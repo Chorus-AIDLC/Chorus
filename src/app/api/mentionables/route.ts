@@ -18,10 +18,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const q = query.q || "";
   const limit = Math.min(50, Math.max(1, parseInt(query.limit || "10", 10)));
 
-  if (!q.trim()) {
-    return success([]);
-  }
-
   const results = await mentionService.searchMentionables({
     companyUuid: auth.companyUuid,
     query: q.trim(),

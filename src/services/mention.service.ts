@@ -214,6 +214,43 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   const effectiveLimit = Math.min(limit, 50);
   const results: Mentionable[] = [];
 
+
+  // If query is empty, return only user's own agents (ordered by createdAt DESC, limit 5)
+  if (!query || query.trim() === '') {
+    let agentOwnerUuid: string | undefined;
+    if (actorType === "user") {
+      agentOwnerUuid = actorUuid;
+    } else if (actorType === "agent" && ownerUuid) {
+      agentOwnerUuid = ownerUuid;
+    }
+
+    if (agentOwnerUuid) {
+      const agents = await prisma.agent.findMany({
+        where: {
+          companyUuid,
+          ownerUuid: agentOwnerUuid,
+        },
+        select: {
+          uuid: true,
+          name: true,
+          roles: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(5, effectiveLimit),
+      });
+
+      for (const agent of agents) {
+        results.push({
+          type: "agent",
+          uuid: agent.uuid,
+          name: agent.name,
+          roles: agent.roles,
+        });
+      }
+    }
+
+    return results;
+  }
   // Search users (all company users are mentionable)
   const users = await prisma.user.findMany({
     where: {
