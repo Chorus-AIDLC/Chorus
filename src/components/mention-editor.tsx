@@ -314,7 +314,6 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
 
     // Fetch mentionables from API
     const fetchMentionables = useCallback(async (query: string) => {
-
       suggestionLoadingRef.current = true;
       forceUpdate((n) => n + 1);
 
