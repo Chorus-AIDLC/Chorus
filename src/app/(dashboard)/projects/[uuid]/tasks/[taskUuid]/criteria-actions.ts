@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { markAcceptanceCriteria, reportCriteriaSelfCheck, getTaskByUuid } from "@/services/task.service";
+import { markAcceptanceCriteria, reportCriteriaSelfCheck, resetAcceptanceCriterion, getTaskByUuid } from "@/services/task.service";
 
 export async function markCriteriaAction(
   taskUuid: string,
@@ -60,7 +60,6 @@ export async function resetCriterionAction(
       return { success: false, error: "Task not found" };
     }
 
-    const { resetAcceptanceCriterion } = await import("@/services/task.service");
     await resetAcceptanceCriterion(auth.companyUuid, taskUuid, criterionUuid);
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);

@@ -261,6 +261,14 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
       }),
     },
     async ({ taskUuid, criteria }) => {
+      // Verify caller is the assignee
+      const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
+      if (!task) return { content: [{ type: "text", text: "Task not found" }], isError: true };
+      const isAssignee =
+        (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
+        (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+      if (!isAssignee) return { content: [{ type: "text", text: "Only the assignee can self-check acceptance criteria" }], isError: true };
+
       const result = await taskService.reportCriteriaSelfCheck(
         auth.companyUuid,
         taskUuid,

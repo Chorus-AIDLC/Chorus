@@ -531,34 +531,36 @@ export async function updateTask(
   }
 
   // If moving FROM to_verify to any status EXCEPT done, reset acceptance criteria
-  // Dev needs to re-check, admin needs to re-verify after rework
-  if (data.status && data.status !== "done") {
-    const current = await prisma.task.findUnique({ where: { uuid }, select: { status: true } });
-    if (current?.status === "to_verify") {
-      await prisma.acceptanceCriterion.updateMany({
-        where: { taskUuid: uuid },
-        data: {
-          status: "pending",
-          evidence: null,
-          markedByType: null,
-          markedBy: null,
-          markedAt: null,
-          devStatus: "pending",
-          devEvidence: null,
-          devMarkedByType: null,
-          devMarkedBy: null,
-          devMarkedAt: null,
-        },
-      });
+  // Wrapped in transaction to prevent TOCTOU race condition
+  const task = await prisma.$transaction(async (tx) => {
+    if (data.status && data.status !== "done") {
+      const current = await tx.task.findUnique({ where: { uuid }, select: { status: true } });
+      if (current?.status === "to_verify") {
+        await tx.acceptanceCriterion.updateMany({
+          where: { taskUuid: uuid },
+          data: {
+            status: "pending",
+            evidence: null,
+            markedByType: null,
+            markedBy: null,
+            markedAt: null,
+            devStatus: "pending",
+            devEvidence: null,
+            devMarkedByType: null,
+            devMarkedBy: null,
+            devMarkedAt: null,
+          },
+        });
+      }
     }
-  }
 
-  const task = await prisma.task.update({
-    where: { uuid },
-    data,
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
+    return tx.task.update({
+      where: { uuid },
+      data,
+      include: {
+        project: { select: { uuid: true, name: true } },
+      },
+    });
   });
 
   eventBus.emitChange({ companyUuid: task.companyUuid, projectUuid: task.project.uuid, entityType: "task", entityUuid: task.uuid, action: "updated" });
@@ -743,6 +745,14 @@ export async function markAcceptanceCriteria(
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
 
+  // Pre-validate all criterion UUIDs belong to this task
+  const validUuids = new Set(
+    (await prisma.acceptanceCriterion.findMany({ where: { taskUuid }, select: { uuid: true } })).map((r) => r.uuid),
+  );
+  for (const c of criteria) {
+    if (!validUuids.has(c.uuid)) throw new Error(`Criterion ${c.uuid} does not belong to task ${taskUuid}`);
+  }
+
   // Update each criterion
   for (const c of criteria) {
     await prisma.acceptanceCriterion.update({
@@ -775,6 +785,14 @@ export async function reportCriteriaSelfCheck(
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
 
+  // Pre-validate all criterion UUIDs belong to this task
+  const validUuids = new Set(
+    (await prisma.acceptanceCriterion.findMany({ where: { taskUuid }, select: { uuid: true } })).map((r) => r.uuid),
+  );
+  for (const c of criteria) {
+    if (!validUuids.has(c.uuid)) throw new Error(`Criterion ${c.uuid} does not belong to task ${taskUuid}`);
+  }
+
   // Update each criterion
   for (const c of criteria) {
     await prisma.acceptanceCriterion.update({
@@ -804,6 +822,10 @@ export async function resetAcceptanceCriterion(
 ): Promise<void> {
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+
+  // Validate criterion belongs to this task
+  const criterion = await prisma.acceptanceCriterion.findFirst({ where: { uuid: criterionUuid, taskUuid } });
+  if (!criterion) throw new Error("Criterion not found for this task");
 
   await prisma.acceptanceCriterion.update({
     where: { uuid: criterionUuid },
@@ -862,9 +884,9 @@ export async function checkAcceptanceCriteriaGate(
 
   const { summary } = computeAcceptanceStatus(rows);
 
-  // Return unresolved criteria (failed or pending, required only)
+  // Return unresolved criteria — required items that are not passed (these block the gate)
   const unresolved = rows
-    .filter((r) => r.status !== "passed")
+    .filter((r) => r.required && r.status !== "passed")
     .map(formatCriterionResponse);
 
   return {

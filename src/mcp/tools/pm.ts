@@ -390,8 +390,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
             title: task.title,
             description: task.description || null,
             priority: task.priority,
-            storyPoints: task.storyPoints || null,
-            acceptanceCriteria: task.acceptanceCriteria || null,
+            storyPoints: task.storyPoints ?? null,
             proposalUuid: proposalUuid || null,
             createdByUuid: auth.actorUuid,
           })
