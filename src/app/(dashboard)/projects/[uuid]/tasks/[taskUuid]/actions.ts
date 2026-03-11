@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask } from "@/services/task.service";
+import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { getAgentsByRole, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
 
@@ -195,6 +195,12 @@ export async function verifyTaskAction(taskUuid: string) {
 
     if (task.status !== "to_verify") {
       return { success: false, error: "Task is not in to_verify status" };
+    }
+
+    // Check acceptance criteria gate
+    const gate = await checkAcceptanceCriteriaGate(taskUuid);
+    if (!gate.allowed) {
+      return { success: false, error: gate.reason || "Not all required acceptance criteria are passed" };
     }
 
     await updateTask(taskUuid, { status: "done" });

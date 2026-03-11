@@ -42,6 +42,8 @@ interface Task {
     assignedBy: { type: string; uuid: string; name: string } | null;
   } | null;
   dependsOn?: { uuid: string; title: string; status: string }[];
+  acceptanceStatus?: string;
+  acceptanceSummary?: { total: number; required: number; passed: number; failed: number; pending: number; requiredPassed: number; requiredFailed: number; requiredPending: number };
 }
 
 interface BlockerInfo {
@@ -119,6 +121,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const [forceDialogOpen, setForceDialogOpen] = useState(false);
   const [forceDialogTask, setForceDialogTask] = useState<Task | null>(null);
   const [forceDialogBlockers, setForceDialogBlockers] = useState<BlockerInfo[]>([]);
+  const [gateDialogOpen, setGateDialogOpen] = useState(false);
+  const [gateDialogCriteria, setGateDialogCriteria] = useState<Array<{ uuid: string; description: string; required: boolean; status: string; evidence: string | null }>>([]);
   const [forceMoving, setForceMoving] = useState(false);
   useRealtimeRefresh();
 
@@ -224,7 +228,13 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
           t.uuid === taskUuid ? { ...t, status: task.status } : t
         )
       );
-      console.error("Failed to move task:", result2.error);
+
+      // Show gate blocked dialog with criteria details
+      if ("gateBlocked" in result2 && result2.gateBlocked) {
+        const criteria = "unresolvedCriteria" in result2 && Array.isArray(result2.unresolvedCriteria) ? result2.unresolvedCriteria : [];
+        setGateDialogCriteria(criteria as Array<{ uuid: string; description: string; required: boolean; status: string; evidence: string | null }>);
+        setGateDialogOpen(true);
+      }
     } else {
       // Refresh to get the latest data
       router.refresh();
@@ -430,12 +440,34 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   ) : (
                                     <span>{t("common.unassigned")}</span>
                                   )}
-                                  {workerCounts[task.uuid] > 0 && (
-                                    <Badge variant="outline" className="h-4 gap-1 border-green-300 px-1.5 text-[10px] text-green-700">
-                                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-                                      {t("sessions.workerCount", { count: workerCounts[task.uuid] })}
-                                    </Badge>
-                                  )}
+                                  <span className="flex items-center gap-1">
+                                    {workerCounts[task.uuid] > 0 && (
+                                      <Badge variant="outline" className="h-4 gap-1 border-green-300 px-1.5 text-[10px] text-green-700">
+                                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                                        {t("sessions.workerCount", { count: workerCounts[task.uuid] })}
+                                      </Badge>
+                                    )}
+                                    {task.acceptanceSummary && task.acceptanceSummary.total > 0 && (() => {
+                                      const s = task.acceptanceSummary;
+                                      const isVerifyCol = task.status === "to_verify";
+                                      const allPassed = s.requiredPassed === s.required && s.required > 0;
+                                      const hasFailed = s.requiredFailed > 0;
+                                      let badgeClass = "bg-[#F5F2EC] text-[#9A9A9A]";
+                                      if (isVerifyCol) {
+                                        badgeClass = allPassed
+                                          ? "bg-green-50 text-green-700"
+                                          : hasFailed
+                                            ? "bg-red-50 text-[#C4574C]"
+                                            : "bg-amber-50 text-[#D97706]";
+                                      }
+                                      return (
+                                        <Badge className={`h-4 gap-1 border-0 px-1.5 text-[9px] ${badgeClass}`}>
+                                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                                          {s.passed}/{s.total}
+                                        </Badge>
+                                      );
+                                    })()}
+                                  </span>
                                 </div>
                               </Card>
                               </div>
@@ -526,6 +558,73 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
             disabled={forceMoving}
           >
             {forceMoving ? t("common.processing") : t("tasks.forceMove")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Acceptance Criteria Gate Dialog */}
+    <Dialog open={gateDialogOpen} onOpenChange={setGateDialogOpen}>
+      <DialogContent className="max-w-[520px] rounded-2xl p-0 gap-0">
+        <DialogHeader className="px-6 pt-6 pb-4">
+          <DialogTitle className="flex items-center gap-2.5">
+            <TriangleAlert className="h-5 w-5 text-[#C4574C]" />
+            {t("acceptanceCriteria.title")}
+          </DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed text-[#6B6B6B]">
+            {t("acceptanceCriteria.gateBlocked", { count: gateDialogCriteria.filter(c => c.required && c.status !== "passed").length })}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="px-6 pb-4 space-y-3">
+          <p className="text-[11px] font-semibold text-[#9A9A9A] uppercase tracking-wide">
+            {t("acceptanceCriteria.title")}
+          </p>
+          {gateDialogCriteria.map((criterion) => (
+            <div
+              key={criterion.uuid}
+              className={`rounded-lg border p-3 space-y-2 ${
+                criterion.status === "failed"
+                  ? "border-red-200 bg-white"
+                  : "border-[#E5E0D8] bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`h-2 w-2 rounded-full shrink-0 ${
+                  criterion.status === "failed" ? "bg-[#C4574C]" : "bg-[#F59E0B]"
+                }`} />
+                <span className="text-xs font-semibold text-[#2C2C2C]">{criterion.description}</span>
+              </div>
+              <div className="flex items-center gap-2 pl-4">
+                <Badge className={`text-[10px] border-0 ${
+                  criterion.status === "failed"
+                    ? "bg-red-50 text-[#C4574C]"
+                    : "bg-amber-50 text-[#D97706]"
+                }`}>
+                  {t(`acceptanceCriteria.status.${criterion.status}`)}
+                </Badge>
+                <Badge className="text-[10px] border-0 bg-[#FAF8F4] text-[#9A9A9A]">
+                  {criterion.required ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
+                </Badge>
+                {!criterion.evidence && (
+                  <span className="text-[10px] italic text-[#9A9A9A]">
+                    {t("acceptanceCriteria.noEvidence")}
+                  </span>
+                )}
+              </div>
+              {criterion.evidence && (
+                <div className="rounded-md bg-red-50 p-2 ml-4">
+                  <span className="text-[10px] font-medium text-[#9A9A9A]">{t("acceptanceCriteria.verifyEvidence")}</span>
+                  <p className="text-[11px] text-[#2C2C2C] mt-0.5">{criterion.evidence}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <DialogFooter className="border-t border-[#E5E2DC] px-6 py-4">
+          <Button className="rounded-lg bg-[#C4574C] hover:bg-[#A3433A] text-white" onClick={() => setGateDialogOpen(false)}>
+            {t("acceptanceCriteria.dismiss")}
           </Button>
         </DialogFooter>
       </DialogContent>

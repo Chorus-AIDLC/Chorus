@@ -47,6 +47,12 @@ export interface DocumentDraft {
   content: string;
 }
 
+// Acceptance criteria item (stored in taskDrafts JSON)
+export interface AcceptanceCriteriaItem {
+  description: string;
+  required?: boolean;  // defaults to true
+}
+
 // Task draft type (with UUID for tracking and modification)
 export interface TaskDraft {
   uuid: string;      // Draft UUID for tracking
@@ -54,7 +60,8 @@ export interface TaskDraft {
   description?: string;
   storyPoints?: number;
   priority?: string;
-  acceptanceCriteria?: string;  // acceptance criteria
+  acceptanceCriteria?: string;  // acceptance criteria (legacy Markdown)
+  acceptanceCriteriaItems?: AcceptanceCriteriaItem[];  // structured acceptance criteria items
   dependsOnDraftUuids?: string[];  // list of dependent taskDraft UUIDs
 }
 
@@ -263,12 +270,14 @@ export async function validateProposal(
     }
   }
 
-  // W3: Every task draft should have non-empty acceptanceCriteria
+  // E-AC: Every task draft must have acceptance criteria (structured items or legacy Markdown)
   for (const draft of taskDrafts) {
-    if (!draft.acceptanceCriteria || draft.acceptanceCriteria.trim().length === 0) {
+    const hasLegacy = draft.acceptanceCriteria && draft.acceptanceCriteria.trim().length > 0;
+    const hasStructured = draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0;
+    if (!hasLegacy && !hasStructured) {
       issues.push({
-        id: "W3",
-        level: "warning",
+        id: "E-AC",
+        level: "error",
         message: `Task draft "${draft.title}" is missing acceptance criteria`,
         field: draft.title,
       });
@@ -618,6 +627,20 @@ export async function approveProposal(
 
     // Create tasks (if task drafts exist)
     if (taskDrafts && taskDrafts.length > 0) {
+      // Validate acceptanceCriteriaItems before materializing
+      for (const draft of taskDrafts) {
+        if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
+          for (let i = 0; i < draft.acceptanceCriteriaItems.length; i++) {
+            const item = draft.acceptanceCriteriaItems[i];
+            if (!item.description || typeof item.description !== "string" || item.description.trim().length === 0) {
+              throw new Error(
+                `Task draft "${draft.title}": acceptanceCriteriaItems[${i}] has an empty or invalid description`
+              );
+            }
+          }
+        }
+      }
+
       const { draftToTaskUuidMap } = await createTasksFromProposal(
         proposal.companyUuid,
         proposal.projectUuid,
@@ -640,6 +663,21 @@ export async function approveProposal(
               data: { taskUuid, dependsOnUuid: depTaskUuid },
             });
           }
+        }
+
+        // Materialize acceptance criteria items
+        if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
+          const taskUuid = draftToTaskUuidMap.get(draft.uuid);
+          if (!taskUuid) continue;
+
+          await tx.acceptanceCriterion.createMany({
+            data: draft.acceptanceCriteriaItems.map((item, index) => ({
+              taskUuid,
+              description: item.description.trim(),
+              required: item.required ?? true,
+              sortOrder: index,
+            })),
+          });
         }
       }
     }

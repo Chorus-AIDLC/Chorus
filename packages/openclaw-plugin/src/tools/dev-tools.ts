@@ -82,4 +82,64 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
       return JSON.stringify(result, null, 2);
     },
   });
+
+  api.registerTool({
+    name: "chorus_report_criteria_self_check",
+    description: "Report self-check results on acceptance criteria for a task you're working on. For required criteria, keep working until all pass. Only mark optional criteria as failed if out of scope.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskUuid: { type: "string", description: "Task UUID" },
+        criteria: {
+          type: "array",
+          description: "Array of { uuid, devStatus: 'passed'|'failed', devEvidence?: string }",
+          items: {
+            type: "object",
+            properties: {
+              uuid: { type: "string", description: "AcceptanceCriterion UUID" },
+              devStatus: { type: "string", description: "Self-check result: passed | failed" },
+              devEvidence: { type: "string", description: "Optional evidence/notes" },
+            },
+            required: ["uuid", "devStatus"],
+          },
+        },
+      },
+      required: ["taskUuid", "criteria"],
+      additionalProperties: false,
+    },
+    async execute(_id: string, { taskUuid, criteria }: { taskUuid: string; criteria: Array<{ uuid: string; devStatus: string; devEvidence?: string }> }) {
+      const result = await mcpClient.callTool("chorus_report_criteria_self_check", { taskUuid, criteria });
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
+  api.registerTool({
+    name: "chorus_mark_acceptance_criteria",
+    description: "Mark acceptance criteria as passed or failed (admin verification). Blocked criteria prevent task from being verified (to_verify -> done).",
+    parameters: {
+      type: "object",
+      properties: {
+        taskUuid: { type: "string", description: "Task UUID" },
+        criteria: {
+          type: "array",
+          description: "Array of { uuid, status: 'passed'|'failed', evidence?: string }",
+          items: {
+            type: "object",
+            properties: {
+              uuid: { type: "string", description: "AcceptanceCriterion UUID" },
+              status: { type: "string", description: "Verification result: passed | failed" },
+              evidence: { type: "string", description: "Optional evidence/notes" },
+            },
+            required: ["uuid", "status"],
+          },
+        },
+      },
+      required: ["taskUuid", "criteria"],
+      additionalProperties: false,
+    },
+    async execute(_id: string, { taskUuid, criteria }: { taskUuid: string; criteria: Array<{ uuid: string; status: string; evidence?: string }> }) {
+      const result = await mcpClient.callTool("chorus_mark_acceptance_criteria", { taskUuid, criteria });
+      return JSON.stringify(result, null, 2);
+    },
+  });
 }

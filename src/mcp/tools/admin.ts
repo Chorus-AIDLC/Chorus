@@ -191,6 +191,12 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: `Can only verify Tasks in to_verify status, current status: ${task.status}` }], isError: true };
       }
 
+      // Check acceptance criteria gate
+      const gate = await taskService.checkAcceptanceCriteriaGate(task.uuid);
+      if (!gate.allowed) {
+        return { content: [{ type: "text", text: `Cannot verify task: ${gate.reason}` }], isError: true };
+      }
+
       const updated = await taskService.updateTask(task.uuid, { status: "done" });
 
       await activityService.createActivity({
@@ -276,6 +282,31 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, status: updated.status }) }],
       };
+    }
+  );
+
+  // chorus_mark_acceptance_criteria - Mark acceptance criteria as passed or failed
+  server.registerTool(
+    "chorus_mark_acceptance_criteria",
+    {
+      description: "Mark acceptance criteria as passed or failed (admin verification)",
+      inputSchema: z.object({
+        taskUuid: z.string().describe("Task UUID"),
+        criteria: z.array(z.object({
+          uuid: z.string().describe("AcceptanceCriterion UUID"),
+          status: z.enum(["passed", "failed"]).describe("Verification result"),
+          evidence: z.string().optional().describe("Optional evidence/notes"),
+        })).describe("Criteria verification results (batch)"),
+      }),
+    },
+    async ({ taskUuid, criteria }) => {
+      const result = await taskService.markAcceptanceCriteria(
+        auth.companyUuid,
+        taskUuid,
+        criteria,
+        { type: auth.type, actorUuid: auth.actorUuid },
+      );
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 

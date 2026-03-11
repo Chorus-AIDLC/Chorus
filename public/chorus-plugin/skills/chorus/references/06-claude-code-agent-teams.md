@@ -190,19 +190,33 @@ SendMessage({ type: "message", recipient: "team-lead", content: "Task complete",
 # DO NOT close your session — the plugin closes it automatically when you exit.
 ```
 
-### Phase 4: Team Lead — Monitor & Close
+### Phase 4: Team Lead — Verify, Unblock & Close
 
-The Team Lead monitors until all Chorus tasks reach `to_verify` or `done`. **Task verification (to_verify → done) is an Admin responsibility** — see the Admin workflow for the verify & unblock loop. Sessions are auto-closed by the plugin when sub-agents exit.
+The Team Lead monitors until all Chorus tasks reach `to_verify` or `done`. Sessions are auto-closed by the plugin when sub-agents exit.
+
+> **Critical: If the Team Lead has admin role, it MUST verify tasks between waves.** Sub-agents submit tasks to `to_verify`, but `to_verify` does NOT resolve dependencies — only `done` or `closed` does. Without verification, downstream tasks will be permanently blocked.
 
 ```
-# 1. Periodically check Chorus task status
-chorus_list_tasks({ projectUuid: "<project-uuid>" })
+# 1. Check which tasks are ready for verification
+chorus_list_tasks({ projectUuid: "<project-uuid>", status: "to_verify" })
 
-# 2. Sessions are closed automatically by the plugin (SubagentStop hook).
+# 2. Verify each completed task (moves to_verify → done, unblocks dependents)
+chorus_admin_verify_task({ taskUuid: "<task-A-uuid>" })
+chorus_admin_verify_task({ taskUuid: "<task-B-uuid>" })
 
-# 3. Clean up Claude Code team
+# 3. Check what's now unblocked for the next wave
+chorus_get_unblocked_tasks({ projectUuid: "<project-uuid>" })
+
+# 4. Spawn next wave of sub-agents for newly unblocked tasks
+# ... (repeat Phase 2-4 until all tasks done)
+
+# 5. Sessions are closed automatically by the plugin (SubagentStop hook).
+
+# 6. Clean up Claude Code team
 # Send shutdown requests to sub-agents, then TeamDelete
 ```
+
+If the Team Lead does NOT have admin role, it should notify the human admin to verify tasks so downstream work can proceed.
 
 ---
 
@@ -212,16 +226,23 @@ When Chorus tasks have dependencies (Task B depends on Task A), the Team Lead mu
 
 > **Server-side enforcement**: `chorus_update_task(status: "in_progress")` will automatically reject if any `dependsOn` task is not `done` or `closed`. The error includes detailed blocker info (title, status, assignee, active session). Sub-agents do NOT need to manually poll dependency status — the server enforces it.
 
-**Recommended: Wave-based sequential spawning**
-- Use `chorus_get_unblocked_tasks` to find tasks ready to start (all deps resolved)
-- Spawn sub-agents only for unblocked tasks (Wave 1)
-- When Wave 1 tasks complete, check for newly unblocked tasks (Wave 2)
-- Repeat until all tasks are done
+**Recommended: Wave-based sequential spawning with verification**
+
+> **Key rule**: `to_verify` does NOT count as resolved. Only `done` or `closed` resolves a dependency. The Team Lead must verify tasks between waves to unblock the next wave.
+
+1. Use `chorus_get_unblocked_tasks` to find tasks ready to start (all deps resolved)
+2. Spawn sub-agents only for unblocked tasks (Wave 1)
+3. Wait for Wave 1 tasks to reach `to_verify`
+4. **Verify each task**: `chorus_admin_verify_task()` → moves to `done` (requires admin role)
+5. Check `chorus_get_unblocked_tasks()` for newly unblocked tasks (Wave 2)
+6. Spawn Wave 2 sub-agents
+7. Repeat until all tasks are done
 
 **Alternative: Spawn all, server rejects blocked ones**
 - Spawn all sub-agents immediately
 - Sub-agents that try to move blocked tasks to `in_progress` will receive a clear error with blocker details
 - Those sub-agents can then use `chorus_get_unblocked_tasks` to find other work, or wait and retry
+- **Note**: Even in this mode, the Team Lead must still verify completed tasks to unblock dependents
 
 ---
 

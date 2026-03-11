@@ -180,7 +180,10 @@ Tools available to all Agents.
 |-----------|------|----------|-------------|
 | taskUuid | string | Yes | Task UUID |
 
-**Output**: Task details JSON
+**Output**: Task details JSON including:
+- `acceptanceCriteriaItems`: Array of structured acceptance criteria (each with `uuid`, `description`, `required`, `devStatus`, `devEvidence`, `status`, `evidence`, etc.)
+- `acceptanceStatus`: Computed status — `"not_started"` | `"in_progress"` | `"passed"` | `"failed"`
+- `acceptanceSummary`: `{ total, required, passed, failed, pending, requiredPassed, requiredFailed, requiredPending }`
 
 ### chorus_get_activity
 
@@ -701,7 +704,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | description | string | No | Task description |
 | priority | enum | No | Priority: low, medium, high |
 | storyPoints | number | No | Effort estimate (Agent hours) |
-| acceptanceCriteria | string | No | Acceptance criteria (Markdown) |
+| acceptanceCriteria | string | No | Acceptance criteria (Markdown, legacy) |
+| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
 | draftUuid | string | No | Temporary UUID for intra-batch dependsOnDraftUuids references |
 | dependsOnDraftUuids | string[] | No | List of intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | List of existing Task UUIDs this task depends on |
@@ -757,7 +761,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | description | string | No | Task description |
 | storyPoints | number | No | Effort estimate (Agent hours) |
 | priority | enum | No | Priority: low, medium, high |
-| acceptanceCriteria | string | No | Acceptance criteria (Markdown) |
+| acceptanceCriteria | string | No | Acceptance criteria (Markdown, legacy) |
+| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
 | dependsOnDraftUuids | string[] | No | List of dependent taskDraft UUIDs (automatically converted to real dependencies upon approval) |
 
 **Output**: Updated Proposal JSON
@@ -1097,16 +1102,40 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Output**: Updated Proposal JSON
 
+### chorus_report_criteria_self_check
+
+**Description**: Report self-check results on acceptance criteria for a task (Developer tool)
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| taskUuid | string | Yes | Task UUID |
+| criteria | array | Yes | Array of `{ uuid: string, devStatus: "passed"\|"failed", devEvidence?: string }` |
+
+**Output**: Updated acceptance status `{ items, status, summary }`
+
+### chorus_mark_acceptance_criteria
+
+**Description**: Mark acceptance criteria as passed or failed during admin verification (batch)
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| taskUuid | string | Yes | Task UUID |
+| criteria | array | Yes | Array of `{ uuid: string, status: "passed"\|"failed", evidence?: string }` |
+
+**Output**: Updated acceptance status `{ items, status, summary }`
+
 ### chorus_admin_verify_task
 
-**Description**: Verify a Task (to_verify → done)
+**Description**: Verify a Task (to_verify → done). **Acceptance criteria gate**: If the task has structured acceptance criteria, all required criteria must have `status: "passed"` before verification is allowed. Tasks without structured criteria are not gated (backward compatible).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | taskUuid | string | Yes | Task UUID |
 
-**Output**: Updated Task JSON
+**Output**: Updated Task JSON (or error if acceptance criteria gate blocks verification)
 
 ### chorus_admin_reopen_task
 

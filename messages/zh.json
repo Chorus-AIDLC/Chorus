@@ -531,7 +531,7 @@
     "E5": "Idea「{title}」尚未完成需求澄清",
     "W1": "建议添加技术设计文档",
     "W2": "任务「{title}」缺少描述",
-    "W3": "任务「{title}」缺少验收标准",
+    "E-AC": "任务「{title}」缺少验收标准",
     "W4": "存在多个任务但未定义依赖关系",
     "W5": "Proposal 缺少描述",
     "I1": "任务「{title}」未设置优先级",
@@ -830,5 +830,41 @@
     "projectStats": "{tasks} 个任务 · {completion}% 完成",
     "noProjects": "此分组中暂无项目",
     "noProjectsHint": "点击上方「新建项目」添加"
+  },
+  "acceptanceCriteria": {
+    "title": "验收标准",
+    "noItems": "暂无结构化验收标准",
+    "status": {
+      "pending": "待处理",
+      "passed": "通过",
+      "failed": "未通过",
+      "notStarted": "未开始",
+      "inProgress": "进行中"
+    },
+    "acceptanceStatus": {
+      "not_started": "未开始",
+      "in_progress": "进行中",
+      "passed": "全部通过",
+      "failed": "未通过"
+    },
+    "required": "必需",
+    "optional": "可选",
+    "devSelfCheck": "开发自检",
+    "verification": "验证",
+    "evidence": "依据",
+    "pass": "通过",
+    "fail": "不通过",
+    "undoVerification": "撤销",
+    "devEvidence": "开发依据",
+    "verifyEvidence": "验证依据",
+    "noEvidence": "暂无依据",
+    "dismiss": "知道了",
+    "progress": "已验证 {passed}/{total}",
+    "requiredProgress": "必需项 {passed}/{required} 已通过",
+    "gateBlocked": "无法验证：{count} 项必需标准尚未通过",
+    "gateReady": "所有必需标准已通过",
+    "addCriterion": "添加标准",
+    "removeCriterion": "移除",
+    "criterionPlaceholder": "描述验收标准..."
   }
 }

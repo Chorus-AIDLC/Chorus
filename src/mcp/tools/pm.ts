@@ -5,6 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
+import { prisma } from "@/lib/prisma";
 import { projectExists } from "@/services/project.service";
 import * as ideaService from "@/services/idea.service";
 import * as proposalService from "@/services/proposal.service";
@@ -185,7 +186,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           description: z.string().optional().describe("Task description"),
           storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
           priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
-          acceptanceCriteria: z.string().optional().describe("Acceptance criteria (Markdown)"),
+          acceptanceCriteriaItems: zArray(z.object({
+            description: z.string().describe("Criterion description"),
+            required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+          })).optional().describe("Structured acceptance criteria items (materialized on approval)"),
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
         })).optional().describe("Task drafts list"),
       }),
@@ -353,7 +357,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           description: z.string().optional().describe("Task description"),
           priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
           storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
-          acceptanceCriteria: z.string().optional().describe("Acceptance criteria (Markdown)"),
+          acceptanceCriteriaItems: zArray(z.object({
+            description: z.string().describe("Criterion description"),
+            required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+          })).optional().describe("Structured acceptance criteria items"),
           draftUuid: z.string().optional().describe("Temporary UUID for intra-batch dependsOnDraftUuids references"),
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
           dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
@@ -428,6 +435,27 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
               await taskService.addTaskDependency(auth.companyUuid, realUuid, depUuid);
             } catch (error) {
               warnings.push(`Task "${task.title}" -> taskUuid "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
+            }
+          }
+        }
+
+        // Create acceptance criteria items
+        if (task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0) {
+          const validItems = task.acceptanceCriteriaItems.filter(
+            (item) => item.description && item.description.trim().length > 0
+          );
+          if (validItems.length > 0) {
+            try {
+              await prisma.acceptanceCriterion.createMany({
+                data: validItems.map((item, index) => ({
+                  taskUuid: realUuid,
+                  description: item.description.trim(),
+                  required: item.required ?? true,
+                  sortOrder: index,
+                })),
+              });
+            } catch (error) {
+              warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
             }
           }
         }
@@ -521,16 +549,19 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         description: z.string().optional().describe("Task description"),
         storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
-        acceptanceCriteria: z.string().optional().describe("Acceptance criteria (Markdown)"),
+        acceptanceCriteriaItems: zArray(z.object({
+          description: z.string().describe("Criterion description"),
+          required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+        })).optional().describe("Structured acceptance criteria items (materialized on approval)"),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
       }),
     },
-    async ({ proposalUuid, title, description, storyPoints, priority, acceptanceCriteria, dependsOnDraftUuids }) => {
+    async ({ proposalUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }) => {
       try {
         const proposal = await proposalService.addTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          { title, description, storyPoints, priority, acceptanceCriteria, dependsOnDraftUuids }
+          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, action: "task_draft_added" }, null, 2) }],
@@ -594,18 +625,21 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         description: z.string().optional().describe("Task description"),
         storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
-        acceptanceCriteria: z.string().optional().describe("Acceptance criteria (Markdown)"),
+        acceptanceCriteriaItems: zArray(z.object({
+          description: z.string().describe("Criterion description"),
+          required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+        })).optional().describe("Structured acceptance criteria items (replaces existing items)"),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
       }),
     },
-    async ({ proposalUuid, draftUuid, title, description, storyPoints, priority, acceptanceCriteria, dependsOnDraftUuids }) => {
+    async ({ proposalUuid, draftUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }) => {
       try {
-        const updates: { title?: string; description?: string; storyPoints?: number; priority?: string; acceptanceCriteria?: string; dependsOnDraftUuids?: string[] } = {};
+        const updates: { title?: string; description?: string; storyPoints?: number; priority?: string; acceptanceCriteriaItems?: Array<{ description: string; required?: boolean }>; dependsOnDraftUuids?: string[] } = {};
         if (title !== undefined) updates.title = title;
         if (description !== undefined) updates.description = description;
         if (storyPoints !== undefined) updates.storyPoints = storyPoints;
         if (priority !== undefined) updates.priority = priority;
-        if (acceptanceCriteria !== undefined) updates.acceptanceCriteria = acceptanceCriteria;
+        if (acceptanceCriteriaItems !== undefined) updates.acceptanceCriteriaItems = acceptanceCriteriaItems;
         if (dependsOnDraftUuids !== undefined) updates.dependsOnDraftUuids = dependsOnDraftUuids;
 
         const proposal = await proposalService.updateTaskDraft(

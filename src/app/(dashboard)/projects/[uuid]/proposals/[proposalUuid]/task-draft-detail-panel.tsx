@@ -3,13 +3,14 @@
 import { useState, useEffect, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Pencil, Trash2, Loader2, Check, Zap, GitBranch, Plus } from "lucide-react";
+import { X, Pencil, Trash2, Loader2, Check, Zap, GitBranch, Plus, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -36,6 +37,11 @@ import {
   removeTaskDraftAction,
 } from "./actions";
 
+interface AcceptanceCriteriaItem {
+  description: string;
+  required?: boolean;
+}
+
 interface TaskDraft {
   uuid: string;
   title: string;
@@ -43,6 +49,7 @@ interface TaskDraft {
   storyPoints?: number;
   priority?: string;
   acceptanceCriteria?: string;
+  acceptanceCriteriaItems?: AcceptanceCriteriaItem[];
   dependsOnDraftUuids?: string[];
 }
 
@@ -96,6 +103,9 @@ export function TaskDraftDetailPanel({
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState(
     taskDraft?.acceptanceCriteria || ""
   );
+  const [editCriteriaItems, setEditCriteriaItems] = useState<AcceptanceCriteriaItem[]>(
+    taskDraft?.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
+  );
   // Pending deps for create mode (stored locally until save)
   const [pendingDeps, setPendingDeps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +152,9 @@ export function TaskDraftDetailPanel({
     setEditPriority(taskDraft.priority || "medium");
     setEditStoryPoints(taskDraft.storyPoints?.toString() || "");
     setEditAcceptanceCriteria(taskDraft.acceptanceCriteria || "");
+    setEditCriteriaItems(
+      taskDraft.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
+    );
     setError(null);
     setIsEditing(true);
   };
@@ -158,6 +171,9 @@ export function TaskDraftDetailPanel({
       setEditPriority(taskDraft.priority || "medium");
       setEditStoryPoints(taskDraft.storyPoints?.toString() || "");
       setEditAcceptanceCriteria(taskDraft.acceptanceCriteria || "");
+      setEditCriteriaItems(
+        taskDraft.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
+      );
     }
     setError(null);
   };
@@ -170,12 +186,18 @@ export function TaskDraftDetailPanel({
 
     setError(null);
     startTransition(async () => {
+      // Filter out empty criteria items
+      const validCriteriaItems = editCriteriaItems.filter((item) => item.description.trim().length > 0);
+
       const taskData = {
         title: editTitle.trim(),
         description: editDescription.trim() || undefined,
         priority: editPriority,
         storyPoints: editStoryPoints ? parseFloat(editStoryPoints) : undefined,
         acceptanceCriteria: editAcceptanceCriteria.trim() || undefined,
+        acceptanceCriteriaItems: validCriteriaItems.length > 0
+          ? validCriteriaItems.map((item) => ({ description: item.description.trim(), required: item.required ?? true }))
+          : undefined,
         ...(isCreateMode && pendingDeps.length > 0
           ? { dependsOnDraftUuids: pendingDeps }
           : {}),
@@ -413,6 +435,69 @@ export function TaskDraftDetailPanel({
         />
       </div>
 
+      {/* Acceptance Criteria Items (structured) */}
+      <div className="space-y-3">
+        <Label className="text-[13px] font-medium text-[#2C2C2C] flex items-center gap-1.5">
+          <ClipboardCheck className="h-3.5 w-3.5 text-[#C67A52]" />
+          {t("acceptanceCriteria.title")}
+        </Label>
+        {editCriteriaItems.length > 0 && (
+          <div className="space-y-2">
+            {editCriteriaItems.map((item, index) => (
+              <div key={index} className="flex items-start gap-2 rounded-lg border border-[#E5E2DC] bg-[#FAF8F4] p-2.5">
+                <div className="flex-1 min-w-0">
+                  <Input
+                    value={item.description}
+                    onChange={(e) => {
+                      const updated = [...editCriteriaItems];
+                      updated[index] = { ...updated[index], description: e.target.value };
+                      setEditCriteriaItems(updated);
+                    }}
+                    placeholder={t("acceptanceCriteria.criterionPlaceholder")}
+                    className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52] h-8"
+                  />
+                </div>
+                <div className="flex items-center gap-2 shrink-0 pt-1">
+                  <Switch
+                    checked={item.required ?? true}
+                    onCheckedChange={(checked) => {
+                      const updated = [...editCriteriaItems];
+                      updated[index] = { ...updated[index], required: checked };
+                      setEditCriteriaItems(updated);
+                    }}
+                    className="data-[state=checked]:bg-[#C67A52]"
+                  />
+                  <span className="text-[10px] font-medium text-[#6B6B6B] min-w-[52px]">
+                    {(item.required ?? true) ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0 border-[#E5E2DC] text-[#9A9A9A] hover:text-[#D32F2F] hover:border-[#D32F2F] hover:bg-[#FFEBEE]"
+                    onClick={() => {
+                      setEditCriteriaItems(editCriteriaItems.filter((_, i) => i !== index));
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 border-[#E5E2DC] text-xs text-[#6B6B6B] hover:text-[#C67A52] hover:border-[#C67A52]"
+          onClick={() => {
+            setEditCriteriaItems([...editCriteriaItems, { description: "", required: true }]);
+          }}
+        >
+          <Plus className="h-3 w-3" />
+          {t("acceptanceCriteria.addCriterion")}
+        </Button>
+      </div>
+
       {/* Dependencies section in edit/create form */}
       {renderDependencies()}
     </div>
@@ -503,7 +588,7 @@ export function TaskDraftDetailPanel({
                   </div>
                 </div>
 
-                {/* Acceptance Criteria Section */}
+                {/* Acceptance Criteria Section (legacy markdown) */}
                 {taskDraft.acceptanceCriteria && (
                   <div className="mt-5">
                     <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
@@ -513,6 +598,37 @@ export function TaskDraftDetailPanel({
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
                         <Streamdown plugins={{ code }}>{taskDraft.acceptanceCriteria}</Streamdown>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Acceptance Criteria Items (structured) */}
+                {taskDraft.acceptanceCriteriaItems && taskDraft.acceptanceCriteriaItems.length > 0 && (
+                  <div className="mt-5">
+                    <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A] flex items-center gap-1.5">
+                      <ClipboardCheck className="h-3 w-3" />
+                      {t("acceptanceCriteria.title")}
+                    </label>
+                    <div className="mt-2 space-y-1.5">
+                      {taskDraft.acceptanceCriteriaItems.map((item, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-2.5"
+                        >
+                          <span className="flex-1 text-[13px] text-[#2C2C2C]">
+                            {item.description}
+                          </span>
+                          <Badge
+                            className={`text-[10px] font-medium border-0 shrink-0 ${
+                              (item.required ?? true)
+                                ? "bg-[#FFF3E0] text-[#E65100]"
+                                : "bg-[#F5F2EC] text-[#6B6B6B]"
+                            }`}
+                          >
+                            {(item.required ?? true) ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
+                          </Badge>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

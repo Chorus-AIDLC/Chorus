@@ -530,7 +530,7 @@
     "E5": "Idea \"{title}\" has unresolved elaboration",
     "W1": "Consider adding a technical design document",
     "W2": "Task \"{title}\" is missing a description",
-    "W3": "Task \"{title}\" is missing acceptance criteria",
+    "E-AC": "Task \"{title}\" is missing acceptance criteria",
     "W4": "Multiple tasks exist but no dependencies are defined",
     "W5": "Proposal is missing a description",
     "I1": "Task \"{title}\" has no priority set",
@@ -829,5 +829,41 @@
     "projectStats": "{tasks} tasks · {completion}% complete",
     "noProjects": "No projects in this group yet",
     "noProjectsHint": "Click \"New Project\" above to add one"
+  },
+  "acceptanceCriteria": {
+    "title": "Acceptance Criteria",
+    "noItems": "No structured acceptance criteria",
+    "status": {
+      "pending": "Pending",
+      "passed": "Passed",
+      "failed": "Failed",
+      "notStarted": "Not Started",
+      "inProgress": "In Progress"
+    },
+    "acceptanceStatus": {
+      "not_started": "Not Started",
+      "in_progress": "In Progress",
+      "passed": "All Passed",
+      "failed": "Failed"
+    },
+    "required": "Required",
+    "optional": "Optional",
+    "devSelfCheck": "Dev Self-Check",
+    "verification": "Verification",
+    "evidence": "Evidence",
+    "pass": "Pass",
+    "fail": "Fail",
+    "undoVerification": "Undo",
+    "devEvidence": "Dev Evidence",
+    "verifyEvidence": "Verify Evidence",
+    "noEvidence": "No evidence",
+    "dismiss": "Dismiss",
+    "progress": "{passed}/{total} verified",
+    "requiredProgress": "{passed}/{required} required passed",
+    "gateBlocked": "Cannot verify: {count} required criteria not yet passed",
+    "gateReady": "All required criteria passed",
+    "addCriterion": "Add Criterion",
+    "removeCriterion": "Remove",
+    "criterionPlaceholder": "Describe the acceptance criterion..."
   }
 }

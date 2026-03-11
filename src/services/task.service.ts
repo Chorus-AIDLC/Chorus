@@ -58,6 +58,34 @@ export interface TaskDependencyInfo {
 }
 
 // API response format
+export interface AcceptanceCriterionResponse {
+  uuid: string;
+  description: string;
+  required: boolean;
+  devStatus: string;  // pending | passed | failed
+  devEvidence: string | null;
+  devMarkedByType: string | null;
+  devMarkedBy: string | null;
+  devMarkedAt: string | null;
+  status: string;  // pending | passed | failed
+  evidence: string | null;
+  markedByType: string | null;
+  markedBy: string | null;
+  markedAt: string | null;
+  sortOrder: number;
+}
+
+export interface AcceptanceSummary {
+  total: number;
+  required: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  requiredPassed: number;
+  requiredFailed: number;
+  requiredPending: number;
+}
+
 export interface TaskResponse {
   uuid: string;
   title: string;
@@ -65,7 +93,10 @@ export interface TaskResponse {
   status: string;
   priority: string;
   storyPoints: number | null;
-  acceptanceCriteria: string | null;  // acceptance criteria
+  acceptanceCriteria: string | null;  // acceptance criteria (Markdown, legacy)
+  acceptanceCriteriaItems: AcceptanceCriterionResponse[];
+  acceptanceStatus: string;  // not_started | in_progress | passed | failed
+  acceptanceSummary: AcceptanceSummary;
   assignee: {
     type: string;
     uuid: string;
@@ -99,6 +130,62 @@ export function isValidTaskStatusTransition(from: string, to: string): boolean {
   return allowed.includes(to);
 }
 
+// ===== Acceptance Criteria Helpers =====
+
+const emptySummary: AcceptanceSummary = {
+  total: 0, required: 0, passed: 0, failed: 0, pending: 0,
+  requiredPassed: 0, requiredFailed: 0, requiredPending: 0,
+};
+
+export function computeAcceptanceStatus(
+  items: Array<{ required: boolean; status: string }>,
+): { status: string; summary: AcceptanceSummary } {
+  if (items.length === 0) {
+    return { status: "not_started", summary: { ...emptySummary } };
+  }
+
+  const summary: AcceptanceSummary = { ...emptySummary, total: items.length };
+  for (const item of items) {
+    if (item.required) summary.required++;
+    if (item.status === "passed") {
+      summary.passed++;
+      if (item.required) summary.requiredPassed++;
+    } else if (item.status === "failed") {
+      summary.failed++;
+      if (item.required) summary.requiredFailed++;
+    } else {
+      summary.pending++;
+      if (item.required) summary.requiredPending++;
+    }
+  }
+
+  if (summary.requiredFailed > 0) return { status: "failed", summary };
+  if (summary.requiredPassed === summary.required && summary.required > 0) return { status: "passed", summary };
+  if (summary.passed > 0 || summary.failed > 0) return { status: "in_progress", summary };
+  return { status: "not_started", summary };
+}
+
+function formatCriterionResponse(
+  c: { uuid: string; description: string; required: boolean; devStatus: string; devEvidence: string | null; devMarkedByType: string | null; devMarkedBy: string | null; devMarkedAt: Date | null; status: string; evidence: string | null; markedByType: string | null; markedBy: string | null; markedAt: Date | null; sortOrder: number },
+): AcceptanceCriterionResponse {
+  return {
+    uuid: c.uuid,
+    description: c.description,
+    required: c.required,
+    devStatus: c.devStatus,
+    devEvidence: c.devEvidence,
+    devMarkedByType: c.devMarkedByType,
+    devMarkedBy: c.devMarkedBy,
+    devMarkedAt: c.devMarkedAt?.toISOString() ?? null,
+    status: c.status,
+    evidence: c.evidence,
+    markedByType: c.markedByType,
+    markedBy: c.markedBy,
+    markedAt: c.markedAt?.toISOString() ?? null,
+    sortOrder: c.sortOrder,
+  };
+}
+
 // ===== Internal Helper Functions =====
 
 // Format a single Task into API response format
@@ -122,6 +209,7 @@ async function formatTaskResponse(
     project?: { uuid: string; name: string };
     dependsOn?: Array<{ dependsOn: { uuid: string; title: string; status: string } }>;
     dependedBy?: Array<{ task: { uuid: string; title: string; status: string } }>;
+    acceptanceCriteriaItems?: Array<{ uuid: string; description: string; required: boolean; devStatus: string; devEvidence: string | null; devMarkedByType: string | null; devMarkedBy: string | null; devMarkedAt: Date | null; status: string; evidence: string | null; markedByType: string | null; markedBy: string | null; markedAt: Date | null; sortOrder: number }>;
   },
   commentCount: number = 0,
 ): Promise<TaskResponse> {
@@ -142,6 +230,11 @@ async function formatTaskResponse(
     status: d.task.status,
   }));
 
+  const criteriaItems = (task.acceptanceCriteriaItems || []).map(formatCriterionResponse);
+  const { status: acceptanceStatus, summary: acceptanceSummary } = computeAcceptanceStatus(
+    task.acceptanceCriteriaItems || [],
+  );
+
   return {
     uuid: task.uuid,
     title: task.title,
@@ -150,6 +243,9 @@ async function formatTaskResponse(
     priority: task.priority,
     storyPoints: task.storyPoints,
     acceptanceCriteria: task.acceptanceCriteria,
+    acceptanceCriteriaItems: criteriaItems,
+    acceptanceStatus,
+    acceptanceSummary,
     assignee,
     proposalUuid: task.proposalUuid,
     ...(task.project && { project: task.project }),
@@ -182,6 +278,7 @@ type RawTaskForBatch = {
   project?: { uuid: string; name: string };
   dependsOn?: Array<{ dependsOn: { uuid: string; title: string; status: string } }>;
   dependedBy?: Array<{ task: { uuid: string; title: string; status: string } }>;
+  acceptanceCriteriaItems?: Array<{ uuid: string; description: string; required: boolean; devStatus: string; devEvidence: string | null; devMarkedByType: string | null; devMarkedBy: string | null; devMarkedAt: Date | null; status: string; evidence: string | null; markedByType: string | null; markedBy: string | null; markedAt: Date | null; sortOrder: number }>;
 };
 
 async function formatTaskResponsesBatch(
@@ -247,6 +344,11 @@ async function formatTaskResponsesBatch(
       status: d.task.status,
     }));
 
+    const criteriaItems = (task.acceptanceCriteriaItems || []).map(formatCriterionResponse);
+    const { status: acceptanceStatus, summary: acceptanceSummary } = computeAcceptanceStatus(
+      task.acceptanceCriteriaItems || [],
+    );
+
     return {
       uuid: task.uuid,
       title: task.title,
@@ -255,6 +357,9 @@ async function formatTaskResponsesBatch(
       priority: task.priority,
       storyPoints: task.storyPoints,
       acceptanceCriteria: task.acceptanceCriteria,
+      acceptanceCriteriaItems: criteriaItems,
+      acceptanceStatus,
+      acceptanceSummary,
       assignee,
       proposalUuid: task.proposalUuid,
       ...(task.project && { project: task.project }),
@@ -280,6 +385,9 @@ const dependencyInclude = {
     select: {
       task: { select: { uuid: true, title: true, status: true } },
     },
+  },
+  acceptanceCriteriaItems: {
+    orderBy: { sortOrder: "asc" as const },
   },
 } as const;
 
@@ -420,6 +528,29 @@ export async function updateTask(
   if (data.description !== undefined && actorContext) {
     const existing = await prisma.task.findUnique({ where: { uuid }, select: { description: true } });
     oldDescription = existing?.description ?? null;
+  }
+
+  // If moving FROM to_verify to any status EXCEPT done, reset acceptance criteria
+  // Dev needs to re-check, admin needs to re-verify after rework
+  if (data.status && data.status !== "done") {
+    const current = await prisma.task.findUnique({ where: { uuid }, select: { status: true } });
+    if (current?.status === "to_verify") {
+      await prisma.acceptanceCriterion.updateMany({
+        where: { taskUuid: uuid },
+        data: {
+          status: "pending",
+          evidence: null,
+          markedByType: null,
+          markedBy: null,
+          markedAt: null,
+          devStatus: "pending",
+          devEvidence: null,
+          devMarkedByType: null,
+          devMarkedBy: null,
+          devMarkedAt: null,
+        },
+      });
+    }
   }
 
   const task = await prisma.task.update({
@@ -575,6 +706,173 @@ export async function createTasksFromProposal(
 
   const formattedTasks = await Promise.all(rawTasks.map(formatTaskResponse));
   return { tasks: formattedTasks, draftToTaskUuidMap };
+}
+
+// ===== Acceptance Criteria CRUD =====
+
+// Bulk create acceptance criteria for a task (used by proposal approval flow)
+export async function createAcceptanceCriteria(
+  taskUuid: string,
+  items: Array<{ description: string; required?: boolean; sortOrder?: number }>,
+): Promise<AcceptanceCriterionResponse[]> {
+  if (items.length === 0) return [];
+
+  const createPromises = items.map((item, index) =>
+    prisma.acceptanceCriterion.create({
+      data: {
+        taskUuid,
+        description: item.description,
+        required: item.required ?? true,
+        sortOrder: item.sortOrder ?? index,
+      },
+    })
+  );
+
+  const created = await Promise.all(createPromises);
+  return created.map(formatCriterionResponse);
+}
+
+// Admin/user marks verification status on acceptance criteria
+export async function markAcceptanceCriteria(
+  companyUuid: string,
+  taskUuid: string,
+  criteria: Array<{ uuid: string; status: "passed" | "failed"; evidence?: string }>,
+  auth: { type: string; actorUuid: string },
+): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
+  // Validate task belongs to company
+  const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
+  if (!task) throw new Error("Task not found");
+
+  // Update each criterion
+  for (const c of criteria) {
+    await prisma.acceptanceCriterion.update({
+      where: { uuid: c.uuid },
+      data: {
+        status: c.status,
+        evidence: c.evidence ?? null,
+        markedByType: auth.type,
+        markedBy: auth.actorUuid,
+        markedAt: new Date(),
+      },
+    });
+  }
+
+  // Notify UI of criteria change
+  eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
+
+  // Return updated state
+  return getAcceptanceStatus(companyUuid, taskUuid);
+}
+
+// Dev agent reports self-check on acceptance criteria
+export async function reportCriteriaSelfCheck(
+  companyUuid: string,
+  taskUuid: string,
+  criteria: Array<{ uuid: string; devStatus: "passed" | "failed"; devEvidence?: string }>,
+  auth: { type: string; actorUuid: string },
+): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
+  // Validate task belongs to company
+  const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
+  if (!task) throw new Error("Task not found");
+
+  // Update each criterion
+  for (const c of criteria) {
+    await prisma.acceptanceCriterion.update({
+      where: { uuid: c.uuid },
+      data: {
+        devStatus: c.devStatus,
+        devEvidence: c.devEvidence ?? null,
+        devMarkedByType: auth.type,
+        devMarkedBy: auth.actorUuid,
+        devMarkedAt: new Date(),
+      },
+    });
+  }
+
+  // Notify UI of criteria change
+  eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
+
+  // Return updated state
+  return getAcceptanceStatus(companyUuid, taskUuid);
+}
+
+// Reset a single acceptance criterion back to pending (admin/user undo)
+export async function resetAcceptanceCriterion(
+  companyUuid: string,
+  taskUuid: string,
+  criterionUuid: string,
+): Promise<void> {
+  const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
+  if (!task) throw new Error("Task not found");
+
+  await prisma.acceptanceCriterion.update({
+    where: { uuid: criterionUuid },
+    data: {
+      status: "pending",
+      evidence: null,
+      markedByType: null,
+      markedBy: null,
+      markedAt: null,
+    },
+  });
+
+  eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
+}
+
+// Get acceptance status for a task
+export async function getAcceptanceStatus(
+  companyUuid: string,
+  taskUuid: string,
+): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
+  // Validate task belongs to company
+  const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
+  if (!task) throw new Error("Task not found");
+
+  const rows = await prisma.acceptanceCriterion.findMany({
+    where: { taskUuid },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  const items = rows.map(formatCriterionResponse);
+  const { status, summary } = computeAcceptanceStatus(rows);
+
+  return { items, status, summary };
+}
+
+// Check acceptance criteria gate for verify→done transition
+export async function checkAcceptanceCriteriaGate(
+  taskUuid: string,
+): Promise<{ allowed: boolean; reason?: string; summary?: AcceptanceSummary; unresolvedCriteria?: AcceptanceCriterionResponse[] }> {
+  const rows = await prisma.acceptanceCriterion.findMany({
+    where: { taskUuid },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  // No criteria rows = backward compat, allow transition
+  if (rows.length === 0) {
+    return { allowed: true };
+  }
+
+  const requiredRows = rows.filter((r) => r.required);
+  const allRequiredPassed = requiredRows.every((r) => r.status === "passed");
+
+  if (allRequiredPassed) {
+    return { allowed: true };
+  }
+
+  const { summary } = computeAcceptanceStatus(rows);
+
+  // Return unresolved criteria (failed or pending, required only)
+  const unresolved = rows
+    .filter((r) => r.status !== "passed")
+    .map(formatCriterionResponse);
+
+  return {
+    allowed: false,
+    reason: `Not all required acceptance criteria are passed. Required: ${summary.required}, Passed: ${summary.requiredPassed}, Failed: ${summary.requiredFailed}, Pending: ${summary.requiredPending}`,
+    summary,
+    unresolvedCriteria: unresolved,
+  };
 }
 
 // ===== Mention Processing (append-only) =====

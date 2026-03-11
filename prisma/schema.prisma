@@ -212,6 +212,8 @@ model Task {
   dependedBy       TaskDependency[] @relation("taskDependedBy")
   // Session checkins
   sessionCheckins  SessionTaskCheckin[]
+  // Structured acceptance criteria (independent table)
+  acceptanceCriteriaItems AcceptanceCriterion[]
 
   @@index([companyUuid])
   @@index([projectUuid])
@@ -232,6 +234,33 @@ model TaskDependency {
   @@unique([taskUuid, dependsOnUuid])
   @@index([taskUuid])
   @@index([dependsOnUuid])
+}
+
+// Acceptance Criterion (independent table — per-row atomic updates, no concurrent write conflicts)
+model AcceptanceCriterion {
+  id              Int       @id @default(autoincrement())
+  uuid            String    @unique @default(uuid())
+  taskUuid        String
+  task            Task      @relation(fields: [taskUuid], references: [uuid], onDelete: Cascade)
+  description     String
+  required        Boolean   @default(true)
+  // Dev self-check (developer fills during work)
+  devStatus       String    @default("pending")  // pending | passed | failed
+  devEvidence     String?
+  devMarkedByType String?   // "user" | "agent"
+  devMarkedBy     String?   // UUID of marker
+  devMarkedAt     DateTime?
+  // Admin verification (admin/user fills during verify)
+  status          String    @default("pending")  // pending | passed | failed
+  evidence        String?
+  markedByType    String?   // "user" | "agent"
+  markedBy        String?   // UUID of marker
+  markedAt        DateTime?
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([taskUuid])
 }
 
 // Proposal (container model: created by Agent/human, approved by human, contains document drafts and task drafts)

@@ -18,7 +18,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
-import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight } from "lucide-react";
+import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +55,11 @@ interface DocumentDraft {
   content: string;
 }
 
+interface AcceptanceCriteriaItem {
+  description: string;
+  required?: boolean;
+}
+
 interface TaskDraft {
   uuid: string;
   title: string;
@@ -62,6 +67,7 @@ interface TaskDraft {
   storyPoints?: number;
   priority?: string;
   acceptanceCriteria?: string;
+  acceptanceCriteriaItems?: AcceptanceCriteriaItem[];
   dependsOnDraftUuids?: string[];
 }
 
@@ -566,7 +572,7 @@ export function ProposalEditor({
                         <p className="mb-3 text-[11px] leading-relaxed text-[#6B6B6B]">{task.description}</p>
                       )}
 
-                      {/* Acceptance criteria */}
+                      {/* Acceptance criteria (legacy markdown) */}
                       {task.acceptanceCriteria && (
                         <div className="mb-3 rounded-lg bg-[#F5F2EC] p-3">
                           <div className="mb-1 text-[10px] font-medium text-muted-foreground">
@@ -574,6 +580,32 @@ export function ProposalEditor({
                           </div>
                           <div className="prose prose-sm max-w-none text-[11px] text-[#6B6B6B]">
                             <Streamdown plugins={{ code }}>{task.acceptanceCriteria}</Streamdown>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Acceptance criteria items (structured) */}
+                      {task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0 && (
+                        <div className="mb-3 rounded-lg bg-[#F5F2EC] p-3">
+                          <div className="mb-1.5 flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                            <ClipboardCheck className="h-2.5 w-2.5" />
+                            {t("acceptanceCriteria.title")}
+                          </div>
+                          <div className="space-y-1">
+                            {task.acceptanceCriteriaItems.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-[11px]">
+                                <span className="flex-1 text-[#6B6B6B]">{item.description}</span>
+                                <Badge
+                                  className={`text-[9px] font-medium border-0 shrink-0 ${
+                                    (item.required ?? true)
+                                      ? "bg-[#FFF3E0] text-[#E65100]"
+                                      : "bg-white text-[#9A9A9A]"
+                                  }`}
+                                >
+                                  {(item.required ?? true) ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
+                                </Badge>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}

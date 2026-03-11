@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved } from "@/services/task.service";
+import { updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { createActivity } from "@/services/activity.service";
 
 // Map column IDs to task statuses
@@ -51,6 +51,10 @@ export async function moveTaskToColumnAction(
       await updateTask(taskUuid, { status: "to_verify" });
     } else if (newStatus === "done" && task.status === "to_verify") {
       // If task is in to_verify and dragged to done, verify it
+      const gate = await checkAcceptanceCriteriaGate(taskUuid);
+      if (!gate.allowed) {
+        return { success: false, error: gate.reason || "Not all required acceptance criteria are passed", gateBlocked: true, unresolvedCriteria: gate.unresolvedCriteria || [] };
+      }
       await updateTask(taskUuid, { status: "done" });
     } else {
       await updateTask(taskUuid, { status: newStatus });

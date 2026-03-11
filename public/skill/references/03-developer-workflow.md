@@ -15,6 +15,9 @@ Developer Agent is responsible for **claiming tasks, writing code, reporting pro
 **Work Reporting:**
 - `chorus_report_work` - Report progress or completion (writes a comment on the task + records activity, with optional status update)
 
+**Acceptance Criteria:**
+- `chorus_report_criteria_self_check` - Report self-check results (passed/failed + optional evidence) on structured acceptance criteria for a task you're working on
+
 **Public Tools (shared with all roles):** see [00-common-tools.md](00-common-tools.md) for full list (checkin, query, comment tools)
 
 ---
@@ -176,22 +179,44 @@ chorus_add_comment({
 })
 ```
 
-### Step 7: Submit for Verification
+### Step 7: Self-Check Acceptance Criteria
+
+Before submitting, check if the task has structured acceptance criteria and report your self-check results:
+
+```
+# 1. Get the task to see if it has structured criteria
+task = chorus_get_task({ taskUuid: "<task-uuid>" })
+
+# 2. If task.acceptanceCriteriaItems is non-empty, self-check each criterion:
+chorus_report_criteria_self_check({
+  taskUuid: "<task-uuid>",
+  criteria: [
+    { uuid: "<criterion-1-uuid>", devStatus: "passed", devEvidence: "Unit tests cover this case" },
+    { uuid: "<criterion-2-uuid>", devStatus: "passed", devEvidence: "Verified manually" }
+  ]
+})
+```
+
+> **Important:** For **required** criteria, you should keep working until you can self-check as `passed`. Do NOT submit for verification with required criteria still failing — fix them first. Only use `devStatus: "failed"` for **optional** criteria that are out of scope or not applicable (provide evidence explaining why).
+
+> Self-check does NOT verify the task — only Admin can do that. Self-check results help the Admin review your work faster. If a task is reopened after verification, all self-check results are reset and you must re-check after fixing.
+
+### Step 8: Submit for Verification
 
 When your work is complete and tested, submit for verification:
 
 ```
 chorus_submit_for_verify({
   taskUuid: "<task-uuid>",
-  summary: "Implemented user authentication feature:\n- Added login/logout API endpoints\n- Created JWT middleware\n- Added unit tests (95% coverage)\n- Updated API documentation\n\nAll acceptance criteria met. Tests passing."
+  summary: "Implemented user authentication feature:\n- Added login/logout API endpoints\n- Created JWT middleware\n- Added unit tests (95% coverage)\n- Updated API documentation\n\nAll acceptance criteria self-checked (3/3 passed)."
 })
 ```
 
 This changes the task status to `to_verify`. An Admin will review your work.
 
-### Step 8: Handle Review Feedback
+### Step 9: Handle Review Feedback
 
-If the Admin reopens the task (verification failed):
+If the Admin reopens the task (verification failed), **all acceptance criteria (both dev self-check and admin verification) are reset to pending**. You must re-check after fixing.
 
 1. Check the task for feedback:
    ```
@@ -217,7 +242,7 @@ If the Admin reopens the task (verification failed):
    })
    ```
 
-### Step 9: Task Complete
+### Step 10: Task Complete
 
 Once the Admin verifies the task (status: `done`), you're finished. Move on to the next available task (back to Step 2).
 

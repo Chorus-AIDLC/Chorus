@@ -222,8 +222,12 @@ The plugin manages session lifecycle (heartbeat, close). Do NOT call chorus_crea
 3. Report progress: chorus_report_work({ taskUuid: \"<TASK_UUID>\", report: \"...\", sessionUuid: \"${SESSION_UUID}\" })
 
 **After completing:**
-4. Check out: chorus_session_checkout_task({ sessionUuid: \"${SESSION_UUID}\", taskUuid: \"<TASK_UUID>\" })
-5. Submit: chorus_submit_for_verify({ taskUuid: \"<TASK_UUID>\", summary: \"...\" })
+4. Self-check acceptance criteria (if the task has structured criteria):
+   Call chorus_get_task to see acceptanceCriteriaItems, then self-check each criterion as passed.
+   For required criteria, keep working until all pass. Only mark optional criteria as failed if out of scope.
+   chorus_report_criteria_self_check({ taskUuid: \"<TASK_UUID>\", criteria: [{ uuid: \"<CRITERION_UUID>\", devStatus: \"passed\", devEvidence: \"...\" }] })
+5. Check out: chorus_session_checkout_task({ sessionUuid: \"${SESSION_UUID}\", taskUuid: \"<TASK_UUID>\" })
+6. Submit: chorus_submit_for_verify({ taskUuid: \"<TASK_UUID>\", summary: \"...\" })
 
 Replace <TASK_UUID> with the actual Chorus task UUID from your prompt.${OWNER_SECTION}"
 

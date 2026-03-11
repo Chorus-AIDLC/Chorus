@@ -246,6 +246,31 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
     }
   );
 
+  // chorus_report_criteria_self_check - Report self-check results on acceptance criteria
+  server.registerTool(
+    "chorus_report_criteria_self_check",
+    {
+      description: "Report self-check results on acceptance criteria for a task you're working on",
+      inputSchema: z.object({
+        taskUuid: z.string().describe("Task UUID"),
+        criteria: z.array(z.object({
+          uuid: z.string().describe("AcceptanceCriterion UUID"),
+          devStatus: z.enum(["passed", "failed"]).describe("Self-check result"),
+          devEvidence: z.string().optional().describe("Optional evidence/notes"),
+        })).describe("Criteria self-check results"),
+      }),
+    },
+    async ({ taskUuid, criteria }) => {
+      const result = await taskService.reportCriteriaSelfCheck(
+        auth.companyUuid,
+        taskUuid,
+        criteria,
+        { type: auth.type, actorUuid: auth.actorUuid },
+      );
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
   // chorus_report_work - Report work progress or completion
   server.registerTool(
     "chorus_report_work",

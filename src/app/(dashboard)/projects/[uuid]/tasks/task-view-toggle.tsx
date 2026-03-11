@@ -28,6 +28,8 @@ interface Task {
     assignedBy: { type: string; uuid: string; name: string } | null;
   } | null;
   dependsOn?: { uuid: string; title: string; status: string }[];
+  acceptanceStatus?: string;
+  acceptanceSummary?: { total: number; required: number; passed: number; failed: number; pending: number; requiredPassed: number; requiredFailed: number; requiredPending: number };
 }
 
 interface TaskViewToggleProps {

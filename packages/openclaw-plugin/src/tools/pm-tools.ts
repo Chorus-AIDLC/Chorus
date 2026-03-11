@@ -108,7 +108,7 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
         inputUuids: { type: "array", description: "Array of input UUIDs", items: { type: "string" } },
         description: { type: "string", description: "Proposal description" },
         documentDrafts: { type: "array", description: "Array of { type, title, content }", items: { type: "object" } },
-        taskDrafts: { type: "array", description: "Array of { title, description?, priority?, storyPoints?, acceptanceCriteria?, dependsOnDraftUuids? }", items: { type: "object" } },
+        taskDrafts: { type: "array", description: "Array of { title, description?, priority?, storyPoints?, acceptanceCriteriaItems?, dependsOnDraftUuids? }", items: { type: "object" } },
       },
       required: ["projectUuid", "title", "inputType", "inputUuids"],
       additionalProperties: false,
@@ -158,20 +158,20 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
         description: { type: "string", description: "Task description" },
         priority: { type: "string", description: 'Priority: "low", "medium", or "high"' },
         storyPoints: { type: "number", description: "Effort estimate in agent hours" },
-        acceptanceCriteria: { type: "string", description: "Acceptance criteria in Markdown" },
+        acceptanceCriteriaItems: { type: "array", description: "Structured acceptance criteria: [{ description, required? }]", items: { type: "object", properties: { description: { type: "string" }, required: { type: "boolean" } }, required: ["description"] } },
         dependsOnDraftUuids: { type: "array", description: "Dependent task draft UUIDs", items: { type: "string" } },
       },
       required: ["proposalUuid", "title"],
       additionalProperties: false,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async execute(_id: string, { proposalUuid, title, description, priority, storyPoints, acceptanceCriteria, dependsOnDraftUuids }: any) {
+    async execute(_id: string, { proposalUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, dependsOnDraftUuids }: any) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const args: Record<string, any> = { proposalUuid, title };
       if (description !== undefined) args.description = description;
       if (priority !== undefined) args.priority = priority;
       if (storyPoints !== undefined) args.storyPoints = storyPoints;
-      if (acceptanceCriteria !== undefined) args.acceptanceCriteria = acceptanceCriteria;
+      if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
       if (dependsOnDraftUuids !== undefined) args.dependsOnDraftUuids = dependsOnDraftUuids;
       const result = await mcpClient.callTool("chorus_pm_add_task_draft", args);
       return JSON.stringify(result, null, 2);
@@ -237,21 +237,21 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
         description: { type: "string", description: "New task description" },
         priority: { type: "string", description: 'Priority: "low", "medium", or "high"' },
         storyPoints: { type: "number", description: "Effort estimate in agent hours" },
-        acceptanceCriteria: { type: "string", description: "Acceptance criteria in Markdown" },
+        acceptanceCriteriaItems: { type: "array", description: "Structured acceptance criteria: [{ description, required? }]", items: { type: "object", properties: { description: { type: "string" }, required: { type: "boolean" } }, required: ["description"] } },
         dependsOnDraftUuids: { type: "array", description: "Task draft UUIDs this task depends on (sets execution order)", items: { type: "string" } },
       },
       required: ["proposalUuid", "draftUuid"],
       additionalProperties: false,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async execute(_id: string, { proposalUuid, draftUuid, title, description, priority, storyPoints, acceptanceCriteria, dependsOnDraftUuids }: any) {
+    async execute(_id: string, { proposalUuid, draftUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, dependsOnDraftUuids }: any) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const args: Record<string, any> = { proposalUuid, draftUuid };
       if (title !== undefined) args.title = title;
       if (description !== undefined) args.description = description;
       if (priority !== undefined) args.priority = priority;
       if (storyPoints !== undefined) args.storyPoints = storyPoints;
-      if (acceptanceCriteria !== undefined) args.acceptanceCriteria = acceptanceCriteria;
+      if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
       if (dependsOnDraftUuids !== undefined) args.dependsOnDraftUuids = dependsOnDraftUuids;
       const result = await mcpClient.callTool("chorus_pm_update_task_draft", args);
       return JSON.stringify(result, null, 2);

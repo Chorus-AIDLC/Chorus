@@ -21,7 +21,8 @@ Admin is the **human proxy role** - you act on behalf of the human project owner
 | `chorus_admin_create_project` | Create a new project (supports optional `groupUuid` to assign to a group) |
 | `chorus_admin_approve_proposal` | Approve proposal (materializes documents + tasks) |
 | `chorus_admin_reject_proposal` | Reject proposal with review note |
-| `chorus_admin_verify_task` | Verify completed task (to_verify -> done) |
+| `chorus_admin_verify_task` | Verify completed task (to_verify -> done). Blocked if required acceptance criteria are not all passed. |
+| `chorus_mark_acceptance_criteria` | Mark acceptance criteria as passed/failed during verification (batch) |
 | `chorus_admin_reopen_task` | Reopen task for rework (to_verify -> in_progress) |
 | `chorus_admin_close_task` | Close task (any state -> closed) |
 | `chorus_admin_close_idea` | Close idea (any state -> closed) |
