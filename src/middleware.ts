@@ -60,9 +60,12 @@ async function getTokenEndpoint(issuer: string): Promise<string | null> {
 
 // Cookie options shared across all auth cookies
 function cookieOptions(maxAge: number) {
+  // Allow disabling secure cookies via env var (for HTTP-only deployments)
+  const forceInsecure = process.env.COOKIE_SECURE === "false";
+  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProduction,
     sameSite: "lax" as const,
     path: "/",
     maxAge,

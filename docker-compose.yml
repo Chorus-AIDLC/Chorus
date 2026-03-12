@@ -11,6 +11,7 @@ services:
       - DATABASE_URL=postgresql://chorus:chorus@db:5432/chorus
       - REDIS_URL=redis://default:chorus-redis@redis:6379
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-chorus-docker-secret-change-in-production}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - DEFAULT_USER=${DEFAULT_USER:-}
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
     depends_on:
