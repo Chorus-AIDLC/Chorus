@@ -68,6 +68,8 @@ docker compose up -d
 
 Open http://localhost:3000 and log in with the credentials you set in `DEFAULT_USER` / `DEFAULT_PASSWORD`.
 
+> **Note for HTTP-only deployments**: The default `docker-compose.yml` sets `COOKIE_SECURE=false` to support HTTP-only deployments (e.g., internal network testing). If you're deploying with HTTPS in production, make sure to set `COOKIE_SECURE=true` to enable secure cookies.
+
 ### Docker Run (Standalone)
 
 If you already have PostgreSQL and Redis running:
@@ -78,6 +80,7 @@ docker run -d \
   -e DATABASE_URL=postgresql://user:pass@your-db-host:5432/chorus \
   -e REDIS_URL=redis://default:password@your-redis-host:6379 \
   -e NEXTAUTH_SECRET=change-me-to-a-random-secret \
+  -e COOKIE_SECURE=false \
   -e DEFAULT_USER=admin@example.com \
   -e DEFAULT_PASSWORD=your-password \
   chorusaidlc/chorus-app:latest
@@ -121,6 +124,7 @@ If `DATABASE_URL` is not set, the entrypoint builds it from these individual var
 | `DEFAULT_USER` | Email address for built-in login (bypasses OIDC). Auto-provisions the user and company on first login. |
 | `DEFAULT_PASSWORD` | Password for the default user (plain text, compared via bcrypt at runtime). |
 | `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:3000`). Set this when running behind a reverse proxy. |
+| `COOKIE_SECURE` | Set to `"false"` to disable secure cookies for HTTP-only deployments (default: `"false"` in docker-compose). Set to `"true"` when deploying with HTTPS in production. |
 
 ### Super Admin
 
