@@ -351,26 +351,35 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
   });
 
-  // --- Admin tools ---
+  // --- Project group tools ---
 
   api.registerTool({
-    name: "chorus_admin_create_project",
-    description: "Create a new project. Call chorus_get_project_groups first to find the right groupUuid.",
+    name: "chorus_get_project_groups",
+    description: "List all project groups. Returns groups with project counts and completion rates.",
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async execute() {
+      const result = await mcpClient.callTool("chorus_get_project_groups", {});
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
+  api.registerTool({
+    name: "chorus_get_project_group",
+    description: "Get a single project group with its projects and stats.",
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Project name" },
-        description: { type: "string", description: "Project description" },
-        groupUuid: { type: "string", description: "Project group UUID (optional, use chorus_get_project_groups to list groups)" },
+        groupUuid: { type: "string", description: "Project group UUID" },
       },
-      required: ["name"],
+      required: ["groupUuid"],
       additionalProperties: false,
     },
-    async execute(_id: string, { name, description, groupUuid }: { name: string; description?: string; groupUuid?: string }) {
-      const args: Record<string, unknown> = { name };
-      if (description) args.description = description;
-      if (groupUuid) args.groupUuid = groupUuid;
-      const result = await mcpClient.callTool("chorus_admin_create_project", args);
+    async execute(_id: string, { groupUuid }: { groupUuid: string }) {
+      const result = await mcpClient.callTool("chorus_get_project_group", { groupUuid });
       return JSON.stringify(result, null, 2);
     },
   });

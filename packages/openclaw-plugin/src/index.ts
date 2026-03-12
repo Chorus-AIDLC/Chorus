@@ -8,6 +8,7 @@ import { ChorusEventRouter } from "./event-router.js";
 import { registerPmTools } from "./tools/pm-tools.js";
 import { registerDevTools } from "./tools/dev-tools.js";
 import { registerCommonTools } from "./tools/common-tools.js";
+import { registerAdminTools } from "./tools/admin-tools.js";
 import { registerChorusCommands } from "./commands.js";
 
 /**
@@ -134,6 +135,7 @@ const plugin = {
     registerPmTools(api, mcpClient);
     registerDevTools(api, mcpClient);
     registerCommonTools(api, mcpClient);
+    registerAdminTools(api, mcpClient);
 
     // --- Commands ---
     registerChorusCommands(api, mcpClient, () => sseListener?.status ?? "disconnected");
