@@ -5,6 +5,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { NextRequest, NextResponse } from "next/server";
 import { UserAuthContext } from "@/types/auth";
+import { getCookieOptions } from "@/lib/cookie-utils";
 
 const COOKIE_NAME = "user_session";
 export const ACCESS_TOKEN_EXPIRY = "1h"; // Access token expiry
@@ -173,49 +174,18 @@ export function setUserSessionCookies(
   accessToken: string,
   refreshToken: string
 ): void {
-  // Allow disabling secure cookies via env var (for HTTP-only deployments)
-  const forceInsecure = process.env.COOKIE_SECURE === "false";
-  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
-
   // Access token cookie (short-lived)
-  response.cookies.set(COOKIE_NAME, accessToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: ACCESS_TOKEN_MAX_AGE,
-    path: "/",
-  });
+  response.cookies.set(COOKIE_NAME, accessToken, getCookieOptions(ACCESS_TOKEN_MAX_AGE));
 
   // Refresh token cookie (long-lived)
-  response.cookies.set(REFRESH_COOKIE_NAME, refreshToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60, // 7 days
-    path: "/",
-  });
+  response.cookies.set(REFRESH_COOKIE_NAME, refreshToken, getCookieOptions(7 * 24 * 60 * 60));
 }
 
 // Clear user session cookies
 export function clearUserSessionCookies(response: NextResponse): void {
-  const forceInsecure = process.env.COOKIE_SECURE === "false";
-  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
+  response.cookies.set(COOKIE_NAME, "", getCookieOptions(0));
 
-  response.cookies.set(COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: 0,
-    path: "/",
-  });
-
-  response.cookies.set(REFRESH_COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: 0,
-    path: "/",
-  });
+  response.cookies.set(REFRESH_COOKIE_NAME, "", getCookieOptions(0));
 }
 
 // Get refresh token from request

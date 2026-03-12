@@ -2,18 +2,13 @@
 // Clears HTTP-only cookie on logout
 
 import { NextResponse } from "next/server";
+import { getCookieOptions } from "@/lib/cookie-utils";
 
 // POST /api/auth/logout - Clear auth cookie
 export async function POST() {
   const response = NextResponse.json({ success: true });
 
-  const expireOpts = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path: "/",
-    maxAge: 0, // Expire immediately
-  };
+  const expireOpts = getCookieOptions(0);
 
   // Clear OIDC auth cookies
   response.cookies.set("oidc_access_token", "", expireOpts);

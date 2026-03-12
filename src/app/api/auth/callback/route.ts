@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { findOrCreateUserByOidc, getCompanyByUuid } from "@/services/user.service";
+import { getCookieOptions } from "@/lib/cookie-utils";
 
 // POST /api/auth/callback
 // Body: { companyUuid, oidcSub, email, name?, accessToken }
@@ -55,45 +56,22 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Cookie options
-    // Allow disabling secure cookies via env var (for HTTP-only deployments)
-    const forceInsecure = process.env.COOKIE_SECURE === "false";
-    const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
-    const cookieBase = {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: "lax" as const,
-      path: "/",
-    };
-
     // Store access token in HTTP-only cookie for Server Actions
     if (accessToken) {
-      response.cookies.set("oidc_access_token", accessToken, {
-        ...cookieBase,
-        maxAge: 3600, // 1 hour (OIDC tokens typically expire in 1 hour)
-      });
+      response.cookies.set("oidc_access_token", accessToken, getCookieOptions(3600));
     }
 
     // Store refresh token for server-side token refresh (middleware)
     if (refreshToken) {
-      response.cookies.set("oidc_refresh_token", refreshToken, {
-        ...cookieBase,
-        maxAge: 30 * 24 * 3600, // 30 days
-      });
+      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(30 * 24 * 3600));
     }
 
     // Store client_id and issuer for server-side token refresh (middleware)
     if (company.oidcClientId) {
-      response.cookies.set("oidc_client_id", company.oidcClientId, {
-        ...cookieBase,
-        maxAge: 30 * 24 * 3600, // 30 days
-      });
+      response.cookies.set("oidc_client_id", company.oidcClientId, getCookieOptions(30 * 24 * 3600));
     }
     if (company.oidcIssuer) {
-      response.cookies.set("oidc_issuer", company.oidcIssuer, {
-        ...cookieBase,
-        maxAge: 30 * 24 * 3600, // 30 days
-      });
+      response.cookies.set("oidc_issuer", company.oidcIssuer, getCookieOptions(30 * 24 * 3600));
     }
 
     return response;

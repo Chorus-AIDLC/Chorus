@@ -1,16 +1,5 @@
 # Changelog
 
-## [0.3.1] - 2026-03-12
-
-### Added
-- **Task Dependency Validation**: Enforce task dependency validation on status transitions to prevent invalid state changes.
-
-### Fixed
-- **HTTP-only Deployment Support**: Added `COOKIE_SECURE=false` environment variable to disable secure cookies for HTTP-only deployments (internal network testing).
-- **Code Block Horizontal Scroll**: Fixed horizontal scroll for code blocks in task draft detail panel.
-
----
-
 ## [0.3.0] - 2026-03-06
 
 ### Added

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 import { ACCESS_TOKEN_EXPIRY, ACCESS_TOKEN_MAX_AGE } from "@/lib/user-session";
+import { getCookieOptions } from "@/lib/cookie-utils";
 
 // In-memory cache for OIDC discovery documents (per edge instance)
 const discoveryCache = new Map<string, { tokenEndpoint: string; expiresAt: number }>();
@@ -58,26 +59,12 @@ async function getTokenEndpoint(issuer: string): Promise<string | null> {
   }
 }
 
-// Cookie options shared across all auth cookies
-function cookieOptions(maxAge: number) {
-  // Allow disabling secure cookies via env var (for HTTP-only deployments)
-  const forceInsecure = process.env.COOKIE_SECURE === "false";
-  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
-  return {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax" as const,
-    path: "/",
-    maxAge,
-  };
-}
-
 // Clear all auth cookies and redirect to login
 function clearAuthAndRedirect(request: NextRequest): NextResponse {
   const loginUrl = new URL("/login", request.url);
   const response = NextResponse.redirect(loginUrl);
 
-  const expireOpts = cookieOptions(0);
+  const expireOpts = getCookieOptions(0);
   response.cookies.set("oidc_access_token", "", expireOpts);
   response.cookies.set("oidc_refresh_token", "", expireOpts);
   response.cookies.set("oidc_client_id", "", expireOpts);
@@ -153,7 +140,7 @@ async function handleUserSessionRefresh(request: NextRequest): Promise<NextRespo
     });
 
     // Write the new access token to the response cookie for the browser
-    response.cookies.set("user_session", newAccessToken, cookieOptions(ACCESS_TOKEN_MAX_AGE));
+    response.cookies.set("user_session", newAccessToken, getCookieOptions(ACCESS_TOKEN_MAX_AGE));
 
     return response;
   } catch (error) {
@@ -268,12 +255,12 @@ export async function middleware(request: NextRequest) {
     });
 
     // Write the new access token to the response cookie for the browser
-    response.cookies.set("oidc_access_token", newAccessToken, cookieOptions(expiresIn));
+    response.cookies.set("oidc_access_token", newAccessToken, getCookieOptions(expiresIn));
 
     // If the provider returned a new refresh token (token rotation), update it
     if (tokenData.refresh_token) {
       request.cookies.set("oidc_refresh_token", tokenData.refresh_token);
-      response.cookies.set("oidc_refresh_token", tokenData.refresh_token, cookieOptions(30 * 24 * 3600));
+      response.cookies.set("oidc_refresh_token", tokenData.refresh_token, getCookieOptions(30 * 24 * 3600));
     }
 
     return response;

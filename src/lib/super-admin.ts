@@ -5,6 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcrypt";
 import { NextRequest, NextResponse } from "next/server";
 import { SuperAdminAuthContext } from "@/types/auth";
+import { getCookieOptions } from "@/lib/cookie-utils";
 
 const COOKIE_NAME = "admin_session";
 const TOKEN_EXPIRY = "24h";
@@ -89,28 +90,12 @@ export async function getSuperAdminFromRequest(
 
 // Set Admin Cookie
 export function setAdminCookie(response: NextResponse, token: string): void {
-  const forceInsecure = process.env.COOKIE_SECURE === "false";
-  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
-  response.cookies.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24, // 24 hours
-    path: "/",
-  });
+  response.cookies.set(COOKIE_NAME, token, getCookieOptions(60 * 60 * 24));
 }
 
 // Clear Admin Cookie
 export function clearAdminCookie(response: NextResponse): void {
-  const forceInsecure = process.env.COOKIE_SECURE === "false";
-  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
-  response.cookies.set(COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    maxAge: 0,
-    path: "/",
-  });
+  response.cookies.set(COOKIE_NAME, "", getCookieOptions(0));
 }
 
 // Get Cookie name (for client-side checks)
