@@ -173,7 +173,9 @@ export function setUserSessionCookies(
   accessToken: string,
   refreshToken: string
 ): void {
-  const isProduction = process.env.NODE_ENV === "production";
+  // Allow disabling secure cookies via env var (for HTTP-only deployments)
+  const forceInsecure = process.env.COOKIE_SECURE === "false";
+  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
 
   // Access token cookie (short-lived)
   response.cookies.set(COOKIE_NAME, accessToken, {
@@ -196,7 +198,8 @@ export function setUserSessionCookies(
 
 // Clear user session cookies
 export function clearUserSessionCookies(response: NextResponse): void {
-  const isProduction = process.env.NODE_ENV === "production";
+  const forceInsecure = process.env.COOKIE_SECURE === "false";
+  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
 
   response.cookies.set(COOKIE_NAME, "", {
     httpOnly: true,

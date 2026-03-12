@@ -56,9 +56,12 @@ export async function POST(request: NextRequest) {
     });
 
     // Cookie options
+    // Allow disabling secure cookies via env var (for HTTP-only deployments)
+    const forceInsecure = process.env.COOKIE_SECURE === "false";
+    const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
     const cookieBase = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: isProduction,
       sameSite: "lax" as const,
       path: "/",
     };

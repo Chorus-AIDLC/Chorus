@@ -89,9 +89,11 @@ export async function getSuperAdminFromRequest(
 
 // Set Admin Cookie
 export function setAdminCookie(response: NextResponse, token: string): void {
+  const forceInsecure = process.env.COOKIE_SECURE === "false";
+  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
   response.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProduction,
     sameSite: "lax",
     maxAge: 60 * 60 * 24, // 24 hours
     path: "/",
@@ -100,9 +102,11 @@ export function setAdminCookie(response: NextResponse, token: string): void {
 
 // Clear Admin Cookie
 export function clearAdminCookie(response: NextResponse): void {
+  const forceInsecure = process.env.COOKIE_SECURE === "false";
+  const isProduction = process.env.NODE_ENV === "production" && !forceInsecure;
   response.cookies.set(COOKIE_NAME, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProduction,
     sameSite: "lax",
     maxAge: 0,
     path: "/",
