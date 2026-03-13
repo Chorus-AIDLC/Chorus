@@ -8,6 +8,9 @@
   <a href="https://discord.gg/SwcCMaMmR">
     <img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
   </a>
+  <a href="https://github.com/Chorus-AIDLC/Chorus/actions/workflows/test.yml">
+    <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ChenNima/f245ebf1cf02d5f6e3df389f836a072a/raw/coverage-badge.json" alt="Coverage">
+  </a>
 </p>
 
 <p align="center"><a href="README.zh.md">中文</a></p>

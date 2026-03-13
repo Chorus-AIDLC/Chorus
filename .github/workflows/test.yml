@@ -43,6 +43,26 @@ jobs:
           json-final-path: coverage/coverage-final.json
           vite-config-path: vitest.config.ts
 
+      - name: Extract coverage percentage
+        if: github.ref == 'refs/heads/main' && always()
+        id: coverage
+        run: |
+          PCT=$(node -e "const s=JSON.parse(require('fs').readFileSync('coverage/coverage-summary.json','utf8')); console.log(s.total.lines.pct)")
+          echo "pct=$PCT" >> $GITHUB_OUTPUT
+
+      - name: Update coverage badge
+        if: github.ref == 'refs/heads/main' && always()
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: f245ebf1cf02d5f6e3df389f836a072a
+          filename: coverage-badge.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.pct }}%
+          valColorRange: ${{ steps.coverage.outputs.pct }}
+          minColorRange: 50
+          maxColorRange: 100
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
