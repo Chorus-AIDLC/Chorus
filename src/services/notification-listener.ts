@@ -455,7 +455,7 @@ function buildMessage(
 
 // ===== Main listener =====
 
-async function handleActivity(event: ActivityEvent): Promise<void> {
+export async function handleActivity(event: ActivityEvent): Promise<void> {
   const notificationType = resolveNotificationType(event.action, event.targetType);
   if (!notificationType) return; // Not a notifiable action
 
