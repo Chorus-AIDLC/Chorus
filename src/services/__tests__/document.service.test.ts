@@ -176,6 +176,79 @@ describe("updateDocument", () => {
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.version).toBeUndefined();
   });
+
+  it("should update only title when only title is provided", async () => {
+    const updated = makeDocRecord({
+      title: "Only Title Changed",
+      project: { uuid: projectUuid, name: "Test Project" },
+    });
+    mockPrisma.document.update.mockResolvedValue(updated);
+
+    await updateDocument(docUuid, { title: "Only Title Changed" });
+
+    const callData = mockPrisma.document.update.mock.calls[0][0].data;
+    expect(callData.title).toBe("Only Title Changed");
+    expect(callData.content).toBeUndefined();
+    expect(callData.version).toBeUndefined();
+  });
+
+  it("should update only content when only content is provided", async () => {
+    const updated = makeDocRecord({
+      content: "# Only content changed",
+      project: { uuid: projectUuid, name: "Test Project" },
+    });
+    mockPrisma.document.update.mockResolvedValue(updated);
+
+    await updateDocument(docUuid, { content: "# Only content changed" });
+
+    const callData = mockPrisma.document.update.mock.calls[0][0].data;
+    expect(callData.content).toBe("# Only content changed");
+    expect(callData.title).toBeUndefined();
+  });
+
+  it("should allow setting content to null", async () => {
+    const updated = makeDocRecord({
+      content: null,
+      project: { uuid: projectUuid, name: "Test Project" },
+    });
+    mockPrisma.document.update.mockResolvedValue(updated);
+
+    await updateDocument(docUuid, { content: null });
+
+    const callData = mockPrisma.document.update.mock.calls[0][0].data;
+    expect(callData.content).toBeNull();
+  });
+
+  it("should update all fields when all are provided", async () => {
+    const updated = makeDocRecord({
+      title: "All Updated",
+      content: "# All fields",
+      version: 2,
+      project: { uuid: projectUuid, name: "Test Project" },
+    });
+    mockPrisma.document.update.mockResolvedValue(updated);
+
+    await updateDocument(docUuid, {
+      title: "All Updated",
+      content: "# All fields",
+      incrementVersion: true,
+    });
+
+    const callData = mockPrisma.document.update.mock.calls[0][0].data;
+    expect(callData.title).toBe("All Updated");
+    expect(callData.content).toBe("# All fields");
+    expect(callData.version).toEqual({ increment: 1 });
+  });
+
+  it("should throw error if document not found during update", async () => {
+    const notFoundError = new Error("Record to update not found.");
+    (notFoundError as any).code = "P2025";
+    mockPrisma.document.update.mockRejectedValue(notFoundError);
+
+    await expect(
+      updateDocument("nonexistent-uuid", { title: "New Title" })
+    ).rejects.toThrow("Record to update not found.");
+  });
 });
 
 // ===== deleteDocument =====
@@ -188,6 +261,16 @@ describe("deleteDocument", () => {
     expect(mockPrisma.document.delete).toHaveBeenCalledWith({
       where: { uuid: docUuid },
     });
+  });
+
+  it("should throw error if document not found during delete", async () => {
+    const notFoundError = new Error("Record to delete does not exist.");
+    (notFoundError as any).code = "P2025";
+    mockPrisma.document.delete.mockRejectedValue(notFoundError);
+
+    await expect(deleteDocument("nonexistent-uuid")).rejects.toThrow(
+      "Record to delete does not exist."
+    );
   });
 });
 
@@ -276,5 +359,45 @@ describe("createDocumentFromProposal", () => {
         data: expect.objectContaining({ type: "prd" }),
       })
     );
+  });
+
+  it("should handle missing content and set it to null", async () => {
+    const proposalUuid = "proposal-0000-0000-0000-000000000001";
+    const record = makeDocRecord({ proposalUuid, content: null });
+    mockPrisma.document.create.mockResolvedValue(record);
+
+    const result = await createDocumentFromProposal(
+      companyUuid,
+      projectUuid,
+      proposalUuid,
+      createdByUuid,
+      { type: "architecture", title: "No Content Doc" }
+    );
+
+    expect(result.content).toBeNull();
+    expect(mockPrisma.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          content: null,
+        }),
+      })
+    );
+  });
+
+  it("should include content when provided in doc parameter", async () => {
+    const proposalUuid = "proposal-0000-0000-0000-000000000001";
+    const content = "# Architecture\n\nDetailed architecture...";
+    const record = makeDocRecord({ proposalUuid, content });
+    mockPrisma.document.create.mockResolvedValue(record);
+
+    const result = await createDocumentFromProposal(
+      companyUuid,
+      projectUuid,
+      proposalUuid,
+      createdByUuid,
+      { type: "architecture", title: "Arch Doc", content }
+    );
+
+    expect(result.content).toBe(content);
   });
 });
