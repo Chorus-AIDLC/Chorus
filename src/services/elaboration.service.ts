@@ -466,7 +466,7 @@ export async function getElaboration({
 
 // ===== Helpers =====
 
-function validateQuestionsFormat(questions: QuestionInput[]): void {
+export function validateQuestionsFormat(questions: QuestionInput[]): void {
   if (questions.length === 0) {
     throw new Error("At least 1 question is required");
   }
@@ -492,7 +492,7 @@ function validateQuestionsFormat(questions: QuestionInput[]): void {
   }
 }
 
-function formatRoundResponse(
+export function formatRoundResponse(
   round: {
     uuid: string;
     roundNumber: number;
@@ -532,7 +532,7 @@ function formatRoundResponse(
   };
 }
 
-function formatQuestionResponse(
+export function formatQuestionResponse(
   q: {
     uuid: string;
     questionId: string;

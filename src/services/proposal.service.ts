@@ -14,7 +14,7 @@ import { createTasksFromProposal } from "./task.service";
 // ===== UUID Helper Functions =====
 
 // Ensure DocumentDraft has a UUID
-function ensureDocumentDraftUuid(draft: Omit<DocumentDraft, "uuid"> & { uuid?: string }): DocumentDraft {
+export function ensureDocumentDraftUuid(draft: Omit<DocumentDraft, "uuid"> & { uuid?: string }): DocumentDraft {
   return {
     ...draft,
     uuid: draft.uuid || randomUUID(),
@@ -22,7 +22,7 @@ function ensureDocumentDraftUuid(draft: Omit<DocumentDraft, "uuid"> & { uuid?: s
 }
 
 // Ensure TaskDraft has a UUID
-function ensureTaskDraftUuid(draft: Omit<TaskDraft, "uuid"> & { uuid?: string }): TaskDraft {
+export function ensureTaskDraftUuid(draft: Omit<TaskDraft, "uuid"> & { uuid?: string }): TaskDraft {
   return {
     ...draft,
     uuid: draft.uuid || randomUUID(),
