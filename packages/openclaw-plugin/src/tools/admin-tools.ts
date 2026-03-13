@@ -45,6 +45,47 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
   });
 
   api.registerTool({
+    name: "chorus_admin_approve_proposal",
+    description:
+      "Approve a Proposal (Admin exclusive). On approval, documentDrafts and taskDrafts are automatically materialized into real Document and Task entities — materialized Tasks can then be claimed and executed by agents. " +
+      "⚠️ This action is irreversible — unless there is a special reason, you MUST obtain explicit human approval before calling this tool.",
+    parameters: {
+      type: "object",
+      properties: {
+        proposalUuid: { type: "string", description: "Proposal UUID" },
+        reviewNote: { type: "string", description: "Optional review note" },
+      },
+      required: ["proposalUuid"],
+      additionalProperties: false,
+    },
+    async execute(_id: string, { proposalUuid, reviewNote }: { proposalUuid: string; reviewNote?: string }) {
+      const args: Record<string, unknown> = { proposalUuid };
+      if (reviewNote) args.reviewNote = reviewNote;
+      const result = await mcpClient.callTool("chorus_admin_approve_proposal", args);
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
+  api.registerTool({
+    name: "chorus_admin_verify_task",
+    description:
+      "Verify a Task (to_verify → done, Admin exclusive). Marks a task as completed after verification. Downstream tasks that depend on this task will only be unblocked after it is verified. " +
+      "⚠️ This action is irreversible — unless there is a special reason, you MUST obtain explicit human approval before calling this tool.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskUuid: { type: "string", description: "Task UUID" },
+      },
+      required: ["taskUuid"],
+      additionalProperties: false,
+    },
+    async execute(_id: string, { taskUuid }: { taskUuid: string }) {
+      const result = await mcpClient.callTool("chorus_admin_verify_task", { taskUuid });
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
+  api.registerTool({
     name: "chorus_mark_acceptance_criteria",
     description: "Mark acceptance criteria as passed or failed (admin verification). Blocked criteria prevent task from being verified (to_verify -> done).",
     parameters: {
