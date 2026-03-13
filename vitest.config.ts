@@ -10,6 +10,7 @@ export default defineConfig({
     ],
   },
   test: {
+    reporters: process.env.GITHUB_ACTIONS === 'true' ? ['default', 'github-actions'] : ['default'],
     globals: true,
     environment: 'node',
     include: ['src/**/__tests__/**/*.test.ts'],
