@@ -484,9 +484,9 @@ describe("validateProposal", () => {
     ).rejects.toThrow("Proposal not found");
   });
 
-  it("E1: should error when no PRD document draft", async () => {
+  it("E1: should error when no document drafts at all", async () => {
     const proposal = dbProposal({
-      documentDrafts: [validDocDraft({ type: "tech_design" })],
+      documentDrafts: [],
       taskDrafts: [validTaskDraft()],
       inputUuids: ["idea-1"],
       description: "Has description",
@@ -498,6 +498,20 @@ describe("validateProposal", () => {
     expect(e1).toBeDefined();
     expect(e1!.level).toBe("error");
     expect(result.valid).toBe(false);
+  });
+
+  it("E1: should pass when non-PRD document draft exists", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "tech_design" })],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e1 = result.issues.find((i) => i.id === "E1");
+    expect(e1).toBeUndefined();
   });
 
   it("E2: should error when document draft content < 100 chars", async () => {

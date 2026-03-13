@@ -98,7 +98,7 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
   // 5. chorus_create_proposal
   api.registerTool({
     name: "chorus_create_proposal",
-    description: "Create a Proposal container with optional document drafts and task drafts.",
+    description: "Create an empty Proposal container. Use chorus_add_document_draft and chorus_add_task_draft to populate it afterwards.",
     parameters: {
       type: "object",
       properties: {
@@ -107,19 +107,15 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
         inputType: { type: "string", description: 'Input source type: "idea" or "document"' },
         inputUuids: { type: "array", description: "Array of input UUIDs", items: { type: "string" } },
         description: { type: "string", description: "Proposal description" },
-        documentDrafts: { type: "array", description: "Array of { type, title, content }", items: { type: "object" } },
-        taskDrafts: { type: "array", description: "Array of { title, description?, priority?, storyPoints?, acceptanceCriteriaItems?, dependsOnDraftUuids? }", items: { type: "object" } },
       },
       required: ["projectUuid", "title", "inputType", "inputUuids"],
       additionalProperties: false,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async execute(_id: string, { projectUuid, title, inputType, inputUuids, description, documentDrafts, taskDrafts }: any) {
+    async execute(_id: string, { projectUuid, title, inputType, inputUuids, description }: any) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const args: Record<string, any> = { projectUuid, title, inputType, inputUuids };
       if (description !== undefined) args.description = description;
-      if (documentDrafts !== undefined) args.documentDrafts = documentDrafts;
-      if (taskDrafts !== undefined) args.taskDrafts = taskDrafts;
       const result = await mcpClient.callTool("chorus_pm_create_proposal", args);
       return JSON.stringify(result, null, 2);
     },

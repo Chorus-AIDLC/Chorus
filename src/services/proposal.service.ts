@@ -76,8 +76,8 @@ export interface ProposalCreateParams {
   description?: string | null;
   inputType: string;
   inputUuids: string[];  // UUID array
-  documentDrafts?: DocumentDraftInput[];  // UUID optional, will be auto-generated
-  taskDrafts?: TaskDraftInput[];          // UUID optional, will be auto-generated
+  documentDrafts?: DocumentDraftInput[];  // Optional: used by frontend, not exposed via MCP
+  taskDrafts?: TaskDraftInput[];          // Optional: used by frontend, not exposed via MCP
   createdByUuid: string;
   createdByType?: string;  // agent | user
 }
@@ -190,12 +190,12 @@ export async function validateProposal(
 
   // --- Error Level ---
 
-  // E1: Must have at least one PRD document draft
-  if (!documentDrafts.some((d) => d.type === "prd")) {
+  // E1: Must have at least one document draft (any type)
+  if (documentDrafts.length === 0) {
     issues.push({
       id: "E1",
       level: "error",
-      message: "Proposal must contain at least one PRD document draft",
+      message: "Proposal must contain at least one document draft",
     });
   }
 
@@ -492,7 +492,7 @@ export async function getProposalByUuid(companyUuid: string, uuid: string) {
 export async function createProposal(
   params: ProposalCreateParams
 ): Promise<ProposalResponse> {
-  // Ensure all drafts have UUIDs
+  // Ensure all drafts have UUIDs (frontend may still pass drafts at creation time)
   const documentDraftsWithUuids = params.documentDrafts?.map(ensureDocumentDraftUuid);
   const taskDraftsWithUuids = params.taskDrafts?.map(ensureTaskDraftUuid);
 
@@ -504,7 +504,6 @@ export async function createProposal(
       description: params.description,
       inputType: params.inputType,
       inputUuids: params.inputUuids as unknown as Prisma.InputJsonValue,
-      // Cast JSON arrays through unknown for proper type compatibility
       ...(documentDraftsWithUuids && { documentDrafts: documentDraftsWithUuids as unknown as Prisma.InputJsonValue }),
       ...(taskDraftsWithUuids && { taskDrafts: taskDraftsWithUuids as unknown as Prisma.InputJsonValue }),
       status: "draft",

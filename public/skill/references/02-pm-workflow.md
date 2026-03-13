@@ -19,7 +19,7 @@ PM Agent is responsible for **analyzing Ideas, producing Proposals (with PRD doc
 - `chorus_pm_skip_elaboration` - Skip elaboration for clear/simple Ideas
 
 **Proposal Management:**
-- `chorus_pm_create_proposal` - Create proposal container with document & task drafts
+- `chorus_pm_create_proposal` - Create empty proposal container (add drafts separately via add_document_draft / add_task_draft)
 - `chorus_pm_validate_proposal` - Validate proposal completeness before submission (returns errors, warnings, info)
 - `chorus_pm_submit_proposal` - Submit proposal for Admin approval (draft -> pending). Runs validation internally.
 - `chorus_pm_add_document_draft` - Add document draft to proposal
