@@ -18,6 +18,10 @@ const mockPrisma = vi.hoisted(() => ({
   },
   task: {
     findFirst: vi.fn(),
+    findMany: vi.fn(),
+  },
+  agent: {
+    findMany: vi.fn(),
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -388,5 +392,252 @@ describe("getSessionName", () => {
     mockPrisma.agentSession.findUnique.mockResolvedValue(null);
     const name = await getSessionName("missing");
     expect(name).toBeNull();
+  });
+});
+
+// ===== getSessionsForTask =====
+describe("getSessionsForTask", () => {
+  it("should return active sessions for a task", async () => {
+    const { getSessionsForTask } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([
+      {
+        taskUuid,
+        checkinAt: now,
+        session: {
+          uuid: sessionUuid,
+          name: "worker-1",
+          agentUuid,
+          agent: { name: "Agent 1" },
+        },
+      },
+    ]);
+
+    const result = await getSessionsForTask(companyUuid, taskUuid);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].sessionUuid).toBe(sessionUuid);
+    expect(result[0].sessionName).toBe("worker-1");
+    expect(result[0].agentUuid).toBe(agentUuid);
+    expect(result[0].agentName).toBe("Agent 1");
+  });
+
+  it("should return empty array when no active sessions", async () => {
+    const { getSessionsForTask } = await import("@/services/session.service");
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+
+    const result = await getSessionsForTask(companyUuid, taskUuid);
+    expect(result).toEqual([]);
+  });
+});
+
+// ===== listAgentSessions =====
+describe("listAgentSessions", () => {
+  it("should list all sessions for an agent", async () => {
+    const { listAgentSessions } = await import("@/services/session.service");
+
+    mockPrisma.agentSession.findMany.mockResolvedValue([
+      makeSession({ uuid: "s1", name: "session-1", taskCheckins: [] }),
+      makeSession({ uuid: "s2", name: "session-2", taskCheckins: [] }),
+    ]);
+
+    const result = await listAgentSessions(companyUuid, agentUuid);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].uuid).toBe("s1");
+    expect(result[1].uuid).toBe("s2");
+  });
+
+  it("should filter by status when provided", async () => {
+    const { listAgentSessions } = await import("@/services/session.service");
+    mockPrisma.agentSession.findMany.mockResolvedValue([
+      makeSession({ status: "closed", taskCheckins: [] }),
+    ]);
+
+    await listAgentSessions(companyUuid, agentUuid, "closed");
+
+    expect(mockPrisma.agentSession.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "closed" }),
+      })
+    );
+  });
+});
+
+// ===== getActiveSessionsForProject =====
+describe("getActiveSessionsForProject", () => {
+  it("should return session-based workers (deduplicated by session)", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([
+      {
+        taskUuid: "t1",
+        checkinAt: now,
+        session: {
+          uuid: "s1",
+          name: "worker-1",
+          agentUuid: "a1",
+          agent: { name: "Agent 1" },
+        },
+      },
+      {
+        taskUuid: "t2",
+        checkinAt: now,
+        session: {
+          uuid: "s1", // same session, should deduplicate
+          name: "worker-1",
+          agentUuid: "a1",
+          agent: { name: "Agent 1" },
+        },
+      },
+      {
+        taskUuid: "t3",
+        checkinAt: now,
+        session: {
+          uuid: "s2",
+          name: "worker-2",
+          agentUuid: "a2",
+          agent: { name: "Agent 2" },
+        },
+      },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(2); // deduplicated
+    expect(result[0].sessionUuid).toBe("s1");
+    expect(result[1].sessionUuid).toBe("s2");
+  });
+
+  it("should limit to 7 workers total", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    // Create 10 unique session checkins
+    const checkins = Array.from({ length: 10 }, (_, i) => ({
+      taskUuid: `t${i}`,
+      checkinAt: now,
+      session: {
+        uuid: `s${i}`,
+        name: `worker-${i}`,
+        agentUuid: `a${i}`,
+        agent: { name: `Agent ${i}` },
+      },
+    }));
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue(checkins);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(7); // max 7 workers
+  });
+
+  it("should include sessionless workers (agents with in_progress tasks without session)", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    // 2 session-based workers
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([
+      {
+        taskUuid: "t1",
+        checkinAt: now,
+        session: {
+          uuid: "s1",
+          name: "worker-1",
+          agentUuid: "a1",
+          agent: { name: "Agent 1" },
+        },
+      },
+    ]);
+
+    // 2 sessionless workers (in_progress tasks without session checkins)
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t2", assigneeUuid: "a2", updatedAt: now },
+      { uuid: "t3", assigneeUuid: "a3", updatedAt: now },
+    ]);
+
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "a2", name: "Agent 2" },
+      { uuid: "a3", name: "Agent 3" },
+    ]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(3); // 1 session + 2 sessionless
+    expect(result[0].sessionUuid).toBe("s1");
+    expect(result[1].sessionUuid).toBe(""); // sessionless
+    expect(result[1].agentUuid).toBe("a2");
+    expect(result[2].sessionUuid).toBe("");
+    expect(result[2].agentUuid).toBe("a3");
+  });
+
+  it("should deduplicate sessionless workers by agent UUID", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+
+    // Same agent working on multiple tasks directly (no session)
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t1", assigneeUuid: "a1", updatedAt: now },
+      { uuid: "t2", assigneeUuid: "a1", updatedAt: now },
+      { uuid: "t3", assigneeUuid: "a2", updatedAt: now },
+    ]);
+
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "a1", name: "Agent 1" },
+      { uuid: "a2", name: "Agent 2" },
+    ]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(2); // deduplicated by agent
+    expect(result[0].agentUuid).toBe("a1");
+    expect(result[1].agentUuid).toBe("a2");
+  });
+
+  it("should exclude tasks with active session checkins from sessionless query", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    // t1 has active session checkin
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([
+      {
+        taskUuid: "t1",
+        checkinAt: now,
+        session: {
+          uuid: "s1",
+          name: "worker-1",
+          agentUuid: "a1",
+          agent: { name: "Agent 1" },
+        },
+      },
+    ]);
+
+    // Agent is also assigned to t1, but should be excluded from sessionless query
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(1);
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          uuid: { notIn: ["t1"] }, // t1 excluded
+        }),
+      })
+    );
+  });
+
+  it("should handle sessionless workers with missing agent names", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t1", assigneeUuid: "a-unknown", updatedAt: now },
+    ]);
+    mockPrisma.agent.findMany.mockResolvedValue([]); // no matching agent
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    expect(result).toHaveLength(0); // skipped due to missing agent name
   });
 });
