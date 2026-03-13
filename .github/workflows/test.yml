@@ -29,7 +29,15 @@ jobs:
         run: npx prisma generate
 
       - name: Run tests with coverage
-        run: pnpm test:coverage
+        run: pnpm test:coverage -- --reporter=json --outputFile=coverage/test-results.json
+
+      - name: Coverage report PR comment
+        if: always()
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+          vite-config-path: vitest.config.ts
 
       - name: Upload coverage report
         if: always()
