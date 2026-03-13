@@ -3,9 +3,11 @@ import path from 'path';
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: [
+      // Must come before the general '@' alias to avoid @/ matching first
+      { find: '@/generated/prisma/client', replacement: path.resolve(__dirname, './src/__mocks__/prisma-client.ts') },
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+    ],
   },
   test: {
     globals: true,
