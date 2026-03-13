@@ -1,0 +1,1228 @@
+/**
+ * proposal.service.test.ts — Unit tests for proposal.service with Prisma mocking.
+ *
+ * Tests cover: createProposal, addTaskDraft, addDocumentDraft, updateTaskDraft,
+ * updateDocumentDraft, removeTaskDraft, removeDocumentDraft, submitProposal,
+ * validateProposal (10+ business rules), approveProposal, rejectProposal, closeProposal.
+ *
+ * Pure function tests (ensureDocumentDraftUuid, ensureTaskDraftUuid) live in
+ * proposal.service.pure.test.ts — not duplicated here.
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ===== Hoisted mocks (vi.mock factories are hoisted above all imports) =====
+
+const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCreateDoc, mockCreateTasks } = vi.hoisted(() => {
+  const mockPrisma = {
+    proposal: {
+      create: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+      count: vi.fn(),
+    },
+    idea: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    taskDependency: {
+      create: vi.fn(),
+    },
+    acceptanceCriterion: {
+      createMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
+  };
+  const mockEventBus = { emitChange: vi.fn() };
+  const mockFormatCreatedBy = vi.fn().mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" });
+  const mockFormatReview = vi.fn().mockResolvedValue(null);
+  const mockCreateDoc = vi.fn().mockResolvedValue({});
+  const mockCreateTasks = vi.fn().mockResolvedValue({ draftToTaskUuidMap: new Map() });
+  return { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCreateDoc, mockCreateTasks };
+});
+
+vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+vi.mock("@/generated/prisma/client", () => ({
+  Prisma: {
+    JsonNull: "DbNull",
+    InputJsonValue: {},
+  },
+}));
+vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
+vi.mock("@/lib/uuid-resolver", () => ({
+  formatCreatedBy: mockFormatCreatedBy,
+  formatReview: mockFormatReview,
+}));
+vi.mock("@/services/document.service", () => ({
+  createDocumentFromProposal: mockCreateDoc,
+}));
+vi.mock("@/services/task.service", () => ({
+  createTasksFromProposal: mockCreateTasks,
+}));
+
+import {
+  createProposal,
+  addDocumentDraft,
+  addTaskDraft,
+  updateDocumentDraft,
+  updateTaskDraft,
+  removeDocumentDraft,
+  removeTaskDraft,
+  submitProposal,
+  validateProposal,
+  approveProposal,
+  rejectProposal,
+  closeProposal,
+} from "@/services/proposal.service";
+import { makeProposal } from "@/__test-utils__/fixtures";
+
+// ===== Helpers =====
+
+const COMPANY_UUID = "00000000-0000-0000-0000-000000000001";
+const PROJECT_UUID = "00000000-0000-0000-0000-000000000010";
+const ACTOR_UUID = "00000000-0000-0000-0000-000000000002";
+
+/** A minimal valid proposal DB row for mocking findFirst/create returns */
+function dbProposal(overrides: Record<string, unknown> = {}) {
+  return makeProposal({
+    companyUuid: COMPANY_UUID,
+    projectUuid: PROJECT_UUID,
+    createdByUuid: ACTOR_UUID,
+    ...overrides,
+  });
+}
+
+/** A long string (>= 100 chars) for document content */
+const LONG_CONTENT = "x".repeat(120);
+
+/** A valid document draft */
+function validDocDraft(overrides: Record<string, unknown> = {}) {
+  return {
+    uuid: "doc-draft-1",
+    type: "prd",
+    title: "PRD",
+    content: LONG_CONTENT,
+    ...overrides,
+  };
+}
+
+/** A valid task draft with acceptance criteria */
+function validTaskDraft(overrides: Record<string, unknown> = {}) {
+  return {
+    uuid: "task-draft-1",
+    title: "Task 1",
+    description: "Implement feature",
+    priority: "medium",
+    storyPoints: 3,
+    acceptanceCriteria: "- [ ] Done",
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Restore default mock implementations that vi.clearAllMocks removes
+  mockFormatCreatedBy.mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" });
+  mockFormatReview.mockResolvedValue(null);
+  mockCreateDoc.mockResolvedValue({});
+  mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap: new Map() });
+  // Default: idea.findMany returns empty array (needed when validateProposal
+  // checks E5 for idea-type proposals)
+  mockPrisma.idea.findMany.mockResolvedValue([]);
+});
+
+// ====================================================================
+// createProposal
+// ====================================================================
+
+describe("createProposal", () => {
+  it("should create a proposal and emit an event", async () => {
+    const created = dbProposal({ status: "draft" });
+    mockPrisma.proposal.create.mockResolvedValue(created);
+
+    const result = await createProposal({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      title: "Test Proposal",
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      createdByUuid: ACTOR_UUID,
+    });
+
+    expect(mockPrisma.proposal.create).toHaveBeenCalledOnce();
+    expect(result.uuid).toBe(created.uuid);
+    expect(result.status).toBe("draft");
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "created" })
+    );
+  });
+
+  it("should auto-generate UUIDs for drafts when not provided", async () => {
+    const created = dbProposal();
+    mockPrisma.proposal.create.mockResolvedValue(created);
+
+    await createProposal({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      title: "Proposal",
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      createdByUuid: ACTOR_UUID,
+      documentDrafts: [{ type: "prd", title: "PRD", content: "Content" }],
+      taskDrafts: [{ title: "Task 1" }],
+    });
+
+    const callData = mockPrisma.proposal.create.mock.calls[0][0].data;
+    expect(callData.documentDrafts[0].uuid).toBeDefined();
+    expect(callData.taskDrafts[0].uuid).toBeDefined();
+  });
+
+  it("should default createdByType to 'agent' when not specified", async () => {
+    mockPrisma.proposal.create.mockResolvedValue(dbProposal());
+
+    await createProposal({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      title: "Test",
+      inputType: "idea",
+      inputUuids: [],
+      createdByUuid: ACTOR_UUID,
+    });
+
+    const callData = mockPrisma.proposal.create.mock.calls[0][0].data;
+    expect(callData.createdByType).toBe("agent");
+  });
+});
+
+// ====================================================================
+// addDocumentDraft
+// ====================================================================
+
+describe("addDocumentDraft", () => {
+  it("should append a new document draft to an existing proposal", async () => {
+    const proposal = dbProposal({ documentDrafts: [validDocDraft()] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await addDocumentDraft("proposal-uuid", COMPANY_UUID, {
+      type: "tech_design",
+      title: "Tech Design",
+      content: "Design content",
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.documentDrafts).toHaveLength(2);
+    expect(updateCall.data.documentDrafts[1].type).toBe("tech_design");
+    expect(updateCall.data.documentDrafts[1].uuid).toBeDefined();
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      addDocumentDraft("proposal-uuid", COMPANY_UUID, {
+        type: "prd",
+        title: "PRD",
+        content: "Content",
+      })
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+
+  it("should handle proposal with null documentDrafts", async () => {
+    const proposal = dbProposal({ documentDrafts: null });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await addDocumentDraft("proposal-uuid", COMPANY_UUID, {
+      type: "prd",
+      title: "PRD",
+      content: "Content",
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.documentDrafts).toHaveLength(1);
+  });
+});
+
+// ====================================================================
+// addTaskDraft
+// ====================================================================
+
+describe("addTaskDraft", () => {
+  it("should append a new task draft to an existing proposal", async () => {
+    const proposal = dbProposal({ taskDrafts: [validTaskDraft()] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await addTaskDraft("proposal-uuid", COMPANY_UUID, {
+      title: "Task 2",
+      description: "Second task",
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts).toHaveLength(2);
+    expect(updateCall.data.taskDrafts[1].title).toBe("Task 2");
+    expect(updateCall.data.taskDrafts[1].uuid).toBeDefined();
+  });
+
+  it("should throw if proposal is not found or not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "Task" })
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+
+  it("should handle proposal with null taskDrafts", async () => {
+    const proposal = dbProposal({ taskDrafts: null });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "Task 1" });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts).toHaveLength(1);
+  });
+});
+
+// ====================================================================
+// updateDocumentDraft
+// ====================================================================
+
+describe("updateDocumentDraft", () => {
+  it("should update fields on an existing document draft", async () => {
+    const draft = validDocDraft({ uuid: "dd-1" });
+    const proposal = dbProposal({ documentDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await updateDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", {
+      title: "Updated PRD",
+      content: "New content",
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.documentDrafts[0].title).toBe("Updated PRD");
+    expect(updateCall.data.documentDrafts[0].content).toBe("New content");
+  });
+
+  it("should throw if document draft UUID is not found", async () => {
+    const proposal = dbProposal({ documentDrafts: [validDocDraft({ uuid: "dd-1" })] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" })
+    ).rejects.toThrow("Document draft not found");
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", { title: "X" })
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+});
+
+// ====================================================================
+// updateTaskDraft
+// ====================================================================
+
+describe("updateTaskDraft", () => {
+  it("should update fields on an existing task draft", async () => {
+    const draft = validTaskDraft({ uuid: "td-1" });
+    const proposal = dbProposal({ taskDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", {
+      title: "Updated Task",
+      priority: "high",
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts[0].title).toBe("Updated Task");
+    expect(updateCall.data.taskDrafts[0].priority).toBe("high");
+  });
+
+  it("should throw if task draft UUID is not found", async () => {
+    const proposal = dbProposal({ taskDrafts: [validTaskDraft({ uuid: "td-1" })] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" })
+    ).rejects.toThrow("Task draft not found");
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "X" })
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+});
+
+// ====================================================================
+// removeDocumentDraft
+// ====================================================================
+
+describe("removeDocumentDraft", () => {
+  it("should remove a document draft by UUID", async () => {
+    const drafts = [
+      validDocDraft({ uuid: "dd-1" }),
+      validDocDraft({ uuid: "dd-2", title: "Second" }),
+    ];
+    const proposal = dbProposal({ documentDrafts: drafts });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1");
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.documentDrafts).toHaveLength(1);
+    expect(updateCall.data.documentDrafts[0].uuid).toBe("dd-2");
+  });
+
+  it("should set documentDrafts to JsonNull when last draft is removed", async () => {
+    const proposal = dbProposal({ documentDrafts: [validDocDraft({ uuid: "dd-1" })] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1");
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.documentDrafts).toBe("DbNull"); // Prisma.JsonNull
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1")
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+});
+
+// ====================================================================
+// removeTaskDraft
+// ====================================================================
+
+describe("removeTaskDraft", () => {
+  it("should remove a task draft by UUID", async () => {
+    const drafts = [
+      validTaskDraft({ uuid: "td-1" }),
+      validTaskDraft({ uuid: "td-2", title: "Second" }),
+    ];
+    const proposal = dbProposal({ taskDrafts: drafts });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts).toHaveLength(1);
+    expect(updateCall.data.taskDrafts[0].uuid).toBe("td-2");
+  });
+
+  it("should set taskDrafts to JsonNull when last draft is removed", async () => {
+    const proposal = dbProposal({ taskDrafts: [validTaskDraft({ uuid: "td-1" })] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts).toBe("DbNull");
+  });
+
+  it("should clean up dependsOnDraftUuids references to the removed draft", async () => {
+    const drafts = [
+      validTaskDraft({ uuid: "td-1" }),
+      validTaskDraft({ uuid: "td-2", dependsOnDraftUuids: ["td-1", "td-3"] }),
+      validTaskDraft({ uuid: "td-3", dependsOnDraftUuids: ["td-1"] }),
+    ];
+    const proposal = dbProposal({ taskDrafts: drafts });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    const remaining = updateCall.data.taskDrafts;
+    expect(remaining).toHaveLength(2);
+    // td-2 should have td-1 removed from deps, keeping td-3
+    expect(remaining[0].dependsOnDraftUuids).toEqual(["td-3"]);
+    // td-3 should have td-1 removed, leaving empty
+    expect(remaining[1].dependsOnDraftUuids).toEqual([]);
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1")
+    ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+});
+
+// ====================================================================
+// validateProposal — 10+ distinct business rules
+// ====================================================================
+
+describe("validateProposal", () => {
+  it("should throw if proposal not found", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      validateProposal(COMPANY_UUID, "nonexistent")
+    ).rejects.toThrow("Proposal not found");
+  });
+
+  it("E1: should error when no PRD document draft", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "tech_design" })],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e1 = result.issues.find((i) => i.id === "E1");
+    expect(e1).toBeDefined();
+    expect(e1!.level).toBe("error");
+    expect(result.valid).toBe(false);
+  });
+
+  it("E2: should error when document draft content < 100 chars", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ content: "short" })],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e2 = result.issues.find((i) => i.id === "E2");
+    expect(e2).toBeDefined();
+    expect(e2!.level).toBe("error");
+    expect(e2!.field).toBe("PRD");
+  });
+
+  it("E2: should error when document draft has empty content", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ content: "" })],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    expect(result.issues.some((i) => i.id === "E2")).toBe(true);
+  });
+
+  it("E3: should error when no task drafts", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e3 = result.issues.find((i) => i.id === "E3");
+    expect(e3).toBeDefined();
+    expect(e3!.level).toBe("error");
+  });
+
+  it("E4: should error when inputUuids is empty", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: [],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e4 = result.issues.find((i) => i.id === "E4");
+    expect(e4).toBeDefined();
+    expect(e4!.level).toBe("error");
+  });
+
+  it("E5: should error when input idea has unresolved elaboration", async () => {
+    const proposal = dbProposal({
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "My Idea", elaborationStatus: "pending" },
+    ]);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e5 = result.issues.find((i) => i.id === "E5");
+    expect(e5).toBeDefined();
+    expect(e5!.level).toBe("error");
+    expect(e5!.message).toContain("unresolved elaboration");
+  });
+
+  it("E5: should not error when input idea has resolved elaboration", async () => {
+    const proposal = dbProposal({
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "My Idea", elaborationStatus: "resolved" },
+    ]);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e5 = result.issues.find((i) => i.id === "E5");
+    expect(e5).toBeUndefined();
+  });
+
+  it("E5: should skip idea elaboration check for non-idea input types", async () => {
+    const proposal = dbProposal({
+      inputType: "manual",
+      inputUuids: ["source-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
+    const e5 = result.issues.find((i) => i.id === "E5");
+    expect(e5).toBeUndefined();
+  });
+
+  it("E-AC: should error when task draft has no acceptance criteria", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [
+        validTaskDraft({
+          uuid: "td-no-ac",
+          title: "No AC Task",
+          acceptanceCriteria: null,
+          acceptanceCriteriaItems: undefined,
+        }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const eac = result.issues.find((i) => i.id === "E-AC");
+    expect(eac).toBeDefined();
+    expect(eac!.level).toBe("error");
+    expect(eac!.field).toBe("No AC Task");
+  });
+
+  it("E-AC: should pass when task draft has structured acceptanceCriteriaItems", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [
+        validTaskDraft({
+          acceptanceCriteria: null,
+          acceptanceCriteriaItems: [{ description: "It works", required: true }],
+        }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const eac = result.issues.find((i) => i.id === "E-AC");
+    expect(eac).toBeUndefined();
+  });
+
+  it("E-AC: should pass when task draft has legacy acceptanceCriteria", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [
+        validTaskDraft({
+          acceptanceCriteria: "- [ ] Something done",
+          acceptanceCriteriaItems: undefined,
+        }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const eac = result.issues.find((i) => i.id === "E-AC");
+    expect(eac).toBeUndefined();
+  });
+
+  it("W1: should warn when no tech_design document draft", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "prd" })],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w1 = result.issues.find((i) => i.id === "W1");
+    expect(w1).toBeDefined();
+    expect(w1!.level).toBe("warning");
+  });
+
+  it("W1: should not warn when tech_design is present", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [
+        validDocDraft({ type: "prd" }),
+        validDocDraft({ uuid: "dd-2", type: "tech_design", title: "Design" }),
+      ],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w1 = result.issues.find((i) => i.id === "W1");
+    expect(w1).toBeUndefined();
+  });
+
+  it("W2: should warn when task draft has empty description", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft({ description: "" })],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w2 = result.issues.find((i) => i.id === "W2");
+    expect(w2).toBeDefined();
+    expect(w2!.level).toBe("warning");
+  });
+
+  it("W2: should warn when task draft description is missing", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft({ description: undefined })],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w2 = result.issues.find((i) => i.id === "W2");
+    expect(w2).toBeDefined();
+  });
+
+  it("W4: should warn when >= 2 tasks but none have dependencies", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [
+        validTaskDraft({ uuid: "td-1" }),
+        validTaskDraft({ uuid: "td-2", title: "Task 2" }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w4 = result.issues.find((i) => i.id === "W4");
+    expect(w4).toBeDefined();
+    expect(w4!.level).toBe("warning");
+  });
+
+  it("W4: should not warn when at least one task has dependencies", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [
+        validTaskDraft({ uuid: "td-1" }),
+        validTaskDraft({ uuid: "td-2", title: "Task 2", dependsOnDraftUuids: ["td-1"] }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w4 = result.issues.find((i) => i.id === "W4");
+    expect(w4).toBeUndefined();
+  });
+
+  it("W4: should not warn when only 1 task (no need for deps)", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w4 = result.issues.find((i) => i.id === "W4");
+    expect(w4).toBeUndefined();
+  });
+
+  it("W5: should warn when proposal description is empty", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w5 = result.issues.find((i) => i.id === "W5");
+    expect(w5).toBeDefined();
+    expect(w5!.level).toBe("warning");
+  });
+
+  it("W5: should warn when proposal description is null", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: null,
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const w5 = result.issues.find((i) => i.id === "W5");
+    expect(w5).toBeDefined();
+  });
+
+  it("I1: should info when task draft has no priority", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft({ priority: undefined })],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const i1 = result.issues.find((i) => i.id === "I1");
+    expect(i1).toBeDefined();
+    expect(i1!.level).toBe("info");
+  });
+
+  it("I2: should info when task draft has no storyPoints", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft({ storyPoints: undefined })],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const i2 = result.issues.find((i) => i.id === "I2");
+    expect(i2).toBeDefined();
+    expect(i2!.level).toBe("info");
+  });
+
+  it("should return valid=true when only warnings and info (no errors)", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "prd" })],
+      taskDrafts: [
+        validTaskDraft({ description: "", priority: undefined, storyPoints: undefined }),
+      ],
+      inputUuids: ["idea-1"],
+      description: "",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    // Has W1, W2, W5, I1, I2 but no errors
+    expect(result.valid).toBe(true);
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.issues.every((i) => i.level !== "error")).toBe(true);
+  });
+
+  it("should return valid=false when there are error-level issues", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [],
+      taskDrafts: [],
+      inputUuids: [],
+      description: "",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    expect(result.valid).toBe(false);
+    expect(result.issues.some((i) => i.level === "error")).toBe(true);
+  });
+
+  it("should report multiple errors for multiple invalid document drafts", async () => {
+    const proposal = dbProposal({
+      documentDrafts: [
+        validDocDraft({ uuid: "dd-1", title: "Short Doc 1", content: "a" }),
+        validDocDraft({ uuid: "dd-2", title: "Short Doc 2", content: "b" }),
+      ],
+      taskDrafts: [validTaskDraft()],
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e2Issues = result.issues.filter((i) => i.id === "E2");
+    expect(e2Issues).toHaveLength(2);
+  });
+});
+
+// ====================================================================
+// submitProposal
+// ====================================================================
+
+describe("submitProposal", () => {
+  it("should throw if proposal not found", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      submitProposal("nonexistent", COMPANY_UUID)
+    ).rejects.toThrow("Proposal not found");
+  });
+
+  it("should throw if proposal is not in draft status", async () => {
+    const proposal = dbProposal({ status: "pending" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      submitProposal(proposal.uuid, COMPANY_UUID)
+    ).rejects.toThrow("Only draft proposals can be submitted for review");
+  });
+
+  it("should throw with validation errors if proposal fails validation", async () => {
+    // findFirst is called by submitProposal, then again by validateProposal
+    const proposal = dbProposal({
+      status: "draft",
+      documentDrafts: [],
+      taskDrafts: [],
+      inputUuids: [],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      submitProposal(proposal.uuid, COMPANY_UUID)
+    ).rejects.toThrow("Proposal validation failed");
+  });
+
+  it("should transition to pending status on valid proposal", async () => {
+    const proposal = dbProposal({
+      status: "draft",
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Good proposal",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "Idea", elaborationStatus: "resolved" },
+    ]);
+    const updatedProposal = dbProposal({ ...proposal, status: "pending" });
+    mockPrisma.proposal.update.mockResolvedValue(updatedProposal);
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await submitProposal(proposal.uuid, COMPANY_UUID);
+
+    expect(mockPrisma.proposal.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: "pending" },
+      })
+    );
+    expect(result.status).toBe("pending");
+    expect(mockEventBus.emitChange).toHaveBeenCalled();
+  });
+
+  it("should auto-transition input ideas to proposal_created", async () => {
+    const proposal = dbProposal({
+      status: "draft",
+      inputType: "idea",
+      inputUuids: ["idea-1", "idea-2"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Good proposal",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "Idea 1", elaborationStatus: "resolved" },
+      { uuid: "idea-2", title: "Idea 2", elaborationStatus: "resolved" },
+    ]);
+    mockPrisma.proposal.update.mockResolvedValue(dbProposal({ ...proposal, status: "pending" }));
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 2 });
+
+    await submitProposal(proposal.uuid, COMPANY_UUID);
+
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
+      where: {
+        uuid: { in: ["idea-1", "idea-2"] },
+        companyUuid: COMPANY_UUID,
+        status: "elaborating",
+      },
+      data: { status: "proposal_created" },
+    });
+  });
+});
+
+// ====================================================================
+// approveProposal
+// ====================================================================
+
+describe("approveProposal", () => {
+  it("should throw if proposal not found", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      approveProposal("nonexistent", COMPANY_UUID, "reviewer-uuid")
+    ).rejects.toThrow("Proposal not found");
+  });
+
+  it("should update status to approved and materialize documents", async () => {
+    const proposal = dbProposal({
+      status: "pending",
+      documentDrafts: [validDocDraft()],
+      taskDrafts: null,
+      inputType: "manual",
+      inputUuids: ["source-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const updatedRow = dbProposal({ ...proposal, status: "approved" });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+        taskDependency: { create: vi.fn() },
+        acceptanceCriterion: { createMany: vi.fn() },
+      };
+      return cb(tx);
+    });
+
+    const result = await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", "Looks good");
+
+    expect(mockCreateDoc).toHaveBeenCalledOnce();
+    expect(result.status).toBe("approved");
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "updated" })
+    );
+  });
+
+  it("should materialize tasks and dependencies", async () => {
+    const taskDrafts = [
+      validTaskDraft({ uuid: "td-1", title: "Task 1" }),
+      validTaskDraft({ uuid: "td-2", title: "Task 2", dependsOnDraftUuids: ["td-1"] }),
+    ];
+    const proposal = dbProposal({
+      status: "pending",
+      documentDrafts: [validDocDraft()],
+      taskDrafts,
+      inputType: "manual",
+      inputUuids: ["source-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const draftToTaskUuidMap = new Map([
+      ["td-1", "real-task-1"],
+      ["td-2", "real-task-2"],
+    ]);
+    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap });
+
+    const txMock = {
+      proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      taskDependency: { create: vi.fn() },
+      acceptanceCriterion: { createMany: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+
+    expect(mockCreateTasks).toHaveBeenCalledOnce();
+    expect(txMock.taskDependency.create).toHaveBeenCalledWith({
+      data: { taskUuid: "real-task-2", dependsOnUuid: "real-task-1" },
+    });
+  });
+
+  it("should materialize acceptance criteria items", async () => {
+    const taskDrafts = [
+      validTaskDraft({
+        uuid: "td-1",
+        acceptanceCriteriaItems: [
+          { description: "Criterion 1", required: true },
+          { description: "Criterion 2", required: false },
+        ],
+      }),
+    ];
+    const proposal = dbProposal({
+      status: "pending",
+      documentDrafts: [validDocDraft()],
+      taskDrafts,
+      inputType: "manual",
+      inputUuids: ["source-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const draftToTaskUuidMap = new Map([["td-1", "real-task-1"]]);
+    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap });
+
+    const txMock = {
+      proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      taskDependency: { create: vi.fn() },
+      acceptanceCriterion: { createMany: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+
+    expect(txMock.acceptanceCriterion.createMany).toHaveBeenCalledWith({
+      data: [
+        { taskUuid: "real-task-1", description: "Criterion 1", required: true, sortOrder: 0 },
+        { taskUuid: "real-task-1", description: "Criterion 2", required: false, sortOrder: 1 },
+      ],
+    });
+  });
+
+  it("should throw when acceptanceCriteriaItems has empty description", async () => {
+    const taskDrafts = [
+      validTaskDraft({
+        uuid: "td-1",
+        acceptanceCriteriaItems: [{ description: "", required: true }],
+      }),
+    ];
+    const proposal = dbProposal({
+      status: "pending",
+      documentDrafts: [validDocDraft()],
+      taskDrafts,
+      inputType: "manual",
+      inputUuids: ["source-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+        taskDependency: { create: vi.fn() },
+        acceptanceCriterion: { createMany: vi.fn() },
+      };
+      return cb(tx);
+    });
+
+    await expect(
+      approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid")
+    ).rejects.toThrow("empty or invalid description");
+  });
+
+  it("should auto-complete input ideas when approved", async () => {
+    const proposal = dbProposal({
+      status: "pending",
+      documentDrafts: null,
+      taskDrafts: null,
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    const updatedRow = dbProposal({ ...proposal, status: "approved" });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+        taskDependency: { create: vi.fn() },
+        acceptanceCriterion: { createMany: vi.fn() },
+      };
+      return cb(tx);
+    });
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
+      where: {
+        uuid: { in: ["idea-1"] },
+        companyUuid: COMPANY_UUID,
+        status: "proposal_created",
+      },
+      data: { status: "completed" },
+    });
+  });
+});
+
+// ====================================================================
+// rejectProposal
+// ====================================================================
+
+describe("rejectProposal", () => {
+  it("should transition proposal to draft status with review note", async () => {
+    const updated = dbProposal({
+      status: "draft",
+      reviewedByUuid: "reviewer-uuid",
+      reviewNote: "Needs work",
+      reviewedAt: new Date(),
+    });
+    mockPrisma.proposal.update.mockResolvedValue(updated);
+
+    const result = await rejectProposal("proposal-uuid", "reviewer-uuid", "Needs work");
+
+    expect(mockPrisma.proposal.update).toHaveBeenCalledWith({
+      where: { uuid: "proposal-uuid" },
+      data: expect.objectContaining({
+        status: "draft",
+        reviewedByUuid: "reviewer-uuid",
+        reviewNote: "Needs work",
+      }),
+      include: { project: { select: { uuid: true, name: true } } },
+    });
+    expect(result.status).toBe("draft");
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "updated" })
+    );
+  });
+});
+
+// ====================================================================
+// closeProposal
+// ====================================================================
+
+describe("closeProposal", () => {
+  it("should transition proposal to closed status", async () => {
+    const updated = dbProposal({
+      status: "closed",
+      reviewedByUuid: "admin-uuid",
+      reviewNote: "No longer needed",
+      reviewedAt: new Date(),
+    });
+    mockPrisma.proposal.update.mockResolvedValue(updated);
+
+    const result = await closeProposal("proposal-uuid", "admin-uuid", "No longer needed");
+
+    expect(mockPrisma.proposal.update).toHaveBeenCalledWith({
+      where: { uuid: "proposal-uuid" },
+      data: expect.objectContaining({
+        status: "closed",
+        reviewedByUuid: "admin-uuid",
+        reviewNote: "No longer needed",
+      }),
+      include: { project: { select: { uuid: true, name: true } } },
+    });
+    expect(result.status).toBe("closed");
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "updated" })
+    );
+  });
+});
