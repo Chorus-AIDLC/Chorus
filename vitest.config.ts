@@ -26,8 +26,12 @@ export default defineConfig({
         'src/lib/prisma.ts',
         'src/lib/redis.ts',
       ],
-      // Thresholds disabled — coverage report is for reference only.
-      // Re-enable when coverage reaches 80% across all included files.
+      thresholds: {
+        lines: 95,
+        statements: 95,
+        branches: 85,
+        functions: 93,
+      },
     },
   },
 });
