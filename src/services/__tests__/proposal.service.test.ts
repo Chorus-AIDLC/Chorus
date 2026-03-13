@@ -20,6 +20,7 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
       findFirst: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
       count: vi.fn(),
     },
     idea: {
@@ -78,6 +79,7 @@ import {
   approveProposal,
   rejectProposal,
   closeProposal,
+  deleteProposal,
 } from "@/services/proposal.service";
 import { makeProposal } from "@/__test-utils__/fixtures";
 
@@ -1242,6 +1244,50 @@ describe("closeProposal", () => {
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: "proposal", action: "updated" })
     );
+  });
+});
+
+// ====================================================================
+// deleteProposal
+// ====================================================================
+
+describe("deleteProposal", () => {
+  it("should delete a draft proposal", async () => {
+    const proposal = dbProposal({ status: "draft" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.delete.mockResolvedValue(proposal);
+
+    await deleteProposal("proposal-uuid", COMPANY_UUID);
+
+    expect(mockPrisma.proposal.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "proposal-uuid", companyUuid: COMPANY_UUID },
+    });
+    expect(mockPrisma.proposal.delete).toHaveBeenCalledWith({
+      where: { uuid: "proposal-uuid" },
+    });
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "deleted" })
+    );
+  });
+
+  it("should delete a proposal in any status", async () => {
+    for (const status of ["closed", "pending", "approved"]) {
+      const proposal = dbProposal({ status });
+      mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+      mockPrisma.proposal.delete.mockResolvedValue(proposal);
+
+      await deleteProposal("proposal-uuid", COMPANY_UUID);
+
+      expect(mockPrisma.proposal.delete).toHaveBeenCalledWith({
+        where: { uuid: "proposal-uuid" },
+      });
+    }
+  });
+
+  it("should throw when proposal not found", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(deleteProposal("nonexistent", COMPANY_UUID)).rejects.toThrow("Proposal not found");
   });
 });
 

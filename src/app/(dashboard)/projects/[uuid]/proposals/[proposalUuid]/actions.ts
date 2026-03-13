@@ -7,6 +7,7 @@ import {
   rejectProposal,
   closeProposal,
   submitProposal,
+  deleteProposal,
   getProposalByUuid,
   addDocumentDraft,
   addTaskDraft,
@@ -154,6 +155,29 @@ export async function closeProposalAction(proposalUuid: string, reviewNote: stri
   } catch (error) {
     console.error("Failed to close proposal:", error);
     return { success: false, error: "Failed to close proposal" };
+  }
+}
+
+export async function deleteProposalAction(proposalUuid: string, projectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
+    if (!proposal) {
+      return { success: false, error: "Proposal not found" };
+    }
+
+    await deleteProposal(proposalUuid, auth.companyUuid);
+
+    revalidatePath(`/projects/${projectUuid}/proposals`);
+
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to delete proposal:", error);
+    return { success: false, error: "Failed to delete proposal" };
   }
 }
 

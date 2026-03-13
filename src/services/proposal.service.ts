@@ -749,6 +749,24 @@ export async function closeProposal(
   return formatProposalResponse(proposal);
 }
 
+// Delete Proposal (only draft or closed)
+export async function deleteProposal(
+  proposalUuid: string,
+  companyUuid: string
+): Promise<void> {
+  const proposal = await prisma.proposal.findFirst({
+    where: { uuid: proposalUuid, companyUuid },
+  });
+
+  if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+
+  await prisma.proposal.delete({ where: { uuid: proposalUuid } });
+
+  eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposal.uuid, action: "deleted" });
+}
+
 // ===== Draft Management Functions =====
 
 // Submit Proposal for review (draft -> pending)

@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { approveProposalAction, rejectProposalAction, closeProposalAction, submitProposalAction } from "./actions";
+import { approveProposalAction, rejectProposalAction, closeProposalAction, submitProposalAction, deleteProposalAction } from "./actions";
 
 interface ProposalActionsProps {
   proposalUuid: string;
@@ -21,7 +21,7 @@ interface ProposalActionsProps {
   status: string;
 }
 
-export function ProposalActions({ proposalUuid, status }: ProposalActionsProps) {
+export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalActionsProps) {
   const t = useTranslations();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -32,6 +32,7 @@ export function ProposalActions({ proposalUuid, status }: ProposalActionsProps) 
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closeReason, setCloseReason] = useState("");
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const handleSubmit = () => {
     startTransition(async () => {
@@ -76,6 +77,17 @@ export function ProposalActions({ proposalUuid, status }: ProposalActionsProps) 
     });
   };
 
+  const handleDelete = () => {
+    startTransition(async () => {
+      const result = await deleteProposalAction(proposalUuid, projectUuid);
+      if (result.success) {
+        setDeleteDialogOpen(false);
+        router.push(`/projects/${projectUuid}/proposals`);
+        router.refresh();
+      }
+    });
+  };
+
   return (
     <>
       <div className="flex gap-2">
@@ -115,6 +127,14 @@ export function ProposalActions({ proposalUuid, status }: ProposalActionsProps) 
             </Button>
           </>
         )}
+        <Button
+          variant="outline"
+          onClick={() => setDeleteDialogOpen(true)}
+          disabled={isPending}
+          className="border-[#D32F2F] text-[#D32F2F] hover:bg-[#FFEBEE]"
+        >
+          {t("proposals.deleteProposal")}
+        </Button>
         <Button
           variant="outline"
           className="border-[#E5E0D8] text-[#6B6B6B]"
@@ -237,6 +257,31 @@ export function ProposalActions({ proposalUuid, status }: ProposalActionsProps) 
               className="bg-[#6B6B6B] hover:bg-[#555555] text-white"
             >
               {isPending ? t("common.processing") : t("proposals.closeProposal")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("proposals.deleteProposal")}</DialogTitle>
+            <DialogDescription>{t("proposals.deleteProposalDesc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(false)}
+              className="border-[#E5E0D8] text-[#6B6B6B]"
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleDelete}
+              disabled={isPending}
+              className="bg-[#D32F2F] hover:bg-[#B71C1C] text-white"
+            >
+              {isPending ? t("common.processing") : t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -511,7 +511,9 @@
     "selectDependency": "Select a task...",
     "removeDependency": "Remove",
     "viewMode": "View",
-    "taskDraftSaved": "Task draft saved"
+    "taskDraftSaved": "Task draft saved",
+    "deleteProposal": "Delete Proposal",
+    "deleteProposalDesc": "Are you sure you want to delete this proposal? This action cannot be undone."
   },
   "proposalValidation": {
     "title": "Submission Checklist",

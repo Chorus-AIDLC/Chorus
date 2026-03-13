@@ -512,7 +512,9 @@
     "selectDependency": "选择任务...",
     "removeDependency": "移除",
     "viewMode": "查看",
-    "taskDraftSaved": "任务草稿已保存"
+    "taskDraftSaved": "任务草稿已保存",
+    "deleteProposal": "删除提案",
+    "deleteProposalDesc": "确定要删除此提案吗？此操作无法撤销。"
   },
   "proposalValidation": {
     "title": "提交检查清单",
