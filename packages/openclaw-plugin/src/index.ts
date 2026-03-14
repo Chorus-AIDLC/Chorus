@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OpenClawPluginApi = any;
 
-import { chorusConfigSchema, type ChorusPluginConfig } from "./config.js";
+import { chorusConfigSchema, type ChorusPluginConfig, validateConfigWithWarnings } from "./config.js";
 import { ChorusMcpClient } from "./mcp-client.js";
 import { ChorusSseListener } from "./sse-listener.js";
 import { ChorusEventRouter } from "./event-router.js";
@@ -51,17 +51,20 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     const rawConfig = api.pluginConfig ?? {};
     const config: ChorusPluginConfig = {
-      chorusUrl: rawConfig.chorusUrl ?? "",
-      apiKey: rawConfig.apiKey ?? "",
+      chorusUrl: rawConfig.chorusUrl || undefined,
+      apiKey: rawConfig.apiKey || undefined,
       projectUuids: rawConfig.projectUuids ?? [],
       autoStart: rawConfig.autoStart ?? true,
     };
     const logger = api.logger;
 
-    if (!config.chorusUrl || !config.apiKey) {
-      logger.error("Chorus plugin missing required config: chorusUrl and apiKey");
+    if (!validateConfigWithWarnings(config, logger)) {
       return;
     }
+
+    // After validateConfigWithWarnings, chorusUrl and apiKey are guaranteed present
+    const chorusUrl = config.chorusUrl!;
+    const apiKey = config.apiKey!;
 
     // Resolve gateway URL and hooks token from OpenClaw config
     const gatewayPort = api.config?.gateway?.port ?? 18789;
@@ -69,13 +72,13 @@ const plugin = {
     const hooksToken = api.config?.hooks?.token ?? "";
 
     logger.info(
-      `Chorus plugin initializing — ${config.chorusUrl} (${config.projectUuids?.length || "all"} projects)`
+      `Chorus plugin initializing — ${chorusUrl} (${config.projectUuids?.length || "all"} projects)`
     );
 
     // --- MCP Client ---
     const mcpClient = new ChorusMcpClient({
-      chorusUrl: config.chorusUrl,
-      apiKey: config.apiKey,
+      chorusUrl,
+      apiKey,
       logger,
     });
 
@@ -103,8 +106,8 @@ const plugin = {
       id: "chorus-sse",
       async start() {
         sseListener = new ChorusSseListener({
-          chorusUrl: config.chorusUrl,
-          apiKey: config.apiKey,
+          chorusUrl,
+          apiKey,
           logger,
           onEvent: (event) => eventRouter.dispatch(event),
           onReconnect: async () => {

@@ -2,7 +2,6 @@
   "id": "chorus-openclaw-plugin",
   "configSchema": {
     "type": "object",
-    "required": ["chorusUrl", "apiKey"],
     "additionalProperties": false,
     "properties": {
       "chorusUrl": {
