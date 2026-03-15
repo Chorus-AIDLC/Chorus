@@ -232,6 +232,53 @@ describe("listTasks", () => {
     );
     expect(result.tasks[0].commentCount).toBe(3);
   });
+
+  it("passes proposalUuids filter to prisma where clause", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+
+    await listTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 10,
+      proposalUuids: ["proposal-1", "proposal-2"],
+    });
+
+    const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
+    expect(whereArg.proposalUuid).toEqual({ in: ["proposal-1", "proposal-2"] });
+  });
+
+  it("does not include proposalUuid filter when proposalUuids is undefined", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+
+    await listTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 10,
+    });
+
+    const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
+    expect(whereArg).not.toHaveProperty("proposalUuid");
+  });
+
+  it("does not include proposalUuid filter when proposalUuids is empty array", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+
+    await listTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 10,
+      proposalUuids: [],
+    });
+
+    const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
+    expect(whereArg).not.toHaveProperty("proposalUuid");
+  });
 });
 
 // ---------- getTask ----------
@@ -1141,6 +1188,33 @@ describe("getUnblockedTasks", () => {
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
     expect(whereArg.status.in).toEqual(["open", "assigned"]);
   });
+
+  it("should pass proposalUuids filter to where clause", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+
+    await (await import("@/services/task.service")).getUnblockedTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      proposalUuids: ["prop-1", "prop-2"],
+    });
+
+    const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
+    expect(whereArg.proposalUuid).toEqual({ in: ["prop-1", "prop-2"] });
+  });
+
+  it("should not include proposalUuid filter when proposalUuids is not provided", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+
+    await (await import("@/services/task.service")).getUnblockedTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+    });
+
+    const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
+    expect(whereArg).not.toHaveProperty("proposalUuid");
+  });
 });
 
 // ---------- checkDependenciesResolved ----------
@@ -1217,8 +1291,8 @@ describe("checkDependenciesResolved", () => {
 describe("getProjectTaskDependencies", () => {
   it("should return nodes and edges for project DAG", async () => {
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "t1", title: "Task 1", status: "open", priority: "high" },
-      { uuid: "t2", title: "Task 2", status: "done", priority: "medium" },
+      { uuid: "t1", title: "Task 1", status: "open", priority: "high", proposalUuid: "p1" },
+      { uuid: "t2", title: "Task 2", status: "done", priority: "medium", proposalUuid: "p1" },
     ]);
     mockPrisma.taskDependency.findMany.mockResolvedValue([
       { taskUuid: "t2", dependsOnUuid: "t1" },
@@ -1231,6 +1305,7 @@ describe("getProjectTaskDependencies", () => {
 
     expect(result.nodes).toHaveLength(2);
     expect(result.nodes[0].uuid).toBe("t1");
+    expect(result.nodes[0].proposalUuid).toBe("p1");
     expect(result.edges).toHaveLength(1);
     expect(result.edges[0]).toEqual({ from: "t2", to: "t1" });
   });

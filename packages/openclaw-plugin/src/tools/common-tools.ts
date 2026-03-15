@@ -89,17 +89,20 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_get_available_tasks",
-    description: "Get tasks available to claim in a project (status=open)",
+    description: "Get tasks available to claim in a project (status=open). Optionally filter by proposal UUIDs.",
     parameters: {
       type: "object",
       properties: {
         projectUuid: { type: "string", description: "Project UUID" },
+        proposalUuids: { type: "array", items: { type: "string" }, description: "Filter tasks by proposal UUIDs" },
       },
       required: ["projectUuid"],
       additionalProperties: false,
     },
-    async execute(_id: string, { projectUuid }: { projectUuid: string }) {
-      const result = await mcpClient.callTool("chorus_get_available_tasks", { projectUuid });
+    async execute(_id: string, { projectUuid, proposalUuids }: { projectUuid: string; proposalUuids?: string[] }) {
+      const args: Record<string, unknown> = { projectUuid };
+      if (proposalUuids && proposalUuids.length > 0) args.proposalUuids = proposalUuids;
+      const result = await mcpClient.callTool("chorus_get_available_tasks", args);
       return JSON.stringify(result, null, 2);
     },
   });
@@ -145,23 +148,25 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_list_tasks",
-    description: "List tasks for a project. Can filter by status and priority.",
+    description: "List tasks for a project. Can filter by status, priority, and proposal UUIDs.",
     parameters: {
       type: "object",
       properties: {
         projectUuid: { type: "string", description: "Project UUID" },
         status: { type: "string", description: "Filter by status: open | assigned | in_progress | to_verify | done | closed" },
         priority: { type: "string", description: "Filter by priority: low | medium | high" },
+        proposalUuids: { type: "array", items: { type: "string" }, description: "Filter tasks by proposal UUIDs" },
         page: { type: "number", description: "Page number (default: 1)" },
         pageSize: { type: "number", description: "Items per page (default: 20)" },
       },
       required: ["projectUuid"],
       additionalProperties: false,
     },
-    async execute(_id: string, { projectUuid, status, priority, page, pageSize }: { projectUuid: string; status?: string; priority?: string; page?: number; pageSize?: number }) {
+    async execute(_id: string, { projectUuid, status, priority, proposalUuids, page, pageSize }: { projectUuid: string; status?: string; priority?: string; proposalUuids?: string[]; page?: number; pageSize?: number }) {
       const args: Record<string, unknown> = { projectUuid };
       if (status) args.status = status;
       if (priority) args.priority = priority;
+      if (proposalUuids && proposalUuids.length > 0) args.proposalUuids = proposalUuids;
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_list_tasks", args);
@@ -260,17 +265,20 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_get_unblocked_tasks",
-    description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/closed). Note: to_verify is NOT considered resolved.",
+    description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/closed). Optionally filter by proposal UUIDs. Note: to_verify is NOT considered resolved.",
     parameters: {
       type: "object",
       properties: {
         projectUuid: { type: "string", description: "Project UUID" },
+        proposalUuids: { type: "array", items: { type: "string" }, description: "Filter tasks by proposal UUIDs" },
       },
       required: ["projectUuid"],
       additionalProperties: false,
     },
-    async execute(_id: string, { projectUuid }: { projectUuid: string }) {
-      const result = await mcpClient.callTool("chorus_get_unblocked_tasks", { projectUuid });
+    async execute(_id: string, { projectUuid, proposalUuids }: { projectUuid: string; proposalUuids?: string[] }) {
+      const args: Record<string, unknown> = { projectUuid };
+      if (proposalUuids && proposalUuids.length > 0) args.proposalUuids = proposalUuids;
+      const result = await mcpClient.callTool("chorus_get_unblocked_tasks", args);
       return JSON.stringify(result, null, 2);
     },
   });

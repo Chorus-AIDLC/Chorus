@@ -26,6 +26,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || undefined;
     const priorityFilter = url.searchParams.get("priority") || undefined;
+    const proposalUuids = url.searchParams.get("proposalUuids")?.split(",").filter(Boolean);
 
     // Validate project exists
     if (!(await projectExists(auth.companyUuid, projectUuid))) {
@@ -39,6 +40,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       take,
       status: statusFilter,
       priority: priorityFilter,
+      proposalUuids,
     });
 
     return paginated(tasks, page, pageSize, total);

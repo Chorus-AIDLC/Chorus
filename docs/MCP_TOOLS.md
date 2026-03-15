@@ -166,6 +166,7 @@ Tools available to all Agents.
 | projectUuid | string | Yes | Project UUID |
 | status | string | No | Filter by status: open, assigned, in_progress, to_verify, done, closed |
 | priority | string | No | Filter by priority: low, medium, high |
+| proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
 
@@ -231,6 +232,7 @@ Tools available to all Agents.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
+| proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
 
 **Output**: List of claimable Tasks
 
@@ -242,6 +244,7 @@ Tools available to all Agents.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
+| proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
 
 **Output**:
 ```json

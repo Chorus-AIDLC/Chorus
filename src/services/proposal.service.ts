@@ -1023,3 +1023,39 @@ export async function removeTaskDraft(
 
   return formatProposalResponse(updated);
 }
+
+// Get lightweight proposal list with task counts (for filter dropdown)
+export async function getProjectProposals(
+  companyUuid: string,
+  projectUuid: string,
+): Promise<Array<{ uuid: string; title: string; sequenceNumber: number; taskCount: number }>> {
+  const proposals = await prisma.proposal.findMany({
+    where: { companyUuid, projectUuid, status: "approved" },
+    select: {
+      uuid: true,
+      title: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  // Count tasks per proposal
+  const taskCounts = await prisma.task.groupBy({
+    by: ["proposalUuid"],
+    where: {
+      companyUuid,
+      projectUuid,
+      proposalUuid: { in: proposals.map(p => p.uuid) },
+    },
+    _count: true,
+  });
+
+  const countMap = new Map(taskCounts.map(tc => [tc.proposalUuid, tc._count]));
+
+  return proposals.map((p, index) => ({
+    uuid: p.uuid,
+    title: p.title,
+    sequenceNumber: index + 1,
+    taskCount: countMap.get(p.uuid) ?? 0,
+  }));
+}

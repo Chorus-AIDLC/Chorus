@@ -72,10 +72,17 @@ Projects can be organized into **Project Groups** — a single-level grouping fo
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_list_tasks` | List project Tasks (filterable by status/priority, paginated) |
+| `chorus_list_tasks` | List project Tasks (filterable by status/priority/proposalUuids, paginated) |
 | `chorus_get_task` | Get a single Task's details and context |
-| `chorus_get_available_tasks` | Get claimable Tasks (status=open) |
-| `chorus_get_unblocked_tasks` | Get tasks ready to start — all dependencies resolved (done/closed). `to_verify` is NOT considered resolved. |
+| `chorus_get_available_tasks` | Get claimable Tasks (status=open, optional proposalUuids filter) |
+| `chorus_get_unblocked_tasks` | Get tasks ready to start — all dependencies resolved (done/closed). Optional proposalUuids filter. `to_verify` is NOT considered resolved. |
+
+**Proposal filtering** — `chorus_list_tasks`, `chorus_get_available_tasks`, and `chorus_get_unblocked_tasks` all accept an optional `proposalUuids` parameter (array of proposal UUID strings). When provided, only tasks belonging to those proposals are returned. When omitted, all tasks are returned (backward compatible).
+
+```
+// Example: filter tasks by two proposals
+chorus_list_tasks({ projectUuid: "...", proposalUuids: ["proposal-uuid-1", "proposal-uuid-2"] })
+```
 
 ---
 

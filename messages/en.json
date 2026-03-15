@@ -412,7 +412,17 @@
     "blockedTooltip": "Blocked by {count} unresolved {count, plural, one {dependency} other {dependencies}}",
     "blockedBy": "Blocked by: {tasks}",
     "noActiveSession": "No active session",
-    "forceStatusChange": "Force status change"
+    "forceStatusChange": "Force status change",
+    "proposalFilter": {
+      "label": "Proposal",
+      "allProposals": "All Proposals",
+      "clear": "Clear",
+      "search": "Search proposals...",
+      "taskCount": "{count} tasks",
+      "filtered": "{filtered} of {total} proposals",
+      "noResults": "No proposals found",
+      "filteredSubtitle": "{filtered} of {total} tasks (filtered)"
+    }
   },
   "proposals": {
     "pageTitle": "Proposals",

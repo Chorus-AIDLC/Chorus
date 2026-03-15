@@ -33,6 +33,9 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
     acceptanceCriterion: {
       createMany: vi.fn(),
     },
+    task: {
+      groupBy: vi.fn(),
+    },
     $transaction: vi.fn(),
   };
   const mockEventBus = { emitChange: vi.fn() };
@@ -80,6 +83,7 @@ import {
   rejectProposal,
   closeProposal,
   deleteProposal,
+  getProjectProposals,
 } from "@/services/proposal.service";
 import { makeProposal } from "@/__test-utils__/fixtures";
 
@@ -1710,5 +1714,59 @@ describe("approveProposal - edge cases", () => {
 
     // Should not throw, acceptance criteria creation should be skipped
     expect(mockCreateTasks).toHaveBeenCalled();
+  });
+});
+
+// ---------- getProjectProposals ----------
+
+describe("getProjectProposals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns approved proposals with task counts and sequence numbers", async () => {
+    const now = new Date();
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "Proposal 1", createdAt: now },
+      { uuid: "p2", title: "Proposal 2", createdAt: new Date(now.getTime() + 1000) },
+    ]);
+    mockPrisma.task.groupBy.mockResolvedValue([
+      { proposalUuid: "p1", _count: 3 },
+      { proposalUuid: "p2", _count: 1 },
+    ]);
+
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ uuid: "p1", title: "Proposal 1", sequenceNumber: 1, taskCount: 3 });
+    expect(result[1]).toEqual({ uuid: "p2", title: "Proposal 2", sequenceNumber: 2, taskCount: 1 });
+
+    // Verify query filters
+    expect(mockPrisma.proposal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, status: "approved" },
+      }),
+    );
+  });
+
+  it("returns 0 task count for proposals with no tasks", async () => {
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "Proposal 1", createdAt: new Date() },
+    ]);
+    mockPrisma.task.groupBy.mockResolvedValue([]);
+
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].taskCount).toBe(0);
+  });
+
+  it("returns empty array when no approved proposals exist", async () => {
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.task.groupBy.mockResolvedValue([]);
+
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+
+    expect(result).toHaveLength(0);
   });
 });

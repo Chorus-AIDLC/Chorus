@@ -19,6 +19,7 @@ export interface TaskListParams {
   take: number;
   status?: string;
   priority?: string;
+  proposalUuids?: string[];
 }
 
 export interface TaskCreateParams {
@@ -401,12 +402,14 @@ export async function listTasks({
   take,
   status,
   priority,
+  proposalUuids,
 }: TaskListParams): Promise<{ tasks: TaskResponse[]; total: number }> {
   const where = {
     projectUuid,
     companyUuid,
     ...(status && { status }),
     ...(priority && { priority }),
+    ...(proposalUuids && proposalUuids.length > 0 && { proposalUuid: { in: proposalUuids } }),
   };
 
   const [rawTasks, total] = await Promise.all([
@@ -1086,14 +1089,17 @@ export async function getTaskDependencies(
 export async function getUnblockedTasks({
   companyUuid,
   projectUuid,
+  proposalUuids,
 }: {
   companyUuid: string;
   projectUuid: string;
+  proposalUuids?: string[];
 }): Promise<{ tasks: TaskResponse[]; total: number }> {
   const where = {
     projectUuid,
     companyUuid,
     status: { in: ["open", "assigned"] },
+    ...(proposalUuids && proposalUuids.length > 0 && { proposalUuid: { in: proposalUuids } }),
     // Exclude tasks that have any dependency NOT in done/closed
     NOT: {
       dependsOn: {
@@ -1238,13 +1244,13 @@ export async function getProjectTaskDependencies(
   companyUuid: string,
   projectUuid: string
 ): Promise<{
-  nodes: Array<{ uuid: string; title: string; status: string; priority: string }>;
+  nodes: Array<{ uuid: string; title: string; status: string; priority: string; proposalUuid: string | null }>;
   edges: Array<{ from: string; to: string }>;
 }> {
   const [tasks, dependencies] = await Promise.all([
     prisma.task.findMany({
       where: { companyUuid, projectUuid },
-      select: { uuid: true, title: true, status: true, priority: true },
+      select: { uuid: true, title: true, status: true, priority: true, proposalUuid: true },
     }),
     prisma.taskDependency.findMany({
       where: {
@@ -1260,6 +1266,7 @@ export async function getProjectTaskDependencies(
       title: t.title,
       status: t.status,
       priority: t.priority,
+      proposalUuid: t.proposalUuid ?? null,
     })),
     edges: dependencies.map((d) => ({
       from: d.taskUuid,

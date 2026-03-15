@@ -413,7 +413,17 @@
     "blockedTooltip": "被 {count} 个未完成的依赖阻塞",
     "blockedBy": "阻塞于：{tasks}",
     "noActiveSession": "无活跃会话",
-    "forceStatusChange": "强制状态变更"
+    "forceStatusChange": "强制状态变更",
+    "proposalFilter": {
+      "label": "提案",
+      "allProposals": "所有提案",
+      "clear": "清除",
+      "search": "搜索提案...",
+      "taskCount": "{count} 个任务",
+      "filtered": "{filtered} / {total} 个提案",
+      "noResults": "未找到提案",
+      "filteredSubtitle": "显示 {filtered} / {total} 个任务（已筛选）"
+    }
   },
   "proposals": {
     "pageTitle": "提案",

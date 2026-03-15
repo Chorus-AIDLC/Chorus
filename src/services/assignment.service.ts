@@ -257,9 +257,14 @@ export async function getAvailableItems(
   companyUuid: string,
   projectUuid: string,
   canClaimIdeas: boolean,
-  canClaimTasks: boolean
+  canClaimTasks: boolean,
+  proposalUuids?: string[],
 ): Promise<AvailableItemsResponse> {
   const baseWhere = { projectUuid, companyUuid, status: "open" };
+  const taskWhere = {
+    ...baseWhere,
+    ...(proposalUuids && proposalUuids.length > 0 && { proposalUuid: { in: proposalUuids } }),
+  };
 
   const [rawIdeas, rawTasks] = await Promise.all([
     canClaimIdeas
@@ -279,7 +284,7 @@ export async function getAvailableItems(
       : [],
     canClaimTasks
       ? prisma.task.findMany({
-          where: baseWhere,
+          where: taskWhere,
           select: {
             uuid: true,
             title: true,

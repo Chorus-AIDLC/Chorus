@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { LayoutGrid, GitBranch, Plus, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePanelUrl } from "@/hooks/use-panel-url";
+import { ProposalFilter } from "@/components/proposal-filter";
 import { KanbanBoard } from "./kanban-board";
 import { DagView } from "./dag-view";
 import { TaskDetailPanel } from "./task-detail-panel";
@@ -78,10 +80,19 @@ const priorityColors: Record<string, string> = {
 export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, initialSelectedTaskUuid }: TaskViewToggleProps) {
   const t = useTranslations();
   const isMobile = useIsMobile();
+  const searchParams = useSearchParams();
   const [view, setView] = useState<"kanban" | "dag" | "list">("kanban");
 
   const basePath = `/projects/${projectUuid}/tasks`;
   const { selectedId: selectedTaskUuid, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedTaskUuid);
+
+  // Parse proposalUuids from URL for filtering
+  const proposalUuidFilter = useMemo(() => {
+    const param = searchParams.get("proposalUuids");
+    if (!param) return null;
+    const uuids = param.split(",").filter(Boolean);
+    return uuids.length > 0 ? new Set(uuids) : null;
+  }, [searchParams]);
 
   // Switch to list view on mobile after hydration
   useEffect(() => {
@@ -102,14 +113,25 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
     setDagRefreshKey(prev => prev + 1);
   }, []);
 
+  // Apply both proposal filter and status filter
+  const proposalFilteredTasks = useMemo(() => {
+    if (!proposalUuidFilter) return initialTasks;
+    return initialTasks.filter(task => task.proposalUuid && proposalUuidFilter.has(task.proposalUuid));
+  }, [initialTasks, proposalUuidFilter]);
+
   const filteredTasks = useMemo(() => {
     const filter = statusFilters.find(f => f.id === activeFilter);
-    if (!filter || filter.statuses.length === 0) return initialTasks;
-    return initialTasks.filter(task => filter.statuses.includes(task.status));
-  }, [initialTasks, activeFilter]);
+    if (!filter || filter.statuses.length === 0) return proposalFilteredTasks;
+    return proposalFilteredTasks.filter(task => filter.statuses.includes(task.status));
+  }, [proposalFilteredTasks, activeFilter]);
 
   return (
     <>
+      {/* Proposal Filter */}
+      <div className="mb-4 overflow-x-auto">
+        <ProposalFilter projectUuid={projectUuid} />
+      </div>
+
       {/* Toolbar: View Toggle + New Task */}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-1 rounded-lg bg-[#F5F2EC] p-1 w-fit">
@@ -178,8 +200,8 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
           <div className="mb-4 flex gap-1 overflow-x-auto border-b border-[#E5E0D8] pb-2">
             {statusFilters.map((filter) => {
               const count = filter.statuses.length === 0
-                ? initialTasks.length
-                : initialTasks.filter(task => filter.statuses.includes(task.status)).length;
+                ? proposalFilteredTasks.length
+                : proposalFilteredTasks.filter(task => filter.statuses.includes(task.status)).length;
               return (
                 <Button
                   key={filter.id}
@@ -261,7 +283,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
       ) : view === "kanban" ? (
         <KanbanBoard
           projectUuid={projectUuid}
-          initialTasks={initialTasks}
+          initialTasks={proposalFilteredTasks}
           currentUserUuid={currentUserUuid}
           selectedTaskUuid={selectedTaskUuid}
           onTaskSelect={openPanel}

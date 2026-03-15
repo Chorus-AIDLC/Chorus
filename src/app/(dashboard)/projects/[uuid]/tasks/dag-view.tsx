@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -17,6 +17,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 import { useTranslations } from "next-intl";
+import { useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
 import { getProjectDependenciesAction } from "./actions";
@@ -68,6 +69,7 @@ interface TaskNodeData {
   title: string;
   status: string;
   priority: string;
+  proposalUuid: string | null;
   [key: string]: unknown;
 }
 
@@ -149,25 +151,48 @@ const defaultEdgeStyle = {
 
 export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps) {
   const t = useTranslations();
+  const searchParams = useSearchParams();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<TaskNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Parse proposalUuids from URL search params
+  const proposalUuids = useMemo(() => {
+    const param = searchParams.get("proposalUuids");
+    if (!param) return null;
+    const uuids = param.split(",").filter(Boolean);
+    return uuids.length > 0 ? new Set(uuids) : null;
+  }, [searchParams]);
+
   const loadDag = useCallback(async () => {
     setIsLoading(true);
     const data = await getProjectDependenciesAction(projectUuid);
 
-    const rawNodes: Node<TaskNodeData>[] = data.nodes.map((n) => ({
+    let filteredNodes = data.nodes;
+    let filteredEdgeData = data.edges;
+
+    // Filter by proposalUuids if set
+    if (proposalUuids) {
+      filteredNodes = data.nodes.filter(
+        (n) => n.proposalUuid !== null && proposalUuids.has(n.proposalUuid)
+      );
+      const visibleNodeIds = new Set(filteredNodes.map((n) => n.uuid));
+      filteredEdgeData = data.edges.filter(
+        (e) => visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
+      );
+    }
+
+    const rawNodes: Node<TaskNodeData>[] = filteredNodes.map((n) => ({
       id: n.uuid,
       type: "taskNode",
       position: { x: 0, y: 0 },
-      data: { title: n.title, status: n.status, priority: n.priority },
+      data: { title: n.title, status: n.status, priority: n.priority, proposalUuid: n.proposalUuid },
     }));
 
     // edges: from = taskUuid (depends on), to = dependsOnUuid
     // In visualization: dependsOnUuid -> taskUuid (arrow from dependency to dependent)
-    const rawEdges: Edge[] = data.edges.map((e, i) => ({
+    const rawEdges: Edge[] = filteredEdgeData.map((e, i) => ({
       id: `e-${i}`,
       source: e.to,    // dependsOnUuid (the upstream task)
       target: e.from,   // taskUuid (the task that depends on it)
@@ -178,7 +203,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
     setIsLoading(false);
-  }, [projectUuid, setNodes, setEdges]);
+  }, [projectUuid, proposalUuids, setNodes, setEdges]);
 
   useEffect(() => {
     loadDag();

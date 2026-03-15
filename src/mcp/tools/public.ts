@@ -215,11 +215,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         projectUuid: z.string().describe("Project UUID"),
         status: z.string().optional().describe("Filter by status: open, assigned, in_progress, to_verify, done, closed"),
         priority: z.string().optional().describe("Filter by priority: low, medium, high"),
+        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
       }),
     },
-    async ({ projectUuid, status, priority, page = 1, pageSize = 20 }) => {
+    async ({ projectUuid, status, priority, proposalUuids, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -234,6 +235,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         take: pageSize,
         status,
         priority,
+        proposalUuids,
       });
 
       return {
@@ -461,9 +463,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get Tasks available to claim in a project (status=open)",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
+        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
       }),
     },
-    async ({ projectUuid }) => {
+    async ({ projectUuid, proposalUuids }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -474,7 +477,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         auth.companyUuid,
         projectUuid,
         false,
-        true
+        true,
+        proposalUuids
       );
 
       return {
@@ -531,9 +535,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/to_verify). Useful for discovering what work can begin next after a task completes.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
+        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
       }),
     },
-    async ({ projectUuid }) => {
+    async ({ projectUuid, proposalUuids }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -543,6 +548,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       const { tasks, total } = await taskService.getUnblockedTasks({
         companyUuid: auth.companyUuid,
         projectUuid,
+        proposalUuids,
       });
 
       return {
