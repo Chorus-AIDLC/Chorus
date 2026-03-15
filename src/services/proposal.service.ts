@@ -60,8 +60,8 @@ export interface TaskDraft {
   description?: string;
   storyPoints?: number;
   priority?: string;
-  acceptanceCriteria?: string;  // acceptance criteria (legacy Markdown)
-  acceptanceCriteriaItems?: AcceptanceCriteriaItem[];  // structured acceptance criteria items
+  acceptanceCriteria?: string;  // legacy Markdown (read-only, kept for backward-compatible viewing of old data)
+  acceptanceCriteriaItems?: AcceptanceCriteriaItem[];  // structured acceptance criteria items (primary format)
   dependsOnDraftUuids?: string[];  // list of dependent taskDraft UUIDs
 }
 
@@ -270,15 +270,13 @@ export async function validateProposal(
     }
   }
 
-  // E-AC: Every task draft must have acceptance criteria (structured items or legacy Markdown)
+  // E-AC: Every task draft must have structured acceptance criteria items
   for (const draft of taskDrafts) {
-    const hasLegacy = draft.acceptanceCriteria && draft.acceptanceCriteria.trim().length > 0;
-    const hasStructured = draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0;
-    if (!hasLegacy && !hasStructured) {
+    if (!draft.acceptanceCriteriaItems || draft.acceptanceCriteriaItems.length === 0) {
       issues.push({
         id: "E-AC",
         level: "error",
-        message: `Task draft "${draft.title}" is missing acceptance criteria`,
+        message: `Task draft "${draft.title}" is missing acceptance criteria (structured items required)`,
         field: draft.title,
       });
     }

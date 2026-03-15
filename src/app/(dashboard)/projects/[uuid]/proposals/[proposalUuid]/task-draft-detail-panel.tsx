@@ -100,9 +100,6 @@ export function TaskDraftDetailPanel({
   const [editStoryPoints, setEditStoryPoints] = useState(
     taskDraft?.storyPoints?.toString() || ""
   );
-  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState(
-    taskDraft?.acceptanceCriteria || ""
-  );
   const [editCriteriaItems, setEditCriteriaItems] = useState<AcceptanceCriteriaItem[]>(
     taskDraft?.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
   );
@@ -151,7 +148,6 @@ export function TaskDraftDetailPanel({
     setEditDescription(taskDraft.description || "");
     setEditPriority(taskDraft.priority || "medium");
     setEditStoryPoints(taskDraft.storyPoints?.toString() || "");
-    setEditAcceptanceCriteria(taskDraft.acceptanceCriteria || "");
     setEditCriteriaItems(
       taskDraft.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
     );
@@ -170,7 +166,6 @@ export function TaskDraftDetailPanel({
       setEditDescription(taskDraft.description || "");
       setEditPriority(taskDraft.priority || "medium");
       setEditStoryPoints(taskDraft.storyPoints?.toString() || "");
-      setEditAcceptanceCriteria(taskDraft.acceptanceCriteria || "");
       setEditCriteriaItems(
         taskDraft.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
       );
@@ -194,7 +189,6 @@ export function TaskDraftDetailPanel({
         description: editDescription.trim() || undefined,
         priority: editPriority,
         storyPoints: editStoryPoints ? parseFloat(editStoryPoints) : undefined,
-        acceptanceCriteria: editAcceptanceCriteria.trim() || undefined,
         acceptanceCriteriaItems: validCriteriaItems.length > 0
           ? validCriteriaItems.map((item) => ({ description: item.description.trim(), required: item.required ?? true }))
           : undefined,
@@ -419,20 +413,6 @@ export function TaskDraftDetailPanel({
             className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52]"
           />
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="edit-acceptance" className="text-[13px] font-medium text-[#2C2C2C]">
-          {t("proposals.taskAcceptanceCriteria")}
-        </Label>
-        <Textarea
-          id="edit-acceptance"
-          value={editAcceptanceCriteria}
-          onChange={(e) => setEditAcceptanceCriteria(e.target.value)}
-          rows={4}
-          className="border-[#E5E2DC] text-sm resize-none focus-visible:ring-[#C67A52] font-mono"
-          placeholder="- [ ] Criterion 1&#10;- [ ] Criterion 2"
-        />
       </div>
 
       {/* Acceptance Criteria Items (structured) */}

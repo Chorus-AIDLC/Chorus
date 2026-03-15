@@ -218,7 +218,6 @@ export async function addTaskDraftAction(
     description?: string;
     storyPoints?: number;
     priority?: string;
-    acceptanceCriteria?: string;
     acceptanceCriteriaItems?: Array<{ description: string; required?: boolean }>;
     dependsOnDraftUuids?: string[];
   }
@@ -282,7 +281,6 @@ export async function updateTaskDraftAction(
     description?: string;
     storyPoints?: number;
     priority?: string;
-    acceptanceCriteria?: string;
     acceptanceCriteriaItems?: Array<{ description: string; required?: boolean }>;
     dependsOnDraftUuids?: string[];
   }
