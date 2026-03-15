@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.1] - 2026-03-15
+
+### Added
+- **Proposal-based Task Filtering**: Filter tasks by source proposal across UI, API, MCP tools, and plugins. (#34)
+- **Idea Reuse Across Proposals**: An Idea can now be linked to multiple Proposals, enabling iterative refinement. (#29)
+- **Delete Proposal Button**: Added frontend button to delete proposals directly from the UI. (#27)
+- **Simplified Proposal MCP**: Empty shell proposal creation + relaxed E1 validation for faster PM workflows. (#25)
+- **PR Workflow Skill**: New `pr-workflow` skill for branch/PR/CI/merge workflow automation. (#33)
+- **Unit Test Coverage**: Added Vitest test suite — Phase 1 (417 tests), Phase 2 (736 tests, 71.5%), Phase 3 (984 tests, 95.3%). (#21, #22, #23)
+- **Coverage Badge**: README now displays dynamic test coverage badge via shields.io. (#24)
+
+### Changed
+- **OpenClaw Plugin Config**: All config params are now optional with missing-config warnings instead of hard errors. (#31)
+
+### Fixed
+- **Legacy Acceptance Criteria**: Removed legacy markdown acceptance criteria from task draft editing. (#32)
+
+---
+
 ## [0.4.0] - 2026-03-12
 
 ### Added
