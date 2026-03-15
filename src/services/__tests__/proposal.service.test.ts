@@ -121,7 +121,7 @@ function validTaskDraft(overrides: Record<string, unknown> = {}) {
     description: "Implement feature",
     priority: "medium",
     storyPoints: 3,
-    acceptanceCriteria: "- [ ] Done",
+    acceptanceCriteriaItems: [{ description: "Done", required: true }],
     ...overrides,
   };
 }
@@ -670,7 +670,7 @@ describe("validateProposal", () => {
     expect(eac).toBeUndefined();
   });
 
-  it("E-AC: should pass when task draft has legacy acceptanceCriteria", async () => {
+  it("E-AC: should error when task draft has only legacy acceptanceCriteria (no structured items)", async () => {
     const proposal = dbProposal({
       documentDrafts: [validDocDraft()],
       taskDrafts: [
@@ -686,7 +686,8 @@ describe("validateProposal", () => {
 
     const result = await validateProposal(COMPANY_UUID, proposal.uuid);
     const eac = result.issues.find((i) => i.id === "E-AC");
-    expect(eac).toBeUndefined();
+    expect(eac).toBeDefined();
+    expect(eac!.level).toBe("error");
   });
 
   it("W1: should warn when no tech_design document draft", async () => {
@@ -1647,8 +1648,8 @@ describe("approveProposal - edge cases", () => {
       status: "pending",
       documentDrafts: [{ uuid: "doc-1", type: "prd", title: "PRD", content: LONG_CONTENT }],
       taskDrafts: [
-        { uuid: "task-1", title: "Task 1", description: "Task 1", acceptanceCriteria: "Criteria" },
-        { uuid: "task-2", title: "Task 2", description: "Task 2", acceptanceCriteria: "Criteria", dependsOnDraftUuids: ["task-1"] },
+        { uuid: "task-1", title: "Task 1", description: "Task 1", acceptanceCriteriaItems: [{ description: "Criteria", required: true }] },
+        { uuid: "task-2", title: "Task 2", description: "Task 2", acceptanceCriteriaItems: [{ description: "Criteria", required: true }], dependsOnDraftUuids: ["task-1"] },
       ],
     });
 
