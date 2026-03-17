@@ -8,7 +8,7 @@ const mockTransport = vi.hoisted(() => ({
 }));
 
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
-  WebStandardStreamableHTTPServerTransport: vi.fn().mockImplementation(function() {
+  WebStandardStreamableHTTPServerTransport: vi.fn(function() {
     return mockTransport;
   }),
 }));
