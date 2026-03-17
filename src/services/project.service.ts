@@ -93,6 +93,18 @@ export async function getProjectByUuid(companyUuid: string, uuid: string) {
   });
 }
 
+// Get project UUIDs by group UUID
+export async function getProjectUuidsByGroup(companyUuid: string, groupUuid: string): Promise<string[]> {
+  const projects = await prisma.project.findMany({
+    where: {
+      companyUuid,
+      groupUuid,
+    },
+    select: { uuid: true },
+  });
+  return projects.map((p) => p.uuid);
+}
+
 // Create project
 export async function createProject({ companyUuid, name, description, groupUuid }: ProjectCreateParams) {
   return prisma.project.create({

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "@/mcp/server";
 import { extractApiKey, validateApiKey } from "@/lib/api-key";
+import { getProjectUuidsByGroup } from "@/services/project.service";
 import type { AgentAuthContext } from "@/types/auth";
 
 // Store session transport instances with activity tracking
@@ -36,6 +37,9 @@ function cleanupExpiredSessions() {
 }
 
 // Start periodic cleanup
+// NOTE: This assumes a persistent Node.js process (not serverless/edge).
+// In serverless environments, cleanup would need to be handled differently
+// (e.g., via external scheduler or on-demand cleanup).
 setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS);
 
 // Update session activity and reset timeout
@@ -76,16 +80,8 @@ export async function POST(request: NextRequest) {
     const projectHeader = request.headers.get("x-chorus-project");
 
     if (projectGroupUuid) {
-      // Query all projects in the group
-      const { prisma } = await import("@/lib/prisma");
-      const projects = await prisma.project.findMany({
-        where: {
-          companyUuid: validation.agent.companyUuid,
-          groupUuid: projectGroupUuid,
-        },
-        select: { uuid: true },
-      });
-      projectUuids = projects.map((p) => p.uuid);
+      // Query all projects in the group via service layer
+      projectUuids = await getProjectUuidsByGroup(validation.agent.companyUuid, projectGroupUuid);
     } else if (projectHeader) {
       // Parse comma-separated project UUIDs
       projectUuids = projectHeader.split(",").map((s) => s.trim()).filter(Boolean);
