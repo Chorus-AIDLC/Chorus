@@ -225,64 +225,98 @@ cmd_mcp_tool() {
 
   local mcp_url="${CHORUS_URL}/api/mcp"
   local auth_header="Authorization: Bearer ${CHORUS_API_KEY}"
+  local max_retries=3
+  local retry_count=0
+  local session_id=""
+  local tool_response=""
 
-  # Step 1: Initialize MCP session
-  local init_payload
-  init_payload=$(cat <<JSONEOF
+  # Retry loop for auto-reconnection on 404 (session expired)
+  while [ $retry_count -le $max_retries ]; do
+    # Step 1: Initialize MCP session
+    local init_payload
+    init_payload=$(cat <<JSONEOF
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.1.1"}}}
 JSONEOF
 )
 
-  # Use a unique temp file for headers to avoid concurrent hooks overwriting each other
-  local headers_file
-  headers_file=$(mktemp "${STATE_DIR}/.mcp_headers.XXXXXX")
+    # Use a unique temp file for headers to avoid concurrent hooks overwriting each other
+    local headers_file
+    headers_file=$(mktemp "${STATE_DIR}/.mcp_headers.XXXXXX")
 
-  local init_response
-  init_response=$(curl -s -S -X POST \
-    -H "$auth_header" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -D "$headers_file" \
-    -d "$init_payload" \
-    "$mcp_url" 2>/dev/null) || { rm -f "$headers_file"; die "MCP initialize failed"; }
+    local init_response
+    init_response=$(curl -s -S -X POST \
+      -H "$auth_header" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json, text/event-stream" \
+      -D "$headers_file" \
+      -d "$init_payload" \
+      "$mcp_url" 2>/dev/null) || { rm -f "$headers_file"; die "MCP initialize failed"; }
 
-  # Extract session ID from response headers
-  local session_id
-  session_id=$(grep -i "^mcp-session-id:" "$headers_file" | tr -d '\r' | awk '{print $2}')
-  rm -f "$headers_file"
+    # Extract session ID from response headers
+    session_id=$(grep -i "^mcp-session-id:" "$headers_file" | tr -d '\r' | awk '{print $2}')
+    rm -f "$headers_file"
 
-  if [ -z "$session_id" ]; then
-    die "No MCP session ID returned"
-  fi
+    if [ -z "$session_id" ]; then
+      die "No MCP session ID returned"
+    fi
 
-  # Step 2: Send initialized notification
-  local notif_payload='{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  curl -s -S -X POST \
-    -H "$auth_header" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -H "mcp-session-id: $session_id" \
-    -d "$notif_payload" \
-    "$mcp_url" >/dev/null 2>&1 || true
+    # Step 2: Send initialized notification
+    local notif_payload='{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    curl -s -S -X POST \
+      -H "$auth_header" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json, text/event-stream" \
+      -H "mcp-session-id: $session_id" \
+      -d "$notif_payload" \
+      "$mcp_url" >/dev/null 2>&1 || true
 
-  # Step 3: Call the tool
-  local call_payload
-  call_payload=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$tool_name" "$arguments")
+    # Step 3: Call the tool
+    local call_payload
+    call_payload=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$tool_name" "$arguments")
 
-  local tool_response
-  tool_response=$(curl -s -S -X POST \
-    -H "$auth_header" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -H "mcp-session-id: $session_id" \
-    -d "$call_payload" \
-    "$mcp_url") || die "MCP tool call failed"
+    # Capture HTTP status code and response separately
+    local http_code
+    local response_file
+    response_file=$(mktemp "${STATE_DIR}/.mcp_response.XXXXXX")
+
+    http_code=$(curl -s -S -X POST \
+      -H "$auth_header" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json, text/event-stream" \
+      -H "mcp-session-id: $session_id" \
+      -d "$call_payload" \
+      -w "%{http_code}" \
+      -o "$response_file" \
+      "$mcp_url" 2>/dev/null) || http_code="000"
+
+    # Check if session expired (404)
+    if [ "$http_code" = "404" ]; then
+      retry_count=$((retry_count + 1))
+      rm -f "$response_file"
+
+      if [ $retry_count -le $max_retries ]; then
+        # Session expired - retry with new session
+        continue
+      else
+        die "MCP session expired after retry. Please reinitialize."
+      fi
+    fi
+
+    # Read the response
+    tool_response=$(cat "$response_file")
+    rm -f "$response_file"
+
+    # Break the retry loop - request succeeded
+    break
+  done
 
   # Step 4: Close session (best effort)
-  curl -s -S -X DELETE \
-    -H "$auth_header" \
-    -H "mcp-session-id: $session_id" \
-    "$mcp_url" >/dev/null 2>&1 || true
+  if [ -n "$session_id" ]; then
+    curl -s -S -X DELETE \
+      -H "$auth_header" \
+      -H "mcp-session-id: $session_id" \
+      "$mcp_url" >/dev/null 2>&1 || true
+  fi
 
   # Response may be SSE format (event: message\ndata: {...}) or plain JSON
   # Strip SSE framing to get the JSON payload
