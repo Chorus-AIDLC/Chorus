@@ -1,21 +1,28 @@
-# Chorus vs Plane: Comparative Analysis & Improvement Roadmap
+# Chorus vs Plane: Comparative Analysis & Agent-First Strategy
 
-> **Document Version**: 1.0
-> **Date**: 2026-02-19
-> **Purpose**: Analyze Plane's mature feature set against Chorus, identify gaps, and extract lessons for Chorus's evolution.
+> **Document Version**: 2.0
+> **Date**: 2026-03-15
+> **Purpose**: Deep comparison of Plane's mature PM feature set against Chorus's Agent-First architecture. Identify what to learn, what to skip, and how to build a lightweight yet powerful AI-human collaboration platform.
 
 ---
 
 ## 1. Executive Summary
 
-**Plane** is a mature, open-source (AGPL-3.0) project management platform built for human teams, comparable to Jira/Linear. It features a Django + React monorepo architecture with 30+ database models, real-time collaboration, rich integrations, and enterprise-grade deployment support.
+**Plane** is a mature, open-source (AGPL-3.0) project management platform built for human teams. With 86 Django models, 6 apps (web, admin, api, live, space, proxy), 15 shared packages, and a Turbo monorepo architecture, it is a full-featured Jira/Linear alternative.
 
-**Chorus** is an AI-first collaboration platform implementing AI-DLC methodology. Its core differentiator is treating AI Agents as first-class project participants through 59 MCP tools, session observability, and the "Reversed Conversation" paradigm.
+**Chorus** is an Agent-First collaboration platform implementing AI-DLC methodology. With 21 Prisma models, 79 MCP tools, and a single Next.js monolith, it is purpose-built for AI Agents as first-class project participants.
 
-**Key Findings:**
-- Chorus's **AI-first architecture** (MCP, sessions, agent roles) has no equivalent in Plane and represents genuine innovation
-- Plane's **project management maturity** (20+ features Chorus lacks) provides a clear roadmap for Chorus's evolution
-- The highest-impact gaps are: notification system, file management, custom views/filters, and labels/tags
+**Key Insight**: Plane and Chorus are solving fundamentally different problems. Plane optimizes for *humans managing work*. Chorus optimizes for *agents doing work, humans verifying*. The comparison is not "Chorus needs to catch up to Plane" but rather "what can Chorus selectively learn from Plane to serve its Agent-First mission better."
+
+**What Changed Since v1.0 (2026-02-19)**:
+- Chorus grew from 14 to 21 models: added Notification, NotificationPreference, Mention, ElaborationRound, ElaborationQuestion, AcceptanceCriterion, ProjectGroup
+- MCP tools grew from 59 to 79
+- Elaboration system (AI asks clarifying questions) fully implemented
+- Structured acceptance criteria on tasks
+- Task dependency validation on status transitions
+- Proposal-based task filtering
+- Project Groups for organizing projects
+- Plugin hooks for Claude Code agent team lifecycle
 
 ---
 
@@ -23,403 +30,397 @@
 
 | Dimension | Chorus | Plane |
 |-----------|--------|-------|
+| **Philosophy** | Agent-First: AI proposes, human verifies | Human-First: humans plan, optionally use AI assist |
 | **Backend** | Next.js 15 (API Routes) | Django 4.2 (REST Framework) |
 | **Frontend** | React 19 + Next.js App Router | React 19 + React Router v7 |
-| **Database** | PostgreSQL 16 + Prisma 7 | PostgreSQL 15 + Django ORM |
-| **State Management** | React Context | MobX |
-| **Real-time** | SSE (in-memory EventBus + `GET /api/events`) | WebSocket (dedicated live server) |
+| **Database** | PostgreSQL 16 + Prisma 7 (21 models) | PostgreSQL 15 + Django ORM (86 models) |
+| **State Management** | React Context | MobX (dedicated `shared-state` package) |
+| **Real-time** | SSE (in-memory EventBus + `GET /api/events`) | WebSocket (Hocuspocus live server) |
 | **Background Jobs** | None | Celery + RabbitMQ |
 | **Cache** | None | Redis |
-| **File Storage** | None | S3 / MinIO |
+| **File Storage** | None | S3 / MinIO (FileAsset model) |
 | **Search** | Basic SQL queries | Full-text + MongoDB analytics |
-| **Monorepo** | Single Next.js app | Turbo monorepo (6 apps, 14 packages) |
-| **Models** | 14 Prisma models | 30+ Django models |
-| **API Style** | REST + MCP (HTTP Streamable) | REST only |
-| **Auth** | OIDC + API Keys + SuperAdmin | OIDC + Email/Password + Magic Links + API Keys |
+| **Monorepo** | Single Next.js app + 1 plugin package | Turbo monorepo (6 apps, 15 packages) |
+| **API Style** | REST + MCP (79 tools, HTTP Streamable) | REST only |
+| **AI Integration** | MCP native, agents are first-class citizens | Bolted-on LLM text generation (GPT/Claude/Gemini) |
+| **Auth** | OIDC + API Keys (`cho_` prefix) + SuperAdmin | OIDC + Email/Password + Magic Links + API Keys |
 | **i18n** | next-intl (en, zh) | IntlMessageFormat (en, zh) |
-| **Deployment** | Docker Compose + AWS CDK | Docker Compose + K8s + Swarm + CLI + AIO |
-| **UI Library** | shadcn/ui (Radix) | shadcn/ui (Radix) |
+| **UI Library** | shadcn/ui (Radix) | Propel (custom design system, Storybook) |
+| **Deployment** | Docker Compose + AWS CDK | Docker Compose + K8s + Swarm + AIO |
+| **Soft Delete** | Hard delete | `deleted_at` + SoftDeletionManager on all models |
 
-### Architecture Takeaways
+### Architecture Complexity: 4x Difference
 
-**Plane's separation of concerns** is instructive. By splitting into dedicated services (API, Web, Admin, Live, Worker, Beat, Proxy), Plane achieves:
-- Independent scaling of each service
-- WebSocket server doesn't block API processing
-- Background jobs (email, notifications, analytics) don't impact request latency
-- Proxy handles file uploads and SSL termination
+Plane's 86 models vs Chorus's 21 models is a **4:1 ratio**. This is deliberate, not a gap. Plane needs models for:
+- Human collaboration primitives: reactions, subscribers, favorites, stickies, recent visits, user properties per context, onboarding state
+- Multi-tenant complexity: workspace-level + project-level scoping, member roles at both levels, member invites
+- Content richness: description_json + description_html + description_stripped + description_binary (4 formats per issue!)
+- Integration surface: GitHub sync, Slack sync, importers, exporters, webhooks with retry logs
 
-Chorus's monolithic Next.js approach is simpler to develop but will hit scaling walls as features grow. Chorus already has a **real-time event system** built on an in-memory EventBus + SSE (`src/lib/event-bus.ts` → `GET /api/events` → `RealtimeProvider` context), which pushes updates to the Kanban board, ideas list, proposals, and session widgets. The EventBus is designed for future Redis pub/sub upgrade when multi-instance deployment is needed. The lack of a background job system and caching layer are the most impactful remaining architectural gaps.
-
----
-
-## 3. Feature Gap Analysis
-
-### 3.1 Features Plane Has That Chorus Lacks
-
-#### P0 - Critical Gaps (Core PM functionality)
-
-| # | Feature | Plane's Implementation | Impact on Chorus |
-|---|---------|----------------------|-----------------|
-| 1 | **Notification System** | Full notification model with read/snooze/archive, email delivery, per-user preferences (property_change, state_change, comment, mention) | Agents and humans have no way to receive push updates. This is already identified as P0 in Chorus's own roadmap. |
-| 2 | **Labels/Tags** | Many-to-many Label model on Issues, with colors, project-scope, workspace-scope | Tasks/Ideas have no tagging system. Essential for filtering, categorization, and agent-based routing. |
-| 3 | **File Attachments** | FileAsset model with S3/MinIO storage, multiple entity types (issue, comment, page, user avatar, etc.), upload size limits | No file attachment capability. Agents cannot share screenshots, logs, or artifacts. |
-| 4 | **Custom Workflow States** | Per-project customizable states with state groups (Backlog, Unstarted, Started, Completed, Cancelled), colors, sequences | Chorus has hardcoded status enums. Cannot customize per-project workflows. |
-| 5 | **Sub-tasks / Parent-Child** | Issue parent_id field for hierarchical breakdown, unlimited nesting | Tasks are flat. Cannot decompose a task into sub-tasks. The DAG only models "depends on" relationships, not containment. |
-| 6 | **Search** | Full-text search across issues, pages, comments | No search functionality. As projects grow, finding specific items becomes difficult. |
-
-#### P1 - Important Gaps (Productivity features)
-
-| # | Feature | Plane's Implementation | Impact on Chorus |
-|---|---------|----------------------|-----------------|
-| 8 | **Cycles/Sprints** | Named time-boxed iterations with start/end dates, progress tracking, burn-down charts | Chorus has no iteration/sprint concept. Cannot plan fixed-duration work batches. May need an "AI Bolt" concept aligned with AI-DLC. |
-| 9 | **Custom Views & Filters** | Saved filter configurations with display preferences (group_by, order_by, layout), access control, locked views | Chorus only has fixed Kanban/DAG views. Cannot create custom filtered views. |
-| 10 | **Modules** | Feature/component grouping with lead, members, status, progress tracking | No grouping mechanism beyond Projects. Cannot organize tasks by feature/component. |
-| 11 | **Issue Relations** | Semantic linking (blocks, is blocked by, relates to, duplicates) | Only has TaskDependency (blocks/blocked_by). Missing "relates to" and "duplicates" relationships. |
-| 12 | **Rich Text Editor** | Prosemirror-based editor package with mentions, embeds, media support | Markdown-only. No rich text editing for documents or comments. |
-| 13 | **Intake/Triage** | Inbox system with pending/accepted/rejected/snoozed/duplicate status | No intake pipeline. External requests cannot be triaged before becoming formal Ideas. |
-| 14 | **Webhooks** | Event-driven webhook system with logging, retry, per-project subscriptions | No webhook support. External systems cannot react to Chorus events. |
-| 15 | **Background Jobs** | Celery + RabbitMQ for email sending, notifications, analytics, scheduled cleanup | No async processing. All operations are synchronous in request lifecycle. |
-
-#### P2 - Nice-to-Have Gaps (Polish features)
-
-| # | Feature | Plane's Implementation | Impact on Chorus |
-|---|---------|----------------------|-----------------|
-| 16 | **Reactions** | Emoji reactions on issues and comments | No reaction system. Minor but improves engagement. |
-| 17 | **Subscribers/Followers** | Subscribe to specific issues for updates | No follow mechanism. Users/agents cannot opt-in to specific item updates. |
-| 18 | **Favorites/Bookmarks** | Star/favorite any item for quick access | No bookmarking. Navigation relies on sidebar only. |
-| 19 | **Draft Issues** | Save work-in-progress before publishing | No draft state for Tasks/Ideas (Proposals have drafts but Tasks/Ideas don't). |
-| 20 | **Estimation Points** | Configurable estimation scales (Fibonacci, linear, custom) | Only storyPoints (integer). No configurable estimation system. |
-| 21 | **Import/Export** | Import from GitHub/Jira/Linear, CSV/PDF export | No import/export. Data migration is manual. |
-| 22 | **Analytics Dashboard** | Burn-down charts, velocity tracking, workload distribution, custom queries | No analytics. Cannot measure team/agent performance over time. |
-| 23 | **Audit Trail Versioning** | Full version history on issues with diff capability | Activity stream exists but no version diffing. |
-| 24 | **Bulk Operations** | Bulk update, archive, delete issues | No bulk operations. Each item must be modified individually. |
-| 25 | **User Onboarding** | Step-by-step onboarding flow with progress tracking | No onboarding. New users must figure out the platform independently. |
-| 26 | **Workspace-level Pages** | Global wiki pages not tied to a project | Documents are project-scoped only. No workspace-level knowledge base. |
-
-### 3.2 Features Chorus Has That Plane Lacks
-
-These are Chorus's core differentiators and should be preserved and strengthened:
-
-| # | Feature | Chorus's Implementation | Why Plane Can't Match This |
-|---|---------|------------------------|---------------------------|
-| 1 | **AI Agent as First-Class Citizen** | Agents with roles (PM, Developer, Admin), API Keys, polymorphic assignment | Plane treats all users as humans. No concept of agent identity or role-based tool access. |
-| 2 | **MCP Integration** | 59 MCP tools via HTTP Streamable Transport, role-based tool registration | No MCP support. Plane's API is designed for human-operated clients only. |
-| 3 | **AI-DLC Workflow** | Idea -> Proposal -> Document+Task materialization pipeline | Plane has no proposal/approval workflow. Issues are created directly. |
-| 4 | **Reversed Conversation** | AI proposes, human verifies (not human instructs, AI executes) | Plane follows traditional human-driven workflow. |
-| 5 | **Session Observability** | AgentSession model, task checkin/checkout, real-time worker badges on Kanban | No concept of agent sessions or real-time worker tracking. |
-| 6 | **Multi-Agent Swarm Mode** | Claude Code Plugin with auto-session lifecycle (SubagentStart/Stop hooks) | No multi-agent coordination. |
-| 7 | **Zero Context Injection** | Agents auto-receive persona, project context, task context on checkin | No context injection mechanism. |
-| 8 | **Proposal Materialization** | Drafts (documents + tasks) materialize into real entities on approval | No equivalent. Issues are created directly without a review gate. |
-| 9 | **SSE-based Real-time Event System** | In-memory EventBus → SSE endpoint (`GET /api/events`) → `RealtimeProvider` context with auto-reconnect, visibility-aware disconnect, 500ms debounce. Services (Task, Idea, Proposal, Session) emit events; Kanban, Ideas, Proposals, and PixelCanvas auto-refresh. Designed for future Redis pub/sub upgrade. | Plane uses a separate WebSocket server (`apps/live`), which is more powerful for collaborative editing but requires additional infrastructure. Chorus's SSE approach is simpler and works within the Next.js monolith. |
+Chorus intentionally avoids this complexity. Agents don't need emoji reactions, sticky notes, or onboarding wizards. The challenge is knowing *which* Plane features genuinely help agents work better.
 
 ---
 
-## 4. Detailed Recommendations
-
-### 4.1 Notification & Event System (P0)
-
-**What Plane does:**
-- `Notification` model with entity linking, read/snooze/archive states
-- `UserNotificationPreference` for per-user control
-- `EmailNotificationLog` for delivery tracking
-- Celery background task sends emails asynchronously
-- Real-time push via WebSocket
-
-**What Chorus should do:**
-1. Create a `Notification` model: `{ uuid, recipientType, recipientUuid, entityType, entityUuid, action, title, message, readAt, snoozedUntil, archivedAt }`
-2. Add `NotificationPreference` per user/agent: `{ stateChange, commentAdded, taskAssigned, proposalUpdated, ideaClaimed }`
-3. Leverage the existing EventBus (`src/lib/event-bus.ts`) — it already emits events from Task, Idea, Proposal, and Session services. Add a notification-specific listener that creates `Notification` records on relevant events.
-4. For agents: Deliver notifications via MCP tool (`chorus_get_notifications`) or via the existing SSE stream (with agent auth support added)
-5. For humans: Leverage existing SSE infrastructure (`GET /api/events` + `RealtimeProvider`) to push in-app notification badges + optional email
-
-**Chorus-specific enhancement:** Agent notifications should include context summaries (what changed + why it matters for the agent's current task), leveraging Zero Context Injection.
-
-### 4.2 Labels & Tags (P0)
-
-**What Plane does:**
-- `Label` model with name, color, parent_id (hierarchical), project_id
-- Many-to-many `IssueLabel` junction table
-- Labels used in filters, views, analytics
-
-**What Chorus should do:**
-1. Create `Label` model: `{ uuid, companyUuid, projectUuid, name, color, parentUuid }`
-2. Create `TaskLabel` and `IdeaLabel` junction tables
-3. Expose via MCP tools: `chorus_list_labels`, `chorus_add_label_to_task`
-4. Add label-based filtering to existing list APIs
-
-### 4.3 File Attachment System (P0)
-
-**What Plane does:**
-- `FileAsset` model with entity_type, entity_id, workspace linkage
-- S3/MinIO storage backend
-- Upload size validation middleware
-- Signed URL generation for downloads
-- Multiple asset types (attachment, avatar, cover, etc.)
-
-**What Chorus should do:**
-1. Add S3-compatible storage (AWS S3 or MinIO for self-hosted)
-2. Create `Attachment` model: `{ uuid, companyUuid, targetType, targetUuid, fileName, fileSize, mimeType, s3Key, uploadedBy }`
-3. API routes for upload/download with presigned URLs
-4. MCP tool: `chorus_upload_attachment`, `chorus_get_attachments`
-5. Agents can attach build logs, screenshots, code artifacts
-
-### 4.4 Real-time Updates — Enhance Existing SSE System (P1)
-
-**Current Chorus implementation (already working):**
-- **EventBus** (`src/lib/event-bus.ts`): In-memory `EventEmitter` singleton via `globalThis`, emits `RealtimeEvent` with `{ companyUuid, projectUuid, entityType, entityUuid, action }`
-- **SSE endpoint** (`GET /api/events`): Authenticated via cookie, filters by `companyUuid` (multi-tenancy) and optional `projectUuid`, 30s heartbeat
-- **RealtimeProvider** (`src/contexts/realtime-context.tsx`): Wraps browser `EventSource`, auto-reconnects on tab visibility change, 500ms debounce
-- **Consumers**: Kanban board, ideas list, proposal kanban, and pixel canvas widget all use `useRealtimeRefresh()` or `useRealtimeEvent()`
-- **Producers**: `task.service.ts` (6 emit points), `idea.service.ts` (5), `proposal.service.ts` (5), `session.service.ts` (3)
-
-**What Plane does differently:**
-- Separate WebSocket server for bidirectional real-time collaborative editing
-- Supports multiple users editing the same entity simultaneously
-
-**What Chorus should improve:**
-1. **Redis pub/sub upgrade**: The EventBus comment already notes this — when deploying multiple Next.js instances, replace the in-memory `EventEmitter` with Redis pub/sub. The SSE endpoint and client code stay unchanged.
-2. **Granular event data**: Currently SSE triggers a full `router.refresh()`. Consider sending entity payloads in SSE data so the client can do targeted state updates without a full page refresh.
-3. **Document/Activity coverage**: Add `eventBus.emitChange()` calls to `document.service.ts` and `comment.service.ts` (currently missing).
-4. **Agent SSE support**: The current SSE endpoint authenticates via cookie (designed for browser `EventSource`). Add Bearer token auth support so agents can also subscribe to real-time events.
-
-### 4.5 Background Job System (P1)
-
-**What Plane does:**
-- Celery with RabbitMQ as broker
-- Django Celery Beat for scheduled jobs
-- Workers for: email, notifications, analytics, imports, cleanups
-
-**What Chorus should do:**
-Given the Node.js/Next.js stack:
-1. Adopt **BullMQ** (Redis-backed queue for Node.js) as the job processor
-2. Job types: notification delivery, email sending, session expiry, analytics aggregation
-3. Run the worker as a separate process alongside the Next.js app
-4. Add Redis as a required infrastructure dependency
-
-### 4.6 Caching Layer (P1)
-
-**What Plane does:**
-- Django Redis cache for frequently accessed data
-- Cached querysets, user preferences, workspace settings
-
-**What Chorus should do:**
-1. Add Redis as cache backend
-2. Cache: project settings, agent personas, label lists, active sessions
-3. Invalidate on write through service layer
-4. Especially important for MCP endpoints (agents make frequent reads)
-
-### 4.7 Custom Views & Filters (P1)
-
-**What Plane does:**
-- `IssueView` model with query (JSON filter), display_filters, display_properties
-- Multiple layout types (list, board, calendar, spreadsheet, gantt)
-- Access control (private/public), lockable views
-
-**What Chorus should do:**
-1. Create `SavedView` model: `{ uuid, projectUuid, name, entityType, filters (JSON), displayConfig (JSON), isPublic, createdBy }`
-2. Support filters on: status, priority, assignee, label, date range
-3. Support layouts: kanban (existing), list, table, DAG (existing)
-4. Expose via API for both UI and MCP access
-
-### 4.8 Sub-tasks / Task Hierarchy (P1)
-
-**What Plane does:**
-- `parent_id` on Issue model for unlimited nesting
-- Child count aggregation
-- Parent context in views
-
-**What Chorus should do:**
-1. Add `parentUuid` field to `Task` model
-2. This is distinct from `TaskDependency` (which models "blocks/blocked by")
-3. A parent task auto-calculates progress from children
-4. MCP tools: `chorus_create_subtask`, `chorus_list_subtasks`
-5. DAG view should show both dependency and containment relationships
-
-### 4.9 Search (P1)
-
-**What Plane does:**
-- Full-text search endpoint
-- Search across issues, pages, comments
-- MongoDB for analytics queries
-
-**What Chorus should do:**
-1. Start with PostgreSQL full-text search (tsvector/tsquery) - no new infrastructure
-2. Create search index on: Task.title + Task.description, Idea.title + Idea.description, Document.title + Document.content
-3. API endpoint: `GET /api/search?q=keyword&type=task,idea,document`
-4. MCP tool: `chorus_search` for agents to find relevant items
-
-### 4.10 Sprints / AI Bolts (P2)
-
-**What Plane does:**
-- `Cycle` model with start/end dates, progress snapshots, burn-down data
-
-**What Chorus should consider:**
-The AI-DLC methodology uses "Bolts" (hours-to-days) instead of traditional Sprints (weeks). Chorus could implement:
-1. `Bolt` model: `{ uuid, projectUuid, name, startDate, endDate, goalDescription }`
-2. `BoltTask` junction: assign tasks to a Bolt
-3. Progress tracking: completed Agent Hours / total Agent Hours
-4. This aligns with AI-DLC's time-compressed iteration model
-
----
-
-## 5. Learning from Plane's Engineering Practices
-
-### 5.1 Soft Delete Pattern
-
-**Plane**: Uses `deleted_at` timestamp for soft deletes across all models. Data is never permanently lost on user action.
-
-**Chorus**: Uses hard deletes. If an admin deletes a task, it's gone permanently.
-
-**Recommendation**: Add `deletedAt` field to key models (Task, Idea, Document, Proposal). Filter out deleted items by default. Add "Trash" view for recovery.
-
-### 5.2 External Source Tracking
-
-**Plane**: Every major entity has `external_source` and `external_id` fields, enabling seamless import from other tools and bidirectional sync.
-
-**Chorus**: No external source tracking.
-
-**Recommendation**: Add `externalSource` and `externalId` to Task, Idea, and Document models. This prepares for future integrations (GitHub Issues sync, Jira import, etc.).
-
-### 5.3 User Properties per Context
-
-**Plane**: Stores per-user display preferences at each context level (project, cycle, module, view). Each user sees their own filter/sort/layout settings.
-
-**Chorus**: No per-user preferences. All users see the same view.
-
-**Recommendation**: Create `UserViewPreference` model: `{ userUuid, contextType, contextUuid, filters, sortBy, layout }`. Store Kanban column collapse state, DAG zoom level, etc.
-
-### 5.4 Sequence-based Ordering
-
-**Plane**: Uses float-based `sort_order` for manual drag-and-drop reordering across all list entities.
-
-**Chorus**: No manual ordering. Items sorted by creation date or status.
-
-**Recommendation**: Add `sortOrder` (Float) to Task, Idea, and other list entities. Implement fractional indexing for drag-and-drop support.
-
-### 5.5 Comprehensive Audit Trail
-
-**Plane**: `IssueActivity` logs every field change with old/new values. `IssueVersion` stores full snapshots.
-
-**Chorus**: `Activity` model logs actions but doesn't store old/new values.
-
-**Recommendation**: Extend Activity model to include `changes: JSON` field with `{ field, oldValue, newValue }[]`. This enables:
-- "What changed" diff views
-- Undo capability
-- Compliance audit requirements
-
-### 5.6 Rate Limiting & Throttling
-
-**Plane**: DRF throttle classes with configurable rates (30/min anon, 5/min asset upload).
-
-**Chorus**: No rate limiting. MCP endpoints and API routes are unthrottled.
-
-**Recommendation**: Add rate limiting middleware, especially for:
-- MCP endpoints (agents can be very chatty)
-- API key-based access
-- File upload endpoints (future)
-
-### 5.7 Request Logging & APM
-
-**Plane**: Custom middleware for request logging, API token auditing, Sentry error tracking, OpenTelemetry instrumentation.
-
-**Chorus**: No request logging or APM.
-
-**Recommendation**: Add structured request logging middleware. Log: endpoint, method, auth type, response time, status code. Essential for debugging agent behavior and performance optimization.
-
----
-
-## 6. Prioritized Implementation Roadmap
-
-### Phase 1: Foundation (Fills Critical Gaps)
-
-| Priority | Feature | Effort | Dependencies |
-|----------|---------|--------|-------------|
-| P0-1 | Notification System | High | Existing EventBus, (optional) Redis |
-| P0-2 | Labels/Tags | Low | None |
-| P0-3 | File Attachments | Medium | S3/MinIO |
-| P0-4 | Custom Workflow States | Medium | Schema migration |
-| P0-5 | Sub-tasks | Low | Schema migration |
-| P0-6 | Search (PostgreSQL FTS) | Medium | None |
-
-### Phase 2: Productivity
-
-| Priority | Feature | Effort | Dependencies |
-|----------|---------|--------|-------------|
-| P1-1 | Background Job System (BullMQ) | High | Redis |
-| P1-2 | Caching Layer (Redis) | Medium | Redis |
-| P1-3 | SSE Enhancements (Redis pub/sub, granular data, agent auth) | Medium | Redis |
-| P1-4 | Custom Views & Filters | Medium | Labels |
-| P1-5 | Rich Text Editor | High | None |
-| P1-6 | Webhooks | Medium | Existing EventBus |
-| P1-7 | Issue Relations (relates to, duplicates) | Low | None |
-| P1-8 | Intake/Triage | Medium | None |
-
-### Phase 3: Enterprise & Scale
-
-| Priority | Feature | Effort | Dependencies |
-|----------|---------|--------|-------------|
-| P2-1 | AI Bolts (Sprint equivalent) | Medium | None |
-| P2-2 | Analytics Dashboard | High | Background Jobs |
-| P2-3 | Import/Export | High | External Source Tracking |
-| P2-4 | Bulk Operations | Medium | None |
-| P2-5 | Soft Deletes | Medium | Schema migration |
-| P2-6 | Rate Limiting | Low | None |
-| P2-7 | Request Logging & APM | Medium | None |
-
-### Phase 4: Polish
-
-| Priority | Feature | Effort | Dependencies |
-|----------|---------|--------|-------------|
-| P3-1 | Reactions | Low | None |
-| P3-2 | Subscribers/Followers | Low | Notification System |
-| P3-3 | Favorites/Bookmarks | Low | None |
-| P3-4 | Draft Issues | Low | None |
-| P3-5 | Configurable Estimation | Low | None |
-| P3-6 | User Onboarding Flow | Medium | None |
-| P3-7 | Workspace-level Knowledge Base | Medium | None |
-
----
-
-## 7. Infrastructure Dependencies
-
-Several features share infrastructure dependencies. The recommended infrastructure evolution:
-
-```
-Current:  PostgreSQL + Next.js (monolith) + In-memory EventBus + SSE
-    |
-    v
-Phase 1:  + Redis (cache + job queue + EventBus pub/sub)
-          + S3/MinIO (file storage)
-    |
-    v
-Phase 2:  + BullMQ Worker (background jobs)
-          + EventBus upgrade to Redis pub/sub (multi-instance SSE)
-    |
-    v
-Phase 3:  + Full-text search index
-          + Analytics aggregation pipeline
+## 3. Plane's AI: Surface-Level Integration
+
+This is the most important finding. Plane's entire AI capability is **two REST endpoints**:
+
+```python
+# apps/api/plane/app/views/external/base.py
+class GPTIntegrationEndpoint(BaseAPIView):
+    def post(self, request, slug, project_id):
+        # Just sends text to OpenAI/Anthropic/Gemini and returns response
+        text, error = get_llm_response(task, prompt, api_key, model, provider)
+        return Response({"response": text})
 ```
 
-**Docker Compose update** (target state):
+- `POST /api/workspaces/{slug}/ai-assistant/` — Generic LLM prompt-response
+- `POST /api/workspaces/{slug}/rephrase-grammar/` — Text editing tasks
+
+That's it. No agent identity, no structured workflows, no MCP, no session observability, no context injection. Plane treats AI as a text transformation utility, not as a team member.
+
+**Chorus's 79 MCP tools** represent a fundamentally different paradigm:
+- Agents have identity (roles, personas, API keys)
+- Agents have workflow (claim tasks, report work, submit for verify)
+- Agents have observability (sessions, heartbeats, task checkin/checkout)
+- Agents have collaboration (comments, notifications, @mentions)
+- Agents have structure (elaboration questions, acceptance criteria, proposals)
+
+This is Chorus's moat. No amount of feature additions to Plane will close this gap because it requires rearchitecting from the data model up.
+
+---
+
+## 4. Feature Gap Analysis (Updated)
+
+### 4.1 Gaps Closed Since v1.0
+
+| Feature | Status | How |
+|---------|--------|-----|
+| Notification System | **Implemented** | `Notification` + `NotificationPreference` + `Mention` models, MCP tools `chorus_get_notifications`, auto-mark-read |
+| Elaboration System | **Implemented** | `ElaborationRound` + `ElaborationQuestion` models, PM tools for start/validate/skip elaboration |
+| Project Groups | **Implemented** | `ProjectGroup` model, admin tools for group CRUD, dashboard |
+| Structured Acceptance Criteria | **Implemented** | `AcceptanceCriterion` model, self-check workflow |
+| Task Dependency Validation | **Implemented** | Status transitions blocked when upstream dependencies incomplete |
+
+### 4.2 Remaining Gaps Worth Closing (Agent-Relevant)
+
+These are features that directly improve agent productivity or AI-human collaboration quality:
+
+| # | Feature | Why It Matters for Agents | Effort | Priority |
+|---|---------|--------------------------|--------|----------|
+| 1 | **Labels/Tags** | Agents need to categorize and filter work. Essential for routing tasks to specialized agents. | Low | P0 |
+| 2 | **Search** | Agents querying "find all tasks related to auth" is a core workflow. PostgreSQL FTS is sufficient. | Medium | P0 |
+| 3 | **Sub-tasks (parent_id)** | Agents naturally decompose work. A PM agent creates a parent task, developer agents create sub-tasks. | Low | P0 |
+| 4 | **File Attachments** | Agents need to share artifacts — build logs, screenshots, generated code. | Medium | P1 |
+| 5 | **Webhooks** | External systems (CI/CD, GitHub) need to push events into Chorus. | Medium | P1 |
+| 6 | **Issue Relations** | "relates_to" and "duplicates" help agents understand context. Plane has 6 relation types. | Low | P1 |
+| 7 | **Background Jobs (BullMQ)** | Notification delivery, session cleanup, analytics. Required for scale. | High | P1 |
+| 8 | **Soft Deletes** | Safety net. Agents sometimes make mistakes. `deletedAt` allows recovery. | Medium | P2 |
+
+### 4.3 Gaps to Deliberately NOT Close
+
+These Plane features are human-centric and would add complexity without serving the Agent-First mission:
+
+| Feature | Plane's Implementation | Why Chorus Should Skip It |
+|---------|----------------------|--------------------------|
+| **Cycles/Sprints** | Time-boxed iterations with burn-down charts | Agents don't work in 2-week sprints. AI-DLC uses continuous flow. |
+| **Modules** | Feature grouping with lead/members/progress | Project Groups + Proposals already provide sufficient structure. |
+| **Custom Workflow States** | Per-project configurable state groups with colors | Agents need simple, predictable states (open/assigned/in_progress/completed). Custom states add cognitive load for AI. |
+| **Rich Text Editor** | Prosemirror with mentions, embeds, media | Agents communicate in Markdown. Rich text adds overhead without value for MCP. |
+| **Reactions/Emoji** | Emoji reactions on issues and comments | Zero value for agent workflows. |
+| **Stickies** | Sticky notes on workspace home | Human-only UX feature. |
+| **Favorites/Bookmarks** | User favorites for quick access | Agents don't browse — they query via MCP tools. |
+| **Onboarding Flow** | Step-by-step human onboarding | Agent onboarding is via API key + persona config. |
+| **Gantt Charts** | Timeline visualization with drag-and-drop | Agents don't look at Gantt charts. DAG view is more useful. |
+| **Estimation Points** | Fibonacci/linear estimation scales | Estimation is a human ritual. Agents don't estimate — they do. |
+| **Calendar View** | Calendar layout for date-based planning | Agents work on priority/dependency order, not calendar dates. |
+| **User Properties per Context** | Per-user display preferences at each scope | Agents don't have display preferences. |
+
+### 4.4 Chorus Advantages Plane Cannot Replicate
+
+| # | Feature | Chorus | Plane Equivalent |
+|---|---------|--------|-----------------|
+| 1 | **79 MCP Tools** | Role-based tool registration, structured schemas | 2 text generation endpoints |
+| 2 | **AI-DLC Pipeline** | Idea -> Elaboration -> Proposal -> Tasks materialization | Issues created directly, no review gate |
+| 3 | **Elaboration System** | AI generates clarifying questions, human answers, AI refines | Nothing |
+| 4 | **Agent Sessions** | Swarm mode, heartbeats, task checkin/checkout, real-time worker badges | Nothing |
+| 5 | **Zero Context Injection** | Agents auto-receive persona + project context on checkin | Nothing |
+| 6 | **Acceptance Criteria Workflow** | Structured criteria with self-check + human verification | Nothing (unstructured description only) |
+| 7 | **Proposal Materialization** | Draft documents + tasks reviewed as a package, then materialized | Nothing |
+| 8 | **Plugin Lifecycle Hooks** | SubagentStart/Stop auto-manage sessions and context | Nothing |
+| 9 | **Reversed Conversation** | AI proposes, human approves/rejects | Human instructs, AI assists |
+| 10 | **Multi-Agent Coordination** | PM agent creates proposals, developer agents claim tasks | Single-user AI assist |
+
+---
+
+## 5. Agent-First Strategy: Learning from Plane the Right Way
+
+### 5.1 Principle: Lightweight Multiplier, Not Feature Parity
+
+Plane has 86 models because it serves humans who need visual customization, personal preferences, and social features. Chorus should stay at **~30 models** by asking one question for every potential feature: **"Does this help an agent do better work?"**
+
+The target is not "Plane minus AI features" but "the minimal PM surface that maximizes agent productivity."
+
+### 5.2 What to Adopt from Plane (Adapted for Agents)
+
+#### A. Labels — Agent Routing Tags
+
+Plane uses labels for human categorization. Chorus should use labels as **agent routing metadata**.
+
+```
+Example: A PM agent creates tasks with labels like:
+  - "frontend", "backend", "infra" → routes to specialized agents
+  - "needs-human-review" → flags for human attention
+  - "blocked-external" → signals dependency on non-agent work
+```
+
+Implementation: `Label` model + `TaskLabel` junction. Expose via MCP: `chorus_add_label`, `chorus_list_tasks` with label filter. **Skip**: label colors, hierarchical labels (agent routing doesn't need visual hierarchy).
+
+#### B. Search — Agent Memory
+
+Plane uses search for human navigation. Chorus should use search as **agent contextual memory**.
+
+```
+Example: A developer agent working on "auth" can search:
+  chorus_search("authentication bug") → finds related tasks, past proposals, documents
+```
+
+Implementation: PostgreSQL full-text search (tsvector) on Task, Idea, Document, Comment. MCP tool: `chorus_search`. **Skip**: MongoDB analytics, faceted search (overkill for current scale).
+
+#### C. Sub-tasks — Agent Work Decomposition
+
+Plane uses parent/child for human work breakdown. Chorus should use it for **agent-driven decomposition**.
+
+```
+Example: PM agent creates parent task "Implement user auth"
+  Developer agents create sub-tasks:
+  - "Set up JWT middleware"
+  - "Create login endpoint"
+  - "Add token refresh logic"
+  Parent auto-tracks completion % from children.
+```
+
+Implementation: Add `parentUuid` to Task model. MCP tools: `chorus_create_subtask`, `chorus_list_subtasks`. **Skip**: unlimited nesting depth (agents work best with 1 level of decomposition).
+
+#### D. Soft Deletes — Agent Safety Net
+
+Plane uses soft deletes for data recovery. Chorus should use it as **agent mistake protection**.
+
+```
+Example: An agent accidentally closes the wrong task.
+  With soft delete: admin can recover in seconds.
+  Without: data is gone.
+```
+
+Implementation: Add `deletedAt` to Task, Idea, Document, Proposal. MCP tool: `chorus_admin_restore_task`. **Skip**: per-user trash view, scheduled permanent deletion (keep it simple).
+
+#### E. External Source Tracking — Integration Bridge
+
+Plane tracks `external_source` + `external_id` on all entities. Chorus should adopt this for **bidirectional sync with developer tools**.
+
+```
+Example: A task created from a GitHub issue:
+  externalSource: "github"
+  externalId: "makeplane/plane#1234"
+  → Agents can reference the original issue
+  → Status sync becomes possible
+```
+
+Implementation: Add `externalSource` + `externalId` to Task, Idea. **Skip**: full import/export system (premature for current stage).
+
+#### F. Webhooks — Outbound Event Bridge
+
+Plane fires webhooks on entity changes. Chorus should adopt this for **CI/CD integration and external agent triggers**.
+
+```
+Example: Task status → "completed" fires webhook to:
+  - GitHub: close linked issue
+  - CI/CD: trigger deployment
+  - Slack: notify human stakeholders
+```
+
+Implementation: `Webhook` model + `WebhookLog`. Leverage existing EventBus — add webhook delivery as a listener. **Skip**: per-event-type subscription granularity in v1 (fire all events, let consumers filter).
+
+### 5.3 Unique Agent-First Features to Build (No Plane Equivalent)
+
+These features have no parallel in Plane because they serve agent-specific needs:
+
+#### A. Agent Skill Registry
+
+```
+Problem: How does a PM agent know which developer agent to assign a "React frontend" task to?
+Solution: Agents declare skills (tags) on registration. Task assignment considers skill matching.
+
+Model: AgentSkill { agentUuid, skill, proficiency }
+MCP: chorus_list_agents_by_skill("react", "typescript")
+```
+
+#### B. Context Window Budget Tracking
+
+```
+Problem: Agents have finite context windows. Long tasks drain context and quality degrades.
+Solution: Track context consumption per session. Warn agents when approaching limits.
+
+Model: Session.contextTokensUsed (updated via heartbeat)
+MCP: chorus_session_heartbeat({ contextTokensUsed: 45000 })
+UI: Show context usage % on worker badges
+```
+
+#### C. Agent Handoff Protocol
+
+```
+Problem: When an agent's session ends mid-task (context exhaustion, error), work is lost.
+Solution: Structured handoff — agent writes a "handoff note" before stopping. Next agent picks up.
+
+Model: Task.handoffNote (JSON: { completedSteps, nextSteps, blockers, artifacts })
+MCP: chorus_handoff_task({ taskUuid, note: { ... } })
+```
+
+#### D. Automated Quality Gates
+
+```
+Problem: Human verification is a bottleneck. Agents submit work, humans take hours to verify.
+Solution: Automated pre-verification checks before human review.
+
+Flow: Agent marks task complete → System runs acceptance criteria self-check →
+      If all pass: auto-verify (or flag for quick human approval)
+      If any fail: bounce back to agent with specific failures
+```
+
+#### E. Agent Performance Analytics
+
+```
+Problem: Which agents are most effective? Which task types take longest?
+Solution: Track agent-level metrics derived from session and activity data.
+
+Metrics:
+  - Tasks completed per session
+  - Average time from claim to completion
+  - Acceptance criteria pass rate on first submission
+  - Human revision rate (how often work is bounced back)
+```
+
+#### F. Proposal Templates
+
+```
+Problem: PM agents create similar proposals repeatedly for common patterns.
+Solution: Reusable proposal templates with pre-defined task structures.
+
+Model: ProposalTemplate { name, documentDrafts (JSON), taskDrafts (JSON) }
+MCP: chorus_create_proposal_from_template(templateUuid, overrides)
+```
+
+### 5.4 The "30 Model" Target Architecture
+
+Current (21 models) + recommended additions to reach the sweet spot:
+
+```
+Existing (21):
+  Company, User, Agent, ApiKey
+  ProjectGroup, Project
+  Idea, ElaborationRound, ElaborationQuestion
+  Proposal, Document, Task, TaskDependency, AcceptanceCriterion
+  Comment, Activity, Notification, NotificationPreference, Mention
+  AgentSession, SessionTaskCheckin
+
+Add (9):
+  Label, TaskLabel, IdeaLabel                    — Agent routing tags
+  Webhook, WebhookLog                            — Outbound events
+  AgentSkill                                     — Skill registry
+  ProposalTemplate                               — Reusable blueprints
+  TaskRelation                                   — relates_to, duplicates
+  SearchIndex                                    — FTS materialized view
+
+Total: 30 models
+```
+
+Compare: Plane's 86 models. Chorus achieves **comparable agent utility at 1/3 the complexity**.
+
+---
+
+## 6. Infrastructure Evolution
+
+```
+Current:   PostgreSQL + Next.js (monolith) + In-memory EventBus + SSE
+    |
+    v  Phase 1 (agent productivity)
+    +  Labels, Sub-tasks, Search (FTS), Soft Deletes
+    +  External source tracking on Task/Idea
+    |
+    v  Phase 2 (integration)
+    +  Redis (cache + EventBus pub/sub for multi-instance)
+    +  S3/MinIO (agent artifacts)
+    +  Webhooks (outbound events via EventBus listener)
+    |
+    v  Phase 3 (scale)
+    +  BullMQ Worker (notification delivery, webhook retry, session cleanup)
+    +  Agent Skill Registry + intelligent task routing
+    +  Performance analytics dashboard
+```
+
+Docker Compose target:
 ```yaml
 services:
-  app:        # Next.js (API + Web)
+  app:        # Next.js (API + Web + MCP)
   worker:     # BullMQ job processor
   db:         # PostgreSQL
-  redis:      # Cache + Queue
-  minio:      # File storage (self-hosted)
+  redis:      # Cache + Queue + EventBus pub/sub
+  minio:      # File storage (optional, for agent artifacts)
 ```
+
+---
+
+## 7. Competitive Positioning
+
+### 7.1 Plane's Trajectory
+
+Plane is moving toward being a "better Jira" — more features, more customization, more integrations. Their AI additions will likely follow the "AI copilot for PM" pattern: auto-triage, smart suggestions, AI-generated summaries. This is AI-as-assistant, not AI-as-participant.
+
+### 7.2 Chorus's Trajectory
+
+Chorus should move toward being the **"operating system for AI agent teams"** — not a PM tool that supports agents, but an agent collaboration platform that humans can observe and guide.
+
+The positioning matrix:
+
+```
+                    Human-Operated              Agent-Operated
+                    ────────────────────────────────────────────
+Feature-Rich    │   Jira, Plane, Linear    │   (nobody yet)   │
+                │                          │                   │
+Lightweight     │   Trello, Notion         │   Chorus          │
+                    ────────────────────────────────────────────
+```
+
+Chorus's strategic target is the **Agent-Operated + Lightweight** quadrant. Stay lightweight. Stay agent-first. Don't drift toward the Feature-Rich Human-Operated quadrant where Plane lives.
+
+### 7.3 Risks of Over-Learning from Plane
+
+1. **Feature bloat**: Every Plane feature adds UI complexity that slows human verification
+2. **Human-centric bias**: Optimizing for human browsing experience at the cost of MCP efficiency
+3. **Architecture creep**: Moving toward microservices before the scale demands it
+4. **Lost identity**: Becoming "Plane + agents" instead of "agent platform + human oversight"
+
+### 7.4 The Litmus Test
+
+Before adding any feature, ask:
+
+1. **Does an agent need this?** If only humans benefit, deprioritize.
+2. **Does this need a new model?** Prefer extending existing models over adding new ones.
+3. **Can this be an MCP tool?** If yes, the feature serves agents. If it's UI-only, question it.
+4. **Does this simplify the agent's workflow?** Features should reduce agent decisions, not add them.
 
 ---
 
 ## 8. Conclusion
 
-Chorus and Plane serve different niches but overlap in project management fundamentals. Plane's maturity in traditional PM features (30+ models, real-time collaboration, rich integrations) provides a clear reference for Chorus's evolution. However, **Chorus's AI-first architecture is its moat** — no amount of Plane development will replicate the MCP integration, session observability, and AI-DLC workflow that Chorus provides natively.
+Plane is an excellent reference for PM feature design — its 86-model architecture represents years of iteration on what humans need from project management tools. But Chorus is not building a PM tool. Chorus is building an **agent collaboration platform** that happens to have PM-like features for human observability.
 
-The recommended strategy:
-1. **Protect the moat**: Continue strengthening AI-agent capabilities (notifications for agents, richer context injection, swarm observability)
-2. **Close critical gaps**: Notifications, labels, file attachments — these are table-stakes for any collaboration tool (real-time updates are already working via SSE)
-3. **Adopt selectively**: Not every Plane feature is needed. Prioritize features that enhance the AI-human collaboration loop
-4. **Evolve the architecture**: Redis (to scale existing EventBus to multi-instance + caching + BullMQ) + S3 are the key infrastructure additions that unlock the most features
+The updated strategy:
 
-The goal is not to become Plane, but to build the best AI-human collaboration platform — learning from Plane's years of iteration while staying true to Chorus's unique AI-DLC vision.
+1. **Protect the moat**: 79 MCP tools, AI-DLC pipeline, elaboration system, agent sessions, proposal materialization — these are unreplicable advantages
+2. **Selectively adopt**: Labels, search, sub-tasks, soft deletes, webhooks — the ~9 models that genuinely help agents work better
+3. **Invent new**: Agent skills, handoff protocols, context budgets, quality gates — features that only make sense in an agent-first world
+4. **Stay lightweight**: Target 30 models (vs Plane's 86). Every model must justify its existence through agent utility
+5. **Resist drift**: Don't become "Plane for agents." Be "the OS for AI agent teams that humans can trust"
+
+The goal is not to catch up to Plane. The goal is to define a category that Plane cannot enter without rebuilding from scratch.
