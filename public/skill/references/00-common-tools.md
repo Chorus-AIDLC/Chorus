@@ -51,6 +51,23 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
 
 ---
 
+## Session Lifecycle
+
+MCP sessions implement **sliding window expiration** — sessions expire after 30 minutes of **inactivity**, not from creation time.
+
+**Key points**:
+- Each request automatically renews the session (updates `lastActivity`)
+- Active agents can work indefinitely without timeout
+- Inactive sessions are cleaned up every 5 minutes
+- Server restart clears all sessions (clients should auto-reconnect)
+
+**When you see "Session not found" (HTTP 404)**:
+- The session expired due to inactivity or server restart
+- Your MCP client should automatically reinitialize
+- This is transparent in clients with auto-reconnect support
+
+---
+
 ## Project Groups
 
 Projects can be organized into **Project Groups** — a single-level grouping for categorizing related projects together (e.g., all projects for the same product). A project belongs to at most one group, or can be ungrouped.

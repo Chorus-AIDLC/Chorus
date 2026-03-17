@@ -53,6 +53,11 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
 
 Sessions track which agent is working on which task, powering UI features (Kanban worker badges, Task Detail active workers, Settings page). The Chorus Plugin **fully automates** session lifecycle — sessions are created, heartbeated, and closed automatically. See [05-session-sub-agent.md](05-session-sub-agent.md) for details.
 
+**MCP Session Lifecycle** (connection level):
+- Sessions expire after 30 minutes of **inactivity** (sliding window)
+- Each MCP request automatically renews the session
+- Server restart clears all sessions (plugin auto-reconnects)
+
 **What you do manually (the plugin handles everything else):**
 
 | Tool | Purpose |

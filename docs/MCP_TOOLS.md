@@ -84,6 +84,50 @@ The following tools respect project filtering:
 
 ---
 
+## Session Management
+
+MCP sessions implement **sliding window expiration** with activity tracking to balance resource efficiency with user experience.
+
+### Mechanism
+
+- **Activity tracking**: Each session records `lastActivity` timestamp
+- **30-minute timeout**: Sessions expire after 30 minutes of **inactivity** (not from creation time)
+- **Auto-renewal**: Every MCP request automatically renews the session by updating `lastActivity`
+- **Periodic cleanup**: Server checks for expired sessions every 5 minutes and cleans them up
+- **Memory storage**: Sessions are stored in-memory and lost on server restart
+
+### Example Timeline
+
+```
+Time 0:00  - Session created (lastActivity = 0:00)
+Time 0:15  - API call made (lastActivity updated to 0:15)
+Time 0:30  - API call made (lastActivity updated to 0:30)
+Time 0:55  - No activity since 0:30 → Session expires (25 minutes inactive)
+Time 1:00  - Cleanup runs, session deleted from memory
+Time 1:05  - Client tries to use session → HTTP 404: "Session not found"
+```
+
+### Client Behavior
+
+When a session expires:
+1. Server returns HTTP 404: `{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found. Please reinitialize."},"id":null}`
+2. MCP client should automatically reinitialize by creating a new session
+3. This reconnection is transparent in clients that support auto-reconnect
+
+### Why Sliding Expiration?
+
+✅ **No mid-work expiration**: Active agents can work for hours without timeout
+✅ **Resource efficient**: Inactive sessions are cleaned up automatically
+⚠️ **Server restart impact**: All sessions lost on restart (mitigated by auto-reconnect)
+
+### Best Practices
+
+- **Implement auto-reconnect**: Handle HTTP 404 by reinitializing the session
+- **Keep sessions alive**: Regular tool calls automatically prevent timeout
+- **Clean shutdown**: Call DELETE `/api/mcp` when done to free resources
+
+---
+
 ## Public Tools
 
 Tools available to all Agents.

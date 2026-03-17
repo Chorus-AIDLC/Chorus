@@ -8,12 +8,42 @@ import { createMcpServer } from "@/mcp/server";
 import { extractApiKey, validateApiKey } from "@/lib/api-key";
 import type { AgentAuthContext } from "@/types/auth";
 
-// Store session transport instances
-const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
+// Store session transport instances with activity tracking
+const sessions = new Map<string, {
+  transport: WebStandardStreamableHTTPServerTransport;
+  lastActivity: number;
+}>();
+
+// Session configuration
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 
 // Generate session ID
 function generateSessionId(): string {
   return crypto.randomUUID();
+}
+
+// Clean up expired sessions
+function cleanupExpiredSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of sessions.entries()) {
+    if (now - session.lastActivity > SESSION_TIMEOUT_MS) {
+      console.log(`[MCP] Cleaning up expired session: ${sessionId}`);
+      session.transport.close().catch(console.error);
+      sessions.delete(sessionId);
+    }
+  }
+}
+
+// Start periodic cleanup
+setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS);
+
+// Update session activity and reset timeout
+function touchSession(sessionId: string) {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.lastActivity = Date.now();
+  }
 }
 
 // POST /api/mcp - MCP HTTP Endpoint
@@ -77,8 +107,10 @@ export async function POST(request: NextRequest) {
     let transport: WebStandardStreamableHTTPServerTransport;
 
     if (sessionId && sessions.has(sessionId)) {
-      // Reuse existing session
-      transport = sessions.get(sessionId)!;
+      // Reuse existing session and update activity
+      const session = sessions.get(sessionId)!;
+      transport = session.transport;
+      touchSession(sessionId);
     } else if (sessionId && !sessions.has(sessionId)) {
       // Client sent an expired/invalid session ID (session lost after server restart)
       // Return 404 to let client know it needs to reinitialize
@@ -97,13 +129,11 @@ export async function POST(request: NextRequest) {
       const server = createMcpServer(auth);
       await server.connect(transport);
 
-      // Store session
-      sessions.set(newSessionId, transport);
-
-      // Set session cleanup (after 30 minutes)
-      setTimeout(() => {
-        sessions.delete(newSessionId);
-      }, 30 * 60 * 1000);
+      // Store session with initial activity timestamp
+      sessions.set(newSessionId, {
+        transport,
+        lastActivity: Date.now(),
+      });
     }
 
     // Handle request using Web Standard transport
@@ -130,9 +160,9 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const transport = sessions.get(sessionId);
-    if (transport) {
-      await transport.close();
+    const session = sessions.get(sessionId);
+    if (session) {
+      await session.transport.close();
       sessions.delete(sessionId);
     }
 

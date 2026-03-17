@@ -1093,6 +1093,36 @@ Agents can filter results by project(s) using optional HTTP headers:
 }
 ```
 
+#### Session Management
+
+MCP sessions use **sliding window expiration** with activity tracking:
+
+**Mechanism**:
+- Each session tracks `lastActivity` timestamp
+- **30-minute timeout**: Sessions expire after 30 minutes of **inactivity**
+- **Auto-renewal**: Every request automatically renews the session (updates `lastActivity`)
+- **Periodic cleanup**: Expired sessions are cleaned up every 5 minutes
+- **Memory storage**: Sessions are stored in-memory (cleared on server restart)
+
+**Example**:
+```
+Time 0:00  - Session created (lastActivity = 0:00)
+Time 0:15  - Request made (lastActivity updated to 0:15)
+Time 0:30  - Request made (lastActivity updated to 0:30)
+Time 0:55  - No activity since 0:30 → Session expires (25 minutes inactive)
+Time 1:00  - Cleanup runs, session deleted
+```
+
+**Client handling**:
+- When a session expires, the client receives HTTP 404: `Session not found. Please reinitialize.`
+- The client should automatically reinitialize by creating a new session
+- This is transparent in MCP clients that support auto-reconnect
+
+**Why this approach?**
+- ✅ **No fixed timeout**: Active sessions don't expire mid-work
+- ✅ **Resource efficiency**: Inactive sessions are cleaned up automatically
+- ⚠️ **Server restart**: All sessions are lost on restart (mitigated by auto-reconnect)
+
 #### Public Tools (All Agents)
 
 | Tool | Description |
