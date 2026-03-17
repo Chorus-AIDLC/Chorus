@@ -12,6 +12,8 @@ Core philosophy: **"Reversed Conversation"** — AI proposes, humans verify (not
 - **Language**: TypeScript 5 (strict mode)
 - **Frontend**: React 19, Tailwind CSS 4, shadcn/ui (Radix UI)
 - **Database**: PostgreSQL 16, Prisma ORM 7
+- **Cache/Pub-Sub**: Redis 7 (ioredis, optional — falls back to in-memory)
+- **Testing**: Vitest 4
 - **Auth**: OIDC (users), API Keys with `cho_` prefix (agents), SuperAdmin (env-based bcrypt)
 - **MCP**: @modelcontextprotocol/sdk 1.26 (HTTP Streamable Transport)
 - **i18n**: next-intl (en, zh)
@@ -41,7 +43,7 @@ src/
 └── types/                  # TypeScript type definitions (auth.ts)
 
 prisma/
-├── schema.prisma           # 14 models, UUID-first architecture
+├── schema.prisma           # 21 models, UUID-first architecture
 └── migrations/             # DB migrations
 
 messages/
@@ -60,10 +62,14 @@ pnpm dev                    # Dev server with Turbopack (:3000)
 pnpm build                  # Production build (runs prisma generate first)
 pnpm lint                   # ESLint
 npx tsc --noEmit            # Type check
+pnpm test                   # Run tests (Vitest)
+pnpm test:watch             # Run tests in watch mode
 pnpm db:migrate:dev         # Create/run dev migration
 pnpm db:generate            # Regenerate Prisma client (REQUIRED after schema changes)
+pnpm db:push                # Push schema to DB without migration (dev only)
 pnpm db:studio              # Prisma Studio GUI (:5555)
-docker compose up -d db     # Start PostgreSQL (:5433)
+pnpm docker:db              # Start PostgreSQL + Redis via Docker
+docker compose up -d db     # Start PostgreSQL only (:5433)
 ```
 
 ## Architecture Patterns
@@ -109,12 +115,28 @@ When agents spawn sub-agents (e.g., Claude Code Agent Teams), they create **Sess
 
 `src/services/activity.service.ts` logs all significant actions. Activities support `sessionUuid` + `sessionName` for sub-agent attribution (denormalized for query efficiency).
 
+### Redis (Optional)
+
+Redis is used for SSE event propagation across multiple instances. If `REDIS_URL` is not set, the system falls back to an in-memory EventBus (single-instance only). For production deployments with multiple ECS tasks, ElastiCache Serverless is required.
+
 ## Database Notes
 
-- **14 Prisma models**: Company, User, Agent, ApiKey, Project, Idea, Document, Task, TaskDependency, Proposal, Comment, Activity, AgentSession, SessionTaskCheckin
+- **21 Prisma models**: Company, User, Agent, ApiKey, ProjectGroup, Project, Idea, Document, Task, TaskDependency, AcceptanceCriterion, Proposal, Comment, Activity, AgentSession, SessionTaskCheckin, Notification, NotificationPreference, Mention, ElaborationRound, ElaborationQuestion
 - **relationMode = "prisma"**: Prisma handles relations in application code, not DB foreign keys
 - **Cascade deletes**: Configured at Prisma level (onDelete: Cascade)
 - **After schema changes**: Must run `npx prisma generate` to regenerate client, then restart the dev server to pick up new models. Forgetting this causes `prisma.newModel` to be `undefined` at runtime.
+
+## Testing
+
+Tests use Vitest with coverage thresholds (95% lines, 85% branches). Test files are located in `src/**/__tests__/**/*.test.ts`.
+
+```bash
+pnpm test              # Run all tests
+pnpm test:watch        # Watch mode
+pnpm test:coverage     # Run with coverage report
+```
+
+Test mocks are in `src/__mocks__/`. The Prisma client is mocked for all service tests.
 
 ## API Response Format
 

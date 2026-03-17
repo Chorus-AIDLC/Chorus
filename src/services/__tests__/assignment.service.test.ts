@@ -321,6 +321,96 @@ describe("getMyAssignments", () => {
       })
     );
   });
+
+  it("should filter by projectUuids when provided", async () => {
+    const userAuth: AuthContext = {
+      type: "user",
+      companyUuid,
+      actorUuid: userUuid,
+      userUuid,
+    };
+
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    await getMyAssignments(userAuth, [projectUuid]);
+
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyUuid,
+          projectUuid: { in: [projectUuid] },
+          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
+        }),
+      })
+    );
+
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyUuid,
+          projectUuid: { in: [projectUuid] },
+          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
+        }),
+      })
+    );
+  });
+
+  it("should not filter by projectUuids when not provided", async () => {
+    const userAuth: AuthContext = {
+      type: "user",
+      companyUuid,
+      actorUuid: userUuid,
+      userUuid,
+    };
+
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    await getMyAssignments(userAuth);
+
+    const ideaWhere = mockPrisma.idea.findMany.mock.calls[0][0].where;
+    const taskWhere = mockPrisma.task.findMany.mock.calls[0][0].where;
+
+    expect(ideaWhere).not.toHaveProperty("projectUuid");
+    expect(taskWhere).not.toHaveProperty("projectUuid");
+  });
+
+  it("should filter by multiple projectUuids", async () => {
+    const userAuth: AuthContext = {
+      type: "user",
+      companyUuid,
+      actorUuid: userUuid,
+      userUuid,
+    };
+
+    const projectUuid2 = "project-0000-0000-0000-000000000002";
+
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    await getMyAssignments(userAuth, [projectUuid, projectUuid2]);
+
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyUuid,
+          projectUuid: { in: [projectUuid, projectUuid2] },
+          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
+        }),
+      })
+    );
+
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyUuid,
+          projectUuid: { in: [projectUuid, projectUuid2] },
+          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
+        }),
+      })
+    );
+  });
 });
 
 // ===== getAvailableItems =====

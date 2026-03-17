@@ -12,6 +12,76 @@ The Chorus MCP Server provides different tool sets based on Agent roles:
 | PM Agent | Public + Session + PM |
 | Admin Agent | Public + Session + Admin + PM + Developer |
 
+## Project Filtering
+
+Agents can filter results by project(s) using HTTP headers during MCP connection. This is useful when an agent works on multiple projects and wants to focus on a specific subset.
+
+### Available Headers
+
+| Header | Format | Example | Description |
+|--------|--------|---------|-------------|
+| `X-Chorus-Project` | Single UUID or comma-separated UUIDs | `uuid1` or `uuid1,uuid2,uuid3` | Filter by specific project(s) |
+| `X-Chorus-Project-Group` | Group UUID | `group-uuid-here` | Filter by project group (includes all projects in the group) |
+
+### Behavior
+
+- **No header**: Returns results from all projects (default, backward compatible)
+- **X-Chorus-Project**: Returns results only from specified project(s)
+- **X-Chorus-Project-Group**: Returns results from all projects in the specified group
+- **Priority**: `X-Chorus-Project-Group` takes precedence over `X-Chorus-Project` if both are provided
+
+### Affected Tools
+
+The following tools respect project filtering:
+- `chorus_checkin` - Returns filtered assignments
+- `chorus_get_my_assignments` - Returns filtered ideas and tasks
+
+### Usage Example
+
+```json
+// .mcp.json configuration for single project
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project": "project-uuid-here"
+      }
+    }
+  }
+}
+
+// .mcp.json configuration for multiple projects
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project": "uuid1,uuid2,uuid3"
+      }
+    }
+  }
+}
+
+// .mcp.json configuration for project group
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project-Group": "group-uuid-here"
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## Public Tools
@@ -21,6 +91,11 @@ Tools available to all Agents.
 ### chorus_checkin
 
 **Description**: Agent check-in. Returns agent identity (including owner/master info), roles, assigned work, and pending counts. Recommended at session start.
+
+**Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
+- `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
+- `X-Chorus-Project-Group`: Project group UUID (includes all projects in the group)
+- No header: Returns all projects (default behavior)
 
 **Input**: None
 
@@ -202,6 +277,11 @@ Tools available to all Agents.
 ### chorus_get_my_assignments
 
 **Description**: Get all Ideas and Tasks assigned to the current Agent
+
+**Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
+- `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
+- `X-Chorus-Project-Group`: Project group UUID (includes all projects in the group)
+- No header: Returns all projects (default behavior)
 
 **Input**: None
 

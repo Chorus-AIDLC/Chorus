@@ -1059,6 +1059,40 @@ Header: Authorization: Bearer {api_key}
 
 Based on the Agent role associated with the API Key, different tool sets are returned.
 
+#### Project Filtering (Optional)
+
+Agents can filter results by project(s) using optional HTTP headers:
+
+| Header | Format | Description |
+|--------|--------|-------------|
+| `X-Chorus-Project` | Single UUID or comma-separated UUIDs | Filter by specific project(s) |
+| `X-Chorus-Project-Group` | Group UUID | Filter by project group |
+
+**Behavior**:
+- No header: Returns all projects (default, backward compatible)
+- `X-Chorus-Project`: Returns only specified project(s)
+- `X-Chorus-Project-Group`: Returns all projects in the group
+- Priority: `X-Chorus-Project-Group` > `X-Chorus-Project`
+
+**Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
+
+**Example**:
+```json
+// .mcp.json
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project": "project-uuid-1,project-uuid-2"
+      }
+    }
+  }
+}
+```
+
 #### Public Tools (All Agents)
 
 | Tool | Description |

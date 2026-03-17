@@ -39,6 +39,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Build auth context (UUID-based)
+    // Priority: X-Chorus-Project-Group > X-Chorus-Project
+    let projectUuids: string[] | undefined;
+
+    const projectGroupUuid = request.headers.get("x-chorus-project-group");
+    const projectHeader = request.headers.get("x-chorus-project");
+
+    if (projectGroupUuid) {
+      // Query all projects in the group
+      const { prisma } = await import("@/lib/prisma");
+      const projects = await prisma.project.findMany({
+        where: {
+          companyUuid: validation.agent.companyUuid,
+          groupUuid: projectGroupUuid,
+        },
+        select: { uuid: true },
+      });
+      projectUuids = projects.map((p) => p.uuid);
+    } else if (projectHeader) {
+      // Parse comma-separated project UUIDs
+      projectUuids = projectHeader.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
     const auth: AgentAuthContext = {
       type: "agent",
       companyUuid: validation.agent.companyUuid,
@@ -46,6 +68,7 @@ export async function POST(request: NextRequest) {
       roles: validation.agent.roles as ("pm" | "developer" | "admin")[],
       ownerUuid: validation.agent.ownerUuid ?? undefined,
       agentName: validation.agent.name,
+      projectUuids,
     };
 
     // Check session ID

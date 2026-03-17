@@ -195,7 +195,10 @@ async function formatAvailableTask(task: {
 // ===== Service Methods =====
 
 // Get my claimed Ideas + Tasks
-export async function getMyAssignments(auth: AuthContext): Promise<MyAssignmentsResponse> {
+export async function getMyAssignments(
+  auth: AuthContext,
+  projectUuids?: string[],
+): Promise<MyAssignmentsResponse> {
   const conditions = getAssignmentConditions(auth);
 
   const [rawIdeas, rawTasks] = await Promise.all([
@@ -203,6 +206,7 @@ export async function getMyAssignments(auth: AuthContext): Promise<MyAssignments
     prisma.idea.findMany({
       where: {
         companyUuid: auth.companyUuid,
+        ...(projectUuids && projectUuids.length > 0 && { projectUuid: { in: projectUuids } }),
         OR: conditions,
         status: { notIn: ["completed", "closed"] },
       },
@@ -224,6 +228,7 @@ export async function getMyAssignments(auth: AuthContext): Promise<MyAssignments
     prisma.task.findMany({
       where: {
         companyUuid: auth.companyUuid,
+        ...(projectUuids && projectUuids.length > 0 && { projectUuid: { in: projectUuids } }),
         OR: conditions,
         status: { notIn: ["done", "closed"] },
       },

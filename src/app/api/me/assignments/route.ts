@@ -15,6 +15,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     return errors.unauthorized();
   }
 
-  const result = await getMyAssignments(auth);
+  // Optional projectUuids filter from query parameter (comma-separated)
+  const { searchParams } = new URL(request.url);
+  const projectUuidsParam = searchParams.get("projectUuids");
+  const projectUuids = projectUuidsParam
+    ? projectUuidsParam.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+
+  const result = await getMyAssignments(auth, projectUuids);
   return success(result);
 });

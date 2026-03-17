@@ -27,6 +27,7 @@ export interface AgentAuthContext extends AuthContext {
   roles: AgentRole[];
   ownerUuid?: string;
   agentName: string;
+  projectUuids?: string[]; // Default projects from X-Chorus-Project/X-Chorus-Project-Group headers (optional)
 }
 
 // Super Admin authentication context

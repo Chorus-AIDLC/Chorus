@@ -348,7 +348,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       // Get pending Ideas and Tasks
-      const { ideas, tasks } = await assignmentService.getMyAssignments(auth);
+      const { ideas, tasks } = await assignmentService.getMyAssignments(auth, auth.projectUuids);
 
       // Get unread notification count
       const unreadNotificationCount = await notificationService.getUnreadCount(
@@ -419,7 +419,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       inputSchema: z.object({}),
     },
     async () => {
-      const { ideas, tasks } = await assignmentService.getMyAssignments(auth);
+      const { ideas, tasks } = await assignmentService.getMyAssignments(auth, auth.projectUuids);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ ideas, tasks }, null, 2) }],

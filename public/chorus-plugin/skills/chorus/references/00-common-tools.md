@@ -14,6 +14,39 @@ The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
 - Use the owner info to know who to @mention for confirmations and approvals (e.g., after elaboration, before validating)
 
+### Project Filtering
+
+Results can be filtered by project(s) using optional HTTP headers in your `.mcp.json` configuration:
+
+| Header | Format | Example |
+|--------|--------|---------|
+| `X-Chorus-Project` | Single UUID or comma-separated UUIDs | `project-uuid-1` or `uuid1,uuid2,uuid3` |
+| `X-Chorus-Project-Group` | Group UUID | `group-uuid-here` |
+
+**Behavior**:
+- **No header**: Returns all projects (default, backward compatible)
+- **X-Chorus-Project**: Returns only specified project(s)
+- **X-Chorus-Project-Group**: Returns all projects in the group
+- **Priority**: `X-Chorus-Project-Group` takes precedence if both headers are provided
+
+**Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
+
+**Example `.mcp.json`**:
+```json
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project": "project-uuid-1,project-uuid-2"
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## Session & Observability
