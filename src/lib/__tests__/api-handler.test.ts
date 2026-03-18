@@ -164,7 +164,7 @@ describe('withErrorHandler', () => {
 
   it('handles generic Error in production mode', async () => {
     const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
 
     const handler = vi.fn().mockRejectedValue(new Error('Database connection failed'));
     const wrappedHandler = withErrorHandler(handler);
@@ -179,12 +179,12 @@ describe('withErrorHandler', () => {
     expect(body.error.code).toBe('INTERNAL_ERROR');
     expect(body.error.message).toBe('Internal server error');
 
-    process.env.NODE_ENV = originalEnv;
+    (process.env as Record<string, string | undefined>).NODE_ENV = originalEnv;
   });
 
   it('handles generic Error in development mode with error message', async () => {
     const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'development';
+    (process.env as Record<string, string | undefined>).NODE_ENV = 'development';
 
     const handler = vi.fn().mockRejectedValue(new Error('Database connection failed'));
     const wrappedHandler = withErrorHandler(handler);
@@ -199,7 +199,7 @@ describe('withErrorHandler', () => {
     expect(body.error.code).toBe('INTERNAL_ERROR');
     expect(body.error.message).toBe('Database connection failed');
 
-    process.env.NODE_ENV = originalEnv;
+    (process.env as Record<string, string | undefined>).NODE_ENV = originalEnv;
   });
 
   it('handles unknown error types', async () => {

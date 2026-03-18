@@ -32,6 +32,9 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Type check
+        run: npx tsc --noEmit
+
       - name: Run tests with coverage
         run: pnpm test:coverage -- --reporter=json --outputFile=coverage/test-results.json
 

@@ -345,7 +345,7 @@ describe('requireUser', () => {
       agentName: 'Test Agent',
     };
 
-    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth as unknown as UserAuthContext);
 
     const handler = vi.fn();
     const wrappedHandler = requireUser(handler);
@@ -376,7 +376,7 @@ describe('requireAgentRole', () => {
       agentName: 'Test Agent',
     };
 
-    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth as unknown as UserAuthContext);
 
     const handler = vi.fn().mockResolvedValue(NextResponse.json({ success: true }));
     const wrappedHandler = requireAgentRole('developer', handler);
@@ -398,7 +398,7 @@ describe('requireAgentRole', () => {
       agentName: 'Test Agent',
     };
 
-    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(mockAuth as unknown as UserAuthContext);
 
     const handler = vi.fn();
     const wrappedHandler = requireAgentRole('pm', handler);

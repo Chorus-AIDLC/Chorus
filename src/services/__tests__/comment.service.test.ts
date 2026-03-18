@@ -421,7 +421,7 @@ describe("createComment", () => {
 
     await createComment({
       companyUuid,
-      targetType: "unknown",
+      targetType: "unknown" as "task",
       targetUuid: unknownUuid,
       content: "Hello @user(uuid-123,John)",
       authorType: "user",

@@ -85,7 +85,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     const idea = makeIdea();
@@ -107,7 +106,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -141,7 +139,6 @@ describe("getMyAssignments", () => {
       type: "agent",
       companyUuid,
       actorUuid: agentUuid,
-      agentUuid,
       roles: ["developer_agent"],
       ownerUuid,
     };
@@ -181,7 +178,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -211,7 +207,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     const idea = makeIdea();
@@ -239,7 +234,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     const task = makeTask();
@@ -266,7 +260,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     const idea = makeIdea();
@@ -287,7 +280,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -307,7 +299,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -327,7 +318,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -361,7 +351,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     mockPrisma.idea.findMany.mockResolvedValue([]);
@@ -381,7 +370,6 @@ describe("getMyAssignments", () => {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
-      userUuid,
     };
 
     const projectUuid2 = "project-0000-0000-0000-000000000002";

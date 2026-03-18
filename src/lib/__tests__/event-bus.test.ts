@@ -320,7 +320,7 @@ describe('eventBus', () => {
 
     // Simulate receiving our own message back from Redis
     if (messageHandler) {
-      messageHandler('chorus:events', envelope);
+      (messageHandler as (channel: string, message: string) => void)('chorus:events', envelope);
     }
 
     // Listener should NOT be called again (deduplication)
@@ -382,7 +382,7 @@ describe('eventBus', () => {
 
     // Send malformed JSON
     if (messageHandler) {
-      expect(() => messageHandler('chorus:events', 'not valid json{')).not.toThrow();
+      expect(() => (messageHandler as (channel: string, message: string) => void)('chorus:events', 'not valid json{')).not.toThrow();
     }
 
     expect(listener).not.toHaveBeenCalled();

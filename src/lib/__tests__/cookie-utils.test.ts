@@ -1,20 +1,28 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getCookieOptions } from '../cookie-utils';
 
+const env = process.env as Record<string, string | undefined>;
+
 describe('getCookieOptions', () => {
-  const originalEnv = process.env;
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
+    Object.keys(process.env).forEach((key) => {
+      if (!(key in originalEnv)) delete env[key];
+    });
+    Object.assign(env, originalEnv);
   });
 
   afterEach(() => {
-    process.env = originalEnv;
+    Object.keys(process.env).forEach((key) => {
+      if (!(key in originalEnv)) delete env[key];
+    });
+    Object.assign(env, originalEnv);
   });
 
   it('returns secure=true in production mode by default', () => {
-    process.env.NODE_ENV = 'production';
-    delete process.env.COOKIE_SECURE;
+    env.NODE_ENV = 'production';
+    delete env.COOKIE_SECURE;
 
     const result = getCookieOptions(3600);
 
@@ -28,8 +36,8 @@ describe('getCookieOptions', () => {
   });
 
   it('returns secure=false when COOKIE_SECURE=false override is set', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.COOKIE_SECURE = 'false';
+    env.NODE_ENV = 'production';
+    env.COOKIE_SECURE = 'false';
 
     const result = getCookieOptions(7200);
 
@@ -43,8 +51,8 @@ describe('getCookieOptions', () => {
   });
 
   it('returns secure=false in non-production mode', () => {
-    process.env.NODE_ENV = 'development';
-    delete process.env.COOKIE_SECURE;
+    env.NODE_ENV = 'development';
+    delete env.COOKIE_SECURE;
 
     const result = getCookieOptions(1800);
 
@@ -58,7 +66,7 @@ describe('getCookieOptions', () => {
   });
 
   it('passes through maxAge parameter correctly', () => {
-    process.env.NODE_ENV = 'test';
+    env.NODE_ENV = 'test';
     const maxAge = 9999;
 
     const result = getCookieOptions(maxAge);
@@ -67,8 +75,8 @@ describe('getCookieOptions', () => {
   });
 
   it('returns correct properties when NODE_ENV is undefined', () => {
-    delete process.env.NODE_ENV;
-    delete process.env.COOKIE_SECURE;
+    delete env.NODE_ENV;
+    delete env.COOKIE_SECURE;
 
     const result = getCookieOptions(1234);
 
