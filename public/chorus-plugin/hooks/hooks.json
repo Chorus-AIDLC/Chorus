@@ -65,8 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-subagent-stop.sh",
-            "async": true
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-subagent-stop.sh"
           }
         ]
       }
