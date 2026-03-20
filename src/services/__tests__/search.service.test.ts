@@ -391,49 +391,108 @@ describe("search.service", () => {
   });
 
   describe("snippet generation", () => {
-    it("should generate snippet around match", async () => {
-      const companyUuid = "company-1";
-      const now = new Date();
-
+    // Helper to search a single task with given description
+    const searchWithDescription = async (description: string, query: string) => {
       mockPrisma.task.findMany.mockResolvedValue([
         {
           uuid: "task-1",
           title: "Task title",
-          description: "This is a long description with the keyword test appearing somewhere in the middle of the text to verify snippet extraction works correctly",
+          description,
           status: "open",
           projectUuid: "project-1",
-          updatedAt: now,
+          updatedAt: new Date(),
           project: { name: "Project A" },
         },
       ]);
       mockPrisma.task.count.mockResolvedValue(1);
-
       mockPrisma.idea.findMany.mockResolvedValue([]);
       mockPrisma.idea.count.mockResolvedValue(0);
-
       mockPrisma.proposal.findMany.mockResolvedValue([]);
       mockPrisma.proposal.count.mockResolvedValue(0);
-
       mockPrisma.document.findMany.mockResolvedValue([]);
       mockPrisma.document.count.mockResolvedValue(0);
-
       mockPrisma.project.findMany.mockResolvedValue([]);
       mockPrisma.project.count.mockResolvedValue(0);
+      mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+      mockPrisma.projectGroup.count.mockResolvedValue(0);
 
+      const result = await search({
+        query,
+        companyUuid: "company-1",
+        scope: "global",
+        entityTypes: ["task"],
+      });
+      return result.results[0].snippet;
+    };
+
+    it("should generate snippet around match with ellipsis", async () => {
+      const snippet = await searchWithDescription(
+        "This is a long description with the keyword test appearing somewhere in the middle of the text to verify snippet extraction works correctly",
+        "test"
+      );
+      expect(snippet).toContain("test");
+      expect(snippet).toContain("...");
+    });
+
+    it("should adjust start to word boundary when match is in the middle", async () => {
+      // Create text where match is far enough from start to trigger word-boundary adjustment (line 66-70)
+      const longPrefix = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 ";
+      const text = longPrefix + "target keyword here and more text after it to make the string long enough for ellipsis";
+      const snippet = await searchWithDescription(text, "target");
+      expect(snippet).toContain("target");
+      expect(snippet.startsWith("...")).toBe(true);
+    });
+
+    it("should return beginning of text when query not found in description", async () => {
+      const snippet = await searchWithDescription(
+        "A short description that does not contain the search term at all, just some filler text to make it longer than the max snippet length for testing",
+        "nomatch"
+      );
+      // No match → returns beginning of text with ellipsis
+      expect(snippet).toContain("A short description");
+      expect(snippet.endsWith("...")).toBe(true);
+    });
+
+    it("should return full text without ellipsis when text is short", async () => {
+      const snippet = await searchWithDescription("short text", "nomatch");
+      expect(snippet).toBe("short text");
+      expect(snippet).not.toContain("...");
+    });
+
+    it("should use title for snippet when description is empty", async () => {
+      mockPrisma.task.findMany.mockResolvedValue([
+        {
+          uuid: "task-1",
+          title: "Task with test in title",
+          description: null,
+          status: "open",
+          projectUuid: "project-1",
+          updatedAt: new Date(),
+          project: { name: "Project A" },
+        },
+      ]);
+      mockPrisma.task.count.mockResolvedValue(1);
+      mockPrisma.idea.findMany.mockResolvedValue([]);
+      mockPrisma.idea.count.mockResolvedValue(0);
+      mockPrisma.proposal.findMany.mockResolvedValue([]);
+      mockPrisma.proposal.count.mockResolvedValue(0);
+      mockPrisma.document.findMany.mockResolvedValue([]);
+      mockPrisma.document.count.mockResolvedValue(0);
+      mockPrisma.project.findMany.mockResolvedValue([]);
+      mockPrisma.project.count.mockResolvedValue(0);
       mockPrisma.projectGroup.findMany.mockResolvedValue([]);
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
         query: "test",
-        companyUuid,
+        companyUuid: "company-1",
         scope: "global",
         entityTypes: ["task"],
       });
-
       expect(result.results[0].snippet).toContain("test");
-      expect(result.results[0].snippet).toContain("...");
     });
   });
+
 
   describe("limit parameter", () => {
     it("should respect limit parameter for combined results", async () => {
