@@ -27,6 +27,7 @@ Chorus 是一个 AI Agent 与人类协作的平台，实现 AI-DLC（AI-Driven D
 | **Session 可观测性** | Agent Session + Task Checkin，Kanban/Task Detail 实时显示活跃 Worker |
 | **Chorus Plugin** | Claude Code 插件，自动化 Session 生命周期（创建/心跳/关闭） |
 | **Task DAG** | 任务依赖建模、环检测、@xyflow/react + dagre 可视化 |
+| **全局搜索** | 跨 6 种实体统一搜索，支持 Scope 过滤和 Cmd+K 命令面板 ([详情](./SEARCH.md)) |
 
 ### 1.3 参与者
 
@@ -1612,6 +1613,7 @@ volumes:
 | ✅ Chorus Plugin | Claude Code 插件，自动化 Session 生命周期 | 已实现 |
 | ✅ Task 自动调度查询 | `chorus_get_unblocked_tasks` MCP 工具 | 已实现 |
 | 通知系统 | 应用内通知 + SSE 推送 + Redis Pub/Sub | **已实现** |
+| 全局搜索 | 跨 6 种实体统一搜索，Cmd+K 命令面板，MCP 工具 | **已实现** |
 | 执行度量 | Agent Hours、velocity 统计 | 待开发 (P1) |
 | Git 集成 | 关联 commit 和 PR | 待开发 |
 | 语义搜索 | pgvector 知识库搜索 | 待开发 |
