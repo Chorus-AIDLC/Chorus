@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getCookieOptions } from '../cookie-utils';
+import { getCookieOptions, getMaxAgeFromJwt } from '../cookie-utils';
 
 const env = process.env as Record<string, string | undefined>;
 
@@ -87,5 +87,43 @@ describe('getCookieOptions', () => {
       path: '/',
       maxAge: 1234,
     });
+  });
+});
+
+// Helper: build a minimal JWT with a given payload (no real signature needed)
+function fakeJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${header}.${body}.fakesig`;
+}
+
+describe('getMaxAgeFromJwt', () => {
+  it('computes maxAge from exp claim with 60s buffer', () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600; // 1h from now
+    const result = getMaxAgeFromJwt(fakeJwt({ exp }));
+    // Should be ~3660 (3600 + 60s buffer), allow 2s tolerance
+    expect(result).toBeGreaterThanOrEqual(3658);
+    expect(result).toBeLessThanOrEqual(3662);
+  });
+
+  it('returns 0 when token is already expired', () => {
+    const exp = Math.floor(Date.now() / 1000) - 120; // 2 min ago
+    const result = getMaxAgeFromJwt(fakeJwt({ exp }));
+    expect(result).toBe(0);
+  });
+
+  it('returns fallback when token has no exp claim', () => {
+    const result = getMaxAgeFromJwt(fakeJwt({ sub: 'user' }));
+    expect(result).toBe(3600);
+  });
+
+  it('returns custom fallback when provided', () => {
+    const result = getMaxAgeFromJwt(fakeJwt({ sub: 'user' }), 7200);
+    expect(result).toBe(7200);
+  });
+
+  it('returns fallback for malformed token', () => {
+    expect(getMaxAgeFromJwt('not-a-jwt')).toBe(3600);
+    expect(getMaxAgeFromJwt('')).toBe(3600);
   });
 });
