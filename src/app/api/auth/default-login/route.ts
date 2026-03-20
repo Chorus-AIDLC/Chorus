@@ -11,10 +11,9 @@ import {
 } from "@/lib/default-auth";
 import {
   createUserAccessToken,
-  createUserRefreshToken,
-  setUserSessionCookies,
   UserSessionPayload,
 } from "@/lib/user-session";
+import { getCookieOptions } from "@/lib/cookie-utils";
 import { findOrCreateDefaultUser } from "@/services/user.service";
 
 interface DefaultLoginRequest {
@@ -65,12 +64,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     oidcSub: user.oidcSub,
   };
 
-  const [accessToken, refreshToken] = await Promise.all([
-    createUserAccessToken(sessionPayload),
-    createUserRefreshToken(sessionPayload),
-  ]);
+  // Default auth is for local dev/testing — use a long-lived token (365 days)
+  // so users don't get kicked out. No refresh token needed.
+  const accessToken = await createUserAccessToken(sessionPayload, "365d");
 
-  // Create response and set cookies
   const response = NextResponse.json({
     success: true,
     data: {
@@ -85,7 +82,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     },
   });
 
-  setUserSessionCookies(response, accessToken, refreshToken);
+  response.cookies.set("user_session", accessToken, getCookieOptions(365 * 24 * 60 * 60));
 
   return response;
 });

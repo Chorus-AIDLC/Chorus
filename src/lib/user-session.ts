@@ -36,9 +36,10 @@ export interface UserSessionPayload {
   oidcExpiresAt?: number;
 }
 
-// Create user access token (short-lived)
+// Create user access token (short-lived by default, overridable for local dev)
 export async function createUserAccessToken(
-  payload: UserSessionPayload
+  payload: UserSessionPayload,
+  expiresIn: string = ACCESS_TOKEN_EXPIRY
 ): Promise<string> {
   return new SignJWT({
     ...payload,
@@ -46,7 +47,7 @@ export async function createUserAccessToken(
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(ACCESS_TOKEN_EXPIRY)
+    .setExpirationTime(expiresIn)
     .sign(getSecret());
 }
 
@@ -172,10 +173,10 @@ export async function getFullSessionFromRequest(
 export function setUserSessionCookies(
   response: NextResponse,
   accessToken: string,
-  refreshToken: string
+  refreshToken: string,
+  accessTokenMaxAge: number = ACCESS_TOKEN_MAX_AGE
 ): void {
-  // Access token cookie (short-lived)
-  response.cookies.set(COOKIE_NAME, accessToken, getCookieOptions(ACCESS_TOKEN_MAX_AGE));
+  response.cookies.set(COOKIE_NAME, accessToken, getCookieOptions(accessTokenMaxAge));
 
   // Refresh token cookie (long-lived)
   response.cookies.set(REFRESH_COOKIE_NAME, refreshToken, getCookieOptions(7 * 24 * 60 * 60));

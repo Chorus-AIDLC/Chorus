@@ -109,10 +109,11 @@ export async function authFetch(
     headers,
   });
 
-  // On 401, attempt silent renew + cookie sync, then retry once
+  // On 401, attempt token refresh, then retry once
   if (response.status === 401) {
     const manager = getUserManager();
     if (manager) {
+      // OIDC user: try silent renew
       try {
         const renewed = await manager.signinSilent();
         if (renewed?.access_token) {
@@ -122,6 +123,18 @@ export async function authFetch(
         }
       } catch {
         // Silent renew failed, return original 401
+      }
+    } else {
+      // Default auth user: refresh via cookie-based refresh token
+      try {
+        const refreshRes = await fetch("/api/auth/refresh", { method: "POST" });
+        if (refreshRes.ok) {
+          // Refresh succeeded — cookies are updated, retry without Bearer header
+          headers.delete("Authorization");
+          return fetch(url, { ...options, headers });
+        }
+      } catch {
+        // Refresh failed, return original 401
       }
     }
   }
