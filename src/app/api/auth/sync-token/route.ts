@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { verifyOidcAccessToken } from "@/lib/oidc-auth";
-import { getCookieOptions } from "@/lib/cookie-utils";
+import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
 
 // POST /api/auth/sync-token
 // Body: { accessToken: string }
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({ success: true });
 
     // Update the HTTP-only cookie with the new token
-    response.cookies.set("oidc_access_token", accessToken, getCookieOptions(3600));
+    response.cookies.set("oidc_access_token", accessToken, getCookieOptions(getMaxAgeFromJwt(accessToken)));
 
     // Update refresh token if provided (e.g. after token rotation)
     if (refreshToken && typeof refreshToken === "string") {

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { findOrCreateUserByOidc, getCompanyByUuid } from "@/services/user.service";
-import { getCookieOptions } from "@/lib/cookie-utils";
+import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
 
 // POST /api/auth/callback
 // Body: { companyUuid, oidcSub, email, name?, accessToken }
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     // Store access token in HTTP-only cookie for Server Actions
     if (accessToken) {
-      response.cookies.set("oidc_access_token", accessToken, getCookieOptions(3600));
+      response.cookies.set("oidc_access_token", accessToken, getCookieOptions(getMaxAgeFromJwt(accessToken)));
     }
 
     // Store refresh token for server-side token refresh (middleware)
