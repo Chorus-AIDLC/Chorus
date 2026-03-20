@@ -795,7 +795,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
 
       // Execute assignment
       try {
-        const updated = await taskService.claimTask({
+        await taskService.claimTask({
           taskUuid: task.uuid,
           companyUuid: auth.companyUuid,
           assigneeType: "agent",
@@ -815,8 +815,49 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           value: { assigneeType: "agent", assigneeUuid: agentUuid, assignedBy: auth.actorUuid },
         });
 
+        // Fetch full task details with dependencies
+        const fullTask = await taskService.getTask(auth.companyUuid, task.uuid);
+
+        // Build compact response with only essential fields
+        const compact: Record<string, unknown> = {
+          uuid: fullTask?.uuid,
+          title: fullTask?.title,
+          description: fullTask?.description,
+          status: fullTask?.status,
+          acceptanceCriteriaItems: fullTask?.acceptanceCriteriaItems?.length
+            ? fullTask.acceptanceCriteriaItems
+            : undefined,
+          dependsOn: fullTask?.dependsOn?.length ? fullTask.dependsOn : undefined,
+          dependedBy: fullTask?.dependedBy?.length ? fullTask.dependedBy : undefined,
+        };
+
+        // Build blocking hints
+        const hints: string[] = [];
+        if (fullTask?.dependsOn?.length) {
+          const unresolved = fullTask.dependsOn.filter(
+            (d) => d.status !== "done" && d.status !== "closed"
+          );
+          if (unresolved.length > 0) {
+            const names = unresolved.map((d) => `"${d.title}" (${d.status})`).join(", ");
+            hints.push(`⚠ BLOCKED: This task depends on unfinished tasks: ${names}. They must be verified to done by an admin or human before work can proceed.`);
+          }
+        }
+        if (fullTask?.dependedBy?.length) {
+          const waiting = fullTask.dependedBy.filter(
+            (d) => d.status !== "done" && d.status !== "closed"
+          );
+          if (waiting.length > 0) {
+            const names = waiting.map((d) => `"${d.title}"`).join(", ");
+            hints.push(`IMPORTANT: Downstream tasks are waiting on this one: ${names}. After completion, an admin or human must verify this task to done to unblock them.`);
+          }
+        }
+
+        if (hints.length > 0) {
+          compact._hints = hints;
+        }
+
         return {
-          content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, status: updated.status, assigneeUuid: agentUuid }, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(compact, null, 2) }],
         };
       } catch (e) {
         if (e instanceof AlreadyClaimedError) {
