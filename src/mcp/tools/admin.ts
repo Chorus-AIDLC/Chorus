@@ -13,6 +13,7 @@ import * as ideaService from "@/services/idea.service";
 import * as documentService from "@/services/document.service";
 import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
+import { zArray } from "./schema-utils";
 
 export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_admin_create_project - Create a new project
@@ -296,7 +297,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       description: "Mark acceptance criteria as passed or failed (admin verification)",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        criteria: z.array(z.object({
+        criteria: zArray(z.object({
           uuid: z.string().describe("AcceptanceCriterion UUID"),
           status: z.enum(["passed", "failed"]).describe("Verification result"),
           evidence: z.string().optional().describe("Optional evidence/notes"),

@@ -10,6 +10,7 @@ import * as activityService from "@/services/activity.service";
 import * as commentService from "@/services/comment.service";
 import * as sessionService from "@/services/session.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
+import { zArray } from "./schema-utils";
 
 export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_task - Claim a Task
@@ -253,7 +254,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
       description: "Report self-check results on acceptance criteria for a task you're working on",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        criteria: z.array(z.object({
+        criteria: zArray(z.object({
           uuid: z.string().describe("AcceptanceCriterion UUID"),
           devStatus: z.enum(["passed", "failed"]).describe("Self-check result"),
           devEvidence: z.string().optional().describe("Optional evidence/notes"),

@@ -877,5 +877,27 @@
     "addCriterion": "Add Criterion",
     "removeCriterion": "Remove",
     "criterionPlaceholder": "Describe the acceptance criterion..."
+  },
+  "search": {
+    "placeholder": "Search tasks, ideas, proposals, documents...",
+    "scopeGlobal": "Global",
+    "scopeGroup": "Group",
+    "scopeProject": "This Project",
+    "filterAll": "All",
+    "filterTasks": "Tasks",
+    "filterIdeas": "Ideas",
+    "filterProposals": "Proposals",
+    "filterDocuments": "Documents",
+    "filterProjects": "Projects",
+    "noResults": "No results found",
+    "resultCount": "{count} results",
+    "entityType": {
+      "task": "Task",
+      "idea": "Idea",
+      "proposal": "Proposal",
+      "document": "Document",
+      "project": "Project",
+      "project_group": "Group"
+    }
   }
 }

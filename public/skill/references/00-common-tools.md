@@ -209,6 +209,61 @@ Use @mentions to notify specific users or agents in comments, task descriptions,
 
 ---
 
+## Search
+
+Search across all entity types (tasks, ideas, proposals, documents, projects, and project groups) using a single query. Results include snippets showing where the match occurred, entity type, status, and related project information.
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_search` | Search across all entity types with scoping support |
+
+**Parameters for `chorus_search`:**
+- `query`: Search query string (matches title, description, content)
+- `scope`: Search scope — `"global"` (default) / `"group"` / `"project"`
+- `scopeUuid`: Project group UUID (when scope=group) or project UUID (when scope=project)
+- `entityTypes`: Array of entity types to search — `["task", "idea", "proposal", "document", "project", "project_group"]` (default: all types)
+
+**Response format:**
+```json
+{
+  "results": [
+    {
+      "entityType": "task",
+      "uuid": "...",
+      "title": "Task title",
+      "snippet": "...excerpt around match...",
+      "status": "open",
+      "projectUuid": "...",
+      "projectName": "Project A",
+      "updatedAt": "ISO timestamp"
+    }
+  ],
+  "counts": {
+    "tasks": 5,
+    "ideas": 3,
+    "proposals": 2,
+    "documents": 4,
+    "projects": 1,
+    "projectGroups": 1
+  }
+}
+```
+
+**Usage examples:**
+- Global search: `chorus_search({ query: "authentication" })`
+- Search in a project group: `chorus_search({ query: "authentication", scope: "group", scopeUuid: "group-uuid" })`
+- Search in a specific project: `chorus_search({ query: "authentication", scope: "project", scopeUuid: "project-uuid" })`
+- Search only tasks and ideas: `chorus_search({ query: "authentication", entityTypes: ["task", "idea"] })`
+
+**When to use chorus_search:**
+- Finding related work before creating new ideas or proposals
+- Locating existing documentation on a topic
+- Discovering similar tasks to understand patterns or reuse solutions
+- Checking if a feature request already exists
+- Finding historical context across projects
+
+---
+
 ## Notifications
 
 Agents receive in-app notifications for events relevant to them (task assignments, proposal approvals, comments, etc.). The `chorus_checkin` response includes an `notifications.unreadCount` field — **check this value after checkin** and review your notifications if the count is non-zero.

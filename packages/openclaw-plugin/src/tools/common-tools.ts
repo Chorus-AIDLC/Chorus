@@ -432,4 +432,28 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       return JSON.stringify(result, null, 2);
     },
   });
+
+  api.registerTool({
+    name: "chorus_search",
+    description: "Search across tasks, ideas, proposals, documents, projects, and project groups.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query (matches title, description, content)" },
+        scope: { type: "string", enum: ["global", "group", "project"], description: "Search scope (default: global)" },
+        scopeUuid: { type: "string", description: "Project group UUID (when scope=group) or project UUID (when scope=project)" },
+        entityTypes: { type: "array", items: { type: "string", enum: ["task", "idea", "proposal", "document", "project", "project_group"] }, description: "Entity types to search (default: all). Example: [\"task\", \"idea\"]" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    async execute(_id: string, { query, scope, scopeUuid, entityTypes }: { query: string; scope?: string; scopeUuid?: string; entityTypes?: string[] }) {
+      const args: Record<string, unknown> = { query };
+      if (scope) args.scope = scope;
+      if (scopeUuid) args.scopeUuid = scopeUuid;
+      if (entityTypes) args.entityTypes = entityTypes;
+      const result = await mcpClient.callTool("chorus_search", args);
+      return JSON.stringify(result, null, 2);
+    },
+  });
 }

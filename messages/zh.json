@@ -878,5 +878,27 @@
     "addCriterion": "添加标准",
     "removeCriterion": "移除",
     "criterionPlaceholder": "描述验收标准..."
+  },
+  "search": {
+    "placeholder": "搜索任务、想法、提案、文档...",
+    "scopeGlobal": "全局",
+    "scopeGroup": "分组",
+    "scopeProject": "当前项目",
+    "filterAll": "全部",
+    "filterTasks": "任务",
+    "filterIdeas": "想法",
+    "filterProposals": "提案",
+    "filterDocuments": "文档",
+    "filterProjects": "项目",
+    "noResults": "未找到结果",
+    "resultCount": "{count} 个结果",
+    "entityType": {
+      "task": "任务",
+      "idea": "想法",
+      "proposal": "提案",
+      "document": "文档",
+      "project": "项目",
+      "project_group": "分组"
+    }
   }
 }

@@ -26,6 +26,7 @@ import { RealtimeProvider } from "@/contexts/realtime-context";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { GlobalSearch } from "@/components/global-search";
 
 interface User {
   uuid: string;
@@ -42,6 +43,12 @@ interface Project {
 function extractProjectUuid(pathname: string): string | null {
   // Match /projects/[uuid] or /projects/[uuid]/anything
   const match = pathname.match(/^\/projects\/([a-f0-9-]{36})(\/|$)/);
+  return match ? match[1] : null;
+}
+
+// Extract project group UUID from URL
+function extractGroupUuid(pathname: string): string | null {
+  const match = pathname.match(/^\/project-groups\/([a-f0-9-]{36})(\/|$)/);
   return match ? match[1] : null;
 }
 
@@ -67,6 +74,23 @@ export default function DashboardLayout({
   // Get current project UUID from URL (stateful URL)
   const currentProjectUuid = extractProjectUuid(pathname);
   const currentProject = projects.find((p) => p.uuid === currentProjectUuid) || null;
+
+  // Get current group UUID from URL
+  const currentGroupUuid = extractGroupUuid(pathname);
+  const [currentGroupName, setCurrentGroupName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentGroupUuid) {
+      setCurrentGroupName(null);
+      return;
+    }
+    authFetch(`/api/project-groups/${currentGroupUuid}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.success) setCurrentGroupName(data.data.name);
+      })
+      .catch(() => setCurrentGroupName(null));
+  }, [currentGroupUuid]);
 
   // Global pages: /projects, /projects/new, /settings
   const isGlobalPage =
@@ -219,6 +243,16 @@ export default function DashboardLayout({
             <NotificationBell />
           </div>
         </div>
+
+        {/* Global Search Trigger — hidden in mobile drawer (already in mobile header) */}
+        {!mobile && (
+          <GlobalSearch
+            currentProjectUuid={currentProjectUuid || undefined}
+            currentProjectName={currentProject?.name}
+            currentGroupUuid={currentGroupUuid || undefined}
+            currentGroupName={currentGroupName || undefined}
+          />
+        )}
 
         {/* Navigation */}
         <nav className={`flex flex-col ${navGap}`}>
@@ -377,15 +411,25 @@ export default function DashboardLayout({
     <NotificationProvider>
     <div className="flex min-h-screen bg-background">
       {/* Mobile Header - visible below md */}
-      <header className="fixed top-0 left-0 right-0 z-30 flex h-14 items-center justify-between border-b border-border bg-card px-4 md:hidden">
-        <button onClick={() => setMobileMenuOpen(true)} aria-label={t("nav.openMenu")}>
-          <Menu className="h-5 w-5 text-muted-foreground" />
-        </button>
-        <div className="flex items-center gap-2">
-          <img src="/chorus-icon.png" alt="Chorus" className="h-6 w-6" />
-          <span className="text-sm font-semibold text-foreground">{t("common.appName")}</span>
+      <header className="fixed top-0 left-0 right-0 z-30 border-b border-border bg-card md:hidden">
+        <div className="flex h-14 items-center justify-between px-4">
+          <button onClick={() => setMobileMenuOpen(true)} aria-label={t("nav.openMenu")}>
+            <Menu className="h-5 w-5 text-muted-foreground" />
+          </button>
+          <div className="flex items-center gap-2">
+            <img src="/chorus-icon.png" alt="Chorus" className="h-6 w-6" />
+            <span className="text-sm font-semibold text-foreground">{t("common.appName")}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <GlobalSearch
+              currentProjectUuid={currentProjectUuid || undefined}
+              currentProjectName={currentProject?.name}
+              currentGroupUuid={currentGroupUuid || undefined}
+              currentGroupName={currentGroupName || undefined}
+            />
+            <NotificationBell />
+          </div>
         </div>
-        <NotificationBell />
       </header>
 
       {/* Mobile Drawer */}
@@ -402,7 +446,7 @@ export default function DashboardLayout({
         <SidebarContent />
       </aside>
 
-      {/* Main Content - add top padding on mobile for the fixed header */}
+      {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
       {isProjectContext && currentProject ? (
         <RealtimeProvider projectUuid={currentProject.uuid}>
           <main className="flex-1 overflow-auto pt-14 md:pt-0">{children}</main>

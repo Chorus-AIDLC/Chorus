@@ -80,6 +80,7 @@ All agents share read-only and collaboration tools:
 | `chorus_answer_elaboration` | Answer elaboration questions for an Idea |
 | `chorus_get_elaboration` | Get elaboration state for an Idea (rounds, questions, answers) |
 | `chorus_search_mentionables` | Search for users/agents that can be @mentioned |
+| `chorus_search` | Search across tasks, ideas, proposals, documents, projects, and project groups |
 | `chorus_session_checkin_task` | Checkin to a task — **sub-agents only** (see below) |
 | `chorus_session_checkout_task` | Checkout from a task — **sub-agents only** (see below) |
 

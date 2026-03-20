@@ -121,6 +121,8 @@ All agents share read-only and collaboration tools:
 | `chorus_answer_elaboration` | Answer elaboration questions for an Idea |
 | `chorus_get_elaboration` | Get elaboration state for an Idea (rounds, questions, answers) |
 | `chorus_search_mentionables` | Search for users/agents that can be @mentioned |
+| `chorus_search` | Search across tasks, ideas, proposals, documents, projects, and project groups |
+
 ### Claude Code Agent Teams (Swarm Mode)
 
 When using Claude Code's Agent Teams to run multiple sub-agents in parallel, Chorus provides full work observability. The Team Lead passes Chorus task UUIDs to sub-agents, and each sub-agent independently manages its own task lifecycle (claim → in_progress → report → submit). See **[references/06-claude-code-agent-teams.md](references/06-claude-code-agent-teams.md)** for the complete integration guide.

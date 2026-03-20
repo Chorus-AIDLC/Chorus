@@ -18,6 +18,7 @@ import * as notificationService from "@/services/notification.service";
 import * as elaborationService from "@/services/elaboration.service";
 import * as projectGroupService from "@/services/project-group.service";
 import * as mentionService from "@/services/mention.service";
+import * as searchService from "@/services/search.service";
 import { prisma } from "@/lib/prisma";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
@@ -215,7 +216,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         projectUuid: z.string().describe("Project UUID"),
         status: z.string().optional().describe("Filter by status: open, assigned, in_progress, to_verify, done, closed"),
         priority: z.string().optional().describe("Filter by priority: low, medium, high"),
-        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
       }),
@@ -463,7 +464,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get Tasks available to claim in a project (status=open)",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
       }),
     },
     async ({ projectUuid, proposalUuids }) => {
@@ -535,7 +536,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/to_verify). Useful for discovering what work can begin next after a task completes.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        proposalUuids: z.array(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
       }),
     },
     async ({ projectUuid, proposalUuids }) => {
@@ -795,6 +796,32 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
       return {
         content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+      };
+    }
+  );
+
+  // chorus_search - Search across all entity types
+  server.registerTool(
+    "chorus_search",
+    {
+      description: "Search across tasks, ideas, proposals, documents, projects, and project groups. Supports scoping to project groups or specific projects.",
+      inputSchema: z.object({
+        query: z.string().describe("Search query (matches title, description, content)"),
+        scope: z.enum(["global", "group", "project"]).optional().default("global").describe("Search scope"),
+        scopeUuid: z.string().optional().describe("Project group UUID (scope=group) or project UUID (scope=project)"),
+        entityTypes: zArray(z.enum(["task", "idea", "proposal", "document", "project", "project_group"])).optional().describe("Entity types to search (default: all). Example: [\"task\", \"idea\"]"),
+      }),
+    },
+    async ({ query, scope, scopeUuid, entityTypes }) => {
+      const result = await searchService.search({
+        companyUuid: auth.companyUuid,
+        query,
+        scope,
+        scopeUuid,
+        entityTypes,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     }
   );

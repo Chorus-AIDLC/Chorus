@@ -461,6 +461,52 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ---
 
+### chorus_search
+
+**Description**: Search across tasks, ideas, proposals, documents, projects, and project groups. Supports scoping to project groups or specific projects.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| query | string | Yes | Search query (matches title, description, content) |
+| scope | enum | No | Search scope: global, group, project (default: global) |
+| scopeUuid | string | No | Project group UUID (scope=group) or project UUID (scope=project) |
+| entityTypes | string[] | No | Entity types to search: task, idea, proposal, document, project, project_group (default: all) |
+
+**Output**:
+```json
+{
+  "results": [
+    {
+      "entityType": "task",
+      "uuid": "...",
+      "title": "Task title",
+      "snippet": "...excerpt around match...",
+      "status": "open",
+      "projectUuid": "...",
+      "projectName": "Project A",
+      "updatedAt": "ISO timestamp"
+    }
+  ],
+  "counts": {
+    "tasks": 5,
+    "ideas": 3,
+    "proposals": 2,
+    "documents": 4,
+    "projects": 1,
+    "projectGroups": 1
+  }
+}
+```
+
+**Usage examples**:
+- Global search: `{ query: "authentication" }`
+- Search in a project group: `{ query: "authentication", scope: "group", scopeUuid: "group-uuid" }`
+- Search in a specific project: `{ query: "authentication", scope: "project", scopeUuid: "project-uuid" }`
+- Search only tasks and ideas: `{ query: "authentication", entityTypes: ["task", "idea"] }`
+
+---
+
 ### chorus_get_project_groups
 
 **Description**: List all project groups for the current company. Returns groups with project counts.
