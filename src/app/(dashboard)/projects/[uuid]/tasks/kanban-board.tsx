@@ -351,7 +351,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                               }}
                               style={{
                                 ...provided.draggableProps.style,
-                                animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both`,
+                                ...(snapshot.isDragging ? {} : { animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both` }),
                               }}
                             >
                               <div className="relative">

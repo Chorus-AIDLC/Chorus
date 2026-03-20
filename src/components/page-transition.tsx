@@ -1,8 +1,8 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { fadeInUp } from "@/lib/animation";
+import { motion } from "framer-motion";
+import { ANIM } from "@/lib/animation";
 
 /**
  * Extract the "page-level" key from a pathname, ignoring sub-routes
@@ -30,17 +30,14 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
   const pageKey = getPageKey(pathname);
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={pageKey}
-        variants={fadeInUp}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        className="flex-1"
-      >
-        {children}
-      </motion.div>
-    </AnimatePresence>
+    <motion.div
+      key={pageKey}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: ANIM.normal, ease: ANIM.easeOut }}
+      className="flex-1"
+    >
+      {children}
+    </motion.div>
   );
 }
