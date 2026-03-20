@@ -27,6 +27,7 @@ Chorus is a platform for AI Agent and human collaboration, implementing the AI-D
 | **Session Observability** | Agent Session + Task Checkin, Kanban/Task Detail displays active Workers in real-time |
 | **Chorus Plugin** | Claude Code plugin, automating Session lifecycle (create/heartbeat/close) |
 | **Task DAG** | Task dependency modeling, cycle detection, @xyflow/react + dagre visualization |
+| **Global Search** | Unified search across 6 entity types with scope filtering and Cmd+K UI ([details](./SEARCH.md)) |
 
 ### 1.3 Participants
 
@@ -1684,6 +1685,7 @@ volumes:
 | Chorus Plugin | Claude Code plugin, automating Session lifecycle | Implemented |
 | Task Auto-Scheduling Query | `chorus_get_unblocked_tasks` MCP tool | Implemented |
 | Notification System | In-app notifications + SSE push + Redis Pub/Sub | **Implemented** |
+| Global Search | Unified search across 6 entity types, Cmd+K UI, MCP tool | **Implemented** |
 | Execution Metrics | Agent Hours, velocity statistics | To be developed (P1) |
 | Git Integration | Associate commits and PRs | To be developed |
 | Semantic Search | pgvector knowledge base search | To be developed |
