@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Loader2, Plus } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Check, Loader2, Plus } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ export function CreateProjectDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   const displayGroupName = groupName || t("projectGroups.ungrouped");
 
@@ -58,11 +60,15 @@ export function CreateProjectDialog({
         const data = await res.json();
 
         if (data.success) {
-          setTitle("");
-          setDescription("");
-          onOpenChange(false);
-          onCreated?.();
-          router.refresh();
+          setSuccess(true);
+          setTimeout(() => {
+            setTitle("");
+            setDescription("");
+            onOpenChange(false);
+            onCreated?.();
+            router.refresh();
+            setSuccess(false);
+          }, 600);
         } else {
           setError(data.error || t("projects.createFailed"));
         }
@@ -137,17 +143,33 @@ export function CreateProjectDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending || !title.trim()}
+            disabled={isPending || success || !title.trim()}
             className="rounded-lg bg-[#C67A52] hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
-            {isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
-            {isPending
-              ? t("common.creating")
-              : t("projectGroups.createProject")}
+            <AnimatePresence mode="wait">
+              {success ? (
+                <motion.span
+                  key="success"
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex items-center gap-2"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </motion.span>
+              ) : isPending ? (
+                <motion.span key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t("common.creating")}
+                </motion.span>
+              ) : (
+                <motion.span key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("projectGroups.createProject")}
+                </motion.span>
+              )}
+            </AnimatePresence>
           </Button>
         </div>
       </DialogContent>

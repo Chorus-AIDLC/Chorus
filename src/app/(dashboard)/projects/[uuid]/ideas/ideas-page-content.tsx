@@ -7,6 +7,7 @@ import { getTranslations } from "next-intl/server";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Lightbulb } from "lucide-react";
+import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { listIdeas } from "@/services/idea.service";
 import { projectExists } from "@/services/project.service";
@@ -149,19 +150,21 @@ export async function IdeasPageContent({
 
       {/* Ideas List */}
       {filteredIdeas.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center p-12 text-center">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <Lightbulb className="h-8 w-8 text-primary" />
-          </div>
-          <h3 className="mb-2 text-lg font-medium text-foreground">
-            {filter === "all" ? t("ideas.noIdeas") : t("ideas.noIdeasWithStatus", { status: t(`status.${statusI18nKeys[filter] || filter}`) })}
-          </h3>
-          <p className="mb-6 max-w-sm text-sm text-muted-foreground">
-            {filter === "all"
-              ? t("ideas.startByAdding")
-              : t("ideas.ideasWithStatus")}
-          </p>
-        </Card>
+        <AnimatedEmptyState>
+          <Card className="flex flex-col items-center justify-center p-12 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+              <Lightbulb className="h-8 w-8 text-primary" />
+            </div>
+            <h3 className="mb-2 text-lg font-medium text-foreground">
+              {filter === "all" ? t("ideas.noIdeas") : t("ideas.noIdeasWithStatus", { status: t(`status.${statusI18nKeys[filter] || filter}`) })}
+            </h3>
+            <p className="mb-6 max-w-sm text-sm text-muted-foreground">
+              {filter === "all"
+                ? t("ideas.startByAdding")
+                : t("ideas.ideasWithStatus")}
+            </p>
+          </Card>
+        </AnimatedEmptyState>
       ) : (
         <IdeasList
           ideas={filteredIdeas.map(idea => ({

@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Search, Command as CommandIcon, Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ANIM, staggerItem } from "@/lib/animation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -320,63 +322,78 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
 
           {/* Results */}
           <ScrollArea className="max-h-[400px]">
-            {!query.trim() ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                {t("placeholder")}
-              </div>
-            ) : loading ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
-                {t("placeholder")}...
-              </div>
-            ) : results.length === 0 ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                {t("noResults")}
-              </div>
-            ) : (
-              <div className="p-2">
-                {results.map((result, index) => (
-                  <button
-                    key={`${result.entityType}-${result.uuid}`}
-                    ref={(el) => { resultRefs.current[index] = el; }}
-                    onClick={() => navigateToResult(result)}
-                    onMouseEnter={() => setSelectedIndex(index)}
-                    className={cn(
-                      "block w-full text-left px-3 py-2.5 rounded-lg transition-colors cursor-pointer overflow-hidden",
-                      index === selectedIndex ? "bg-accent" : "hover:bg-accent/50"
-                    )}
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
-                      <Badge
-                        variant="outline"
-                        className={cn("text-[10px] px-1.5 py-0 shrink-0", BADGE_COLORS[result.entityType] || "bg-muted text-muted-foreground")}
+            <AnimatePresence mode="wait">
+              {!query.trim() ? (
+                <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: ANIM.fast }}>
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    {t("placeholder")}
+                  </div>
+                </motion.div>
+              ) : loading ? (
+                <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: ANIM.fast }}>
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
+                    {t("placeholder")}...
+                  </div>
+                </motion.div>
+              ) : results.length === 0 ? (
+                <motion.div key="no-results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: ANIM.fast }}>
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    {t("noResults")}
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={`results-${activeFilter}`}
+                  initial="initial"
+                  animate="animate"
+                  transition={{ staggerChildren: ANIM.staggerFast }}
+                  className="p-2"
+                >
+                  {results.map((result, index) => (
+                    <motion.div key={`${result.entityType}-${result.uuid}`} variants={staggerItem}>
+                      <button
+                        ref={(el) => { resultRefs.current[index] = el; }}
+                        onClick={() => navigateToResult(result)}
+                        onMouseEnter={() => setSelectedIndex(index)}
+                        className={cn(
+                          "block w-full text-left px-3 py-2.5 rounded-lg transition-colors cursor-pointer overflow-hidden",
+                          index === selectedIndex ? "bg-accent" : "hover:bg-accent/50"
+                        )}
                       >
-                        {t(`entityType.${result.entityType}`)}
-                      </Badge>
-                      {result.status && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
-                          {result.status}
-                        </Badge>
-                      )}
-                      {result.projectName && (
-                        <span className="text-[10px] text-muted-foreground line-clamp-1 ml-auto">
-                          {result.projectName}
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-medium text-sm line-clamp-1 break-all">{result.title}</div>
-                    {result.snippet && (
-                      <div className="text-xs text-muted-foreground line-clamp-1 mt-0.5 break-all">
-                        {result.snippet}
-                      </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      {formatRelativeTime(result.updatedAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+                        <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                          <Badge
+                            variant="outline"
+                            className={cn("text-[10px] px-1.5 py-0 shrink-0", BADGE_COLORS[result.entityType] || "bg-muted text-muted-foreground")}
+                          >
+                            {t(`entityType.${result.entityType}`)}
+                          </Badge>
+                          {result.status && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                              {result.status}
+                            </Badge>
+                          )}
+                          {result.projectName && (
+                            <span className="text-[10px] text-muted-foreground line-clamp-1 ml-auto">
+                              {result.projectName}
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-medium text-sm line-clamp-1 break-all">{result.title}</div>
+                        {result.snippet && (
+                          <div className="text-xs text-muted-foreground line-clamp-1 mt-0.5 break-all">
+                            {result.snippet}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-muted-foreground mt-1">
+                          {formatRelativeTime(result.updatedAt)}
+                        </div>
+                      </button>
+                    </motion.div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </ScrollArea>
 
           {/* Footer — desktop only */}

@@ -31,6 +31,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
+import { motion } from "framer-motion";
+import { fadeIn } from "@/lib/animation";
 import {
   addTaskDraftAction,
   updateTaskDraftAction,
@@ -551,7 +553,7 @@ export function TaskDraftDetailPanel({
             {isEditing ? (
               renderEditForm()
             ) : taskDraft ? (
-              <>
+              <motion.div variants={fadeIn} initial="initial" animate="animate">
                 {/* Description Section */}
                 <div>
                   <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
@@ -620,7 +622,7 @@ export function TaskDraftDetailPanel({
                   </div>
                 )}
                 {renderDependencies()}
-              </>
+              </motion.div>
             ) : null}
           </div>
         </ScrollArea>

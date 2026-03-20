@@ -27,6 +27,9 @@ import { NotificationProvider } from "@/contexts/notification-context";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { GlobalSearch } from "@/components/global-search";
+import { PageTransition } from "@/components/page-transition";
+import { motion, AnimatePresence } from "framer-motion";
+import { ANIM, dropdownVariants } from "@/lib/animation";
 
 interface User {
   uuid: string;
@@ -286,39 +289,47 @@ export default function DashboardLayout({
                       className={`h-3 w-3 text-muted-foreground transition-transform ${projectMenuOpen ? "rotate-180" : ""}`}
                     />
                   </Button>
-                  {projectMenuOpen && (
-                    <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-border bg-card py-1 shadow-lg">
-                      {projects.map((project) => (
-                        <Button
-                          key={project.uuid}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => selectProject(project)}
-                          className={`w-full justify-start px-3 py-2 ${navTextSize} [&>*]:truncate ${
-                            currentProject?.uuid === project.uuid
-                              ? "bg-secondary font-medium text-foreground"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          <span className="truncate">{project.name}</span>
-                        </Button>
-                      ))}
-                      <div className="my-1 border-t border-border" />
-                      <Link
-                        href="/projects/new"
-                        onClick={() => setProjectMenuOpen(false)}
+                  <AnimatePresence>
+                    {projectMenuOpen && (
+                      <motion.div
+                        variants={dropdownVariants}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        className="absolute left-0 right-0 top-full z-10 mt-1 origin-top rounded-lg border border-border bg-card py-1 shadow-lg"
                       >
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={`w-full justify-start gap-2 px-3 py-2 ${navTextSize} text-primary`}
+                        {projects.map((project) => (
+                          <Button
+                            key={project.uuid}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => selectProject(project)}
+                            className={`w-full justify-start px-3 py-2 ${navTextSize} [&>*]:truncate ${
+                              currentProject?.uuid === project.uuid
+                                ? "bg-secondary font-medium text-foreground"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            <span className="truncate">{project.name}</span>
+                          </Button>
+                        ))}
+                        <div className="my-1 border-t border-border" />
+                        <Link
+                          href="/projects/new"
+                          onClick={() => setProjectMenuOpen(false)}
                         >
-                          <Plus className="h-3 w-3" />
-                          {t("nav.newProject")}
-                        </Button>
-                      </Link>
-                    </div>
-                  )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`w-full justify-start gap-2 px-3 py-2 ${navTextSize} text-primary`}
+                          >
+                            <Plus className="h-3 w-3" />
+                            {t("nav.newProject")}
+                          </Button>
+                        </Link>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               )}
 
@@ -330,18 +341,27 @@ export default function DashboardLayout({
                   return (
                     <Link key={item.href} href={item.href}>
                       <Button
-                        variant={isActive ? "secondary" : "ghost"}
+                        variant="ghost"
                         size="sm"
-                        className={`w-full justify-start gap-2.5 ${navTextSize} ${navItemPy} ${
+                        className={`relative w-full justify-start gap-2.5 ${navTextSize} ${navItemPy} ${
                           isActive
                             ? "font-medium text-foreground"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        <Icon
-                          className={`${navIconSize} ${isActive ? "text-primary" : ""}`}
-                        />
-                        {item.label}
+                        {isActive && (
+                          <motion.div
+                            layoutId="nav-active"
+                            className="absolute inset-0 rounded-md bg-secondary"
+                            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                          />
+                        )}
+                        <span className="relative flex items-center gap-2.5">
+                          <Icon
+                            className={`${navIconSize} ${isActive ? "text-primary" : ""}`}
+                          />
+                          {item.label}
+                        </span>
                       </Button>
                     </Link>
                   );
@@ -358,16 +378,25 @@ export default function DashboardLayout({
                   return (
                     <Link key={item.href} href={item.href}>
                       <Button
-                        variant={isActive ? "secondary" : "ghost"}
+                        variant="ghost"
                         size="sm"
-                        className={`w-full justify-start gap-2.5 ${navTextSize} ${navItemPy} ${
+                        className={`relative w-full justify-start gap-2.5 ${navTextSize} ${navItemPy} ${
                           isActive
                             ? "font-medium text-foreground"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        <Icon className={navIconSize} />
-                        {item.label}
+                        {isActive && (
+                          <motion.div
+                            layoutId="nav-active"
+                            className="absolute inset-0 rounded-md bg-secondary"
+                            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                          />
+                        )}
+                        <span className="relative flex items-center gap-2.5">
+                          <Icon className={`${navIconSize} ${isActive ? "text-primary" : ""}`} />
+                          {item.label}
+                        </span>
                       </Button>
                     </Link>
                   );
@@ -449,14 +478,14 @@ export default function DashboardLayout({
       {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
       {isProjectContext && currentProject ? (
         <RealtimeProvider projectUuid={currentProject.uuid}>
-          <main className="flex-1 overflow-auto pt-14 md:pt-0">{children}</main>
+          <main className="flex-1 overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
           <PixelCanvasWidget
             projectUuid={currentProject.uuid}
             projectName={currentProject.name}
           />
         </RealtimeProvider>
       ) : (
-        <main className="flex-1 overflow-auto pt-14 md:pt-0">{children}</main>
+        <main className="flex-1 overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
       )}
     </div>
     </NotificationProvider>

@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Check, Loader2 } from "lucide-react";
 import { createIdeaAction } from "./actions";
 
 interface IdeaCreateFormProps {
@@ -22,6 +23,7 @@ export function IdeaCreateForm({ projectUuid }: IdeaCreateFormProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,9 +43,13 @@ export function IdeaCreateForm({ projectUuid }: IdeaCreateFormProps) {
         });
 
         if (result.success) {
-          setTitle("");
-          setContent("");
-          router.refresh();
+          setSuccess(true);
+          setTimeout(() => {
+            setTitle("");
+            setContent("");
+            router.refresh();
+            setSuccess(false);
+          }, 600);
         } else {
           setError(result.error || t("ideas.createFailed"));
         }
@@ -96,18 +102,33 @@ export function IdeaCreateForm({ projectUuid }: IdeaCreateFormProps) {
           <div className="flex justify-end">
             <Button
               type="submit"
-              disabled={isPending || !title.trim()}
+              disabled={isPending || success || !title.trim()}
               size="sm"
               className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
             >
-              {isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t("common.creating")}
-                </>
-              ) : (
-                t("ideas.submit")
-              )}
+              <AnimatePresence mode="wait">
+                {success ? (
+                  <motion.span
+                    key="success"
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex items-center gap-2"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </motion.span>
+                ) : isPending ? (
+                  <motion.span key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t("common.creating")}
+                  </motion.span>
+                ) : (
+                  <motion.span key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    {t("ideas.submit")}
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </Button>
           </div>
         </form>

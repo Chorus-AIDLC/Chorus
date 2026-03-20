@@ -13,6 +13,8 @@ import {
   RefreshCw,
   AtSign,
 } from "lucide-react";
+import { motion } from "framer-motion";
+import { staggerItem } from "@/lib/animation";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -227,8 +229,8 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
     const isUnread = !notification.readAt;
 
     return (
+      <motion.div key={notification.uuid} variants={staggerItem}>
       <button
-        key={notification.uuid}
         onClick={() => handleClickNotification(notification)}
         className="flex w-full gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
       >
@@ -270,6 +272,7 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
           </div>
         </div>
       </button>
+      </motion.div>
     );
   };
 
@@ -292,7 +295,9 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
 
     return (
       <>
-        {items.map(renderItem)}
+        <motion.div initial="initial" animate="animate" transition={{ staggerChildren: 0.04 }}>
+          {items.map(renderItem)}
+        </motion.div>
         {items.length < total && (
           <div className="p-3 text-center">
             <Button
@@ -336,15 +341,29 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
         </TabsList>
 
         <TabsContent value="all" className="mt-0">
-          <ScrollArea className="max-h-[400px] overflow-y-auto">
-            {renderList(allNotifications, false, allTotal)}
-          </ScrollArea>
+          <motion.div
+            key="tab-all"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15 }}
+          >
+            <ScrollArea className="max-h-[400px] overflow-y-auto">
+              {renderList(allNotifications, false, allTotal)}
+            </ScrollArea>
+          </motion.div>
         </TabsContent>
 
         <TabsContent value="unread" className="mt-0">
-          <ScrollArea className="max-h-[400px] overflow-y-auto">
-            {renderList(unreadNotifications, true, unreadTotal)}
-          </ScrollArea>
+          <motion.div
+            key="tab-unread"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15 }}
+          >
+            <ScrollArea className="max-h-[400px] overflow-y-auto">
+              {renderList(unreadNotifications, true, unreadTotal)}
+            </ScrollArea>
+          </motion.div>
         </TabsContent>
       </Tabs>
 

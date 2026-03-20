@@ -13,6 +13,7 @@ import { ProposalFilter } from "@/components/proposal-filter";
 import { KanbanBoard } from "./kanban-board";
 import { DagView } from "./dag-view";
 import { TaskDetailPanel } from "./task-detail-panel";
+import { motion } from "framer-motion";
 
 interface Task {
   uuid: string;
@@ -226,9 +227,14 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
           {/* Task list */}
           <div className="flex-1 space-y-2 overflow-y-auto">
             {filteredTasks.length === 0 ? (
-              <div className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
+                className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+              >
                 {t("tasks.noTasks")}
-              </div>
+              </motion.div>
             ) : (
               filteredTasks.map((task) => (
                 <Card

@@ -58,6 +58,8 @@ import {
 import { getTaskSessionsAction } from "./session-actions";
 import type { TaskSessionInfo } from "@/services/session.service";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { motion } from "framer-motion";
+import { fadeIn } from "@/lib/animation";
 
 interface DependencyTask {
   uuid: string;
@@ -754,7 +756,7 @@ export function TaskDetailPanel({
             {isEditing ? (
               renderEditForm()
             ) : task ? (
-              <>
+              <motion.div variants={fadeIn} initial="initial" animate="animate">
                 {/* Assignee Section */}
                 <div>
                   <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
@@ -1239,7 +1241,7 @@ export function TaskDetailPanel({
                     </Button>
                   </div>
                 </div>
-              </>
+              </motion.div>
             ) : null}
           </div>
         </ScrollArea>

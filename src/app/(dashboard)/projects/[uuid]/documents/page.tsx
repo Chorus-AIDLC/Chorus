@@ -12,6 +12,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { listDocuments } from "@/services/document.service";
 import { projectExists } from "@/services/project.service";
 import { CreateDocumentDialog } from "./create-document-dialog";
+import { AnimatedEmptyState } from "@/components/animated-empty-state";
 
 const docTypeConfig: Record<string, { labelKey: string; color: string; icon: LucideIcon }> = {
   prd: { labelKey: "documents.typePrd", color: "bg-[#E3F2FD] text-[#1976D2]", icon: ClipboardList },
@@ -94,14 +95,16 @@ export default async function DocumentsPage({ params, searchParams }: PageProps)
 
       {/* Documents Grid */}
       {filteredDocuments.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#E8F5E9]">
-            <FilePlus className="h-8 w-8 text-[#5A9E6F]" />
-          </div>
-          <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("documents.noDocuments")}</h3>
-          <p className="mb-6 max-w-sm text-sm text-[#6B6B6B]">{t("documents.noDocumentsDesc")}</p>
-          <CreateDocumentDialog projectUuid={projectUuid} />
-        </Card>
+        <AnimatedEmptyState>
+          <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#E8F5E9]">
+              <FilePlus className="h-8 w-8 text-[#5A9E6F]" />
+            </div>
+            <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("documents.noDocuments")}</h3>
+            <p className="mb-6 max-w-sm text-sm text-[#6B6B6B]">{t("documents.noDocumentsDesc")}</p>
+            <CreateDocumentDialog projectUuid={projectUuid} />
+          </Card>
+        </AnimatedEmptyState>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredDocuments.map((doc) => (

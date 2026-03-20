@@ -25,6 +25,7 @@ import { moveTaskToColumnAction, forceMoveTaskToColumnAction } from "./actions";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
 import { useRealtimeRefresh } from "@/contexts/realtime-context";
+import { motion } from "framer-motion";
 
 interface Task {
   uuid: string;
@@ -318,9 +319,14 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                     }`}
                   >
                     {columnTasks.length === 0 && !snapshot.isDraggingOver ? (
-                      <div className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]">
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
+                        className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+                      >
                         {t("tasks.noTasks")}
-                      </div>
+                      </motion.div>
                     ) : (
                       columnTasks.map((task, index) => {
                         const blocked = isTaskBlocked(task);
@@ -342,6 +348,10 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                 if (!snapshot.isDragging) {
                                   onTaskSelect(task.uuid);
                                 }
+                              }}
+                              style={{
+                                ...provided.draggableProps.style,
+                                animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both`,
                               }}
                             >
                               <div className="relative">

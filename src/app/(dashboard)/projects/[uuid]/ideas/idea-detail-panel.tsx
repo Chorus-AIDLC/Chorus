@@ -56,6 +56,8 @@ import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction } from "./[ideaUuid]/elaboration-actions";
 import { useRealtimeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
+import { motion } from "framer-motion";
+import { fadeIn } from "@/lib/animation";
 
 interface Idea {
   uuid: string;
@@ -535,7 +537,7 @@ export function IdeaDetailPanel({
               </div>
             ) : (
               /* View Mode */
-              <>
+              <motion.div variants={fadeIn} initial="initial" animate="animate">
                 {/* Assignee Section */}
                 <div>
                   <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
@@ -704,7 +706,7 @@ export function IdeaDetailPanel({
                     </Button>
                   </div>
                 </div>
-              </>
+              </motion.div>
             )}
           </div>
         </ScrollArea>

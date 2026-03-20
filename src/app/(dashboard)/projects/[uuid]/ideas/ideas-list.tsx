@@ -18,6 +18,7 @@ import { code } from "@streamdown/code";
 import { IdeaDetailPanel } from "./idea-detail-panel";
 import { useRealtimeRefresh } from "@/contexts/realtime-context";
 import { usePanelUrl } from "@/hooks/use-panel-url";
+import { StaggerList, StaggerItem } from "@/components/stagger-list";
 
 interface IdeaItem {
   uuid: string;
@@ -110,14 +111,14 @@ export function IdeasList({
 
   return (
     <>
-      <div className="space-y-4">
+      <StaggerList className="space-y-4">
         {ideas.map((idea) => {
           const badgeStyle = statusBadgeStyles[idea.status] || statusBadgeStyles.open;
           const isUsed = usedSet.has(idea.uuid);
 
           return (
+            <StaggerItem key={idea.uuid}>
             <Card
-              key={idea.uuid}
               className="cursor-pointer border-[#E5E0D8] py-4 transition-all hover:border-[#C67A52]/50 hover:shadow-sm"
               onClick={() => openPanel(idea.uuid)}
             >
@@ -200,9 +201,10 @@ export function IdeasList({
                 )}
               </CardFooter>
             </Card>
+            </StaggerItem>
           );
         })}
-      </div>
+      </StaggerList>
 
       {/* Side Panel */}
       {selectedIdea && (

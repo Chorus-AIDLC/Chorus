@@ -9,6 +9,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { listActivities } from "@/services/activity.service";
 import { projectExists } from "@/services/project.service";
 import { prisma } from "@/lib/prisma";
+import { AnimatedEmptyState } from "@/components/animated-empty-state";
 
 interface ActivityWithActor {
   uuid: string;
@@ -153,25 +154,27 @@ export default async function ActivityPage({ params }: PageProps) {
 
       {/* Activity Feed */}
       {activities.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F2EC]">
-            <Monitor className="h-8 w-8 text-[#6B6B6B]" />
-          </div>
-          <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("activity.noActivity")}</h3>
-          <p className="max-w-sm text-sm text-[#6B6B6B]">{t("activity.noActivityDesc")}</p>
-        </Card>
+        <AnimatedEmptyState>
+          <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F2EC]">
+              <Monitor className="h-8 w-8 text-[#6B6B6B]" />
+            </div>
+            <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("activity.noActivity")}</h3>
+            <p className="max-w-sm text-sm text-[#6B6B6B]">{t("activity.noActivityDesc")}</p>
+          </Card>
+        </AnimatedEmptyState>
       ) : (
         <div className="space-y-8">
           {Object.entries(groupedActivities).map(([dateLabel, items]) => (
             <div key={dateLabel}>
               <h3 className="mb-4 text-sm font-medium text-[#6B6B6B]">{dateLabel}</h3>
               <div className="space-y-3">
-                {items.map((activity) => {
+                {items.map((activity, index) => {
                   const actionConf = actionConfig[activity.action] || actionConfig.updated;
                   const entityConf = entityTypeConfig[activity.targetType] || entityTypeConfig.project;
 
                   return (
-                    <Card key={activity.uuid} className="flex items-start gap-4 border-[#E5E0D8] p-4">
+                    <Card key={activity.uuid} className="flex items-start gap-4 border-[#E5E0D8] p-4" style={{ animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both` }}>
                       <div className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-full ${activity.isAgent ? "bg-[#E3F2FD]" : "bg-[#F5F2EC]"}`}>
                         {activity.isAgent ? (
                           <Monitor className="h-4 w-4 text-[#1976D2]" />

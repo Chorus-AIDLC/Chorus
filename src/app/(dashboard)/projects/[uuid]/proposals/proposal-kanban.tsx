@@ -11,6 +11,7 @@ import { code } from "@streamdown/code";
 import type { DocumentDraft, TaskDraft } from "@/services/proposal.service";
 import { useRealtimeRefresh } from "@/contexts/realtime-context";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { motion } from "framer-motion";
 
 interface Proposal {
   uuid: string;
@@ -201,9 +202,14 @@ export function ProposalKanban({ projectUuid, proposals }: ProposalKanbanProps) 
         {/* Vertical proposal list */}
         <div className="flex-1 space-y-3">
           {filteredProposals.length === 0 ? (
-            <div className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
+              className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+            >
               {t("proposals.noProposals")}
-            </div>
+            </motion.div>
           ) : (
             filteredProposals.map((proposal) => (
               <ProposalCard
@@ -245,9 +251,14 @@ export function ProposalKanban({ projectUuid, proposals }: ProposalKanbanProps) 
             {/* Cards */}
             <div className="flex-1 space-y-4 overflow-y-auto">
               {columnProposals.length === 0 ? (
-                <div className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
+                  className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+                >
                   {t("proposals.noProposals")}
-                </div>
+                </motion.div>
               ) : (
                 columnProposals.map((proposal) => (
                   <ProposalCard

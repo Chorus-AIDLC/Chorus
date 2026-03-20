@@ -32,6 +32,7 @@ import {
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
 import { CreateProjectGroupDialog } from "@/components/create-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
+import { StaggerList, StaggerItem } from "@/components/stagger-list";
 
 // Types
 interface ProjectData {
@@ -279,10 +280,10 @@ function GroupSection({
                       {t("projectGroups.noProjectsInGroup")}
                     </p>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <StaggerList className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {projects.map((project, index) => (
+                        <StaggerItem key={project.uuid}>
                         <Draggable
-                          key={project.uuid}
                           draggableId={project.uuid}
                           index={index}
                         >
@@ -312,8 +313,9 @@ function GroupSection({
                             </div>
                           )}
                         </Draggable>
+                        </StaggerItem>
                       ))}
-                    </div>
+                    </StaggerList>
                   )}
                   {provided.placeholder}
                 </div>
@@ -393,10 +395,10 @@ function UngroupedSection({ projects, onNewProject }: { projects: ProjectData[];
                         {t("projectGroups.noProjectsInGroup")}
                       </p>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <StaggerList className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {projects.map((project, index) => (
+                          <StaggerItem key={project.uuid}>
                           <Draggable
-                            key={project.uuid}
                             draggableId={project.uuid}
                             index={index}
                           >
@@ -426,8 +428,9 @@ function UngroupedSection({ projects, onNewProject }: { projects: ProjectData[];
                               </div>
                             )}
                           </Draggable>
+                          </StaggerItem>
                         ))}
-                      </div>
+                      </StaggerList>
                     )}
                     {provided.placeholder}
                   </div>
