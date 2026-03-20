@@ -341,10 +341,10 @@ chorus_pm_add_document_draft({
 
 ### Step 7: Add Task Drafts
 
-Add task drafts one at a time using `chorus_pm_add_task_draft`. Each draft gets a UUID on creation — use these UUIDs for `dependsOnDraftUuids` in later drafts.
+Add task drafts one at a time using `chorus_pm_add_task_draft`. The response returns the new draft's `draftUuid` — use it directly for `dependsOnDraftUuids` in subsequent drafts without needing to call `chorus_get_proposal`.
 
 ```
-# Add first task
+# Add first task → response includes { draftUuid, draftTitle }
 chorus_pm_add_task_draft({
   proposalUuid: "<proposal-uuid>",
   title: "Implement <component>",
@@ -354,7 +354,7 @@ chorus_pm_add_task_draft({
   acceptanceCriteria: "- [ ] Criteria 1\n- [ ] Criteria 2"
 })
 
-# Add second task (depends on the first)
+# Add second task — use draftUuid from the first task's response
 chorus_pm_add_task_draft({
   proposalUuid: "<proposal-uuid>",
   title: "Write tests for <component>",
@@ -362,7 +362,7 @@ chorus_pm_add_task_draft({
   priority: "medium",
   storyPoints: 2,
   acceptanceCriteria: "- [ ] Test coverage > 80%",
-  dependsOnDraftUuids: ["<uuid-of-first-task-draft>"]
+  dependsOnDraftUuids: ["<draftUuid-from-first-task>"]
 })
 ```
 

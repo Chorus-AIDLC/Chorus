@@ -505,8 +505,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           auth.companyUuid,
           { type, title, content }
         );
+        const documentDrafts = proposal.documentDrafts as Array<{ uuid: string; title: string }> | null;
+        const newDraft = documentDrafts?.[documentDrafts.length - 1];
         return {
-          content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, action: "document_draft_added" }, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, action: "document_draft_added", draftUuid: newDraft?.uuid, draftTitle: newDraft?.title }, null, 2) }],
         };
       } catch (error) {
         return {
@@ -542,8 +544,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           auth.companyUuid,
           { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }
         );
+        const taskDrafts = proposal.taskDrafts as Array<{ uuid: string; title: string }> | null;
+        const newDraft = taskDrafts?.[taskDrafts.length - 1];
         return {
-          content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, action: "task_draft_added" }, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, action: "task_draft_added", draftUuid: newDraft?.uuid, draftTitle: newDraft?.title }, null, 2) }],
         };
       } catch (error) {
         return {

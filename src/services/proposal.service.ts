@@ -575,12 +575,17 @@ export async function updateProposalContent(
 }
 
 // Approve Proposal
+export interface ApprovalResult extends ProposalResponse {
+  materializedTasks?: Array<{ draftUuid: string; taskUuid: string; title: string }>;
+  materializedDocuments?: Array<{ draftUuid: string; documentUuid: string; title: string }>;
+}
+
 export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
   reviewedByUuid: string,
   reviewNote?: string | null
-): Promise<ProposalResponse> {
+): Promise<ApprovalResult> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
   });
@@ -590,7 +595,7 @@ export async function approveProposal(
   }
 
   // Start transaction
-  const updatedProposal = await prisma.$transaction(async (tx) => {
+  const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {
     // Update Proposal status
     const updated = await tx.proposal.update({
       where: { uuid: proposalUuid },
@@ -609,16 +614,21 @@ export async function approveProposal(
     const documentDrafts = proposal.documentDrafts as DocumentDraft[] | null;
     const taskDrafts = proposal.taskDrafts as TaskDraft[] | null;
 
+    // Track materialized entities
+    const matTasks: Array<{ draftUuid: string; taskUuid: string; title: string }> = [];
+    const matDocs: Array<{ draftUuid: string; documentUuid: string; title: string }> = [];
+
     // Create documents (if document drafts exist)
     if (documentDrafts && documentDrafts.length > 0) {
       for (const draft of documentDrafts) {
-        await createDocumentFromProposal(
+        const doc = await createDocumentFromProposal(
           proposal.companyUuid,
           proposal.projectUuid,
           proposal.uuid,
           proposal.createdByUuid,
           draft
         );
+        matDocs.push({ draftUuid: draft.uuid, documentUuid: doc.uuid, title: doc.title });
       }
     }
 
@@ -645,6 +655,14 @@ export async function approveProposal(
         proposal.createdByUuid,
         taskDrafts
       );
+
+      // Build materialized tasks list
+      for (const draft of taskDrafts) {
+        const taskUuid = draftToTaskUuidMap.get(draft.uuid);
+        if (taskUuid) {
+          matTasks.push({ draftUuid: draft.uuid, taskUuid, title: draft.title });
+        }
+      }
 
       // Materialize dependencies: convert draftUuid references to real taskUuids
       for (const draft of taskDrafts) {
@@ -679,7 +697,7 @@ export async function approveProposal(
       }
     }
 
-    return updated;
+    return { updatedProposal: updated, materializedTasks: matTasks, materializedDocuments: matDocs };
   });
 
   eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -695,7 +713,10 @@ export async function approveProposal(
     }
   }
 
-  return formatProposalResponse(updatedProposal);
+  const response: ApprovalResult = await formatProposalResponse(updatedProposal);
+  if (materializedTasks.length > 0) response.materializedTasks = materializedTasks;
+  if (materializedDocuments.length > 0) response.materializedDocuments = materializedDocuments;
+  return response;
 }
 
 // Reject Proposal (reject -> draft, can be re-edited)

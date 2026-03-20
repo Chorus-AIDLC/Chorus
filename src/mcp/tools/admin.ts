@@ -80,8 +80,12 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         value: reviewNote ? { reviewNote } : undefined,
       });
 
+      const result: Record<string, unknown> = { uuid: updated.uuid, status: updated.status };
+      if (updated.materializedTasks) result.materializedTasks = updated.materializedTasks;
+      if (updated.materializedDocuments) result.materializedDocuments = updated.materializedDocuments;
+
       return {
-        content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, status: updated.status }) }],
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     }
   );

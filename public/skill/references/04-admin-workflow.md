@@ -177,6 +177,8 @@ chorus_admin_approve_proposal({
 })
 ```
 
+The response includes `materializedTasks` (array of `{ draftUuid, taskUuid, title }`) and `materializedDocuments` (array of `{ draftUuid, documentUuid, title }`), so you can immediately assign tasks or reference documents without an extra query.
+
 When approved:
 - All document drafts become real Documents
 - All task drafts become real Tasks (status: `open`, ready for developers to claim)
