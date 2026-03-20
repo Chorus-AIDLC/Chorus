@@ -400,32 +400,21 @@ export default function SettingsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {apiKeys.map((key) => {
-              const isAdmin = key.roles.includes("admin_agent");
-              return (
+            {apiKeys.map((key) => (
               <div
                 key={key.uuid}
-                className={`rounded-xl border p-5 ${
-                  isAdmin
-                    ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/50"
-                    : "border-border bg-card"
-                }`}
+                className="rounded-xl border border-border bg-card p-5"
               >
                 {/* Header Row */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div
                       className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                        isAdmin
-                          ? "bg-red-100 dark:bg-red-900"
-                          : key.roles.includes("developer_agent")
-                            ? "bg-green-100"
-                            : "bg-primary/10"
+                        key.roles.includes("developer_agent")
+                          ? "bg-green-100"
+                          : "bg-primary/10"
                       }`}
                     >
-                      {isAdmin ? (
-                        <ShieldAlert className="h-[18px] w-[18px] text-red-600 dark:text-red-400" />
-                      ) : (
                       <Key
                         className={`h-[18px] w-[18px] ${
                           key.roles.includes("developer_agent")
@@ -433,7 +422,6 @@ export default function SettingsPage() {
                             : "text-primary"
                         }`}
                       />
-                      )}
                     </div>
                     <div>
                       <div className="text-sm font-medium text-foreground">
@@ -469,58 +457,21 @@ export default function SettingsPage() {
                 <div className="mt-4 flex items-center gap-4">
                   <span className="text-xs text-muted-foreground">{t("settings.roles")}</span>
                   <div className="flex items-center gap-2">
-                    <div
-                      className={`flex h-[18px] w-[18px] items-center justify-center rounded ${
-                        key.roles.includes("developer_agent")
-                          ? "bg-primary"
-                          : "border-2 border-border"
-                      }`}
-                    >
-                      {key.roles.includes("developer_agent") && (
-                        <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />
-                      )}
-                    </div>
-                    <span
-                      className={`text-xs ${key.roles.includes("developer_agent") ? "text-foreground" : "text-muted-foreground"}`}
-                    >
-                      {t("settings.developerAgent")}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`flex h-[18px] w-[18px] items-center justify-center rounded ${
-                        key.roles.includes("pm_agent")
-                          ? "bg-primary"
-                          : "border-2 border-border"
-                      }`}
-                    >
-                      {key.roles.includes("pm_agent") && (
-                        <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />
-                      )}
-                    </div>
-                    <span
-                      className={`text-xs ${key.roles.includes("pm_agent") ? "text-foreground" : "text-muted-foreground"}`}
-                    >
-                      {t("settings.pmAgent")}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`flex h-[18px] w-[18px] items-center justify-center rounded ${
-                        key.roles.includes("admin_agent")
-                          ? "bg-red-500"
-                          : "border-2 border-border"
-                      }`}
-                    >
-                      {key.roles.includes("admin_agent") && (
-                        <Check className="h-3 w-3 text-white" strokeWidth={3} />
-                      )}
-                    </div>
-                    <span
-                      className={`text-xs ${key.roles.includes("admin_agent") ? "font-medium text-red-600 dark:text-red-400" : "text-muted-foreground"}`}
-                    >
-                      {t("settings.adminAgent")}
-                    </span>
+                    {key.roles.includes("developer_agent") && (
+                      <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-50 dark:bg-blue-950 dark:text-blue-300">
+                        {t("settings.developerAgent")}
+                      </Badge>
+                    )}
+                    {key.roles.includes("pm_agent") && (
+                      <Badge variant="secondary" className="bg-orange-50 text-orange-700 hover:bg-orange-50 dark:bg-orange-950 dark:text-orange-300">
+                        {t("settings.pmAgent")}
+                      </Badge>
+                    )}
+                    {key.roles.includes("admin_agent") && (
+                      <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-50 dark:bg-red-950 dark:text-red-300">
+                        {t("settings.adminAgent")}
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
@@ -613,7 +564,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-            )})}
+            ))}
           </div>
         )}
       </div>

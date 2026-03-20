@@ -54677,74 +54677,49 @@
                             },
                             {
                               "type": "frame",
-                              "id": "G7q7g",
+                              "id": "9oziV",
                               "name": "key1Role1",
-                              "gap": 8,
+                              "fill": "#E3F2FD",
+                              "cornerRadius": 12,
+                              "padding": [
+                                4,
+                                10
+                              ],
                               "alignItems": "center",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "mGGe3",
-                                  "name": "key1Check1",
-                                  "width": 18,
-                                  "height": 18,
-                                  "fill": "#C67A52",
-                                  "cornerRadius": 4,
-                                  "justifyContent": "center",
-                                  "alignItems": "center",
-                                  "children": [
-                                    {
-                                      "type": "icon_font",
-                                      "id": "HrZDh",
-                                      "name": "key1Check1Icon",
-                                      "width": 12,
-                                      "height": 12,
-                                      "iconFontName": "check",
-                                      "iconFontFamily": "lucide",
-                                      "fill": "#FFFFFF"
-                                    }
-                                  ]
-                                },
-                                {
                                   "type": "text",
-                                  "id": "bffKc",
-                                  "name": "key1Role1Text",
-                                  "fill": "#2C2C2C",
+                                  "id": "4POWP",
+                                  "name": "badge1text",
+                                  "fill": "#1976D2",
                                   "content": "Developer Agent",
                                   "fontFamily": "IBM Plex Sans",
-                                  "fontSize": 12,
-                                  "fontWeight": "normal"
+                                  "fontSize": 11,
+                                  "fontWeight": "500"
                                 }
                               ]
                             },
                             {
                               "type": "frame",
-                              "id": "qPBMP",
-                              "name": "key1Role2",
-                              "gap": 8,
+                              "id": "NJBJH",
+                              "name": "key1RoleAdmin",
+                              "fill": "#FDEDED",
+                              "cornerRadius": 12,
+                              "padding": [
+                                4,
+                                10
+                              ],
                               "alignItems": "center",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "sJDh8",
-                                  "name": "key1Check2",
-                                  "width": 18,
-                                  "height": 18,
-                                  "cornerRadius": 4,
-                                  "stroke": {
-                                    "thickness": 2,
-                                    "fill": "#E5E0D8"
-                                  }
-                                },
-                                {
                                   "type": "text",
-                                  "id": "XMp0w",
-                                  "name": "key1Role2Text",
-                                  "fill": "#6B6B6B",
-                                  "content": "PM Agent",
+                                  "id": "ZQPmF",
+                                  "name": "adminText",
+                                  "fill": "#D32F2F",
+                                  "content": "Admin Agent",
                                   "fontFamily": "IBM Plex Sans",
-                                  "fontSize": 12,
-                                  "fontWeight": "normal"
+                                  "fontSize": 11,
+                                  "fontWeight": "500"
                                 }
                               ]
                             }
@@ -55216,74 +55191,25 @@
                             },
                             {
                               "type": "frame",
-                              "id": "XoLed",
-                              "name": "key2Role1",
-                              "gap": 8,
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "frame",
-                                  "id": "JdMOf",
-                                  "name": "key2Check1",
-                                  "width": 18,
-                                  "height": 18,
-                                  "cornerRadius": 4,
-                                  "stroke": {
-                                    "thickness": 2,
-                                    "fill": "#E5E0D8"
-                                  }
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "HrUq2",
-                                  "name": "key2Role1Text",
-                                  "fill": "#6B6B6B",
-                                  "content": "Developer Agent",
-                                  "fontFamily": "IBM Plex Sans",
-                                  "fontSize": 12,
-                                  "fontWeight": "normal"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "KET8w",
+                              "id": "kNiK9",
                               "name": "key2Role2",
-                              "gap": 8,
+                              "fill": "#FFF3E0",
+                              "cornerRadius": 12,
+                              "padding": [
+                                4,
+                                10
+                              ],
                               "alignItems": "center",
                               "children": [
                                 {
-                                  "type": "frame",
-                                  "id": "bz52d",
-                                  "name": "key2Check2",
-                                  "width": 18,
-                                  "height": 18,
-                                  "fill": "#C67A52",
-                                  "cornerRadius": 4,
-                                  "justifyContent": "center",
-                                  "alignItems": "center",
-                                  "children": [
-                                    {
-                                      "type": "icon_font",
-                                      "id": "W8Pcl",
-                                      "name": "key2Check2Icon",
-                                      "width": 12,
-                                      "height": 12,
-                                      "iconFontName": "check",
-                                      "iconFontFamily": "lucide",
-                                      "fill": "#FFFFFF"
-                                    }
-                                  ]
-                                },
-                                {
                                   "type": "text",
-                                  "id": "kq5HF",
-                                  "name": "key2Role2Text",
-                                  "fill": "#2C2C2C",
+                                  "id": "d0LhI",
+                                  "name": "badge4text",
+                                  "fill": "#E65100",
                                   "content": "PM Agent",
                                   "fontFamily": "IBM Plex Sans",
-                                  "fontSize": 12,
-                                  "fontWeight": "normal"
+                                  "fontSize": 11,
+                                  "fontWeight": "500"
                                 }
                               ]
                             }
