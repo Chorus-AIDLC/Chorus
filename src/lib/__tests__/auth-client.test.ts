@@ -283,6 +283,21 @@ describe('getAccessToken', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null when signinSilent returns null', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const expiredUser = createMockUser({ expired: true });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(expiredUser),
+      signinSilent: vi.fn().mockResolvedValue(null),
+    });
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+
+    const result = await getAccessToken();
+
+    expect(result).toBeNull();
+  });
+
   it('returns null when expired user but no manager', async () => {
     // This edge case shouldn't happen in practice, but test defensive code
     const result = await getAccessToken();
@@ -459,6 +474,41 @@ describe('authFetch', () => {
 
     expect(result).toBe(response401);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on 401 via cookie refresh when no OIDC manager', async () => {
+    // No window stub → getUserManager() returns null (default auth user)
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ status: 401, ok: false } as any) // initial request
+      .mockResolvedValueOnce({ status: 200, ok: true } as any)  // /api/auth/refresh
+      .mockResolvedValueOnce({ status: 200, ok: true } as any); // retry
+
+    const result = await authFetch('/api/test');
+
+    expect(result.status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe('/api/auth/refresh');
+  });
+
+  it('returns original 401 when cookie refresh fails', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ status: 401, ok: false } as any)
+      .mockResolvedValueOnce({ status: 401, ok: false } as any); // refresh failed
+
+    const result = await authFetch('/api/test');
+
+    expect(result.status).toBe(401);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns original 401 when cookie refresh throws', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ status: 401, ok: false } as any)
+      .mockRejectedValueOnce(new Error('Network error')); // refresh throws
+
+    const result = await authFetch('/api/test');
+
+    expect(result.status).toBe(401);
   });
 
   it('does not retry on non-401 errors', async () => {
