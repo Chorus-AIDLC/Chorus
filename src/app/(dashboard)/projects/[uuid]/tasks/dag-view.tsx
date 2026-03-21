@@ -20,7 +20,6 @@ import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
-import { motion } from "framer-motion";
 import { getProjectDependenciesAction } from "./actions";
 import { addTaskDependencyAction } from "./[taskUuid]/dependency-actions";
 
@@ -79,31 +78,25 @@ function TaskNode({ data }: NodeProps<Node<TaskNodeData>>) {
   const borderColor = statusBorderColors[data.status] || "#E5E0D8";
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.3, ease: [0, 0, 0.2, 1] }}
+    <div
+      className="rounded-lg border-2 bg-white px-4 py-3 shadow-sm min-w-[200px] max-w-[260px]"
+      style={{ borderColor }}
     >
-      <div
-        className="rounded-lg border-2 bg-white px-4 py-3 shadow-sm min-w-[200px] max-w-[260px]"
-        style={{ borderColor }}
-      >
-        <Handle type="target" position={Position.Top} className="!bg-[#C67A52] !w-2 !h-2" />
-        <div className="flex items-center gap-2 mb-1.5">
-          <Badge className={`text-[10px] ${statusColors[data.status] || ""}`}>
-            {t(statusI18nKeys[data.status] || data.status)}
-          </Badge>
-          <div className="flex items-center gap-1">
-            <div className={`h-1.5 w-1.5 rounded-full ${priorityDotColors[data.priority] || ""}`} />
-            <span className="text-[10px] text-[#9A9A9A]">{t(priorityI18nKeys[data.priority] || data.priority)}</span>
-          </div>
+      <Handle type="target" position={Position.Top} className="!bg-[#C67A52] !w-2 !h-2" />
+      <div className="flex items-center gap-2 mb-1.5">
+        <Badge className={`text-[10px] ${statusColors[data.status] || ""}`}>
+          {t(statusI18nKeys[data.status] || data.status)}
+        </Badge>
+        <div className="flex items-center gap-1">
+          <div className={`h-1.5 w-1.5 rounded-full ${priorityDotColors[data.priority] || ""}`} />
+          <span className="text-[10px] text-[#9A9A9A]">{t(priorityI18nKeys[data.priority] || data.priority)}</span>
         </div>
-        <p className="text-xs font-medium text-[#2C2C2C] leading-snug line-clamp-2">
-          {data.title}
-        </p>
-        <Handle type="source" position={Position.Bottom} className="!bg-[#C67A52] !w-2 !h-2" />
       </div>
-    </motion.div>
+      <p className="text-xs font-medium text-[#2C2C2C] leading-snug line-clamp-2">
+        {data.title}
+      </p>
+      <Handle type="source" position={Position.Bottom} className="!bg-[#C67A52] !w-2 !h-2" />
+    </div>
   );
 }
 

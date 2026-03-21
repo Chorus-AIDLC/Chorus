@@ -96,7 +96,7 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k" && !e.defaultPrevented) {
         e.preventDefault();
         setIsOpen(true);
       }

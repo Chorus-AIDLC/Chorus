@@ -478,14 +478,14 @@ export default function DashboardLayout({
       {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
       {isProjectContext && currentProject ? (
         <RealtimeProvider projectUuid={currentProject.uuid}>
-          <main className="flex-1 overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
           <PixelCanvasWidget
             projectUuid={currentProject.uuid}
             projectName={currentProject.name}
           />
         </RealtimeProvider>
       ) : (
-        <main className="flex-1 overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
       )}
     </div>
     </NotificationProvider>
