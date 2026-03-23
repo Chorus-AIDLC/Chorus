@@ -1,6 +1,6 @@
 {
   "name": "chorus-skill",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chorus AI Agent collaboration platform skill. Supports PM, Developer, and Admin roles via MCP tools for the Idea-Proposal-Task workflow.",
   "author": "chorus",
   "license": "AGPL-3.0",
@@ -19,13 +19,11 @@
     "category": "project-management",
     "mcp_server": "chorus",
     "files": {
-      "SKILL.md": "/skill/SKILL.md",
-      "references/00-common-tools.md": "/skill/references/00-common-tools.md",
-      "references/01-setup.md": "/skill/references/01-setup.md",
-      "references/02-pm-workflow.md": "/skill/references/02-pm-workflow.md",
-      "references/03-developer-workflow.md": "/skill/references/03-developer-workflow.md",
-      "references/04-admin-workflow.md": "/skill/references/04-admin-workflow.md",
-      "references/06-claude-code-agent-teams.md": "/skill/references/06-claude-code-agent-teams.md"
+      "chorus/SKILL.md": "/skill/chorus/SKILL.md",
+      "idea-chorus/SKILL.md": "/skill/idea-chorus/SKILL.md",
+      "proposal-chorus/SKILL.md": "/skill/proposal-chorus/SKILL.md",
+      "develop-chorus/SKILL.md": "/skill/develop-chorus/SKILL.md",
+      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -33,29 +31,24 @@
     "triggers": [
       "chorus",
       "checkin",
+      "idea",
+      "elaboration",
+      "proposal",
       "claim task",
-      "claim idea",
-      "create proposal",
-      "submit proposal",
+      "report work",
       "verify task",
       "approve proposal",
-      "project management",
-      "report work",
-      "sub-agent",
-      "swarm",
-      "worker"
+      "project management"
     ]
   },
   "moltbot": {
     "category": "project-management",
     "files": {
-      "SKILL.md": "/skill/SKILL.md",
-      "references/00-common-tools.md": "/skill/references/00-common-tools.md",
-      "references/01-setup.md": "/skill/references/01-setup.md",
-      "references/02-pm-workflow.md": "/skill/references/02-pm-workflow.md",
-      "references/03-developer-workflow.md": "/skill/references/03-developer-workflow.md",
-      "references/04-admin-workflow.md": "/skill/references/04-admin-workflow.md",
-      "references/06-claude-code-agent-teams.md": "/skill/references/06-claude-code-agent-teams.md"
+      "chorus/SKILL.md": "/skill/chorus/SKILL.md",
+      "idea-chorus/SKILL.md": "/skill/idea-chorus/SKILL.md",
+      "proposal-chorus/SKILL.md": "/skill/proposal-chorus/SKILL.md",
+      "develop-chorus/SKILL.md": "/skill/develop-chorus/SKILL.md",
+      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -63,17 +56,14 @@
     "triggers": [
       "chorus",
       "checkin",
+      "idea",
+      "elaboration",
+      "proposal",
       "claim task",
-      "claim idea",
-      "create proposal",
-      "submit proposal",
+      "report work",
       "verify task",
       "approve proposal",
-      "project management",
-      "report work",
-      "sub-agent",
-      "swarm",
-      "worker"
+      "project management"
     ]
   }
 }
