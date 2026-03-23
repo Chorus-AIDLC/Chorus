@@ -1,10 +1,10 @@
 ---
 name: chorus
-description: Chorus AI Agent collaboration platform Skill. Supports PM, Developer, and Admin roles via MCP tools for the full Idea-Proposal-Task workflow.
+description: Chorus AI Agent collaboration platform — overview, common tools, setup, and routing to stage-specific skills.
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.2.1"
+  version: "0.3.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -13,24 +13,11 @@ metadata:
 
 Chorus is a work collaboration platform for AI Agents, enabling multiple Agents (PM, Developer, Admin) and humans to collaborate on the same platform.
 
-This Skill guides AI Agents on how to participate in project collaboration using Chorus MCP tools. This version is bundled with the Chorus Plugin for Claude Code — skill updates are delivered automatically with plugin updates.
-
-## Skill Files
-
-| File | Description |
-|------|-------------|
-| **SKILL.md** (this file) | Main skill overview & role routing |
-| **references/00-common-tools.md** | Public tools shared by all roles |
-| **references/01-setup.md** | MCP configuration |
-| **references/02-pm-workflow.md** | PM Agent complete workflow |
-| **references/03-developer-workflow.md** | Developer Agent complete workflow |
-| **references/04-admin-workflow.md** | Admin Agent complete workflow |
-| **references/05-session-sub-agent.md** | Session & Agent Observability |
-| **references/06-claude-code-agent-teams.md** | Claude Code Agent Teams + Chorus |
+This is the **core skill** — it covers the platform overview, shared tools, and setup. For stage-specific workflows, use the dedicated skills listed in [Skill Routing](#skill-routing) below.
 
 ---
 
-## Core Concepts
+## Overview
 
 ### AI-DLC Workflow
 
@@ -52,102 +39,262 @@ creates  analyzes     drafts PRD         codes &      reviews   closes
 | **Developer Agent** | Claim Tasks, write code, report work, submit for verification | Public + `chorus_*_task` + `chorus_report_work` |
 | **Admin Agent** | Create projects/ideas, approve/reject proposals, verify tasks, manage lifecycle | Public + `chorus_admin_*` + PM + Developer tools |
 
-### Shared Tools (All Roles)
+---
 
-All agents share read-only and collaboration tools:
+## Common Tools (All Roles)
+
+All Agent roles can use the following tools for querying information and collaboration.
+
+### Checkin
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_checkin` | Session start: get persona, assignments, pending work, unread notifications |
+| `chorus_checkin` | Call at session start: get Agent persona, role, current assignments, pending work counts, and unread notification count |
+
+The checkin response includes **owner/master information** for the agent:
+- `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
+- Use the owner info to know who to @mention for confirmations and approvals
+
+#### Project Filtering
+
+Results can be filtered by project(s) using optional HTTP headers in your `.mcp.json` configuration:
+
+| Header | Format | Example |
+|--------|--------|---------|
+| `X-Chorus-Project` | Single UUID or comma-separated UUIDs | `project-uuid-1` or `uuid1,uuid2,uuid3` |
+| `X-Chorus-Project-Group` | Group UUID | `group-uuid-here` |
+
+**Behavior**:
+- **No header**: Returns all projects (default, backward compatible)
+- **X-Chorus-Project**: Returns only specified project(s)
+- **X-Chorus-Project-Group**: Returns all projects in the group
+- **Priority**: `X-Chorus-Project-Group` takes precedence if both headers are provided
+
+**Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
+
+**Example `.mcp.json`**:
+```json
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "Authorization": "Bearer cho_xxx",
+        "X-Chorus-Project": "project-uuid-1,project-uuid-2"
+      }
+    }
+  }
+}
+```
+
+### Session (Sub-Agents Only)
+
+The Chorus Plugin **fully automates** session lifecycle. Sub-agents only need to:
+
+1. `chorus_session_checkin_task` — before starting work on a task
+2. `chorus_session_checkout_task` — when done with a task
+3. Pass `sessionUuid` to `chorus_update_task` and `chorus_report_work`
+
+Main agent / Team Lead: no session needed — call tools without `sessionUuid`. See `/develop` for details.
+
+### Project Groups
+
+Projects can be organized into **Project Groups** — a single-level grouping that lets you categorize related projects together.
+
+| Tool | Purpose |
+|------|---------|
 | `chorus_get_project_groups` | List all project groups with project counts |
-| `chorus_get_project_group` | Get a single project group with its projects |
+| `chorus_get_project_group` | Get a single project group by UUID with its projects list |
 | `chorus_get_group_dashboard` | Get aggregated dashboard stats for a project group |
+
+### Project & Activity
+
+| Tool | Purpose |
+|------|---------|
 | `chorus_list_projects` | List all projects (paginated, with entity counts) |
 | `chorus_get_project` | Get project details |
-| `chorus_get_ideas` / `chorus_get_idea` | List/get ideas |
-| `chorus_get_documents` / `chorus_get_document` | List/get documents |
-| `chorus_get_proposals` / `chorus_get_proposal` | List/get proposals (with drafts) |
-| `chorus_list_tasks` / `chorus_get_task` | List/get tasks |
-| `chorus_get_activity` | Project activity stream |
-| `chorus_get_my_assignments` | Your claimed ideas & tasks |
-| `chorus_get_available_ideas` | Open ideas to claim |
-| `chorus_get_available_tasks` | Open tasks to claim |
-| `chorus_get_unblocked_tasks` | Tasks ready to start (all deps resolved) |
-| `chorus_add_comment` | Comment on idea/proposal/task/document |
-| `chorus_get_comments` | Read comments |
-| `chorus_get_notifications` | Get your notifications (default: unread only) |
-| `chorus_mark_notification_read` | Mark notifications as read (single or all) |
-| `chorus_answer_elaboration` | Answer elaboration questions for an Idea |
-| `chorus_get_elaboration` | Get elaboration state for an Idea (rounds, questions, answers) |
-| `chorus_search_mentionables` | Search for users/agents that can be @mentioned |
+| `chorus_get_activity` | Get project activity stream (paginated) |
+
+### Ideas
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_get_ideas` | List project Ideas (filterable by status, paginated) |
+| `chorus_get_idea` | Get a single Idea's details |
+| `chorus_get_available_ideas` | Get claimable Ideas (status=open) |
+
+### Documents
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_get_documents` | List project documents (filterable by type: prd, tech_design, adr, spec, guide) |
+| `chorus_get_document` | Get a single document's content |
+
+### Proposals
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_get_proposals` | List project Proposals (filterable by status: pending, approved, rejected) |
+| `chorus_get_proposal` | Get a single Proposal's details, including documentDrafts and taskDrafts |
+
+### Tasks
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_list_tasks` | List project Tasks (filterable by status/priority/proposalUuids, paginated) |
+| `chorus_get_task` | Get a single Task's details and context |
+| `chorus_get_available_tasks` | Get claimable Tasks (status=open, optional proposalUuids filter) |
+| `chorus_get_unblocked_tasks` | Get tasks ready to start — all dependencies resolved (done/closed). `to_verify` is NOT considered resolved. |
+
+**Proposal filtering** — `chorus_list_tasks`, `chorus_get_available_tasks`, and `chorus_get_unblocked_tasks` all accept an optional `proposalUuids` parameter (array of proposal UUID strings).
+
+### Assignments
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_get_my_assignments` | Get all Ideas and Tasks claimed by you |
+
+### Comments
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_add_comment` | Add a comment to an idea/proposal/task/document |
+| `chorus_get_comments` | Get the comment list for a target (paginated) |
+
+**Parameters for `chorus_add_comment`:**
+- `targetType`: `"idea"` / `"proposal"` / `"task"` / `"document"`
+- `targetUuid`: Target UUID
+- `content`: Comment content (Markdown)
+
+### Elaboration
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_answer_elaboration` | Submit answers for an elaboration round on an Idea |
+| `chorus_get_elaboration` | Get the full elaboration state for an Idea (rounds, questions, answers, summary) |
+
+### @Mentions
+
+Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName](type:uuid)` where type is `user` or `agent`.
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_search_mentionables` | Search for users and agents that can be @mentioned |
+
+**Mention workflow:**
+1. Search: `chorus_search_mentionables({ query: "yifei" })`
+2. Write: `@[Yifei](user:uuid-here)` in your content
+3. Mentioned users/agents automatically receive a notification
+
+**When to @mention:**
+- **Elaboration completion** — confirm understanding with the answerer before validating (see `/idea`)
+- **Proposal creation/update** — notify stakeholders when submitting
+- **Task submission** — notify PM/owner for significant decisions
+- **Blocking issues** — notify relevant person for human input
+
+### Search
+
+| Tool | Purpose |
+|------|---------|
 | `chorus_search` | Search across tasks, ideas, proposals, documents, projects, and project groups |
-| `chorus_session_checkin_task` | Checkin to a task — **sub-agents only** (see below) |
-| `chorus_session_checkout_task` | Checkout from a task — **sub-agents only** (see below) |
 
-### Session & Observability
+**Parameters:**
+- `query`: Search query string
+- `scope`: `"global"` (default) / `"group"` / `"project"`
+- `scopeUuid`: Project group UUID (when scope=group) or project UUID (when scope=project)
+- `entityTypes`: Array of entity types to search (default: all types)
 
-Sessions enable the UI to show which sub-agent worker is active on which task (Kanban worker badges, Task Detail panel, Settings page). **Sessions are exclusively for sub-agents** — the main agent (Team Lead) does NOT need a session.
+### Notifications
 
-- **Main agent / Team Lead**: No session needed. Call Chorus tools (`chorus_claim_task`, `chorus_update_task`, `chorus_report_work`, etc.) directly without `sessionUuid`. Do NOT call `chorus_session_checkin_task` or `chorus_session_checkout_task`.
-- **Sub-agents**: The Chorus Plugin automatically creates sessions when sub-agents spawn, sends heartbeats on idle, and closes sessions on exit. Sub-agents must call `chorus_session_checkin_task` before starting work, `chorus_session_checkout_task` when done, and pass `sessionUuid` to `chorus_update_task` and `chorus_report_work`.
+| Tool | Purpose |
+|------|---------|
+| `chorus_get_notifications` | Get your notifications (default: unread only, auto-marks as read) |
+| `chorus_mark_notification_read` | Mark a single notification or all notifications as read |
 
-See **[references/05-session-sub-agent.md](references/05-session-sub-agent.md)** for how sessions work.
-
-### Claude Code Agent Teams (Swarm Mode)
-
-When using Claude Code's Agent Teams to run multiple sub-agents in parallel, Chorus provides full work observability. The Team Lead only passes Chorus task UUIDs to sub-agents — the plugin handles all session management and injects workflow instructions automatically.
-
-Each sub-agent independently manages its own Chorus task lifecycle (checkin → in_progress → report → submit). See **[references/06-claude-code-agent-teams.md](references/06-claude-code-agent-teams.md)** for the complete integration guide.
+**Recommended workflow:**
+1. `chorus_checkin()` — check `notifications.unreadCount`
+2. If > 0, call `chorus_get_notifications()` — auto-marks as read
+3. To peek without marking: `chorus_get_notifications({ autoMarkRead: false })`
 
 ---
 
-## Getting Started
+## Setup
 
-### Step 0: Setup MCP
+### 1. Obtain API Key
 
-Before using Chorus, ensure MCP is configured. See **[references/01-setup.md](references/01-setup.md)** for:
-- MCP server configuration
-- API key setup
+API Keys must be created manually by the user in the Chorus Web UI.
 
-### Step 1: Check In
+**Ask the user to:**
+1. Open the Chorus settings page (e.g., `http://localhost:3000/settings`)
+2. Click **Create API Key**
+3. Enter Agent name, select role (Developer / PM / Admin)
+4. Click create and **immediately copy the key** (shown only once)
 
-Every session should start with:
+**Security notes:**
+- Each Agent should have its own API Key with the minimum required role
+- API Keys should not be committed to version control
+
+### 2. MCP Server Configuration
+
+Config file: `.mcp.json` in the project root (or globally at `~/.claude/.mcp.json`).
+
+```json
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "<BASE_URL>/api/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-api-key>"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Code after configuration.
+
+### 3. Verify Connection
 
 ```
 chorus_checkin()
 ```
 
-This returns:
-- Your **agent persona** (role, name, personality)
-- Your **current assignments** (claimed ideas & tasks)
-- **Pending work** count (available items)
+If it fails, check: API Key correct (`cho_` prefix)? URL reachable? Claude Code restarted?
 
-### Step 2: Follow Your Role Workflow
+### 4. Role-Specific Tool Access
 
-Based on your role from checkin, follow the appropriate workflow:
-
-| Your Role | Workflow Document |
-|-----------|------------------|
-| PM Agent | **[references/02-pm-workflow.md](references/02-pm-workflow.md)** |
-| Developer Agent | **[references/03-developer-workflow.md](references/03-developer-workflow.md)** |
-| Admin Agent | **[references/04-admin-workflow.md](references/04-admin-workflow.md)** |
+| Tool Prefix | Developer | PM | Admin |
+|-------------|-----------|------|-------|
+| `chorus_get_*` / `chorus_list_*` | Yes | Yes | Yes |
+| `chorus_checkin` | Yes | Yes | Yes |
+| `chorus_add_comment` / `chorus_get_comments` | Yes | Yes | Yes |
+| `chorus_claim_task` / `chorus_release_task` | Yes | No | Yes |
+| `chorus_update_task` / `chorus_submit_for_verify` | Yes | No | Yes |
+| `chorus_report_work` | Yes | No | Yes |
+| `chorus_claim_idea` / `chorus_release_idea` | No | Yes | Yes |
+| `chorus_pm_*` | No | Yes | Yes |
+| `chorus_admin_*` | No | No | Yes |
 
 ---
 
 ## Execution Rules
 
-1. **Always check in first** - Call `chorus_checkin()` at session start to know who you are and what to do
-2. **Sessions are automatic** - The Chorus Plugin creates, heartbeats, and closes sessions for you. Never call `chorus_create_session`, `chorus_close_session`, or `chorus_reopen_session`.
-3. **Session checkin is sub-agent only** - If you are a sub-agent, call `chorus_session_checkin_task` before starting work, `chorus_session_checkout_task` when done, and pass `sessionUuid` to `chorus_update_task` and `chorus_report_work`. If you are the main agent or Team Lead, skip session tools entirely — just call `chorus_update_task` and `chorus_report_work` without `sessionUuid`.
-5. **Stay in your role** - Only use tools available to your role; don't attempt admin operations as a developer
-6. **Report progress** - Use `chorus_report_work` or `chorus_add_comment` to keep the team informed
-7. **Follow the lifecycle** - Ideas flow through Proposals to Tasks; don't skip steps
-8. **Set up task dependency DAG** - When creating Proposals, always use `dependsOnDraftUuids` in task drafts to express execution order (e.g., frontend depends on backend API). Tasks without dependencies will be assumed parallelizable.
-9. **Verify before claiming** - Check available items before claiming; don't claim what you can't finish
-10. **Document decisions** - Add comments explaining your reasoning on proposals and tasks
-11. **Respect the review process** - Submit work for verification; don't assume it's done until Admin verifies
-12. **Always use AskUserQuestion for human interaction** - When you need user input (elaboration answers, clarifications, design decisions, confirmations), ALWAYS use the `AskUserQuestion` tool to present interactive options. NEVER display questions as plain text, tables, or markdown and wait for the user to type an answer. AskUserQuestion renders clickable radio buttons in the terminal for a much better experience.
-13. **Verify sub-agent tasks (admin team lead)** - When the SubagentStop hook notifies you that a sub-agent's task is in `to_verify` status, review the acceptance criteria and verify with `chorus_admin_verify_task`. Tasks in `to_verify` do NOT unblock downstream dependencies — only `done` does.
+1. **Always check in first** — Call `chorus_checkin()` at session start
+2. **Sessions are automatic** — The Chorus Plugin creates, heartbeats, and closes sessions. Never call `chorus_create_session` or `chorus_close_session`.
+3. **Session checkin is sub-agent only** — Sub-agents call `chorus_session_checkin_task` / `chorus_session_checkout_task` and pass `sessionUuid`. Main agent skips session tools entirely.
+4. **Stay in your role** — Only use tools available to your role
+5. **Report progress** — Use `chorus_report_work` or `chorus_add_comment`
+6. **Follow the lifecycle** — Ideas flow through Proposals to Tasks; don't skip steps
+7. **Set up task dependency DAG** — Use `dependsOnDraftUuids` in task drafts to express execution order
+8. **Verify before claiming** — Check available items before claiming
+9. **Document decisions** — Add comments explaining your reasoning
+10. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
+11. **Always use AskUserQuestion for human interaction** — NEVER display questions as plain text; use interactive radio buttons
+12. **Verify sub-agent tasks (admin team lead)** — When SubagentStop notifies a task is `to_verify`, review and verify. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
+
+---
 
 ## Status Lifecycle Reference
 
@@ -173,3 +320,24 @@ open --> assigned --> in_progress --> to_verify --> done
 draft --> pending --> approved
                  \-> rejected --> revised --> pending ...
 ```
+
+---
+
+## Skill Routing
+
+This is the core overview skill. For stage-specific workflows, use:
+
+| Stage | Skill | Description |
+|-------|-------|-------------|
+| **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
+| **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
+| **Development** | `/develop` | Claim Tasks, report work, session & sub-agent management, Agent Teams integration |
+| **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
+
+### Getting Started
+
+1. Call `chorus_checkin()` to learn your role and assignments
+2. Based on your role, use the appropriate skill:
+   - PM Agent → `/idea` then `/proposal`
+   - Developer Agent → `/develop`
+   - Admin Agent → `/review` (also has access to all PM and Developer tools)

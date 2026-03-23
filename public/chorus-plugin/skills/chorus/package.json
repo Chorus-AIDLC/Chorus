@@ -1,7 +1,7 @@
 {
   "name": "chorus",
-  "version": "0.2.0",
-  "description": "Chorus AI Agent collaboration platform skill for Claude Code. Supports PM, Developer, and Admin roles via MCP tools for the Idea-Proposal-Task workflow.",
+  "version": "0.3.0",
+  "description": "Chorus AI Agent collaboration platform — overview, common tools, setup, and routing to stage-specific skills.",
   "author": "chorus",
   "license": "AGPL-3.0",
   "keywords": [
@@ -10,9 +10,6 @@
     "project-management",
     "ai-agent",
     "mcp",
-    "pm",
-    "developer",
-    "admin",
     "collaboration",
     "claude-code"
   ],
@@ -20,14 +17,7 @@
     "category": "project-management",
     "mcp_server": "chorus",
     "files": {
-      "SKILL.md": "SKILL.md",
-      "references/00-common-tools.md": "references/00-common-tools.md",
-      "references/01-setup.md": "references/01-setup.md",
-      "references/02-pm-workflow.md": "references/02-pm-workflow.md",
-      "references/03-developer-workflow.md": "references/03-developer-workflow.md",
-      "references/04-admin-workflow.md": "references/04-admin-workflow.md",
-      "references/05-session-sub-agent.md": "references/05-session-sub-agent.md",
-      "references/06-claude-code-agent-teams.md": "references/06-claude-code-agent-teams.md"
+      "SKILL.md": "SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -35,18 +25,11 @@
     "triggers": [
       "chorus",
       "checkin",
-      "claim task",
-      "claim idea",
-      "create proposal",
-      "submit proposal",
-      "verify task",
-      "approve proposal",
-      "project management",
-      "report work",
-      "session",
-      "sub-agent",
-      "swarm",
-      "worker"
+      "project",
+      "search",
+      "notification",
+      "setup",
+      "mcp"
     ]
   }
 }

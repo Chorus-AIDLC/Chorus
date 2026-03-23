@@ -1,0 +1,36 @@
+{
+  "name": "proposal",
+  "version": "0.1.0",
+  "description": "Chorus Proposal workflow: create proposals with document and task drafts, manage dependency DAG, validate and submit for review.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "proposal",
+    "prd",
+    "draft",
+    "task-breakdown",
+    "pm",
+    "mcp"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "proposal",
+      "create proposal",
+      "draft",
+      "submit proposal",
+      "document",
+      "prd",
+      "task breakdown",
+      "task dependency"
+    ]
+  }
+}

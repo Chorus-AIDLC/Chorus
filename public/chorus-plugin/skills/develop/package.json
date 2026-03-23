@@ -1,0 +1,39 @@
+{
+  "name": "develop",
+  "version": "0.1.0",
+  "description": "Chorus Development workflow: claim tasks, report work, manage sessions, and integrate with Claude Code Agent Teams.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "develop",
+    "task",
+    "developer",
+    "session",
+    "agent-team",
+    "swarm",
+    "mcp"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "claim task",
+      "report work",
+      "submit for verify",
+      "develop",
+      "developer",
+      "session",
+      "sub-agent",
+      "agent team",
+      "swarm",
+      "worker"
+    ]
+  }
+}

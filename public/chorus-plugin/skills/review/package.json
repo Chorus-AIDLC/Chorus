@@ -1,0 +1,36 @@
+{
+  "name": "review",
+  "version": "0.1.0",
+  "description": "Chorus Review workflow: approve/reject proposals, verify tasks, and manage project governance.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "review",
+    "admin",
+    "approve",
+    "verify",
+    "governance",
+    "mcp"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "verify task",
+      "approve",
+      "reject",
+      "close task",
+      "reopen",
+      "review",
+      "create project",
+      "project group"
+    ]
+  }
+}

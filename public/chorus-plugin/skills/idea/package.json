@@ -1,0 +1,33 @@
+{
+  "name": "idea",
+  "version": "0.1.0",
+  "description": "Chorus Idea workflow: claim ideas, run elaboration rounds, and prepare for proposal creation.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "idea",
+    "elaboration",
+    "requirements",
+    "pm",
+    "mcp"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "idea",
+      "claim idea",
+      "elaboration",
+      "elaborate",
+      "requirements",
+      "create idea"
+    ]
+  }
+}
