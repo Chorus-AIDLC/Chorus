@@ -484,7 +484,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     name: "chorus_update_task",
     description:
       "Update a task — edit fields, manage dependencies, or change status.\n\n" +
-      "**Field editing** (any role): title, description, priority, storyPoints, acceptanceCriteriaItems (replaces ALL existing AC), addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
+      "**Field editing** (any role): title, description, priority, storyPoints, addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
       "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
       "For Quick Tasks: create → claim → edit details → execute → verify → done.",
     parameters: {
@@ -497,7 +497,6 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
         description: { type: "string", description: "New task description (supports @mentions)" },
         priority: { type: "string", description: 'New priority: "low", "medium", or "high"' },
         storyPoints: { type: "number", description: "New effort estimate (agent hours)" },
-        acceptanceCriteriaItems: { type: "array", description: "Replace ALL acceptance criteria: [{ description, required? }]", items: { type: "object", properties: { description: { type: "string" }, required: { type: "boolean" } }, required: ["description"] } },
         addDependsOn: { type: "array", description: "Task UUIDs to add as dependencies", items: { type: "string" } },
         removeDependsOn: { type: "array", description: "Task UUIDs to remove from dependencies", items: { type: "string" } },
       },
@@ -505,7 +504,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       additionalProperties: false,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async execute(_id: string, { taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }: any) {
+    async execute(_id: string, { taskUuid, status, sessionUuid, title, description, priority, storyPoints, addDependsOn, removeDependsOn }: any) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const args: Record<string, any> = { taskUuid };
       if (status !== undefined) args.status = status;
@@ -514,7 +513,6 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (description !== undefined) args.description = description;
       if (priority !== undefined) args.priority = priority;
       if (storyPoints !== undefined) args.storyPoints = storyPoints;
-      if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
       if (addDependsOn !== undefined) args.addDependsOn = addDependsOn;
       if (removeDependsOn !== undefined) args.removeDependsOn = removeDependsOn;
       const result = await mcpClient.callTool("chorus_update_task", args);

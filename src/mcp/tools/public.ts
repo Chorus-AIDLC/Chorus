@@ -963,7 +963,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     {
       description:
         "Update a task — edit fields, manage dependencies, or change status.\n\n" +
-        "**Field editing** (any role): title, description, priority, storyPoints, acceptanceCriteriaItems (replaces ALL existing AC), addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
+        "**Field editing** (any role): title, description, priority, storyPoints, addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
         "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
         "For Quick Tasks: create → claim → edit details → execute → verify → done.",
       inputSchema: z.object({
@@ -974,15 +974,11 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         description: z.string().optional().describe("New task description (supports @mentions)"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("New priority"),
         storyPoints: z.number().optional().describe("New effort estimate (agent hours)"),
-        acceptanceCriteriaItems: zArray(z.object({
-          description: z.string().describe("Criterion description"),
-          required: z.boolean().optional().describe("Whether required (default: true)"),
-        })).optional().describe("Replace ALL acceptance criteria (deletes existing, creates new)"),
         addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies"),
         removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies"),
       }),
     },
-    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
+    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, addDependsOn, removeDependsOn }) => {
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
@@ -1059,24 +1055,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         updatedStatus = updated.status;
       }
 
-      // Replace acceptance criteria (delete all, create new)
       const warnings: string[] = [];
-      if (acceptanceCriteriaItems) {
-        await prisma.acceptanceCriterion.deleteMany({ where: { taskUuid: task.uuid } });
-        const validItems = acceptanceCriteriaItems.filter(
-          (item) => item.description && item.description.trim().length > 0
-        );
-        if (validItems.length > 0) {
-          await prisma.acceptanceCriterion.createMany({
-            data: validItems.map((item, index) => ({
-              taskUuid: task.uuid,
-              description: item.description.trim(),
-              required: item.required ?? true,
-              sortOrder: index,
-            })),
-          });
-        }
-      }
 
       // Add dependencies
       if (addDependsOn) {
@@ -1114,7 +1093,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           sessionUuid,
           sessionName,
         });
-      } else if (hasFieldUpdates || acceptanceCriteriaItems || addDependsOn || removeDependsOn) {
+      } else if (hasFieldUpdates || addDependsOn || removeDependsOn) {
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
           projectUuid: task.projectUuid,
@@ -1126,7 +1105,6 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           value: {
             ...(title !== undefined && { title }),
             ...(priority !== undefined && { priority }),
-            ...(acceptanceCriteriaItems && { acceptanceCriteriaReplaced: true }),
             ...(addDependsOn && { addedDependencies: addDependsOn.length }),
             ...(removeDependsOn && { removedDependencies: removeDependsOn.length }),
           },
