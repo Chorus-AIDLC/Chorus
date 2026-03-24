@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
 import * as projectService from "@/services/project.service";
+import { projectExists } from "@/services/project.service";
 import * as ideaService from "@/services/idea.service";
 import * as documentService from "@/services/document.service";
 import * as taskService from "@/services/task.service";
@@ -19,6 +20,7 @@ import * as elaborationService from "@/services/elaboration.service";
 import * as projectGroupService from "@/services/project-group.service";
 import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
+import * as sessionService from "@/services/session.service";
 import { prisma } from "@/lib/prisma";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
@@ -820,6 +822,322 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         scopeUuid,
         entityTypes,
       });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ===== Task Creation & Editing Tools =====
+
+  // chorus_create_tasks - Batch create tasks (migrated from pm.ts, available to all roles)
+  server.registerTool(
+    "chorus_create_tasks",
+    {
+      description:
+        "Batch create tasks in a project. Two modes:\n\n" +
+        "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches. Flow: create → claim → execute → verify → done.\n\n" +
+        "**Proposal-linked** (traditional AI-DLC): pass proposalUuid to associate with an approved proposal.\n\n" +
+        "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).",
+      inputSchema: z.object({
+        projectUuid: z.string().describe("Project UUID"),
+        proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional — omit for Quick Task mode)"),
+        tasks: zArray(z.object({
+          title: z.string().describe("Task title"),
+          description: z.string().optional().describe("Task description"),
+          priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
+          storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
+          acceptanceCriteriaItems: zArray(z.object({
+            description: z.string().describe("Criterion description"),
+            required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+          })).optional().describe("Structured acceptance criteria items"),
+          draftUuid: z.string().optional().describe("Temporary UUID for intra-batch dependsOnDraftUuids references"),
+          dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
+          dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
+        })).describe("Task list"),
+      }),
+    },
+    async ({ projectUuid, proposalUuid, tasks }) => {
+      if (!(await projectExists(auth.companyUuid, projectUuid))) {
+        return { content: [{ type: "text", text: "Project not found" }], isError: true };
+      }
+
+      if (proposalUuid) {
+        const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
+        if (!proposal) {
+          return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
+        }
+      }
+
+      const createdTasks = await Promise.all(
+        tasks.map(task =>
+          taskService.createTask({
+            companyUuid: auth.companyUuid,
+            projectUuid,
+            title: task.title,
+            description: task.description || null,
+            priority: task.priority,
+            storyPoints: task.storyPoints ?? null,
+            proposalUuid: proposalUuid || null,
+            createdByUuid: auth.actorUuid,
+          })
+        )
+      );
+
+      const draftToTaskUuidMap: Record<string, string> = {};
+      for (let i = 0; i < tasks.length; i++) {
+        if (tasks[i].draftUuid) {
+          draftToTaskUuidMap[tasks[i].draftUuid!] = createdTasks[i].uuid;
+        }
+      }
+
+      const warnings: string[] = [];
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
+        const realUuid = createdTasks[i].uuid;
+
+        if (task.dependsOnDraftUuids) {
+          for (const draftUuid of task.dependsOnDraftUuids) {
+            const depRealUuid = draftToTaskUuidMap[draftUuid];
+            if (!depRealUuid) {
+              warnings.push(`Task "${task.title}": draftUuid "${draftUuid}" not found in this batch`);
+              continue;
+            }
+            try {
+              await taskService.addTaskDependency(auth.companyUuid, realUuid, depRealUuid);
+            } catch (error) {
+              warnings.push(`Task "${task.title}" -> draftUuid "${draftUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
+            }
+          }
+        }
+
+        if (task.dependsOnTaskUuids) {
+          for (const depUuid of task.dependsOnTaskUuids) {
+            try {
+              await taskService.addTaskDependency(auth.companyUuid, realUuid, depUuid);
+            } catch (error) {
+              warnings.push(`Task "${task.title}" -> taskUuid "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
+            }
+          }
+        }
+
+        if (task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0) {
+          const validItems = task.acceptanceCriteriaItems.filter(
+            (item) => item.description && item.description.trim().length > 0
+          );
+          if (validItems.length > 0) {
+            try {
+              await prisma.acceptanceCriterion.createMany({
+                data: validItems.map((item, index) => ({
+                  taskUuid: realUuid,
+                  description: item.description.trim(),
+                  required: item.required ?? true,
+                  sortOrder: index,
+                })),
+              });
+            } catch (error) {
+              warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
+            }
+          }
+        }
+      }
+
+      const result: {
+        tasks: { uuid: string; title: string }[];
+        warnings?: string[];
+      } = { tasks: createdTasks.map(t => ({ uuid: t.uuid, title: t.title })) };
+
+      if (warnings.length > 0) {
+        result.warnings = warnings;
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // chorus_update_task - Full-featured task editing tool (migrated from developer.ts, enhanced)
+  server.registerTool(
+    "chorus_update_task",
+    {
+      description:
+        "Update a task — edit fields, manage dependencies, or change status.\n\n" +
+        "**Field editing** (any role): title, description, priority, storyPoints, acceptanceCriteriaItems (replaces ALL existing AC), addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
+        "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
+        "For Quick Tasks: create → claim → edit details → execute → verify → done.",
+      inputSchema: z.object({
+        taskUuid: z.string().describe("Task UUID"),
+        status: z.enum(["in_progress", "to_verify"]).optional().describe("New status (assignee only)"),
+        sessionUuid: z.string().optional().describe("Session UUID for sub-agent identification"),
+        title: z.string().optional().describe("New task title"),
+        description: z.string().optional().describe("New task description (supports @mentions)"),
+        priority: z.enum(["low", "medium", "high"]).optional().describe("New priority"),
+        storyPoints: z.number().optional().describe("New effort estimate (agent hours)"),
+        acceptanceCriteriaItems: zArray(z.object({
+          description: z.string().describe("Criterion description"),
+          required: z.boolean().optional().describe("Whether required (default: true)"),
+        })).optional().describe("Replace ALL acceptance criteria (deletes existing, creates new)"),
+        addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies"),
+        removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies"),
+      }),
+    },
+    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
+      const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
+      if (!task) {
+        return { content: [{ type: "text", text: "Task not found" }], isError: true };
+      }
+
+      // Status update requires assignee check
+      if (status) {
+        const isAssignee =
+          (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
+          (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+
+        if (!isAssignee) {
+          return { content: [{ type: "text", text: "Only the assignee can update task status" }], isError: true };
+        }
+
+        if (!taskService.isValidTaskStatusTransition(task.status, status)) {
+          return {
+            content: [{ type: "text", text: `Invalid status transition: ${task.status} -> ${status}` }],
+            isError: true,
+          };
+        }
+
+        if (status === "in_progress") {
+          const depCheck = await taskService.checkDependenciesResolved(task.uuid);
+          if (!depCheck.resolved) {
+            const blockerLines = depCheck.blockers.map((b, i) => {
+              const assigneeStr = b.assignee
+                ? `${b.assignee.name} [${b.assignee.type}]`
+                : "none";
+              const sessionStr = b.sessionCheckin
+                ? `session: ${b.sessionCheckin.sessionName}`
+                : "no active session";
+              return `${i + 1}. "${b.title}" (status: ${b.status}, assignee: ${assigneeStr}, ${sessionStr})`;
+            });
+            const msg = [
+              `Cannot move to in_progress: ${depCheck.blockers.length} dependencies not resolved.`,
+              "",
+              "Blockers:",
+              ...blockerLines,
+              "",
+              "Tip: Use chorus_get_unblocked_tasks to find tasks you can start now.",
+            ].join("\n");
+            return { content: [{ type: "text", text: msg }], isError: true };
+          }
+        }
+      }
+
+      // Resolve session info
+      let sessionName: string | undefined;
+      if (sessionUuid) {
+        const session = await sessionService.getSession(auth.companyUuid, sessionUuid);
+        if (session && session.agentUuid === auth.actorUuid) {
+          sessionName = session.name;
+          await sessionService.heartbeatSession(auth.companyUuid, sessionUuid);
+        }
+      }
+
+      // Build update data for taskService.updateTask
+      const updateData: taskService.TaskUpdateParams = {};
+      if (status) updateData.status = status;
+      if (title !== undefined) updateData.title = title;
+      if (description !== undefined) updateData.description = description;
+      if (priority !== undefined) updateData.priority = priority;
+      if (storyPoints !== undefined) updateData.storyPoints = storyPoints;
+
+      const hasFieldUpdates = title !== undefined || description !== undefined || priority !== undefined || storyPoints !== undefined || status !== undefined;
+
+      let updatedStatus = task.status;
+      if (hasFieldUpdates) {
+        const updated = await taskService.updateTask(task.uuid, updateData, {
+          actorType: auth.type,
+          actorUuid: auth.actorUuid,
+        });
+        updatedStatus = updated.status;
+      }
+
+      // Replace acceptance criteria (delete all, create new)
+      const warnings: string[] = [];
+      if (acceptanceCriteriaItems) {
+        await prisma.acceptanceCriterion.deleteMany({ where: { taskUuid: task.uuid } });
+        const validItems = acceptanceCriteriaItems.filter(
+          (item) => item.description && item.description.trim().length > 0
+        );
+        if (validItems.length > 0) {
+          await prisma.acceptanceCriterion.createMany({
+            data: validItems.map((item, index) => ({
+              taskUuid: task.uuid,
+              description: item.description.trim(),
+              required: item.required ?? true,
+              sortOrder: index,
+            })),
+          });
+        }
+      }
+
+      // Add dependencies
+      if (addDependsOn) {
+        for (const depUuid of addDependsOn) {
+          try {
+            await taskService.addTaskDependency(auth.companyUuid, task.uuid, depUuid);
+          } catch (error) {
+            warnings.push(`addDependsOn "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
+          }
+        }
+      }
+
+      // Remove dependencies
+      if (removeDependsOn) {
+        for (const depUuid of removeDependsOn) {
+          try {
+            await taskService.removeTaskDependency(auth.companyUuid, task.uuid, depUuid);
+          } catch (error) {
+            warnings.push(`removeDependsOn "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
+          }
+        }
+      }
+
+      // Log activity
+      if (status) {
+        await activityService.createActivity({
+          companyUuid: auth.companyUuid,
+          projectUuid: task.projectUuid,
+          targetType: "task",
+          targetUuid: task.uuid,
+          actorType: "agent",
+          actorUuid: auth.actorUuid,
+          action: "status_changed",
+          value: { status },
+          sessionUuid,
+          sessionName,
+        });
+      } else if (hasFieldUpdates || acceptanceCriteriaItems || addDependsOn || removeDependsOn) {
+        await activityService.createActivity({
+          companyUuid: auth.companyUuid,
+          projectUuid: task.projectUuid,
+          targetType: "task",
+          targetUuid: task.uuid,
+          actorType: "agent",
+          actorUuid: auth.actorUuid,
+          action: "updated",
+          value: {
+            ...(title !== undefined && { title }),
+            ...(priority !== undefined && { priority }),
+            ...(acceptanceCriteriaItems && { acceptanceCriteriaReplaced: true }),
+            ...(addDependsOn && { addedDependencies: addDependsOn.length }),
+            ...(removeDependsOn && { removedDependencies: removeDependsOn.length }),
+          },
+          sessionUuid,
+          sessionName,
+        });
+      }
+
+      const result: Record<string, unknown> = { uuid: task.uuid, status: updatedStatus };
+      if (warnings.length > 0) result.warnings = warnings;
+
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };

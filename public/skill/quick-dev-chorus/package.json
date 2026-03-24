@@ -1,0 +1,17 @@
+{
+  "name": "quick-dev-chorus",
+  "version": "0.1.0",
+  "description": "Quick Task workflow: skip Idea→Proposal, create tasks directly, execute, and verify.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    }
+  }
+}

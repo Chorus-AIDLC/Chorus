@@ -433,6 +433,95 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
   });
 
+  // ===== Task Creation & Editing (available to all roles) =====
+
+  api.registerTool({
+    name: "chorus_create_tasks",
+    description:
+      "Batch create tasks in a project. Two modes:\n\n" +
+      "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches.\n" +
+      "Flow: create → chorus_claim_task → execute → chorus_report_work → chorus_submit_for_verify → done.\n\n" +
+      "**Proposal-linked** (traditional AI-DLC): pass proposalUuid to associate with an approved proposal.\n\n" +
+      "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).",
+    parameters: {
+      type: "object",
+      properties: {
+        projectUuid: { type: "string", description: "Project UUID" },
+        proposalUuid: { type: "string", description: "Associated Proposal UUID (optional — omit for Quick Task mode)" },
+        tasks: {
+          type: "array",
+          description: "Task list. Each: { title, description?, priority?, storyPoints?, acceptanceCriteriaItems?, draftUuid?, dependsOnDraftUuids?, dependsOnTaskUuids? }",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Task title" },
+              description: { type: "string", description: "Task description" },
+              priority: { type: "string", description: 'Priority: "low", "medium", or "high"' },
+              storyPoints: { type: "number", description: "Effort estimate in agent hours" },
+              acceptanceCriteriaItems: { type: "array", description: "Structured acceptance criteria: [{ description, required? }]", items: { type: "object", properties: { description: { type: "string" }, required: { type: "boolean" } }, required: ["description"] } },
+              draftUuid: { type: "string", description: "Temporary UUID for intra-batch dependency references" },
+              dependsOnDraftUuids: { type: "array", description: "Dependent draftUuid list within this batch", items: { type: "string" } },
+              dependsOnTaskUuids: { type: "array", description: "Dependent existing Task UUID list", items: { type: "string" } },
+            },
+            required: ["title"],
+          },
+        },
+      },
+      required: ["projectUuid", "tasks"],
+      additionalProperties: false,
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async execute(_id: string, { projectUuid, proposalUuid, tasks }: any) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const args: Record<string, any> = { projectUuid, tasks };
+      if (proposalUuid !== undefined) args.proposalUuid = proposalUuid;
+      const result = await mcpClient.callTool("chorus_create_tasks", args);
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
+  api.registerTool({
+    name: "chorus_update_task",
+    description:
+      "Update a task — edit fields, manage dependencies, or change status.\n\n" +
+      "**Field editing** (any role): title, description, priority, storyPoints, acceptanceCriteriaItems (replaces ALL existing AC), addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
+      "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
+      "For Quick Tasks: create → claim → edit details → execute → verify → done.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskUuid: { type: "string", description: "Task UUID" },
+        status: { type: "string", description: "New status: in_progress | to_verify (assignee only)" },
+        sessionUuid: { type: "string", description: "Session UUID for sub-agent identification" },
+        title: { type: "string", description: "New task title" },
+        description: { type: "string", description: "New task description (supports @mentions)" },
+        priority: { type: "string", description: 'New priority: "low", "medium", or "high"' },
+        storyPoints: { type: "number", description: "New effort estimate (agent hours)" },
+        acceptanceCriteriaItems: { type: "array", description: "Replace ALL acceptance criteria: [{ description, required? }]", items: { type: "object", properties: { description: { type: "string" }, required: { type: "boolean" } }, required: ["description"] } },
+        addDependsOn: { type: "array", description: "Task UUIDs to add as dependencies", items: { type: "string" } },
+        removeDependsOn: { type: "array", description: "Task UUIDs to remove from dependencies", items: { type: "string" } },
+      },
+      required: ["taskUuid"],
+      additionalProperties: false,
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async execute(_id: string, { taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }: any) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const args: Record<string, any> = { taskUuid };
+      if (status !== undefined) args.status = status;
+      if (sessionUuid !== undefined) args.sessionUuid = sessionUuid;
+      if (title !== undefined) args.title = title;
+      if (description !== undefined) args.description = description;
+      if (priority !== undefined) args.priority = priority;
+      if (storyPoints !== undefined) args.storyPoints = storyPoints;
+      if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
+      if (addDependsOn !== undefined) args.addDependsOn = addDependsOn;
+      if (removeDependsOn !== undefined) args.removeDependsOn = removeDependsOn;
+      const result = await mcpClient.callTool("chorus_update_task", args);
+      return JSON.stringify(result, null, 2);
+    },
+  });
+
   api.registerTool({
     name: "chorus_search",
     description: "Search across tasks, ideas, proposals, documents, projects, and project groups.",

@@ -329,6 +329,7 @@ This is the core overview skill. For stage-specific workflows, use:
 
 | Stage | Skill | Description |
 |-------|-------|-------------|
+| **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/develop` | Claim Tasks, report work, session & sub-agent management, Agent Teams integration |

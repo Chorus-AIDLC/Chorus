@@ -324,11 +324,12 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_pm_create_tasks - Batch create tasks
+  // chorus_pm_create_tasks - Deprecated alias for chorus_create_tasks (now in public.ts)
+  // Kept for backward compatibility with existing agents that reference the old name.
   server.registerTool(
     "chorus_pm_create_tasks",
     {
-      description: "Batch create tasks (can associate with a Proposal, supports intra-batch dependencies)",
+      description: "[Deprecated — use chorus_create_tasks instead] Batch create tasks (can associate with a Proposal, supports intra-batch dependencies)",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional)"),
@@ -348,12 +349,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid, proposalUuid, tasks }) => {
-      // Validate project exists
       if (!(await projectExists(auth.companyUuid, projectUuid))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
 
-      // Validate Proposal exists (if provided)
       if (proposalUuid) {
         const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
         if (!proposal) {
@@ -361,7 +360,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      // 1. Batch create tasks
       const createdTasks = await Promise.all(
         tasks.map(task =>
           taskService.createTask({
@@ -377,7 +375,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         )
       );
 
-      // 2. Build draftUuid -> realUuid map
       const draftToTaskUuidMap: Record<string, string> = {};
       for (let i = 0; i < tasks.length; i++) {
         if (tasks[i].draftUuid) {
@@ -385,13 +382,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      // 3. Create dependencies
       const warnings: string[] = [];
       for (let i = 0; i < tasks.length; i++) {
         const task = tasks[i];
         const realUuid = createdTasks[i].uuid;
 
-        // Handle dependsOnDraftUuids (intra-batch dependencies)
         if (task.dependsOnDraftUuids) {
           for (const draftUuid of task.dependsOnDraftUuids) {
             const depRealUuid = draftToTaskUuidMap[draftUuid];
@@ -407,7 +402,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           }
         }
 
-        // Handle dependsOnTaskUuids (existing Task dependencies)
         if (task.dependsOnTaskUuids) {
           for (const depUuid of task.dependsOnTaskUuids) {
             try {
@@ -418,7 +412,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           }
         }
 
-        // Create acceptance criteria items
         if (task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0) {
           const validItems = task.acceptanceCriteriaItems.filter(
             (item) => item.description && item.description.trim().length > 0

@@ -361,6 +361,7 @@ This is the core overview skill. For stage-specific workflows, download and read
 
 | Stage | Skill | Path |
 |-------|-------|------|
+| **Quick Dev** | `quick-dev-chorus` | `<BASE_URL>/skill/quick-dev-chorus/SKILL.md` |
 | **Ideation** | `idea-chorus` | `<BASE_URL>/skill/idea-chorus/SKILL.md` |
 | **Planning** | `proposal-chorus` | `<BASE_URL>/skill/proposal-chorus/SKILL.md` |
 | **Development** | `develop-chorus` | `<BASE_URL>/skill/develop-chorus/SKILL.md` |

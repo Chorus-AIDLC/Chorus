@@ -19,26 +19,7 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
     },
   });
 
-  api.registerTool({
-    name: "chorus_update_task",
-    description: "Update task status (only the assignee can operate). Moving to in_progress requires all dependsOn tasks to be done or closed — otherwise the request is rejected with blocker details. Use chorus_get_unblocked_tasks to find tasks ready to start.",
-    parameters: {
-      type: "object",
-      properties: {
-        taskUuid: { type: "string", description: "Task UUID" },
-        status: { type: "string", description: "New status: in_progress | to_verify" },
-        sessionUuid: { type: "string", description: "Session UUID for sub-agent identification" },
-      },
-      required: ["taskUuid", "status"],
-      additionalProperties: false,
-    },
-    async execute(_id: string, { taskUuid, status, sessionUuid }: { taskUuid: string; status: string; sessionUuid?: string }) {
-      const args: Record<string, unknown> = { taskUuid, status };
-      if (sessionUuid) args.sessionUuid = sessionUuid;
-      const result = await mcpClient.callTool("chorus_update_task", args);
-      return JSON.stringify(result, null, 2);
-    },
-  });
+  // chorus_update_task — migrated to common-tools.ts (available to all roles, enhanced with field editing)
 
   api.registerTool({
     name: "chorus_report_work",
