@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const mockProjectService = vi.hoisted(() => ({
   getProjectByUuid: vi.fn(),
+  projectExists: vi.fn(),
 }));
 
 const mockTaskService = vi.hoisted(() => ({
@@ -29,6 +30,8 @@ vi.mock("@/services/notification.service", () => ({}));
 vi.mock("@/services/elaboration.service", () => ({}));
 vi.mock("@/services/project-group.service", () => ({}));
 vi.mock("@/services/mention.service", () => ({}));
+vi.mock("@/services/session.service", () => ({}));
+vi.mock("@/services/search.service", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 // Capture tool handlers via a fake McpServer
