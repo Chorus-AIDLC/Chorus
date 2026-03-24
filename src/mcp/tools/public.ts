@@ -942,6 +942,20 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
+      // Log activity for each created task
+      for (const created of createdTasks) {
+        await activityService.createActivity({
+          companyUuid: auth.companyUuid,
+          projectUuid,
+          targetType: "task",
+          targetUuid: created.uuid,
+          actorType: "agent",
+          actorUuid: auth.actorUuid,
+          action: "created",
+          value: { title: created.title, ...(proposalUuid ? { proposalUuid } : { quickTask: true }) },
+        });
+      }
+
       const result: {
         tasks: { uuid: string; title: string }[];
         warnings?: string[];
@@ -1079,8 +1093,18 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      // Log activity
-      if (status) {
+      // Log activity — merge all changes into a single record
+      const activityValue: Record<string, unknown> = {};
+      if (status) activityValue.status = status;
+      if (title !== undefined) activityValue.title = title;
+      if (description !== undefined) activityValue.descriptionUpdated = true;
+      if (priority !== undefined) activityValue.priority = priority;
+      if (storyPoints !== undefined) activityValue.storyPoints = storyPoints;
+      if (addDependsOn) activityValue.addedDependencies = addDependsOn.length;
+      if (removeDependsOn) activityValue.removedDependencies = removeDependsOn.length;
+
+      const hasAnyChange = status || hasFieldUpdates || addDependsOn || removeDependsOn;
+      if (hasAnyChange) {
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
           projectUuid: task.projectUuid,
@@ -1088,26 +1112,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           targetUuid: task.uuid,
           actorType: "agent",
           actorUuid: auth.actorUuid,
-          action: "status_changed",
-          value: { status },
-          sessionUuid,
-          sessionName,
-        });
-      } else if (hasFieldUpdates || addDependsOn || removeDependsOn) {
-        await activityService.createActivity({
-          companyUuid: auth.companyUuid,
-          projectUuid: task.projectUuid,
-          targetType: "task",
-          targetUuid: task.uuid,
-          actorType: "agent",
-          actorUuid: auth.actorUuid,
-          action: "updated",
-          value: {
-            ...(title !== undefined && { title }),
-            ...(priority !== undefined && { priority }),
-            ...(addDependsOn && { addedDependencies: addDependsOn.length }),
-            ...(removeDependsOn && { removedDependencies: removeDependsOn.length }),
-          },
+          action: status ? "status_changed" : "updated",
+          value: activityValue,
           sessionUuid,
           sessionName,
         });
