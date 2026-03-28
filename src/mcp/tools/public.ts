@@ -385,35 +385,14 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         effectivePersona = defaultPersonas[agent.roles[0]] || null;
       }
 
-      // Check if this is the agent's first checkin — emit agent_checkin notification to owner
+      // Emit agent_checkin notification to owner on first checkin
       if (agent.ownerUuid) {
-        const existingCheckinNotification = await prisma.notification.findFirst({
-          where: {
-            companyUuid: auth.companyUuid,
-            action: "agent_checkin",
-            actorType: "agent",
-            actorUuid: agent.uuid,
-          },
-          select: { uuid: true },
+        await notificationService.emitAgentCheckinIfFirst({
+          companyUuid: auth.companyUuid,
+          agentUuid: agent.uuid,
+          agentName: agent.name,
+          ownerUuid: agent.ownerUuid,
         });
-
-        if (!existingCheckinNotification) {
-          await notificationService.create({
-            companyUuid: auth.companyUuid,
-            projectUuid: "system",
-            recipientType: "user",
-            recipientUuid: agent.ownerUuid,
-            entityType: "agent",
-            entityUuid: agent.uuid,
-            entityTitle: agent.name,
-            projectName: "",
-            action: "agent_checkin",
-            message: `Agent "${agent.name}" connected successfully`,
-            actorType: "agent",
-            actorUuid: agent.uuid,
-            actorName: agent.name,
-          });
-        }
       }
 
       const result = {

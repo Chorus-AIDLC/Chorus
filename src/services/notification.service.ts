@@ -403,6 +403,47 @@ export async function archive(
 }
 
 /**
+ * Emit an agent_checkin notification to the agent's owner on first checkin only.
+ * Returns true if notification was created, false if already existed.
+ */
+export async function emitAgentCheckinIfFirst(params: {
+  companyUuid: string;
+  agentUuid: string;
+  agentName: string;
+  ownerUuid: string;
+}): Promise<boolean> {
+  const existing = await prisma.notification.findFirst({
+    where: {
+      companyUuid: params.companyUuid,
+      action: "agent_checkin",
+      actorType: "agent",
+      actorUuid: params.agentUuid,
+    },
+    select: { uuid: true },
+  });
+
+  if (existing) return false;
+
+  await create({
+    companyUuid: params.companyUuid,
+    projectUuid: "system",
+    recipientType: "user",
+    recipientUuid: params.ownerUuid,
+    entityType: "agent",
+    entityUuid: params.agentUuid,
+    entityTitle: params.agentName,
+    projectName: "",
+    action: "agent_checkin",
+    message: `Agent "${params.agentName}" connected successfully`,
+    actorType: "agent",
+    actorUuid: params.agentUuid,
+    actorName: params.agentName,
+  });
+
+  return true;
+}
+
+/**
  * Get notification preferences for an owner (user or agent), creating defaults if not found
  */
 export async function getPreferences(
