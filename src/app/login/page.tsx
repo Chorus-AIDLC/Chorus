@@ -63,6 +63,24 @@ export default function LoginPage() {
         return;
       }
 
+      // Check if user needs onboarding
+      const onboardingCompleted = localStorage.getItem("chorus_onboarding_completed");
+      if (onboardingCompleted) {
+        router.push("/projects");
+        return;
+      }
+
+      // Check if user has any agents
+      try {
+        const agentsRes = await fetch("/api/agents");
+        const agentsData = await agentsRes.json();
+        if (agentsData.success && agentsData.data.length === 0) {
+          router.push("/onboarding");
+          return;
+        }
+      } catch {
+        // If agents check fails, proceed to projects
+      }
       router.push("/projects");
     } catch {
       setError(t("login.networkError"));

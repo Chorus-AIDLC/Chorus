@@ -71,6 +71,7 @@ interface CreateAgentKeyInput {
 export async function createAgentAndKeyAction(input: CreateAgentKeyInput): Promise<{
   success: boolean;
   key?: string;
+  agentUuid?: string;
   error?: string;
 }> {
   const auth = await getServerAuthContext();
@@ -95,7 +96,7 @@ export async function createAgentAndKeyAction(input: CreateAgentKeyInput): Promi
       name: input.name,
     });
 
-    return { success: true, key: apiKey.key };
+    return { success: true, key: apiKey.key, agentUuid: agent.uuid };
   } catch (error) {
     console.error("Failed to create agent and API key:", error);
     return { success: false, error: "Failed to create API key" };

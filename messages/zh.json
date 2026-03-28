@@ -627,7 +627,10 @@
     "saving": "保存中...",
     "editAgentDesc": "更新此智能体的名称、角色和人设。",
     "updateSuccess": "智能体更新成功",
-    "updateFailed": "更新智能体失败"
+    "updateFailed": "更新智能体失败",
+    "setupGuide": "设置向导",
+    "setupGuideDesc": "逐步设置您的 AI 智能体连接",
+    "openSetupGuide": "打开设置向导"
   },
   "login": {
     "title": "Chorus",
@@ -737,7 +740,8 @@
       "idea_claimed": "想法已认领",
       "elaboration_requested": "需求澄清已请求",
       "elaboration_answered": "需求澄清已回答",
-      "mentioned": "你被提及了"
+      "mentioned": "你被提及了",
+      "agent_checkin": "Agent 已成功连接"
     },
     "preferences": {
       "title": "通知偏好",
@@ -878,6 +882,94 @@
     "addCriterion": "添加标准",
     "removeCriterion": "移除",
     "criterionPlaceholder": "描述验收标准..."
+  },
+  "onboarding": {
+    "skip": "暂时跳过",
+    "next": "下一步",
+    "steps": {
+      "welcome": "欢迎",
+      "createAgent": "创建智能体",
+      "copyKey": "复制密钥",
+      "installGuide": "安装",
+      "testConnection": "测试",
+      "completion": "完成"
+    },
+    "welcome": {
+      "title": "欢迎使用 Chorus",
+      "description": "Chorus 是一个 AI 与人类协作平台。AI 智能体提出方案，人类验证 — 通过结构化的开发生命周期。",
+      "getStarted": "开始使用",
+      "pipelineTitle": "AI 驱动开发生命周期",
+      "pipeline": {
+        "idea": "想法",
+        "proposal": "方案",
+        "task": "任务",
+        "execute": "执行",
+        "verify": "验证",
+        "done": "完成"
+      }
+    },
+    "completion": {
+      "title": "一切就绪！",
+      "description": "您的智能体已配置完成，可以开始协作了。创建一个项目或探索设置来开始使用。",
+      "summary": "配置摘要",
+      "agentName": "智能体名称",
+      "agentRoles": "角色",
+      "goToProjects": "前往项目",
+      "goToSettings": "前往设置"
+    },
+    "createAgent": {
+      "title": "创建您的 AI 智能体",
+      "description": "设置一个具有匹配您工作流程的角色和人设的 AI 智能体。这将为智能体生成一个 API 密钥。"
+    },
+    "copyKey": {
+      "title": "复制您的 API 密钥",
+      "description": "请将此 API 密钥保存到安全的地方。您需要它来配置 AI 智能体客户端。",
+      "warning": "请立即复制此密钥。此后将无法再次查看！",
+      "copy": "复制密钥",
+      "copied": "已复制！"
+    },
+    "install": {
+      "description": "选择您的 AI 智能体客户端，然后按照以下说明进行设置。",
+      "tabs": {
+        "claudeCode": "Claude Code",
+        "openClaw": "OpenClaw",
+        "other": "其他智能体"
+      },
+      "claudeCode": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc 以实现持久化。",
+        "step2Title": "第 2 步：打开 Claude Code 并运行"
+      },
+      "openClaw": {
+        "step1Title": "第 1 步：安装插件",
+        "step2Title": "第 2 步：编辑 ~/.openclaw/openclaw.json",
+        "step3Title": "第 3 步：重启 OpenClaw 网关",
+        "step3Desc": "重启 OpenClaw 网关进程以加载新的配置。",
+        "step4Title": "第 4 步：验证连接",
+        "step4Desc": "在 OpenClaw 聊天窗口中，输入以下命令：",
+        "troubleshootingTitle": "故障排除",
+        "troubleshootingError": "\"Wake agent failed: HTTP 405\"",
+        "troubleshootingFix": "此错误表示 hooks 未启用。请在 openclaw.json 配置中将 \"hooks.enabled\" 设置为 true，然后重启网关。"
+      },
+      "other": {
+        "description": "复制以下提示词并发送给您的 AI 智能体以配置 Chorus 连接。"
+      }
+    },
+    "testConnection": {
+      "title": "测试连接",
+      "waiting": "等待智能体连接...",
+      "waitingFor": "正在监听 {name} 的签到",
+      "connected": "智能体连接成功！",
+      "timeout": "仍在等待连接。请检查安装步骤后重试。",
+      "retry": "重试",
+      "skipHint": "您可以稍后在设置中测试连接。"
+    },
+    "placeholder": {
+      "createAgent": "此步骤将用于创建 AI 智能体。即将推出。",
+      "copyKey": "此步骤将用于复制 API 密钥。即将推出。",
+      "installGuide": "此步骤将引导您完成安装。即将推出。",
+      "testConnection": "此步骤将测试智能体连接。即将推出。"
+    }
   },
   "search": {
     "placeholder": "搜索任务、想法、提案、文档...",

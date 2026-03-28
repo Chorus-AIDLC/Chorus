@@ -127,6 +127,13 @@ function getEntityPath(notification: Notification): string {
   }
 }
 
+// Internal notification actions that should not be displayed in the popup
+const HIDDEN_ACTIONS = new Set(["agent_checkin"]);
+
+function filterDisplayable(notifications: Notification[]) {
+  return notifications.filter((n) => !HIDDEN_ACTIONS.has(n.action));
+}
+
 // ===== NotificationPopup =====
 
 interface NotificationPopupProps {
@@ -276,7 +283,8 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
     );
   };
 
-  const renderList = (items: Notification[], isUnread: boolean, total: number) => {
+  const renderList = (rawItems: Notification[], isUnread: boolean, total: number) => {
+    const items = filterDisplayable(rawItems);
     if (loading) {
       return (
         <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">

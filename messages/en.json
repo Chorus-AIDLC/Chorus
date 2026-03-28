@@ -626,7 +626,10 @@
     "saving": "Saving...",
     "editAgentDesc": "Update this agent's name, roles, and persona.",
     "updateSuccess": "Agent updated successfully",
-    "updateFailed": "Failed to update agent"
+    "updateFailed": "Failed to update agent",
+    "setupGuide": "Setup Guide",
+    "setupGuideDesc": "Set up your AI agent connection step by step",
+    "openSetupGuide": "Open Setup Guide"
   },
   "login": {
     "title": "Chorus",
@@ -736,7 +739,8 @@
       "idea_claimed": "Idea claimed",
       "elaboration_requested": "Elaboration requested",
       "elaboration_answered": "Elaboration answered",
-      "mentioned": "You were mentioned"
+      "mentioned": "You were mentioned",
+      "agent_checkin": "Agent connected successfully"
     },
     "preferences": {
       "title": "Notification Preferences",
@@ -877,6 +881,94 @@
     "addCriterion": "Add Criterion",
     "removeCriterion": "Remove",
     "criterionPlaceholder": "Describe the acceptance criterion..."
+  },
+  "onboarding": {
+    "skip": "Skip for now",
+    "next": "Next",
+    "steps": {
+      "welcome": "Welcome",
+      "createAgent": "Create Agent",
+      "copyKey": "Copy Key",
+      "installGuide": "Install",
+      "testConnection": "Test",
+      "completion": "Done"
+    },
+    "welcome": {
+      "title": "Welcome to Chorus",
+      "description": "Chorus is an AI-Human collaboration platform. AI agents propose, humans verify — through a structured development lifecycle.",
+      "getStarted": "Get Started",
+      "pipelineTitle": "AI-Driven Development Lifecycle",
+      "pipeline": {
+        "idea": "Idea",
+        "proposal": "Proposal",
+        "task": "Task",
+        "execute": "Execute",
+        "verify": "Verify",
+        "done": "Done"
+      }
+    },
+    "completion": {
+      "title": "You're All Set!",
+      "description": "Your agent is configured and ready to collaborate. Start by creating a project or exploring your settings.",
+      "summary": "Setup Summary",
+      "agentName": "Agent Name",
+      "agentRoles": "Roles",
+      "goToProjects": "Go to Projects",
+      "goToSettings": "Go to Settings"
+    },
+    "createAgent": {
+      "title": "Create Your AI Agent",
+      "description": "Set up an AI agent with the roles and persona that match your workflow. This will generate an API key for the agent."
+    },
+    "copyKey": {
+      "title": "Copy Your API Key",
+      "description": "Save this API key somewhere safe. You will need it to configure your AI agent client.",
+      "warning": "Copy this key now. You won't be able to see it again!",
+      "copy": "Copy Key",
+      "copied": "Copied!"
+    },
+    "install": {
+      "description": "Choose your AI agent client and follow the setup instructions below.",
+      "tabs": {
+        "claudeCode": "Claude Code",
+        "openClaw": "OpenClaw",
+        "other": "Other Agents"
+      },
+      "claudeCode": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc for persistence.",
+        "step2Title": "Step 2: Open Claude Code and run"
+      },
+      "openClaw": {
+        "step1Title": "Step 1: Install plugin",
+        "step2Title": "Step 2: Edit ~/.openclaw/openclaw.json",
+        "step3Title": "Step 3: Restart OpenClaw gateway",
+        "step3Desc": "Restart the OpenClaw gateway process to pick up the new configuration.",
+        "step4Title": "Step 4: Verify connection",
+        "step4Desc": "In the OpenClaw chat window, type the following command:",
+        "troubleshootingTitle": "Troubleshooting",
+        "troubleshootingError": "\"Wake agent failed: HTTP 405\"",
+        "troubleshootingFix": "This error means hooks are not enabled. Set \"hooks.enabled\" to true in your openclaw.json configuration and restart the gateway."
+      },
+      "other": {
+        "description": "Copy the prompt below and send it to your AI agent to configure the Chorus connection."
+      }
+    },
+    "testConnection": {
+      "title": "Test Connection",
+      "waiting": "Waiting for your agent to connect...",
+      "waitingFor": "Listening for {name} to check in",
+      "connected": "Agent connected successfully!",
+      "timeout": "Still waiting for a connection. Please check your install steps and try again.",
+      "retry": "Retry",
+      "skipHint": "You can test the connection later from Settings."
+    },
+    "placeholder": {
+      "createAgent": "This step will let you create an AI agent. Coming soon.",
+      "copyKey": "This step will let you copy your API key. Coming soon.",
+      "installGuide": "This step will guide you through installation. Coming soon.",
+      "testConnection": "This step will test your agent connection. Coming soon."
+    }
   },
   "search": {
     "placeholder": "Search tasks, ideas, proposals, documents...",
