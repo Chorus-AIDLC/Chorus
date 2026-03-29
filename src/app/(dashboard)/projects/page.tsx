@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import {
@@ -25,9 +25,11 @@ import {
   ArrowRight,
   Folder,
 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
 import { CreateProjectGroupDialog } from "@/components/create-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
+import { getProjectInitials, getProjectIconColor } from "@/lib/project-colors";
 
 // Types
 interface ProjectData {
@@ -53,33 +55,6 @@ interface ProjectGroupData {
   projectCount: number;
   createdAt: string;
   updatedAt: string;
-}
-
-// Pastel icon color palette based on project name hash
-const ICON_COLORS = [
-  { bg: "#F5C4B3", text: "#712B13" }, // Coral
-  { bg: "#FAC775", text: "#633806" }, // Amber
-  { bg: "#CECBF6", text: "#3C3489" }, // Purple
-  { bg: "#B5D4F4", text: "#0C447C" }, // Blue
-  { bg: "#C0DD97", text: "#27500A" }, // Green
-  { bg: "#9FE1CB", text: "#085041" }, // Teal
-  { bg: "#F4C0D1", text: "#72243E" }, // Pink
-];
-
-function getProjectInitials(name: string): string {
-  const words = name.trim().split(/\s+/);
-  if (words.length >= 2) {
-    return (words[0][0] + words[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
-
-function getIconColor(name: string): { bg: string; text: string } {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return ICON_COLORS[Math.abs(hash) % ICON_COLORS.length];
 }
 
 function getProgressColor(percent: number): { bar: string; text: string } {
@@ -112,7 +87,7 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
   const t = useTranslations();
   const formatRelative = useRelativeDate();
   const initials = getProjectInitials(project.name);
-  const iconColor = getIconColor(project.name);
+  const iconColor = getProjectIconColor(project.name);
   const progress = project.counts.tasks > 0
     ? Math.round((project.counts.doneTasks / project.counts.tasks) * 100)
     : 0;
@@ -157,12 +132,11 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
 
       {/* Progress bar + percentage */}
       <div className="flex w-[200px] shrink-0 items-center gap-2">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#F0EDE8]">
-          <div
-            className="h-full rounded-full transition-all"
-            style={{ width: `${progress}%`, backgroundColor: progressColor.bar }}
-          />
-        </div>
+        <Progress
+          value={progress}
+          className="h-1.5 flex-1 bg-[#F0EDE8]"
+          style={{ '--progress-indicator': progressColor.bar } as React.CSSProperties}
+        />
         <span className="w-9 text-right text-[11px] font-semibold" style={{ color: progressColor.text }}>
           {progress}%
         </span>
@@ -204,7 +178,7 @@ function GroupSection({
         <div ref={provided.innerRef} {...provided.droppableProps}>
           <Collapsible open={isOpen} onOpenChange={setIsOpen}>
             <Card
-              className={`overflow-hidden rounded-2xl border-[#E5E2DC] !gap-0 !py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
+              className={`overflow-hidden rounded-2xl border-[#E5E2DC] gap-0 py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
                 snapshot.isDraggingOver
                   ? "border-[#C67A52] bg-[#C67A5208]"
                   : ""
@@ -341,7 +315,7 @@ function UngroupedSection({ projects, onNewProject }: { projects: ProjectData[];
           <div ref={provided.innerRef} {...provided.droppableProps}>
             <Collapsible open={isOpen} onOpenChange={setIsOpen}>
               <Card
-                className={`overflow-hidden rounded-2xl border-[#E5E2DC] !gap-0 !py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
+                className={`overflow-hidden rounded-2xl border-[#E5E2DC] gap-0 py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
                   snapshot.isDraggingOver
                     ? "border-[#C67A52] bg-[#C67A5208]"
                     : ""

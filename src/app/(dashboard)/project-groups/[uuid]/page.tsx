@@ -15,6 +15,7 @@ import {
 import { authFetch } from "@/lib/auth-client";
 import { ManageProjectGroupDialog } from "@/components/manage-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
+import { getProjectInitials, getProjectIconColor } from "@/lib/project-colors";
 
 // ── Types ──────────────────────────────────────────────────────
 interface GroupDashboardData {
@@ -52,31 +53,6 @@ interface GroupDashboardData {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-const AVATAR_COLORS = [
-  "#C67A52",
-  "#1976D2",
-  "#5A9E6F",
-  "#7B1FA2",
-  "#D4805A",
-  "#2E86AB",
-  "#A45A52",
-  "#6B8E5A",
-];
-
-function getProjectInitials(name: string): string {
-  const words = name.trim().split(/\s+/);
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
-}
-
-function getAvatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 const activityDotColors: Record<string, string> = {
   task: "#5A9E6F",
   idea: "#C67A52",
@@ -279,7 +255,7 @@ export default function ProjectGroupDashboardPage() {
             {projects.length > 0 ? (
               projects.map((project) => {
                 const initials = getProjectInitials(project.name);
-                const color = getAvatarColor(project.name);
+                const iconColor = getProjectIconColor(project.name);
                 return (
                   <Link
                     key={project.uuid}
@@ -288,8 +264,8 @@ export default function ProjectGroupDashboardPage() {
                     <div className="flex cursor-pointer items-center justify-between rounded-xl border border-[#E5E2DC] bg-white py-3 px-4 transition-all hover:border-[#C67A52] hover:shadow-sm">
                       <div className="flex items-center gap-3">
                         <div
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold text-white"
-                          style={{ backgroundColor: color }}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold"
+                          style={{ backgroundColor: iconColor.bg, color: iconColor.text }}
                         >
                           {initials}
                         </div>
