@@ -6,7 +6,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 
 # Quick Dev Skill
 
-Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) and create tasks directly. Ideal for small, well-understood work.
+Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) and create tasks directly. Ideal for small, well-understood work. The goal is for agents to **autonomously record their development work and verify task completion** through structured acceptance criteria.
 
 ---
 
@@ -15,7 +15,7 @@ Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) a
 The standard AI-DLC flow ensures quality through structured planning, but adds overhead that slows down small tasks. Quick Dev provides a lightweight alternative:
 
 ```
-chorus_create_tasks → chorus_claim_task → in_progress → report → self-check AC → submit for verify → done
+[check admin role] → chorus_create_tasks → chorus_claim_task → in_progress → report → self-check AC → submit for verify → [self-verify if admin] → done
 ```
 
 **Use Quick Dev when:**
@@ -35,22 +35,35 @@ For complex work, consider using the idea and proposal skills instead.
 
 ---
 
+## Pre-Flight: Admin Self-Verify Check
+
+**Before creating tasks**, if you have the `admin_agent` role, ask the user:
+
+> "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify?"
+
+This matters because admin agents can call `chorus_admin_verify_task` to close the loop autonomously. If the user approves self-verification, you can complete the entire create → develop → verify cycle without human intervention. Record the decision and apply it in Step 7.
+
+---
+
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_create_tasks` | Create task(s) directly — omit `proposalUuid` for Quick Task mode |
+| `chorus_create_tasks` | Create task(s) — omit `proposalUuid` for standalone Quick Task, or pass it to attach to an existing proposal |
 | `chorus_update_task` | Edit task fields (title, description, priority, AC, dependencies) or change status |
 | `chorus_claim_task` | Claim a task (open → assigned) |
 | `chorus_report_work` | Report progress with optional status update |
 | `chorus_report_criteria_self_check` | Self-check acceptance criteria before submitting |
 | `chorus_submit_for_verify` | Submit for admin verification |
+| `chorus_admin_verify_task` | **(admin only)** Verify task — use when self-verification is approved |
 
 ---
 
 ## Workflow
 
 ### Step 1: Create a Quick Task
+
+**Always include `acceptanceCriteriaItems`** — these are the foundation for self-checking in Step 6. Write specific, testable criteria that you can objectively verify after development. Vague AC like "works correctly" defeats the purpose; prefer "returns 200 on GET /api/foo with valid token".
 
 ```
 chorus_create_tasks({
@@ -68,9 +81,9 @@ chorus_create_tasks({
 })
 ```
 
-Omit `proposalUuid` — this is what makes it a Quick Task.
-
-To associate with an existing proposal (gap-filling): pass `proposalUuid`.
+**`proposalUuid` is optional:**
+- **Omit** for standalone quick tasks (bug fixes, hotfixes, exploratory work)
+- **Pass** to attach the task to an existing proposal — useful for gap-filling, follow-up patches, or continuing work after a proposal's initial tasks are delivered
 
 ### Step 2: Claim the Task
 
@@ -80,7 +93,7 @@ chorus_claim_task({ taskUuid: "<task-uuid>" })
 
 ### Step 3: Edit Details (if needed)
 
-Use `chorus_update_task` to refine the task after creation:
+Use `chorus_update_task` to refine the task after creation. **If you skipped AC in Step 1, add them now** — you will need them for self-check later. Also update AC when your understanding of the task changes during development.
 
 ```
 chorus_update_task({
@@ -121,7 +134,7 @@ chorus_report_criteria_self_check({
 })
 ```
 
-### Step 7: Submit for Verification
+### Step 7: Submit for Verification (or Self-Verify)
 
 ```
 chorus_submit_for_verify({
@@ -130,15 +143,24 @@ chorus_submit_for_verify({
 })
 ```
 
+**Admin self-verification:** If you have the `admin_agent` role and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
+
+```
+chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
+```
+
+This completes the full autonomous cycle: create → develop → verify → done.
+
 ---
 
 ## Tips
 
 - Keep Quick Tasks small — if you need more than 2-3 tasks, consider using a proposal
-- Always add acceptance criteria — they enable structured verification
-- Use `chorus_update_task` to refine tasks after creation rather than deleting and recreating
-- For gap-filling after a proposal, pass the `proposalUuid` to keep tasks grouped
+- **Always write acceptance criteria at creation time** — they are your self-check contract. Specific, testable AC enables autonomous verification and makes the entire workflow self-contained
+- Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
+- Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
 - Quick Tasks appear in the same project task list and DAG as proposal-based tasks
+- Admin agents can run the full lifecycle autonomously (create → develop → self-verify) — but always confirm with the user first
 
 ---
 
