@@ -360,7 +360,7 @@ function GroupSection({
                       {t("projectGroups.noProjectsInGroup")}
                     </p>
                   ) : (
-                    <div className={viewMode === "grid" ? "grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3" : ""}>
+                    <div className={viewMode === "grid" ? "md:grid md:grid-cols-2 md:gap-4 md:p-5 lg:grid-cols-3" : ""}>
                       {projects.map((project, index) => (
                         <Draggable
                           key={project.uuid}
@@ -381,9 +381,16 @@ function GroupSection({
                                 }}
                               >
                                 {viewMode === "grid" ? (
-                                  <div className={snapshot.isDragging ? "rotate-1 opacity-90 shadow-md" : ""}>
-                                    <ProjectGridCard project={project} />
-                                  </div>
+                                  <>
+                                    {/* Mobile: always list */}
+                                    <div className={`md:hidden transition-colors hover:bg-[#F5F2EC] ${snapshot.isDragging ? "rotate-1 opacity-90 shadow-md rounded-lg bg-white" : ""}`}>
+                                      <ProjectListRow project={project} showDivider={index < projects.length - 1} />
+                                    </div>
+                                    {/* Desktop: grid card */}
+                                    <div className={`hidden md:block ${snapshot.isDragging ? "rotate-1 opacity-90 shadow-md" : ""}`}>
+                                      <ProjectGridCard project={project} />
+                                    </div>
+                                  </>
                                 ) : (
                                   <div
                                     className={`transition-colors hover:bg-[#F5F2EC] ${
@@ -482,7 +489,7 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
                         {t("projectGroups.noProjectsInGroup")}
                       </p>
                     ) : (
-                      <div className={viewMode === "grid" ? "grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3" : ""}>
+                      <div className={viewMode === "grid" ? "md:grid md:grid-cols-2 md:gap-4 md:p-5 lg:grid-cols-3" : ""}>
                         {projects.map((project, index) => (
                           <Draggable
                             key={project.uuid}
@@ -550,7 +557,17 @@ export default function ProjectsPage() {
   const [groups, setGroups] = useState<ProjectGroupData[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("chorus_projects_view_mode");
+      if (saved === "list" || saved === "grid") return saved;
+    }
+    return "list";
+  });
+  useEffect(() => {
+    localStorage.setItem("chorus_projects_view_mode", viewMode);
+  }, [viewMode]);
+
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [createProjectTarget, setCreateProjectTarget] = useState<{ groupUuid: string | null; groupName: string } | null>(null);
 
@@ -679,11 +696,13 @@ export default function ProjectsPage() {
                 {t("projects.title")}
               </h1>
               <div className="flex items-center gap-3">
-                {/* View toggle */}
-                <div className="flex overflow-hidden rounded-lg border border-[#E5E2DC]">
-                  <button
+                {/* View toggle — desktop only, mobile always uses list */}
+                <div className="hidden overflow-hidden rounded-lg border border-[#E5E2DC] md:flex">
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setViewMode("list")}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-none px-2.5 py-1.5 text-xs font-medium transition-colors ${
                       viewMode === "list"
                         ? "bg-[#F5F2EC] text-[#C67A52]"
                         : "text-[#9A9A9A] hover:text-[#6B6B6B]"
@@ -691,10 +710,12 @@ export default function ProjectsPage() {
                   >
                     <List className="h-3.5 w-3.5" />
                     {t("projects.listView")}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setViewMode("grid")}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-none px-2.5 py-1.5 text-xs font-medium transition-colors ${
                       viewMode === "grid"
                         ? "bg-[#F5F2EC] text-[#C67A52]"
                         : "text-[#9A9A9A] hover:text-[#6B6B6B]"
@@ -702,7 +723,7 @@ export default function ProjectsPage() {
                   >
                     <Grid2X2 className="h-3.5 w-3.5" />
                     {t("projects.gridView")}
-                  </button>
+                  </Button>
                 </div>
                 <Button
                   className="hidden rounded-xl bg-[#C67A52] px-5 text-white hover:bg-[#B56A42] md:flex"
