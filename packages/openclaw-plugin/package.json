@@ -1,6 +1,6 @@
 {
   "name": "@chorus-aidlc/chorus-openclaw-plugin",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "OpenClaw plugin for Chorus AI-DLC collaboration platform — SSE real-time events + MCP tool integration",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,7 @@
   "keywords": ["openclaw", "chorus", "ai-dlc", "mcp", "plugin", "agent"],
   "files": [
     "src",
+    "skills",
     "openclaw.plugin.json",
     "README.md"
   ]

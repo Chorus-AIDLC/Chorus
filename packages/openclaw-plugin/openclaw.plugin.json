@@ -1,5 +1,6 @@
 {
   "id": "chorus-openclaw-plugin",
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

@@ -46,11 +46,28 @@ interface AssignmentsResponse {
 
 // ===== Formatting helpers =====
 
+const PLUGIN_SKILLS = [
+  { name: "chorus", emoji: "🎵", description: "Platform overview, tools, setup, and workflow routing" },
+  { name: "idea", emoji: "💡", description: "Claim ideas, run elaboration, prepare for proposal" },
+  { name: "proposal", emoji: "📋", description: "Create proposals with document & task drafts, manage DAG" },
+  { name: "develop", emoji: "🔨", description: "Claim tasks, report work, submit for verification" },
+  { name: "quick-dev", emoji: "⚡", description: "Skip Idea→Proposal, create tasks directly" },
+  { name: "review", emoji: "✅", description: "Approve/reject proposals, verify tasks, governance" },
+] as const;
+
+function formatSkillsList(): string {
+  const lines = PLUGIN_SKILLS.map(
+    (s) => `  ${s.emoji} ${s.name.padEnd(12)} ${s.description}`
+  );
+  return `Chorus skills (${PLUGIN_SKILLS.length}):\n${lines.join("\n")}\n\nUse: /chorus:<skill-name>  (e.g. /chorus:idea)`;
+}
+
 function formatStatus(checkin: CheckinResponse, connectionStatus: string): string {
   const lines: string[] = [
     `Connection: ${connectionStatus}`,
     `Assignments: ${checkin?.pending?.ideasCount ?? 0} ideas, ${checkin?.pending?.tasksCount ?? 0} tasks`,
     `Notifications: ${checkin?.notifications?.unreadCount ?? 0} unread`,
+    `Skills: ${PLUGIN_SKILLS.map((s) => s.name).join(", ")}`,
   ];
   return lines.join("\n");
 }
@@ -83,6 +100,7 @@ const HELP_TEXT = [
   "  /chorus status    Same as above",
   "  /chorus tasks     List assigned tasks",
   "  /chorus ideas     List assigned ideas",
+  "  /chorus skills    List available Chorus skills",
 ].join("\n");
 
 // ===== Registration =====
@@ -119,6 +137,11 @@ export function registerChorusCommands(
         } catch (err) {
           return { text: `Failed to fetch tasks: ${err instanceof Error ? err.message : String(err)}` };
         }
+      }
+
+      // /chorus skills
+      if (sub === "skills") {
+        return { text: formatSkillsList() };
       }
 
       // /chorus ideas
