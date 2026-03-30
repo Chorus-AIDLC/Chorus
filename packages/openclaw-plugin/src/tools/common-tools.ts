@@ -1,9 +1,14 @@
 import type { ChorusMcpClient } from "../mcp-client.js";
 
+function toolResult(result: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }], details: result };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
   api.registerTool({
     name: "chorus_checkin",
+    label: "Check-in",
     description: "Agent check-in. Returns persona, roles, and pending assignments. Recommended at session start.",
     parameters: {
       type: "object",
@@ -12,12 +17,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute() {
       const result = await mcpClient.callTool("chorus_checkin", {});
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_notifications",
+    label: "Get Notifications",
     description: "Get notifications. By default fetches unread and auto-marks them as read.",
     parameters: {
       type: "object",
@@ -32,12 +38,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (status) args.status = status;
       if (autoMarkRead !== undefined) args.autoMarkRead = autoMarkRead;
       const result = await mcpClient.callTool("chorus_get_notifications", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_project",
+    label: "Get Project",
     description: "Get project details and context",
     parameters: {
       type: "object",
@@ -49,12 +56,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { projectUuid }: { projectUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_project", { projectUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_task",
+    label: "Get Task",
     description: "Get detailed information and context for a single task",
     parameters: {
       type: "object",
@@ -66,12 +74,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid }: { taskUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_task", { taskUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_idea",
+    label: "Get Idea",
     description: "Get detailed information for a single idea",
     parameters: {
       type: "object",
@@ -83,12 +92,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { ideaUuid }: { ideaUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_idea", { ideaUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_available_tasks",
+    label: "Available Tasks",
     description: "Get tasks available to claim in a project (status=open). Optionally filter by proposal UUIDs.",
     parameters: {
       type: "object",
@@ -103,12 +113,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { projectUuid };
       if (proposalUuids && proposalUuids.length > 0) args.proposalUuids = proposalUuids;
       const result = await mcpClient.callTool("chorus_get_available_tasks", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_available_ideas",
+    label: "Available Ideas",
     description: "Get ideas available to claim in a project (status=open)",
     parameters: {
       type: "object",
@@ -120,7 +131,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { projectUuid }: { projectUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_available_ideas", { projectUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
@@ -128,6 +139,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_list_projects",
+    label: "List Projects",
     description: "List all projects for the current company. Returns projects with counts of ideas, documents, tasks, and proposals.",
     parameters: {
       type: "object",
@@ -142,12 +154,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_list_projects", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_list_tasks",
+    label: "List Tasks",
     description: "List tasks for a project. Can filter by status, priority, and proposal UUIDs.",
     parameters: {
       type: "object",
@@ -170,12 +183,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_list_tasks", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_ideas",
+    label: "List Ideas",
     description: "List ideas for a project. Can filter by status.",
     parameters: {
       type: "object",
@@ -194,12 +208,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_get_ideas", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_proposals",
+    label: "List Proposals",
     description: "List proposals for a project. Can filter by status.",
     parameters: {
       type: "object",
@@ -218,12 +233,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_get_proposals", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_documents",
+    label: "List Documents",
     description: "List documents for a project. Can filter by type.",
     parameters: {
       type: "object",
@@ -242,12 +258,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_get_documents", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_document",
+    label: "Get Document",
     description: "Get the detailed content of a single document.",
     parameters: {
       type: "object",
@@ -259,12 +276,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { documentUuid }: { documentUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_document", { documentUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_unblocked_tasks",
+    label: "Unblocked Tasks",
     description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/closed). Optionally filter by proposal UUIDs. Note: to_verify is NOT considered resolved.",
     parameters: {
       type: "object",
@@ -279,12 +297,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { projectUuid };
       if (proposalUuids && proposalUuids.length > 0) args.proposalUuids = proposalUuids;
       const result = await mcpClient.callTool("chorus_get_unblocked_tasks", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_activity",
+    label: "Activity Stream",
     description: "Get the activity stream for a project. Shows all actions taken by agents and users.",
     parameters: {
       type: "object",
@@ -301,12 +320,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_get_activity", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_comments",
+    label: "Get Comments",
     description: "Get comments for an Idea, Proposal, Task, or Document. Useful for understanding context, decisions, and feedback.",
     parameters: {
       type: "object",
@@ -324,12 +344,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (page !== undefined) args.page = page;
       if (pageSize !== undefined) args.pageSize = pageSize;
       const result = await mcpClient.callTool("chorus_get_comments", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_elaboration",
+    label: "Get Elaboration",
     description: "Get the full elaboration state for an Idea, including all rounds, questions, answers, and progress summary.",
     parameters: {
       type: "object",
@@ -341,12 +362,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { ideaUuid }: { ideaUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_elaboration", { ideaUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_my_assignments",
+    label: "My Assignments",
     description: "Get all Ideas and Tasks currently assigned to you.",
     parameters: {
       type: "object",
@@ -355,7 +377,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute() {
       const result = await mcpClient.callTool("chorus_get_my_assignments", {});
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
@@ -363,6 +385,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_get_project_groups",
+    label: "List Groups",
     description: "List all project groups. Returns groups with project counts and completion rates.",
     parameters: {
       type: "object",
@@ -371,12 +394,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute() {
       const result = await mcpClient.callTool("chorus_get_project_groups", {});
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_get_project_group",
+    label: "Get Group",
     description: "Get a single project group with its projects and stats.",
     parameters: {
       type: "object",
@@ -388,7 +412,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { groupUuid }: { groupUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_project_group", { groupUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
@@ -396,6 +420,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_add_comment",
+    label: "Add Comment",
     description: "Add a comment to an Idea, Proposal, Task, or Document",
     parameters: {
       type: "object",
@@ -409,12 +434,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { targetType, targetUuid, content }: { targetType: string; targetUuid: string; content: string }) {
       const result = await mcpClient.callTool("chorus_add_comment", { targetType, targetUuid, content });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_search_mentionables",
+    label: "Search Mentionables",
     description: "Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment text.",
     parameters: {
       type: "object",
@@ -429,7 +455,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { query };
       if (limit !== undefined) args.limit = limit;
       const result = await mcpClient.callTool("chorus_search_mentionables", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
@@ -437,6 +463,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_create_tasks",
+    label: "Create Tasks",
     description:
       "Batch create tasks in a project. Two modes:\n\n" +
       "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches.\n" +
@@ -476,12 +503,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, any> = { projectUuid, tasks };
       if (proposalUuid !== undefined) args.proposalUuid = proposalUuid;
       const result = await mcpClient.callTool("chorus_create_tasks", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_update_task",
+    label: "Update Task",
     description:
       "Update a task — edit fields, manage dependencies, or change status.\n\n" +
       "**Field editing** (any role): title, description, priority, storyPoints, addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
@@ -516,12 +544,13 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (addDependsOn !== undefined) args.addDependsOn = addDependsOn;
       if (removeDependsOn !== undefined) args.removeDependsOn = removeDependsOn;
       const result = await mcpClient.callTool("chorus_update_task", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_search",
+    label: "Search",
     description: "Search across tasks, ideas, proposals, documents, projects, and project groups.",
     parameters: {
       type: "object",
@@ -540,7 +569,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       if (scopeUuid) args.scopeUuid = scopeUuid;
       if (entityTypes) args.entityTypes = entityTypes;
       const result = await mcpClient.callTool("chorus_search", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 }

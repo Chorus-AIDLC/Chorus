@@ -1,9 +1,14 @@
 import type { ChorusMcpClient } from "../mcp-client.js";
 
+function toolResult(result: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }], details: result };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
   api.registerTool({
     name: "chorus_claim_task",
+    label: "Claim Task",
     description: "Claim an open task (open -> assigned)",
     parameters: {
       type: "object",
@@ -15,7 +20,7 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid }: { taskUuid: string }) {
       const result = await mcpClient.callTool("chorus_claim_task", { taskUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
@@ -23,6 +28,7 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
 
   api.registerTool({
     name: "chorus_report_work",
+    label: "Report Work",
     description: "Report work progress or completion on a task",
     parameters: {
       type: "object",
@@ -40,12 +46,13 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
       if (status) args.status = status;
       if (sessionUuid) args.sessionUuid = sessionUuid;
       const result = await mcpClient.callTool("chorus_report_work", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_submit_for_verify",
+    label: "Submit for Verify",
     description: "Submit task for human verification (in_progress -> to_verify)",
     parameters: {
       type: "object",
@@ -60,12 +67,13 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { taskUuid };
       if (summary) args.summary = summary;
       const result = await mcpClient.callTool("chorus_submit_for_verify", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_report_criteria_self_check",
+    label: "Self-Check AC",
     description: "Report self-check results on acceptance criteria for a task you're working on. For required criteria, keep working until all pass. Only mark optional criteria as failed if out of scope.",
     parameters: {
       type: "object",
@@ -90,7 +98,7 @@ export function registerDevTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid, criteria }: { taskUuid: string; criteria: Array<{ uuid: string; devStatus: string; devEvidence?: string }> }) {
       const result = await mcpClient.callTool("chorus_report_criteria_self_check", { taskUuid, criteria });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 

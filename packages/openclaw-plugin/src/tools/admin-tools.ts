@@ -1,9 +1,14 @@
 import type { ChorusMcpClient } from "../mcp-client.js";
 
+function toolResult(result: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }], details: result };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
   api.registerTool({
     name: "chorus_admin_create_project",
+    label: "Create Project",
     description: "Create a new project. Call chorus_get_project_groups first to find the right groupUuid.",
     parameters: {
       type: "object",
@@ -20,12 +25,13 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
       if (description) args.description = description;
       if (groupUuid) args.groupUuid = groupUuid;
       const result = await mcpClient.callTool("chorus_admin_create_project", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_admin_create_project_group",
+    label: "Create Group",
     description: "Create a new project group for organizing projects.",
     parameters: {
       type: "object",
@@ -40,12 +46,13 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { name };
       if (description) args.description = description;
       const result = await mcpClient.callTool("chorus_admin_create_project_group", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_admin_approve_proposal",
+    label: "Approve Proposal",
     description:
       "Approve a Proposal (Admin exclusive). On approval, documentDrafts and taskDrafts are automatically materialized into real Document and Task entities — materialized Tasks can then be claimed and executed by agents. " +
       "⚠️ This action is irreversible — unless there is a special reason, you MUST obtain explicit human approval before calling this tool.",
@@ -62,12 +69,13 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { proposalUuid };
       if (reviewNote) args.reviewNote = reviewNote;
       const result = await mcpClient.callTool("chorus_admin_approve_proposal", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_admin_verify_task",
+    label: "Verify Task",
     description:
       "Verify a Task (to_verify → done, Admin exclusive). Marks a task as completed after verification. Downstream tasks that depend on this task will only be unblocked after it is verified. " +
       "⚠️ This action is irreversible — unless there is a special reason, you MUST obtain explicit human approval before calling this tool.",
@@ -81,12 +89,13 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid }: { taskUuid: string }) {
       const result = await mcpClient.callTool("chorus_admin_verify_task", { taskUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   api.registerTool({
     name: "chorus_mark_acceptance_criteria",
+    label: "Mark AC",
     description: "Mark acceptance criteria as passed or failed (admin verification). Blocked criteria prevent task from being verified (to_verify -> done).",
     parameters: {
       type: "object",
@@ -111,7 +120,7 @@ export function registerAdminTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid, criteria }: { taskUuid: string; criteria: Array<{ uuid: string; status: string; evidence?: string }> }) {
       const result = await mcpClient.callTool("chorus_mark_acceptance_criteria", { taskUuid, criteria });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 }

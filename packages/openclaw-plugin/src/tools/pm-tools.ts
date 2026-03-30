@@ -1,10 +1,15 @@
 import type { ChorusMcpClient } from "../mcp-client.js";
 
+function toolResult(result: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }], details: result };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
   // 1. chorus_claim_idea
   api.registerTool({
     name: "chorus_claim_idea",
+    label: "Claim Idea",
     description: "Claim an open Idea for elaboration (open -> elaborating). After claiming, start elaboration or create a proposal directly.",
     parameters: {
       type: "object",
@@ -16,13 +21,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { ideaUuid }: { ideaUuid: string }) {
       const result = await mcpClient.callTool("chorus_claim_idea", { ideaUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 2. chorus_start_elaboration
   api.registerTool({
     name: "chorus_start_elaboration",
+    label: "Start Elaboration",
     description: "Start an elaboration round for an Idea. Creates structured questions for the stakeholder to answer before proposal creation.",
     parameters: {
       type: "object",
@@ -41,13 +47,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async execute(_id: string, { ideaUuid, depth, questions }: { ideaUuid: string; depth: string; questions: any[] }) {
       const result = await mcpClient.callTool("chorus_pm_start_elaboration", { ideaUuid, depth, questions });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 3. chorus_answer_elaboration
   api.registerTool({
     name: "chorus_answer_elaboration",
+    label: "Answer Elaboration",
     description: "Answer elaboration questions for an Idea. Submits answers for a specific elaboration round.",
     parameters: {
       type: "object",
@@ -66,13 +73,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async execute(_id: string, { ideaUuid, roundUuid, answers }: { ideaUuid: string; roundUuid: string; answers: any[] }) {
       const result = await mcpClient.callTool("chorus_answer_elaboration", { ideaUuid, roundUuid, answers });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 4. chorus_validate_elaboration
   api.registerTool({
     name: "chorus_validate_elaboration",
+    label: "Validate Elaboration",
     description: "Validate answers from an elaboration round. Empty issues array = all valid, marks elaboration as resolved.",
     parameters: {
       type: "object",
@@ -91,13 +99,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async execute(_id: string, { ideaUuid, roundUuid, issues }: { ideaUuid: string; roundUuid: string; issues: any[] }) {
       const result = await mcpClient.callTool("chorus_pm_validate_elaboration", { ideaUuid, roundUuid, issues });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 5. chorus_create_proposal
   api.registerTool({
     name: "chorus_create_proposal",
+    label: "Create Proposal",
     description: "Create an empty Proposal container. Use chorus_add_document_draft and chorus_add_task_draft to populate it afterwards.",
     parameters: {
       type: "object",
@@ -117,13 +126,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, any> = { projectUuid, title, inputType, inputUuids };
       if (description !== undefined) args.description = description;
       const result = await mcpClient.callTool("chorus_pm_create_proposal", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 6. chorus_add_document_draft
   api.registerTool({
     name: "chorus_add_document_draft",
+    label: "Add Doc Draft",
     description: "Add a document draft to a pending Proposal container.",
     parameters: {
       type: "object",
@@ -138,13 +148,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid, type, title, content }: { proposalUuid: string; type: string; title: string; content: string }) {
       const result = await mcpClient.callTool("chorus_pm_add_document_draft", { proposalUuid, type, title, content });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 7. chorus_add_task_draft
   api.registerTool({
     name: "chorus_add_task_draft",
+    label: "Add Task Draft",
     description: "Add a task draft to a pending Proposal container.",
     parameters: {
       type: "object",
@@ -170,13 +181,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
       if (dependsOnDraftUuids !== undefined) args.dependsOnDraftUuids = dependsOnDraftUuids;
       const result = await mcpClient.callTool("chorus_pm_add_task_draft", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 8. chorus_get_proposal — View full proposal with all drafts
   api.registerTool({
     name: "chorus_get_proposal",
+    label: "Get Proposal",
     description: "Get detailed information for a Proposal, including all document drafts and task drafts with their UUIDs. Use this to inspect proposal contents before modifying or submitting.",
     parameters: {
       type: "object",
@@ -188,13 +200,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid }: { proposalUuid: string }) {
       const result = await mcpClient.callTool("chorus_get_proposal", { proposalUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 9. chorus_update_document_draft — Modify an existing document draft
   api.registerTool({
     name: "chorus_update_document_draft",
+    label: "Update Doc Draft",
     description: "Update a document draft in a Proposal. Can change title, type, or content.",
     parameters: {
       type: "object",
@@ -216,13 +229,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       if (type !== undefined) args.type = type;
       if (content !== undefined) args.content = content;
       const result = await mcpClient.callTool("chorus_pm_update_document_draft", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 10. chorus_update_task_draft — Modify an existing task draft (including dependencies)
   api.registerTool({
     name: "chorus_update_task_draft",
+    label: "Update Task Draft",
     description: "Update a task draft in a Proposal. Use this to fix validation issues, add dependencies (dependsOnDraftUuids), change priority, etc.",
     parameters: {
       type: "object",
@@ -250,13 +264,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       if (acceptanceCriteriaItems !== undefined) args.acceptanceCriteriaItems = acceptanceCriteriaItems;
       if (dependsOnDraftUuids !== undefined) args.dependsOnDraftUuids = dependsOnDraftUuids;
       const result = await mcpClient.callTool("chorus_pm_update_task_draft", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 11. chorus_remove_document_draft
   api.registerTool({
     name: "chorus_remove_document_draft",
+    label: "Remove Doc Draft",
     description: "Remove a document draft from a Proposal.",
     parameters: {
       type: "object",
@@ -269,13 +284,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid, draftUuid }: { proposalUuid: string; draftUuid: string }) {
       const result = await mcpClient.callTool("chorus_pm_remove_document_draft", { proposalUuid, draftUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 12. chorus_remove_task_draft
   api.registerTool({
     name: "chorus_remove_task_draft",
+    label: "Remove Task Draft",
     description: "Remove a task draft from a Proposal.",
     parameters: {
       type: "object",
@@ -288,13 +304,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid, draftUuid }: { proposalUuid: string; draftUuid: string }) {
       const result = await mcpClient.callTool("chorus_pm_remove_task_draft", { proposalUuid, draftUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 13. chorus_validate_proposal
   api.registerTool({
     name: "chorus_validate_proposal",
+    label: "Validate Proposal",
     description: "Validate a Proposal's completeness before submission. Returns errors (block submit), warnings, and info. ALWAYS call this before chorus_submit_proposal. If errors exist, use chorus_update_task_draft / chorus_update_document_draft to fix them, then validate again.",
     parameters: {
       type: "object",
@@ -306,13 +323,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid }: { proposalUuid: string }) {
       const result = await mcpClient.callTool("chorus_pm_validate_proposal", { proposalUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 9. chorus_submit_proposal
   api.registerTool({
     name: "chorus_submit_proposal",
+    label: "Submit Proposal",
     description: "Submit a Proposal for approval (draft -> pending). Requires all input Ideas to have elaboration resolved.",
     parameters: {
       type: "object",
@@ -324,13 +342,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { proposalUuid }: { proposalUuid: string }) {
       const result = await mcpClient.callTool("chorus_pm_submit_proposal", { proposalUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 15. chorus_pm_assign_task
   api.registerTool({
     name: "chorus_pm_assign_task",
+    label: "Assign Task",
     description: "Assign a task to a specified Developer Agent. The task must be in open or assigned status. Use chorus_search_mentionables to find the agent UUID.",
     parameters: {
       type: "object",
@@ -343,13 +362,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { taskUuid, agentUuid }: { taskUuid: string; agentUuid: string }) {
       const result = await mcpClient.callTool("chorus_pm_assign_task", { taskUuid, agentUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 16. chorus_move_idea
   api.registerTool({
     name: "chorus_move_idea",
+    label: "Move Idea",
     description: "Move an Idea to a different project within the same company. Also moves linked draft/pending Proposals.",
     parameters: {
       type: "object",
@@ -362,13 +382,14 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
     },
     async execute(_id: string, { ideaUuid, targetProjectUuid }: { ideaUuid: string; targetProjectUuid: string }) {
       const result = await mcpClient.callTool("chorus_move_idea", { ideaUuid, targetProjectUuid });
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 
   // 17. chorus_pm_create_idea
   api.registerTool({
     name: "chorus_pm_create_idea",
+    label: "Create Idea",
     description: "Create a new Idea in a project. Use this when you discover a requirement, want to propose work, or record a user request.",
     parameters: {
       type: "object",
@@ -384,7 +405,7 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       const args: Record<string, unknown> = { projectUuid, title };
       if (content) args.content = content;
       const result = await mcpClient.callTool("chorus_pm_create_idea", args);
-      return JSON.stringify(result, null, 2);
+      return toolResult(result);
     },
   });
 }
