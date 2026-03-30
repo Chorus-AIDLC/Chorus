@@ -126,10 +126,6 @@ export class ChorusEventRouter {
         case "task_reopened":
           this.handleTaskReopened(notification);
           break;
-        case "comment_added":
-          // Comments alone don't wake the agent — @mentions are handled by "mentioned" action.
-          // Silently ignore to avoid noisy logs.
-          break;
         default:
           this.logger.info(`Unhandled notification action: "${notification.action}"`);
           break;
