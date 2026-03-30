@@ -289,6 +289,41 @@ Wraps `@modelcontextprotocol/sdk` with:
 
 ## Troubleshooting
 
+### chorus_* tools not available in agent (sandbox mode)
+
+**Symptom:** Agent cannot call `chorus_checkin` or any `chorus_*` tool. Tools are missing from the tool list.
+
+**Cause:** When OpenClaw sandbox mode is enabled (`agents.defaults.sandbox.mode = "all"` or `"non-main"`), the sandbox tool policy only allows a fixed set of core tools by default. Plugin-registered tools are excluded unless explicitly allowed.
+
+**Verify:**
+```bash
+openclaw sandbox explain
+# Look for: Sandbox tool policy → allow (default)
+# chorus_* tools will NOT appear unless configured
+```
+
+**Fix:** Add the plugin to the sandbox tool allow list:
+```bash
+openclaw config set tools.sandbox.tools.alsoAllow '["chorus-openclaw-plugin"]'
+# Then restart gateway
+openclaw gateway restart
+```
+
+Or add directly to `~/.openclaw/openclaw.json`:
+```json
+{
+  "tools": {
+    "sandbox": {
+      "tools": {
+        "alsoAllow": ["chorus-openclaw-plugin"]
+      }
+    }
+  }
+}
+```
+
+---
+
 ### "plugin id mismatch" warning
 Ensure `openclaw.plugin.json` `id` and `index.ts` `id` both equal `chorus-openclaw-plugin`.
 
