@@ -59,8 +59,6 @@ Claiming an idea automatically transitions it from `open` to `elaborating`.
 
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
 
-> **Note on tool names:** OpenClaw tool names differ slightly from the upstream MCP server. `chorus_start_elaboration` calls `chorus_pm_start_elaboration` and `chorus_validate_elaboration` calls `chorus_pm_validate_elaboration` on the server side. The mapping is transparent.
-
 ---
 
 ## SSE Wake Events (OpenClaw-Specific)

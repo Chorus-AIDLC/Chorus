@@ -75,8 +75,6 @@ A rejected proposal returns to `draft` status. Fix issues based on the review no
 
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
 
-> **Note on tool names:** OpenClaw tool names differ from the upstream MCP server. `chorus_create_proposal` calls `chorus_pm_create_proposal`, `chorus_add_document_draft` calls `chorus_pm_add_document_draft`, etc. The mapping is transparent.
-
 ---
 
 ## SSE Wake Events (OpenClaw-Specific)
