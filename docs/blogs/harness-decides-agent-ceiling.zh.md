@@ -211,14 +211,14 @@ Harness 不是辅助。Harness 是上限。
 
 ## 引用与参考
 
-- Chorus — AI-DLC Agent Collaboration Platform（https://github.com/Chorus-AIDLC/Chorus）
-- Mitchell Hashimoto, "My AI Adoption Journey — Step 5: Engineer the Harness"（https://mitchellh.com/writing/my-ai-adoption-journey#step-5-engineer-the-harness）
-- OpenAI, "Harness engineering: leveraging Codex in an agent-first world" (2026.02.11)（https://openai.com/index/harness-engineering/）
-- Birgitta Böckeler / Martin Fowler, "Harness Engineering" (2026.02.17)（https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html）
-- Anthropic Engineering, "Effective harnesses for long-running agents" (2025.11.26)（https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents）
-- Anthropic Engineering, "Harness design for long-running application development" (2026.03.24)（https://www.anthropic.com/engineering/harness-design-long-running-apps）
-- Anup Jadhav, "Stripe's coding agents: the walls matter more than the model" (2026.02.20)（https://www.anup.io/stripes-coding-agents-the-walls-matter-more-than-the-model/）
-- Philipp Schmid, "The importance of Agent Harness in 2026" (2026.01.05)（https://www.philschmid.de/agent-harness-2026）
-- Aakash Gupta, "2025 Was Agents. 2026 Is Agent Harnesses." (2026.01.07)（https://aakashgupta.medium.com/2025-was-agents-2026-is-agent-harnesses-heres-why-that-changes-everything-073e9877655e）
-- LangChain Blog, "The Anatomy of an Agent Harness" (2026.03.10)（https://blog.langchain.com/the-anatomy-of-an-agent-harness/）
-- AutoJunjie, "awesome-agent-harness"（https://github.com/AutoJunjie/awesome-agent-harness）
+- Chorus — AI-DLC Agent Collaboration Platform (https://github.com/Chorus-AIDLC/Chorus)
+- Mitchell Hashimoto, "My AI Adoption Journey — Step 5: Engineer the Harness" (https://mitchellh.com/writing/my-ai-adoption-journey#step-5-engineer-the-harness)
+- OpenAI, "Harness engineering: leveraging Codex in an agent-first world" (2026.02.11) (https://openai.com/index/harness-engineering/)
+- Birgitta Böckeler / Martin Fowler, "Harness Engineering" (2026.02.17) (https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html)
+- Anthropic Engineering, "Effective harnesses for long-running agents" (2025.11.26) (https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
+- Anthropic Engineering, "Harness design for long-running application development" (2026.03.24) (https://www.anthropic.com/engineering/harness-design-long-running-apps)
+- Anup Jadhav, "Stripe's coding agents: the walls matter more than the model" (2026.02.20) (https://www.anup.io/stripes-coding-agents-the-walls-matter-more-than-the-model/)
+- Philipp Schmid, "The importance of Agent Harness in 2026" (2026.01.05) (https://www.philschmid.de/agent-harness-2026)
+- Aakash Gupta, "2025 Was Agents. 2026 Is Agent Harnesses." (2026.01.07) (https://aakashgupta.medium.com/2025-was-agents-2026-is-agent-harnesses-heres-why-that-changes-everything-073e9877655e)
+- LangChain Blog, "The Anatomy of an Agent Harness" (2026.03.10) (https://blog.langchain.com/the-anatomy-of-an-agent-harness/)
+- AutoJunjie, "awesome-agent-harness" (https://github.com/AutoJunjie/awesome-agent-harness)
