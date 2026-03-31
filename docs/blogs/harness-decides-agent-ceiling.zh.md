@@ -40,9 +40,9 @@ Mitchell Hashimoto（HashiCorp 创始人）在 2026 年 2 月首次明确了"Har
 
 2026 年 2 月起，这个认知从个人观点变成了行业共识——而且大家从不同方向抵达了同一个终点。
 
-有人关注**可靠性**：OpenAI 用 Codex agent 从空 repo 构建完整产品，零行人写代码，发现 harness 的工程设计决定了 agent 能否长时间可靠运行。有人关注**学科定位**：Martin Fowler 撰文将 Harness Engineering 定位为软件工程实践的新分支——不是 AI 研究的分支，是工程实践的分支。有人关注**评估能力**：Anthropic 提出 GAN 式 Generator/Evaluator 架构，核心发现是模型不能可靠地评估自己的工作，必须由 harness 提供外部验证环。
+有人关注**可靠性**：OpenAI 用 Codex agent 从空 repo 构建完整产品，零行人写代码，发现 harness 的工程设计决定了 agent 能否长时间可靠运行。有人关注**学科定位**：Birgitta Böckeler 在 Martin Fowler 的网站上撰文，将 Harness Engineering 定位为软件工程实践的新分支——不是 AI 研究的分支，是工程实践的分支。有人关注**评估能力**：Anthropic 提出 GAN 式 Generator/Evaluator 架构，核心发现是模型不能可靠地评估自己的工作，必须由 harness 提供外部验证环。
 
-还有人把话说得更绝。Stripe 的 Minions 团队——"The Walls Matter More Than the Model"，围墙比引擎重要。Philipp Schmid 从数据视角补了一刀——"The Harness is the Dataset"，harness 捕获的工作轨迹本身就是竞争壁垒。
+还有人把话说得更绝。Anup Jadhav 在分析 Stripe Minions 架构后总结——"The Walls Matter More Than the Model"，围墙比引擎重要。Philipp Schmid 从数据视角补了一刀——"The Harness is the Dataset"，harness 捕获的工作轨迹本身就是竞争壁垒。
 
 > "2025 Was Agents. 2026 Is Agent Harnesses." — Aakash Gupta
 
@@ -212,13 +212,13 @@ Harness 不是辅助。Harness 是上限。
 ## 引用与参考
 
 - Chorus — AI-DLC Agent Collaboration Platform（https://github.com/Chorus-AIDLC/Chorus）
-- Mitchell Hashimoto, "Prompt Engineering → Context Engineering → Harness Engineering"（https://mitchellh.com/writing/harness-engineering）
-- OpenAI, "Harness engineering: leveraging Codex in an agent-first world" (2026.02.11)（https://openai.com/index/harness-engineering）
-- Martin Fowler, "Harness Engineering" (2026.02.17)（https://martinfowler.com/articles/harness-engineering.html）
-- Anthropic Engineering, "Effective harnesses for long-running agents"（https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents）
-- Anthropic Engineering, "Harness design for long-running application development"（https://www.anthropic.com/engineering/harness-design-for-long-running-application-development）
-- Stripe Engineering, "Coding Agents: The Walls Matter More Than the Model"（https://stripe.com/blog/coding-agents-the-walls-matter-more-than-the-model）
-- Philipp Schmid, "The importance of Agent Harness in 2026"（https://www.philschmid.de/agent-harness）
-- Aakash Gupta, "2025 Was Agents. 2026 Is Agent Harnesses."（https://www.news.aakashg.com/p/2026-is-agent-harnesses）
-- LangChain Blog, "The Anatomy of an Agent Harness" (2026.03.10)（https://blog.langchain.dev/the-anatomy-of-an-agent-harness/）
+- Mitchell Hashimoto, "My AI Adoption Journey — Step 5: Engineer the Harness"（https://mitchellh.com/writing/my-ai-adoption-journey#step-5-engineer-the-harness）
+- OpenAI, "Harness engineering: leveraging Codex in an agent-first world" (2026.02.11)（https://openai.com/index/harness-engineering/）
+- Birgitta Böckeler / Martin Fowler, "Harness Engineering" (2026.02.17)（https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html）
+- Anthropic Engineering, "Effective harnesses for long-running agents" (2025.11.26)（https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents）
+- Anthropic Engineering, "Harness design for long-running application development" (2026.03.24)（https://www.anthropic.com/engineering/harness-design-long-running-apps）
+- Anup Jadhav, "Stripe's coding agents: the walls matter more than the model" (2026.02.20)（https://www.anup.io/stripes-coding-agents-the-walls-matter-more-than-the-model/）
+- Philipp Schmid, "The importance of Agent Harness in 2026" (2026.01.05)（https://www.philschmid.de/agent-harness-2026）
+- Aakash Gupta, "2025 Was Agents. 2026 Is Agent Harnesses." (2026.01.07)（https://aakashgupta.medium.com/2025-was-agents-2026-is-agent-harnesses-heres-why-that-changes-everything-073e9877655e）
+- LangChain Blog, "The Anatomy of an Agent Harness" (2026.03.10)（https://blog.langchain.com/the-anatomy-of-an-agent-harness/）
 - AutoJunjie, "awesome-agent-harness"（https://github.com/AutoJunjie/awesome-agent-harness）
