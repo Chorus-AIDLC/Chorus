@@ -9,45 +9,15 @@ import { extractApiKey, validateApiKey } from "@/lib/api-key";
 import { getProjectUuidsByGroup } from "@/services/project.service";
 import type { AgentAuthContext } from "@/types/auth";
 
-// Store session transport instances with activity tracking
-const sessions = new Map<string, {
-  transport: WebStandardStreamableHTTPServerTransport;
-  lastActivity: number;
-}>();
-
-// Session configuration
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+// Store active session transports
+// Sessions are cleaned up via: client DELETE request, transport onclose callback,
+// or process restart. No idle timeout — MCP SDK design does not require one,
+// and always-on clients (e.g., OpenClaw) need indefinite sessions.
+const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
 // Generate session ID
 function generateSessionId(): string {
   return crypto.randomUUID();
-}
-
-// Clean up expired sessions
-function cleanupExpiredSessions() {
-  const now = Date.now();
-  for (const [sessionId, session] of sessions.entries()) {
-    if (now - session.lastActivity > SESSION_TIMEOUT_MS) {
-      console.log(`[MCP] Cleaning up expired session: ${sessionId}`);
-      session.transport.close().catch(console.error);
-      sessions.delete(sessionId);
-    }
-  }
-}
-
-// Start periodic cleanup
-// NOTE: This assumes a persistent Node.js process (not serverless/edge).
-// In serverless environments, cleanup would need to be handled differently
-// (e.g., via external scheduler or on-demand cleanup).
-setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS);
-
-// Update session activity and reset timeout
-function touchSession(sessionId: string) {
-  const session = sessions.get(sessionId);
-  if (session) {
-    session.lastActivity = Date.now();
-  }
 }
 
 // POST /api/mcp - MCP HTTP Endpoint
@@ -103,10 +73,8 @@ export async function POST(request: NextRequest) {
     let transport: WebStandardStreamableHTTPServerTransport;
 
     if (sessionId && sessions.has(sessionId)) {
-      // Reuse existing session and update activity
-      const session = sessions.get(sessionId)!;
-      transport = session.transport;
-      touchSession(sessionId);
+      // Reuse existing session
+      transport = sessions.get(sessionId)!;
     } else if (sessionId && !sessions.has(sessionId)) {
       // Client sent an expired/invalid session ID (session lost after server restart)
       // Return 404 to let client know it needs to reinitialize
@@ -125,11 +93,12 @@ export async function POST(request: NextRequest) {
       const server = createMcpServer(auth);
       await server.connect(transport);
 
-      // Store session with initial activity timestamp
-      sessions.set(newSessionId, {
-        transport,
-        lastActivity: Date.now(),
-      });
+      // Clean up session when transport closes (client DELETE or connection drop)
+      transport.onclose = () => {
+        sessions.delete(newSessionId);
+      };
+
+      sessions.set(newSessionId, transport);
     }
 
     // Handle request using Web Standard transport
@@ -156,9 +125,9 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const session = sessions.get(sessionId);
-    if (session) {
-      await session.transport.close();
+    const transport = sessions.get(sessionId);
+    if (transport) {
+      await transport.close();
       sessions.delete(sessionId);
     }
 

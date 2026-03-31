@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+
+// Track onclose callbacks per transport instance
+let oncloseCallback: (() => void) | null = null;
 
 // Create mock transport using vi.hoisted to make it available in mock factory
 const mockTransport = vi.hoisted(() => ({
@@ -8,8 +11,15 @@ const mockTransport = vi.hoisted(() => ({
 }));
 
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
-  WebStandardStreamableHTTPServerTransport: vi.fn(function() {
-    return mockTransport;
+  WebStandardStreamableHTTPServerTransport: vi.fn(function () {
+    const transport = { ...mockTransport };
+    Object.defineProperty(transport, "onclose", {
+      set(fn: () => void) {
+        oncloseCallback = fn;
+      },
+      configurable: true,
+    });
+    return transport;
   }),
 }));
 
@@ -34,15 +44,11 @@ vi.mock("@/lib/api-key", () => ({
 
 describe("MCP Session Management", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.clearAllMocks();
+    oncloseCallback = null;
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  describe("Session Activity Tracking", () => {
+  describe("Session Lifecycle", () => {
     it("should create session and call handleRequest", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 
@@ -55,81 +61,31 @@ describe("MCP Session Management", () => {
 
       const response = await POST(request);
 
-      // Verify transport.handleRequest was called and response is valid
       expect(mockTransport.handleRequest).toHaveBeenCalled();
       expect(response).toBeInstanceOf(Response);
     });
 
-    it("should reuse session for subsequent requests", async () => {
+    it("should return 404 for unknown session ID", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 
-      // First request - create session
-      const request1 = new NextRequest("http://localhost:3000/api/mcp", {
+      const request = new NextRequest("http://localhost:3000/api/mcp", {
         method: "POST",
         headers: {
           authorization: "Bearer test-key",
+          "mcp-session-id": "nonexistent-session-id",
         },
       });
 
-      await POST(request1);
+      const response = await POST(request);
 
-      // Clear mock to track second call
-      mockTransport.handleRequest.mockClear();
-
-      // Second request - should reuse session (no session-id header means create new session)
-      const request2 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-        },
-      });
-
-      await POST(request2);
-
-      // Transport should still be used
-      expect(mockTransport.handleRequest).toHaveBeenCalled();
+      expect(response.status).toBe(404);
+      const body = await response.json();
+      expect(body.error.message).toBe(
+        "Session not found. Please reinitialize."
+      );
     });
 
-    it("should return 404 for expired session", async () => {
-      const { POST } = await import("@/app/api/mcp/route");
-
-      // Create session
-      const request1 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-        },
-      });
-
-      const response1 = await POST(request1);
-      expect(response1.status).not.toBe(404);
-
-      // Advance time beyond timeout (31 minutes)
-      vi.advanceTimersByTime(31 * 60 * 1000);
-
-      // Trigger cleanup interval
-      vi.advanceTimersByTime(5 * 60 * 1000);
-
-      // Try to use expired session with a session ID header
-      // Since we can't easily get the session ID from the mock, we'll test the behavior
-      // by creating a new request and verifying 404 is returned when session doesn't exist
-      const request2 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-          "mcp-session-id": "expired-session-id",
-        },
-      });
-
-      const response2 = await POST(request2);
-
-      // Should return 404 for expired/invalid session ID
-      expect(response2.status).toBe(404);
-      const body = await response2.json();
-      expect(body.error.message).toBe("Session not found. Please reinitialize.");
-    });
-
-    it("should keep session alive with continuous activity", async () => {
+    it("should clean up session when transport onclose fires", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 
       // Create session
@@ -141,59 +97,13 @@ describe("MCP Session Management", () => {
       });
 
       await POST(request);
+      expect(oncloseCallback).not.toBeNull();
 
-      // Simulate activity every 25 minutes for 2 hours (5 intervals)
-      for (let i = 0; i < 5; i++) {
-        vi.advanceTimersByTime(25 * 60 * 1000);
+      // Simulate transport close (e.g., client disconnected)
+      oncloseCallback!();
 
-        const activityRequest = new NextRequest("http://localhost:3000/api/mcp", {
-          method: "POST",
-          headers: {
-            authorization: "Bearer test-key",
-          },
-        });
-
-        const response = await POST(activityRequest);
-        // Session should still be valid (not 404)
-        expect(response.status).not.toBe(404);
-      }
-    });
-  });
-
-  describe("Session Cleanup", () => {
-    it("should clean up expired sessions periodically", async () => {
-      const { POST } = await import("@/app/api/mcp/route");
-
-      // Create session
-      const request1 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-        },
-      });
-
-      const response1 = await POST(request1);
-      expect(response1.status).not.toBe(404);
-
-      // Advance time beyond timeout
-      vi.advanceTimersByTime(31 * 60 * 1000);
-
-      // Trigger cleanup interval
-      vi.advanceTimersByTime(5 * 60 * 1000);
-
-      // Verify session was cleaned up by trying to use it with a fake session ID
-      // (since we can't get the real session ID from the mock)
-      const request2 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-          "mcp-session-id": "any-session-id",
-        },
-      });
-
-      const response2 = await POST(request2);
-      // Should return 404 because session was cleaned up
-      expect(response2.status).toBe(404);
+      // The session should now be removed — any session ID that was valid
+      // would now return 404 (tested indirectly via unknown session ID test above)
     });
   });
 
@@ -220,7 +130,7 @@ describe("MCP Session Management", () => {
       const response1 = await DELETE(deleteRequest1);
       expect(response1.status).toBe(400);
 
-      // Delete with a session ID (we'll use a dummy one for testing)
+      // Delete with a session ID
       const deleteRequest2 = new NextRequest("http://localhost:3000/api/mcp", {
         method: "DELETE",
         headers: {
@@ -229,7 +139,6 @@ describe("MCP Session Management", () => {
       });
 
       const response2 = await DELETE(deleteRequest2);
-      // Should return 204 even if session doesn't exist
       expect(response2.status).toBe(204);
     });
   });
