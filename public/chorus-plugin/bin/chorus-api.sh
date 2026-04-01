@@ -2,9 +2,12 @@
 # chorus-api.sh — Lightweight REST API wrapper for Chorus session management
 # Used by hook scripts to communicate with Chorus backend.
 #
-# Environment variables:
+# Environment variables (either source works, env vars take priority):
 #   CHORUS_URL      — Chorus base URL (e.g., http://localhost:3000)
 #   CHORUS_API_KEY  — Agent API key (cho_xxx)
+# Or via Claude Code plugin userConfig (auto-injected as CLAUDE_PLUGIN_OPTION_*):
+#   CLAUDE_PLUGIN_OPTION_CHORUS_URL
+#   CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY
 #
 # State file: $CLAUDE_PROJECT_DIR/.chorus/state.json (gitignored)
 
@@ -12,8 +15,9 @@ set -euo pipefail
 
 # ===== Configuration =====
 
-CHORUS_URL="${CHORUS_URL:-}"
-CHORUS_API_KEY="${CHORUS_API_KEY:-}"
+# Resolve config: env var > userConfig (CLAUDE_PLUGIN_OPTION_*) > empty
+CHORUS_URL="${CHORUS_URL:-${CLAUDE_PLUGIN_OPTION_CHORUS_URL:-}}"
+CHORUS_API_KEY="${CHORUS_API_KEY:-${CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY:-}}"
 STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus"
 STATE_FILE="${STATE_DIR}/state.json"
 
@@ -25,8 +29,16 @@ die() {
 }
 
 require_env() {
-  [ -n "$CHORUS_URL" ]    || die "CHORUS_URL is not set"
-  [ -n "$CHORUS_API_KEY" ] || die "CHORUS_API_KEY is not set"
+  [ -n "$CHORUS_URL" ]    || die "CHORUS_URL is not set. Run /plugin to configure Chorus, or export CHORUS_URL."
+  [ -n "$CHORUS_API_KEY" ] || die "CHORUS_API_KEY is not set. Run /plugin to configure Chorus, or export CHORUS_API_KEY."
+}
+
+# Resolve configuration from env vars or userConfig.
+# Callable as subcommand: chorus-api.sh resolve-config
+# Outputs shell assignments that can be eval'd by hook scripts.
+chorus_resolve_config() {
+  echo "CHORUS_URL=\"${CHORUS_URL}\""
+  echo "CHORUS_API_KEY=\"${CHORUS_API_KEY}\""
 }
 
 # Make an authenticated API request to Chorus
@@ -341,6 +353,7 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  resolve-config)   chorus_resolve_config ;;
   checkin)          cmd_checkin "$@" ;;
   mcp-tool)         cmd_mcp_tool "$@" ;;
   state-get)        state_get "${1:-}" ;;

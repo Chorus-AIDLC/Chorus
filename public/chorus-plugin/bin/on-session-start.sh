@@ -17,11 +17,15 @@ if [ ! -t 0 ]; then
   EVENT=$(cat)
 fi
 
+# Resolve config: env var > userConfig (CLAUDE_PLUGIN_OPTION_*)
+CHORUS_URL="${CHORUS_URL:-${CLAUDE_PLUGIN_OPTION_CHORUS_URL:-}}"
+CHORUS_API_KEY="${CHORUS_API_KEY:-${CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY:-}}"
+
 # Check if Chorus environment is configured
-if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
+if [ -z "$CHORUS_URL" ] || [ -z "$CHORUS_API_KEY" ]; then
   "$API" hook-output \
-    "Chorus plugin: not configured (set CHORUS_URL and CHORUS_API_KEY)" \
-    "Chorus environment not configured. Set CHORUS_URL and CHORUS_API_KEY to enable Chorus integration." \
+    "Chorus plugin: not configured. Run /plugin to set up, or export CHORUS_URL and CHORUS_API_KEY." \
+    "Chorus not configured. Run /plugin to configure Chorus, or set CHORUS_URL and CHORUS_API_KEY env vars." \
     "SessionStart"
   exit 0
 fi
