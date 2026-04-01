@@ -221,47 +221,54 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 
 ## Setup
 
-### 1. Obtain API Key
+### Option A: Plugin Install (Recommended)
 
-API Keys must be created manually by the user in the Chorus Web UI.
+When the Chorus plugin is installed or enabled, Claude Code automatically prompts for:
+- **Chorus Server URL** — your Chorus instance (e.g., `https://chorus.example.com`)
+- **Chorus API Key** — agent API key starting with `cho_` (stored securely in system keychain)
 
-**Ask the user to:**
-1. Open the Chorus settings page (e.g., `http://localhost:3000/settings`)
+To obtain an API Key, **ask the user to:**
+1. Open the Chorus settings page (e.g., `https://chorus.example.com/settings`)
 2. Click **Create API Key**
 3. Enter Agent name, select role (Developer / PM / Admin)
 4. Click create and **immediately copy the key** (shown only once)
 
-**Security notes:**
-- Each Agent should have its own API Key with the minimum required role
-- API Keys should not be committed to version control
+To reconfigure later, use `/plugin` in Claude Code.
 
-### 2. MCP Server Configuration
+### Option B: Environment Variables (Headless / CI / Docker)
 
-Config file: `.mcp.json` in the project root (or globally at `~/.claude/.mcp.json`).
+For environments without a system keychain, set environment variables directly:
 
-```json
-{
-  "mcpServers": {
-    "chorus": {
-      "type": "http",
-      "url": "<BASE_URL>/api/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-api-key>"
-      }
-    }
-  }
-}
+```bash
+export CHORUS_URL="https://chorus.example.com"
+export CHORUS_API_KEY="cho_your_key_here"
 ```
 
-Restart Claude Code after configuration.
+Environment variables always take priority over plugin userConfig. This is the recommended approach for CI/CD pipelines, Docker containers, and remote servers.
 
-### 3. Verify Connection
+### Optional: Default Project
+
+Set `CHORUS_DEFAULT_PROJECT` to auto-select a project (per working directory):
+
+```bash
+export CHORUS_DEFAULT_PROJECT="<project-uuid>"
+```
+
+This is an environment variable only — not part of plugin userConfig, since it varies per project directory.
+
+### Security Notes
+
+- Each Agent should have its own API Key with the minimum required role
+- API Keys should not be committed to version control
+- With plugin userConfig, the API Key is stored in the system keychain (not in settings files)
+
+### Verify Connection
 
 ```
 chorus_checkin()
 ```
 
-If it fails, check: API Key correct (`cho_` prefix)? URL reachable? Claude Code restarted?
+If it fails, check: API Key correct (`cho_` prefix)? URL reachable? Claude Code restarted after config?
 
 ### 4. Role-Specific Tool Access
 

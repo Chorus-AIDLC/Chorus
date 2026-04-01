@@ -1,7 +1,7 @@
 {
   "name": "chorus",
   "description": "Chorus AI-DLC collaboration platform plugin for Claude Code. Automates session lifecycle, provides MCP tools for PM/Developer/Admin workflows, and enables multi-agent team observability.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "author": {
     "name": "Chorus-AIDLC"
   },
@@ -16,5 +16,20 @@
     "session",
     "multi-agent",
     "collaboration"
-  ]
+  ],
+  "userConfig": {
+    "CHORUS_URL": {
+      "type": "string",
+      "title": "Chorus Server URL",
+      "description": "Your Chorus instance URL (e.g., https://chorus.example.com). Get this from your Chorus admin.",
+      "required": true
+    },
+    "CHORUS_API_KEY": {
+      "type": "string",
+      "title": "Chorus API Key",
+      "description": "Agent API key starting with cho_ (get it from Chorus Settings > API Keys)",
+      "required": true,
+      "sensitive": true
+    }
+  }
 }

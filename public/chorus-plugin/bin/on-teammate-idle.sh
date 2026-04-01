@@ -10,8 +10,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API="${SCRIPT_DIR}/chorus-api.sh"
 
+# Resolve config: env var > userConfig (CLAUDE_PLUGIN_OPTION_*)
+CHORUS_URL="${CHORUS_URL:-${CLAUDE_PLUGIN_OPTION_CHORUS_URL:-}}"
+CHORUS_API_KEY="${CHORUS_API_KEY:-${CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY:-}}"
+
 # Check environment
-if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
+if [ -z "$CHORUS_URL" ] || [ -z "$CHORUS_API_KEY" ]; then
   exit 0
 fi
 

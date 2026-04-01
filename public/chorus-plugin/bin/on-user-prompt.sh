@@ -12,8 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus"
 SESSIONS_DIR="${STATE_DIR}/sessions"
 
+# Resolve config: env var > userConfig (CLAUDE_PLUGIN_OPTION_*)
+CHORUS_URL="${CHORUS_URL:-${CLAUDE_PLUGIN_OPTION_CHORUS_URL:-}}"
+CHORUS_API_KEY="${CHORUS_API_KEY:-${CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY:-}}"
+
 # Skip entirely if Chorus is not configured
-if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
+if [ -z "$CHORUS_URL" ] || [ -z "$CHORUS_API_KEY" ]; then
   exit 0
 fi
 

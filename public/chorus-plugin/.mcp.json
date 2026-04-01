@@ -2,9 +2,9 @@
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "${CHORUS_URL}/api/mcp",
+      "url": "${user_config.CHORUS_URL}/api/mcp",
       "headers": {
-        "Authorization": "Bearer ${CHORUS_API_KEY}"
+        "Authorization": "Bearer ${user_config.CHORUS_API_KEY}"
       }
     }
   }

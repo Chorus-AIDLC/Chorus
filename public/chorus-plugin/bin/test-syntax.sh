@@ -22,6 +22,8 @@ echo ""
 # we only care about bash syntax/substitution errors before the API call.
 export CHORUS_URL="http://localhost:0"
 export CHORUS_API_KEY="cho_test"
+export CLAUDE_PLUGIN_OPTION_CHORUS_URL="http://localhost:0"
+export CLAUDE_PLUGIN_OPTION_CHORUS_API_KEY="cho_test"
 export CLAUDE_PROJECT_DIR="/tmp/chorus-test-$$"
 mkdir -p "$CLAUDE_PROJECT_DIR"
 

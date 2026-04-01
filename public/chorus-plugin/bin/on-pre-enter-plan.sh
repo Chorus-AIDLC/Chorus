@@ -6,7 +6,9 @@
 
 set -euo pipefail
 
-[ -z "${CHORUS_URL:-}" ] && exit 0
+# Resolve config: env var > userConfig (CLAUDE_PLUGIN_OPTION_*)
+CHORUS_URL="${CHORUS_URL:-${CLAUDE_PLUGIN_OPTION_CHORUS_URL:-}}"
+[ -z "$CHORUS_URL" ] && exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API="${SCRIPT_DIR}/chorus-api.sh"
