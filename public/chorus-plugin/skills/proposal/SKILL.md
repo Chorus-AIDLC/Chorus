@@ -298,6 +298,9 @@ Schema changes, new tables.
 ## API Design
 New/modified endpoints.
 
+## Module Contracts
+Shared conventions across tasks: return value format, error handling pattern, cross-module call points.
+
 ## Implementation Plan
 Step-by-step implementation order.
 
@@ -312,7 +315,7 @@ Good tasks are:
 - **Testable** — Clear, cohesive acceptance criteria (max 6 items per task; group related checks into one criterion but list key coverage, e.g. "All tests pass: service layer unit tests, API integration tests, edge case handling")
 - **Sized** — 1-8 story points (hours of agent work)
 - **Ordered** — Use `dependsOnDraftUuids` / `dependsOnTaskUuids` to express execution order
-- **Descriptive** — Include enough context for a developer agent to start without questions
+- **Descriptive** — Include enough context for a developer agent to start without questions. For tasks with cross-module dependencies, reference the tech design's Module Contracts in the AC
 
 ### Task Granularity
 
@@ -331,6 +334,7 @@ Each task should correspond to an **independently runnable and testable function
 - Add `storyPoints` to help prioritize and estimate effort
 - Keep acceptance criteria cohesive — group related verifications into one item rather than listing each check separately
 - Always set up task dependency DAG — tasks without dependencies are assumed parallelizable
+- When multiple tasks share data formats or call each other, define contracts in the tech design before writing task AC
 - When combining multiple ideas, explain how they relate in the proposal description
 
 ---
