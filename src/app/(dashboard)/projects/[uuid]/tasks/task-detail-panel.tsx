@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Pencil, CheckCircle, Play, Eye, Bot, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
+import { X, Pencil, CheckCircle, Play, Eye, Bot, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -119,6 +119,7 @@ interface TaskDetailPanelProps {
   onClose: () => void;
   onCreated?: () => void;
   onDependencyChange?: () => void;
+  onBack?: () => void;
 }
 
 // Status color configuration
@@ -235,6 +236,7 @@ export function TaskDetailPanel({
   onClose,
   onCreated,
   onDependencyChange,
+  onBack,
 }: TaskDetailPanelProps) {
   const t = useTranslations();
   const router = useRouter();
@@ -700,6 +702,16 @@ export function TaskDetailPanel({
       <div className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`}>
         {/* Panel Header */}
         <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
+          {onBack && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="mr-2 h-8 w-8 shrink-0"
+              onClick={onBack}
+            >
+              <ArrowLeft className="h-4 w-4 text-[#6B6B6B]" />
+            </Button>
+          )}
           <div className="flex-1 min-w-0">
             {isEditing ? (
               <h2 className="text-base font-semibold text-[#2C2C2C]">

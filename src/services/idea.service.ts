@@ -10,6 +10,10 @@ import { ApiError } from "@/lib/api-handler";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 
+// ===== Derived Status =====
+
+export type DerivedIdeaStatus = 'todo' | 'in_progress' | 'human_conduct_required' | 'done' | 'closed';
+
 // ===== Type Definitions =====
 
 export interface IdeaListParams {
@@ -533,4 +537,193 @@ export async function moveIdea(
     include: { project: { select: { uuid: true, name: true } } },
   });
   return formatIdeaResponse(updated!);
+}
+
+// ===== Derived Status =====
+
+/**
+ * Compute the derived status for a single idea based on its native status
+ * and related Proposal/Task chain.
+ */
+export interface DerivedStatusContext {
+  ideaStatus: string;
+  elaborationStatus?: string | null;
+  hasPendingProposal: boolean;
+  hasApprovedProposal: boolean;
+  taskStatuses: string[];
+}
+
+export type BadgeHint =
+  | "open"              // New idea, not started
+  | "researching"       // AI elaborating
+  | "answer_questions"  // Elaboration: human needs to answer questions
+  | "planning"          // AI drafting proposal
+  | "review_proposal"   // Proposal: awaiting human approval
+  | "building"          // Tasks in development
+  | "verify_work"       // Tasks: work done, human needs to verify
+  | "done"              // All tasks complete
+  | "closed"            // Idea closed
+  | null;
+
+export interface DerivedStatusResult {
+  derivedStatus: DerivedIdeaStatus;
+  badgeHint: BadgeHint;
+}
+
+export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusResult {
+  const normalized = normalizeIdeaStatus(ctx.ideaStatus);
+
+  switch (normalized) {
+    case "completed":
+      return { derivedStatus: "done", badgeHint: "done" };
+    case "closed":
+      return { derivedStatus: "closed", badgeHint: "closed" };
+    case "open":
+      return { derivedStatus: "todo", badgeHint: "open" };
+    case "elaborating":
+      // Only pending_answers means human needs to act; otherwise agent is working
+      if (ctx.elaborationStatus === "pending_answers")
+        return { derivedStatus: "human_conduct_required", badgeHint: "answer_questions" };
+      return { derivedStatus: "in_progress", badgeHint: "researching" };
+    case "proposal_created": {
+      if (ctx.hasApprovedProposal) {
+        // Approved — derive from task progress
+        const allDone = ctx.taskStatuses.length > 0
+          && ctx.taskStatuses.every((s) => s === "done" || s === "closed");
+        if (allDone) return { derivedStatus: "done", badgeHint: "done" };
+        // Only enter verify_work when ALL tasks are done/closed/to_verify (none still building)
+        const allFinishedOrVerify = ctx.taskStatuses.length > 0
+          && ctx.taskStatuses.every((s) => s === "done" || s === "closed" || s === "to_verify");
+        if (allFinishedOrVerify && ctx.taskStatuses.some((s) => s === "to_verify"))
+          return { derivedStatus: "human_conduct_required", badgeHint: "verify_work" };
+        return { derivedStatus: "in_progress", badgeHint: "building" };
+      }
+      if (ctx.hasPendingProposal)
+        return { derivedStatus: "human_conduct_required", badgeHint: "review_proposal" };
+      // draft or rejected — agent still drafting proposal
+      return { derivedStatus: "in_progress", badgeHint: "planning" };
+    }
+    default:
+      return { derivedStatus: "todo", badgeHint: "open" };
+  }
+}
+
+export interface IdeaWithDerivedStatus {
+  uuid: string;
+  title: string;
+  status: string;
+  derivedStatus: DerivedIdeaStatus;
+  badgeHint: BadgeHint;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Get all ideas in a project with their derived statuses.
+ * Uses 3 batch queries (Ideas, Proposals, Tasks) — no N+1.
+ */
+export async function getIdeasWithDerivedStatus(
+  companyUuid: string,
+  projectUuid: string,
+): Promise<IdeaWithDerivedStatus[]> {
+  // Query 1: All ideas in the project
+  const ideas = await prisma.idea.findMany({
+    where: { companyUuid, projectUuid },
+    select: {
+      uuid: true,
+      title: true,
+      status: true,
+      elaborationStatus: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Query 2: All proposals (approved + pending) for the project
+  const proposals = await prisma.proposal.findMany({
+    where: {
+      companyUuid,
+      projectUuid,
+      status: { in: ["approved", "pending"] },
+    },
+    select: {
+      uuid: true,
+      status: true,
+      inputUuids: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Build ideaUuid → latest approved Proposal mapping
+  // Also track which ideas have a pending proposal
+  const ideaToLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
+  const ideasWithPendingProposal = new Set<string>();
+
+  for (const proposal of proposals) {
+    const inputUuids = proposal.inputUuids as string[];
+    if (!Array.isArray(inputUuids)) continue;
+    for (const ideaUuid of inputUuids) {
+      if (proposal.status === "pending") {
+        ideasWithPendingProposal.add(ideaUuid);
+      } else if (proposal.status === "approved") {
+        const existing = ideaToLatestApproved.get(ideaUuid);
+        if (!existing || proposal.createdAt > existing.createdAt) {
+          ideaToLatestApproved.set(ideaUuid, { uuid: proposal.uuid, createdAt: proposal.createdAt });
+        }
+      }
+    }
+  }
+
+  // Collect unique approved proposal UUIDs
+  const relevantProposalUuids = [...new Set([...ideaToLatestApproved.values()].map((p) => p.uuid))];
+
+  // Query 3: Tasks linked to those approved proposals
+  const proposalToTaskStatuses = new Map<string, string[]>();
+  if (relevantProposalUuids.length > 0) {
+    const tasks = await prisma.task.findMany({
+      where: {
+        companyUuid,
+        proposalUuid: { in: relevantProposalUuids },
+      },
+      select: {
+        proposalUuid: true,
+        status: true,
+      },
+    });
+
+    for (const task of tasks) {
+      if (!task.proposalUuid) continue;
+      const statuses = proposalToTaskStatuses.get(task.proposalUuid) || [];
+      statuses.push(task.status);
+      proposalToTaskStatuses.set(task.proposalUuid, statuses);
+    }
+  }
+
+  // Compute derived status for each idea
+  return ideas.map((idea) => {
+    const latestApproved = ideaToLatestApproved.get(idea.uuid);
+    const taskStatuses = latestApproved
+      ? proposalToTaskStatuses.get(latestApproved.uuid) || []
+      : [];
+
+    const { derivedStatus, badgeHint } = computeDerivedStatus({
+      ideaStatus: idea.status,
+      elaborationStatus: idea.elaborationStatus,
+      hasPendingProposal: ideasWithPendingProposal.has(idea.uuid),
+      hasApprovedProposal: !!latestApproved,
+      taskStatuses,
+    });
+
+    return {
+      uuid: idea.uuid,
+      title: idea.title,
+      status: idea.status,
+      derivedStatus,
+      badgeHint,
+      createdAt: idea.createdAt,
+      updatedAt: idea.updatedAt,
+    };
+  });
 }
