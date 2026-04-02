@@ -5,6 +5,11 @@
 
 set -euo pipefail
 
+# Check userConfig toggle — default enabled
+if [ "${CLAUDE_PLUGIN_OPTION_ENABLETASKREVIEWER:-true}" != "true" ]; then
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API="${SCRIPT_DIR}/chorus-api.sh"
 

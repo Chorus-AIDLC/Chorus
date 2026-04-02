@@ -277,6 +277,32 @@ If it fails, check: API Key correct (`cho_` prefix)? URL reachable? Claude Code 
 | `chorus_pm_*` | No | Yes | Yes |
 | `chorus_admin_*` | No | No | Yes |
 
+### 5. Review Agent Configuration
+
+The plugin includes two independent review agents that auto-trigger after proposal submission and task verification. Both are **enabled by default**.
+
+| Setting | Controls | Default |
+|---------|----------|---------|
+| `enableProposalReviewer` | Spawn `chorus:proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
+| `enableTaskReviewer` | Spawn `chorus:task-reviewer` after `chorus_submit_for_verify` | `false` (disabled) |
+
+To toggle, the user can reconfigure the plugin via `/plugin` settings. Or manually edit `~/.claude/settings.json`:
+
+```json
+{
+  "pluginConfigs": {
+    "chorus@chorus-plugins": {
+      "options": {
+        "enableProposalReviewer": true,
+        "enableTaskReviewer": true
+      }
+    }
+  }
+}
+```
+
+When enabled, reviewers run synchronously and post a VERDICT comment (PASS/FAIL/PARTIAL) on the proposal/task. Results are advisory — they do not block approval or verification.
+
 ---
 
 ## Execution Rules

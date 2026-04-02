@@ -69,6 +69,10 @@ run_test "on-subagent-stop.sh"   '{"agent_id":"agent-001","agent_type":"general-
 run_test "on-teammate-idle.sh"   '{"agent_id":"agent-001","agent_type":"general-purpose"}'
 run_test "on-task-completed.sh"  '{"task_id":"task-001"}'
 
+# --- PostToolUse hooks ---
+run_test "on-post-submit-proposal.sh"  '{"tool_input":{"proposalUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"pending","title":"Test proposal"}}'
+run_test "on-post-submit-for-verify.sh" '{"tool_input":{"taskUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"to_verify","title":"Test task"}}'
+
 # --- Session hooks ---
 run_test "on-session-start.sh"   '{}'
 run_test "on-session-end.sh"     '{}'
