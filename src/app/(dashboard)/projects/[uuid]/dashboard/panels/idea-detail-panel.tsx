@@ -173,9 +173,9 @@ function formatActivityMessage(activity: ActivityResponse, t: any): string {
     case "elaboration_skipped":
       return t("activity.elaborationSkipped", { actor: actorName });
     case "elaboration_resolved":
-      return t("activity.elaborationAnswered", { actor: actorName });
+      return t("activity.elaborationResolved", { actor: actorName });
     case "elaboration_followup":
-      return t("activity.elaborationStarted", { actor: actorName });
+      return t("activity.elaborationFollowup", { actor: actorName });
     default:
       return `${actorName}: ${action}`;
   }

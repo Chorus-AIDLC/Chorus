@@ -14,7 +14,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   nodeTypes,
   defaultEdgeStyle,
@@ -139,7 +140,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
       {error && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-xs text-red-700 shadow-sm">
           {error}
-          <button className="ml-2 font-medium hover:text-red-900" onClick={() => setError(null)}>x</button>
+          <Button variant="ghost" size="icon" className="ml-2 h-5 w-5 font-medium hover:text-red-900" onClick={() => setError(null)}><X className="h-3 w-3" /></Button>
         </div>
       )}
       <ReactFlow

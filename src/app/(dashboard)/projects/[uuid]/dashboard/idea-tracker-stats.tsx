@@ -49,16 +49,16 @@ const activityDotColors: Record<string, string> = {
   document: "bg-[#9A9A9A]",
 };
 
-function formatRelativeTime(dateStr: string): string {
+function formatRelativeTime(dateStr: string, t: (key: string, params?: Record<string, unknown>) => string): string {
   const now = Date.now();
   const diff = now - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t("justNow");
+  if (minutes < 60) return t("minutesAgo", { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("hoursAgo", { hours });
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t("daysAgo", { days });
 }
 
 interface IdeaTrackerStatsProps {
@@ -241,7 +241,7 @@ export function IdeaTrackerStats({ projectUuid }: IdeaTrackerStatsProps) {
                         {activity.actorName} {activity.action}
                       </p>
                       <span className="text-[11px] text-[#9A9A9A]">
-                        {formatRelativeTime(activity.createdAt)}
+                        {formatRelativeTime(activity.createdAt, t)}
                       </span>
                     </div>
                   </div>
