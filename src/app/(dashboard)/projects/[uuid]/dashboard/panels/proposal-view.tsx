@@ -10,6 +10,7 @@ import {
   ListChecks,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Streamdown } from "streamdown";
 import { code as codePlugin } from "@streamdown/code";
 import { TaskDag, type TaskDagTask, type TaskDagEdge } from "@/components/task-dag";
@@ -256,9 +257,10 @@ function ProposalContent({
           </div>
           <div className="space-y-0">
             {docDrafts.map((doc, i) => (
-              <button
+              <Button
                 key={doc.uuid || i}
-                className="w-full text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
+                variant="ghost"
+                className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
                 onClick={() => doc.content && onDocClick?.({ title: doc.title, type: doc.type, content: doc.content })}
               >
                 <Badge
@@ -271,7 +273,7 @@ function ProposalContent({
                   {doc.title}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -301,26 +303,30 @@ function ProposalContent({
           {/* Cards/DAG toggle (only when deps exist) */}
           {dagEdges.length > 0 && (
             <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] bg-[#F7F6F3] p-0.5 mt-3 w-fit">
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setTaskView("cards")}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 h-auto text-[11px] font-medium transition-colors ${
                   taskView === "cards"
                     ? "bg-white text-[#2C2C2C] shadow-sm"
                     : "text-[#9A9A9A] hover:text-[#6B6B6B]"
                 }`}
               >
                 {tProposals("cardsView")}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setTaskView("dag")}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-md px-2.5 py-1 h-auto text-[11px] font-medium transition-colors ${
                   taskView === "dag"
                     ? "bg-white text-[#2C2C2C] shadow-sm"
                     : "text-[#9A9A9A] hover:text-[#6B6B6B]"
                 }`}
               >
                 DAG
-              </button>
+              </Button>
             </div>
           )}
 
@@ -439,24 +445,26 @@ function TaskDraftRow({
   // If materialized task exists, open task detail panel
   if (onNavigate) {
     return (
-      <button
+      <Button
+        variant="ghost"
         onClick={onNavigate}
-        className="w-full text-left flex items-center gap-2.5 py-4 cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg transition-colors"
+        className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg transition-colors"
       >
         {dotEl}
         {titleEl}
         {badgeEl}
         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
-      </button>
+      </Button>
     );
   }
 
   // Draft — expand inline
   return (
     <div>
-      <button
+      <Button
+        variant="ghost"
         onClick={hasDetails ? onToggle : undefined}
-        className={`w-full text-left flex items-center gap-2.5 py-4 ${
+        className={`w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 ${
           hasDetails ? "cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg" : ""
         } transition-colors`}
       >
@@ -464,7 +472,7 @@ function TaskDraftRow({
         {titleEl}
         {badgeEl}
         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
-      </button>
+      </Button>
 
       {expanded && hasDetails && (
         <div className="pb-3 pl-5 space-y-3">
