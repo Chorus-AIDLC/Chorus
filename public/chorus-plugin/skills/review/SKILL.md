@@ -120,6 +120,12 @@ This returns: title, description, input ideas, **document drafts** (PRD, tech de
 chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 ```
 
+#### A3.5: Independent Review (Automatic)
+
+After `chorus_pm_submit_proposal`, the Chorus plugin's PostToolUse hook suggests spawning `chorus:proposal-reviewer` — a read-only agent that adversarially reviews the proposal's document quality, task granularity, AC alignment, and dependency DAG. Check for its VERDICT comment before approving.
+
+> **VERDICT: FAIL is advisory** — the reviewer's opinion does not block approval. The admin reads the review comment and makes the final decision.
+
 #### A4: Approve or Reject
 
 **Approve:**

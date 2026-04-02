@@ -214,6 +214,8 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook will suggest spawning `chorus:task-reviewer` — an independent, read-only review agent. Follow the suggestion to get an adversarial review before admin verification. The reviewer posts a VERDICT comment on the task. Its result is advisory (does not block verification).
+
 ### Step 9: Handle Review Feedback
 
 If reopened (verification failed), **all acceptance criteria are reset to pending**.

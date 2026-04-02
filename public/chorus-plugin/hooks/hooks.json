@@ -21,6 +21,26 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": ".*chorus_pm_submit_proposal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-submit-proposal.sh"
+          }
+        ]
+      },
+      {
+        "matcher": ".*chorus_submit_for_verify",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-submit-for-verify.sh"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "EnterPlanMode",
