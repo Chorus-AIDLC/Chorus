@@ -7,147 +7,29 @@ import {
   Controls,
   type Node,
   type Edge,
-  type NodeProps,
   type Connection,
-  Handle,
-  Position,
   useNodesState,
   useEdgesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import dagre from "dagre";
 import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  nodeTypes,
+  defaultEdgeStyle,
+  getLayoutedElements,
+  type TaskNodeData,
+} from "@/components/task-dag";
 import { getProjectDependenciesAction } from "./actions";
 import { addTaskDependencyAction } from "./[taskUuid]/dependency-actions";
-
-// Status colors matching existing patterns
-const statusColors: Record<string, string> = {
-  open: "bg-[#FFF3E0] text-[#E65100]",
-  assigned: "bg-[#E3F2FD] text-[#1976D2]",
-  in_progress: "bg-[#E8F5E9] text-[#5A9E6F]",
-  to_verify: "bg-[#F3E5F5] text-[#7B1FA2]",
-  done: "bg-[#E0F2F1] text-[#00796B]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
-};
-
-const statusBorderColors: Record<string, string> = {
-  open: "#E65100",
-  assigned: "#1976D2",
-  in_progress: "#5A9E6F",
-  to_verify: "#7B1FA2",
-  done: "#00796B",
-  closed: "#9A9A9A",
-};
-
-const priorityI18nKeys: Record<string, string> = {
-  low: "priority.low",
-  medium: "priority.medium",
-  high: "priority.high",
-  critical: "priority.critical",
-};
-
-const statusI18nKeys: Record<string, string> = {
-  open: "status.open",
-  assigned: "status.assigned",
-  in_progress: "status.inProgress",
-  to_verify: "status.toVerify",
-  done: "status.done",
-  closed: "status.closed",
-};
-
-const priorityDotColors: Record<string, string> = {
-  low: "bg-[#9A9A9A]",
-  medium: "bg-[#E65100]",
-  high: "bg-[#D32F2F]",
-  critical: "bg-[#B71C1C]",
-};
-
-interface TaskNodeData {
-  title: string;
-  status: string;
-  priority: string;
-  proposalUuid: string | null;
-  [key: string]: unknown;
-}
-
-function TaskNode({ data }: NodeProps<Node<TaskNodeData>>) {
-  const t = useTranslations();
-  const borderColor = statusBorderColors[data.status] || "#E5E0D8";
-
-  return (
-    <div
-      className="rounded-lg border-2 bg-white px-4 py-3 shadow-sm min-w-[200px] max-w-[260px]"
-      style={{ borderColor }}
-    >
-      <Handle type="target" position={Position.Top} className="!bg-[#C67A52] !w-2 !h-2" />
-      <div className="flex items-center gap-2 mb-1.5">
-        <Badge className={`text-[10px] ${statusColors[data.status] || ""}`}>
-          {t(statusI18nKeys[data.status] || data.status)}
-        </Badge>
-        <div className="flex items-center gap-1">
-          <div className={`h-1.5 w-1.5 rounded-full ${priorityDotColors[data.priority] || ""}`} />
-          <span className="text-[10px] text-[#9A9A9A]">{t(priorityI18nKeys[data.priority] || data.priority)}</span>
-        </div>
-      </div>
-      <p className="text-xs font-medium text-[#2C2C2C] leading-snug line-clamp-2">
-        {data.title}
-      </p>
-      <Handle type="source" position={Position.Bottom} className="!bg-[#C67A52] !w-2 !h-2" />
-    </div>
-  );
-}
-
-const nodeTypes = { taskNode: TaskNode };
-
-const NODE_WIDTH = 240;
-const NODE_HEIGHT = 80;
-
-function getLayoutedElements(
-  nodes: Node<TaskNodeData>[],
-  edges: Edge[]
-): { nodes: Node<TaskNodeData>[]; edges: Edge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 80 });
-
-  nodes.forEach((node) => {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
-  });
-
-  edges.forEach((edge) => {
-    g.setEdge(edge.source, edge.target);
-  });
-
-  dagre.layout(g);
-
-  const layoutedNodes = nodes.map((node) => {
-    const nodeWithPosition = g.node(node.id);
-    return {
-      ...node,
-      position: {
-        x: nodeWithPosition.x - NODE_WIDTH / 2,
-        y: nodeWithPosition.y - NODE_HEIGHT / 2,
-      },
-    };
-  });
-
-  return { nodes: layoutedNodes, edges };
-}
 
 interface DagViewProps {
   projectUuid: string;
   onTaskSelect: (taskUuid: string) => void;
   refreshKey?: number;
 }
-
-const defaultEdgeStyle = {
-  animated: true,
-  style: { stroke: "#C67A52", strokeWidth: 2 },
-  markerEnd: { type: "arrowclosed" as const, color: "#C67A52" },
-};
 
 export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps) {
   const t = useTranslations();
@@ -258,7 +140,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
       {error && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-xs text-red-700 shadow-sm">
           {error}
-          <button className="ml-2 font-medium hover:text-red-900" onClick={() => setError(null)}>x</button>
+          <Button variant="ghost" size="icon" className="ml-2 h-5 w-5 font-medium hover:text-red-900" onClick={() => setError(null)}><X className="h-3 w-3" /></Button>
         </div>
       )}
       <ReactFlow
