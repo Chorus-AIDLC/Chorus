@@ -19,7 +19,7 @@ interface NewIdeaDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectUuid: string;
-  onCreated: (uuid: string) => void;
+  onCreated?: (uuid: string) => void;
 }
 
 export function NewIdeaDialog({
@@ -56,7 +56,7 @@ export function NewIdeaDialog({
         setTitle("");
         setContent("");
         onOpenChange(false);
-        onCreated(json.data.uuid);
+        onCreated?.(json.data.uuid);
       } else {
         setError(json.error || t("error.createFailed"));
       }

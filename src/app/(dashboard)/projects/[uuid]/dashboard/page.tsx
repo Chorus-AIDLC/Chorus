@@ -4,7 +4,9 @@
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { getProject } from "@/services/project.service";
+import { getProject, getProjectStats } from "@/services/project.service";
+import { getIdeasWithDerivedStatus, groupIdeasByDerivedStatus } from "@/services/idea.service";
+import { listActivitiesWithActorNames } from "@/services/activity.service";
 import { ProjectSettingsModal } from "./project-settings-modal";
 import { IdeaTracker } from "./idea-tracker";
 
@@ -25,6 +27,25 @@ export default async function DashboardPage({ params }: PageProps) {
   if (!project) {
     redirect("/projects");
   }
+
+  // Fetch initial data server-side for zero-spinner first render
+  const [ideasData, statsData] = await Promise.all([
+    getIdeasWithDerivedStatus(auth.companyUuid, projectUuid).then((ideas) =>
+      groupIdeasByDerivedStatus(auth.companyUuid, ideas)
+    ),
+    Promise.all([
+      getProjectStats(auth.companyUuid, projectUuid),
+      listActivitiesWithActorNames({
+        companyUuid: auth.companyUuid,
+        projectUuid,
+        skip: 0,
+        take: 5,
+      }),
+    ]).then(([stats, { activities }]) => ({
+      stats,
+      recentActivities: activities,
+    })),
+  ]);
 
   return (
     <div className="flex h-full flex-col gap-5 bg-[#F7F6F3] p-5 md:p-6">
@@ -49,7 +70,12 @@ export default async function DashboardPage({ params }: PageProps) {
 
       {/* Idea Tracker */}
       <div className="min-h-0 flex-1">
-        <IdeaTracker projectUuid={projectUuid} currentUserUuid={auth.actorUuid} />
+        <IdeaTracker
+          projectUuid={projectUuid}
+          currentUserUuid={auth.actorUuid}
+          initialGroups={ideasData}
+          initialStats={statsData}
+        />
       </div>
     </div>
   );
