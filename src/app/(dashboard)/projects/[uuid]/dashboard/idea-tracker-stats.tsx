@@ -49,7 +49,8 @@ const activityDotColors: Record<string, string> = {
   document: "bg-[#9A9A9A]",
 };
 
-function formatRelativeTime(dateStr: string, t: (key: string, params?: Record<string, unknown>) => string): string {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatRelativeTime(dateStr: string, t: any): string {
   const now = Date.now();
   const diff = now - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
