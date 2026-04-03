@@ -702,16 +702,12 @@ export async function approveProposal(
 
   eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
 
-  // Auto-complete input Ideas when proposal is approved
-  if (proposal.inputType === "idea") {
-    const inputUuids = (proposal.inputUuids as string[]) || [];
-    if (inputUuids.length > 0) {
-      await prisma.idea.updateMany({
-        where: { uuid: { in: inputUuids }, companyUuid, status: "proposal_created" },
-        data: { status: "completed" },
-      });
-    }
-  }
+  // Note: We do NOT auto-complete input Ideas here.
+  // The Idea's derived status is computed from its linked Tasks' progress:
+  //   proposal_created + approved proposal → in_review (tasks not started)
+  //   proposal_created + tasks to_verify   → verifying
+  //   All tasks done                       → idea auto-completed by task completion flow
+  // See computeDerivedStatus() in idea.service.ts.
 
   const response: ApprovalResult = await formatProposalResponse(updatedProposal);
   if (materializedTasks.length > 0) response.materializedTasks = materializedTasks;
