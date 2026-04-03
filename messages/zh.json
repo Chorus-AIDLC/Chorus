@@ -157,7 +157,9 @@
     "closed": "已关闭",
     "elaborating": "需求澄清中",
     "proposalCreated": "方案已创建",
-    "proposal_created": "方案已创建"
+    "proposal_created": "方案已创建",
+    "needHumanInput": "需要人工介入",
+    "humanConductRequired": "需要指挥"
   },
   "admin": {
     "title": "超级管理员",
@@ -285,13 +287,13 @@
     "openProposals": "待审提案",
     "ideasCaptured": "已收集想法",
     "taskProgress": "任务进度",
-    "listView": "列表",
-    "gridView": "网格",
-    "empty": "空项目",
-    "complete": "已完成",
     "createNewProject": "创建新项目",
     "createNewProjectDesc": "开始一个新项目并邀请团队",
     "updated": "更新于",
+    "listView": "列表",
+    "gridView": "网格",
+    "empty": "空",
+    "complete": "完成",
     "createNew": {
       "title": "创建新项目",
       "subtitle": "设置项目详情，之后再将想法分配给 PM 智能体",
@@ -451,7 +453,9 @@
     "reviewInstructions": "审核内容并批准或拒绝此提案。",
     "basedOn": "基于",
     "documentDrafts": "文档草稿",
+    "documents": "文档",
     "taskDrafts": "任务草稿",
+    "tasks": "任务",
     "emptyContainer": "此提案容器为空。请添加文档或任务。",
     "inputType": "输入类型",
     "creatorType": "创建者类型",
@@ -463,6 +467,7 @@
     "reviewedBy": "审核人",
     "reviewedAt": "审核时间",
     "reviewNote": "审核备注",
+    "requestChanges": "请求修改",
     "approveProposal": "批准提案",
     "approveProposalDesc": "可选填备注给提案创建者（例如给 Agent 的指示）。",
     "approveNotePlaceholder": "添加备注（可选）...",
@@ -798,6 +803,9 @@
     "skipReasonPlaceholder": "例如：有明确复现步骤的bug修复",
     "skipReasonRequired": "请提供跳过原因",
     "elaborationRequiredHint": "完成或跳过需求澄清后才能创建方案",
+    "questionCount": "{count} 个问题",
+    "navCounter": "{current} / {total}",
+    "somethingElse": "其他答案",
     "category": {
       "functional": "功能性",
       "nonFunctional": "非功能性",
@@ -981,6 +989,108 @@
       "copyKey": "此步骤将用于复制 API 密钥。即将推出。",
       "installGuide": "此步骤将引导您完成安装。即将推出。",
       "testConnection": "此步骤将测试智能体连接。即将推出。"
+    }
+  },
+  "ideaTracker": {
+    "overview": "总览",
+    "overviewSubtitle": "追踪想法、提案和任务进展",
+    "tabs": {
+      "ideas": "想法",
+      "stats": "统计"
+    },
+    "badge": {
+      "open": "待开始",
+      "researching": "调研中",
+      "answerQuestions": "回答问题",
+      "planning": "规划中",
+      "reviewProposal": "审批提案",
+      "building": "开发中",
+      "verifyWork": "验收成果",
+      "done": "已完成",
+      "closed": "已关闭"
+    },
+    "status": {
+      "todo": "待处理",
+      "inProgress": "进行中",
+      "humanConductRequired": "需要指挥",
+      "done": "已完成"
+    },
+    "actions": {
+      "newIdea": "新建想法",
+      "untitledIdea": "未命名想法",
+      "search": "搜索想法...",
+      "retry": "重试",
+      "assign": "分配",
+      "reassign": "重新分配"
+    },
+    "empty": {
+      "noIdeas": "暂无想法",
+      "getStarted": "想法会经过需求细化、提案和任务执行——从创建第一个想法开始",
+      "noResults": "没有匹配的想法",
+      "groupEmpty": "此状态下暂无想法"
+    },
+    "newIdea": {
+      "title": "新建想法",
+      "ideaTitle": "标题",
+      "titlePlaceholder": "你的想法是什么？",
+      "description": "描述",
+      "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节..."
+    },
+    "error": {
+      "loadFailed": "加载想法失败",
+      "createFailed": "创建想法失败"
+    },
+    "loading": "加载中...",
+    "justNow": "刚刚",
+    "minutesAgo": "{minutes}分钟前",
+    "hoursAgo": "{hours}小时前",
+    "daysAgo": "{days}天前",
+    "stats": {
+      "totalIdeas": "想法总数",
+      "totalTasks": "任务总数",
+      "totalProposals": "提案总数",
+      "totalDocuments": "文档总数",
+      "openCount": "{count} 个待处理",
+      "activeCount": "{count} 个进行中",
+      "pendingCount": "{count} 个待审核",
+      "taskPipeline": "任务流水线",
+      "totalCount": "共 {count} 个",
+      "todoCount": "待处理：{count}",
+      "inProgressCount": "进行中：{count}",
+      "toVerifyCount": "待验证：{count}",
+      "doneCount": "已完成：{count}",
+      "noTasks": "暂无任务",
+      "recentActivity": "最近活动",
+      "viewAll": "查看全部",
+      "noActivity": "暂无活动"
+    },
+    "panel": {
+      "notFound": "未找到想法",
+      "loadFailed": "加载想法失败",
+      "verifyingPlaceholder": "验证进行中...",
+      "donePlaceholder": "此想法已完成。",
+      "elaborationStatus": "细化状态",
+      "elaborationRounds": "细化问答",
+      "elaborationWaiting": "等待智能体",
+      "elaborationWaitingDesc": "PM 智能体将很快开始细化。",
+      "elaboration": {
+        "pendingAnswers": "待回答",
+        "validating": "验证中",
+        "resolved": "已完成"
+      },
+      "noProposals": "暂无与此想法关联的提案",
+      "viewProposal": "查看完整提案"
+    }
+  },
+  "panel": {
+    "verify": {
+      "noTasks": "暂无需要验证的任务",
+      "overallProgress": "总体进度"
+    },
+    "prdExpanded": {
+      "noDocuments": "暂无文档或任务",
+      "documents": "文档",
+      "taskDag": "任务依赖图"
     }
   },
   "search": {
