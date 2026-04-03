@@ -9,7 +9,6 @@ import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/er
 import { ApiError } from "@/lib/api-handler";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
-import { batchCommentCounts } from "@/services/comment.service";
 
 // ===== Derived Status =====
 
@@ -727,83 +726,4 @@ export async function getIdeasWithDerivedStatus(
       updatedAt: idea.updatedAt,
     };
   });
-}
-
-
-// ===== Tracker Grouping =====
-
-export const TRACKER_STATUSES = ["todo", "in_progress", "human_conduct_required", "done"] as const;
-export interface TrackerIdeaItem {
-  uuid: string;
-  ideaNumber: number;
-  title: string;
-  status: string;
-  derivedStatus: DerivedIdeaStatus;
-  badgeHint: BadgeHint;
-  createdAt: string; // ISO string
-  updatedAt: string; // ISO string
-  commentCount: number;
-  assignee: null; // Not resolved in tracker grouping; use detail panel for full info
-}
-
-export interface TrackerGroups {
-  groups: Record<string, TrackerIdeaItem[]>;
-  counts: Record<string, number>;
-}
-
-/**
- * Group ideas with derived statuses into tracker columns.
- * Computes sequential idea numbers and batch-fetches comment counts.
- */
-export async function groupIdeasByDerivedStatus(
-  companyUuid: string,
-  ideas: IdeaWithDerivedStatus[]
-): Promise<TrackerGroups> {
-  // Batch fetch comment counts for all ideas
-  const ideaUuids = ideas.map((i) => i.uuid);
-  const commentCounts = await batchCommentCounts(companyUuid, "idea", ideaUuids);
-
-  // Compute project-scoped sequential numbers (IDEA-1, IDEA-2, ...)
-  // Sort asc by createdAt for stable numbering
-  const sortedForNumbering = [...ideas].sort(
-    (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-  );
-  const ideaNumberMap = new Map<string, number>();
-  sortedForNumbering.forEach((idea, idx) => {
-    ideaNumberMap.set(idea.uuid, idx + 1);
-  });
-
-  // Initialise groups for all tracker statuses
-  const groups: Record<string, TrackerIdeaItem[]> = {};
-  const counts: Record<string, number> = {};
-  for (const status of TRACKER_STATUSES) {
-    groups[status] = [];
-    counts[status] = 0;
-  }
-
-  // Group ideas by derivedStatus, skipping closed
-  for (const idea of ideas) {
-    const ds = idea.derivedStatus;
-    if (ds === "closed") continue;
-
-    const formatted: TrackerIdeaItem = {
-      uuid: idea.uuid,
-      ideaNumber: ideaNumberMap.get(idea.uuid) ?? 0,
-      title: idea.title,
-      status: idea.status,
-      derivedStatus: ds as DerivedIdeaStatus,
-      badgeHint: idea.badgeHint,
-      createdAt: idea.createdAt.toISOString(),
-      updatedAt: idea.updatedAt.toISOString(),
-      commentCount: commentCounts[idea.uuid] ?? 0,
-      assignee: null,
-    };
-
-    if (groups[ds]) {
-      groups[ds].push(formatted);
-      counts[ds]++;
-    }
-  }
-
-  return { groups, counts };
 }

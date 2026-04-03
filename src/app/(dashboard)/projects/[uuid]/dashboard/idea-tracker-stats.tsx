@@ -64,13 +64,12 @@ function formatRelativeTime(dateStr: string, t: any): string {
 
 interface IdeaTrackerStatsProps {
   projectUuid: string;
-  initialData?: StatsData;
 }
 
-export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsProps) {
+export function IdeaTrackerStats({ projectUuid }: IdeaTrackerStatsProps) {
   const t = useTranslations("ideaTracker");
-  const [data, setData] = useState<StatsData | null>(initialData ?? null);
-  const [loading, setLoading] = useState(initialData === undefined);
+  const [data, setData] = useState<StatsData | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -85,13 +84,9 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
     }
   }, [projectUuid]);
 
-  // Initial fetch only when no SSR data provided
   useEffect(() => {
-    if (initialData === undefined) {
-      fetchStats();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    fetchStats();
+  }, [fetchStats]);
 
   if (loading) {
     return (

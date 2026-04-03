@@ -8,11 +8,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRealtimeEvent } from "@/contexts/realtime-context";
 import { IdeaStatusGroup } from "./idea-status-group";
 import type { IdeaCardItem } from "./idea-card";
-import type { TrackerGroups } from "@/services/idea.service";
 
 interface TrackerApiResponse {
   success: boolean;
-  data?: TrackerGroups;
+  data?: {
+    groups: Record<string, IdeaCardItem[]>;
+    counts: Record<string, number>;
+  };
   error?: string;
 }
 
@@ -21,7 +23,6 @@ interface IdeaTrackerListProps {
   onIdeaClick: (uuid: string) => void;
   onNewIdea?: () => void;
   onEmptyChange?: (isEmpty: boolean) => void;
-  initialGroups?: TrackerGroups;
 }
 
 // Display order matching the Pencil design
@@ -32,14 +33,11 @@ export function IdeaTrackerList({
   onIdeaClick,
   onNewIdea,
   onEmptyChange,
-  initialGroups,
 }: IdeaTrackerListProps) {
   const t = useTranslations("ideaTracker");
 
-  const [groups, setGroups] = useState<Record<string, IdeaCardItem[]>>(
-    initialGroups?.groups ?? {}
-  );
-  const [isLoading, setIsLoading] = useState(initialGroups === undefined);
+  const [groups, setGroups] = useState<Record<string, IdeaCardItem[]>>({});
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -59,16 +57,12 @@ export function IdeaTrackerList({
     }
   }, [projectUuid, t]);
 
-  // Initial fetch only when no SSR data provided
-  useEffect(() => {
-    if (initialGroups === undefined) {
-      fetchData();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Realtime refresh (always active for live updates)
+  // Initial fetch + realtime refresh
   useRealtimeEvent(fetchData);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const totalIdeas = STATUS_ORDER.reduce(
     (sum, s) => sum + (groups[s] || []).length,
