@@ -737,6 +737,7 @@
     "projectBadge": "Project",
     "notificationPreferences": "Notification Preferences",
     "loadMore": "Load more",
+    "viewDetail": "View",
     "types": {
       "proposal_approved": "Proposal approved",
       "proposal_rejected": "Proposal rejected",

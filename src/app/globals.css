@@ -98,6 +98,37 @@ span[style*="--sdm-tbg"] {
   }
 }
 
+/* Sonner toast theme — Chorus design tokens */
+[data-sonner-toaster] {
+  --normal-bg: var(--color-card);
+  --normal-text: var(--color-foreground);
+  --normal-border: var(--color-border);
+}
+
+[data-sonner-toast] {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-sonner-toast] [data-title] {
+  color: var(--color-foreground) !important;
+  font-weight: 600 !important;
+}
+
+[data-sonner-toast] [data-description] {
+  color: var(--color-muted-foreground) !important;
+}
+
+[data-sonner-toast] [data-close-button] {
+  color: var(--color-muted-foreground) !important;
+  border-color: var(--color-border) !important;
+  background: var(--color-card) !important;
+}
+
+[data-sonner-toast] [data-button] {
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+
 /* Chorus Animation Keyframes */
 @keyframes collapsible-down {
   from { height: 0; opacity: 0; }

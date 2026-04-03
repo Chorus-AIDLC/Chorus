@@ -738,6 +738,7 @@
     "projectBadge": "项目",
     "notificationPreferences": "通知偏好",
     "loadMore": "加载更多",
+    "viewDetail": "查看",
     "types": {
       "proposal_approved": "提案已通过",
       "proposal_rejected": "提案已拒绝",

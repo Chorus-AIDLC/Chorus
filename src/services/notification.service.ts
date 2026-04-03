@@ -163,11 +163,17 @@ export async function create(
     },
   });
 
-  // Emit SSE event for real-time notification delivery
+  // Emit SSE event for real-time notification delivery (includes details for toast)
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
     type: "new_notification",
     notificationUuid: notification.uuid,
     unreadCount,
+    action: params.action,
+    actorName: params.actorName,
+    entityTitle: params.entityTitle,
+    entityType: params.entityType,
+    entityUuid: params.entityUuid,
+    projectUuid: params.projectUuid,
   });
 
   return formatNotification(notification);
@@ -221,12 +227,23 @@ export async function createBatch(
       },
     });
 
+    const match = created.find(
+      (n) => n.recipientType === recipientType && n.recipientUuid === recipientUuid
+    );
+    const matchParams = notifications.find(
+      (n) => n.recipientType === recipientType && n.recipientUuid === recipientUuid
+    );
+
     eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
       type: "new_notification",
-      notificationUuid: created.find(
-        (n) => n.recipientType === recipientType && n.recipientUuid === recipientUuid
-      )?.uuid,
+      notificationUuid: match?.uuid,
       unreadCount,
+      action: matchParams?.action,
+      actorName: matchParams?.actorName,
+      entityTitle: matchParams?.entityTitle,
+      entityType: matchParams?.entityType,
+      entityUuid: matchParams?.entityUuid,
+      projectUuid: matchParams?.projectUuid,
     });
   }
 
