@@ -33,15 +33,21 @@ function formatRelativeTime(dateString: string, t: any): string {
 interface ProposalCommentsProps {
   proposalUuid: string;
   currentUserUuid?: string;
+  onCountChange?: (count: number) => void;
 }
 
-export function ProposalComments({ proposalUuid, currentUserUuid }: ProposalCommentsProps) {
+export function ProposalComments({ proposalUuid, currentUserUuid, onCountChange }: ProposalCommentsProps) {
   const t = useTranslations();
   const [comment, setComment] = useState("");
   const [comments, setComments] = useState<CommentResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const editorRef = useRef<MentionEditorRef>(null);
+
+  // Notify parent of comment count changes
+  useEffect(() => {
+    onCountChange?.(comments.length);
+  }, [comments.length, onCountChange]);
 
   // Auto-refresh comments when another user adds a comment
   useRealtimeEntityEvent("proposal", proposalUuid, (event) => {

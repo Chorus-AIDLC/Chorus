@@ -18,7 +18,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
-import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch } from "lucide-react";
+import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch, Bot } from "lucide-react";
+import { usePresence } from "@/hooks/use-presence";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -188,6 +189,10 @@ export function ProposalEditor({
   const t = useTranslations();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Presence tracking
+  const { getPresence } = usePresence();
+  const presenceList = getPresence("proposal", proposalUuid);
 
   // View toggle state
   const [taskView, setTaskView] = useState<"cards" | "dag">("cards");
@@ -401,6 +406,17 @@ export function ProposalEditor({
 
   return (
     <>
+      {/* Presence Banner */}
+      {presenceList.length > 0 && (
+        <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-700 animate-in fade-in duration-300">
+          <Bot className="h-4 w-4 shrink-0" />
+          <span>
+            {presenceList.map(p => p.agentName).join(", ")}{" "}
+            {t("proposals.presenceWorking")}
+          </span>
+        </div>
+      )}
+
       {/* Document Drafts Section */}
       <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
         <CardHeader className="flex-row items-center justify-between border-b border-[#F5F2EC] px-6 py-4">

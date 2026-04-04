@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,9 +23,10 @@ interface DiscussionDrawerProps {
 export function DiscussionDrawer({
   proposalUuid,
   currentUserUuid,
-  commentCount,
+  commentCount: initialCount,
 }: DiscussionDrawerProps) {
   const t = useTranslations();
+  const [count, setCount] = useState(initialCount);
 
   return (
     <Sheet>
@@ -36,9 +38,9 @@ export function DiscussionDrawer({
         >
           <MessageCircle className="h-4 w-4" />
           <span>{t("proposals.discussion")}</span>
-          {commentCount > 0 && (
+          {count > 0 && (
             <Badge className="ml-0.5 h-5 min-w-5 justify-center rounded-full border-0 bg-[#E07A5F] px-1.5 text-[10px] font-semibold text-white">
-              {commentCount}
+              {count}
             </Badge>
           )}
         </Button>
@@ -51,9 +53,9 @@ export function DiscussionDrawer({
           <SheetTitle className="flex items-center gap-2 text-base">
             <MessageCircle className="h-[18px] w-[18px]" />
             {t("proposals.discussion")}
-            {commentCount > 0 && (
+            {count > 0 && (
               <span className="rounded-full bg-[#F0EDE8] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
-                {commentCount}
+                {count}
               </span>
             )}
           </SheetTitle>
@@ -62,6 +64,7 @@ export function DiscussionDrawer({
           <ProposalComments
             proposalUuid={proposalUuid}
             currentUserUuid={currentUserUuid}
+            onCountChange={setCount}
           />
         </div>
       </SheetContent>

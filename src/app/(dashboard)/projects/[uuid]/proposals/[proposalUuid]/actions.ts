@@ -15,6 +15,8 @@ import {
   updateTaskDraft,
   removeDocumentDraft,
   removeTaskDraft,
+  type DocumentDraft,
+  type TaskDraft,
 } from "@/services/proposal.service";
 import { createActivity } from "@/services/activity.service";
 
@@ -178,6 +180,32 @@ export async function deleteProposalAction(proposalUuid: string, projectUuid: st
   } catch (error) {
     console.error("Failed to delete proposal:", error);
     return { success: false, error: "Failed to delete proposal" };
+  }
+}
+
+// ===== Realtime Refresh Action =====
+
+/** Lightweight action for component-level refresh — only returns status + drafts */
+export async function getProposalDraftsAction(proposalUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { status: null, documentDrafts: [], taskDrafts: [] };
+  }
+
+  try {
+    const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
+    if (!proposal) {
+      return { status: null, documentDrafts: [], taskDrafts: [] };
+    }
+
+    return {
+      status: proposal.status as string,
+      documentDrafts: (proposal.documentDrafts ?? []) as unknown as DocumentDraft[],
+      taskDrafts: (proposal.taskDrafts ?? []) as unknown as TaskDraft[],
+    };
+  } catch (error) {
+    console.warn("[getProposalDraftsAction] Failed:", error);
+    return { status: null, documentDrafts: [], taskDrafts: [] };
   }
 }
 

@@ -466,6 +466,7 @@
     "tasks": "Tasks",
     "inputs": "Inputs",
     "discussion": "Discussion",
+    "presenceWorking": "is working on this proposal",
     "reviewInfo": "Review Info",
     "reviewedBy": "Reviewed By",
     "reviewedAt": "Reviewed At",
