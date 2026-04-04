@@ -9,6 +9,8 @@ import {
   DropResult,
 } from "@hello-pangea/dnd";
 import { Lock, TriangleAlert, Monitor } from "lucide-react";
+import { motion, LayoutGroup } from "framer-motion";
+import { ANIM } from "@/lib/animation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,6 +124,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const [gateDialogOpen, setGateDialogOpen] = useState(false);
   const [gateDialogCriteria, setGateDialogCriteria] = useState<Array<{ uuid: string; description: string; required: boolean; status: string; evidence: string | null }>>([]);
   const [forceMoving, setForceMoving] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Refetch tasks locally — no router.refresh() needed
   const refetchTasks = useCallback(async () => {
@@ -172,7 +175,12 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
     );
   };
 
+  const handleDragStart = () => {
+    setIsDragging(true);
+  };
+
   const handleDragEnd = async (result: DropResult) => {
+    setIsDragging(false);
     const { destination, source, draggableId } = result;
 
     // Dropped outside a column
@@ -283,7 +291,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
 
   return (
     <>
-    <DragDropContext onDragEnd={handleDragEnd}>
+    <DragDropContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <LayoutGroup>
       <div className="flex flex-1 gap-4 overflow-x-auto pb-4">
         {columnConfigs.map((column) => {
           const columnTasks = getTasksForColumn(column.statuses);
@@ -360,7 +369,11 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                               }}
                               style={provided.draggableProps.style}
                             >
-                              <div className="relative">
+                              <motion.div
+                                className="relative"
+                                layoutId={isDragging ? undefined : `task-card-${task.uuid}`}
+                                transition={ANIM.spring}
+                              >
                                 {workerCounts[task.uuid] > 0 && (
                                   <div className="absolute -top-3 -right-3 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-green-400 bg-white shadow-sm">
                                     <img src="/typing-animation.gif" alt="" className="h-8 w-8" />
@@ -486,7 +499,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   </span>
                                 </div>
                               </Card>
-                              </div>
+                              </motion.div>
                             </div>
                           )}
                         </Draggable>
@@ -501,6 +514,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
           );
         })}
       </div>
+      </LayoutGroup>
     </DragDropContext>
 
     {/* Task Detail Panel - View/Edit */}
