@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   DragDropContext,
@@ -147,10 +147,17 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   // SSE: only refetch when task entities change
   useRealtimeEntityTypeEvent("task", refetchTasks);
 
-  // Sync local state when server data changes (e.g. initial navigation)
+  // Refetch when proposal filter changes (immediate response, no SSE needed)
+  // NOTE: We intentionally do NOT sync from initialTasks prop because pushState
+  // sidebar navigation triggers Next.js soft re-render, producing a stale
+  // initialTasks snapshot that overwrites fresher SSE-fetched data.
+  const filterRef = useRef(proposalUuidFilter);
   useEffect(() => {
-    setTasks(initialTasks);
-  }, [initialTasks]);
+    if (filterRef.current !== proposalUuidFilter) {
+      filterRef.current = proposalUuidFilter;
+      refetchTasks();
+    }
+  }, [proposalUuidFilter, refetchTasks]);
 
   // Fetch active worker counts in a single batch query instead of N individual calls
   useEffect(() => {
