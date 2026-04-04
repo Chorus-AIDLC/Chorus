@@ -1,26 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { shouldRefresh } from "../draft-diff";
 
-// Test the refresh trigger logic extracted from ProposalEditor SSE handler
+// Tests the actual exported shouldRefresh function used by ProposalEditor
 // router.refresh() should be called when:
 // 1. Status changes (e.g. draft → pending)
 // 2. Draft count changes while in draft status (for ValidationChecklist)
 
-function shouldRefresh(
-  currentStatus: string,
-  latestStatus: string | null,
-  oldDocCount: number,
-  newDocCount: number,
-  oldTaskCount: number,
-  newTaskCount: number
-): boolean {
-  const statusChanged = latestStatus != null && latestStatus !== currentStatus;
-  const draftCountChanged = currentStatus === "draft" && (
-    newDocCount !== oldDocCount || newTaskCount !== oldTaskCount
-  );
-  return statusChanged || draftCountChanged;
-}
-
-describe("status refresh trigger", () => {
+describe("shouldRefresh", () => {
   it("triggers on status change (draft → pending)", () => {
     expect(shouldRefresh("draft", "pending", 1, 1, 3, 3)).toBe(true);
   });

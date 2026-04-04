@@ -22,7 +22,7 @@ import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardChec
 import { usePresence, injectPresence } from "@/hooks/use-presence";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
-import { findNew, findDeleted } from "./draft-diff";
+import { findNew, findDeleted, shouldRefresh } from "./draft-diff";
 import { getProposalDraftsAction } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -211,6 +211,10 @@ export function ProposalEditor({
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
+  // Refs for delete animation: track latest fetched data so timeout never applies stale data
+  const pendingDocsRef = useRef<DocumentDraft[] | null>(null);
+  const pendingTasksRef = useRef<TaskDraft[] | null>(null);
+
   // View toggle state
   const [taskView, setTaskView] = useState<"cards" | "dag">("cards");
 
@@ -270,25 +274,27 @@ export function ProposalEditor({
       // Delete animation: mark deleting, then remove after fade-out
       const allDeleted = [...findDeleted(oldDocs, latestDocs), ...findDeleted(oldTasks, latestTasks)];
       if (allDeleted.length > 0) {
+        // Store latest data in refs so the timeout always applies the most recent fetch
+        pendingDocsRef.current = latestDocs;
+        pendingTasksRef.current = latestTasks;
         setDeletingIds(new Set(allDeleted));
         setTimeout(() => {
-          setDocs(latestDocs);
-          setTasks(latestTasks);
+          setDocs(pendingDocsRef.current ?? latestDocs);
+          setTasks(pendingTasksRef.current ?? latestTasks);
+          pendingDocsRef.current = null;
+          pendingTasksRef.current = null;
           setDeletingIds(new Set());
         }, 500);
       } else {
+        // Also update pending refs in case a delete timeout is in flight
+        pendingDocsRef.current = latestDocs;
+        pendingTasksRef.current = latestTasks;
         setDocs(latestDocs);
         setTasks(latestTasks);
       }
 
-      // Refresh server components when:
-      // 1. Status changed (Actions buttons update) — rare event
-      // 2. Draft count changed while in draft status (ValidationChecklist updates)
-      const statusChanged = latest.status && latest.status !== status;
-      const draftCountChanged = status === "draft" && (
-        latestDocs.length !== oldDocs.length || latestTasks.length !== oldTasks.length
-      );
-      if (statusChanged || draftCountChanged) {
+      // Refresh server components when status changes or draft count changes in draft status
+      if (shouldRefresh(status, latest.status, oldDocs.length, latestDocs.length, oldTasks.length, latestTasks.length)) {
         router.refresh();
       }
       onStatusChange?.(latest.status ?? status);

@@ -42,6 +42,26 @@ export function findChangedDocs(old: DocDraft[], current: DocDraft[]): string[] 
   }).map(d => d.uuid);
 }
 
+/**
+ * Determine whether a full-page router.refresh() is needed.
+ * - Status change (e.g. draft → pending): refreshes Actions buttons
+ * - Draft count change in draft status: refreshes ValidationChecklist
+ */
+export function shouldRefresh(
+  currentStatus: string,
+  latestStatus: string | null,
+  oldDocCount: number,
+  newDocCount: number,
+  oldTaskCount: number,
+  newTaskCount: number
+): boolean {
+  const statusChanged = latestStatus != null && latestStatus !== currentStatus;
+  const draftCountChanged = currentStatus === "draft" && (
+    newDocCount !== oldDocCount || newTaskCount !== oldTaskCount
+  );
+  return statusChanged || draftCountChanged;
+}
+
 /** Find task drafts that exist in both but have changed (field-level comparison) */
 export function findChangedTasks(old: TaskDraft[], current: TaskDraft[]): string[] {
   const oldMap = new Map(old.map(d => [d.uuid, d]));
