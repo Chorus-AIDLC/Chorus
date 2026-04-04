@@ -87,13 +87,13 @@ const docTypeKeys: Record<string, string> = {
   guide: "Guide",
 };
 
-// Document type icon and color configuration
-const docTypeConfig: Record<string, { icon: typeof FileText; bg: string; fg: string; subtitle: string }> = {
-  prd: { icon: FileText, bg: "bg-[#FFF3E0]", fg: "text-[#E07A5F]", subtitle: "Product Requirements Document" },
-  tech_design: { icon: Code, bg: "bg-[#E8F0FE]", fg: "text-[#4285F4]", subtitle: "Technical Design Document" },
-  adr: { icon: BookOpen, bg: "bg-[#E8F5E9]", fg: "text-[#4CAF50]", subtitle: "Architecture Decision Record" },
-  spec: { icon: FileCheck, bg: "bg-[#F3E8FD]", fg: "text-[#7C3AED]", subtitle: "Specification" },
-  guide: { icon: BookMarked, bg: "bg-[#FFF8E1]", fg: "text-[#F9A825]", subtitle: "Guide" },
+// Document type icon and color configuration (subtitles use i18n keys)
+const docTypeConfig: Record<string, { icon: typeof FileText; bg: string; fg: string; subtitleKey: string }> = {
+  prd: { icon: FileText, bg: "bg-[#FFF3E0]", fg: "text-[#E07A5F]", subtitleKey: "proposals.docSubtitlePrd" },
+  tech_design: { icon: Code, bg: "bg-[#E8F0FE]", fg: "text-[#4285F4]", subtitleKey: "proposals.docSubtitleTechDesign" },
+  adr: { icon: BookOpen, bg: "bg-[#E8F5E9]", fg: "text-[#4CAF50]", subtitleKey: "proposals.docSubtitleAdr" },
+  spec: { icon: FileCheck, bg: "bg-[#F3E8FD]", fg: "text-[#7C3AED]", subtitleKey: "proposals.docSubtitleSpec" },
+  guide: { icon: BookMarked, bg: "bg-[#FFF8E1]", fg: "text-[#F9A825]", subtitleKey: "proposals.docSubtitleGuide" },
 };
 
 // ===== DAG View Components =====
@@ -445,7 +445,7 @@ export function ProposalEditor({
                         </div>
                         <div className="min-w-0">
                           <div className="text-[13px] font-medium text-foreground truncate">{doc.title}</div>
-                          <div className="text-[11px] text-muted-foreground">{typeConf.subtitle}</div>
+                          <div className="text-[11px] text-muted-foreground">{t(typeConf.subtitleKey)}</div>
                         </div>
                         <span className="text-muted-foreground shrink-0">
                           {isExpanded ? (
@@ -605,13 +605,13 @@ export function ProposalEditor({
                         {acCount > 0 && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                             <ClipboardCheck className="h-3 w-3 text-[#4CAF50]" />
-                            {acCount} AC
+                            {t("proposals.acCount", { count: acCount })}
                           </span>
                         )}
                         {depCount > 0 && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                             <GitBranch className="h-3 w-3" />
-                            {depCount} {depCount === 1 ? "dep" : "deps"}
+                            {t("proposals.depCount", { count: depCount })}
                           </span>
                         )}
                       </div>

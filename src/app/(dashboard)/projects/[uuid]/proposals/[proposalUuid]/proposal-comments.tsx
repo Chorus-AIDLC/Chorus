@@ -147,7 +147,7 @@ export function ProposalComments({ proposalUuid, currentUserUuid }: ProposalComm
                         ? "bg-[#FFF3E0] text-[#E07A5F]"
                         : "bg-[#F0EDE8] text-[#6B6B6B]"
                     }`}>
-                      {isAgent ? "Agent" : "Human"}
+                      {isAgent ? t("comments.roleAgent") : t("comments.roleHuman")}
                     </span>
                     <span className="text-[11px] text-[#BFBFBF]">
                       {formatRelativeTime(c.createdAt, t)}

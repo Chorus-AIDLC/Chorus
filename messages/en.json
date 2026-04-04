@@ -92,7 +92,9 @@
   "comments": {
     "title": "Comments",
     "noComments": "No comments yet",
-    "addComment": "Add a comment... (type @ to mention)"
+    "addComment": "Add a comment... (type @ to mention)",
+    "roleAgent": "Agent",
+    "roleHuman": "Human"
   },
   "mentions": {
     "noResults": "No results",
@@ -521,6 +523,13 @@
     "docTypeAdr": "ADR",
     "docTypeSpec": "Spec",
     "docTypeGuide": "Guide",
+    "docSubtitlePrd": "Product Requirements Document",
+    "docSubtitleTechDesign": "Technical Design Document",
+    "docSubtitleAdr": "Architecture Decision Record",
+    "docSubtitleSpec": "Specification",
+    "docSubtitleGuide": "Guide",
+    "acCount": "{count} AC",
+    "depCount": "{count, plural, one {# dep} other {# deps}}",
     "storyPointsPlaceholder": "e.g. 4",
     "cardsView": "Cards",
     "dependencyExists": "This dependency already exists",
