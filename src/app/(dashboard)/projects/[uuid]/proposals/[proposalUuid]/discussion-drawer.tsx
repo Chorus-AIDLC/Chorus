@@ -46,7 +46,7 @@ export function DiscussionDrawer({
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <PresenceIndicator entityType="proposal" entityUuid={proposalUuid}>
+        <PresenceIndicator entityType="proposal" entityUuid={proposalUuid} subEntityType="comment">
           <Button
             variant="outline"
             size="sm"
