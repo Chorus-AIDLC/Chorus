@@ -7,6 +7,7 @@ import { registerPmTools } from "./tools/pm";
 import { registerDeveloperTools } from "./tools/developer";
 import { registerAdminTools } from "./tools/admin";
 import { registerSessionTools } from "./tools/session";
+import { enablePresence } from "./tools/presence";
 import type { AgentAuthContext } from "@/types/auth";
 
 // MCP Server factory function
@@ -15,6 +16,9 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
     name: "chorus",
     version: "1.0.0",
   });
+
+  // Enable presence event emission for all tools (must be called before registerTool calls)
+  enablePresence(server, auth);
 
   // Register public tools (available to all Agents)
   registerPublicTools(server, auth);

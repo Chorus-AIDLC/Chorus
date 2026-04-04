@@ -3,7 +3,7 @@
 // Auth via cookie (EventSource automatically sends cookies)
 
 import { getAuthContext } from "@/lib/auth";
-import { eventBus, type RealtimeEvent } from "@/lib/event-bus";
+import { eventBus, type RealtimeEvent, type PresenceEvent } from "@/lib/event-bus";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,18 @@ export async function GET(request: NextRequest) {
 
       eventBus.on("change", handler);
 
+      // Subscribe to presence events
+      const presenceHandler = (event: PresenceEvent) => {
+        // Filter by company (multi-tenancy)
+        if (event.companyUuid !== auth.companyUuid) return;
+        // Filter by project
+        if (projectUuid && event.projectUuid !== projectUuid) return;
+
+        send(`data: ${JSON.stringify({ type: "presence", ...event })}\n\n`);
+      };
+
+      eventBus.on("presence", presenceHandler);
+
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
@@ -51,6 +63,7 @@ export async function GET(request: NextRequest) {
       // Cleanup on abort (client disconnect)
       request.signal.addEventListener("abort", () => {
         eventBus.off("change", handler);
+        eventBus.off("presence", presenceHandler);
         clearInterval(heartbeat);
         try {
           controller.close();

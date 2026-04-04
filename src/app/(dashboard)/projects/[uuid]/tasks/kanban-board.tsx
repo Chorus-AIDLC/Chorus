@@ -8,6 +8,7 @@ import {
   Draggable,
   DropResult,
 } from "@hello-pangea/dnd";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { Lock, TriangleAlert, Monitor } from "lucide-react";
 import { motion, LayoutGroup } from "framer-motion";
 import { ANIM } from "@/lib/animation";
@@ -379,6 +380,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                     <img src="/typing-animation.gif" alt="" className="h-8 w-8" />
                                   </div>
                                 )}
+                              <PresenceIndicator entityType="task" entityUuid={task.uuid}>
                               <Card
                                 className={`cursor-pointer p-4 transition-all ${
                                   blocked
@@ -499,6 +501,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   </span>
                                 </div>
                               </Card>
+                              </PresenceIndicator>
                               </motion.div>
                             </div>
                           )}

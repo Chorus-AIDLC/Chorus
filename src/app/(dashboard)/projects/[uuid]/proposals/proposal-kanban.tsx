@@ -11,6 +11,7 @@ import { code } from "@streamdown/code";
 import type { DocumentDraft, TaskDraft } from "@/services/proposal.service";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { motion } from "framer-motion";
 import { fetchProposalsAction } from "./actions";
 
@@ -98,6 +99,7 @@ function ProposalCard({
       href={`/projects/${projectUuid}/proposals/${proposal.uuid}`}
       className="block"
     >
+      <PresenceIndicator entityType="proposal" entityUuid={proposal.uuid}>
       <Card className="cursor-pointer border-[#E5E0D8] bg-white p-4 transition-all hover:border-[#C67A52] hover:shadow-sm">
         {/* Row 1: Status badge + Type tag */}
         <div className="mb-2 flex items-start justify-between">
@@ -143,6 +145,7 @@ function ProposalCard({
           )}
         </div>
       </Card>
+      </PresenceIndicator>
     </Link>
   );
 }
@@ -263,7 +266,7 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
             </div>
 
             {/* Cards */}
-            <div className="flex-1 space-y-4 overflow-y-auto">
+            <div className="flex-1 space-y-4 overflow-y-auto pt-3">
               {columnProposals.length === 0 ? (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}

@@ -14,6 +14,17 @@ export interface RealtimeEvent {
   actorUuid?: string;
 }
 
+export interface PresenceEvent {
+  companyUuid: string;
+  projectUuid: string;
+  entityType: "task" | "idea" | "proposal" | "document";
+  entityUuid: string;
+  agentUuid: string;
+  agentName: string;
+  action: "view" | "mutate";
+  timestamp: number;
+}
+
 // Single Redis channel for all events (ElastiCache Serverless doesn't support PSUBSCRIBE)
 const REDIS_CHANNEL = "chorus:events";
 
@@ -28,6 +39,12 @@ class ChorusEventBus extends EventEmitter {
   private _connected = false;
   /** Unique per-process ID to deduplicate own messages from Redis */
   private readonly _instanceId = randomUUID();
+  /** Throttle map: key → last emit timestamp (ms) */
+  private readonly _presenceThrottle = new Map<string, number>();
+  private _evictionTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly THROTTLE_WINDOW_MS = 2000;
+  private static readonly EVICTION_INTERVAL_MS = 30000;
+  private static readonly EVICTION_TTL_MS = 30000;
 
   /** Call once at startup to initialize Redis subscriptions */
   async connect(): Promise<void> {
@@ -74,6 +91,52 @@ class ChorusEventBus extends EventEmitter {
     }
     // Always emit locally for same-process consumers
     return super.emit(event, ...args);
+  }
+
+  emitPresence(event: PresenceEvent) {
+    const key = `${event.agentUuid}:${event.entityType}:${event.entityUuid}`;
+    const now = Date.now();
+    const lastEmit = this._presenceThrottle.get(key);
+    if (lastEmit && now - lastEmit < ChorusEventBus.THROTTLE_WINDOW_MS) {
+      return; // Throttled
+    }
+    this._presenceThrottle.set(key, now);
+    this._ensureEvictionTimer();
+    this.emit("presence", event);
+  }
+
+  private _ensureEvictionTimer() {
+    if (this._evictionTimer) return;
+    this._evictionTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, ts] of this._presenceThrottle) {
+        if (now - ts >= ChorusEventBus.EVICTION_TTL_MS) {
+          this._presenceThrottle.delete(key);
+        }
+      }
+      if (this._presenceThrottle.size === 0) {
+        clearInterval(this._evictionTimer!);
+        this._evictionTimer = null;
+      }
+    }, ChorusEventBus.EVICTION_INTERVAL_MS);
+    // Don't block process exit
+    if (this._evictionTimer && typeof this._evictionTimer === "object" && "unref" in this._evictionTimer) {
+      this._evictionTimer.unref();
+    }
+  }
+
+  /** Expose for testing */
+  get _throttleMapSize() {
+    return this._presenceThrottle.size;
+  }
+
+  /** Reset presence throttle state — test only */
+  _resetPresenceState() {
+    this._presenceThrottle.clear();
+    if (this._evictionTimer) {
+      clearInterval(this._evictionTimer);
+      this._evictionTimer = null;
+    }
   }
 
   emitChange(event: RealtimeEvent) {

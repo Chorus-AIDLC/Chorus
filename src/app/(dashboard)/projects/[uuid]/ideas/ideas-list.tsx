@@ -18,6 +18,7 @@ import { code } from "@streamdown/code";
 import { IdeaDetailPanel } from "./idea-detail-panel";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { usePanelUrl } from "@/hooks/use-panel-url";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { StaggerList, StaggerItem } from "@/components/stagger-list";
 import { fetchIdeasAction } from "./actions";
 
@@ -139,6 +140,7 @@ export function IdeasList({
 
           return (
             <StaggerItem key={idea.uuid}>
+            <PresenceIndicator entityType="idea" entityUuid={idea.uuid}>
             <Card
               className="cursor-pointer border-[#E5E0D8] py-4 transition-all hover:border-[#C67A52]/50 hover:shadow-sm"
               onClick={() => openPanel(idea.uuid)}
@@ -222,6 +224,7 @@ export function IdeasList({
                 )}
               </CardFooter>
             </Card>
+            </PresenceIndicator>
             </StaggerItem>
           );
         })}
