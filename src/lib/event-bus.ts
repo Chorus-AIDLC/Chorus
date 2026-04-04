@@ -19,6 +19,9 @@ export interface PresenceEvent {
   projectUuid: string;
   entityType: "task" | "idea" | "proposal" | "document";
   entityUuid: string;
+  /** Optional sub-entity for nested resources (e.g., draft within a proposal) */
+  subEntityType?: string;
+  subEntityUuid?: string;
   agentUuid: string;
   agentName: string;
   action: "view" | "mutate";
@@ -94,7 +97,7 @@ class ChorusEventBus extends EventEmitter {
   }
 
   emitPresence(event: PresenceEvent) {
-    const key = `${event.agentUuid}:${event.entityType}:${event.entityUuid}`;
+    const key = `${event.agentUuid}:${event.entityType}:${event.entityUuid}${event.subEntityType ? `:${event.subEntityType}` : ""}${event.subEntityUuid ? `:${event.subEntityUuid}` : ""}`;
     const now = Date.now();
     const lastEmit = this._presenceThrottle.get(key);
     if (lastEmit && now - lastEmit < ChorusEventBus.THROTTLE_WINDOW_MS) {

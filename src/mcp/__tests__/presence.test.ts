@@ -42,7 +42,7 @@ describe("presence wrapper", () => {
 
   describe("detectResource", () => {
     it("detects taskUuid", () => {
-      const result = detectResource({ taskUuid: "t-1", projectUuid: "p-1" });
+      const result = detectResource({ taskUuid: "t-1", projectUuid: "p-1" }, "chorus_get_task");
       expect(result).toEqual({
         entityType: "task",
         entityUuid: "t-1",
@@ -51,7 +51,7 @@ describe("presence wrapper", () => {
     });
 
     it("detects ideaUuid", () => {
-      const result = detectResource({ ideaUuid: "i-1" });
+      const result = detectResource({ ideaUuid: "i-1" }, "chorus_get_task");
       expect(result).toEqual({
         entityType: "idea",
         entityUuid: "i-1",
@@ -60,7 +60,7 @@ describe("presence wrapper", () => {
     });
 
     it("detects proposalUuid", () => {
-      const result = detectResource({ proposalUuid: "pr-1" });
+      const result = detectResource({ proposalUuid: "pr-1" }, "chorus_get_task");
       expect(result).toEqual({
         entityType: "proposal",
         entityUuid: "pr-1",
@@ -69,7 +69,7 @@ describe("presence wrapper", () => {
     });
 
     it("detects documentUuid", () => {
-      const result = detectResource({ documentUuid: "d-1", projectUuid: "p-1" });
+      const result = detectResource({ documentUuid: "d-1", projectUuid: "p-1" }, "chorus_get_task");
       expect(result).toEqual({
         entityType: "document",
         entityUuid: "d-1",
@@ -81,7 +81,7 @@ describe("presence wrapper", () => {
       const result = detectResource({
         targetUuid: "t-1",
         targetType: "task",
-      });
+      }, "chorus_get_task");
       expect(result).toEqual({
         entityType: "task",
         entityUuid: "t-1",
@@ -93,17 +93,17 @@ describe("presence wrapper", () => {
       const result = detectResource({
         targetUuid: "x-1",
         targetType: "unknown_entity",
-      });
+      }, "chorus_get_task");
       expect(result).toBeNull();
     });
 
     it("returns null for tools without resource UUIDs", () => {
-      const result = detectResource({ query: "search term" });
+      const result = detectResource({ query: "search term" }, "chorus_get_task");
       expect(result).toBeNull();
     });
 
     it("returns null for empty params", () => {
-      const result = detectResource({});
+      const result = detectResource({}, "chorus_get_task");
       expect(result).toBeNull();
     });
 
@@ -112,7 +112,7 @@ describe("presence wrapper", () => {
         taskUuid: "t-1",
         targetUuid: "i-1",
         targetType: "idea",
-      });
+      }, "chorus_get_task");
       expect(result?.entityType).toBe("task");
       expect(result?.entityUuid).toBe("t-1");
     });

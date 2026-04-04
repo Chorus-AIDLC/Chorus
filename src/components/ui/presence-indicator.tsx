@@ -7,14 +7,17 @@ import { Bot } from "lucide-react";
 interface PresenceIndicatorProps {
   entityType: string;
   entityUuid: string;
+  /** Optional sub-entity for nested resources (e.g., draft within a proposal) */
+  subEntityType?: string;
+  subEntityUuid?: string;
   children: React.ReactNode;
   /** Place badge inside the border (for containers with overflow-hidden) */
   badgeInside?: boolean;
 }
 
-export function PresenceIndicator({ entityType, entityUuid, children, badgeInside }: PresenceIndicatorProps) {
+export function PresenceIndicator({ entityType, entityUuid, subEntityType, subEntityUuid, children, badgeInside }: PresenceIndicatorProps) {
   const { getPresence } = usePresence();
-  const entries = getPresence(entityType, entityUuid);
+  const entries = getPresence(entityType, entityUuid, subEntityType, subEntityUuid);
 
   if (entries.length === 0) {
     return <>{children}</>;

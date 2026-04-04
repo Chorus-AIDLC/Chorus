@@ -34,9 +34,16 @@ interface DetectedResource {
   entityType: PresenceEvent["entityType"];
   entityUuid: string;
   projectUuid?: string;
+  subEntityType?: string;
+  subEntityUuid?: string;
 }
 
-function detectResource(params: Record<string, unknown>): DetectedResource | null {
+function detectResource(params: Record<string, unknown>, toolName: string): DetectedResource | null {
+  // Detect optional sub-entity (e.g., draftUuid within a proposal)
+  const draftUuid = typeof params.draftUuid === "string" ? params.draftUuid : undefined;
+  // Detect comment tools for sub-entity "comment"
+  const isCommentTool = toolName.includes("comment");
+
   // Check entity-specific UUID fields first
   for (const [field, entityType] of Object.entries(ENTITY_UUID_FIELDS)) {
     if (typeof params[field] === "string") {
@@ -44,6 +51,7 @@ function detectResource(params: Record<string, unknown>): DetectedResource | nul
         entityType,
         entityUuid: params[field] as string,
         projectUuid: typeof params.projectUuid === "string" ? params.projectUuid : undefined,
+        ...(draftUuid && entityType === "proposal" ? { subEntityType: "draft", subEntityUuid: draftUuid } : {}),
       };
     }
   }
@@ -56,6 +64,7 @@ function detectResource(params: Record<string, unknown>): DetectedResource | nul
         entityType,
         entityUuid: params.targetUuid as string,
         projectUuid: typeof params.projectUuid === "string" ? params.projectUuid : undefined,
+        ...(isCommentTool ? { subEntityType: "comment" } : {}),
       };
     }
   }
@@ -144,6 +153,10 @@ async function emitPresenceAsync(
         projectUuid,
         entityType: resource.entityType,
         entityUuid: resource.entityUuid,
+        ...(resource.subEntityType && resource.subEntityUuid ? {
+          subEntityType: resource.subEntityType,
+          subEntityUuid: resource.subEntityUuid,
+        } : {}),
         agentUuid: auth.actorUuid,
         agentName: auth.agentName || "Unknown Agent",
         action: classifyAction(toolName),
@@ -173,7 +186,7 @@ export function enablePresence(server: McpServer, auth: AgentAuthContext): void 
 
     const wrappedHandler = async (params: Record<string, unknown>, extra: unknown) => {
       // Fire and forget — emit presence without blocking the tool handler
-      const resource = detectResource(params);
+      const resource = detectResource(params, name);
       if (resource) {
         emitPresenceAsync(resource, name, auth, projectUuidCache);
       }

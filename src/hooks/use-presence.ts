@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { usePresenceSubscription, type PresenceEvent } from "@/contexts/realtime-context";
 
 // Re-export for consumers
@@ -22,12 +22,18 @@ const timers = new Map<string, NodeJS.Timeout>(); // entryKey → cleanup timer
 let storeListeners = new Set<() => void>();
 let version = 0;
 
-function entityKey(entityType: string, entityUuid: string): string {
+function presenceKey(entityType: string, entityUuid: string, subEntityType?: string, subEntityUuid?: string): string {
+  if (subEntityType) {
+    return subEntityUuid
+      ? `${entityType}:${entityUuid}:${subEntityType}:${subEntityUuid}`
+      : `${entityType}:${entityUuid}:${subEntityType}`;
+  }
   return `${entityType}:${entityUuid}`;
 }
 
-function dedupKey(entityType: string, entityUuid: string, agentUuid: string): string {
-  return `${entityType}:${entityUuid}:${agentUuid}`;
+function dedupKeyFor(entityType: string, entityUuid: string, agentUuid: string, subEntityType?: string, subEntityUuid?: string): string {
+  const base = presenceKey(entityType, entityUuid, subEntityType, subEntityUuid);
+  return `${base}:${agentUuid}`;
 }
 
 function notifyListeners() {
@@ -36,8 +42,10 @@ function notifyListeners() {
 }
 
 function addPresence(event: PresenceEvent) {
-  const eKey = entityKey(event.entityType, event.entityUuid);
-  const dKey = dedupKey(event.entityType, event.entityUuid, event.agentUuid);
+  const subType = event.subEntityType;
+  const subUuid = event.subEntityUuid;
+  const pKey = presenceKey(event.entityType, event.entityUuid, subType, subUuid);
+  const dKey = dedupKeyFor(event.entityType, event.entityUuid, event.agentUuid, subType, subUuid);
 
   // Frontend dedup: same agent+entity within 3s
   const lastTime = dedupMap.get(dKey);
@@ -54,10 +62,10 @@ function addPresence(event: PresenceEvent) {
   };
 
   // Add/replace entry for this agent on this entity
-  const entries = presenceMap.get(eKey) ?? [];
+  const entries = presenceMap.get(pKey) ?? [];
   const filtered = entries.filter((e) => e.agentUuid !== event.agentUuid);
   filtered.push(entry);
-  presenceMap.set(eKey, filtered);
+  presenceMap.set(pKey, filtered);
 
   // Clear previous timer for this agent+entity
   const existingTimer = timers.get(dKey);
@@ -65,13 +73,13 @@ function addPresence(event: PresenceEvent) {
 
   // Auto-clear after 3 seconds
   const timer = setTimeout(() => {
-    const current = presenceMap.get(eKey);
+    const current = presenceMap.get(pKey);
     if (current) {
       const remaining = current.filter((e) => e.agentUuid !== event.agentUuid);
       if (remaining.length === 0) {
-        presenceMap.delete(eKey);
+        presenceMap.delete(pKey);
       } else {
-        presenceMap.set(eKey, remaining);
+        presenceMap.set(pKey, remaining);
       }
     }
     dedupMap.delete(dKey);
@@ -104,12 +112,34 @@ export function _resetPresenceStore() {
   storeListeners = new Set();
 }
 
-/** Expose addPresence for testing */
+/** Expose addPresence for testing and manual injection */
 export const _addPresence = addPresence;
 
 /**
+ * Manually inject a presence entry for a sub-entity.
+ * Use this when a new sub-item appears and you want to show presence on it.
+ */
+export function injectPresence(params: {
+  entityType: PresenceEvent["entityType"];
+  entityUuid: string;
+  subEntityType: string;
+  subEntityUuid: string;
+  agentUuid: string;
+  agentName: string;
+  action: "view" | "mutate";
+}) {
+  addPresence({
+    type: "presence",
+    companyUuid: "",
+    projectUuid: "",
+    ...params,
+    timestamp: Date.now(),
+  });
+}
+
+/**
  * Hook to subscribe to agent presence events.
- * Returns getPresence(entityType, entityUuid) to query active presences for a resource.
+ * Returns getPresence to query active presences for a resource, optionally at sub-entity level.
  */
 export function usePresence() {
   // Subscribe to store changes for re-render
@@ -118,8 +148,13 @@ export function usePresence() {
   // Subscribe to SSE presence events via RealtimeContext
   usePresenceSubscription(addPresence);
 
-  const getPresence = (entityType: string, entityUuid: string): PresenceEntry[] => {
-    return presenceMap.get(entityKey(entityType, entityUuid)) ?? [];
+  const getPresence = (
+    entityType: string,
+    entityUuid: string,
+    subEntityType?: string,
+    subEntityUuid?: string
+  ): PresenceEntry[] => {
+    return presenceMap.get(presenceKey(entityType, entityUuid, subEntityType, subEntityUuid)) ?? [];
   };
 
   return { getPresence };

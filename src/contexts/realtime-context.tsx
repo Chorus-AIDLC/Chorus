@@ -32,6 +32,8 @@ export interface PresenceEvent {
   projectUuid: string;
   entityType: "task" | "idea" | "proposal" | "document";
   entityUuid: string;
+  subEntityType?: string;
+  subEntityUuid?: string;
   agentUuid: string;
   agentName: string;
   action: "view" | "mutate";

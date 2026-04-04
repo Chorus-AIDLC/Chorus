@@ -18,8 +18,9 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
-import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch, Bot } from "lucide-react";
-import { usePresence } from "@/hooks/use-presence";
+import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch } from "lucide-react";
+import { usePresence, injectPresence } from "@/hooks/use-presence";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { findNew, findDeleted } from "./draft-diff";
 import { getProposalDraftsAction } from "./actions";
@@ -202,7 +203,6 @@ export function ProposalEditor({
   // Realtime draft state (T2: component-level refresh)
   const [docs, setDocs] = useState(initialDocDrafts);
   const [tasks, setTasks] = useState(initialTaskDrafts);
-  const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   // Keep refs to latest state for SSE callback (avoids stale closure)
@@ -247,11 +247,24 @@ export function ProposalEditor({
       const latestDocs = latest.documentDrafts ?? [];
       const latestTasks = latest.taskDrafts ?? [];
 
-      // Detect new items — show presence-style border on newly created drafts
+      // Inject sub-entity presence for newly created drafts
       const allNewIds = [...findNew(oldDocs, latestDocs), ...findNew(oldTasks, latestTasks)];
       if (allNewIds.length > 0) {
-        setNewItemIds(new Set(allNewIds));
-        setTimeout(() => setNewItemIds(new Set()), 3000);
+        const currentPresence = getPresence("proposal", proposalUuid);
+        const agent = currentPresence[0];
+        if (agent) {
+          for (const newId of allNewIds) {
+            injectPresence({
+              entityType: "proposal",
+              entityUuid: proposalUuid,
+              subEntityType: "draft",
+              subEntityUuid: newId,
+              agentUuid: agent.agentUuid,
+              agentName: agent.agentName,
+              action: "mutate",
+            });
+          }
+        }
       }
 
       // Delete animation: mark deleting, then remove after fade-out
@@ -473,17 +486,6 @@ export function ProposalEditor({
 
   return (
     <>
-      {/* Presence Banner */}
-      {presenceList.length > 0 && (
-        <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-700 animate-in fade-in duration-300">
-          <Bot className="h-4 w-4 shrink-0" />
-          <span>
-            {presenceList.map(p => p.agentName).join(", ")}{" "}
-            {t("proposals.presenceWorking")}
-          </span>
-        </div>
-      )}
-
       {/* Document Drafts Section */}
       <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
         <CardHeader className="flex-row items-center justify-between border-b border-[#F5F2EC] px-6 py-4">
@@ -516,9 +518,10 @@ export function ProposalEditor({
                 const typeConf = docTypeConfig[doc.type] || docTypeConfig.guide;
                 const DocIcon = typeConf.icon;
                 return (
-                  <div key={doc.uuid} className={`px-5 py-4 transition-all duration-500 ${
+                  <PresenceIndicator key={doc.uuid} entityType="proposal" entityUuid={proposalUuid} subEntityType="draft" subEntityUuid={doc.uuid} badgeInside>
+                  <div className={`px-5 py-4 transition-all duration-500 ${
                     deletingIds.has(doc.uuid) ? "opacity-0" : ""
-                  } ${newItemIds.has(doc.uuid) ? "ring-2 ring-inset ring-[#E07A5F]/60" : ""}`}>
+                  }`}>
                     {/* Document header row */}
                     <div className="flex items-center justify-between">
                       <button
@@ -571,6 +574,7 @@ export function ProposalEditor({
                       </div>
                     )}
                   </div>
+                  </PresenceIndicator>
                 );
               })}
             </div>
@@ -650,18 +654,17 @@ export function ProposalEditor({
                   const acCount = (task.acceptanceCriteriaItems?.length || 0);
                   const isSelected = selectedTaskDraftUuid === task.uuid;
                   return (
+                    <PresenceIndicator key={task.uuid} entityType="proposal" entityUuid={proposalUuid} subEntityType="draft" subEntityUuid={task.uuid}>
                     <div
-                      key={task.uuid}
                       onClick={() => {
                         setShowCreateTaskPanel(false);
                         setSelectedTaskDraftUuid(task.uuid);
                       }}
-                      className={`cursor-pointer rounded-[10px] border bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 ${
+                      className={`cursor-pointer rounded-[10px] bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 ${
                         deletingIds.has(task.uuid) ? "opacity-0" : ""
-                      } ${newItemIds.has(task.uuid) ? "ring-2 ring-[#E07A5F]/60 border-[#E07A5F]" : ""
                       } ${isSelected
-                          ? "border-[#C67A52] shadow-sm"
-                          : "border-[#E5E2DC] hover:border-[#C67A52]/50"
+                          ? "border-[#C67A52] shadow-sm border"
+                          : "border-[#E5E2DC] hover:border-[#C67A52]/50 border"
                       }`}
                     >
                       {/* Top row: priority + story points */}
@@ -703,6 +706,7 @@ export function ProposalEditor({
                         )}
                       </div>
                     </div>
+                    </PresenceIndicator>
                   );
                 })}
               </div>

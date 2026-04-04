@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,10 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
+import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { ProposalComments } from "./proposal-comments";
+import { getProposalCommentsAction } from "./comment-actions";
 
 interface DiscussionDrawerProps {
   proposalUuid: string;
@@ -28,22 +31,36 @@ export function DiscussionDrawer({
   const t = useTranslations();
   const [count, setCount] = useState(initialCount);
 
+  // Listen for SSE events to update badge count even when drawer is closed
+  const refreshCount = useCallback(async () => {
+    try {
+      const result = await getProposalCommentsAction(proposalUuid);
+      setCount(result.comments.length);
+    } catch {
+      // Ignore — badge stays at last known count
+    }
+  }, [proposalUuid]);
+
+  useRealtimeEntityEvent("proposal", proposalUuid, refreshCount);
+
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5 border-[#E5E0D8] text-[#3D3D3D]"
-        >
-          <MessageCircle className="h-4 w-4" />
-          <span>{t("proposals.discussion")}</span>
-          {count > 0 && (
-            <Badge className="ml-0.5 h-5 min-w-5 justify-center rounded-full border-0 bg-[#E07A5F] px-1.5 text-[10px] font-semibold text-white">
-              {count}
-            </Badge>
-          )}
-        </Button>
+        <PresenceIndicator entityType="proposal" entityUuid={proposalUuid}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-[#E5E0D8] text-[#3D3D3D]"
+          >
+            <MessageCircle className="h-4 w-4" />
+            <span>{t("proposals.discussion")}</span>
+            {count > 0 && (
+              <Badge className="ml-0.5 h-5 min-w-5 justify-center rounded-full border-0 bg-[#E07A5F] px-1.5 text-[10px] font-semibold text-white">
+                {count}
+              </Badge>
+            )}
+          </Button>
+        </PresenceIndicator>
       </SheetTrigger>
       <SheetContent
         side="right"
