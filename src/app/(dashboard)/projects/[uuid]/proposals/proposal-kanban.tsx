@@ -266,6 +266,7 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
             </div>
 
             {/* Cards */}
+            {/* pt-3: leave room for PresenceIndicator badge above first card */}
             <div className="flex-1 space-y-4 overflow-y-auto pt-3">
               {columnProposals.length === 0 ? (
                 <motion.div

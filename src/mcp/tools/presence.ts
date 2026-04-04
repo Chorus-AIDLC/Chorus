@@ -115,7 +115,8 @@ async function resolveProjectUuid(
       cache.set(cacheKey, projectUuid);
     }
     return projectUuid;
-  } catch {
+  } catch (err) {
+    console.warn("[Presence] Failed to resolve projectUuid:", err);
     return null;
   }
 }
@@ -150,8 +151,8 @@ async function emitPresenceAsync(
       };
       eventBus.emitPresence(presenceEvent);
     }
-  } catch {
-    // Silently fail — never let presence affect tool execution
+  } catch (err) {
+    console.warn("[Presence] Failed to emit presence event:", err);
   }
 }
 

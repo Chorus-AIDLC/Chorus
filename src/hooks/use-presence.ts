@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { usePresenceSubscription, type PresenceEvent } from "@/contexts/realtime-context";
 
 // Re-export for consumers
@@ -118,13 +118,9 @@ export function usePresence() {
   // Subscribe to SSE presence events via RealtimeContext
   usePresenceSubscription(addPresence);
 
-  const getPresence = useCallback(
-    (entityType: string, entityUuid: string): PresenceEntry[] => {
-      return presenceMap.get(entityKey(entityType, entityUuid)) ?? [];
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [version]
-  );
+  const getPresence = (entityType: string, entityUuid: string): PresenceEntry[] => {
+    return presenceMap.get(entityKey(entityType, entityUuid)) ?? [];
+  };
 
   return { getPresence };
 }

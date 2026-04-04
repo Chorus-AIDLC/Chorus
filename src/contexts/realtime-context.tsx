@@ -24,11 +24,13 @@ interface RealtimeEvent {
 
 type EntitySubscriber = (event: RealtimeEvent) => void;
 
+// Re-export backend PresenceEvent with SSE `type` discriminator
+export type { PresenceEvent as PresenceEventBase } from "@/lib/event-bus";
 export interface PresenceEvent {
   type: "presence";
   companyUuid: string;
   projectUuid: string;
-  entityType: string;
+  entityType: "task" | "idea" | "proposal" | "document";
   entityUuid: string;
   agentUuid: string;
   agentName: string;
