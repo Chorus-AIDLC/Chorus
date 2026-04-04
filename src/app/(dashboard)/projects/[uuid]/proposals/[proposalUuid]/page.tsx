@@ -29,6 +29,7 @@ import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
 import { DiscussionDrawer } from "./discussion-drawer";
 import { batchCommentCounts } from "@/services/comment.service";
+import { normalizeNewlines } from "../dashboard/panels/utils";
 
 // Status color configuration
 const statusColors: Record<string, string> = {
@@ -195,7 +196,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               </CardHeader>
               <CardContent className="px-5 py-4">
                 <div className="prose prose-sm max-w-none text-[#6B6B6B]">
-                  <MarkdownContent>{proposal.description}</MarkdownContent>
+                  <MarkdownContent>{normalizeNewlines(proposal.description)}</MarkdownContent>
                 </div>
               </CardContent>
             </Card>
