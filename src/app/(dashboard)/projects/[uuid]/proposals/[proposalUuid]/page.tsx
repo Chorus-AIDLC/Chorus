@@ -29,7 +29,7 @@ import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
 import { DiscussionDrawer } from "./discussion-drawer";
 import { batchCommentCounts } from "@/services/comment.service";
-import { normalizeNewlines } from "../dashboard/panels/utils";
+import { normalizeNewlines } from "../../dashboard/panels/utils";
 
 // Status color configuration
 const statusColors: Record<string, string> = {
