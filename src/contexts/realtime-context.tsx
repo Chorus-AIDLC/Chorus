@@ -56,6 +56,18 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     const THROTTLE_MS = 3000;  // At most 1 refresh every 3 seconds
     const DEBOUNCE_MS = 1000;  // Wait 1s of silence before refreshing
 
+    // Per-entityType debounce timers for entity subscribers
+    const entityDebounceTimers: Record<string, NodeJS.Timeout> = {};
+    const ENTITY_DEBOUNCE_MS = 300;
+
+    function debouncedNotifyEntity(event: RealtimeEvent) {
+      const key = event.entityType;
+      clearTimeout(entityDebounceTimers[key]);
+      entityDebounceTimers[key] = setTimeout(() => {
+        notifyEntity(event);
+      }, ENTITY_DEBOUNCE_MS);
+    }
+
     function connect() {
       // Close any existing connection before opening a new one
       disconnect();
@@ -85,9 +97,9 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
           }, Math.max(DEBOUNCE_MS, THROTTLE_MS - elapsed));
         }
 
-        // Entity-specific events fire immediately (no throttle/debounce)
+        // Entity-specific events: debounced per entity type (300ms)
         if (parsedEvent) {
-          notifyEntity(parsedEvent);
+          debouncedNotifyEntity(parsedEvent);
         }
       };
       es.onerror = () => {
@@ -104,18 +116,14 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
 
     function handleVisibility() {
       if (document.visibilityState === "visible") {
-        // If the connection was lost while hidden (e.g. browser suspended it),
-        // reconnect and do a catch-up refresh for all subscriber types.
-        if (!es || es.readyState === EventSource.CLOSED) {
+        const connectionLost = !es || es.readyState === EventSource.CLOSED;
+        if (connectionLost) {
+          // Reconnect and catch up — events were missed while disconnected.
           connect();
-        }
-        // Always notify on re-focus — events may have arrived but been throttled,
-        // or the connection may have silently dropped.
-        notify();
-        // Fire a synthetic event for each entity type so entity-type subscribers
-        // (kanban, ideas-list, etc.) also catch up on missed changes.
-        for (const entityType of ["task", "idea", "proposal", "document", "project"] as const) {
-          notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
+          notify();
+          for (const entityType of ["task", "idea", "proposal", "document", "project"]) {
+            notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
+          }
         }
       }
     }
@@ -126,6 +134,7 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     return () => {
       disconnect();
       clearTimeout(debounceTimer);
+      for (const key in entityDebounceTimers) clearTimeout(entityDebounceTimers[key]);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [projectUuid, notify, notifyEntity]);
@@ -188,6 +197,7 @@ export function useRealtimeRefresh() {
  * Subscribe to SSE events filtered by one or more entity types.
  * The callback fires only when events match any of the given entityTypes.
  * Does NOT fire on mount — only on matching SSE events.
+ * Events are debounced per entity type (300ms) to batch rapid-fire updates.
  */
 export function useRealtimeEntityTypeEvent(
   entityTypes: string | string[],
@@ -213,18 +223,6 @@ export function useRealtimeEntityTypeEvent(
     };
     return context.subscribeEntity(handler);
   }, [context]);
-}
-
-/**
- * Convenience hook: calls router.refresh() only when SSE events match
- * the given entity type(s). Much cheaper than useRealtimeRefresh() which
- * refreshes on every event regardless of type.
- */
-export function useRealtimeEntityTypeRefresh(entityTypes: string | string[]) {
-  const router = useRouter();
-  useRealtimeEntityTypeEvent(entityTypes, () => {
-    router.refresh();
-  });
 }
 
 /**
