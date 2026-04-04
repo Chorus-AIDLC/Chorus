@@ -104,10 +104,19 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
 
     function handleVisibility() {
       if (document.visibilityState === "visible") {
-        connect();
+        // If the connection was lost while hidden (e.g. browser suspended it),
+        // reconnect and do a catch-up refresh for all subscriber types.
+        if (!es || es.readyState === EventSource.CLOSED) {
+          connect();
+        }
+        // Always notify on re-focus — events may have arrived but been throttled,
+        // or the connection may have silently dropped.
         notify();
-      } else {
-        disconnect();
+        // Fire a synthetic event for each entity type so entity-type subscribers
+        // (kanban, ideas-list, etc.) also catch up on missed changes.
+        for (const entityType of ["task", "idea", "proposal", "document", "project"] as const) {
+          notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
+        }
       }
     }
 
@@ -171,6 +180,49 @@ export function useRealtimeEvent(callback: () => void) {
 export function useRealtimeRefresh() {
   const router = useRouter();
   useRealtimeEvent(() => {
+    router.refresh();
+  });
+}
+
+/**
+ * Subscribe to SSE events filtered by one or more entity types.
+ * The callback fires only when events match any of the given entityTypes.
+ * Does NOT fire on mount — only on matching SSE events.
+ */
+export function useRealtimeEntityTypeEvent(
+  entityTypes: string | string[],
+  callback: (event: RealtimeEvent) => void
+) {
+  const context = useContext(RealtimeContext);
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  const typesRef = useRef(entityTypes);
+  typesRef.current = entityTypes;
+
+  useEffect(() => {
+    if (!context) return;
+    const handler = (event: RealtimeEvent) => {
+      const types = typesRef.current;
+      const match = Array.isArray(types)
+        ? types.includes(event.entityType)
+        : event.entityType === types;
+      if (match) {
+        callbackRef.current(event);
+      }
+    };
+    return context.subscribeEntity(handler);
+  }, [context]);
+}
+
+/**
+ * Convenience hook: calls router.refresh() only when SSE events match
+ * the given entity type(s). Much cheaper than useRealtimeRefresh() which
+ * refreshes on every event regardless of type.
+ */
+export function useRealtimeEntityTypeRefresh(entityTypes: string | string[]) {
+  const router = useRouter();
+  useRealtimeEntityTypeEvent(entityTypes, () => {
     router.refresh();
   });
 }

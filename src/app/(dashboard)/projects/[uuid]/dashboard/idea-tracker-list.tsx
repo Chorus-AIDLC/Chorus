@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { AlertCircle, Lightbulb, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useRealtimeEvent } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { IdeaStatusGroup } from "./idea-status-group";
 import type { IdeaCardItem } from "./idea-card";
 
@@ -59,8 +59,8 @@ export function IdeaTrackerList({
     }
   }, [projectUuid, t]);
 
-  // Realtime refresh — initial data comes from Server Component
-  useRealtimeEvent(fetchData);
+  // Realtime refresh — only re-fetch when idea entities change
+  useRealtimeEntityTypeEvent("idea", fetchData);
 
   // Only fetch on mount if no initial data was provided
   useEffect(() => {

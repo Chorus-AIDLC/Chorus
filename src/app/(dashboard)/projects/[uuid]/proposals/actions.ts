@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import {
+  listProposals,
   createProposal,
   checkIdeasAssignee,
   type DocumentDraftInput,
@@ -79,5 +80,28 @@ export async function createProposalAction(
   } catch (error) {
     console.error("Failed to create proposal:", error);
     return { success: false, error: error instanceof Error ? error.message : "Failed to create proposal" };
+  }
+}
+
+/**
+ * Fetch proposals for client-side refetch (SSE-driven updates).
+ */
+export async function fetchProposalsAction(projectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+
+  try {
+    const { proposals } = await listProposals({
+      companyUuid: auth.companyUuid,
+      projectUuid,
+      skip: 0,
+      take: 1000,
+    });
+    return { success: true as const, data: proposals };
+  } catch (error) {
+    console.error("Failed to fetch proposals:", error);
+    return { success: false as const, error: "Failed to fetch proposals" };
   }
 }

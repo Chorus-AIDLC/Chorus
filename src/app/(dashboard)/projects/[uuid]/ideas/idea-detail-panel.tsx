@@ -54,7 +54,7 @@ import { MentionEditor, type MentionEditorRef } from "@/components/mention-edito
 import { AssignIdeaModal } from "./assign-idea-modal";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction } from "./[ideaUuid]/elaboration-actions";
-import { useRealtimeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
@@ -183,8 +183,8 @@ export function IdeaDetailPanel({
     }
   }, [idea.uuid]);
 
-  // Subscribe to SSE events to refresh elaboration in real-time
-  useRealtimeEvent(reloadElaboration);
+  // Subscribe to SSE events to refresh elaboration when idea changes
+  useRealtimeEntityTypeEvent("idea", reloadElaboration);
 
   // Auto-refresh comments when another user adds a comment
   useRealtimeEntityEvent("idea", idea.uuid, (event) => {

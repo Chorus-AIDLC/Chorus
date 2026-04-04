@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved, checkAcceptanceCriteriaGate } from "@/services/task.service";
+import { listTasks, updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { createActivity } from "@/services/activity.service";
 
 // Map column IDs to task statuses
@@ -103,6 +103,26 @@ export async function forceMoveTaskToColumnAction(
   } catch (error) {
     console.error("Failed to force move task:", error);
     return { success: false, error: "Failed to force move task" };
+  }
+}
+
+export async function fetchTasksAction(projectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+
+  try {
+    const { tasks } = await listTasks({
+      companyUuid: auth.companyUuid,
+      projectUuid,
+      skip: 0,
+      take: 1000,
+    });
+    return { success: true as const, data: tasks };
+  } catch (error) {
+    console.error("Failed to fetch tasks:", error);
+    return { success: false as const, error: "Failed to fetch tasks" };
   }
 }
 

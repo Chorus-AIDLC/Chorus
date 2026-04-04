@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import {
   DragDropContext,
@@ -21,10 +20,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { moveTaskToColumnAction, forceMoveTaskToColumnAction } from "./actions";
+import { moveTaskToColumnAction, forceMoveTaskToColumnAction, fetchTasksAction } from "./actions";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
-import { useRealtimeRefresh } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 
 interface Task {
   uuid: string;
@@ -115,7 +114,6 @@ function getUnresolvedDeps(task: Task): { uuid: string; title: string; status: s
 
 export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose }: KanbanBoardProps) {
   const t = useTranslations();
-  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
   const [forceDialogOpen, setForceDialogOpen] = useState(false);
@@ -124,9 +122,24 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const [gateDialogOpen, setGateDialogOpen] = useState(false);
   const [gateDialogCriteria, setGateDialogCriteria] = useState<Array<{ uuid: string; description: string; required: boolean; status: string; evidence: string | null }>>([]);
   const [forceMoving, setForceMoving] = useState(false);
-  useRealtimeRefresh();
 
-  // Sync local state when server data changes (after router.refresh())
+  // Refetch tasks locally — no router.refresh() needed
+  const refetchTasks = useCallback(async () => {
+    const result = await fetchTasksAction(projectUuid);
+    if (result.success) {
+      setTasks(result.data);
+      // Also refresh worker counts with the new task list
+      const wcResult = await getBatchWorkerCountsAction(result.data.map((t) => t.uuid));
+      if (wcResult.success && wcResult.data) {
+        setWorkerCounts(wcResult.data);
+      }
+    }
+  }, [projectUuid]);
+
+  // SSE: only refetch when task entities change
+  useRealtimeEntityTypeEvent("task", refetchTasks);
+
+  // Sync local state when server data changes (e.g. initial navigation)
   useEffect(() => {
     setTasks(initialTasks);
   }, [initialTasks]);
@@ -236,8 +249,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setGateDialogOpen(true);
       }
     } else {
-      // Refresh to get the latest data
-      router.refresh();
+      // Refetch tasks to get the latest data (local update, no full-page refresh)
+      refetchTasks();
     }
   };
 
@@ -253,7 +266,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setForceDialogOpen(false);
         setForceDialogTask(null);
         setForceDialogBlockers([]);
-        router.refresh();
+        refetchTasks();
       } else {
         console.error("Failed to force move task:", result.error);
       }

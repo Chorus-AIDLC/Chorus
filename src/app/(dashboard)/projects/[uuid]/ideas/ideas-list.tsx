@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Bot, MessageSquare, FileText, User } from "lucide-react";
@@ -16,9 +16,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { IdeaDetailPanel } from "./idea-detail-panel";
-import { useRealtimeRefresh } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { usePanelUrl } from "@/hooks/use-panel-url";
 import { StaggerList, StaggerItem } from "@/components/stagger-list";
+import { fetchIdeasAction } from "./actions";
 
 interface IdeaItem {
   uuid: string;
@@ -81,15 +82,35 @@ function formatRelativeTime(dateString: string, t: any): string {
 }
 
 export function IdeasList({
-  ideas,
+  ideas: initialIdeas,
   projectUuid,
   currentUserUuid,
-  usedIdeaUuids,
-  ideaProposalMap,
+  usedIdeaUuids: initialUsedIdeaUuids,
+  ideaProposalMap: initialIdeaProposalMap,
   initialSelectedIdeaUuid,
 }: IdeasListProps) {
   const t = useTranslations();
-  useRealtimeRefresh();
+
+  const [ideas, setIdeas] = useState(initialIdeas);
+  const [usedIdeaUuids, setUsedIdeaUuids] = useState(initialUsedIdeaUuids);
+  const [ideaProposalMap, setIdeaProposalMap] = useState(initialIdeaProposalMap);
+
+  // Sync from server component on navigation/filter change
+  useEffect(() => { setIdeas(initialIdeas); }, [initialIdeas]);
+  useEffect(() => { setUsedIdeaUuids(initialUsedIdeaUuids); }, [initialUsedIdeaUuids]);
+  useEffect(() => { setIdeaProposalMap(initialIdeaProposalMap); }, [initialIdeaProposalMap]);
+
+  // Refetch ideas locally on SSE — no router.refresh()
+  const refetchIdeas = useCallback(async () => {
+    const result = await fetchIdeasAction(projectUuid);
+    if (result.success) {
+      setIdeas(result.data.ideas);
+      setUsedIdeaUuids(result.data.usedIdeaUuids);
+      setIdeaProposalMap(result.data.ideaProposalMap);
+    }
+  }, [projectUuid]);
+
+  useRealtimeEntityTypeEvent("idea", refetchIdeas);
 
   const basePath = `/projects/${projectUuid}/ideas`;
   const { selectedId, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedIdeaUuid);

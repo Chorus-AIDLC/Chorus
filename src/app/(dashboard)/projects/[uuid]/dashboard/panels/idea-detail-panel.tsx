@@ -22,7 +22,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { usePanelUrl } from "@/hooks/use-panel-url";
-import { useRealtimeEvent } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { BasicView } from "./basic-view";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView } from "./proposal-view";
@@ -158,7 +158,7 @@ export function IdeaDetailPanel({
     fetchIdea();
   }, [fetchIdea]);
 
-  useRealtimeEvent(fetchIdea);
+  useRealtimeEntityTypeEvent("idea", fetchIdea);
 
   // Fetch task when selected from proposal view
   useEffect(() => {
