@@ -294,6 +294,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
           selectedTaskUuid={selectedTaskUuid}
           onTaskSelect={openPanel}
           onPanelClose={closePanel}
+          proposalUuidFilter={proposalUuidFilter}
         />
       ) : (
         <div className="flex flex-1 flex-col">

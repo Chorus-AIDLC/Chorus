@@ -63,6 +63,7 @@ interface KanbanBoardProps {
   selectedTaskUuid?: string | null;
   onTaskSelect: (taskUuid: string) => void;
   onPanelClose: () => void;
+  proposalUuidFilter?: Set<string> | null;
 }
 
 // Status color configuration
@@ -115,7 +116,7 @@ function getUnresolvedDeps(task: Task): { uuid: string; title: string; status: s
   );
 }
 
-export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose }: KanbanBoardProps) {
+export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose, proposalUuidFilter }: KanbanBoardProps) {
   const t = useTranslations();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
@@ -131,14 +132,17 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const refetchTasks = useCallback(async () => {
     const result = await fetchTasksAction(projectUuid);
     if (result.success) {
-      setTasks(result.data);
+      const filtered = proposalUuidFilter
+        ? result.data.filter(task => task.proposalUuid && proposalUuidFilter.has(task.proposalUuid))
+        : result.data;
+      setTasks(filtered);
       // Also refresh worker counts with the new task list
-      const wcResult = await getBatchWorkerCountsAction(result.data.map((t) => t.uuid));
+      const wcResult = await getBatchWorkerCountsAction(filtered.map((t) => t.uuid));
       if (wcResult.success && wcResult.data) {
         setWorkerCounts(wcResult.data);
       }
     }
-  }, [projectUuid]);
+  }, [projectUuid, proposalUuidFilter]);
 
   // SSE: only refetch when task entities change
   useRealtimeEntityTypeEvent("task", refetchTasks);
