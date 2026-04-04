@@ -153,9 +153,9 @@ async function emitPresenceAsync(
         projectUuid,
         entityType: resource.entityType,
         entityUuid: resource.entityUuid,
-        ...(resource.subEntityType && resource.subEntityUuid ? {
+        ...(resource.subEntityType ? {
           subEntityType: resource.subEntityType,
-          subEntityUuid: resource.subEntityUuid,
+          ...(resource.subEntityUuid ? { subEntityUuid: resource.subEntityUuid } : {}),
         } : {}),
         agentUuid: auth.actorUuid,
         agentName: auth.agentName || "Unknown Agent",
