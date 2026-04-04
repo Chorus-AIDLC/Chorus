@@ -13,19 +13,19 @@ The Idea Tracker displays ideas with a **derived presentation** computed from mu
 
 ## Full Mapping (11 internal states → 4 groups + 9 badge labels)
 
-| # | Idea Status | Elab Status | Proposal | Tasks | → Group | → Badge |
-|---|---|---|---|---|---|---|
-| 1 | `open` | — | — | — | **To Do** | `open` |
-| 2 | `elaborating` | `null`/`validating`/`resolved` | — | — | **In Progress** | `researching` |
-| 3 | `elaborating` | `pending_answers` | — | — | **Human Conduct Required** | `answer_questions` |
-| 4 | `proposal_created` | — | `draft`/`rejected` | — | **In Progress** | `planning` |
-| 5 | `proposal_created` | — | `pending` | — | **Human Conduct Required** | `review_proposal` |
-| 6 | `proposal_created` | — | `approved` | not all finished (any `open`/`assigned`/`in_progress` remaining) | **In Progress** | `building` |
-| 7 | `proposal_created` | — | `approved` | ALL `done`/`closed`/`to_verify`, with ≥1 `to_verify` | **Human Conduct Required** | `verify_work` |
-| 8 | `proposal_created` | — | `approved` | ≥1 task, ALL `done`/`closed` | **Done** | `done` |
-| 9 | `proposal_created` | — | `approved` | no tasks | **In Progress** | `building` |
-| 10 | `completed` | — | — | — | **Done** | `done` |
-| 11 | `closed` | — | — | — | *(excluded from board)* | `closed` |
+| # | Idea Status | Elab Status | Proposal | Tasks | → Group | → Card Badge | → Detail Panel Badge |
+|---|---|---|---|---|---|---|---|
+| 1 | `open` | — | — | — | **To Do** | `open` | `open` |
+| 2 | `elaborating` | `null`/`validating`/`resolved` | — | — | **In Progress** | `researching` | `researching` |
+| 3 | `elaborating` | `pending_answers` | — | — | **Human Conduct Required** | `answer_questions` | `answer_questions` |
+| 4 | `proposal_created` | — | `draft`/`rejected` | — | **In Progress** | `planning` | `planning` |
+| 5 | `proposal_created` | — | `pending` | — | **Human Conduct Required** | `review_proposal` | `review_proposal` |
+| 6 | `proposal_created` | — | `approved` | not all finished (any `open`/`assigned`/`in_progress` remaining) | **In Progress** | `building` | `building` |
+| 7 | `proposal_created` | — | `approved` | ALL `done`/`closed`/`to_verify`, with ≥1 `to_verify` | **Human Conduct Required** | `verify_work` | `verify_work` |
+| 8 | `proposal_created` | — | `approved` | ≥1 task, ALL `done`/`closed` | **Done** | `done` | `done` |
+| 9 | `proposal_created` | — | `approved` | no tasks | **In Progress** | `building` | `building` |
+| 10 | `completed` | — | — | — | **Done** | `done` | `done` |
+| 11 | `closed` | — | — | — | *(excluded from board)* | `closed` | `closed` |
 
 ### Evaluation Order
 
@@ -49,4 +49,5 @@ The code evaluates `proposal_created` + `approved` states in this order (first m
 - **Data fetching**: `getIdeasWithDerivedStatus()` — 3 batch queries (ideas + proposals + tasks), no N+1
 - **Tests**: 27 test cases in `src/services/__tests__/idea.service.derived-status.test.ts` covering all 11 rows
 - **API**: `GET /api/projects/[uuid]/ideas/tracker` returns `derivedStatus` + `badgeHint` per idea
-- **UI**: `src/app/(dashboard)/projects/[uuid]/dashboard/idea-card.tsx` renders badge color/label based on `badgeHint`
+- **UI (Card)**: `src/app/(dashboard)/projects/[uuid]/dashboard/idea-card.tsx` renders badge color/label based on `badgeHint`
+- **UI (Detail Panel)**: `src/app/(dashboard)/projects/[uuid]/dashboard/panels/idea-detail-panel.tsx` — `getIdeaAction` server action queries proposals + tasks and calls `computeDerivedStatus` to compute `derivedStatus` + `badgeHint`, ensuring the detail panel badge matches the card badge

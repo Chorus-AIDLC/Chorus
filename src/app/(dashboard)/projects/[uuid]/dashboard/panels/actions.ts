@@ -1,9 +1,10 @@
 "use server";
 
 import { getServerAuthContext } from "@/lib/auth-server";
-import { getIdea, moveIdea } from "@/services/idea.service";
+import { getIdea, moveIdea, computeDerivedStatus } from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { getTask, listTasks } from "@/services/task.service";
+import { prisma } from "@/lib/prisma";
 import { listProjects } from "@/services/project.service";
 import { listProjectGroups } from "@/services/project-group.service";
 
@@ -18,7 +19,30 @@ export async function getIdeaAction(ideaUuid: string) {
     return { success: false as const, error: "Not found" };
   }
 
-  return { success: true as const, data: idea };
+  // Compute derived status with full context (proposal + task states)
+  const proposals = await prisma.proposal.findMany({
+    where: { projectUuid: idea.project?.uuid, companyUuid: auth.companyUuid, inputUuids: { array_contains: [ideaUuid] } },
+    select: { status: true, uuid: true },
+  });
+  const approvedProposal = proposals.find((p) => p.status === "approved");
+  let taskStatuses: string[] = [];
+  if (approvedProposal) {
+    const tasks = await prisma.task.findMany({
+      where: { proposalUuid: approvedProposal.uuid, companyUuid: auth.companyUuid },
+      select: { status: true },
+    });
+    taskStatuses = tasks.map((t) => t.status);
+  }
+
+  const { derivedStatus, badgeHint } = computeDerivedStatus({
+    ideaStatus: idea.status,
+    elaborationStatus: idea.elaborationStatus,
+    hasPendingProposal: proposals.some((p) => p.status === "pending"),
+    hasApprovedProposal: !!approvedProposal,
+    taskStatuses,
+  });
+
+  return { success: true as const, data: { ...idea, derivedStatus, badgeHint } };
 }
 
 export async function getTaskAction(taskUuid: string) {
