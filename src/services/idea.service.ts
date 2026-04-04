@@ -608,6 +608,48 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
   }
 }
 
+/**
+ * Get a single idea with its derived status computed from proposal + task states.
+ * Returns the full IdeaResponse plus derivedStatus and badgeHint.
+ */
+export async function getIdeaWithDerivedStatus(
+  companyUuid: string,
+  ideaUuid: string,
+): Promise<(IdeaResponse & DerivedStatusResult) | null> {
+  const idea = await getIdea(companyUuid, ideaUuid);
+  if (!idea) return null;
+
+  const proposals = await prisma.proposal.findMany({
+    where: {
+      companyUuid,
+      projectUuid: idea.project?.uuid,
+      status: { in: ["approved", "pending"] },
+      inputUuids: { array_contains: [ideaUuid] },
+    },
+    select: { uuid: true, status: true },
+  });
+
+  const approvedProposal = proposals.find((p) => p.status === "approved");
+  let taskStatuses: string[] = [];
+  if (approvedProposal) {
+    const tasks = await prisma.task.findMany({
+      where: { companyUuid, proposalUuid: approvedProposal.uuid },
+      select: { status: true },
+    });
+    taskStatuses = tasks.map((t) => t.status);
+  }
+
+  const result = computeDerivedStatus({
+    ideaStatus: idea.status,
+    elaborationStatus: idea.elaborationStatus,
+    hasPendingProposal: proposals.some((p) => p.status === "pending"),
+    hasApprovedProposal: !!approvedProposal,
+    taskStatuses,
+  });
+
+  return { ...idea, ...result };
+}
+
 export interface IdeaWithDerivedStatus {
   uuid: string;
   title: string;

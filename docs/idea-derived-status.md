@@ -50,4 +50,4 @@ The code evaluates `proposal_created` + `approved` states in this order (first m
 - **Tests**: 27 test cases in `src/services/__tests__/idea.service.derived-status.test.ts` covering all 11 rows
 - **API**: `GET /api/projects/[uuid]/ideas/tracker` returns `derivedStatus` + `badgeHint` per idea
 - **UI (Card)**: `src/app/(dashboard)/projects/[uuid]/dashboard/idea-card.tsx` renders badge color/label based on `badgeHint`
-- **UI (Detail Panel)**: `src/app/(dashboard)/projects/[uuid]/dashboard/panels/idea-detail-panel.tsx` — `getIdeaAction` server action queries proposals + tasks and calls `computeDerivedStatus` to compute `derivedStatus` + `badgeHint`, ensuring the detail panel badge matches the card badge
+- **UI (Detail Panel)**: `src/app/(dashboard)/projects/[uuid]/dashboard/panels/idea-detail-panel.tsx` — uses `getIdeaWithDerivedStatus()` service function via server action, ensuring the detail panel badge matches the card badge

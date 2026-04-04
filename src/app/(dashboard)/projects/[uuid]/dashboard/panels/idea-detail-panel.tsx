@@ -582,14 +582,6 @@ function PanelContent({
         />
       );
     case "proposal_created":
-      return (
-        <ProposalView
-          idea={idea}
-          projectUuid={projectUuid}
-          onTaskClick={onTaskClick}
-          onDocClick={onDocClick}
-        />
-      );
     case "completed":
     case "closed":
       return (
