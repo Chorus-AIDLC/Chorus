@@ -205,6 +205,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
           {/* Validation Checklist (draft only) */}
           {proposal.status === "draft" && (
             <ProposalValidationChecklist
+              key={`checklist-${documentDrafts?.length ?? 0}-${taskDrafts?.length ?? 0}`}
               projectUuid={projectUuid}
               proposalUuid={proposalUuid}
               status={proposal.status}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useCallback, useMemo, useEffect } from "react";
+import { useState, useTransition, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -20,6 +20,9 @@ import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch, Bot } from "lucide-react";
 import { usePresence } from "@/hooks/use-presence";
+import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { findNew, findDeleted } from "./draft-diff";
+import { getProposalDraftsAction } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -178,13 +181,15 @@ interface ProposalEditorProps {
   status: string;
   documentDrafts: DocumentDraft[] | null;
   taskDrafts: TaskDraft[] | null;
+  onStatusChange?: (status: string) => void;
 }
 
 export function ProposalEditor({
   proposalUuid,
   status,
-  documentDrafts,
-  taskDrafts,
+  documentDrafts: initialDocDrafts,
+  taskDrafts: initialTaskDrafts,
+  onStatusChange,
 }: ProposalEditorProps) {
   const t = useTranslations();
   const router = useRouter();
@@ -193,6 +198,18 @@ export function ProposalEditor({
   // Presence tracking
   const { getPresence } = usePresence();
   const presenceList = getPresence("proposal", proposalUuid);
+
+  // Realtime draft state (T2: component-level refresh)
+  const [docs, setDocs] = useState(initialDocDrafts);
+  const [tasks, setTasks] = useState(initialTaskDrafts);
+  const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+
+  // Keep refs to latest state for SSE callback (avoids stale closure)
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
 
   // View toggle state
   const [taskView, setTaskView] = useState<"cards" | "dag">("cards");
@@ -217,24 +234,74 @@ export function ProposalEditor({
   // Only allow editing for draft proposals
   const canEdit = status === "draft";
 
-  // Derive selected task draft from taskDrafts
+  // SSE listener: component-level refresh (T2)
+  useRealtimeEntityEvent("proposal", proposalUuid, async (event) => {
+    if (!["created", "updated", "deleted"].includes(event.action)) return;
+    // Conflict guard: skip refresh when user is editing
+    if (showDocDialog || selectedTaskDraftUuid || showCreateTaskPanel) return;
+
+    try {
+      const latest = await getProposalDraftsAction(proposalUuid);
+      const oldDocs = docsRef.current ?? [];
+      const oldTasks = tasksRef.current ?? [];
+      const latestDocs = latest.documentDrafts ?? [];
+      const latestTasks = latest.taskDrafts ?? [];
+
+      // Detect new items — show presence-style border on newly created drafts
+      const allNewIds = [...findNew(oldDocs, latestDocs), ...findNew(oldTasks, latestTasks)];
+      if (allNewIds.length > 0) {
+        setNewItemIds(new Set(allNewIds));
+        setTimeout(() => setNewItemIds(new Set()), 3000);
+      }
+
+      // Delete animation: mark deleting, then remove after fade-out
+      const allDeleted = [...findDeleted(oldDocs, latestDocs), ...findDeleted(oldTasks, latestTasks)];
+      if (allDeleted.length > 0) {
+        setDeletingIds(new Set(allDeleted));
+        setTimeout(() => {
+          setDocs(latestDocs);
+          setTasks(latestTasks);
+          setDeletingIds(new Set());
+        }, 500);
+      } else {
+        setDocs(latestDocs);
+        setTasks(latestTasks);
+      }
+
+      // Refresh server components when:
+      // 1. Status changed (Actions buttons update) — rare event
+      // 2. Draft count changed while in draft status (ValidationChecklist updates)
+      const statusChanged = latest.status && latest.status !== status;
+      const draftCountChanged = status === "draft" && (
+        latestDocs.length !== oldDocs.length || latestTasks.length !== oldTasks.length
+      );
+      if (statusChanged || draftCountChanged) {
+        router.refresh();
+      }
+      onStatusChange?.(latest.status ?? status);
+    } catch (err) {
+      console.warn("[ProposalEditor] Failed to refresh drafts:", err);
+    }
+  });
+
+  // Derive selected task draft from tasks state
   const selectedTaskDraft = useMemo(() => {
-    if (!selectedTaskDraftUuid || !taskDrafts) return null;
-    return taskDrafts.find((t) => t.uuid === selectedTaskDraftUuid) || null;
-  }, [selectedTaskDraftUuid, taskDrafts]);
+    if (!selectedTaskDraftUuid || !tasks) return null;
+    return tasks.find((t) => t.uuid === selectedTaskDraftUuid) || null;
+  }, [selectedTaskDraftUuid, tasks]);
 
   // ===== DAG State (reactive) =====
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<TaskDraftNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => {
-    if (!taskDrafts || taskDrafts.length === 0) {
+    if (!tasks || tasks.length === 0) {
       setNodes([]);
       setEdges([]);
       return;
     }
 
-    const rawNodes: Node<TaskDraftNodeData>[] = taskDrafts.map((task) => ({
+    const rawNodes: Node<TaskDraftNodeData>[] = tasks.map((task) => ({
       id: task.uuid,
       type: "taskDraftNode",
       position: { x: 0, y: 0 },
@@ -242,7 +309,7 @@ export function ProposalEditor({
     }));
 
     const rawEdges: Edge[] = [];
-    taskDrafts.forEach((task) => {
+    tasks.forEach((task) => {
       if (task.dependsOnDraftUuids) {
         task.dependsOnDraftUuids.forEach((depUuid, i) => {
           rawEdges.push({
@@ -258,7 +325,7 @@ export function ProposalEditor({
     const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(rawNodes, rawEdges);
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
-  }, [taskDrafts, setNodes, setEdges]);
+  }, [tasks, setNodes, setEdges]);
 
   const onConnect = useCallback(
     async (connection: Connection) => {
@@ -271,7 +338,7 @@ export function ProposalEditor({
       const dependsOnUuid = connection.source;
 
       // Find the target task draft
-      const targetTask = taskDrafts?.find((t) => t.uuid === taskUuid);
+      const targetTask = tasks?.find((t) => t.uuid === taskUuid);
       if (!targetTask) return;
 
       const existingDeps = targetTask.dependsOnDraftUuids || [];
@@ -291,7 +358,7 @@ export function ProposalEditor({
           if (current === target) return true;
           if (visited.has(current)) continue;
           visited.add(current);
-          const task = taskDrafts?.find((t) => t.uuid === current);
+          const task = tasks?.find((t) => t.uuid === current);
           if (task?.dependsOnDraftUuids) {
             queue.push(...task.dependsOnDraftUuids);
           }
@@ -317,7 +384,7 @@ export function ProposalEditor({
         }
       });
     },
-    [canEdit, taskDrafts, proposalUuid, router, startTransition, t]
+    [canEdit, tasks, proposalUuid, router, startTransition, t]
   );
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
@@ -398,8 +465,8 @@ export function ProposalEditor({
     });
   };
 
-  const hasDocuments = documentDrafts && documentDrafts.length > 0;
-  const hasTasks = taskDrafts && taskDrafts.length > 0;
+  const hasDocuments = docs && docs.length > 0;
+  const hasTasks = tasks && tasks.length > 0;
 
   // Show panel: either selected task or create mode
   const showPanel = selectedTaskDraftUuid !== null || showCreateTaskPanel;
@@ -426,7 +493,7 @@ export function ProposalEditor({
               {t("proposals.documentDrafts")}
             </CardTitle>
             <Badge variant="secondary" className="border-0 bg-[#F5F2EC] text-[11px] font-medium text-muted-foreground">
-              {documentDrafts?.length || 0}
+              {docs?.length || 0}
             </Badge>
           </div>
           {canEdit && (
@@ -444,12 +511,14 @@ export function ProposalEditor({
         <CardContent className="p-0">
           {hasDocuments ? (
             <div className="space-y-0 divide-y divide-[#F5F2EC]">
-              {documentDrafts.map((doc) => {
+              {docs.map((doc) => {
                 const isExpanded = expandedDocs.has(doc.uuid);
                 const typeConf = docTypeConfig[doc.type] || docTypeConfig.guide;
                 const DocIcon = typeConf.icon;
                 return (
-                  <div key={doc.uuid} className="px-5 py-4">
+                  <div key={doc.uuid} className={`px-5 py-4 transition-all duration-500 ${
+                    deletingIds.has(doc.uuid) ? "opacity-0" : ""
+                  } ${newItemIds.has(doc.uuid) ? "ring-2 ring-inset ring-[#E07A5F]/60" : ""}`}>
                     {/* Document header row */}
                     <div className="flex items-center justify-between">
                       <button
@@ -525,7 +594,7 @@ export function ProposalEditor({
               {t("proposals.taskDrafts")}
             </CardTitle>
             <Badge className="border-0 bg-[#C67A5220] text-[11px] font-semibold text-[#C67A52]">
-              {taskDrafts?.length || 0}
+              {tasks?.length || 0}
             </Badge>
           </div>
           <div className="flex items-center gap-3">
@@ -575,7 +644,7 @@ export function ProposalEditor({
             taskView === "cards" ? (
               /* Cards View */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-5">
-                {taskDrafts.map((task) => {
+                {tasks.map((task) => {
                   const prio = priorityColors[task.priority || "medium"] || priorityColors.medium;
                   const depCount = task.dependsOnDraftUuids?.length || 0;
                   const acCount = (task.acceptanceCriteriaItems?.length || 0);
@@ -587,8 +656,10 @@ export function ProposalEditor({
                         setShowCreateTaskPanel(false);
                         setSelectedTaskDraftUuid(task.uuid);
                       }}
-                      className={`cursor-pointer rounded-[10px] border bg-white p-4 transition-colors flex flex-col gap-2.5 ${
-                        isSelected
+                      className={`cursor-pointer rounded-[10px] border bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 ${
+                        deletingIds.has(task.uuid) ? "opacity-0" : ""
+                      } ${newItemIds.has(task.uuid) ? "ring-2 ring-[#E07A5F]/60 border-[#E07A5F]" : ""
+                      } ${isSelected
                           ? "border-[#C67A52] shadow-sm"
                           : "border-[#E5E2DC] hover:border-[#C67A52]/50"
                       }`}
@@ -752,7 +823,7 @@ export function ProposalEditor({
       {showPanel && (
         <TaskDraftDetailPanel
           taskDraft={showCreateTaskPanel ? null : selectedTaskDraft}
-          allTaskDrafts={taskDrafts || []}
+          allTaskDrafts={tasks || []}
           proposalUuid={proposalUuid}
           canEdit={canEdit}
           onClose={() => {
