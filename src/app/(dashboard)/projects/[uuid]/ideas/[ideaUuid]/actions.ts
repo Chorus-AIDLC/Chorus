@@ -19,8 +19,8 @@ export async function claimIdeaAction(ideaUuid: string) {
       return { success: false, error: "Idea not found" };
     }
 
-    // Only completed/closed ideas cannot be reassigned
-    if (idea.status === "completed" || idea.status === "closed") {
+    // Elaborated ideas cannot be reassigned (lifecycle is done)
+    if (idea.status === "elaborated") {
       return { success: false, error: "Idea is not available for assignment" };
     }
 
@@ -66,8 +66,8 @@ export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string
       return { success: false, error: "Idea not found" };
     }
 
-    // Only completed/closed ideas cannot be reassigned
-    if (idea.status === "completed" || idea.status === "closed") {
+    // Elaborated ideas cannot be reassigned (lifecycle is done)
+    if (idea.status === "elaborated") {
       return { success: false, error: "Idea is not available for assignment" };
     }
 
@@ -113,8 +113,8 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
       return { success: false, error: "Idea not found" };
     }
 
-    // Only completed/closed ideas cannot be reassigned
-    if (idea.status === "completed" || idea.status === "closed") {
+    // Elaborated ideas cannot be reassigned (lifecycle is done)
+    if (idea.status === "elaborated") {
       return { success: false, error: "Idea is not available for assignment" };
     }
 
@@ -149,8 +149,8 @@ export async function releaseIdeaAction(ideaUuid: string) {
       return { success: false, error: "Idea not found" };
     }
 
-    // Only completed/closed ideas cannot be released
-    if (idea.status === "completed" || idea.status === "closed") {
+    // Elaborated ideas cannot be released (lifecycle is done)
+    if (idea.status === "elaborated") {
       return { success: false, error: "Idea cannot be released from current status" };
     }
 

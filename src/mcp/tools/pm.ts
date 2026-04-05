@@ -113,58 +113,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_update_idea_status - Update Idea status
-  server.registerTool(
-    "chorus_update_idea_status",
-    {
-      description: "Update Idea status (only assignee can operate). Valid statuses: open, elaborating, proposal_created, completed, closed. Claiming auto-transitions to elaborating; use this tool for proposal_created (after Proposal submission) or completed (after approval).",
-      inputSchema: z.object({
-        ideaUuid: z.string().describe("Idea UUID"),
-        status: z.enum(["in_progress", "pending_review", "completed"]).describe("New status"),
-      }),
-    },
-    async ({ ideaUuid, status }) => {
-      const idea = await ideaService.getIdeaByUuid(auth.companyUuid, ideaUuid);
-      if (!idea) {
-        return { content: [{ type: "text", text: "Idea not found" }], isError: true };
-      }
-
-      // Check if the caller is the assignee (UUID comparison)
-      const isAssignee =
-        (idea.assigneeType === "agent" && idea.assigneeUuid === auth.actorUuid) ||
-        (idea.assigneeType === "user" && auth.ownerUuid && idea.assigneeUuid === auth.ownerUuid);
-
-      if (!isAssignee) {
-        return { content: [{ type: "text", text: "Only the assignee can update the status" }], isError: true };
-      }
-
-      // Validate status transition
-      if (!ideaService.isValidIdeaStatusTransition(idea.status, status)) {
-        return {
-          content: [{ type: "text", text: `Invalid status transition: ${idea.status} -> ${status}` }],
-          isError: true,
-        };
-      }
-
-      const updated = await ideaService.updateIdea(idea.uuid, auth.companyUuid, { status });
-
-      await activityService.createActivity({
-        companyUuid: auth.companyUuid,
-        projectUuid: idea.projectUuid,
-        targetType: "idea",
-        targetUuid: idea.uuid,
-        actorType: "agent",
-        actorUuid: auth.actorUuid,
-        action: "status_changed",
-        value: { status },
-      });
-
-      return {
-        content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, status: updated.status }, null, 2) }],
-      };
-    }
-  );
-
   // chorus_pm_create_proposal - Create a Proposal (container model)
   server.registerTool(
     "chorus_pm_create_proposal",

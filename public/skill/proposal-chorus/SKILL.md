@@ -193,13 +193,7 @@ chorus_add_comment({
 })
 ```
 
-### Step 6: Update Idea Status
-
-```
-chorus_update_idea_status({ ideaUuid: "<idea-uuid>", status: "proposal_created" })
-```
-
-### Step 7: Handle Feedback
+### Step 6: Handle Feedback
 
 If the proposal is rejected, check the review note:
 
@@ -210,19 +204,14 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 Revise the drafts and resubmit.
 
-### Step 8: Post-Approval
+### Step 7: Post-Approval
 
 When the Admin approves:
 - Document drafts become real Documents
 - Task drafts become real Tasks (status: `open`, ready for developers)
+- The Idea's displayed status is automatically derived from Proposal and Task progress -- no manual update needed
 
-Consider marking the idea as completed:
-
-```
-chorus_update_idea_status({ ideaUuid: "<idea-uuid>", status: "completed" })
-```
-
-### Step 9: Manage Task Dependencies (Optional)
+### Step 8: Manage Task Dependencies (Optional)
 
 After tasks are created, you can manage dependencies:
 
@@ -248,7 +237,7 @@ chorus_remove_task_dependency({ taskUuid: "<task-B-uuid>", dependsOnTaskUuid: "<
 
 Dependencies are validated: same project, no self-dependency, no cycles (DFS detection).
 
-### Step 10: Assign Tasks to Developer Agents (Optional)
+### Step 9: Assign Tasks to Developer Agents (Optional)
 
 ```
 chorus_pm_assign_task({ taskUuid: "<task-uuid>", agentUuid: "<developer-agent-uuid>" })

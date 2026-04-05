@@ -36,6 +36,8 @@ import { getIdeaAction, getTaskAction } from "./actions";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import type { IdeaResponse } from "@/services/idea.service";
 
+type IdeaWithDerivedStatus = IdeaResponse & { derivedStatus: string; badgeHint: string | null };
+
 // Task shape needed by TaskDetailPanel
 interface TaskForPanel {
   uuid: string;
@@ -79,9 +81,9 @@ interface TaskForPanel {
 }
 
 import {
-  derivePanelStatus,
   DERIVED_STATUS_COLORS as derivedStatusColors,
   DERIVED_STATUS_I18N_KEYS as derivedStatusI18nKeys,
+  BADGE_HINT_I18N_KEYS,
 } from "../utils";
 
 interface IdeaDetailPanelProps {
@@ -104,7 +106,7 @@ export function IdeaDetailPanel({
   const router = useRouter();
 
   // Core idea state
-  const [idea, setIdea] = useState<IdeaResponse | null>(null);
+  const [idea, setIdea] = useState<IdeaWithDerivedStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -232,8 +234,8 @@ export function IdeaDetailPanel({
     }
   };
 
-  const status = idea ? derivePanelStatus(idea.status, idea.elaborationStatus) : "todo";
-  const canAssign = idea ? idea.status !== "completed" && idea.status !== "closed" : false;
+  const status = idea?.derivedStatus || "todo";
+  const canAssign = idea ? idea.status !== "elaborated" : false;
   const elaborationResolved = idea?.elaborationStatus === "resolved";
   const showHelpText = idea?.status === "elaborating" && !elaborationResolved;
 
@@ -272,7 +274,9 @@ export function IdeaDetailPanel({
                         derivedStatusColors[status] || derivedStatusColors.todo
                       }
                     >
-                      {tStatus(derivedStatusI18nKeys[status] || "todo")}
+                      {idea.badgeHint
+                        ? tTracker(`badge.${BADGE_HINT_I18N_KEYS[idea.badgeHint] || "open"}`)
+                        : tStatus(derivedStatusI18nKeys[status] || "todo")}
                     </Badge>
                     <span className="text-xs text-[#9A9A9A]">
                       {new Date(idea.createdAt).toLocaleDateString(locale)}
@@ -288,7 +292,7 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
-            {idea && idea.status !== "completed" && idea.status !== "closed" && !isEditing && (
+            {idea && idea.status !== "elaborated" && !isEditing && (
               <>
                 <Button
                   variant="outline"
@@ -577,7 +581,7 @@ function PanelContent({
           onRefresh={onRefresh}
         />
       );
-    case "proposal_created":
+    case "elaborated":
       return (
         <ProposalView
           idea={idea}
@@ -585,13 +589,6 @@ function PanelContent({
           onTaskClick={onTaskClick}
           onDocClick={onDocClick}
         />
-      );
-    case "completed":
-    case "closed":
-      return (
-        <div className="flex items-center justify-center py-12 text-sm text-[#9A9A9A]">
-          {t("panel.donePlaceholder")}
-        </div>
       );
     default:
       return (

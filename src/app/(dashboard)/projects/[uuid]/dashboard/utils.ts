@@ -1,5 +1,5 @@
 import type { useTranslations } from "next-intl";
-import type { DerivedIdeaStatus, BadgeHint } from "@/services/idea.service";
+import type { BadgeHint } from "@/services/idea.service";
 
 export type TranslateFn = ReturnType<typeof useTranslations>;
 
@@ -38,18 +38,6 @@ export const DERIVED_STATUS_I18N_KEYS: Record<string, string> = {
   done: "done",
 };
 
-/** Derive a simplified status from the idea's lifecycle for panel routing */
-export function derivePanelStatus(ideaStatus: string, elaborationStatus?: string | null): DerivedIdeaStatus {
-  if (ideaStatus === "open") return "todo";
-  if (ideaStatus === "elaborating") {
-    return elaborationStatus === "pending_answers" ? "human_conduct_required" : "in_progress";
-  }
-  if (ideaStatus === "proposal_created") return "human_conduct_required";
-  if (ideaStatus === "completed") return "done";
-  if (ideaStatus === "closed") return "done";
-  return "todo";
-}
-
 // ===== Badge Hint i18n =====
 
 export const BADGE_HINT_I18N_KEYS: Record<string, string> = {
@@ -61,7 +49,6 @@ export const BADGE_HINT_I18N_KEYS: Record<string, string> = {
   building: "building",
   verify_work: "verifyWork",
   done: "done",
-  closed: "closed",
 };
 
 export function getBadgeHintLabel(badgeHint: BadgeHint, t: TranslateFn): string {
