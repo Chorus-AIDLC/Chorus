@@ -352,10 +352,9 @@ Each event includes the entity UUID, project UUID, and actor information so the 
 
 ### Idea Status Flow
 ```
-open --> elaborating --> proposal_created --> completed
-  \                                            /
-   \--> closed <------------------------------/
+open --> elaborating --> elaborated
 ```
+Post-elaboration progress (planning, building, verifying, done) is derived from linked proposal and task states.
 
 ### Task Status Flow
 ```

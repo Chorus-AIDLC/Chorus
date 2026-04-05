@@ -431,7 +431,7 @@ describe("validateElaboration", () => {
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { uuid: IDEA_UUID },
-        data: { elaborationStatus: "resolved" },
+        data: { elaborationStatus: "resolved", status: "elaborated" },
       })
     );
 
@@ -558,6 +558,7 @@ describe("skipElaboration", () => {
         data: {
           elaborationDepth: "minimal",
           elaborationStatus: "resolved",
+          status: "elaborated",
         },
       })
     );

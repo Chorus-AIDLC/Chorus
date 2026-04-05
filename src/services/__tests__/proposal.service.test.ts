@@ -588,7 +588,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "idea-1", title: "My Idea", elaborationStatus: "pending" },
+      { uuid: "idea-1", title: "My Idea", status: "elaborated", elaborationStatus: "pending" },
     ]);
 
     const result = await validateProposal(COMPANY_UUID, proposal.uuid);
@@ -598,7 +598,7 @@ describe("validateProposal", () => {
     expect(e5!.message).toContain("unresolved elaboration");
   });
 
-  it("E5: should not error when input idea has resolved elaboration", async () => {
+  it("E5: should not error when input idea has elaborated status and resolved elaboration", async () => {
     const proposal = dbProposal({
       inputType: "idea",
       inputUuids: ["idea-1"],
@@ -608,12 +608,52 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "idea-1", title: "My Idea", elaborationStatus: "resolved" },
+      { uuid: "idea-1", title: "My Idea", status: "elaborated", elaborationStatus: "resolved" },
     ]);
 
     const result = await validateProposal(COMPANY_UUID, proposal.uuid);
     const e5 = result.issues.find((i) => i.id === "E5");
     expect(e5).toBeUndefined();
+  });
+
+  it("E5: should error when input idea is not elaborated (e.g. still open)", async () => {
+    const proposal = dbProposal({
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "My Idea", status: "open", elaborationStatus: null },
+    ]);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e5 = result.issues.find((i) => i.id === "E5");
+    expect(e5).toBeDefined();
+    expect(e5!.level).toBe("error");
+    expect(e5!.message).toContain("not elaborated");
+  });
+
+  it("E5: should error when input idea is still elaborating", async () => {
+    const proposal = dbProposal({
+      inputType: "idea",
+      inputUuids: ["idea-1"],
+      documentDrafts: [validDocDraft()],
+      taskDrafts: [validTaskDraft()],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", title: "My Idea", status: "elaborating", elaborationStatus: "validating" },
+    ]);
+
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const e5 = result.issues.find((i) => i.id === "E5");
+    expect(e5).toBeDefined();
+    expect(e5!.level).toBe("error");
+    expect(e5!.message).toContain("not elaborated");
   });
 
   it("E5: should skip idea elaboration check for non-idea input types", async () => {
@@ -961,11 +1001,10 @@ describe("submitProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "idea-1", title: "Idea", elaborationStatus: "resolved" },
+      { uuid: "idea-1", title: "Idea", status: "elaborated", elaborationStatus: "resolved" },
     ]);
     const updatedProposal = dbProposal({ ...proposal, status: "pending" });
     mockPrisma.proposal.update.mockResolvedValue(updatedProposal);
-    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await submitProposal(proposal.uuid, COMPANY_UUID);
 
@@ -978,7 +1017,7 @@ describe("submitProposal", () => {
     expect(mockEventBus.emitChange).toHaveBeenCalled();
   });
 
-  it("should auto-transition input ideas to proposal_created", async () => {
+  it("should NOT auto-transition input ideas (idea stays at elaborated)", async () => {
     const proposal = dbProposal({
       status: "draft",
       inputType: "idea",
@@ -989,22 +1028,15 @@ describe("submitProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "idea-1", title: "Idea 1", elaborationStatus: "resolved" },
-      { uuid: "idea-2", title: "Idea 2", elaborationStatus: "resolved" },
+      { uuid: "idea-1", title: "Idea 1", status: "elaborated", elaborationStatus: "resolved" },
+      { uuid: "idea-2", title: "Idea 2", status: "elaborated", elaborationStatus: "resolved" },
     ]);
     mockPrisma.proposal.update.mockResolvedValue(dbProposal({ ...proposal, status: "pending" }));
-    mockPrisma.idea.updateMany.mockResolvedValue({ count: 2 });
 
     await submitProposal(proposal.uuid, COMPANY_UUID);
 
-    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
-      where: {
-        uuid: { in: ["idea-1", "idea-2"] },
-        companyUuid: COMPANY_UUID,
-        status: "elaborating",
-      },
-      data: { status: "proposal_created" },
-    });
+    // Ideas should NOT be auto-transitioned — they stay at "elaborated"
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -1766,8 +1798,8 @@ describe("getProjectProposals", () => {
 
 
 // ===== Idea Reuse across Proposals =====
-describe("Idea reuse - submitProposal with proposal_created Idea", () => {
-  it("should not error when Idea is already in proposal_created status", async () => {
+describe("Idea reuse - submitProposal with elaborated Idea", () => {
+  it("should not error when Idea is already in elaborated status (reused across proposals)", async () => {
     const { submitProposal } = await import("@/services/proposal.service");
 
     const now = new Date();
@@ -1797,24 +1829,19 @@ describe("Idea reuse - submitProposal with proposal_created Idea", () => {
       updatedAt: now,
     };
 
-    // E5 check: ideas must have resolved elaboration
+    // E5 check: ideas must have elaborated status and resolved elaboration
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "idea-already-used", title: "Test Idea", elaborationStatus: "resolved" },
+      { uuid: "idea-already-used", title: "Test Idea", status: "elaborated", elaborationStatus: "resolved" },
     ]);
 
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue({ ...proposal, status: "pending" });
-    // Idea is already proposal_created - updateMany should match 0 rows (no error)
-    mockPrisma.idea.updateMany.mockResolvedValue({ count: 0 });
 
     const result = await submitProposal("proposal-reuse", COMPANY_UUID);
 
     expect(result.status).toBe("pending");
-    // updateMany was called with status: "elaborating" filter, which won't match proposal_created
-    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
-      where: { uuid: { in: ["idea-already-used"] }, companyUuid: COMPANY_UUID, status: "elaborating" },
-      data: { status: "proposal_created" },
-    });
+    // Ideas should NOT be auto-transitioned — they stay at "elaborated"
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 });
 

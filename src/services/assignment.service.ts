@@ -208,7 +208,7 @@ export async function getMyAssignments(
         companyUuid: auth.companyUuid,
         ...(projectUuids && projectUuids.length > 0 && { projectUuid: { in: projectUuids } }),
         OR: conditions,
-        status: { notIn: ["completed", "closed"] },
+        status: { notIn: ["elaborated", "completed", "closed"] },
       },
       select: {
         uuid: true,

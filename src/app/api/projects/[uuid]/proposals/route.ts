@@ -9,6 +9,8 @@ import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isAgent, isPmAgent, isUser } from "@/lib/auth";
 import { projectExists } from "@/services/project.service";
 import { listProposals, createProposal, type DocumentDraft, type TaskDraft } from "@/services/proposal.service";
+import { normalizeIdeaStatus } from "@/services/idea.service";
+import { prisma } from "@/lib/prisma";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -83,6 +85,21 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
     if (!body.inputUuids || !Array.isArray(body.inputUuids) || body.inputUuids.length === 0) {
       return errors.validationError({ inputUuids: "Input UUIDs are required" });
+    }
+
+    // Validate that all input ideas are elaborated
+    if (body.inputType === "idea") {
+      const ideas = await prisma.idea.findMany({
+        where: { uuid: { in: body.inputUuids }, companyUuid: auth.companyUuid },
+        select: { uuid: true, title: true, status: true },
+      });
+      for (const idea of ideas) {
+        if (normalizeIdeaStatus(idea.status) !== "elaborated") {
+          return errors.badRequest(
+            `Idea "${idea.title}" is not elaborated (status: ${idea.status}). Ideas must be elaborated before creating a proposal.`
+          );
+        }
+      }
     }
 
     // Determine creator type

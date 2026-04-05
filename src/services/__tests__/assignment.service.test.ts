@@ -118,7 +118,7 @@ describe("getMyAssignments", () => {
         where: expect.objectContaining({
           companyUuid,
           OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-          status: { notIn: ["completed", "closed"] },
+          status: { notIn: ["elaborated", "completed", "closed"] },
         }),
       })
     );
@@ -188,7 +188,7 @@ describe("getMyAssignments", () => {
     expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { notIn: ["completed", "closed"] },
+          status: { notIn: ["elaborated", "completed", "closed"] },
         }),
       })
     );

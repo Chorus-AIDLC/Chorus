@@ -284,7 +284,7 @@ export async function validateElaboration({
     });
     await prisma.idea.update({
       where: { uuid: ideaUuid },
-      data: { elaborationStatus: "resolved" },
+      data: { elaborationStatus: "resolved", status: "elaborated" },
     });
 
     await activityService.createActivity({
@@ -408,6 +408,7 @@ export async function skipElaboration({
     data: {
       elaborationDepth: "minimal",
       elaborationStatus: "resolved",
+      status: "elaborated",
     },
   });
 

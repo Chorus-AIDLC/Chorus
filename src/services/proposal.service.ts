@@ -10,6 +10,7 @@ import { formatCreatedBy, formatReview } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { createDocumentFromProposal } from "./document.service";
 import { createTasksFromProposal } from "./task.service";
+import { normalizeIdeaStatus } from "./idea.service";
 
 // ===== UUID Helper Functions =====
 
@@ -229,14 +230,22 @@ export async function validateProposal(
     });
   }
 
-  // E5: All input Ideas must have elaborationStatus === "resolved"
+  // E5: All input Ideas must have status === "elaborated" and elaborationStatus === "resolved"
   if (proposal.inputType === "idea" && inputUuids.length > 0) {
     const ideas = await prisma.idea.findMany({
       where: { uuid: { in: inputUuids }, companyUuid },
-      select: { uuid: true, title: true, elaborationStatus: true },
+      select: { uuid: true, title: true, status: true, elaborationStatus: true },
     });
     for (const idea of ideas) {
-      if (idea.elaborationStatus !== "resolved") {
+      const normalized = normalizeIdeaStatus(idea.status);
+      if (normalized !== "elaborated") {
+        issues.push({
+          id: "E5",
+          level: "error",
+          message: `Input idea "${idea.title}" is not elaborated (status: ${idea.status})`,
+          field: idea.title,
+        });
+      } else if (idea.elaborationStatus !== "resolved") {
         issues.push({
           id: "E5",
           level: "error",
@@ -856,16 +865,8 @@ export async function submitProposal(
     },
   });
 
-  // Auto-transition input Ideas to proposal_created
-  if (proposal.inputType === "idea") {
-    const inputUuids = (proposal.inputUuids as string[]) || [];
-    if (inputUuids.length > 0) {
-      await prisma.idea.updateMany({
-        where: { uuid: { in: inputUuids }, companyUuid, status: "elaborating" },
-        data: { status: "proposal_created" },
-      });
-    }
-  }
+  // No longer auto-transition Ideas — idea stays at "elaborated" and
+  // post-elaboration progress is derived from proposal + task states.
 
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
 

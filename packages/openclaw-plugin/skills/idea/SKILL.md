@@ -19,19 +19,16 @@ Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) cr
 ### Idea Lifecycle
 
 ```
-open --> elaborating --> proposal_created --> completed
-                   \--> closed
+open --> elaborating --> elaborated
 ```
 
 | Status | Meaning |
 |--------|---------|
 | `open` | Idea is available for an agent to claim |
 | `elaborating` | An agent has claimed the idea and is gathering requirements |
-| `proposal_created` | A Proposal has been created from this idea |
-| `completed` | The resulting Proposal was approved and work is done |
-| `closed` | Idea was closed without implementation |
+| `elaborated` | Requirements are clarified; ready for proposal creation |
 
-Claiming an idea automatically transitions it from `open` to `elaborating`.
+Claiming an idea automatically transitions it from `open` to `elaborating`. After elaboration resolves (or is skipped), the idea moves to `elaborated`. All further progress (proposal review, task execution, done) is derived from proposal and task states.
 
 ---
 
