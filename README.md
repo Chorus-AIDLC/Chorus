@@ -462,6 +462,8 @@ Based on the [AI-DLC methodology](https://aws.amazon.com/blogs/devops/ai-driven-
 | [Chorus Plugin](docs/chorus-plugin.md) | Plugin Design & Hook Documentation |
 | [Search](docs/SEARCH.md) | Global Search Technical Design |
 | [AI-DLC Gap Analysis](docs/AIDLC_GAP_ANALYSIS.md) | AI-DLC Methodology Gap Analysis |
+| [AIG Implementation Plan](docs/CHORUS_AIG_PLAN.md) | Agent transparency roadmap aligned with Linear AIG principles |
+| [Presence Design](docs/PRESENCE_DESIGN.md) | Real-time agent presence system architecture |
 | [Docker](docs/DOCKER.md) | Docker image usage, environment variables, deployment |
 | [CLAUDE.md](CLAUDE.md) | Development Guide (coding conventions for AI Agents) |
 

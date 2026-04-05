@@ -29,7 +29,7 @@ const mockRedis = vi.hoisted(() => {
 vi.mock('@/lib/redis', () => mockRedis);
 
 // Import after mocking
-import type { RealtimeEvent } from '../event-bus';
+import type { RealtimeEvent, PresenceEvent } from '../event-bus';
 
 describe('eventBus', () => {
   beforeEach(() => {
@@ -429,6 +429,111 @@ describe('eventBus', () => {
     await eventBus.connect();
 
     await expect(eventBus.disconnect()).resolves.not.toThrow();
+  });
+
+  describe('emitPresence', () => {
+    // Use unique IDs per test to avoid throttle map pollution from the singleton
+    let testId = 0;
+    const makePresenceEvent = (overrides?: Partial<PresenceEvent>): PresenceEvent => {
+      testId++;
+      return {
+        companyUuid: 'comp-1',
+        projectUuid: 'proj-1',
+        entityType: 'task',
+        entityUuid: `presence-task-${testId}`,
+        agentUuid: `presence-agent-${testId}`,
+        agentName: 'Dev Agent',
+        action: 'view',
+        timestamp: Date.now(),
+        ...overrides,
+      };
+    };
+
+    it('emits presence events locally', async () => {
+      const { eventBus } = await import('../event-bus');
+      const listener = vi.fn();
+      eventBus.on('presence', listener);
+
+      const event = makePresenceEvent();
+      eventBus.emitPresence(event);
+
+      expect(listener).toHaveBeenCalledWith(event);
+      eventBus.off('presence', listener);
+    });
+
+    it('throttles duplicate agent+entity within 2 seconds', async () => {
+      const { eventBus } = await import('../event-bus');
+      const listener = vi.fn();
+      eventBus.on('presence', listener);
+
+      const base = makePresenceEvent();
+      eventBus.emitPresence(base);
+      eventBus.emitPresence(base);
+      eventBus.emitPresence(base);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      eventBus.off('presence', listener);
+    });
+
+    it('allows same agent+entity after throttle window', async () => {
+      vi.useFakeTimers();
+      const { eventBus } = await import('../event-bus');
+      const listener = vi.fn();
+      eventBus.on('presence', listener);
+
+      const event = makePresenceEvent();
+      eventBus.emitPresence(event);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2001);
+      eventBus.emitPresence(event);
+      expect(listener).toHaveBeenCalledTimes(2);
+
+      eventBus.off('presence', listener);
+      vi.useRealTimers();
+    });
+
+    it('does not throttle different entities', async () => {
+      const { eventBus } = await import('../event-bus');
+      const listener = vi.fn();
+      eventBus.on('presence', listener);
+
+      const agentId = `shared-agent-${testId++}`;
+      eventBus.emitPresence(makePresenceEvent({ agentUuid: agentId, entityUuid: 'diff-ent-1' }));
+      eventBus.emitPresence(makePresenceEvent({ agentUuid: agentId, entityUuid: 'diff-ent-2' }));
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      eventBus.off('presence', listener);
+    });
+
+    it('does not throttle different agents on same entity', async () => {
+      const { eventBus } = await import('../event-bus');
+      const listener = vi.fn();
+      eventBus.on('presence', listener);
+
+      const entityId = `shared-entity-${testId++}`;
+      eventBus.emitPresence(makePresenceEvent({ agentUuid: 'diff-agent-a', entityUuid: entityId }));
+      eventBus.emitPresence(makePresenceEvent({ agentUuid: 'diff-agent-b', entityUuid: entityId }));
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      eventBus.off('presence', listener);
+    });
+
+    it('evicts stale throttle entries after 30s', async () => {
+      vi.useFakeTimers({ now: Date.now() });
+      const { eventBus } = await import('../event-bus');
+
+      // Reset to ensure clean state with fake timers
+      eventBus._resetPresenceState();
+
+      eventBus.emitPresence(makePresenceEvent({ entityUuid: 'eviction-test-1' }));
+      expect(eventBus._throttleMapSize).toBe(1);
+
+      vi.advanceTimersByTime(31000);
+      expect(eventBus._throttleMapSize).toBe(0);
+
+      vi.useRealTimers();
+    });
   });
 
   it('does not connect twice', async () => {

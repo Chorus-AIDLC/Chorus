@@ -284,24 +284,24 @@ The plugin includes two independent review agents that auto-trigger after propos
 | Setting | Controls | Default |
 |---------|----------|---------|
 | `enableProposalReviewer` | Spawn `chorus:proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
-| `enableTaskReviewer` | Spawn `chorus:task-reviewer` after `chorus_submit_for_verify` | `false` (disabled) |
+| `enableTaskReviewer` | Spawn `chorus:task-reviewer` after `chorus_submit_for_verify` | `true` (enabled) |
 
-To toggle, the user can reconfigure the plugin via `/plugin` settings. Or manually edit `~/.claude/settings.json`:
+To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.claude/settings.json`:
 
 ```json
 {
   "pluginConfigs": {
     "chorus@chorus-plugins": {
       "options": {
-        "enableProposalReviewer": true,
-        "enableTaskReviewer": true
+        "enableProposalReviewer": false,
+        "enableTaskReviewer": false
       }
     }
   }
 }
 ```
 
-When enabled, reviewers run synchronously and post a VERDICT comment (PASS/FAIL/PARTIAL) on the proposal/task. Results are advisory — they do not block approval or verification.
+When enabled, reviewers run as read-only sub-agents and post a VERDICT comment (PASS/FAIL/PARTIAL) on the proposal/task. Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
 
 ---
 

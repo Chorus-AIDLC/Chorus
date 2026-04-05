@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { createIdea, updateIdea, deleteIdea } from "@/services/idea.service";
+import { listIdeas, createIdea, updateIdea, deleteIdea } from "@/services/idea.service";
+import { checkIdeasAvailability } from "@/services/proposal.service";
+import { batchCommentCounts } from "@/services/comment.service";
 
 interface Attachment {
   type: string;
@@ -82,5 +84,52 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
   } catch (error) {
     console.error("Failed to delete idea:", error);
     return { success: false, error: "Failed to delete idea" };
+  }
+}
+
+/**
+ * Fetch enriched ideas data for client-side refetch (SSE-driven updates).
+ * Mirrors the data enrichment in ideas-page-content.tsx server component.
+ */
+export async function fetchIdeasAction(projectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+
+  try {
+    const { ideas: allIdeas } = await listIdeas({
+      companyUuid: auth.companyUuid,
+      projectUuid,
+      skip: 0,
+      take: 1000,
+    });
+
+    const allIdeaUuids = allIdeas.map((idea) => idea.uuid);
+
+    const [availabilityCheck, commentCounts] = await Promise.all([
+      allIdeaUuids.length > 0
+        ? checkIdeasAvailability(auth.companyUuid, allIdeaUuids)
+        : Promise.resolve({ usedIdeas: [] as { uuid: string; proposalUuid: string }[] }),
+      allIdeaUuids.length > 0
+        ? batchCommentCounts(auth.companyUuid, "idea", allIdeaUuids)
+        : Promise.resolve({} as Record<string, number>),
+    ]);
+
+    const usedIdeaUuids = availabilityCheck.usedIdeas.map((u) => u.uuid);
+    const ideaProposalMap: Record<string, string> = {};
+    for (const u of availabilityCheck.usedIdeas) {
+      ideaProposalMap[u.uuid] = u.proposalUuid;
+    }
+
+    const ideas = allIdeas.map((idea) => ({
+      ...idea,
+      commentCount: commentCounts[idea.uuid] || 0,
+    }));
+
+    return { success: true as const, data: { ideas, usedIdeaUuids, ideaProposalMap } };
+  } catch (error) {
+    console.error("Failed to fetch ideas:", error);
+    return { success: false as const, error: "Failed to fetch ideas" };
   }
 }

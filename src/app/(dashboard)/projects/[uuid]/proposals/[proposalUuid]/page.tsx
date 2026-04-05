@@ -9,8 +9,6 @@ import {
   ClipboardList,
   ChevronRight,
   Monitor,
-  FileText,
-  ListTodo,
   Lightbulb,
   Pencil,
   AlertCircle,
@@ -27,9 +25,11 @@ import { getIdea } from "@/services/idea.service";
 import { projectExists } from "@/services/project.service";
 import { ProposalActions } from "./proposal-actions";
 import { ProposalEditor } from "./proposal-editor";
-import { ProposalComments } from "./proposal-comments";
 import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
+import { DiscussionDrawer } from "./discussion-drawer";
+import { batchCommentCounts } from "@/services/comment.service";
+import { normalizeNewlines } from "../../dashboard/panels/utils";
 
 // Status color configuration
 const statusColors: Record<string, string> = {
@@ -106,6 +106,10 @@ export default async function ProposalDetailPage({ params }: PageProps) {
       )).filter(Boolean) as Awaited<ReturnType<typeof getIdea>>[]
     : [];
 
+  // Fetch comment count for the discussion drawer badge
+  const commentCounts = await batchCommentCounts(auth.companyUuid, "proposal", [proposalUuid]);
+  const commentCount = commentCounts[proposalUuid] || 0;
+
   return (
     <div className="px-4 py-4 md:px-10 md:py-8">
       {/* Breadcrumb */}
@@ -164,11 +168,18 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             </div>
           </div>
         </div>
-        <ProposalActions
-          proposalUuid={proposalUuid}
-          projectUuid={projectUuid}
-          status={proposal.status}
-        />
+        <div className="flex items-center gap-2">
+          <DiscussionDrawer
+            proposalUuid={proposalUuid}
+            currentUserUuid={auth.actorUuid}
+            commentCount={commentCount}
+          />
+          <ProposalActions
+            proposalUuid={proposalUuid}
+            projectUuid={projectUuid}
+            status={proposal.status}
+          />
+        </div>
       </div>
 
       {/* Content — two column layout */}
@@ -185,7 +196,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               </CardHeader>
               <CardContent className="px-5 py-4">
                 <div className="prose prose-sm max-w-none text-[#6B6B6B]">
-                  <MarkdownContent>{proposal.description}</MarkdownContent>
+                  <MarkdownContent>{normalizeNewlines(proposal.description)}</MarkdownContent>
                 </div>
               </CardContent>
             </Card>
@@ -194,6 +205,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
           {/* Validation Checklist (draft only) */}
           {proposal.status === "draft" && (
             <ProposalValidationChecklist
+              key={`checklist-${documentDrafts?.length ?? 0}-${taskDrafts?.length ?? 0}`}
               projectUuid={projectUuid}
               proposalUuid={proposalUuid}
               status={proposal.status}
@@ -274,35 +286,6 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             />
           )}
 
-          {/* Container Summary Card */}
-          <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-            <CardHeader className="border-b border-[#F5F2EC] px-5 py-4">
-              <CardTitle className="text-[13px] font-semibold text-foreground">
-                {t("proposals.containerSummary")}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 px-5 py-4">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FileText className="h-3.5 w-3.5" /> {t("proposals.documents")}
-                </span>
-                <span className="text-[13px] font-semibold text-[#6B6B6B]">{documentDrafts?.length || 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <ListTodo className="h-3.5 w-3.5" /> {t("proposals.tasks")}
-                </span>
-                <span className="text-[13px] font-semibold text-[#C67A52]">{taskDrafts?.length || 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Lightbulb className="h-3.5 w-3.5" /> {t("proposals.inputs")}
-                </span>
-                <span className="text-[13px] font-semibold text-[#6B6B6B]">{proposal.inputUuids?.length || 0}</span>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Review Info */}
           {proposal.review && (
             <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
@@ -382,9 +365,6 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
           )}
-
-          {/* Comments */}
-          <ProposalComments proposalUuid={proposalUuid} currentUserUuid={auth.actorUuid} />
 
           {/* Draft Notice */}
           {proposal.status === "draft" && (

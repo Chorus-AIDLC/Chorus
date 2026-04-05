@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
-import { useRealtimeEvent } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { motion } from "framer-motion";
@@ -42,8 +42,8 @@ export function ElaborationView({ idea, onRefresh }: ElaborationViewProps) {
     loadElaboration();
   }, [loadElaboration]);
 
-  // Subscribe to SSE events to refresh elaboration in real-time
-  useRealtimeEvent(loadElaboration);
+  // Subscribe to SSE events to refresh elaboration when idea changes
+  useRealtimeEntityTypeEvent("idea", loadElaboration);
 
   const handleRefresh = async () => {
     await loadElaboration();

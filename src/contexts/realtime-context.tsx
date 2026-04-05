@@ -24,9 +24,28 @@ interface RealtimeEvent {
 
 type EntitySubscriber = (event: RealtimeEvent) => void;
 
+// Re-export backend PresenceEvent with SSE `type` discriminator
+export type { PresenceEvent as PresenceEventBase } from "@/lib/event-bus";
+export interface PresenceEvent {
+  type: "presence";
+  companyUuid: string;
+  projectUuid: string;
+  entityType: "task" | "idea" | "proposal" | "document";
+  entityUuid: string;
+  subEntityType?: string;
+  subEntityUuid?: string;
+  agentUuid: string;
+  agentName: string;
+  action: "view" | "mutate";
+  timestamp: number;
+}
+
+type PresenceSubscriber = (event: PresenceEvent) => void;
+
 interface RealtimeContextType {
   subscribe: (callback: Subscriber) => () => void;
   subscribeEntity: (callback: EntitySubscriber) => () => void;
+  subscribePresence: (callback: PresenceSubscriber) => () => void;
 }
 
 const RealtimeContext = createContext<RealtimeContextType | null>(null);
@@ -39,6 +58,7 @@ interface RealtimeProviderProps {
 export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProps) {
   const subscribersRef = useRef<Set<Subscriber>>(new Set());
   const entitySubscribersRef = useRef<Set<EntitySubscriber>>(new Set());
+  const presenceSubscribersRef = useRef<Set<PresenceSubscriber>>(new Set());
 
   const notify = useCallback(() => {
     subscribersRef.current.forEach((cb) => cb());
@@ -56,39 +76,59 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     const THROTTLE_MS = 3000;  // At most 1 refresh every 3 seconds
     const DEBOUNCE_MS = 1000;  // Wait 1s of silence before refreshing
 
+    // Per-entityType debounce timers for entity subscribers
+    const entityDebounceTimers: Record<string, NodeJS.Timeout> = {};
+    const ENTITY_DEBOUNCE_MS = 300;
+
+    function debouncedNotifyEntity(event: RealtimeEvent) {
+      const key = event.entityType;
+      clearTimeout(entityDebounceTimers[key]);
+      entityDebounceTimers[key] = setTimeout(() => {
+        notifyEntity(event);
+      }, ENTITY_DEBOUNCE_MS);
+    }
+
     function connect() {
       // Close any existing connection before opening a new one
       disconnect();
       es = new EventSource(`/api/events?projectUuid=${projectUuid}`);
       es.onmessage = (msg) => {
-        // Parse event data for entity-specific subscribers
-        let parsedEvent: RealtimeEvent | null = null;
+        // Parse event data
+        let parsed: Record<string, unknown> | null = null;
         try {
-          parsedEvent = JSON.parse(msg.data);
+          parsed = JSON.parse(msg.data);
         } catch {
-          // Non-JSON message (e.g. heartbeat) — ignore for entity subscribers
+          // Non-JSON message (e.g. heartbeat) — ignore
+          return;
         }
+
+        if (!parsed) return;
+
+        // Route presence events to dedicated subscribers — skip notify/debouncedNotifyEntity
+        if (parsed.type === "presence") {
+          presenceSubscribersRef.current.forEach((cb) => cb(parsed as unknown as PresenceEvent));
+          return;
+        }
+
+        // Existing change event handling (backward compatible)
+        const parsedEvent = parsed as unknown as RealtimeEvent;
 
         clearTimeout(debounceTimer);
         const now = Date.now();
         const elapsed = now - lastNotifyTime;
 
         if (elapsed >= THROTTLE_MS) {
-          // Enough time has passed — refresh immediately
           lastNotifyTime = now;
           notify();
         } else {
-          // Too soon — schedule a deferred refresh
           debounceTimer = setTimeout(() => {
             lastNotifyTime = Date.now();
             notify();
           }, Math.max(DEBOUNCE_MS, THROTTLE_MS - elapsed));
         }
 
-        // Entity-specific events fire immediately (no throttle/debounce)
-        if (parsedEvent) {
-          notifyEntity(parsedEvent);
-        }
+        // Entity-specific events: debounced per entity type (300ms)
+        debouncedNotifyEntity(parsedEvent);
       };
       es.onerror = () => {
         // Browser EventSource auto-reconnects on error
@@ -104,10 +144,15 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
 
     function handleVisibility() {
       if (document.visibilityState === "visible") {
-        connect();
-        notify();
-      } else {
-        disconnect();
+        const connectionLost = !es || es.readyState === EventSource.CLOSED;
+        if (connectionLost) {
+          // Reconnect and catch up — events were missed while disconnected.
+          connect();
+          notify();
+          for (const entityType of ["task", "idea", "proposal", "document", "project"]) {
+            notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
+          }
+        }
       }
     }
 
@@ -117,6 +162,7 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     return () => {
       disconnect();
       clearTimeout(debounceTimer);
+      for (const key in entityDebounceTimers) clearTimeout(entityDebounceTimers[key]);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [projectUuid, notify, notifyEntity]);
@@ -135,8 +181,15 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     };
   }, []);
 
+  const subscribePresence = useCallback((callback: PresenceSubscriber) => {
+    presenceSubscribersRef.current.add(callback);
+    return () => {
+      presenceSubscribersRef.current.delete(callback);
+    };
+  }, []);
+
   // Memoize context value to avoid unnecessary re-renders of consumers
-  const contextValue = useMemo(() => ({ subscribe, subscribeEntity }), [subscribe, subscribeEntity]);
+  const contextValue = useMemo(() => ({ subscribe, subscribeEntity, subscribePresence }), [subscribe, subscribeEntity, subscribePresence]);
 
   return (
     <RealtimeContext.Provider value={contextValue}>
@@ -173,6 +226,54 @@ export function useRealtimeRefresh() {
   useRealtimeEvent(() => {
     router.refresh();
   });
+}
+
+/**
+ * Subscribe to SSE events filtered by one or more entity types.
+ * The callback fires only when events match any of the given entityTypes.
+ * Does NOT fire on mount — only on matching SSE events.
+ * Events are debounced per entity type (300ms) to batch rapid-fire updates.
+ */
+export function useRealtimeEntityTypeEvent(
+  entityTypes: string | string[],
+  callback: (event: RealtimeEvent) => void
+) {
+  const context = useContext(RealtimeContext);
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  const typesRef = useRef(entityTypes);
+  typesRef.current = entityTypes;
+
+  useEffect(() => {
+    if (!context) return;
+    const handler = (event: RealtimeEvent) => {
+      const types = typesRef.current;
+      const match = Array.isArray(types)
+        ? types.includes(event.entityType)
+        : event.entityType === types;
+      if (match) {
+        callbackRef.current(event);
+      }
+    };
+    return context.subscribeEntity(handler);
+  }, [context]);
+}
+
+/**
+ * Subscribe to presence events from the SSE stream.
+ * No-ops gracefully outside RealtimeProvider.
+ */
+export function usePresenceSubscription(callback: (event: PresenceEvent) => void) {
+  const context = useContext(RealtimeContext);
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  useEffect(() => {
+    if (!context) return;
+    const handler = (event: PresenceEvent) => callbackRef.current(event);
+    return context.subscribePresence(handler);
+  }, [context]);
 }
 
 /**

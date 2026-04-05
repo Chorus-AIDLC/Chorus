@@ -1,7 +1,7 @@
 {
   "name": "chorus",
   "description": "Chorus AI-DLC collaboration platform plugin for Claude Code. Automates session lifecycle, provides MCP tools for PM/Developer/Admin workflows, and enables multi-agent team observability.",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "author": {
     "name": "Chorus-AIDLC"
   },
@@ -19,7 +19,7 @@
       "type": "boolean",
       "title": "Enable Task Reviewer",
       "description": "Auto-spawn chorus:task-reviewer after submitting a task for verification. Adds independent code review but increases token usage.",
-      "default": false
+      "default": true
     }
   },
   "keywords": [

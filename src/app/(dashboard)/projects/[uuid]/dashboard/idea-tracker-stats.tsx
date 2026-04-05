@@ -7,7 +7,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card } from "@/components/ui/card";
-import { useRealtimeEvent } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { formatRelativeTime } from "./utils";
 import {
   Lightbulb,
@@ -81,8 +81,8 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
     if (!initialData) fetchStats();
   }, [fetchStats, initialData]);
 
-  // Live refresh when ideas/tasks/proposals change
-  useRealtimeEvent(fetchStats);
+  // Live refresh when ideas/tasks/proposals/documents change
+  useRealtimeEntityTypeEvent(["idea", "task", "proposal", "document"], fetchStats);
 
   if (loading) {
     return (

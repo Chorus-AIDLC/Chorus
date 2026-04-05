@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   DragDropContext,
@@ -9,7 +8,10 @@ import {
   Draggable,
   DropResult,
 } from "@hello-pangea/dnd";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { Lock, TriangleAlert, Monitor } from "lucide-react";
+import { motion, LayoutGroup } from "framer-motion";
+import { ANIM } from "@/lib/animation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,10 +23,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { moveTaskToColumnAction, forceMoveTaskToColumnAction } from "./actions";
+import { moveTaskToColumnAction, forceMoveTaskToColumnAction, fetchTasksAction } from "./actions";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
-import { useRealtimeRefresh } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 
 interface Task {
   uuid: string;
@@ -61,6 +63,7 @@ interface KanbanBoardProps {
   selectedTaskUuid?: string | null;
   onTaskSelect: (taskUuid: string) => void;
   onPanelClose: () => void;
+  proposalUuidFilter?: Set<string> | null;
 }
 
 // Status color configuration
@@ -113,9 +116,8 @@ function getUnresolvedDeps(task: Task): { uuid: string; title: string; status: s
   );
 }
 
-export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose }: KanbanBoardProps) {
+export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose, proposalUuidFilter }: KanbanBoardProps) {
   const t = useTranslations();
-  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
   const [forceDialogOpen, setForceDialogOpen] = useState(false);
@@ -124,12 +126,38 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const [gateDialogOpen, setGateDialogOpen] = useState(false);
   const [gateDialogCriteria, setGateDialogCriteria] = useState<Array<{ uuid: string; description: string; required: boolean; status: string; evidence: string | null }>>([]);
   const [forceMoving, setForceMoving] = useState(false);
-  useRealtimeRefresh();
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Sync local state when server data changes (after router.refresh())
+  // Refetch tasks locally — no router.refresh() needed
+  const refetchTasks = useCallback(async () => {
+    const result = await fetchTasksAction(projectUuid);
+    if (result.success) {
+      const filtered = proposalUuidFilter
+        ? result.data.filter(task => task.proposalUuid && proposalUuidFilter.has(task.proposalUuid))
+        : result.data;
+      setTasks(filtered);
+      // Also refresh worker counts with the new task list
+      const wcResult = await getBatchWorkerCountsAction(filtered.map((t) => t.uuid));
+      if (wcResult.success && wcResult.data) {
+        setWorkerCounts(wcResult.data);
+      }
+    }
+  }, [projectUuid, proposalUuidFilter]);
+
+  // SSE: only refetch when task entities change
+  useRealtimeEntityTypeEvent("task", refetchTasks);
+
+  // Refetch when proposal filter changes (immediate response, no SSE needed)
+  // NOTE: We intentionally do NOT sync from initialTasks prop because pushState
+  // sidebar navigation triggers Next.js soft re-render, producing a stale
+  // initialTasks snapshot that overwrites fresher SSE-fetched data.
+  const filterRef = useRef(proposalUuidFilter);
   useEffect(() => {
-    setTasks(initialTasks);
-  }, [initialTasks]);
+    if (filterRef.current !== proposalUuidFilter) {
+      filterRef.current = proposalUuidFilter;
+      refetchTasks();
+    }
+  }, [proposalUuidFilter, refetchTasks]);
 
   // Fetch active worker counts in a single batch query instead of N individual calls
   useEffect(() => {
@@ -159,7 +187,12 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
     );
   };
 
+  const handleDragStart = () => {
+    setIsDragging(true);
+  };
+
   const handleDragEnd = async (result: DropResult) => {
+    setIsDragging(false);
     const { destination, source, draggableId } = result;
 
     // Dropped outside a column
@@ -236,8 +269,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setGateDialogOpen(true);
       }
     } else {
-      // Refresh to get the latest data
-      router.refresh();
+      // Refetch tasks to get the latest data (local update, no full-page refresh)
+      refetchTasks();
     }
   };
 
@@ -253,7 +286,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setForceDialogOpen(false);
         setForceDialogTask(null);
         setForceDialogBlockers([]);
-        router.refresh();
+        refetchTasks();
       } else {
         console.error("Failed to force move task:", result.error);
       }
@@ -270,7 +303,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
 
   return (
     <>
-    <DragDropContext onDragEnd={handleDragEnd}>
+    <DragDropContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <LayoutGroup>
       <div className="flex flex-1 gap-4 overflow-x-auto pb-4">
         {columnConfigs.map((column) => {
           const columnTasks = getTasksForColumn(column.statuses);
@@ -347,12 +381,17 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                               }}
                               style={provided.draggableProps.style}
                             >
-                              <div className="relative">
+                              <motion.div
+                                className="relative"
+                                layoutId={isDragging ? undefined : `task-card-${task.uuid}`}
+                                transition={ANIM.spring}
+                              >
                                 {workerCounts[task.uuid] > 0 && (
                                   <div className="absolute -top-3 -right-3 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-green-400 bg-white shadow-sm">
                                     <img src="/typing-animation.gif" alt="" className="h-8 w-8" />
                                   </div>
                                 )}
+                              <PresenceIndicator entityType="task" entityUuid={task.uuid}>
                               <Card
                                 className={`cursor-pointer p-4 transition-all ${
                                   blocked
@@ -473,7 +512,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   </span>
                                 </div>
                               </Card>
-                              </div>
+                              </PresenceIndicator>
+                              </motion.div>
                             </div>
                           )}
                         </Draggable>
@@ -488,6 +528,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
           );
         })}
       </div>
+      </LayoutGroup>
     </DragDropContext>
 
     {/* Task Detail Panel - View/Edit */}

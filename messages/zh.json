@@ -92,7 +92,9 @@
   "comments": {
     "title": "评论",
     "noComments": "暂无评论",
-    "addComment": "添加评论...（输入 @ 提及他人）"
+    "addComment": "添加评论...（输入 @ 提及他人）",
+    "roleAgent": "Agent",
+    "roleHuman": "用户"
   },
   "mentions": {
     "noResults": "无结果",
@@ -465,6 +467,7 @@
     "documents": "文档",
     "tasks": "任务",
     "inputs": "输入",
+    "discussion": "讨论",
     "reviewInfo": "审核信息",
     "reviewedBy": "审核人",
     "reviewedAt": "审核时间",
@@ -522,6 +525,13 @@
     "docTypeAdr": "ADR",
     "docTypeSpec": "规格说明",
     "docTypeGuide": "指南",
+    "docSubtitlePrd": "产品需求文档",
+    "docSubtitleTechDesign": "技术设计文档",
+    "docSubtitleAdr": "架构决策记录",
+    "docSubtitleSpec": "规格说明书",
+    "docSubtitleGuide": "指南",
+    "acCount": "{count} AC",
+    "depCount": "{count} 依赖",
     "storyPointsPlaceholder": "例如 4",
     "cardsView": "卡片",
     "dependencyExists": "此依赖关系已存在",

@@ -1,7 +1,7 @@
 "use server";
 
 import { getServerAuthContext } from "@/lib/auth-server";
-import { getIdea, moveIdea } from "@/services/idea.service";
+import { moveIdea, getIdeaWithDerivedStatus } from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { getTask, listTasks } from "@/services/task.service";
 import { listProjects } from "@/services/project.service";
@@ -13,7 +13,7 @@ export async function getIdeaAction(ideaUuid: string) {
     return { success: false as const, error: "Unauthorized" };
   }
 
-  const idea = await getIdea(auth.companyUuid, ideaUuid);
+  const idea = await getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid);
   if (!idea) {
     return { success: false as const, error: "Not found" };
   }

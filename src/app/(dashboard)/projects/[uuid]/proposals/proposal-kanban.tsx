@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card } from "@/components/ui/card";
@@ -9,9 +9,11 @@ import { Bot, User } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import type { DocumentDraft, TaskDraft } from "@/services/proposal.service";
-import { useRealtimeRefresh } from "@/contexts/realtime-context";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { motion } from "framer-motion";
+import { fetchProposalsAction } from "./actions";
 
 interface Proposal {
   uuid: string;
@@ -97,6 +99,7 @@ function ProposalCard({
       href={`/projects/${projectUuid}/proposals/${proposal.uuid}`}
       className="block"
     >
+      <PresenceIndicator entityType="proposal" entityUuid={proposal.uuid}>
       <Card className="cursor-pointer border-[#E5E0D8] bg-white p-4 transition-all hover:border-[#C67A52] hover:shadow-sm">
         {/* Row 1: Status badge + Type tag */}
         <div className="mb-2 flex items-start justify-between">
@@ -142,15 +145,29 @@ function ProposalCard({
           )}
         </div>
       </Card>
+      </PresenceIndicator>
     </Link>
   );
 }
 
-export function ProposalKanban({ projectUuid, proposals }: ProposalKanbanProps) {
+export function ProposalKanban({ projectUuid, proposals: initialProposals }: ProposalKanbanProps) {
   const t = useTranslations();
   const isMobile = useIsMobile();
   const [activeFilter, setActiveFilter] = useState("all");
-  useRealtimeRefresh();
+  const [proposals, setProposals] = useState(initialProposals);
+
+  // Sync from server component on navigation
+  useEffect(() => { setProposals(initialProposals); }, [initialProposals]);
+
+  // Refetch proposals locally on SSE — no router.refresh()
+  const refetchProposals = useCallback(async () => {
+    const result = await fetchProposalsAction(projectUuid);
+    if (result.success) {
+      setProposals(result.data);
+    }
+  }, [projectUuid]);
+
+  useRealtimeEntityTypeEvent("proposal", refetchProposals);
 
   const getProposalsForColumn = (statuses: string[]) =>
     proposals.filter((p) => statuses.includes(p.status));
@@ -249,7 +266,8 @@ export function ProposalKanban({ projectUuid, proposals }: ProposalKanbanProps) 
             </div>
 
             {/* Cards */}
-            <div className="flex-1 space-y-4 overflow-y-auto">
+            {/* pt-3: leave room for PresenceIndicator badge above first card */}
+            <div className="flex-1 space-y-4 overflow-y-auto pt-3">
               {columnProposals.length === 0 ? (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}

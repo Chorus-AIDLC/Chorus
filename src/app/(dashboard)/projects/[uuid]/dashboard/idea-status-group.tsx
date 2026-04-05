@@ -8,6 +8,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { IdeaCard, type IdeaCardItem } from "./idea-card";
 
 interface IdeaStatusGroupProps {
@@ -77,7 +78,9 @@ export function IdeaStatusGroup({
                 {idx > 0 && (
                   <div className="mx-0 h-px bg-[#F0EEEA]" />
                 )}
-                <IdeaCard idea={idea} onClick={onIdeaClick} />
+                <PresenceIndicator entityType="idea" entityUuid={idea.uuid} badgeInside>
+                  <IdeaCard idea={idea} onClick={onIdeaClick} />
+                </PresenceIndicator>
               </div>
             ))}
           </div>

@@ -1,5 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Inline code: orange bold highlight */
+:not(pre) > code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-weight: 600;
+  color: hsl(var(--primary));
+  font-size: inherit;
+}
 
 @custom-variant dark (&:is(.dark *));
 @source "../../../node_modules/streamdown/dist/*.js";

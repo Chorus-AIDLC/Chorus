@@ -889,6 +889,7 @@ export async function addDocumentDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -920,6 +921,7 @@ export async function addTaskDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -957,6 +959,7 @@ export async function updateDocumentDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -994,6 +997,7 @@ export async function updateTaskDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1026,6 +1030,7 @@ export async function removeDocumentDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1063,6 +1068,7 @@ export async function removeTaskDraft(
     },
   });
 
+  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 

@@ -27,7 +27,7 @@ An Idea's own status only tracks the elaboration phase. Everything downstream (p
 
 ## Full Mapping (11 internal states → 4 groups + 9 badge labels)
 
-| # | Idea Status | Elab Status | Proposal | Tasks | → Group | → Badge |
+li| # | Idea Status | Elab Status | Proposal | Tasks | → Group | → Badge |
 |---|---|---|---|---|---|---|
 | 1 | `open` | — | — | — | **To Do** | `open` |
 | 2 | `elaborating` | `null`/`validating`/`resolved` | — | — | **In Progress** | `researching` |
