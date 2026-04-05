@@ -978,7 +978,7 @@ describe("submitProposal", () => {
     expect(mockEventBus.emitChange).toHaveBeenCalled();
   });
 
-  it("should auto-transition input ideas to proposal_created", async () => {
+  it("should NOT auto-transition input ideas on submit (status derived from proposal/tasks)", async () => {
     const proposal = dbProposal({
       status: "draft",
       inputType: "idea",
@@ -993,18 +993,11 @@ describe("submitProposal", () => {
       { uuid: "idea-2", title: "Idea 2", elaborationStatus: "resolved" },
     ]);
     mockPrisma.proposal.update.mockResolvedValue(dbProposal({ ...proposal, status: "pending" }));
-    mockPrisma.idea.updateMany.mockResolvedValue({ count: 2 });
 
     await submitProposal(proposal.uuid, COMPANY_UUID);
 
-    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
-      where: {
-        uuid: { in: ["idea-1", "idea-2"] },
-        companyUuid: COMPANY_UUID,
-        status: "elaborating",
-      },
-      data: { status: "proposal_created" },
-    });
+    // Should NOT call idea.updateMany — idea status is no longer changed on proposal submit
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -1804,17 +1797,12 @@ describe("Idea reuse - submitProposal with proposal_created Idea", () => {
 
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue({ ...proposal, status: "pending" });
-    // Idea is already proposal_created - updateMany should match 0 rows (no error)
-    mockPrisma.idea.updateMany.mockResolvedValue({ count: 0 });
 
     const result = await submitProposal("proposal-reuse", COMPANY_UUID);
 
     expect(result.status).toBe("pending");
-    // updateMany was called with status: "elaborating" filter, which won't match proposal_created
-    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
-      where: { uuid: { in: ["idea-already-used"] }, companyUuid: COMPANY_UUID, status: "elaborating" },
-      data: { status: "proposal_created" },
-    });
+    // Idea status is no longer changed on proposal submit — derived status handles lifecycle
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 });
 

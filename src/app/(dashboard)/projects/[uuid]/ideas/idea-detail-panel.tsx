@@ -88,17 +88,13 @@ interface IdeaDetailPanelProps {
 const statusColors: Record<string, string> = {
   open: "bg-[#FFF3E0] text-[#E65100]",
   elaborating: "bg-[#E3F2FD] text-[#1976D2]",
-  proposal_created: "bg-[#F3E5F5] text-[#7B1FA2]",
-  completed: "bg-[#E0F2F1] text-[#00796B]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  elaborated: "bg-[#E0F2F1] text-[#00796B]",
 };
 
 const statusI18nKeys: Record<string, string> = {
   open: "open",
   elaborating: "elaborating",
-  proposal_created: "proposal_created",
-  completed: "completed",
-  closed: "closed",
+  elaborated: "elaborated",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -224,16 +220,16 @@ export function IdeaDetailPanel({
     return () => clearTimeout(timer);
   }, []);
 
-  const canAssign = idea.status !== "completed" && idea.status !== "closed";
+  const canAssign = idea.status !== "elaborated";
   const elaborationResolved = idea.elaborationStatus === "resolved";
   const canCreateProposal =
-    (idea.status === "elaborating" || idea.status === "proposal_created" || idea.status === "completed") &&
+    (idea.status === "elaborating" || idea.status === "elaborated") &&
     elaborationResolved;
   const canSkipElaboration =
     idea.status === "elaborating" &&
     (!idea.elaborationStatus || idea.elaborationStatus !== "resolved") &&
     (idea.assignee?.uuid === currentUserUuid);
-  const canEdit = idea.status !== "completed" && idea.status !== "closed";
+  const canEdit = idea.status !== "elaborated";
 
   useEffect(() => {
     async function loadComments() {
@@ -776,11 +772,6 @@ export function IdeaDetailPanel({
                   {idea.status === "elaborating" && !elaborationResolved && !canSkipElaboration && (
                     <span className="text-[11px] text-[#9A9A9A]">
                       {t("elaboration.elaborationRequiredHint")}
-                    </span>
-                  )}
-                  {(idea.status === "completed" || idea.status === "closed") && (
-                    <span className="text-sm text-[#9A9A9A]">
-                      {idea.status === "completed" ? t("status.completed") : t("status.closed")}
                     </span>
                   )}
                 </div>

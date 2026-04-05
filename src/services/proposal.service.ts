@@ -856,17 +856,6 @@ export async function submitProposal(
     },
   });
 
-  // Auto-transition input Ideas to proposal_created
-  if (proposal.inputType === "idea") {
-    const inputUuids = (proposal.inputUuids as string[]) || [];
-    if (inputUuids.length > 0) {
-      await prisma.idea.updateMany({
-        where: { uuid: { in: inputUuids }, companyUuid, status: "elaborating" },
-        data: { status: "proposal_created" },
-      });
-    }
-  }
-
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
 
   return formatProposalResponse(updated);

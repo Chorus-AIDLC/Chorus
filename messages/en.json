@@ -157,6 +157,7 @@
     "completed": "Completed",
     "closed": "Closed",
     "elaborating": "Elaborating",
+    "elaborated": "Elaborated",
     "proposalCreated": "Proposal Created",
     "proposal_created": "Proposal Created",
     "needHumanInput": "Need Human Input",

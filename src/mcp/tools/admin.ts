@@ -421,43 +421,6 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_admin_close_idea - Close an Idea (any -> closed)
-  server.registerTool(
-    "chorus_admin_close_idea",
-    {
-      description: "Close an Idea (any status -> closed, Admin exclusive)",
-      inputSchema: z.object({
-        ideaUuid: z.string().describe("Idea UUID"),
-      }),
-    },
-    async ({ ideaUuid }) => {
-      const idea = await ideaService.getIdeaByUuid(auth.companyUuid, ideaUuid);
-      if (!idea) {
-        return { content: [{ type: "text", text: "Idea not found" }], isError: true };
-      }
-
-      if (idea.status === "closed") {
-        return { content: [{ type: "text", text: "Idea is already in closed status" }], isError: true };
-      }
-
-      const updated = await ideaService.updateIdea(ideaUuid, auth.companyUuid, { status: "closed" });
-
-      await activityService.createActivity({
-        companyUuid: auth.companyUuid,
-        projectUuid: idea.projectUuid,
-        targetType: "idea",
-        targetUuid: ideaUuid,
-        actorType: "agent",
-        actorUuid: auth.actorUuid,
-        action: "closed",
-      });
-
-      return {
-        content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, status: updated.status }) }],
-      };
-    }
-  );
-
   // ===== Project Group Admin Tools =====
 
   // chorus_admin_create_project_group - Create a new project group

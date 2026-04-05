@@ -12,7 +12,7 @@ import * as activityService from "@/services/activity.service";
 
 // ===== Derived Status =====
 
-export type DerivedIdeaStatus = 'todo' | 'in_progress' | 'human_conduct_required' | 'done' | 'closed';
+export type DerivedIdeaStatus = 'todo' | 'in_progress' | 'human_conduct_required' | 'done';
 
 // ===== Type Definitions =====
 
@@ -66,14 +66,13 @@ export interface IdeaResponse {
   updatedAt: string;
 }
 
-// Idea status transition rules — simplified AI-DLC lifecycle
-// open → elaborating → proposal_created → completed → closed
+// Idea status transition rules — simplified 3-state model
+// open → elaborating → elaborated
+// Post-elaboration status is derived from Proposal + Task states (see computeDerivedStatus)
 export const IDEA_STATUS_TRANSITIONS: Record<string, string[]> = {
-  open: ["elaborating", "closed"],
-  elaborating: ["proposal_created", "closed"],
-  proposal_created: ["completed", "elaborating", "closed"],
-  completed: ["closed"],
-  closed: [],
+  open: ["elaborating"],
+  elaborating: ["elaborated"],
+  elaborated: [],
 };
 
 // Map legacy statuses to current ones (for backward compatibility with historical data)
@@ -82,8 +81,11 @@ export function normalizeIdeaStatus(status: string): string {
     case "assigned":
     case "in_progress":
       return "elaborating";
+    case "proposal_created":
+    case "completed":
+    case "closed":
     case "pending_review":
-      return "proposal_created";
+      return "elaborated";
     default:
       return status;
   }
@@ -314,8 +316,9 @@ export async function claimIdea({
   if (existing.assigneeUuid) {
     throw new AlreadyClaimedError("Idea");
   }
-  if (existing.status === "completed" || existing.status === "closed") {
-    throw new Error("Cannot claim a completed or closed Idea");
+  const normalizedStatus = normalizeIdeaStatus(existing.status);
+  if (normalizedStatus === "elaborated") {
+    throw new Error("Cannot claim an elaborated Idea");
   }
 
   const idea = await prisma.idea.update({
@@ -349,8 +352,9 @@ export async function assignIdea({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new Error("Idea not found");
-  if (existing.status === "completed" || existing.status === "closed") {
-    throw new Error("Cannot assign a completed or closed Idea");
+  const normalizedAssignStatus = normalizeIdeaStatus(existing.status);
+  if (normalizedAssignStatus === "elaborated") {
+    throw new Error("Cannot assign an elaborated Idea");
   }
 
   // If currently open, move to elaborating; otherwise keep current status
@@ -379,8 +383,9 @@ export async function assignIdea({
 export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
   const existing = await prisma.idea.findUnique({ where: { uuid } });
   if (!existing) throw new Error("Idea not found");
-  if (existing.status === "completed" || existing.status === "closed") {
-    throw new Error("Cannot release a completed or closed Idea");
+  const normalizedReleaseStatus = normalizeIdeaStatus(existing.status);
+  if (normalizedReleaseStatus === "elaborated") {
+    throw new Error("Cannot release an elaborated Idea");
   }
 
   const idea = await prisma.idea.update({
@@ -562,7 +567,6 @@ export type BadgeHint =
   | "building"          // Tasks in development
   | "verify_work"       // Tasks: work done, human needs to verify
   | "done"              // All tasks complete
-  | "closed"            // Idea closed
   | null;
 
 export interface DerivedStatusResult {
@@ -574,10 +578,6 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
   const normalized = normalizeIdeaStatus(ctx.ideaStatus);
 
   switch (normalized) {
-    case "completed":
-      return { derivedStatus: "done", badgeHint: "done" };
-    case "closed":
-      return { derivedStatus: "closed", badgeHint: "closed" };
     case "open":
       return { derivedStatus: "todo", badgeHint: "open" };
     case "elaborating":
@@ -585,22 +585,17 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
       if (ctx.elaborationStatus === "pending_answers")
         return { derivedStatus: "human_conduct_required", badgeHint: "answer_questions" };
       return { derivedStatus: "in_progress", badgeHint: "researching" };
-    case "proposal_created": {
+    case "elaborated": {
+      if (ctx.hasPendingProposal)
+        return { derivedStatus: "human_conduct_required", badgeHint: "review_proposal" };
       if (ctx.hasApprovedProposal) {
-        // Approved — derive from task progress
+        if (ctx.taskStatuses.some((s) => s === "to_verify"))
+          return { derivedStatus: "human_conduct_required", badgeHint: "verify_work" };
         const allDone = ctx.taskStatuses.length > 0
           && ctx.taskStatuses.every((s) => s === "done" || s === "closed");
         if (allDone) return { derivedStatus: "done", badgeHint: "done" };
-        // Only enter verify_work when ALL tasks are done/closed/to_verify (none still building)
-        const allFinishedOrVerify = ctx.taskStatuses.length > 0
-          && ctx.taskStatuses.every((s) => s === "done" || s === "closed" || s === "to_verify");
-        if (allFinishedOrVerify && ctx.taskStatuses.some((s) => s === "to_verify"))
-          return { derivedStatus: "human_conduct_required", badgeHint: "verify_work" };
         return { derivedStatus: "in_progress", badgeHint: "building" };
       }
-      if (ctx.hasPendingProposal)
-        return { derivedStatus: "human_conduct_required", badgeHint: "review_proposal" };
-      // draft or rejected — agent still drafting proposal
       return { derivedStatus: "in_progress", badgeHint: "planning" };
     }
     default:
@@ -626,10 +621,11 @@ export async function getIdeaWithDerivedStatus(
       status: { in: ["approved", "pending"] },
       inputUuids: { array_contains: [ideaUuid] },
     },
-    select: { uuid: true, status: true },
+    select: { uuid: true, status: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
   });
 
-  const approvedProposal = proposals.find((p) => p.status === "approved");
+  const approvedProposal = proposals.find((p) => p.status === "approved") ?? null;
   let taskStatuses: string[] = [];
   if (approvedProposal) {
     const tasks = await prisma.task.findMany({
@@ -815,8 +811,6 @@ export async function getTrackerGroups(
 
   for (const idea of ideas) {
     const ds = idea.derivedStatus;
-    if (ds === "closed") continue;
-
     const formatted: TrackerIdeaItem = {
       uuid: idea.uuid,
       title: idea.title,

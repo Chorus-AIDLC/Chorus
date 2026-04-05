@@ -49,7 +49,6 @@ export const BADGE_HINT_I18N_KEYS: Record<string, string> = {
   building: "building",
   verify_work: "verifyWork",
   done: "done",
-  closed: "closed",
 };
 
 export function getBadgeHintLabel(badgeHint: BadgeHint, t: TranslateFn): string {

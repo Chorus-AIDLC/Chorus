@@ -16,16 +16,26 @@ describe("normalizeIdeaStatus", () => {
     expect(normalizeIdeaStatus("in_progress")).toBe("elaborating");
   });
 
-  it('should map "pending_review" to "proposal_created"', () => {
-    expect(normalizeIdeaStatus("pending_review")).toBe("proposal_created");
+  it('should map "pending_review" to "elaborated"', () => {
+    expect(normalizeIdeaStatus("pending_review")).toBe("elaborated");
+  });
+
+  it('should map "proposal_created" to "elaborated"', () => {
+    expect(normalizeIdeaStatus("proposal_created")).toBe("elaborated");
+  });
+
+  it('should map "completed" to "elaborated"', () => {
+    expect(normalizeIdeaStatus("completed")).toBe("elaborated");
+  });
+
+  it('should map "closed" to "elaborated"', () => {
+    expect(normalizeIdeaStatus("closed")).toBe("elaborated");
   });
 
   it("should pass through current statuses unchanged", () => {
     expect(normalizeIdeaStatus("open")).toBe("open");
     expect(normalizeIdeaStatus("elaborating")).toBe("elaborating");
-    expect(normalizeIdeaStatus("proposal_created")).toBe("proposal_created");
-    expect(normalizeIdeaStatus("completed")).toBe("completed");
-    expect(normalizeIdeaStatus("closed")).toBe("closed");
+    expect(normalizeIdeaStatus("elaborated")).toBe("elaborated");
   });
 
   it("should pass through unknown statuses unchanged", () => {
@@ -39,13 +49,7 @@ describe("isValidIdeaStatusTransition", () => {
   describe("valid transitions", () => {
     const validCases: [string, string][] = [
       ["open", "elaborating"],
-      ["open", "closed"],
-      ["elaborating", "proposal_created"],
-      ["elaborating", "closed"],
-      ["proposal_created", "completed"],
-      ["proposal_created", "elaborating"],
-      ["proposal_created", "closed"],
-      ["completed", "closed"],
+      ["elaborating", "elaborated"],
     ];
 
     it.each(validCases)("%s -> %s should be valid", (from, to) => {
@@ -55,18 +59,10 @@ describe("isValidIdeaStatusTransition", () => {
 
   describe("invalid transitions", () => {
     const invalidCases: [string, string][] = [
-      ["open", "completed"],
-      ["open", "proposal_created"],
+      ["open", "elaborated"],
       ["elaborating", "open"],
-      ["elaborating", "completed"],
-      ["proposal_created", "open"],
-      ["completed", "open"],
-      ["completed", "elaborating"],
-      ["completed", "proposal_created"],
-      ["closed", "open"],
-      ["closed", "elaborating"],
-      ["closed", "proposal_created"],
-      ["closed", "completed"],
+      ["elaborated", "open"],
+      ["elaborated", "elaborating"],
     ];
 
     it.each(invalidCases)("%s -> %s should be invalid", (from, to) => {
@@ -76,23 +72,20 @@ describe("isValidIdeaStatusTransition", () => {
 
   describe("legacy status normalization in transitions", () => {
     it('should treat "assigned" as "elaborating" for transitions', () => {
-      // "assigned" normalizes to "elaborating", which can go to "proposal_created"
-      expect(isValidIdeaStatusTransition("assigned", "proposal_created")).toBe(true);
-      expect(isValidIdeaStatusTransition("assigned", "closed")).toBe(true);
+      // "assigned" normalizes to "elaborating", which can go to "elaborated"
+      expect(isValidIdeaStatusTransition("assigned", "elaborated")).toBe(true);
       expect(isValidIdeaStatusTransition("assigned", "open")).toBe(false);
     });
 
     it('should treat "in_progress" as "elaborating" for transitions', () => {
-      expect(isValidIdeaStatusTransition("in_progress", "proposal_created")).toBe(true);
-      expect(isValidIdeaStatusTransition("in_progress", "closed")).toBe(true);
-      expect(isValidIdeaStatusTransition("in_progress", "completed")).toBe(false);
+      expect(isValidIdeaStatusTransition("in_progress", "elaborated")).toBe(true);
+      expect(isValidIdeaStatusTransition("in_progress", "open")).toBe(false);
     });
 
-    it('should treat "pending_review" as "proposal_created" for transitions', () => {
-      expect(isValidIdeaStatusTransition("pending_review", "completed")).toBe(true);
-      expect(isValidIdeaStatusTransition("pending_review", "elaborating")).toBe(true);
-      expect(isValidIdeaStatusTransition("pending_review", "closed")).toBe(true);
+    it('should treat "pending_review" as "elaborated" (terminal) for transitions', () => {
+      // "pending_review" normalizes to "elaborated", which is terminal
       expect(isValidIdeaStatusTransition("pending_review", "open")).toBe(false);
+      expect(isValidIdeaStatusTransition("pending_review", "elaborating")).toBe(false);
     });
   });
 
@@ -101,11 +94,11 @@ describe("isValidIdeaStatusTransition", () => {
   });
 
   it("should have all expected statuses in IDEA_STATUS_TRANSITIONS", () => {
-    const expectedStatuses = ["open", "elaborating", "proposal_created", "completed", "closed"];
+    const expectedStatuses = ["open", "elaborating", "elaborated"];
     expect(Object.keys(IDEA_STATUS_TRANSITIONS).sort()).toEqual(expectedStatuses.sort());
   });
 
-  it("closed should be a terminal state with no transitions", () => {
-    expect(IDEA_STATUS_TRANSITIONS["closed"]).toEqual([]);
+  it("elaborated should be a terminal state with no transitions", () => {
+    expect(IDEA_STATUS_TRANSITIONS["elaborated"]).toEqual([]);
   });
 });

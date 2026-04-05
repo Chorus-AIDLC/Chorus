@@ -71,16 +71,16 @@ function makeFullIdea(uuid: string, status: string, elaborationStatus?: string |
 // ===== computeDerivedStatus (pure function tests) =====
 
 describe("computeDerivedStatus", () => {
-  it('maps "completed" → done/done', () => {
+  it('maps legacy "completed" (normalizes to elaborated) with no proposal → in_progress/planning', () => {
     const result = computeDerivedStatus({ ideaStatus: "completed", hasPendingProposal: false, hasApprovedProposal: false, taskStatuses: [] });
-    expect(result.derivedStatus).toBe("done");
-    expect(result.badgeHint).toBe("done");
+    expect(result.derivedStatus).toBe("in_progress");
+    expect(result.badgeHint).toBe("planning");
   });
 
-  it('maps "closed" → closed/closed', () => {
+  it('maps legacy "closed" (normalizes to elaborated) with no proposal → in_progress/planning', () => {
     const result = computeDerivedStatus({ ideaStatus: "closed", hasPendingProposal: false, hasApprovedProposal: false, taskStatuses: [] });
-    expect(result.derivedStatus).toBe("closed");
-    expect(result.badgeHint).toBe("closed");
+    expect(result.derivedStatus).toBe("in_progress");
+    expect(result.badgeHint).toBe("planning");
   });
 
   it('maps "open" → todo/open', () => {
@@ -107,30 +107,30 @@ describe("computeDerivedStatus", () => {
     expect(r.badgeHint).toBe("researching");
   });
 
-  it('maps "proposal_created" with pending proposal → human_conduct_required/review_proposal', () => {
+  it('maps legacy "proposal_created" (normalizes to elaborated) with pending proposal → human_conduct_required/review_proposal', () => {
     const result = computeDerivedStatus({ ideaStatus: "proposal_created", hasPendingProposal: true, hasApprovedProposal: false, taskStatuses: [] });
     expect(result.derivedStatus).toBe("human_conduct_required");
     expect(result.badgeHint).toBe("review_proposal");
   });
 
-  it('maps "proposal_created" without approved or pending proposal → in_progress/planning', () => {
+  it('maps legacy "proposal_created" (normalizes to elaborated) without approved or pending proposal → in_progress/planning', () => {
     const result = computeDerivedStatus({ ideaStatus: "proposal_created", hasPendingProposal: false, hasApprovedProposal: false, taskStatuses: [] });
     expect(result.derivedStatus).toBe("in_progress");
     expect(result.badgeHint).toBe("planning");
   });
 
-  it('maps "proposal_created" with approved proposal and mixed in_progress+to_verify → in_progress/building', () => {
+  it('maps legacy "proposal_created" with approved proposal and mixed in_progress+to_verify → verify_work (any to_verify triggers)', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
       hasApprovedProposal: true,
       taskStatuses: ["in_progress", "to_verify", "done"],
     });
-    expect(result.derivedStatus).toBe("in_progress");
-    expect(result.badgeHint).toBe("building");
+    expect(result.derivedStatus).toBe("human_conduct_required");
+    expect(result.badgeHint).toBe("verify_work");
   });
 
-  it('maps "proposal_created" with approved proposal and all done/to_verify → human_conduct_required/verify_work', () => {
+  it('maps legacy "proposal_created" with approved proposal and all done/to_verify → human_conduct_required/verify_work', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
@@ -141,7 +141,7 @@ describe("computeDerivedStatus", () => {
     expect(result.badgeHint).toBe("verify_work");
   });
 
-  it('maps "proposal_created" with approved proposal and in_progress tasks → in_progress/building', () => {
+  it('maps legacy "proposal_created" with approved proposal and in_progress tasks (no to_verify) → in_progress/building', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
@@ -152,7 +152,7 @@ describe("computeDerivedStatus", () => {
     expect(result.badgeHint).toBe("building");
   });
 
-  it('maps "proposal_created" with approved proposal and all tasks done → done/done', () => {
+  it('maps legacy "proposal_created" with approved proposal and all tasks done → done/done', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
@@ -163,7 +163,7 @@ describe("computeDerivedStatus", () => {
     expect(result.badgeHint).toBe("done");
   });
 
-  it('maps "proposal_created" with approved proposal and only open tasks → in_progress/building', () => {
+  it('maps legacy "proposal_created" with approved proposal and only open tasks → in_progress/building', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
@@ -174,7 +174,7 @@ describe("computeDerivedStatus", () => {
     expect(result.badgeHint).toBe("building");
   });
 
-  it('maps "proposal_created" with approved proposal and no tasks → in_progress/building', () => {
+  it('maps legacy "proposal_created" with approved proposal and no tasks → in_progress/building', () => {
     const result = computeDerivedStatus({
       ideaStatus: "proposal_created",
       hasPendingProposal: false,
@@ -189,6 +189,103 @@ describe("computeDerivedStatus", () => {
     const result = computeDerivedStatus({ ideaStatus: "assigned", hasPendingProposal: false, hasApprovedProposal: false, taskStatuses: [] });
     expect(result.derivedStatus).toBe("in_progress");
     expect(result.badgeHint).toBe("researching");
+  });
+
+  // ===== "elaborated" status — the primary post-elaboration state =====
+
+  it('"elaborated" with approved proposal and incomplete tasks → in_progress/building', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["in_progress", "open"],
+    });
+    // EXPECTED: should derive from task progress → in_progress/building
+    expect(result.derivedStatus).toBe("in_progress");
+    expect(result.badgeHint).toBe("building");
+  });
+
+  it('"elaborated" with approved proposal and all done tasks → done/done', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["done", "done"],
+    });
+    // EXPECTED: all tasks done → done/done
+    expect(result.derivedStatus).toBe("done");
+    expect(result.badgeHint).toBe("done");
+  });
+
+  it('"elaborated" with pending proposal → human_conduct_required/review_proposal', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: true,
+      hasApprovedProposal: false,
+      taskStatuses: [],
+    });
+    // EXPECTED: pending proposal → human_conduct_required/review_proposal
+    expect(result.derivedStatus).toBe("human_conduct_required");
+    expect(result.badgeHint).toBe("review_proposal");
+  });
+
+  it('"elaborated" with no proposal → in_progress/planning', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: false,
+      taskStatuses: [],
+    });
+    // EXPECTED: no proposal yet → in_progress/planning
+    expect(result.derivedStatus).toBe("in_progress");
+    expect(result.badgeHint).toBe("planning");
+  });
+
+  it('"elaborated" with approved proposal and to_verify tasks → human_conduct_required/verify_work', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["done", "to_verify"],
+    });
+    // EXPECTED: all finished with some to_verify → human_conduct_required/verify_work
+    expect(result.derivedStatus).toBe("human_conduct_required");
+    expect(result.badgeHint).toBe("verify_work");
+  });
+
+  // ===== verify_work trigger: ANY to_verify (not all must be finished) =====
+
+  it('"elaborated" with approved proposal and mixed in_progress+to_verify → verify_work (any to_verify triggers)', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["in_progress", "to_verify", "done"],
+    });
+    expect(result.derivedStatus).toBe("human_conduct_required");
+    expect(result.badgeHint).toBe("verify_work");
+  });
+
+  it('"elaborated" with approved proposal and single to_verify among open tasks → verify_work', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["open", "to_verify", "open"],
+    });
+    expect(result.derivedStatus).toBe("human_conduct_required");
+    expect(result.badgeHint).toBe("verify_work");
+  });
+
+  it('"elaborated" with approved proposal and no to_verify, some in_progress → building', () => {
+    const result = computeDerivedStatus({
+      ideaStatus: "elaborated",
+      hasPendingProposal: false,
+      hasApprovedProposal: true,
+      taskStatuses: ["in_progress", "done", "open"],
+    });
+    expect(result.derivedStatus).toBe("in_progress");
+    expect(result.badgeHint).toBe("building");
   });
 
   it('maps unknown status → todo/open', () => {
@@ -239,8 +336,8 @@ describe("getIdeasWithDerivedStatus", () => {
     expect(result[0].badgeHint).toBe("answer_questions");
   });
 
-  it("returns human_conduct_required for proposal_created with pending proposal", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "proposal_created")]);
+  it("returns human_conduct_required for elaborated idea with pending proposal", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "elaborated")]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-1", status: "pending", inputUuids: ["idea-1"], createdAt: now },
     ]);
@@ -256,7 +353,7 @@ describe("getIdeasWithDerivedStatus", () => {
     const proposalUuid = "proposal-aaa";
     const ideaUuid = "idea-1";
 
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea(ideaUuid, "proposal_created")]);
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea(ideaUuid, "elaborated")]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: proposalUuid, status: "approved", inputUuids: [ideaUuid], createdAt: now },
     ]);
@@ -275,26 +372,26 @@ describe("getIdeasWithDerivedStatus", () => {
     expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("returns done for completed ideas", async () => {
+  it("returns planning for legacy completed ideas (normalizes to elaborated, no proposal)", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "completed")]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
     const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
 
-    expect(result[0].derivedStatus).toBe("done");
-    expect(result[0].badgeHint).toBe("done");
+    expect(result[0].derivedStatus).toBe("in_progress");
+    expect(result[0].badgeHint).toBe("planning");
   });
 
-  it("returns closed for closed ideas", async () => {
+  it("returns planning for legacy closed ideas (normalizes to elaborated, no proposal)", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "closed")]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
     const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
 
-    expect(result[0].derivedStatus).toBe("closed");
-    expect(result[0].badgeHint).toBe("closed");
+    expect(result[0].derivedStatus).toBe("in_progress");
+    expect(result[0].badgeHint).toBe("planning");
   });
 
   it("uses the latest approved proposal when multiple exist for one idea", async () => {
@@ -302,7 +399,7 @@ describe("getIdeasWithDerivedStatus", () => {
     const oldProposalUuid = "proposal-old";
     const newProposalUuid = "proposal-new";
 
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea(ideaUuid, "proposal_created")]);
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea(ideaUuid, "elaborated")]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: newProposalUuid, status: "approved", inputUuids: [ideaUuid], createdAt: new Date("2026-02-01T00:00:00Z") },
       { uuid: oldProposalUuid, status: "approved", inputUuids: [ideaUuid], createdAt: new Date("2026-01-01T00:00:00Z") },
@@ -325,17 +422,20 @@ describe("getIdeasWithDerivedStatus", () => {
       makeIdea("idea-open", "open"),
       makeIdea("idea-elab", "elaborating", "validating"),
       makeIdea("idea-elab-pending", "elaborating", "pending_answers"),
-      makeIdea("idea-prop-pending", "proposal_created"),
-      makeIdea("idea-done", "completed"),
-      makeIdea("idea-closed", "closed"),
-      makeIdea("idea-verify", "proposal_created"),
+      makeIdea("idea-prop-pending", "elaborated"),
+      makeIdea("idea-done-tasks", "elaborated"),
+      makeIdea("idea-no-proposal", "elaborated"),
+      makeIdea("idea-verify", "elaborated"),
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: proposalUuid, status: "approved", inputUuids: ["idea-verify"], createdAt: now },
+      { uuid: "proposal-done", status: "approved", inputUuids: ["idea-done-tasks"], createdAt: now },
       { uuid: "proposal-pending", status: "pending", inputUuids: ["idea-prop-pending"], createdAt: now },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
       { proposalUuid, status: "to_verify" },
+      { proposalUuid: "proposal-done", status: "done" },
+      { proposalUuid: "proposal-done", status: "done" },
     ]);
 
     const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
@@ -345,8 +445,8 @@ describe("getIdeasWithDerivedStatus", () => {
     expect(statusMap["idea-elab"]).toBe("in_progress");
     expect(statusMap["idea-elab-pending"]).toBe("human_conduct_required");
     expect(statusMap["idea-prop-pending"]).toBe("human_conduct_required");
-    expect(statusMap["idea-done"]).toBe("done");
-    expect(statusMap["idea-closed"]).toBe("closed");
+    expect(statusMap["idea-done-tasks"]).toBe("done");
+    expect(statusMap["idea-no-proposal"]).toBe("in_progress");
     expect(statusMap["idea-verify"]).toBe("human_conduct_required");
 
     const badgeMap = Object.fromEntries(result.map((r) => [r.uuid, r.badgeHint]));
@@ -354,8 +454,8 @@ describe("getIdeasWithDerivedStatus", () => {
     expect(badgeMap["idea-elab"]).toBe("researching");
     expect(badgeMap["idea-elab-pending"]).toBe("answer_questions");
     expect(badgeMap["idea-prop-pending"]).toBe("review_proposal");
-    expect(badgeMap["idea-done"]).toBe("done");
-    expect(badgeMap["idea-closed"]).toBe("closed");
+    expect(badgeMap["idea-done-tasks"]).toBe("done");
+    expect(badgeMap["idea-no-proposal"]).toBe("planning");
     expect(badgeMap["idea-verify"]).toBe("verify_work");
   });
 
@@ -369,14 +469,14 @@ describe("getIdeasWithDerivedStatus", () => {
   });
 
   it("handles proposal with non-array inputUuids gracefully", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "proposal_created")]);
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "elaborated")]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-bad", status: "approved", inputUuids: "not-an-array", createdAt: now },
     ]);
 
     const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
 
-    // Should not crash; no valid proposal mapping → no approved, no pending → in_progress
+    // Should not crash; no valid proposal mapping → no approved, no pending → in_progress/planning
     expect(result[0].derivedStatus).toBe("in_progress");
     expect(result[0].badgeHint).toBe("planning");
     expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
@@ -410,7 +510,7 @@ describe("getIdeaWithDerivedStatus", () => {
   });
 
   it("computes building when approved proposal has active tasks", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "proposal_created"));
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-1", status: "approved" },
     ]);
@@ -426,7 +526,7 @@ describe("getIdeaWithDerivedStatus", () => {
   });
 
   it("computes done when all tasks are done/closed", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "proposal_created"));
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-1", status: "approved" },
     ]);
@@ -441,8 +541,8 @@ describe("getIdeaWithDerivedStatus", () => {
     expect(result!.badgeHint).toBe("done");
   });
 
-  it("computes verify_work when all tasks finished with some to_verify", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "proposal_created"));
+  it("computes verify_work when any task is to_verify", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-1", status: "approved" },
     ]);
@@ -458,7 +558,7 @@ describe("getIdeaWithDerivedStatus", () => {
   });
 
   it("computes review_proposal when pending proposal exists", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "proposal_created"));
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: "proposal-1", status: "pending" },
     ]);
@@ -471,7 +571,7 @@ describe("getIdeaWithDerivedStatus", () => {
   });
 
   it("skips task query when no approved proposal", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "proposal_created"));
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
     await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
@@ -503,7 +603,7 @@ describe("getTrackerGroups", () => {
     expect(result.counts.done).toBe(0);
   });
 
-  it("excludes closed ideas from all groups", async () => {
+  it("legacy closed ideas normalize to elaborated (shown as in_progress/planning with no proposal)", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
       makeIdea("idea-closed", "closed"),
     ]);
@@ -512,26 +612,32 @@ describe("getTrackerGroups", () => {
 
     const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
 
+    // Legacy "closed" normalizes to "elaborated", which with no proposal becomes in_progress/planning
     const allItems = Object.values(result.groups).flat();
-    expect(allItems).toHaveLength(0);
+    expect(allItems).toHaveLength(1);
+    expect(allItems[0].derivedStatus).toBe("in_progress");
+    expect(allItems[0].badgeHint).toBe("planning");
   });
 
   it("groups ideas by derived status with correct counts", async () => {
     const proposalUuid = "proposal-approved";
+    const doneProposalUuid = "proposal-done";
 
     mockPrisma.idea.findMany.mockResolvedValue([
       makeIdea("idea-open", "open"),
       makeIdea("idea-elab", "elaborating", "validating"),
       makeIdea("idea-pending", "elaborating", "pending_answers"),
-      makeIdea("idea-done", "completed"),
-      makeIdea("idea-closed", "closed"),
-      makeIdea("idea-building", "proposal_created"),
+      makeIdea("idea-done", "elaborated"),
+      makeIdea("idea-building", "elaborated"),
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       { uuid: proposalUuid, status: "approved", inputUuids: ["idea-building"], createdAt: now },
+      { uuid: doneProposalUuid, status: "approved", inputUuids: ["idea-done"], createdAt: now },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
       { proposalUuid, status: "in_progress" },
+      { proposalUuid: doneProposalUuid, status: "done" },
+      { proposalUuid: doneProposalUuid, status: "done" },
     ]);
 
     const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
@@ -541,9 +647,7 @@ describe("getTrackerGroups", () => {
     expect(result.counts.human_conduct_required).toBe(1); // pending_answers
     expect(result.counts.done).toBe(1);
 
-    // Closed should not appear in any group
     const allUuids = Object.values(result.groups).flat().map((i) => i.uuid);
-    expect(allUuids).not.toContain("idea-closed");
     expect(allUuids).toHaveLength(5);
   });
 

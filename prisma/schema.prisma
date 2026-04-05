@@ -144,7 +144,7 @@ model Idea {
   content        String?   // Text content
   attachments    Json?     // Attachment list [{type, url, name}]
   // Status and assignment (ARCHITECTURE.md §7.3)
-  status         String    @default("open")  // open | elaborating | proposal_created | completed | closed
+  status         String    @default("open")  // open | elaborating | elaborated (3-state model; post-elaboration status derived from Proposal+Task)
   assigneeType   String?   // user | agent
   assigneeUuid   String?   // User or Agent UUID (polymorphic)
   assignedAt     DateTime? // Assignment timestamp

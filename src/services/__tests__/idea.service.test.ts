@@ -204,7 +204,21 @@ describe("claimIdea", () => {
     ).rejects.toThrow(AlreadyClaimedError);
   });
 
-  it("should throw if idea is completed or closed", async () => {
+  it("should throw if idea is elaborated", async () => {
+    const existing = makeIdeaRecord({ status: "elaborated", assigneeUuid: null });
+    mockPrisma.idea.findFirst.mockResolvedValue(existing);
+
+    await expect(
+      claimIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: ACTOR_UUID,
+      })
+    ).rejects.toThrow("Cannot claim an elaborated Idea");
+  });
+
+  it("should throw if idea has legacy completed status (normalizes to elaborated)", async () => {
     const existing = makeIdeaRecord({ status: "completed", assigneeUuid: null });
     mockPrisma.idea.findFirst.mockResolvedValue(existing);
 
@@ -215,7 +229,7 @@ describe("claimIdea", () => {
         assigneeType: "agent",
         assigneeUuid: ACTOR_UUID,
       })
-    ).rejects.toThrow("Cannot claim a completed or closed Idea");
+    ).rejects.toThrow("Cannot claim an elaborated Idea");
   });
 });
 
@@ -258,12 +272,12 @@ describe("assignIdea", () => {
 
   it("should keep current status when reassigning non-open idea", async () => {
     const existing = makeIdeaRecord({
-      status: "proposal_created",
+      status: "elaborating",
       assigneeType: "agent",
       assigneeUuid: "old-agent-uuid",
     });
     const assigned = makeIdeaRecord({
-      status: "proposal_created",
+      status: "elaborating",
       assigneeType: "user",
       assigneeUuid: ACTOR_UUID,
       assignedAt: now,
@@ -284,12 +298,12 @@ describe("assignIdea", () => {
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          status: "proposal_created", // Should keep existing status
+          status: "elaborating", // Should keep existing status
         }),
       })
     );
 
-    expect(result.status).toBe("proposal_created");
+    expect(result.status).toBe("elaborating");
   });
 
   it("should throw if idea not found", async () => {
@@ -305,7 +319,21 @@ describe("assignIdea", () => {
     ).rejects.toThrow("Idea not found");
   });
 
-  it("should throw if idea is completed", async () => {
+  it("should throw if idea is elaborated", async () => {
+    const existing = makeIdeaRecord({ status: "elaborated" });
+    mockPrisma.idea.findFirst.mockResolvedValue(existing);
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "user",
+        assigneeUuid: ACTOR_UUID,
+      })
+    ).rejects.toThrow("Cannot assign an elaborated Idea");
+  });
+
+  it("should throw if idea has legacy completed status (normalizes to elaborated)", async () => {
     const existing = makeIdeaRecord({ status: "completed" });
     mockPrisma.idea.findFirst.mockResolvedValue(existing);
 
@@ -316,21 +344,7 @@ describe("assignIdea", () => {
         assigneeType: "user",
         assigneeUuid: ACTOR_UUID,
       })
-    ).rejects.toThrow("Cannot assign a completed or closed Idea");
-  });
-
-  it("should throw if idea is closed", async () => {
-    const existing = makeIdeaRecord({ status: "closed" });
-    mockPrisma.idea.findFirst.mockResolvedValue(existing);
-
-    await expect(
-      assignIdea({
-        ideaUuid: IDEA_UUID,
-        companyUuid: COMPANY_UUID,
-        assigneeType: "user",
-        assigneeUuid: ACTOR_UUID,
-      })
-    ).rejects.toThrow("Cannot assign a completed or closed Idea");
+    ).rejects.toThrow("Cannot assign an elaborated Idea");
   });
 });
 
@@ -381,11 +395,19 @@ describe("releaseIdea", () => {
     await expect(releaseIdea(IDEA_UUID)).rejects.toThrow("Idea not found");
   });
 
-  it("should throw if idea is closed", async () => {
+  it("should throw if idea is elaborated", async () => {
+    mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "elaborated" }));
+
+    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
+      "Cannot release an elaborated Idea"
+    );
+  });
+
+  it("should throw if idea has legacy closed status (normalizes to elaborated)", async () => {
     mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "closed" }));
 
     await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
-      "Cannot release a completed or closed Idea"
+      "Cannot release an elaborated Idea"
     );
   });
 });
@@ -491,12 +513,12 @@ describe("updateIdea", () => {
   });
 
   it("should update idea status", async () => {
-    const updated = makeIdeaRecord({ status: "proposal_created" });
+    const updated = makeIdeaRecord({ status: "elaborated" });
     mockPrisma.idea.update.mockResolvedValue(updated);
 
-    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { status: "proposal_created" });
+    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { status: "elaborated" });
 
-    expect(result.status).toBe("proposal_created");
+    expect(result.status).toBe("elaborated");
   });
 
   it("should process new mentions when content updated with actor context", async () => {

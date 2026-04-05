@@ -19,9 +19,13 @@ This skill covers the **Ideation** stage of the AI-DLC workflow: claiming Ideas,
 
 Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) create Ideas describing what they need. The PM Agent claims an Idea, runs elaboration to clarify requirements, and then moves on to `/proposal` to create a Proposal with document and task drafts.
 
+**Idea status lifecycle (3 stored states):**
+
 ```
-Idea (open) --> claim --> elaborating --> elaboration resolved --> /proposal
+open --> elaborating --> elaborated
 ```
+
+All post-elaboration progress (planning, building, verifying, done) is **derived** from the state of linked Proposals and Tasks. No agent should set Idea status directly beyond elaboration -- all transitions are side-effects of claiming, releasing, or completing elaboration.
 
 ---
 
@@ -34,7 +38,6 @@ Idea (open) --> claim --> elaborating --> elaboration resolved --> /proposal
 | `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans) |
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
 | `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
-| `chorus_update_idea_status` | Update idea status (proposal_created / completed) |
 | `chorus_move_idea` | Move an idea to a different project (also moves linked draft/pending proposals) |
 
 **Requirements Elaboration:**

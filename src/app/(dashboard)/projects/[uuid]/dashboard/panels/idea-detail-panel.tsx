@@ -235,7 +235,7 @@ export function IdeaDetailPanel({
   };
 
   const status = idea?.derivedStatus || "todo";
-  const canAssign = idea ? idea.status !== "completed" && idea.status !== "closed" : false;
+  const canAssign = idea ? idea.status !== "elaborated" : false;
   const elaborationResolved = idea?.elaborationStatus === "resolved";
   const showHelpText = idea?.status === "elaborating" && !elaborationResolved;
 
@@ -292,7 +292,7 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
-            {idea && idea.status !== "completed" && idea.status !== "closed" && !isEditing && (
+            {idea && idea.status !== "elaborated" && !isEditing && (
               <>
                 <Button
                   variant="outline"
@@ -581,9 +581,7 @@ function PanelContent({
           onRefresh={onRefresh}
         />
       );
-    case "proposal_created":
-    case "completed":
-    case "closed":
+    case "elaborated":
       return (
         <ProposalView
           idea={idea}
