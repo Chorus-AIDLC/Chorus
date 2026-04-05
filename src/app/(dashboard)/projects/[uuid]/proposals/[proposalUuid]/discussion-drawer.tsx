@@ -44,9 +44,9 @@ export function DiscussionDrawer({
   useRealtimeEntityEvent("proposal", proposalUuid, refreshCount);
 
   return (
-    <Sheet>
-      <SheetTrigger asChild>
-        <PresenceIndicator entityType="proposal" entityUuid={proposalUuid} subEntityType="comment">
+    <PresenceIndicator entityType="proposal" entityUuid={proposalUuid} subEntityType="comment">
+      <Sheet>
+        <SheetTrigger asChild>
           <Button
             variant="outline"
             size="sm"
@@ -60,31 +60,31 @@ export function DiscussionDrawer({
               </Badge>
             )}
           </Button>
-        </PresenceIndicator>
-      </SheetTrigger>
-      <SheetContent
-        side="right"
-        className="w-full sm:w-[420px] sm:max-w-[420px] p-0 flex flex-col"
-      >
-        <SheetHeader className="border-b border-[#F0EDE8] px-6 py-4">
-          <SheetTitle className="flex items-center gap-2 text-base">
-            <MessageCircle className="h-[18px] w-[18px]" />
-            {t("proposals.discussion")}
-            {count > 0 && (
-              <span className="rounded-full bg-[#F0EDE8] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
-                {count}
-              </span>
-            )}
-          </SheetTitle>
-        </SheetHeader>
-        <div className="flex-1 overflow-y-auto p-6">
-          <ProposalComments
-            proposalUuid={proposalUuid}
-            currentUserUuid={currentUserUuid}
-            onCountChange={setCount}
-          />
-        </div>
-      </SheetContent>
-    </Sheet>
+        </SheetTrigger>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[420px] sm:max-w-[420px] p-0 flex flex-col"
+        >
+          <SheetHeader className="border-b border-[#F0EDE8] px-6 py-4">
+            <SheetTitle className="flex items-center gap-2 text-base">
+              <MessageCircle className="h-[18px] w-[18px]" />
+              {t("proposals.discussion")}
+              {count > 0 && (
+                <span className="rounded-full bg-[#F0EDE8] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
+                  {count}
+                </span>
+              )}
+            </SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 overflow-y-auto p-6">
+            <ProposalComments
+              proposalUuid={proposalUuid}
+              currentUserUuid={currentUserUuid}
+              onCountChange={setCount}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+    </PresenceIndicator>
   );
 }
