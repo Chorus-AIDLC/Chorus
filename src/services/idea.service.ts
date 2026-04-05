@@ -315,9 +315,6 @@ export async function claimIdea({
   if (existing.assigneeUuid) {
     throw new AlreadyClaimedError("Idea");
   }
-  if (normalizeIdeaStatus(existing.status) === "elaborated") {
-    throw new Error("Cannot claim an already elaborated Idea");
-  }
 
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
@@ -350,9 +347,6 @@ export async function assignIdea({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new Error("Idea not found");
-  if (normalizeIdeaStatus(existing.status) === "elaborated") {
-    throw new Error("Cannot assign an already elaborated Idea");
-  }
 
   // If currently open, move to elaborating; otherwise keep current status
   const newStatus = existing.status === "open" ? "elaborating" : existing.status;
@@ -380,9 +374,6 @@ export async function assignIdea({
 export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
   const existing = await prisma.idea.findUnique({ where: { uuid } });
   if (!existing) throw new Error("Idea not found");
-  if (normalizeIdeaStatus(existing.status) === "elaborated") {
-    throw new Error("Cannot release an already elaborated Idea");
-  }
 
   const idea = await prisma.idea.update({
     where: { uuid },
