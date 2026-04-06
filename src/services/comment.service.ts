@@ -182,26 +182,100 @@ export async function createComment({
   };
 }
 
+export interface CommentAuthor {
+  type: string;
+  uuid: string;
+  name: string;
+  owner?: { uuid: string; name: string };
+}
+
+export interface CommentWithOwner extends Omit<CommentResponse, "author"> {
+  author: CommentAuthor;
+}
+
+/**
+ * Batch resolve agent owners for a list of comments.
+ * 2 queries max: Agent table + User table.
+ */
+export async function resolveAgentOwners(
+  comments: CommentResponse[]
+): Promise<CommentWithOwner[]> {
+  const agentUuids = [
+    ...new Set(
+      comments
+        .filter((c) => c.author.type === "agent")
+        .map((c) => c.author.uuid)
+    ),
+  ];
+
+  if (agentUuids.length === 0) {
+    return comments.map((c) => ({ ...c, author: { ...c.author } }));
+  }
+
+  // Query 1: Get agent -> ownerUuid mapping
+  const agents = await prisma.agent.findMany({
+    where: { uuid: { in: agentUuids } },
+    select: { uuid: true, ownerUuid: true },
+  });
+
+  const agentToOwnerUuid = new Map<string, string>();
+  const ownerUuids: string[] = [];
+  for (const agent of agents) {
+    if (agent.ownerUuid) {
+      agentToOwnerUuid.set(agent.uuid, agent.ownerUuid);
+      ownerUuids.push(agent.ownerUuid);
+    }
+  }
+
+  // Query 2: Get owner names
+  const ownerNameMap = new Map<string, string>();
+  if (ownerUuids.length > 0) {
+    const owners = await prisma.user.findMany({
+      where: { uuid: { in: [...new Set(ownerUuids)] } },
+      select: { uuid: true, name: true, email: true },
+    });
+    for (const owner of owners) {
+      ownerNameMap.set(owner.uuid, owner.name || owner.email || "Unknown");
+    }
+  }
+
+  return comments.map((c) => {
+    const author: CommentAuthor = { ...c.author };
+    if (c.author.type === "agent") {
+      const ownerUuid = agentToOwnerUuid.get(c.author.uuid);
+      if (ownerUuid) {
+        const ownerName = ownerNameMap.get(ownerUuid);
+        if (ownerName) {
+          author.owner = { uuid: ownerUuid, name: ownerName };
+        }
+      }
+    }
+    return { ...c, author };
+  });
+}
+
 // Resolve projectUuid from a comment target entity
 export async function resolveProjectUuid(
   targetType: string,
-  targetUuid: string
+  targetUuid: string,
+  companyUuid?: string
 ): Promise<string | null> {
+  const companyFilter = companyUuid ? { companyUuid } : {};
   switch (targetType) {
     case "task": {
-      const task = await prisma.task.findUnique({ where: { uuid: targetUuid }, select: { projectUuid: true } });
+      const task = await prisma.task.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
       return task?.projectUuid ?? null;
     }
     case "idea": {
-      const idea = await prisma.idea.findUnique({ where: { uuid: targetUuid }, select: { projectUuid: true } });
+      const idea = await prisma.idea.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
       return idea?.projectUuid ?? null;
     }
     case "proposal": {
-      const proposal = await prisma.proposal.findUnique({ where: { uuid: targetUuid }, select: { projectUuid: true } });
+      const proposal = await prisma.proposal.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
       return proposal?.projectUuid ?? null;
     }
     case "document": {
-      const doc = await prisma.document.findUnique({ where: { uuid: targetUuid }, select: { projectUuid: true } });
+      const doc = await prisma.document.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
       return doc?.projectUuid ?? null;
     }
     default:

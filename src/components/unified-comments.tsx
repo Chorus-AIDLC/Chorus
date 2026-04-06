@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useTranslations, useLocale } from "next-intl";
+import { useTranslations } from "next-intl";
+import type { useTranslations as UseTranslationsType } from "next-intl";
 import { Bot, Send, Loader2, User, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -17,11 +18,11 @@ import { getAgentColor } from "@/lib/agent-color";
 import { toast } from "sonner";
 
 type TargetType = "idea" | "proposal" | "task" | "document";
+type TranslateFn = ReturnType<typeof UseTranslationsType>;
 
 const COLLAPSE_THRESHOLD = 200;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatRelativeTime(dateString: string, t: any): string {
+function formatRelativeTime(dateString: string, t: TranslateFn): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -52,7 +53,6 @@ export function UnifiedComments({
   compact = false,
 }: UnifiedCommentsProps) {
   const t = useTranslations();
-  const locale = useLocale();
   const [comment, setComment] = useState("");
   const [comments, setComments] = useState<CommentWithOwner[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -177,7 +177,6 @@ export function UnifiedComments({
               gap={gap}
               iconSize={iconSize}
               t={t}
-              locale={locale}
             />
           ))
         )}
@@ -193,16 +192,13 @@ function CommentItem({
   gap,
   iconSize,
   t,
-  locale,
 }: {
   comment: CommentWithOwner;
   compact: boolean;
   avatarSize: string;
   gap: string;
   iconSize: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  t: any;
-  locale: string;
+  t: TranslateFn;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isAgent = c.author.type === "agent";
@@ -273,23 +269,27 @@ function CommentItem({
               <ContentWithMentions>
                 {c.content.slice(0, COLLAPSE_THRESHOLD) + "..."}
               </ContentWithMentions>
-              <button
+              <Button
+                variant="link"
+                size="sm"
                 onClick={() => setExpanded(true)}
-                className="text-[#E07A5F] text-xs font-medium mt-1 hover:underline cursor-pointer"
+                className="h-auto p-0 text-[#E07A5F] text-xs font-medium mt-1"
               >
                 {t("comments.showMore")}
-              </button>
+              </Button>
             </>
           ) : (
             <>
               <ContentWithMentions>{c.content}</ContentWithMentions>
               {shouldCollapse && (
-                <button
+                <Button
+                  variant="link"
+                  size="sm"
                   onClick={() => setExpanded(false)}
-                  className="text-[#E07A5F] text-xs font-medium mt-1 hover:underline cursor-pointer"
+                  className="h-auto p-0 text-[#E07A5F] text-xs font-medium mt-1"
                 >
                   {t("comments.showLess")}
-                </button>
+                </Button>
               )}
             </>
           )}

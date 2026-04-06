@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { X, Pencil, CheckCircle, Play, Eye, Bot, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
@@ -40,11 +40,9 @@ import {
   getTaskSourceAction,
   type ProposalSource,
 } from "./[taskUuid]/source-actions";
-import type { CommentResponse } from "@/services/comment.service";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { ContentWithMentions } from "@/components/mention-renderer";
-import { MentionEditor, type MentionEditorRef } from "@/components/mention-editor";
 import { AssignTaskModal } from "./assign-task-modal";
 import {
   getTaskDependenciesAction,
@@ -260,8 +258,6 @@ export function TaskDetailPanel({
 
   // Active workers (sessions)
   const [activeWorkers, setActiveWorkers] = useState<TaskSessionInfo[]>([]);
-
-
 
   // Pending dependencies for create mode (stored locally until task is created)
   const [pendingDeps, setPendingDeps] = useState<DependencyTask[]>([]);

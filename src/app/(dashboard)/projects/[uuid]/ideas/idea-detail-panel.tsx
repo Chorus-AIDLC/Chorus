@@ -1,17 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, Send, FileText, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
+import { X, Bot, User, FileText, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   Command,
   CommandInput,
@@ -43,11 +42,9 @@ import { UnifiedComments } from "@/components/unified-comments";
 import { getIdeaActivitiesAction } from "./[ideaUuid]/activity-actions";
 import { updateIdeaAction, deleteIdeaAction } from "./actions";
 import type { ActivityResponse } from "@/services/activity.service";
-import type { CommentResponse } from "@/services/comment.service";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { ContentWithMentions } from "@/components/mention-renderer";
-import { MentionEditor, type MentionEditorRef } from "@/components/mention-editor";
 import { AssignIdeaModal } from "./assign-idea-modal";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction } from "./[ideaUuid]/elaboration-actions";
@@ -177,7 +174,6 @@ export function IdeaDetailPanel({
 
   // Subscribe to SSE events to refresh elaboration when idea changes
   useRealtimeEntityTypeEvent("idea", reloadElaboration);
-
 
   // Skip elaboration state
   const [showSkipDialog, setShowSkipDialog] = useState(false);
