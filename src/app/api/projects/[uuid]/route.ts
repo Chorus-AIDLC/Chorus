@@ -3,10 +3,15 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
+import {
+  getProject,
+  updateProject,
+  deleteProject,
+  projectExists,
+} from "@/services/project.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -18,30 +23,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
   }
 
   const { uuid } = await context.params;
-
-  const project = await prisma.project.findFirst({
-    where: {
-      uuid,
-      companyUuid: auth.companyUuid,
-    },
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      groupUuid: true,
-      createdAt: true,
-      updatedAt: true,
-      _count: {
-        select: {
-          ideas: true,
-          documents: true,
-          tasks: true,
-          proposals: true,
-          activities: true,
-        },
-      },
-    },
-  });
+  const project = await getProject(auth.companyUuid, uuid);
 
   if (!project) {
     return errors.notFound("Project");
@@ -71,20 +53,14 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     return errors.unauthorized();
   }
 
-  // Only users can update projects
   if (!isUser(auth)) {
     return errors.forbidden("Only users can update projects");
   }
 
   const { uuid } = await context.params;
 
-  // Validate project exists and belongs to the current company (query by UUID)
-  const existing = await prisma.project.findFirst({
-    where: { uuid, companyUuid: auth.companyUuid },
-    select: { uuid: true },
-  });
-
-  if (!existing) {
+  const exists = await projectExists(auth.companyUuid, uuid);
+  if (!exists) {
     return errors.notFound("Project");
   }
 
@@ -93,7 +69,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     description?: string;
   }>(request);
 
-  // Build update data
   const updateData: { name?: string; description?: string | null } = {};
 
   if (body.name !== undefined) {
@@ -107,17 +82,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     updateData.description = body.description?.trim() || null;
   }
 
-  const project = await prisma.project.update({
-    where: { uuid: existing.uuid },
-    data: updateData,
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  const project = await updateProject(uuid, updateData);
 
   return success({
     uuid: project.uuid,
@@ -135,27 +100,18 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
     return errors.unauthorized();
   }
 
-  // Only users can delete projects
   if (!isUser(auth)) {
     return errors.forbidden("Only users can delete projects");
   }
 
   const { uuid } = await context.params;
 
-  // Validate project exists and belongs to the current company (query by UUID)
-  const existing = await prisma.project.findFirst({
-    where: { uuid, companyUuid: auth.companyUuid },
-    select: { uuid: true },
-  });
-
-  if (!existing) {
+  const exists = await projectExists(auth.companyUuid, uuid);
+  if (!exists) {
     return errors.notFound("Project");
   }
 
-  // Delete project (Prisma handles cascade deletes at the application level)
-  await prisma.project.delete({
-    where: { uuid: existing.uuid },
-  });
+  await deleteProject(uuid);
 
   return success({ deleted: true });
 });

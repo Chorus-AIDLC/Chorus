@@ -109,6 +109,21 @@ describe("getProject", () => {
     const result = await getProject(companyUuid, "nonexistent");
     expect(result).toBeNull();
   });
+
+  it("should include groupUuid in the result", async () => {
+    const groupUuid = "group-0000-0000-0000-000000000001";
+    const project = makeProject({ groupUuid, _count: { ideas: 1, documents: 0, tasks: 0, proposals: 0, activities: 0 } });
+    mockPrisma.project.findFirst.mockResolvedValue(project);
+
+    const result = await getProject(companyUuid, projectUuid);
+
+    expect(result!.groupUuid).toBe(groupUuid);
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ groupUuid: true }),
+      })
+    );
+  });
 });
 
 // ===== createProject =====

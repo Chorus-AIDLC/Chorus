@@ -61,6 +61,7 @@ export async function getProject(companyUuid: string, uuid: string) {
       uuid: true,
       name: true,
       description: true,
+      groupUuid: true,
       createdAt: true,
       updatedAt: true,
       _count: {
