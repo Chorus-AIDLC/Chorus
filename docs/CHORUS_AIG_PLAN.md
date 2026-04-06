@@ -158,6 +158,7 @@ Phase 2: Structured Status ──────────────── 🔲
     │   2a. Extended state machine
     │   2b. Agent plans
     │   2c. Thinking indicators
+    │   2d. ✅ Unified Comment Component (agent delegation display, long comment collapse)
     │
 Phase 3: Signals ────────────────────────── 🔲 PLANNING
     │   3a. Human → Agent (stop, redirect)
@@ -165,7 +166,7 @@ Phase 3: Signals ─────────────────────
     │   3c. Implementation (typed comments)
     │
 Phase 4: Enhanced Accountability ─────────── 🔲 FUTURE
-    │   4a. Delegation model
+    │   4a. Delegation model (runtime agent→owner resolution done in Phase 2d)
     │   4b. Action audit trail
     │   4c. Disengagement protocol (depends on Phase 3)
     │

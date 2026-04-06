@@ -29,7 +29,7 @@ import { ProposalView } from "./proposal-view";
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
 import { DocumentPanel } from "./document-panel";
 import { ActivityTimeline } from "./activity-timeline";
-import { CommentsSection } from "./comments-section";
+import { UnifiedComments } from "@/components/unified-comments";
 import { MoveIdeaDialog } from "./move-idea-dialog";
 import { deleteIdeaAction, updateIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/actions";
 import { getIdeaAction, getTaskAction } from "./actions";
@@ -387,9 +387,11 @@ export function IdeaDetailPanel({
 
                 <ActivityTimeline ideaUuid={ideaUuid} />
 
-                <CommentsSection
-                  ideaUuid={ideaUuid}
+                <UnifiedComments
+                  targetType="idea"
+                  targetUuid={ideaUuid}
                   currentUserUuid={currentUserUuid}
+                  compact
                 />
               </>
               )

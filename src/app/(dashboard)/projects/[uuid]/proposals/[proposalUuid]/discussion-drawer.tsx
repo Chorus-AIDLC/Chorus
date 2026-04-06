@@ -14,8 +14,8 @@ import {
 } from "@/components/ui/sheet";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
-import { ProposalComments } from "./proposal-comments";
-import { getProposalCommentsAction } from "./comment-actions";
+import { UnifiedComments } from "@/components/unified-comments";
+import { getCommentsAction } from "@/app/(dashboard)/projects/comment-actions";
 
 interface DiscussionDrawerProps {
   proposalUuid: string;
@@ -34,7 +34,8 @@ export function DiscussionDrawer({
   // Listen for SSE events to update badge count even when drawer is closed
   const refreshCount = useCallback(async () => {
     try {
-      const result = await getProposalCommentsAction(proposalUuid);
+      const result = await getCommentsAction("proposal", proposalUuid);
+      if (!result.success) return;
       setCount(result.comments.length);
     } catch {
       // Ignore — badge stays at last known count
@@ -77,8 +78,9 @@ export function DiscussionDrawer({
             </SheetTitle>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-6">
-            <ProposalComments
-              proposalUuid={proposalUuid}
+            <UnifiedComments
+              targetType="proposal"
+              targetUuid={proposalUuid}
               currentUserUuid={currentUserUuid}
               onCountChange={setCount}
             />

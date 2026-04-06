@@ -39,10 +39,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  getIdeaCommentsAction,
-  createIdeaCommentAction,
-} from "./[ideaUuid]/comment-actions";
+import { UnifiedComments } from "@/components/unified-comments";
 import { getIdeaActivitiesAction } from "./[ideaUuid]/activity-actions";
 import { updateIdeaAction, deleteIdeaAction } from "./actions";
 import type { ActivityResponse } from "@/services/activity.service";
@@ -162,11 +159,6 @@ export function IdeaDetailPanel({
 }: IdeaDetailPanelProps) {
   const t = useTranslations();
   const router = useRouter();
-  const [comment, setComment] = useState("");
-  const [comments, setComments] = useState<CommentResponse[]>([]);
-  const [isLoadingComments, setIsLoadingComments] = useState(true);
-  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
-  const editorRef = useRef<MentionEditorRef>(null);
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -186,13 +178,6 @@ export function IdeaDetailPanel({
   // Subscribe to SSE events to refresh elaboration when idea changes
   useRealtimeEntityTypeEvent("idea", reloadElaboration);
 
-  // Auto-refresh comments when another user adds a comment
-  useRealtimeEntityEvent("idea", idea.uuid, (event) => {
-    if (event.actorUuid === currentUserUuid) return;
-    getIdeaCommentsAction(idea.uuid).then((result) => {
-      setComments(result.comments);
-    });
-  });
 
   // Skip elaboration state
   const [showSkipDialog, setShowSkipDialog] = useState(false);
@@ -236,19 +221,12 @@ export function IdeaDetailPanel({
   const canEdit = idea.status !== "completed" && idea.status !== "closed";
 
   useEffect(() => {
-    async function loadComments() {
-      setIsLoadingComments(true);
-      const result = await getIdeaCommentsAction(idea.uuid);
-      setComments(result.comments);
-      setIsLoadingComments(false);
-    }
     async function loadActivities() {
       setIsLoadingActivities(true);
       const result = await getIdeaActivitiesAction(idea.uuid);
       setActivities(result.activities);
       setIsLoadingActivities(false);
     }
-    loadComments();
     loadActivities();
   }, [idea.uuid]);
 
@@ -259,20 +237,6 @@ export function IdeaDetailPanel({
     setEditContent(idea.content || "");
     setEditError(null);
   }, [idea.uuid, idea.title, idea.content]);
-
-  const handleSubmitComment = async () => {
-    if (!comment.trim() || isSubmittingComment) return;
-
-    setIsSubmittingComment(true);
-    const result = await createIdeaCommentAction(idea.uuid, comment);
-    setIsSubmittingComment(false);
-
-    if (result.success && result.comment) {
-      setComments((prev) => [...prev, result.comment!]);
-      setComment("");
-      editorRef.current?.clear();
-    }
-  };
 
   const handleStartEdit = () => {
     setEditTitle(idea.title);
@@ -634,71 +598,13 @@ export function IdeaDetailPanel({
                   <label className="text-[11px] font-medium uppercase tracking-wider text-[#9A9A9A]">
                     {t("comments.title")}
                   </label>
-                  <div className="mt-2 space-y-3">
-                    {isLoadingComments ? (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
-                      </div>
-                    ) : comments.length === 0 ? (
-                      <p className="text-sm text-[#9A9A9A] italic">{t("comments.noComments")}</p>
-                    ) : (
-                      comments.map((c) => (
-                        <div key={c.uuid} className="flex gap-2.5">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarFallback className={c.author.type === "agent" ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B] text-[10px]"}>
-                              {c.author.type === "agent" ? (
-                                <Bot className="h-3 w-3" />
-                              ) : (
-                                c.author.name.charAt(0).toUpperCase()
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className={`text-xs font-semibold ${c.author.type === "agent" ? "text-[#C67A52]" : "text-[#2C2C2C]"}`}>{c.author.name}</span>
-                              <span className="text-[11px] text-[#9A9A9A]">{formatRelativeTime(c.createdAt, t)}</span>
-                            </div>
-                            <div className="mt-1 text-xs leading-relaxed text-[#2C2C2C]">
-                              <ContentWithMentions>{c.content}</ContentWithMentions>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Comment Input */}
-                  <Separator className="my-3 bg-[#F5F2EC]" />
-                  <div className="flex items-start gap-2.5">
-                    <Avatar className="mt-1.5 h-6 w-6">
-                      <AvatarFallback className="bg-[#C67A52] text-white text-[10px]">
-                        <User className="h-3 w-3" />
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <MentionEditor
-                        ref={editorRef}
-                        value={comment}
-                        onChange={setComment}
-                        onSubmit={handleSubmitComment}
-                        placeholder={t("comments.addComment")}
-                        className="border-none bg-[#FAF8F4] text-sm"
-                        disabled={isSubmittingComment}
-                      />
-                    </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="mt-1 h-7 w-7"
-                      disabled={!comment.trim() || isSubmittingComment}
-                      onClick={handleSubmitComment}
-                    >
-                      {isSubmittingComment ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#9A9A9A]" />
-                      ) : (
-                        <Send className="h-3.5 w-3.5 text-[#C67A52]" />
-                      )}
-                    </Button>
+                  <div className="mt-2">
+                    <UnifiedComments
+                      targetType="idea"
+                      targetUuid={idea.uuid}
+                      currentUserUuid={currentUserUuid}
+                      compact
+                    />
                   </div>
                 </div>
               </motion.div>

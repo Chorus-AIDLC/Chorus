@@ -12,6 +12,7 @@ import { getDocument } from "@/services/document.service";
 import { projectExists } from "@/services/project.service";
 import { DocumentActions } from "./document-actions";
 import { DocumentContent } from "./document-content";
+import { DocumentComments } from "./document-comments";
 
 const docTypeConfig: Record<string, { labelKey: string; color: string; icon: LucideIcon }> = {
   prd: { labelKey: "documents.typePrd", color: "bg-[#E3F2FD] text-[#1976D2]", icon: ClipboardList },
@@ -94,11 +95,22 @@ export default async function DocumentDetailPage({ params }: PageProps) {
       {/* Content */}
       <div className="flex flex-1 flex-col gap-6 overflow-hidden lg:flex-row">
         {/* Main Content */}
-        <DocumentContent
-          documentUuid={documentUuid}
-          projectUuid={projectUuid}
-          initialContent={document.content || ""}
-        />
+        <div className="flex flex-1 flex-col gap-6 overflow-y-auto">
+          <DocumentContent
+            documentUuid={documentUuid}
+            projectUuid={projectUuid}
+            initialContent={document.content || ""}
+          />
+
+          {/* Comments */}
+          <Card className="border-[#E5E0D8] p-4">
+            <h3 className="mb-3 text-sm font-medium text-[#6B6B6B]">{t("comments.title")}</h3>
+            <DocumentComments
+              documentUuid={documentUuid}
+              currentUserUuid={auth.actorUuid}
+            />
+          </Card>
+        </div>
 
         {/* Sidebar */}
         <div className="w-full space-y-4 lg:w-64 lg:flex-shrink-0">

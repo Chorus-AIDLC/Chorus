@@ -94,7 +94,12 @@
     "noComments": "No comments yet",
     "addComment": "Add a comment... (type @ to mention)",
     "roleAgent": "Agent",
-    "roleHuman": "Human"
+    "roleHuman": "Human",
+    "onBehalfOf": "on behalf of {name}",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "loadError": "Failed to load comments",
+    "retry": "Retry"
   },
   "mentions": {
     "noResults": "No results",

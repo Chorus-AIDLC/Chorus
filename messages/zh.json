@@ -94,7 +94,12 @@
     "noComments": "暂无评论",
     "addComment": "添加评论...（输入 @ 提及他人）",
     "roleAgent": "Agent",
-    "roleHuman": "用户"
+    "roleHuman": "用户",
+    "onBehalfOf": "代表 {name}",
+    "showMore": "展开更多",
+    "showLess": "收起",
+    "loadError": "加载评论失败",
+    "retry": "重试"
   },
   "mentions": {
     "noResults": "无结果",

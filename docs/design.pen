@@ -78659,6 +78659,953 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "l5X47",
+      "x": 4420,
+      "y": 3764,
+      "name": "Unified Comment Component",
+      "width": 460,
+      "fill": "#FFFFFF",
+      "cornerRadius": 12,
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "#E5E0D8"
+      },
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#0000000D",
+        "offset": {
+          "x": 0,
+          "y": 4
+        },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "y1NWj",
+          "name": "header",
+          "width": "fill_container",
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "#F0EDE8"
+          },
+          "padding": [
+            16,
+            20
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fopK7",
+              "name": "titleRow",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "Uk4Om",
+                  "name": "titleIcon",
+                  "width": 18,
+                  "height": 18,
+                  "iconFontName": "message-circle",
+                  "iconFontFamily": "lucide",
+                  "fill": "#1A1A1A"
+                },
+                {
+                  "type": "text",
+                  "id": "1PkBy",
+                  "name": "titleText",
+                  "fill": "#1A1A1A",
+                  "content": "Discussion",
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "A0icp",
+                  "name": "countBadge",
+                  "fill": "#F0EDE8",
+                  "cornerRadius": 9999,
+                  "padding": [
+                    2,
+                    8
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "YYMfB",
+                      "name": "badgeText",
+                      "fill": "#6B6B6B",
+                      "content": "12",
+                      "fontFamily": "Inter",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "1Vj3f",
+              "name": "closeBtn",
+              "cornerRadius": 6,
+              "stroke": {
+                "align": "inside",
+                "thickness": 1,
+                "fill": "#E5E0D8"
+              },
+              "padding": 6,
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "IxEmU",
+                  "name": "closeIcon",
+                  "width": 16,
+                  "height": 16,
+                  "iconFontName": "x",
+                  "iconFontFamily": "lucide",
+                  "fill": "#6B6B6B"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "yGM68",
+          "name": "inputArea",
+          "width": "fill_container",
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "#F0EDE8"
+          },
+          "layout": "vertical",
+          "padding": [
+            12,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "Vepr5",
+              "name": "inputRow",
+              "width": "fill_container",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KobzG",
+                  "name": "myAvatar",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#E5E0D8",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "4dl5R",
+                      "name": "avatarT",
+                      "fill": "#6B6B6B",
+                      "content": "Y",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Js5AN",
+                  "name": "inputField",
+                  "width": "fill_container",
+                  "cornerRadius": 8,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E0D8"
+                  },
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "TXNN2",
+                      "name": "inputText",
+                      "fill": "#BFBFBF",
+                      "content": "Write a comment...",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "entSD",
+                      "name": "sendBtn",
+                      "fill": "#E07A5F",
+                      "cornerRadius": 8,
+                      "gap": 6,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "YpSgX",
+                          "name": "sendIcon",
+                          "width": 13,
+                          "height": 13,
+                          "iconFontName": "send",
+                          "iconFontFamily": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "9IsmX",
+          "name": "commentList",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "3Dyja",
+              "name": "comment-agent-delegated",
+              "width": "fill_container",
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "bottom": 1
+                },
+                "fill": "#F0EDE8"
+              },
+              "gap": 10,
+              "padding": [
+                16,
+                20
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "wDnof",
+                  "name": "c1Av",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#E8F0FE",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "xuG6L",
+                      "name": "c1avIcon",
+                      "width": 15,
+                      "height": 15,
+                      "iconFontName": "bot",
+                      "iconFontFamily": "lucide",
+                      "fill": "#4285F4"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "U9EX1",
+                  "name": "c1Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mPuIp",
+                      "name": "c1Meta",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "bTH5w",
+                          "name": "c1name",
+                          "fill": "#1A1A1A",
+                          "content": "Admin Claude",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "rG9gg",
+                          "name": "c1Badge",
+                          "fill": "#E8F0FE",
+                          "cornerRadius": 4,
+                          "padding": [
+                            1,
+                            5
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "M33qB",
+                              "name": "c1badgeT",
+                              "fill": "#4285F4",
+                              "content": "Agent",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "v6xw4",
+                          "name": "c1time",
+                          "fill": "#BFBFBF",
+                          "content": "5 min ago",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n1s5k",
+                      "name": "c1Delegation",
+                      "gap": 4,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "lK39B",
+                          "name": "c1delegIcon",
+                          "width": 11,
+                          "height": 11,
+                          "iconFontName": "arrow-right-from-line",
+                          "iconFontFamily": "lucide",
+                          "fill": "#A3A3A3"
+                        },
+                        {
+                          "type": "text",
+                          "id": "D2bEn",
+                          "name": "c1delegText",
+                          "fill": "#A3A3A3",
+                          "content": "on behalf of Yifei Chen",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "wjHT9",
+                      "name": "c1text",
+                      "fill": "#3D3D3D",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "LGTM! The presence indicator implementation looks solid. Throttling with 2s dedup window is a good balance between real-time feel and server load.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "zvLkS",
+              "name": "comment-human",
+              "width": "fill_container",
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "bottom": 1
+                },
+                "fill": "#F0EDE8"
+              },
+              "gap": 10,
+              "padding": [
+                16,
+                20
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "plPrq",
+                  "name": "c2Av",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#E5E0D8",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "cCjYx",
+                      "name": "c2avT",
+                      "fill": "#6B6B6B",
+                      "content": "Y",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oaCe8",
+                  "name": "c2Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "8Bke8",
+                      "name": "c2Meta",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "H0Vl3",
+                          "name": "c2name",
+                          "fill": "#1A1A1A",
+                          "content": "Yifei Chen",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "FtsI3",
+                          "name": "c2Badge",
+                          "fill": "#F0EDE8",
+                          "cornerRadius": 4,
+                          "padding": [
+                            1,
+                            5
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fwPhV",
+                              "name": "c2badgeT",
+                              "fill": "#6B6B6B",
+                              "content": "Owner",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "zuuxN",
+                          "name": "c2time",
+                          "fill": "#BFBFBF",
+                          "content": "20 min ago",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "ENF9D",
+                      "name": "c2text",
+                      "fill": "#3D3D3D",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Badge overflow on idea cards — CollapsibleContent clips the positioned badge. Can you fix this before the next release?",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "L9Oim",
+              "name": "comment-agent-collapsed",
+              "width": "fill_container",
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "bottom": 1
+                },
+                "fill": "#F0EDE8"
+              },
+              "gap": 10,
+              "padding": [
+                16,
+                20
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "9vTex",
+                  "name": "c3Av",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#FFF3E0",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "GT39e",
+                      "name": "c3avIcon",
+                      "width": 15,
+                      "height": 15,
+                      "iconFontName": "bot",
+                      "iconFontFamily": "lucide",
+                      "fill": "#E07A5F"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QDHIg",
+                  "name": "c3Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "3WRsU",
+                      "name": "c3Meta",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Hrzum",
+                          "name": "c3name",
+                          "fill": "#1A1A1A",
+                          "content": "PM Agent",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ZwOyN",
+                          "name": "c3Badge",
+                          "fill": "#FFF3E0",
+                          "cornerRadius": 4,
+                          "padding": [
+                            1,
+                            5
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "RFL7q",
+                              "name": "c3badgeT",
+                              "fill": "#E07A5F",
+                              "content": "Agent",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "MKKbu",
+                          "name": "c3time",
+                          "fill": "#BFBFBF",
+                          "content": "1h ago",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hf8zy",
+                      "name": "c3Delegation",
+                      "gap": 4,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "KtkHQ",
+                          "name": "c3dIcon",
+                          "width": 11,
+                          "height": 11,
+                          "iconFontName": "arrow-right-from-line",
+                          "iconFontFamily": "lucide",
+                          "fill": "#A3A3A3"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wW2Wy",
+                          "name": "c3dText",
+                          "fill": "#A3A3A3",
+                          "content": "on behalf of Yifei Chen",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "8H32J",
+                      "name": "c3TextClip",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": 60,
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "nDZCe",
+                          "name": "c3text",
+                          "fill": "#3D3D3D",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Updated proposal based on review feedback. Key changes:\n1. Fire-and-forget presence emission to avoid blocking MCP handlers\n2. Dual-layer throttle: client-side 500ms + server-side 2s dedup\n3. PixelCanvas sprite system with deterministic color assignment\n4. Redis pub/sub for multi-instance propagation with in-memory fallback",
+                          "lineHeight": 1.5,
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "W8px5",
+                      "name": "c3more",
+                      "fill": "#E07A5F",
+                      "content": "Show more",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ci8V5",
+              "name": "comment-agent-expanded",
+              "width": "fill_container",
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "bottom": 1
+                },
+                "fill": "#F0EDE8"
+              },
+              "gap": 10,
+              "padding": [
+                16,
+                20
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sTo18",
+                  "name": "c4Av",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#FFF3E0",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "idhv7",
+                      "name": "c4avIcon",
+                      "width": 15,
+                      "height": 15,
+                      "iconFontName": "bot",
+                      "iconFontFamily": "lucide",
+                      "fill": "#E07A5F"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lvhBx",
+                  "name": "c4Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "dGlBn",
+                      "name": "c4Meta",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "rWPDj",
+                          "name": "c4name",
+                          "fill": "#1A1A1A",
+                          "content": "PM Agent",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "jFzUS",
+                          "name": "c4Badge",
+                          "fill": "#FFF3E0",
+                          "cornerRadius": 4,
+                          "padding": [
+                            1,
+                            5
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Ll9Jp",
+                              "name": "c4badgeT",
+                              "fill": "#E07A5F",
+                              "content": "Agent",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "bDraZ",
+                          "name": "c4time",
+                          "fill": "#BFBFBF",
+                          "content": "2h ago",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Tl4Ok",
+                      "name": "c4Delegation",
+                      "gap": 4,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "NG8Se",
+                          "name": "c4dIcon",
+                          "width": 11,
+                          "height": 11,
+                          "iconFontName": "arrow-right-from-line",
+                          "iconFontFamily": "lucide",
+                          "fill": "#A3A3A3"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ziFGL",
+                          "name": "c4dText",
+                          "fill": "#A3A3A3",
+                          "content": "on behalf of Yifei Chen",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "E9Mcn",
+                      "name": "c4text",
+                      "fill": "#3D3D3D",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Updated proposal based on review feedback. Key changes:\n1. Fire-and-forget presence emission to avoid blocking MCP handlers\n2. Dual-layer throttle: client-side 500ms + server-side 2s dedup\n3. PixelCanvas sprite system with deterministic color assignment\n4. Redis pub/sub for multi-instance propagation with in-memory fallback\n5. Ephemeral 3-second indicators prevent stale presence ghost artifacts\n6. Zero-effort detection from MCP tool parameters — agents don't need to explicitly emit presence",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "CB61I",
+                      "name": "c4less",
+                      "fill": "#E07A5F",
+                      "content": "Show less",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NAUWr",
+              "name": "comment-agent-standalone",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                16,
+                20
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "qLSax",
+                  "name": "c5Av",
+                  "width": 30,
+                  "height": 30,
+                  "fill": "#E8F0FE",
+                  "cornerRadius": 9999,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "J4AL0",
+                      "name": "c5avIcon",
+                      "width": 15,
+                      "height": 15,
+                      "iconFontName": "bot",
+                      "iconFontFamily": "lucide",
+                      "fill": "#4285F4"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n3TjE",
+                  "name": "c5Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "0zaaZ",
+                      "name": "c5Meta",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sP8jw",
+                          "name": "c5name",
+                          "fill": "#1A1A1A",
+                          "content": "Admin Claude",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "wVkFa",
+                          "name": "c5Badge",
+                          "fill": "#E8F0FE",
+                          "cornerRadius": 4,
+                          "padding": [
+                            1,
+                            5
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "w36VC",
+                              "name": "c5badgeT",
+                              "fill": "#4285F4",
+                              "content": "Agent",
+                              "fontFamily": "Inter",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "3hLZF",
+                          "name": "c5time",
+                          "fill": "#BFBFBF",
+                          "content": "3h ago",
+                          "fontFamily": "Inter",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "QeJdd",
+                      "name": "c5text",
+                      "fill": "#3D3D3D",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Review round 2: SSE should use unnamed events for presence. Named events break the onmessage handler.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {

@@ -33,10 +33,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
 import { markCriteriaAction, selfCheckCriteriaAction, resetCriterionAction } from "./[taskUuid]/criteria-actions";
-import {
-  getTaskCommentsAction,
-  createTaskCommentAction,
-} from "./[taskUuid]/comment-actions";
+import { UnifiedComments } from "@/components/unified-comments";
 import { getTaskActivitiesAction } from "./[taskUuid]/activity-actions";
 import type { ActivityResponse } from "@/services/activity.service";
 import {
@@ -249,11 +246,6 @@ export function TaskDetailPanel({
   }, []);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [comment, setComment] = useState("");
-  const [comments, setComments] = useState<CommentResponse[]>([]);
-  const [isLoadingComments, setIsLoadingComments] = useState(true);
-  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
-  const editorRef = useRef<MentionEditorRef>(null);
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [source, setSource] = useState<ProposalSource | null>(null);
@@ -269,14 +261,7 @@ export function TaskDetailPanel({
   // Active workers (sessions)
   const [activeWorkers, setActiveWorkers] = useState<TaskSessionInfo[]>([]);
 
-  // Auto-refresh comments when another user adds a comment
-  useRealtimeEntityEvent("task", task?.uuid ?? "", (event) => {
-    if (event.actorUuid === currentUserUuid) return;
-    if (!task) return;
-    getTaskCommentsAction(task.uuid).then((result) => {
-      setComments(result.comments);
-    });
-  });
+
 
   // Pending dependencies for create mode (stored locally until task is created)
   const [pendingDeps, setPendingDeps] = useState<DependencyTask[]>([]);
@@ -306,12 +291,6 @@ export function TaskDetailPanel({
   useEffect(() => {
     if (!task) return;
 
-    async function loadComments() {
-      setIsLoadingComments(true);
-      const result = await getTaskCommentsAction(task!.uuid);
-      setComments(result.comments);
-      setIsLoadingComments(false);
-    }
     async function loadActivities() {
       setIsLoadingActivities(true);
       const result = await getTaskActivitiesAction(task!.uuid);
@@ -341,7 +320,6 @@ export function TaskDetailPanel({
         setActiveWorkers(result.data);
       }
     }
-    loadComments();
     loadActivities();
     loadSource();
     loadDependencies();
@@ -379,20 +357,6 @@ export function TaskDetailPanel({
     if (result.success) {
       onClose();
       router.refresh();
-    }
-  };
-
-  const handleSubmitComment = async () => {
-    if (!task || !comment.trim() || isSubmittingComment) return;
-
-    setIsSubmittingComment(true);
-    const result = await createTaskCommentAction(task.uuid, comment);
-    setIsSubmittingComment(false);
-
-    if (result.success && result.comment) {
-      setComments((prev) => [...prev, result.comment!]);
-      setComment("");
-      editorRef.current?.clear();
     }
   };
 
@@ -1186,71 +1150,13 @@ export function TaskDetailPanel({
                   <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
                     {t("comments.title")}
                   </label>
-                  <div className="mt-3 space-y-3">
-                    {isLoadingComments ? (
-                      <div className="flex items-center justify-center py-4">
-                        <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
-                      </div>
-                    ) : comments.length === 0 ? (
-                      <p className="text-sm text-[#9A9A9A] italic">{t("comments.noComments")}</p>
-                    ) : (
-                      comments.map((c) => (
-                        <div key={c.uuid} className="flex gap-2.5">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarFallback className={c.author.type === "agent" ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B] text-[10px]"}>
-                              {c.author.type === "agent" ? (
-                                <Bot className="h-3 w-3" />
-                              ) : (
-                                c.author.name.charAt(0).toUpperCase()
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-[#2C2C2C]">{c.author.name}</span>
-                              <span className="text-[10px] text-[#9A9A9A]">{formatRelativeTime(c.createdAt, t)}</span>
-                            </div>
-                            <div className="mt-1 text-xs leading-relaxed text-[#2C2C2C]">
-                              <ContentWithMentions>{c.content}</ContentWithMentions>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Comment Input */}
-                  <Separator className="my-3 bg-[#F5F2EC]" />
-                  <div className="flex items-start gap-2.5">
-                    <Avatar className="mt-1.5 h-6 w-6">
-                      <AvatarFallback className="bg-[#C67A52] text-white text-[10px]">
-                        <User className="h-3 w-3" />
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <MentionEditor
-                        ref={editorRef}
-                        value={comment}
-                        onChange={setComment}
-                        onSubmit={handleSubmitComment}
-                        placeholder={t("comments.addComment")}
-                        className="border-none bg-[#FAF8F4] text-sm"
-                        disabled={isSubmittingComment}
-                      />
-                    </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="mt-1 h-7 w-7"
-                      disabled={!comment.trim() || isSubmittingComment}
-                      onClick={handleSubmitComment}
-                    >
-                      {isSubmittingComment ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#9A9A9A]" />
-                      ) : (
-                        <Send className="h-3.5 w-3.5 text-[#C67A52]" />
-                      )}
-                    </Button>
+                  <div className="mt-3">
+                    <UnifiedComments
+                      targetType="task"
+                      targetUuid={task.uuid}
+                      currentUserUuid={currentUserUuid}
+                      compact
+                    />
                   </div>
                 </div>
               </motion.div>
