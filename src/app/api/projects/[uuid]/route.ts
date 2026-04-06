@@ -28,6 +28,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
       uuid: true,
       name: true,
       description: true,
+      groupUuid: true,
       createdAt: true,
       updatedAt: true,
       _count: {
@@ -50,6 +51,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
     uuid: project.uuid,
     name: project.name,
     description: project.description,
+    groupUuid: project.groupUuid,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     counts: {

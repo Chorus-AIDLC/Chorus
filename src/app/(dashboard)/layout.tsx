@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
   ChevronDown,
-  Plus,
   LayoutDashboard,
   Lightbulb,
   FileText,
@@ -20,7 +19,7 @@ import {
   LogOut,
   Menu,
 } from "lucide-react";
-import { getAccessToken, authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
+import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { NotificationProvider } from "@/contexts/notification-context";
@@ -30,7 +29,7 @@ import { GlobalSearch } from "@/components/global-search";
 import { PageTransition } from "@/components/page-transition";
 import { Toaster } from "@/components/ui/sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { ANIM, dropdownVariants } from "@/lib/animation";
+import { dropdownVariants } from "@/lib/animation";
 
 interface User {
   uuid: string;
@@ -41,6 +40,10 @@ interface User {
 interface Project {
   uuid: string;
   name: string;
+}
+
+interface CurrentProject extends Project {
+  groupUuid: string | null;
 }
 
 // Extract project UUID from URL
@@ -65,7 +68,8 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const t = useTranslations();
   const [user, setUser] = useState<User | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProject, setCurrentProject] = useState<CurrentProject | null>(null);
+  const [siblingProjects, setSiblingProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -86,7 +90,6 @@ export default function DashboardLayout({
 
   // Get current project UUID from URL (stateful URL)
   const currentProjectUuid = extractProjectUuid(pathname);
-  const currentProject = projects.find((p) => p.uuid === currentProjectUuid) || null;
 
   // Get current group UUID from URL
   const currentGroupUuid = extractGroupUuid(pathname);
@@ -113,11 +116,55 @@ export default function DashboardLayout({
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { checkSession(); }, []);
+
+  // Fetch current project + sibling projects when URL changes
   useEffect(() => {
-    checkSession();
-    fetchProjects();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!currentProjectUuid || isGlobalPage) {
+      setCurrentProject(null);
+      setSiblingProjects([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchCurrentProject() {
+      try {
+        const res = await authFetch(`/api/projects/${currentProjectUuid}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!data.success || cancelled) return;
+        const proj: CurrentProject = {
+          uuid: data.data.uuid,
+          name: data.data.name,
+          groupUuid: data.data.groupUuid ?? null,
+        };
+        setCurrentProject(proj);
+
+        // Fetch sibling projects from the same group
+        if (proj.groupUuid) {
+          const groupRes = await authFetch(`/api/project-groups/${proj.groupUuid}`);
+          if (!groupRes.ok || cancelled) return;
+          const groupData = await groupRes.json();
+          if (groupData.success && !cancelled) {
+            setSiblingProjects(
+              (groupData.data.projects || []).filter(
+                (p: Project) => p.uuid !== currentProjectUuid
+              )
+            );
+          }
+        } else {
+          setSiblingProjects([]);
+        }
+      } catch {
+        // Silently fail — project context will be missing but page still works
+      }
+    }
+
+    fetchCurrentProject();
+    return () => { cancelled = true; };
+  }, [currentProjectUuid, isGlobalPage]);
 
   const checkSession = async () => {
     try {
@@ -163,25 +210,8 @@ export default function DashboardLayout({
     setLoading(false);
   };
 
-  const fetchProjects = async () => {
-    try {
-      const response = await authFetch("/api/projects");
-      if (!response.ok) {
-        console.error("Failed to fetch projects:", response.status);
-        return;
-      }
-      const data = await response.json();
-      if (data.success && data.data.length > 0) {
-        setProjects(data.data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch projects:", error);
-    }
-  };
-
   const selectProject = (project: Project) => {
     setProjectMenuOpen(false);
-    // Navigate to project dashboard with UUID in URL
     router.push(`/projects/${project.uuid}/dashboard`);
   };
 
@@ -289,18 +319,20 @@ export default function DashboardLayout({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setProjectMenuOpen(!projectMenuOpen)}
-                    className="w-full justify-between px-3 py-1.5"
+                    onClick={() => siblingProjects.length > 0 && setProjectMenuOpen(!projectMenuOpen)}
+                    className={`w-full justify-between px-3 py-1.5 ${siblingProjects.length === 0 ? "cursor-default" : ""}`}
                   >
                     <span className={`truncate font-semibold uppercase tracking-wider text-foreground ${smallTextSize}`}>
                       {currentProject.name}
                     </span>
-                    <ChevronDown
-                      className={`h-3 w-3 text-muted-foreground transition-transform ${projectMenuOpen ? "rotate-180" : ""}`}
-                    />
+                    {siblingProjects.length > 0 && (
+                      <ChevronDown
+                        className={`h-3 w-3 text-muted-foreground transition-transform ${projectMenuOpen ? "rotate-180" : ""}`}
+                      />
+                    )}
                   </Button>
                   <AnimatePresence>
-                    {projectMenuOpen && (
+                    {projectMenuOpen && siblingProjects.length > 0 && (
                       <motion.div
                         variants={dropdownVariants}
                         initial="initial"
@@ -308,35 +340,17 @@ export default function DashboardLayout({
                         exit="exit"
                         className="absolute left-0 right-0 top-full z-10 mt-1 origin-top rounded-lg border border-border bg-card py-1 shadow-lg"
                       >
-                        {projects.map((project) => (
+                        {siblingProjects.map((project) => (
                           <Button
                             key={project.uuid}
                             variant="ghost"
                             size="sm"
                             onClick={() => selectProject(project)}
-                            className={`w-full justify-start px-3 py-2 ${navTextSize} [&>*]:truncate ${
-                              currentProject?.uuid === project.uuid
-                                ? "bg-secondary font-medium text-foreground"
-                                : "text-muted-foreground"
-                            }`}
+                            className={`w-full justify-start px-3 py-2 ${navTextSize} [&>*]:truncate text-muted-foreground`}
                           >
                             <span className="truncate">{project.name}</span>
                           </Button>
                         ))}
-                        <div className="my-1 border-t border-border" />
-                        <Link
-                          href="/projects/new"
-                          onClick={() => setProjectMenuOpen(false)}
-                        >
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={`w-full justify-start gap-2 px-3 py-2 ${navTextSize} text-primary`}
-                          >
-                            <Plus className="h-3 w-3" />
-                            {t("nav.newProject")}
-                          </Button>
-                        </Link>
                       </motion.div>
                     )}
                   </AnimatePresence>

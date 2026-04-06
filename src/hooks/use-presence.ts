@@ -154,7 +154,25 @@ export function usePresence() {
     subEntityType?: string,
     subEntityUuid?: string
   ): PresenceEntry[] => {
-    return presenceMap.get(presenceKey(entityType, entityUuid, subEntityType, subEntityUuid)) ?? [];
+    // Exact sub-entity query
+    if (subEntityType) {
+      return presenceMap.get(presenceKey(entityType, entityUuid, subEntityType, subEntityUuid)) ?? [];
+    }
+
+    // No sub-entity specified: aggregate all keys prefixed with entityType:entityUuid
+    const prefix = `${entityType}:${entityUuid}`;
+    const seen = new Map<string, PresenceEntry>();
+    for (const [key, entries] of presenceMap) {
+      if (key === prefix || key.startsWith(prefix + ":")) {
+        for (const e of entries) {
+          const existing = seen.get(e.agentUuid);
+          if (!existing || e.timestamp > existing.timestamp) {
+            seen.set(e.agentUuid, e);
+          }
+        }
+      }
+    }
+    return [...seen.values()];
   };
 
   return { getPresence };

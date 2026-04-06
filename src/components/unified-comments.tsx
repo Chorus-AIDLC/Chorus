@@ -14,6 +14,7 @@ import {
 import type { CommentWithOwner } from "@/services/comment.service";
 import { ContentWithMentions } from "@/components/mention-renderer";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { getAgentColor } from "@/lib/agent-color";
 import { toast } from "sonner";
 
@@ -116,6 +117,7 @@ export function UnifiedComments({
   const sortedComments = [...comments].reverse();
 
   return (
+    <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
       {/* Input at top */}
       <div className={`flex items-center ${gap} pb-3 border-b border-[#F0EDE8]`}>
@@ -182,6 +184,7 @@ export function UnifiedComments({
         )}
       </div>
     </div>
+    </PresenceIndicator>
   );
 }
 
