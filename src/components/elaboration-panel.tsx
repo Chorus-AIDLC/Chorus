@@ -121,7 +121,7 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#FAF8F4] ${
+            className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors cursor-pointer hover:bg-[#FAF8F4] ${
               isOpen ? "bg-[#F7F6F3] border-b border-[#E5E0D8]" : ""
             }`}
           >
