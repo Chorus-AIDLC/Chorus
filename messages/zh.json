@@ -47,6 +47,7 @@
     "source": "来源",
     "currentAssignee": "当前负责人",
     "failedToAssign": "分配失败",
+    "actions": "操作",
     "genericError": "发生错误，请重试。",
     "unknown": "未知",
     "system": "系统",

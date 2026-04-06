@@ -3,7 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
+import { MoreHorizontal, Send, Check, X, Archive, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -90,59 +98,50 @@ export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalA
 
   return (
     <>
-      <div className="flex gap-2">
-        {status === "draft" && (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
           <Button
-            onClick={() => setSubmitDialogOpen(true)}
+            variant="outline"
+            className="border-[#E5E0D8] text-[#3D3D3D] gap-1.5"
             disabled={isPending}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
           >
-            {isPending ? t("common.processing") : t("proposals.submitForReview")}
+            <MoreHorizontal className="h-4 w-4" />
+            <span className="hidden sm:inline">{t("common.actions")}</span>
           </Button>
-        )}
-        {status === "pending" && (
-          <>
-            <Button
-              variant="outline"
-              onClick={() => setCloseDialogOpen(true)}
-              disabled={isPending}
-              className="border-[#6B6B6B] text-[#6B6B6B] hover:bg-[#F5F5F5]"
-            >
-              {t("proposals.closeProposal")}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setRejectDialogOpen(true)}
-              disabled={isPending}
-              className="border-[#D32F2F] text-[#D32F2F] hover:bg-[#FFEBEE]"
-            >
-              {t("common.reject")}
-            </Button>
-            <Button
-              onClick={() => setApproveDialogOpen(true)}
-              disabled={isPending}
-              className="bg-[#5A9E6F] hover:bg-[#4A8E5F] text-white"
-            >
-              {t("common.approve")}
-            </Button>
-          </>
-        )}
-        <Button
-          variant="outline"
-          onClick={() => setDeleteDialogOpen(true)}
-          disabled={isPending}
-          className="border-[#D32F2F] text-[#D32F2F] hover:bg-[#FFEBEE]"
-        >
-          {t("proposals.deleteProposal")}
-        </Button>
-        <Button
-          variant="outline"
-          className="border-[#E5E0D8] text-[#6B6B6B]"
-          onClick={() => router.back()}
-        >
-          {t("common.back")}
-        </Button>
-      </div>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          {status === "draft" && (
+            <DropdownMenuItem onClick={() => setSubmitDialogOpen(true)}>
+              <Send className="h-4 w-4" />
+              {t("proposals.submitForReview")}
+            </DropdownMenuItem>
+          )}
+          {status === "pending" && (
+            <>
+              <DropdownMenuItem onClick={() => setApproveDialogOpen(true)}>
+                <Check className="h-4 w-4 text-[#5A9E6F]" />
+                {t("common.approve")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRejectDialogOpen(true)}>
+                <X className="h-4 w-4 text-[#D32F2F]" />
+                {t("common.reject")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setCloseDialogOpen(true)}>
+                <Archive className="h-4 w-4" />
+                {t("proposals.closeProposal")}
+              </DropdownMenuItem>
+            </>
+          )}
+          {(status === "draft" || status === "pending") && <DropdownMenuSeparator />}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => setDeleteDialogOpen(true)}
+          >
+            <Trash2 className="h-4 w-4" />
+            {t("proposals.deleteProposal")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <Dialog open={submitDialogOpen} onOpenChange={setSubmitDialogOpen}>
         <DialogContent className="sm:max-w-md">

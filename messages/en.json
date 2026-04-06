@@ -47,6 +47,7 @@
     "source": "Source",
     "currentAssignee": "Currently assigned to",
     "failedToAssign": "Failed to assign",
+    "actions": "Actions",
     "genericError": "An error occurred. Please try again.",
     "unknown": "Unknown",
     "system": "System",
