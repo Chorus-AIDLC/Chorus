@@ -172,6 +172,11 @@ export function IdeaDetailPanel({
     }
   }, [idea.uuid]);
 
+  // Load elaboration on mount
+  useEffect(() => {
+    reloadElaboration();
+  }, [reloadElaboration]);
+
   // Subscribe to SSE events to refresh elaboration when idea changes
   useRealtimeEntityTypeEvent("idea", reloadElaboration);
 
