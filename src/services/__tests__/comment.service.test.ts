@@ -709,6 +709,32 @@ describe("resolveProjectUuid", () => {
 
     expect(result).toBeNull();
   });
+
+  it("should pass companyUuid filter when provided", async () => {
+    const projectUuid = "project-scoped";
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+
+    const result = await resolveProjectUuid("task", "task-123", "company-abc");
+
+    expect(result).toBe(projectUuid);
+    expect(mockPrisma.task.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "task-123", companyUuid: "company-abc" },
+      select: { projectUuid: true },
+    });
+  });
+
+  it("should not include companyUuid filter when not provided", async () => {
+    const projectUuid = "project-unscoped";
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid });
+
+    const result = await resolveProjectUuid("idea", "idea-123");
+
+    expect(result).toBe(projectUuid);
+    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "idea-123" },
+      select: { projectUuid: true },
+    });
+  });
 });
 
 // ===== resolveAgentOwners =====
@@ -802,5 +828,58 @@ describe("resolveAgentOwners", () => {
     const result = await resolveAgentOwners(comments);
 
     expect(result[0].author.owner).toEqual({ uuid: "owner-002", name: "fallback@test.com" });
+  });
+
+  it("should use 'Unknown' when both name and email are null", async () => {
+    const comments = [
+      makeComment({ author: { type: "agent", uuid: "agent-004", name: "Bot4" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-004", ownerUuid: "owner-003" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: "owner-003", name: null, email: null },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toEqual({ uuid: "owner-003", name: "Unknown" });
+  });
+
+  it("should skip owner when agent exists but ownerUuid user not found in DB", async () => {
+    const comments = [
+      makeComment({ author: { type: "agent", uuid: "agent-005", name: "Bot5" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-005", ownerUuid: "nonexistent-owner" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toBeUndefined();
+  });
+
+  it("should deduplicate agent UUIDs", async () => {
+    const comments = [
+      makeComment({ uuid: "c1", author: { type: "agent", uuid: "agent-same", name: "Bot" } }),
+      makeComment({ uuid: "c2", author: { type: "agent", uuid: "agent-same", name: "Bot" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-same", ownerUuid: "owner-dedup" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: "owner-dedup", name: "Dedup Owner", email: "d@test.com" },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toEqual({ uuid: "owner-dedup", name: "Dedup Owner" });
+    expect(result[1].author.owner).toEqual({ uuid: "owner-dedup", name: "Dedup Owner" });
+    // Only 1 agent query despite 2 comments with same agent
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledWith({
+      where: { uuid: { in: ["agent-same"] } },
+      select: { uuid: true, ownerUuid: true },
+    });
   });
 });
