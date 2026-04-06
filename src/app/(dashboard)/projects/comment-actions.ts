@@ -10,8 +10,6 @@ import {
 } from "@/services/comment.service";
 import { createActivity } from "@/services/activity.service";
 
-export type { CommentWithOwner, CommentAuthor } from "@/services/comment.service";
-
 const VALID_TARGET_TYPES = ["idea", "proposal", "task", "document"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
 

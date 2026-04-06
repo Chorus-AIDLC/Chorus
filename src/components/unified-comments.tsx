@@ -10,8 +10,8 @@ import { MentionEditor, type MentionEditorRef } from "@/components/mention-edito
 import {
   getCommentsAction,
   createCommentAction,
-  type CommentWithOwner,
 } from "@/app/(dashboard)/projects/comment-actions";
+import type { CommentWithOwner } from "@/services/comment.service";
 import { ContentWithMentions } from "@/components/mention-renderer";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { getAgentColor } from "@/lib/agent-color";
