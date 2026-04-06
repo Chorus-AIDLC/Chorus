@@ -10,7 +10,6 @@ import {
   getProject,
   updateProject,
   deleteProject,
-  projectExists,
 } from "@/services/project.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -59,11 +58,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
 
   const { uuid } = await context.params;
 
-  const exists = await projectExists(auth.companyUuid, uuid);
-  if (!exists) {
-    return errors.notFound("Project");
-  }
-
   const body = await parseBody<{
     name?: string;
     description?: string;
@@ -82,7 +76,10 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     updateData.description = body.description?.trim() || null;
   }
 
-  const project = await updateProject(uuid, updateData);
+  const project = await updateProject(auth.companyUuid, uuid, updateData);
+  if (!project) {
+    return errors.notFound("Project");
+  }
 
   return success({
     uuid: project.uuid,
@@ -106,12 +103,10 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
 
   const { uuid } = await context.params;
 
-  const exists = await projectExists(auth.companyUuid, uuid);
-  if (!exists) {
+  const deleted = await deleteProject(auth.companyUuid, uuid);
+  if (!deleted) {
     return errors.notFound("Project");
   }
-
-  await deleteProject(uuid);
 
   return success({ deleted: true });
 });

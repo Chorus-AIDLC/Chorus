@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { getProject, deleteProject, updateProject } from "@/services/project.service";
+import { deleteProject, updateProject } from "@/services/project.service";
 import { revalidatePath } from "next/cache";
 import { getActiveSessionsForProject, type TaskSessionInfo } from "@/services/session.service";
 
@@ -12,13 +12,11 @@ export async function deleteProjectAction(projectUuid: string) {
     return { success: false, error: "Unauthorized" };
   }
 
-  const project = await getProject(auth.companyUuid, projectUuid);
-  if (!project) {
-    return { success: false, error: "Project not found" };
-  }
-
   try {
-    await deleteProject(projectUuid);
+    const deleted = await deleteProject(auth.companyUuid, projectUuid);
+    if (!deleted) {
+      return { success: false, error: "Project not found" };
+    }
   } catch (error) {
     console.error("Failed to delete project:", error);
     return { success: false, error: "Failed to delete project" };
@@ -36,13 +34,11 @@ export async function updateProjectAction(
     return { success: false, error: "Unauthorized" };
   }
 
-  const project = await getProject(auth.companyUuid, projectUuid);
-  if (!project) {
-    return { success: false, error: "Project not found" };
-  }
-
   try {
-    const updated = await updateProject(projectUuid, data);
+    const updated = await updateProject(auth.companyUuid, projectUuid, data);
+    if (!updated) {
+      return { success: false, error: "Project not found" };
+    }
     revalidatePath(`/projects/${projectUuid}/dashboard`);
     return { success: true, data: updated };
   } catch (error) {

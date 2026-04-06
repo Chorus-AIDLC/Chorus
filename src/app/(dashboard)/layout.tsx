@@ -157,8 +157,8 @@ export default function DashboardLayout({
         } else {
           setSiblingProjects([]);
         }
-      } catch {
-        // Silently fail — project context will be missing but page still works
+      } catch (error) {
+        console.error("Failed to fetch current project:", error);
       }
     }
 
@@ -500,12 +500,12 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
-      {isProjectContext && currentProject ? (
-        <RealtimeProvider projectUuid={currentProject.uuid}>
+      {isProjectContext && currentProjectUuid ? (
+        <RealtimeProvider projectUuid={currentProjectUuid}>
           <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
           <PixelCanvasWidget
-            projectUuid={currentProject.uuid}
-            projectName={currentProject.name}
+            projectUuid={currentProjectUuid}
+            projectName={currentProject?.name || ""}
           />
         </RealtimeProvider>
       ) : (

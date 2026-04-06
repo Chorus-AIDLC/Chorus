@@ -53,13 +53,10 @@ export async function updateProject(
     return { success: false, error: "Unauthorized" };
   }
 
-  // Verify project belongs to company
-  const exists = await projectService.projectExists(auth.companyUuid, uuid);
-  if (!exists) {
+  const project = await projectService.updateProject(auth.companyUuid, uuid, data);
+  if (!project) {
     return { success: false, error: "Project not found" };
   }
-
-  const project = await projectService.updateProject(uuid, data);
 
   // Revalidate
   revalidatePath("/projects");
@@ -78,13 +75,10 @@ export async function deleteProject(
     return { success: false, error: "Unauthorized" };
   }
 
-  // Verify project belongs to company
-  const exists = await projectService.projectExists(auth.companyUuid, uuid);
-  if (!exists) {
+  const deleted = await projectService.deleteProject(auth.companyUuid, uuid);
+  if (!deleted) {
     return { success: false, error: "Project not found" };
   }
-
-  await projectService.deleteProject(uuid);
 
   // Revalidate projects list
   revalidatePath("/projects");

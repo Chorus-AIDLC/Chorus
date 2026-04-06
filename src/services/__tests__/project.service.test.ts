@@ -172,12 +172,17 @@ describe("createProject", () => {
 // ===== updateProject =====
 describe("updateProject", () => {
   it("should update project fields", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
     const updated = makeProject({ name: "Updated Name" });
     mockPrisma.project.update.mockResolvedValue(updated);
 
-    const result = await updateProject(projectUuid, { name: "Updated Name" });
+    const result = await updateProject(companyUuid, projectUuid, { name: "Updated Name" });
 
-    expect(result.name).toBe("Updated Name");
+    expect(result!.name).toBe("Updated Name");
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledWith({
+      where: { uuid: projectUuid, companyUuid },
+      select: { uuid: true },
+    });
     expect(mockPrisma.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { uuid: projectUuid },
@@ -185,18 +190,40 @@ describe("updateProject", () => {
       })
     );
   });
+
+  it("should return null when project not found", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue(null);
+
+    const result = await updateProject(companyUuid, "nonexistent", { name: "X" });
+    expect(result).toBeNull();
+    expect(mockPrisma.project.update).not.toHaveBeenCalled();
+  });
 });
 
 // ===== deleteProject =====
 describe("deleteProject", () => {
-  it("should delete project by uuid", async () => {
+  it("should delete project scoped by companyUuid", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
     mockPrisma.project.delete.mockResolvedValue(makeProject());
 
-    await deleteProject(projectUuid);
+    const result = await deleteProject(companyUuid, projectUuid);
 
+    expect(result).toBe(true);
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledWith({
+      where: { uuid: projectUuid, companyUuid },
+      select: { uuid: true },
+    });
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { uuid: projectUuid },
     });
+  });
+
+  it("should return false when project not found", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue(null);
+
+    const result = await deleteProject(companyUuid, "nonexistent");
+    expect(result).toBe(false);
+    expect(mockPrisma.project.delete).not.toHaveBeenCalled();
   });
 });
 

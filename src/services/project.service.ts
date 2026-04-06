@@ -121,10 +121,17 @@ export async function createProject({ companyUuid, name, description, groupUuid 
   });
 }
 
-// Update project
-export async function updateProject(uuid: string, data: ProjectUpdateParams) {
+// Update project (scoped by companyUuid for multi-tenancy defense-in-depth)
+export async function updateProject(companyUuid: string, uuid: string, data: ProjectUpdateParams) {
+  // Verify ownership atomically before updating
+  const project = await prisma.project.findFirst({
+    where: { uuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!project) return null;
+
   return prisma.project.update({
-    where: { uuid },
+    where: { uuid: project.uuid },
     data,
     select: {
       uuid: true,
@@ -136,9 +143,16 @@ export async function updateProject(uuid: string, data: ProjectUpdateParams) {
   });
 }
 
-// Delete project
-export async function deleteProject(uuid: string) {
-  return prisma.project.delete({ where: { uuid } });
+// Delete project (scoped by companyUuid for multi-tenancy defense-in-depth)
+export async function deleteProject(companyUuid: string, uuid: string) {
+  const project = await prisma.project.findFirst({
+    where: { uuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!project) return false;
+
+  await prisma.project.delete({ where: { uuid: project.uuid } });
+  return true;
 }
 
 // Get company-level overview stats (for Projects list page)
