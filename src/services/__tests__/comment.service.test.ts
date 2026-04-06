@@ -58,6 +58,7 @@ import {
   listComments,
   batchCommentCounts,
   resolveProjectUuid,
+  resolveAgentOwners,
 } from "@/services/comment.service";
 import { parseMentions, createMentions } from "@/services/mention.service";
 import { createActivity } from "@/services/activity.service";
@@ -707,5 +708,99 @@ describe("resolveProjectUuid", () => {
     const result = await resolveProjectUuid("task", "nonexistent");
 
     expect(result).toBeNull();
+  });
+});
+
+// ===== resolveAgentOwners =====
+describe("resolveAgentOwners", () => {
+  const makeComment = (overrides = {}) => ({
+    uuid: "comment-001",
+    targetType: "task",
+    targetUuid: "task-001",
+    content: "Hello",
+    author: { type: "user", uuid: "user-001", name: "Dev" },
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    ...overrides,
+  });
+
+  it("should return comments unchanged when no agent authors", async () => {
+    const comments = [makeComment()];
+    const result = await resolveAgentOwners(comments);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].author.owner).toBeUndefined();
+    expect(mockPrisma.agent.findMany).not.toHaveBeenCalled();
+  });
+
+  it("should resolve agent owner from Agent + User tables", async () => {
+    const comments = [
+      makeComment({ author: { type: "agent", uuid: "agent-001", name: "Bot" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-001", ownerUuid: "owner-001" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: "owner-001", name: "Alice", email: "alice@test.com" },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toEqual({ uuid: "owner-001", name: "Alice" });
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("should handle agent without owner", async () => {
+    const comments = [
+      makeComment({ author: { type: "agent", uuid: "agent-002", name: "Bot2" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-002", ownerUuid: null },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toBeUndefined();
+    expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("should batch resolve multiple agents in 2 queries", async () => {
+    const comments = [
+      makeComment({ uuid: "c1", author: { type: "agent", uuid: "agent-a", name: "BotA" } }),
+      makeComment({ uuid: "c2", author: { type: "user", uuid: "user-001", name: "Dev" } }),
+      makeComment({ uuid: "c3", author: { type: "agent", uuid: "agent-b", name: "BotB" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-a", ownerUuid: "owner-x" },
+      { uuid: "agent-b", ownerUuid: "owner-x" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: "owner-x", name: "Shared Owner", email: "shared@test.com" },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toEqual({ uuid: "owner-x", name: "Shared Owner" });
+    expect(result[1].author.owner).toBeUndefined();
+    expect(result[2].author.owner).toEqual({ uuid: "owner-x", name: "Shared Owner" });
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("should use email as fallback when owner name is null", async () => {
+    const comments = [
+      makeComment({ author: { type: "agent", uuid: "agent-003", name: "Bot3" } }),
+    ];
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "agent-003", ownerUuid: "owner-002" },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: "owner-002", name: null, email: "fallback@test.com" },
+    ]);
+
+    const result = await resolveAgentOwners(comments);
+
+    expect(result[0].author.owner).toEqual({ uuid: "owner-002", name: "fallback@test.com" });
   });
 });
