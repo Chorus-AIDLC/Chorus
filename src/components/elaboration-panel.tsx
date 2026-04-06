@@ -102,12 +102,14 @@ interface RoundCardProps {
 
 function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
   const t = useTranslations("elaboration");
-  // `needs_followup` rounds require the user to answer follow-up questions,
-  // so they are treated as interactive/pending just like `pending_answers`.
-  const isPending =
-    round.status === "pending_answers" || round.status === "needs_followup";
+  // `needs_followup` means all questions in this round were answered, but
+  // validation flagged issues — a new follow-up round handles those.
+  // So this round should display as "done" (read-only Q&A view).
+  const isPending = round.status === "pending_answers";
   const isDone =
-    round.status === "answered" || round.status === "validated";
+    round.status === "answered" ||
+    round.status === "validated" ||
+    round.status === "needs_followup";
   const [isOpen, setIsOpen] = useState(isPending);
 
   return (
