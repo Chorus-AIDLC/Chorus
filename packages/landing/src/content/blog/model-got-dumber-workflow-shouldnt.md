@@ -1,7 +1,7 @@
 ---
 title: "The Model Got Dumber. Your Workflow Shouldn't."
 description: "Anthropic quietly nerfed Claude Code's thinking depth and cut off OpenClaw's subscription access. The real problem isn't what changed — it's that your workflow had zero resilience to it."
-date: 2025-04-07
+date: 2026-04-07
 lang: en
 postSlug: model-got-dumber-workflow-shouldnt
 ---
@@ -66,7 +66,7 @@ Now imagine a different setup. Each task spells out what "done" looks like — e
 
 Planning is the same story. The issue reports that the model stopped thinking ahead — it just dove straight into code. But if planning lives in its own phase — requirements clarified through Q&A, work broken into a dependency graph, each node tagged with testable acceptance criteria — then planning never needed thinking tokens in the first place. It was already finished before the first line of code got written.
 
-And verification. The model stopped reviewing its own output? Then don't ask it to. Put an independent reviewer agent on the other end. It compares the result against the acceptance criteria; anything that doesn't match gets kicked back. The agent that writes the code and the agent that checks it are different agents. That's not waste. That's cross-validation.
+And verification. The model stopped reviewing its own output? Then don't ask it to. Put an independent reviewer agent on the other end. In Chorus, the task-reviewer is strictly read-only — it can run tests and inspect code, but it cannot edit a single file. Its only job is to find problems, not fix them. Anything that doesn't match the acceptance criteria gets kicked back to the dev agent. The agent that writes the code and the agent that checks it are different agents with different permissions. That's not waste. That's cross-validation.
 
 ---
 
