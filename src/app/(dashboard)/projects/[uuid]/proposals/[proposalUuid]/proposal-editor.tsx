@@ -666,7 +666,7 @@ export function ProposalEditor({
                         setShowCreateTaskPanel(false);
                         setSelectedTaskDraftUuid(task.uuid);
                       }}
-                      className={`cursor-pointer rounded-[10px] bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 ${
+                      className={`cursor-pointer rounded-[10px] bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 h-full ${
                         deletingIds.has(task.uuid) ? "opacity-0" : ""
                       } ${isSelected
                           ? "border-[#C67A52] shadow-sm border"

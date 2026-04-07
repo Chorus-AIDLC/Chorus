@@ -19,40 +19,40 @@ export function PresenceIndicator({ entityType, entityUuid, subEntityType, subEn
   const { getPresence } = usePresence();
   const entries = getPresence(entityType, entityUuid, subEntityType, subEntityUuid);
 
-  if (entries.length === 0) {
-    return <>{children}</>;
-  }
+  const hasPresence = entries.length > 0;
 
   // Determine border style: mutate takes priority over view
-  const hasMutate = entries.some((e) => e.action === "mutate");
+  const hasMutate = hasPresence && entries.some((e) => e.action === "mutate");
   const borderStyle = hasMutate ? "solid" : "dashed";
 
   // Primary agent for border color (mutate > view, then most recent)
-  const primary = hasMutate
-    ? entries.find((e) => e.action === "mutate")!
-    : entries[entries.length - 1];
-  const borderColor = getAgentColor(primary.agentName);
+  const primary = hasPresence
+    ? (hasMutate ? entries.find((e) => e.action === "mutate")! : entries[entries.length - 1])
+    : null;
+  const borderColor = primary ? getAgentColor(primary.agentName) : "transparent";
 
   return (
     <div
-      className="relative animate-in fade-in duration-300 ease-out"
-      style={{
-        border: `2px ${borderStyle} ${borderColor}`,
+      className="relative"
+      style={hasPresence ? {
+        outline: `2px ${borderStyle} ${borderColor}`,
+        outlineOffset: "-2px",
         borderRadius: "var(--radius)",
-        transition: "border-color 300ms ease-out, border-style 300ms ease-out, opacity 300ms ease-in",
-      }}
+      } : undefined}
     >
       {/* Agent badges */}
-      <div className={`absolute flex gap-1 z-10 justify-end ${badgeInside ? "top-0.5 right-1.5 max-w-[70%]" : "-top-2.5 right-2 max-w-[80%]"}`}>
-        {entries.slice(0, 3).map((entry) => (
-          <AgentBadge key={entry.agentUuid} entry={entry} />
-        ))}
-        {entries.length > 3 && (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white bg-gray-500 whitespace-nowrap">
-            +{entries.length - 3}
-          </span>
-        )}
-      </div>
+      {hasPresence && (
+        <div className={`absolute flex gap-1 z-10 justify-end ${badgeInside ? "top-0.5 right-1.5 max-w-[70%]" : "-top-2.5 right-2 max-w-[80%]"}`}>
+          {entries.slice(0, 3).map((entry) => (
+            <AgentBadge key={entry.agentUuid} entry={entry} />
+          ))}
+          {entries.length > 3 && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white bg-gray-500 whitespace-nowrap">
+              +{entries.length - 3}
+            </span>
+          )}
+        </div>
+      )}
       {children}
     </div>
   );
