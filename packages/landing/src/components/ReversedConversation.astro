@@ -1,0 +1,49 @@
+<div class="reversed" id="concept">
+  <div class="reversed-text">
+    <h2>Reversed Conversation</h2>
+    <p>Traditional tools: you prompt, AI responds. Chorus flips this. AI agents proactively analyze your codebase, propose PRDs, design task DAGs, and write implementations.</p>
+    <p>Your role shifts from "writing prompts" to "reviewing proposals." You stay in control while AI handles the heavy lifting.</p>
+  </div>
+  <div class="reversed-visual">
+    <img src="/images/proposal.png" alt="Proposal Review Panel" />
+  </div>
+</div>
+
+<style>
+  .reversed {
+    background: var(--text-primary);
+    border-radius: 24px;
+    padding: 80px 48px;
+    margin: 0 32px;
+    max-width: 1200px;
+    margin-left: auto; margin-right: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .reversed-text h2 {
+    font-size: 36px; font-weight: 800;
+    color: #fff;
+    letter-spacing: -0.5px;
+    margin-bottom: 20px;
+  }
+  .reversed-text p {
+    font-size: 16px;
+    color: rgba(255,255,255,0.65);
+    line-height: 1.7;
+    margin-bottom: 16px;
+  }
+  .reversed-visual img {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  @media (max-width: 900px) {
+    .reversed { grid-template-columns: 1fr; padding: 48px 28px; margin: 0 16px; }
+  }
+  @media (max-width: 600px) {
+    .reversed { padding: 36px 20px; }
+  }
+</style>

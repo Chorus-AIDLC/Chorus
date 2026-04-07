@@ -24,6 +24,9 @@
     "cdk:deploy": "pnpm -C packages/chorus-cdk exec cdk deploy",
     "cdk:diff": "pnpm --filter @chorus/cdk run diff",
     "cdk:destroy": "pnpm --filter @chorus/cdk run destroy",
+    "landing:dev": "pnpm --filter @chorus/landing run dev",
+    "landing:build": "pnpm --filter @chorus/landing run build",
+    "landing:preview": "pnpm --filter @chorus/landing run preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

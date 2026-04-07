@@ -1,0 +1,40 @@
+---
+const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
+---
+
+<footer>
+  <div class="footer-left">
+    &copy; {new Date().getFullYear()} Chorus. AI-Driven Development Lifecycle.
+  </div>
+  <div class="footer-links">
+    <a href="#features">Features</a>
+    <a href="#showcase">Showcase</a>
+    <a href="#agents">Agents</a>
+    <a href="#workflow">Workflow</a>
+    <a href={githubUrl}>GitHub</a>
+  </div>
+</footer>
+
+<style>
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 32px;
+    max-width: 1200px; margin: 0 auto;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 16px;
+  }
+  .footer-left {
+    font-size: 14px;
+    color: var(--text-tertiary);
+  }
+  .footer-links {
+    display: flex; gap: 24px;
+  }
+  .footer-links a {
+    font-size: 14px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .footer-links a:hover { color: var(--primary); }
+</style>

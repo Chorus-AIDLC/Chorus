@@ -1,0 +1,51 @@
+---
+const stats = [
+  { num: "85", label: "MCP Tools" },
+  { num: "21", label: "Data Models" },
+  { num: "3", label: "Agent Roles" },
+  { num: "2", label: "Languages (en / zh)" },
+];
+---
+
+<div class="stats-bar">
+  {stats.map((s) => (
+    <div class="stat-card">
+      <div class="stat-num">{s.num}</div>
+      <div class="stat-label">{s.label}</div>
+    </div>
+  ))}
+</div>
+
+<style>
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px;
+    padding: 0 32px 100px;
+    max-width: 1200px; margin: 0 auto;
+  }
+  .stat-card {
+    text-align: center;
+    padding: 32px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .stat-num {
+    font-size: 42px; font-weight: 800;
+    color: var(--primary);
+    letter-spacing: -1px;
+  }
+  .stat-label {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  @media (max-width: 900px) {
+    .stats-bar { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .stats-bar { grid-template-columns: 1fr; }
+  }
+</style>

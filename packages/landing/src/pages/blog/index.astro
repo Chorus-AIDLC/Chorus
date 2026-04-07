@@ -1,0 +1,339 @@
+---
+import { getCollection } from "astro:content";
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+
+const allPosts = await getCollection("blog");
+const enPosts = allPosts
+  .filter((p) => p.data.lang === "en")
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+
+function getTags(slug: string): string[] {
+  if (slug.includes("claude-code")) return ["Claude Code", "Plugin"];
+  if (slug.includes("openclaw")) return ["OpenClaw", "Plugin"];
+  if (slug.includes("harness")) return ["Architecture", "Essay"];
+  return ["Engineering"];
+}
+
+const featured = enPosts[0];
+const rest = enPosts.slice(1);
+const featuredDate = featured?.data.date.toISOString().slice(0, 10) ?? "";
+const featuredTags = featured ? getTags(featured.data.postSlug) : [];
+---
+
+<Layout title="Blog - Chorus">
+  <Nav />
+  <main class="blog-page">
+    <div class="blog-hero">
+      <div class="blog-hero-inner">
+        <span class="blog-eyebrow">Engineering Blog</span>
+        <h1>Building the<br /><span class="hero-accent">Agent Harness</span></h1>
+        <p>Deep dives into plugin architecture, multi-agent orchestration, and the infrastructure that makes AI-human collaboration work.</p>
+      </div>
+      <div class="hero-decoration" aria-hidden="true">
+        <div class="deco-line"></div>
+        <div class="deco-line"></div>
+        <div class="deco-line"></div>
+      </div>
+    </div>
+
+    {featured && (
+      <a href={`/blog/${featured.data.postSlug}/`} class="featured-card">
+        <div class="featured-badge">Latest</div>
+        <div class="featured-content">
+          <div class="featured-meta">
+            <time datetime={featuredDate}>{featuredDate}</time>
+            <span class="meta-dot"></span>
+            <span class="reading-time">15 min read</span>
+          </div>
+          <h2>{featured.data.title}</h2>
+          <p>{featured.data.description}</p>
+          <div class="tag-row">
+            {featuredTags.map((tag) => <span class="tag">{tag}</span>)}
+            <span class="lang-badge">EN / 中文</span>
+          </div>
+        </div>
+        <div class="featured-arrow" aria-hidden="true">
+          <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        </div>
+      </a>
+    )}
+
+    <div class="post-list">
+      {rest.map((post, i) => {
+        const dateStr = post.data.date.toISOString().slice(0, 10);
+        const tags = getTags(post.data.postSlug);
+        const num = String(i + 2).padStart(2, "0");
+        return (
+          <a href={`/blog/${post.data.postSlug}/`} class="post-row">
+            <span class="post-num">{num}</span>
+            <div class="post-body">
+              <div class="post-row-meta">
+                <time datetime={dateStr}>{dateStr}</time>
+                <span class="meta-dot"></span>
+                <span class="reading-time">15 min read</span>
+              </div>
+              <h3>{post.data.title}</h3>
+              <p>{post.data.description}</p>
+              <div class="tag-row">
+                {tags.map((tag) => <span class="tag">{tag}</span>)}
+                <span class="lang-badge">EN / 中文</span>
+              </div>
+            </div>
+            <div class="row-arrow" aria-hidden="true">
+              <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10h10"/><path d="M10 5l5 5-5 5"/></svg>
+            </div>
+          </a>
+        );
+      })}
+    </div>
+  </main>
+  <Footer />
+</Layout>
+
+<style>
+  .blog-page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  /* ---- HERO ---- */
+  .blog-hero {
+    padding: 160px 0 64px;
+    position: relative;
+    overflow: hidden;
+  }
+  .blog-hero-inner { position: relative; z-index: 1; }
+  .blog-eyebrow {
+    display: inline-block;
+    font-size: 12px; font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--primary);
+    margin-bottom: 16px;
+    padding: 5px 14px;
+    background: rgba(198,122,82,0.08);
+    border-radius: 100px;
+    border: 1px solid rgba(198,122,82,0.15);
+  }
+  .blog-hero h1 {
+    font-size: clamp(36px, 5vw, 52px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1.5px;
+    margin-bottom: 16px;
+  }
+  .hero-accent {
+    background: linear-gradient(135deg, var(--primary), var(--orange));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .blog-hero p {
+    font-size: 17px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 540px;
+  }
+  .hero-decoration {
+    position: absolute;
+    top: 120px; right: -40px;
+    display: flex; flex-direction: column; gap: 12px;
+    opacity: 0.12;
+  }
+  .deco-line {
+    height: 3px; border-radius: 2px;
+    background: var(--primary);
+  }
+  .deco-line:nth-child(1) { width: 180px; }
+  .deco-line:nth-child(2) { width: 120px; margin-left: 30px; }
+  .deco-line:nth-child(3) { width: 80px; margin-left: 60px; }
+
+  /* ---- FEATURED ---- */
+  .featured-card {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    position: relative;
+    background: var(--text-primary);
+    border-radius: 20px;
+    padding: 40px 40px 40px 44px;
+    margin-bottom: 32px;
+    text-decoration: none;
+    color: #fff;
+    overflow: hidden;
+    transition: transform 0.3s, box-shadow 0.3s;
+    border-left: 4px solid var(--primary);
+  }
+  .featured-card::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle at top right, rgba(198,122,82,0.12), transparent 70%);
+    pointer-events: none;
+  }
+  .featured-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  }
+  .featured-badge {
+    position: absolute;
+    top: 16px; right: 20px;
+    font-size: 10px; font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    padding: 4px 10px;
+    background: var(--primary);
+    border-radius: 5px;
+  }
+  .featured-content { flex: 1; position: relative; z-index: 1; }
+  .featured-meta {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+  }
+  .featured-content h2 {
+    font-size: 24px; font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: -0.5px;
+    margin-bottom: 10px;
+  }
+  .featured-content p {
+    font-size: 15px;
+    line-height: 1.65;
+    color: rgba(255,255,255,0.55);
+    margin-bottom: 16px;
+  }
+  .featured-arrow {
+    flex-shrink: 0;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.4);
+    transition: all 0.3s;
+  }
+  .featured-card:hover .featured-arrow {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+  }
+
+  /* ---- POST LIST ---- */
+  .post-list {
+    display: flex; flex-direction: column;
+    margin-bottom: 80px;
+  }
+  .post-row {
+    display: flex; align-items: flex-start; gap: 24px;
+    padding: 32px 0;
+    border-bottom: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.25s;
+  }
+  .post-row:first-child { border-top: 1px solid var(--border); }
+  .post-row:hover { padding-left: 12px; }
+  .post-row:hover .post-num { color: var(--primary); }
+  .post-num {
+    font-size: 42px; font-weight: 800;
+    letter-spacing: -2px;
+    color: var(--border);
+    line-height: 1;
+    flex-shrink: 0;
+    width: 56px;
+    transition: color 0.25s;
+    user-select: none;
+  }
+  .post-body { flex: 1; min-width: 0; }
+  .post-row-meta {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin-bottom: 6px;
+  }
+  .post-row h3 {
+    font-size: 20px; font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 6px;
+    line-height: 1.3;
+  }
+  .post-row p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+  .row-arrow {
+    flex-shrink: 0; margin-top: 6px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: all 0.25s;
+  }
+  .post-row:hover .row-arrow {
+    opacity: 1;
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+  }
+
+  /* ---- SHARED ---- */
+  .meta-dot {
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.5;
+  }
+  .reading-time { font-style: italic; }
+  .tag-row {
+    display: flex; align-items: center;
+    gap: 6px; flex-wrap: wrap;
+  }
+  .tag {
+    padding: 3px 10px; border-radius: 5px;
+    font-size: 11px; font-weight: 600;
+    background: rgba(198,122,82,0.08);
+    color: var(--primary);
+    border: 1px solid rgba(198,122,82,0.15);
+  }
+  .featured-card .tag {
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.65);
+    border-color: rgba(255,255,255,0.1);
+  }
+  .lang-badge {
+    padding: 3px 10px; border-radius: 5px;
+    font-size: 11px; font-weight: 600;
+    background: rgba(0,121,107,0.08);
+    color: var(--teal);
+    border: 1px solid rgba(0,121,107,0.15);
+  }
+  .featured-card .lang-badge {
+    background: rgba(0,121,107,0.15);
+    color: rgba(128,203,196,0.8);
+    border-color: rgba(0,121,107,0.25);
+  }
+
+  @media (max-width: 600px) {
+    .blog-page { padding: 0 20px; }
+    .blog-hero { padding: 120px 0 40px; }
+    .hero-decoration { display: none; }
+    .featured-card {
+      flex-direction: column;
+      padding: 28px 24px;
+      align-items: stretch;
+    }
+    .featured-arrow { display: none; }
+    .post-num { font-size: 32px; width: 40px; }
+    .row-arrow { display: none; }
+  }
+</style>

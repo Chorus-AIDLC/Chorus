@@ -1,0 +1,267 @@
+---
+const dockerHubUrl = "https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general";
+const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
+
+const composeYml = `services:
+  app:
+    image: chorusaidlc/chorus-app:latest
+    ports: ["3000:3000"]
+    environment:
+      - DATABASE_URL=postgresql://chorus:chorus@db:5432/chorus
+      - REDIS_URL=redis://default:chorus-redis@redis:6379
+      - NEXTAUTH_SECRET=change-me-to-a-random-secret
+      - DEFAULT_USER=admin@example.com
+      - DEFAULT_PASSWORD=changeme
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass chorus-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "chorus-redis", "ping"]
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chorus
+      POSTGRES_PASSWORD: chorus
+      POSTGRES_DB: chorus
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chorus"]`;
+---
+
+<div class="quickstart" id="quickstart">
+  <div class="quickstart-card">
+    <div class="quickstart-header">
+      <span class="quickstart-badge">Docker</span>
+    </div>
+    <h2>Run Chorus in 60 Seconds</h2>
+    <p>Pre-built image on <a href={dockerHubUrl}>Docker Hub</a>. Supports amd64 &amp; arm64 (Apple Silicon).</p>
+    <div class="qs-steps">
+      <div class="qs-step">
+        <div class="qs-num">1</div>
+        <div class="qs-content">
+          <p>Create a <code>docker-compose.yml</code></p>
+          <div class="qs-code-wrap">
+            <button class="qs-copy" title="Copy" data-code={composeYml}>
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>
+            </button>
+            <pre class="qs-code"><span class="qs-comment"># docker-compose.yml</span>{`
+services:
+  app:
+    `}<span class="qs-flag">image</span>: chorusaidlc/chorus-app:<span class="qs-env">latest</span>{`
+    `}<span class="qs-flag">ports</span>: [<span class="qs-env">"3000:3000"</span>]{`
+    `}<span class="qs-flag">environment</span>:{`
+      - DATABASE_URL=`}<span class="qs-env">postgresql://chorus:chorus@db:5432/chorus</span>{`
+      - REDIS_URL=`}<span class="qs-env">redis://default:chorus-redis@redis:6379</span>{`
+      - NEXTAUTH_SECRET=`}<span class="qs-env">change-me-to-a-random-secret</span>{`
+      - DEFAULT_USER=`}<span class="qs-env">admin@example.com</span>{`
+      - DEFAULT_PASSWORD=`}<span class="qs-env">changeme</span>{`
+    `}<span class="qs-flag">depends_on</span>:{`
+      db: { `}<span class="qs-flag">condition</span>: service_healthy {`}
+      redis: { `}<span class="qs-flag">condition</span>: service_healthy {`}
+  redis:
+    `}<span class="qs-flag">image</span>: redis:7-alpine{`
+    `}<span class="qs-flag">command</span>: redis-server --requirepass chorus-redis{`
+    `}<span class="qs-flag">healthcheck</span>:{`
+      `}<span class="qs-flag">test</span>: [<span class="qs-env">"CMD"</span>, <span class="qs-env">"redis-cli"</span>, <span class="qs-env">"-a"</span>, <span class="qs-env">"chorus-redis"</span>, <span class="qs-env">"ping"</span>]{`
+  db:
+    `}<span class="qs-flag">image</span>: postgres:16-alpine{`
+    `}<span class="qs-flag">environment</span>:{`
+      POSTGRES_USER: `}<span class="qs-env">chorus</span>{`
+      POSTGRES_PASSWORD: `}<span class="qs-env">chorus</span>{`
+      POSTGRES_DB: `}<span class="qs-env">chorus</span>{`
+    `}<span class="qs-flag">healthcheck</span>:{`
+      `}<span class="qs-flag">test</span>: [<span class="qs-env">"CMD-SHELL"</span>, <span class="qs-env">"pg_isready -U chorus"</span>]</pre>
+          </div>
+        </div>
+      </div>
+      <div class="qs-step">
+        <div class="qs-num">2</div>
+        <div class="qs-content">
+          <p>Start everything</p>
+          <div class="qs-code-wrap">
+            <button class="qs-copy" title="Copy" data-code="docker compose up -d">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>
+            </button>
+            <pre class="qs-code"><span class="qs-cmd">docker compose</span> up -d</pre>
+          </div>
+        </div>
+      </div>
+      <div class="qs-step">
+        <div class="qs-num">3</div>
+        <div class="qs-content">
+          <p>Open <a href="http://localhost:3000">http://localhost:3000</a> and log in with your DEFAULT_USER credentials</p>
+          <div class="qs-arch">
+            <span class="qs-arch-tag">linux/amd64</span>
+            <span class="qs-arch-tag">linux/arm64</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="qs-footer">
+      <a href={dockerHubUrl} class="qs-link qs-link-primary">Docker Hub</a>
+      <a href={githubUrl} class="qs-link qs-link-outline">GitHub</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.qs-copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const code = (btn as HTMLElement).dataset.code || '';
+      navigator.clipboard.writeText(code).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 8 7 11 12 5"/></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>';
+        }, 2000);
+      });
+    });
+  });
+</script>
+
+<style>
+  .quickstart {
+    max-width: 800px; margin: 0 auto;
+    padding: 0 32px 80px;
+  }
+  .quickstart-card {
+    background: var(--text-primary);
+    border-radius: 20px;
+    padding: 48px;
+    position: relative;
+    overflow: hidden;
+  }
+  .quickstart-card::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 200px; height: 200px;
+    background: radial-gradient(circle, rgba(198,122,82,0.15), transparent 70%);
+  }
+  .quickstart-header {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 8px;
+  }
+  .quickstart-badge {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px; font-weight: 700;
+    background: rgba(198,122,82,0.2);
+    color: var(--primary-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .quickstart-card h2 {
+    font-size: 28px; font-weight: 800;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .quickstart-card > p {
+    font-size: 15px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 28px;
+  }
+  .quickstart-card > p a {
+    color: var(--primary-light);
+    text-decoration: none;
+  }
+  .quickstart-card > p a:hover { text-decoration: underline; }
+  .qs-steps {
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .qs-step {
+    display: flex; gap: 16px; align-items: flex-start;
+  }
+  .qs-num {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .qs-content { flex: 1; }
+  .qs-content p {
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 8px;
+  }
+  .qs-content p a {
+    color: #7dd3fc;
+    text-decoration: none;
+  }
+  .qs-content p a:hover { text-decoration: underline; }
+  .qs-content code {
+    color: rgba(255,255,255,0.8);
+  }
+  .qs-code-wrap { position: relative; }
+  .qs-code {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+  }
+  .qs-code :global(.qs-cmd) { color: #7dd3fc; }
+  .qs-code :global(.qs-flag) { color: #a78bfa; }
+  .qs-code :global(.qs-env) { color: #86efac; }
+  .qs-code :global(.qs-comment) { color: rgba(255,255,255,0.3); }
+  .qs-copy {
+    position: absolute; top: 10px; right: 10px;
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.5);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+    z-index: 1;
+  }
+  .qs-copy:hover { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.8); }
+  .qs-copy:global(.copied) { background: var(--green); border-color: var(--green); color: #fff; }
+  .qs-arch {
+    display: flex; gap: 6px; margin-top: 12px;
+  }
+  .qs-arch-tag {
+    padding: 3px 10px;
+    border-radius: 5px;
+    font-size: 11px; font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.45);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .qs-footer {
+    margin-top: 28px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .qs-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 13px; font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .qs-link-primary {
+    background: var(--primary); color: #fff;
+  }
+  .qs-link-primary:hover { background: var(--primary-dark); }
+  .qs-link-outline {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.7);
+  }
+  .qs-link-outline:hover { border-color: var(--primary); color: var(--primary-light); }
+</style>

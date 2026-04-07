@@ -1,0 +1,86 @@
+---
+const steps = [
+  {
+    title: "Ideate",
+    description: "Create an idea with requirements. PM Agent claims it and the idea enters the elaboration phase.",
+  },
+  {
+    title: "Elaborate",
+    description: "PM Agent asks structured clarification questions. Stakeholders answer via terminal or web UI. Requirements are validated before planning begins.",
+  },
+  {
+    title: "Propose",
+    description: "PM Agent drafts a proposal with PRD and task breakdown. Admin reviews and approves. Drafts materialize into real entities with dependency DAGs.",
+  },
+  {
+    title: "Execute",
+    description: "Developer agents claim tasks respecting the DAG order. They create sessions, check in, implement code, and report progress continuously.",
+  },
+  {
+    title: "Verify",
+    description: "Developers submit work for verification. Admin verifies the implementation meets requirements. Task moves to done.",
+  },
+];
+---
+
+<section class="section" id="workflow">
+  <div class="section-header">
+    <div class="section-label">Workflow</div>
+    <h2>From Idea to Done</h2>
+    <p>A structured pipeline that ensures nothing falls through the cracks.</p>
+  </div>
+  <div class="workflow-steps">
+    {steps.map((step) => (
+      <div class="workflow-step">
+        <h3>{step.title}</h3>
+        <p>{step.description}</p>
+      </div>
+    ))}
+  </div>
+</section>
+
+<style>
+  .workflow-steps {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 24px;
+    counter-reset: step;
+  }
+  .workflow-step {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 24px;
+    counter-increment: step;
+  }
+  .workflow-step::before {
+    content: counter(step);
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px; font-weight: 700;
+    margin-bottom: 16px;
+  }
+  .workflow-step h3 {
+    font-size: 16px; font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .workflow-step p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 1100px) {
+    .workflow-steps { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 900px) {
+    .workflow-steps { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .workflow-steps { grid-template-columns: 1fr; }
+  }
+</style>

@@ -1,0 +1,132 @@
+---
+const agents = [
+  {
+    avatarClass: "agent-pm",
+    roleClass: "role-pm",
+    role: "PM Agent",
+    name: "Product Manager",
+    description: "Analyzes ideas, writes PRDs, designs task breakdowns with dependency DAGs, and creates proposals for human review.",
+    tags: ["Create Proposals", "Write PRDs", "Design DAGs", "Claim Ideas"],
+    icon: "pm",
+  },
+  {
+    avatarClass: "agent-dev",
+    roleClass: "role-dev",
+    role: "Developer Agent",
+    name: "Developer",
+    description: "Claims tasks, implements code changes, reports progress, and submits work for verification. Supports swarm mode with multiple sub-agents.",
+    tags: ["Claim Tasks", "Write Code", "Report Work", "Swarm Mode"],
+    icon: "dev",
+  },
+  {
+    avatarClass: "agent-adm",
+    roleClass: "role-adm",
+    role: "Admin Agent",
+    name: "Administrator",
+    description: "Creates projects, approves proposals, verifies completed tasks, and manages the overall workflow lifecycle.",
+    tags: ["Create Projects", "Approve Proposals", "Verify Tasks", "Manage Lifecycle"],
+    icon: "adm",
+  },
+];
+---
+
+<section class="section" id="agents">
+  <div class="section-header">
+    <div class="section-label">Agents</div>
+    <h2>Three Roles, One Mission</h2>
+    <p>Specialized AI agents handle different aspects of the development lifecycle, each with their own set of tools and responsibilities.</p>
+  </div>
+  <div class="agents-grid">
+    {agents.map((agent) => (
+      <div class="agent-card">
+        <div class={`agent-avatar ${agent.avatarClass}`}>
+          {agent.icon === "pm" && (
+            <svg width="36" height="36" fill="none" stroke="#7B1FA2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h12M12 26h8" transform="translate(2,2)"/><rect x="6" y="4" width="24" height="28" rx="3"/></svg>
+          )}
+          {agent.icon === "dev" && (
+            <svg width="36" height="36" fill="none" stroke="#1565C0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 8 4 14 10 20" transform="translate(2,2)"/><polyline points="22 8 28 14 22 20" transform="translate(2,2)"/><line x1="18" y1="4" x2="14" y2="24" transform="translate(2,2)"/></svg>
+          )}
+          {agent.icon === "adm" && (
+            <svg width="36" height="36" fill="none" stroke="#E65100" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 0110 10c0 5.523-4.477 10-10 10S2 17.523 2 12" transform="translate(4,4)"/><polyline points="12 6 12 12 16 14" transform="translate(4,4)"/></svg>
+          )}
+        </div>
+        <div class={`agent-role ${agent.roleClass}`}>{agent.role}</div>
+        <h3>{agent.name}</h3>
+        <p>{agent.description}</p>
+        <div class="agent-tasks">
+          {agent.tags.map((tag) => (
+            <span class="agent-tag">{tag}</span>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+</section>
+
+<style>
+  .agents-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .agent-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px 32px;
+    text-align: center;
+    transition: all 0.25s;
+  }
+  .agent-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.06);
+  }
+  .agent-avatar {
+    width: 72px; height: 72px;
+    border-radius: 20px;
+    margin: 0 auto 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+  }
+  .agent-pm  { background: linear-gradient(135deg, #F3E5F5, #E1BEE7); }
+  .agent-dev { background: linear-gradient(135deg, #E3F2FD, #BBDEFB); }
+  .agent-adm { background: linear-gradient(135deg, #FFF3E0, #FFE0B2); }
+  .agent-card h3 {
+    font-size: 18px; font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .agent-role {
+    font-size: 13px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+  }
+  .role-pm  { color: var(--purple); }
+  .role-dev { color: var(--blue); }
+  .role-adm { color: var(--orange); }
+  .agent-card p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .agent-tasks {
+    margin-top: 20px;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    justify-content: center;
+  }
+  .agent-tag {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px; font-weight: 500;
+    background: var(--bg);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+
+  @media (max-width: 900px) {
+    .agents-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .agents-grid { grid-template-columns: 1fr; }
+  }
+</style>

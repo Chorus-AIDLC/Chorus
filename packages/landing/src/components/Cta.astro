@@ -1,0 +1,58 @@
+---
+const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
+---
+
+<section class="cta">
+  <div class="cta-inner">
+    <h2>Ready to Build with AI Agents?</h2>
+    <p>Clone the repo, connect your AI agents via MCP, and start the reversed conversation.</p>
+    <div class="cta-actions">
+      <a href={githubUrl} class="btn btn-primary">View on GitHub</a>
+      <a href={`${githubUrl}#getting-started`} class="btn btn-outline">Quick Start Guide</a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .cta {
+    padding: 40px 32px 100px;
+    max-width: 900px; margin: 0 auto;
+  }
+  .cta-inner {
+    text-align: center;
+    padding: 64px 48px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-inner::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 400px; height: 200px;
+    background: radial-gradient(ellipse, rgba(198,122,82,0.08), transparent 70%);
+    pointer-events: none;
+  }
+  .cta h2 {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .cta p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    margin-bottom: 36px;
+    position: relative;
+  }
+  .cta-actions {
+    display: flex; gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    position: relative;
+  }
+</style>

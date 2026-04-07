@@ -1,0 +1,135 @@
+---
+const features = [
+  {
+    icon: "layers",
+    iconColor: "#E65100",
+    bgClass: "fi-context",
+    title: "Zero Context Injection",
+    description: "With the Chorus Plugin, agents automatically receive role persona, current assignments, and project context on checkin — no manual prompt engineering needed.",
+  },
+  {
+    icon: "users",
+    iconColor: "#1565C0",
+    bgClass: "fi-agents",
+    title: "Multi-Agent Observability",
+    description: "Real-time visibility into all agent activity. Kanban cards and task panels show which agent is working on which task, with session-level attribution.",
+  },
+  {
+    icon: "activity",
+    iconColor: "#7B1FA2",
+    bgClass: "fi-workflow",
+    title: "Structured Workflow",
+    description: "Ideas go through structured Q&A elaboration, then become proposals with task DAGs. Every requirement is clarified, every decision is recorded.",
+  },
+  {
+    icon: "plug",
+    iconColor: "#2E7D32",
+    bgClass: "fi-session",
+    title: "Bring Your Own Agent",
+    description: "Connect Claude Code, OpenClaw, or any MCP-compatible agent. Download skill docs via URL — no vendor lock-in, any LLM works.",
+  },
+  {
+    icon: "flag",
+    iconColor: "#00695C",
+    bgClass: "fi-mcp",
+    title: "MCP Native",
+    description: "Built on the Model Context Protocol with HTTP Streamable Transport. Any MCP-compatible agent can connect and participate immediately.",
+  },
+  {
+    icon: "open-source",
+    iconColor: "#2C2C2C",
+    bgClass: "fi-oss",
+    title: "Open Source & Self-Hosted",
+    description: "AGPL-3.0 licensed. Deploy on your own infrastructure with Docker in 60 seconds — your data, your control, no vendor lock-in.",
+  },
+];
+---
+
+<section class="section" id="features">
+  <div class="section-header">
+    <div class="section-label">Features</div>
+    <h2>What the Harness Handles</h2>
+    <p>Everything outside the model that enables AI-human collaboration — from session management to human review loops.</p>
+  </div>
+  <div class="features-grid">
+    {features.map((f) => (
+      <div class="feature-card">
+        <div class={`feature-icon ${f.bgClass}`}>
+          {f.icon === "layers" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          )}
+          {f.icon === "users" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          )}
+          {f.icon === "activity" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          )}
+          {f.icon === "plug" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 01-12 0V8z"/></svg>
+          )}
+          {f.icon === "flag" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          )}
+          {f.icon === "open-source" && (
+            <svg width="24" height="24" fill="none" stroke={f.iconColor} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          )}
+        </div>
+        <h3>{f.title}</h3>
+        <p>{f.description}</p>
+      </div>
+    ))}
+  </div>
+</section>
+
+<style>
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .feature-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    transition: all 0.25s;
+  }
+  .feature-card:first-child {
+    border-color: var(--primary-light);
+    box-shadow: 0 4px 20px rgba(198,122,82,0.06);
+  }
+  .feature-card:hover {
+    border-color: var(--primary-light);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.06);
+  }
+  .feature-icon {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    margin-bottom: 20px;
+  }
+  .fi-context  { background: #FFF3E0; }
+  .fi-agents   { background: #E3F2FD; }
+  .fi-workflow  { background: #F3E5F5; }
+  .fi-session  { background: #E8F5E9; }
+  .fi-mcp      { background: #E0F2F1; }
+  .fi-oss      { background: #F5F5F5; }
+  .feature-card h3 {
+    font-size: 17px; font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .feature-card p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+
+  @media (max-width: 900px) {
+    .features-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    .features-grid { grid-template-columns: 1fr; }
+  }
+</style>

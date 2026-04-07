@@ -1,0 +1,410 @@
+---
+const steps = [
+  { label: "Idea", desc: "Requirements & context", nodeClass: "p-idea" },
+  { label: "Elaborate", desc: "Structured Q&A rounds", nodeClass: "p-elaborate" },
+  { label: "Proposal", desc: "PRD + task DAG drafts", nodeClass: "p-proposal" },
+  { label: "Execute", desc: "Claim, code, report", nodeClass: "p-execute" },
+  { label: "Verify", desc: "Review & approve", nodeClass: "p-verify" },
+  { label: "Done", desc: "Shipped", nodeClass: "p-done" },
+];
+
+// Dialogue scripts for human-interaction steps
+// Each step has alternating [speaker, text] pairs
+const dialogues: Record<number, Array<[string, string]>> = {
+  0: [["human", "Auth module needs refactoring"], ["agent", "Got it, starting elaboration..."]],
+  1: [["agent", "What auth providers needed?"], ["human", "OAuth + SAML"], ["agent", "Requirements confirmed"]],
+  2: [["agent", "Proposal ready: 6 tasks, DAG mapped"], ["human", "Approved"]],
+  4: [["agent", "All tests passing, PR ready"], ["human", "Verified ✓"]],
+};
+---
+
+<div class="pipeline-section">
+  <div class="pipeline" id="pipeline">
+    {steps.map((step, i) => (
+      <div class="pipeline-step" data-index={i}>
+        <div class={`pipeline-card ${step.nodeClass}`}>
+          <span class="step-num">{i + 1}</span>
+          <div class="card-label">{step.label}</div>
+          <div class="card-desc">{step.desc}</div>
+        </div>
+        {i < steps.length - 1 && (
+          <div class="pipeline-connector">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+          </div>
+        )}
+      </div>
+    ))}
+    <!-- Agent dot (top) -->
+    <div class="actor-dot agent-dot" id="agent-dot" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2v1a7 7 0 017 7 2 2 0 010 4 7 7 0 01-7 7h-4a7 7 0 01-7-7 2 2 0 010-4 7 7 0 017-7V4a2 2 0 012-2zm-3 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
+    </div>
+    <!-- Sub-agent dot (swarm worker) -->
+    <div class="actor-dot sub-dot" id="sub-dot" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a2 2 0 012 2v1a7 7 0 017 7 2 2 0 010 4 7 7 0 01-7 7h-4a7 7 0 01-7-7 2 2 0 010-4 7 7 0 017-7V4a2 2 0 012-2zm-3 11a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>
+    </div>
+    <!-- Reviewer dot -->
+    <div class="actor-dot reviewer-dot" id="reviewer-dot" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+    </div>
+    <!-- Human dot (bottom) -->
+    <div class="actor-dot human-dot" id="human-dot" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    </div>
+    <!-- Chat bubble -->
+    <div class="chat-bubble" id="chat-bubble" aria-hidden="true">
+      <span id="chat-text"></span>
+    </div>
+  </div>
+</div>
+
+<script define:vars={{ dialogues }}>
+  function animatePipeline() {
+    const pipeline = document.getElementById('pipeline');
+    const agentDot = document.getElementById('agent-dot');
+    const subDot = document.getElementById('sub-dot');
+    const reviewerDot = document.getElementById('reviewer-dot');
+    const humanDot = document.getElementById('human-dot');
+    const bubble = document.getElementById('chat-bubble');
+    const chatText = document.getElementById('chat-text');
+    const cards = pipeline?.querySelectorAll('.pipeline-card');
+    const stepEls = pipeline?.querySelectorAll('.pipeline-step');
+    if (!pipeline || !agentDot || !subDot || !reviewerDot || !humanDot || !bubble || !chatText || !cards?.length || !stepEls?.length) return;
+
+    const humanSteps = new Set([0, 1, 2, 4]);
+    const EXECUTE_STEP = 3;
+    let current = 0;
+    const total = cards.length;
+    let timers = [];
+    let hovering = false;
+    let hoverLoop = null;
+
+    // --- Utilities ---
+    function t(fn, ms) { const id = setTimeout(fn, ms); timers.push(id); return id; }
+    function clearAll() { timers.forEach(clearTimeout); timers = []; }
+
+    function getX(i) {
+      const pr = pipeline.getBoundingClientRect();
+      const cr = cards[i].getBoundingClientRect();
+      return cr.left - pr.left + cr.width / 2;
+    }
+    function getDotX(dot) {
+      const pr = pipeline.getBoundingClientRect();
+      const dr = dot.getBoundingClientRect();
+      return dr.left - pr.left + dr.width / 2;
+    }
+    function posAt(dot, x) { dot.style.left = x + 'px'; }
+    function showBubble(dot, text, cls, color) {
+      bubble.className = 'chat-bubble visible ' + cls;
+      if (color) bubble.classList.add(color);
+      bubble.style.left = getDotX(dot) + 'px';
+      chatText.textContent = text;
+    }
+    function hideBubble() { bubble.classList.remove('visible'); }
+    function resetAll() {
+      agentDot.classList.remove('visible');
+      humanDot.classList.remove('visible');
+      subDot.classList.remove('visible');
+      reviewerDot.classList.remove('visible');
+      hideBubble();
+      cards.forEach(c => c.classList.remove('active'));
+    }
+
+    // --- Step animations (return total duration) ---
+    function playStep(idx) {
+      resetAll();
+      cards.forEach((c, i) => c.classList.toggle('active', i === idx));
+      posAt(agentDot, getX(idx));
+      agentDot.classList.add('visible');
+
+      if (idx === EXECUTE_STEP) {
+        return playExecute();
+      } else if (humanSteps.has(idx)) {
+        return playHumanStep(idx);
+      } else {
+        // Done step — just sit
+        return 1000;
+      }
+    }
+
+    function playHumanStep(idx) {
+      const lines = dialogues[idx];
+      if (!lines || !lines.length) return 1000;
+
+      posAt(humanDot, getX(idx));
+      t(() => humanDot.classList.add('visible'), 200);
+
+      let delay = 400;
+      for (let i = 0; i < lines.length; i++) {
+        const [speaker, text] = lines[i];
+        ((d, s, tx) => {
+          t(() => {
+            const dot = s === 'human' ? humanDot : agentDot;
+            const cls = s === 'human' ? 'bubble-bottom' : 'bubble-top';
+            showBubble(dot, tx, cls);
+          }, d);
+        })(delay, speaker, text);
+        delay += 1200;
+      }
+      t(() => { hideBubble(); humanDot.classList.remove('visible'); }, delay);
+      return delay + 300;
+    }
+
+    function playExecute() {
+      const x = getX(EXECUTE_STEP);
+      posAt(subDot, x - 28);
+      posAt(agentDot, x);
+
+      t(() => { subDot.classList.add('visible'); showBubble(agentDot, 'Spawning workers...', 'bubble-top'); }, 300);
+      t(() => { showBubble(subDot, 'Task #1 done', 'bubble-top', 'bubble-blue'); }, 1500);
+      t(() => { showBubble(agentDot, 'Task #2 done', 'bubble-top'); }, 2700);
+      t(() => { posAt(reviewerDot, x + 44); reviewerDot.classList.add('visible'); showBubble(reviewerDot, 'AC #3 FAIL: no error handling', 'bubble-top', 'bubble-red'); }, 3900);
+      t(() => { showBubble(agentDot, 'Fixed, tests updated', 'bubble-top'); }, 5100);
+      t(() => { showBubble(reviewerDot, 'AC 3/3 PASS ✓', 'bubble-top', 'bubble-green'); }, 6300);
+      t(() => { hideBubble(); subDot.classList.remove('visible'); reviewerDot.classList.remove('visible'); }, 7500);
+      return 7900;
+    }
+
+    // --- Auto-play loop ---
+    function autoPlay() {
+      if (hovering) return;
+      clearAll();
+      const dur = playStep(current);
+      t(() => {
+        const next = (current + 1) % total;
+        if (next === 0) {
+          resetAll();
+          t(() => { current = 0; autoPlay(); }, 1000);
+        } else {
+          current = next;
+          autoPlay();
+        }
+      }, dur);
+    }
+
+    // --- Hover loop for a single step ---
+    function startHoverLoop(idx) {
+      clearAll();
+      if (hoverLoop) clearTimeout(hoverLoop);
+      function loop() {
+        if (!hovering) return;
+        clearAll();
+        const dur = playStep(idx);
+        hoverLoop = setTimeout(() => {
+          resetAll();
+          setTimeout(loop, 400);
+        }, dur);
+      }
+      loop();
+    }
+
+    function stopHoverLoop() {
+      if (hoverLoop) { clearTimeout(hoverLoop); hoverLoop = null; }
+      clearAll();
+      resetAll();
+    }
+
+    // --- Hover listeners ---
+    stepEls.forEach((el, idx) => {
+      el.addEventListener('mouseenter', () => {
+        hovering = true;
+        current = idx;
+        startHoverLoop(idx);
+      });
+      el.addEventListener('mouseleave', () => {
+        hovering = false;
+        stopHoverLoop();
+        // Resume auto-play from next step after a beat
+        t(() => {
+          current = (idx + 1) % total;
+          autoPlay();
+        }, 600);
+      });
+    });
+
+    // --- Start on scroll into view ---
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        observer.disconnect();
+        t(() => autoPlay(), 600);
+      }
+    }, { threshold: 0.3 });
+    observer.observe(pipeline);
+
+    window.addEventListener('resize', () => posAt(agentDot, getX(current)));
+  }
+
+  animatePipeline();
+</script>
+
+<style>
+  .pipeline-section {
+    padding: 20px 32px 80px;
+    max-width: 1100px; margin: 0 auto;
+  }
+  .pipeline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 40px 0;
+  }
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+  }
+  .pipeline-card {
+    width: 140px;
+    height: 110px;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1.5px solid;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: transform 0.35s ease, box-shadow 0.35s ease;
+    position: relative;
+    cursor: default;
+  }
+  .pipeline-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  }
+  .pipeline-card.active {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+  }
+  .step-num {
+    font-size: 11px;
+    font-weight: 700;
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.06);
+    color: inherit;
+    opacity: 0.5;
+    margin-bottom: 4px;
+  }
+  .card-label {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+  }
+  .card-desc {
+    font-size: 12px;
+    color: inherit;
+    opacity: 0.6;
+    line-height: 1.4;
+  }
+  .pipeline-connector {
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    color: var(--border);
+  }
+
+  /* Actor dots */
+  .actor-dot {
+    position: absolute;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    transform: translate(-50%, 0);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+    transition: left 0.4s cubic-bezier(0.4,0,0.2,1), opacity 0.3s;
+  }
+  .actor-dot.visible { opacity: 1; }
+  .agent-dot {
+    top: 4px;
+    background: var(--primary);
+    box-shadow: 0 3px 12px rgba(198,122,82,0.4);
+  }
+  .sub-dot {
+    top: 4px;
+    background: var(--blue);
+    box-shadow: 0 3px 12px rgba(25,118,210,0.4);
+  }
+  .reviewer-dot {
+    top: 4px;
+    background: #d32f2f;
+    box-shadow: 0 3px 12px rgba(211,47,47,0.4);
+  }
+  .human-dot {
+    bottom: 4px;
+    background: var(--teal);
+    box-shadow: 0 3px 12px rgba(0,121,107,0.4);
+  }
+
+  /* Chat bubble */
+  .chat-bubble {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%) scale(0.9);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 3;
+    transition: opacity 0.25s, transform 0.25s;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chat-bubble.visible {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  .chat-bubble.bubble-top {
+    top: -16px;
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(198,122,82,0.25);
+  }
+  .chat-bubble.bubble-bottom {
+    bottom: -16px;
+    background: var(--teal);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0,121,107,0.25);
+  }
+  .chat-bubble.bubble-blue {
+    background: var(--blue);
+    box-shadow: 0 4px 12px rgba(25,118,210,0.3);
+  }
+  .chat-bubble.bubble-red {
+    background: #d32f2f;
+    box-shadow: 0 4px 12px rgba(211,47,47,0.3);
+  }
+  .chat-bubble.bubble-green {
+    background: #2e7d32;
+    box-shadow: 0 4px 12px rgba(46,125,50,0.3);
+  }
+
+  /* Node colors */
+  .p-idea      { background: #FFF3E0; border-color: #FFB74D; color: #E65100; }
+  .p-elaborate { background: #F3E5F5; border-color: #CE93D8; color: #7B1FA2; }
+  .p-proposal  { background: #E3F2FD; border-color: #90CAF9; color: #1565C0; }
+  .p-execute   { background: #E8F5E9; border-color: #A5D6A7; color: #2E7D32; }
+  .p-verify    { background: #FFF8E1; border-color: #FFD54F; color: #F57F17; }
+  .p-done      { background: #E0F2F1; border-color: #80CBC4; color: #00695C; }
+
+  @media (max-width: 900px) {
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      padding: 40px 0;
+    }
+    .pipeline-step { display: block; }
+    .pipeline-card { width: 100%; height: 110px; }
+    .pipeline-connector { display: none; }
+  }
+  @media (max-width: 600px) {
+    .pipeline { grid-template-columns: repeat(2, 1fr); }
+    .pipeline-section { padding: 20px 20px 60px; }
+  }
+</style>

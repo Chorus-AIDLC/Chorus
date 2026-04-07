@@ -1,0 +1,317 @@
+---
+import { getCollection, render } from "astro:content";
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog");
+  const enPosts = posts
+    .filter((p) => p.data.lang === "en")
+    .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+
+  return posts.map((post) => {
+    const isZh = post.data.lang === "zh";
+    const urlSlug = isZh ? `${post.data.postSlug}/zh` : post.data.postSlug;
+
+    // Find prev/next among same-language posts
+    const sameLang = isZh
+      ? posts.filter((p) => p.data.lang === "zh").sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
+      : enPosts;
+    const idx = sameLang.findIndex((p) => p.data.postSlug === post.data.postSlug);
+    const prev = idx > 0 ? sameLang[idx - 1] : null;
+    const next = idx < sameLang.length - 1 ? sameLang[idx + 1] : null;
+
+    return {
+      params: { slug: urlSlug },
+      props: {
+        post,
+        prevLink: prev ? { title: prev.data.title, slug: prev.data.postSlug, lang: prev.data.lang } : null,
+        nextLink: next ? { title: next.data.title, slug: next.data.postSlug, lang: next.data.lang } : null,
+      },
+    };
+  });
+}
+
+const { post, prevLink, nextLink } = Astro.props;
+const { Content } = await render(post);
+
+const isZh = post.data.lang === "zh";
+const langSuffix = isZh ? "/zh" : "";
+const altLangUrl = isZh
+  ? `/blog/${post.data.postSlug}/`
+  : `/blog/${post.data.postSlug}/zh/`;
+const altLangLabel = isZh ? "EN" : "中文";
+const dateStr = post.data.date.toISOString().slice(0, 10);
+
+---
+
+<Layout title={`${post.data.title} - Chorus Blog`} description={post.data.description}>
+  <Nav />
+  <main class="blog-post">
+    <article>
+      <div class="post-meta">
+        <a href="/blog/" class="back-link">&larr; Blog</a>
+        <div class="meta-right">
+          <time datetime={dateStr}>{dateStr}</time>
+          <a href={altLangUrl} class="lang-switch">{altLangLabel}</a>
+        </div>
+      </div>
+      <div class="post-content">
+        <Content />
+      </div>
+      <div class="post-end" aria-hidden="true">
+        <span class="end-dot"></span>
+        <span class="end-dot"></span>
+        <span class="end-dot"></span>
+      </div>
+    </article>
+
+    <nav class="post-nav">
+      {prevLink ? (
+        <a href={`/blog/${prevLink.slug}${prevLink.lang === "zh" ? "/zh" : ""}/`} class="nav-link nav-prev">
+          <span class="nav-label">&larr; {isZh ? "上一篇" : "Previous"}</span>
+          <span class="nav-title">{prevLink.title}</span>
+        </a>
+      ) : <div />}
+      {nextLink ? (
+        <a href={`/blog/${nextLink.slug}${nextLink.lang === "zh" ? "/zh" : ""}/`} class="nav-link nav-next">
+          <span class="nav-label">{isZh ? "下一篇" : "Next"} &rarr;</span>
+          <span class="nav-title">{nextLink.title}</span>
+        </a>
+      ) : <div />}
+    </nav>
+  </main>
+  <Footer />
+</Layout>
+
+<style>
+  .blog-post {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 120px 32px 80px;
+  }
+
+  /* ---- META BAR ---- */
+  .post-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .meta-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .back-link {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .back-link:hover { color: var(--primary); }
+  .post-meta time {
+    font-size: 14px;
+    color: var(--text-tertiary);
+  }
+  .lang-switch {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    background: rgba(198,122,82,0.1);
+    border: 1px solid rgba(198,122,82,0.2);
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .lang-switch:hover {
+    background: rgba(198,122,82,0.2);
+  }
+
+  /* ---- ARTICLE END ---- */
+  .post-end {
+    margin: 64px 0 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+  }
+  .end-dot {
+    display: block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--primary-light);
+  }
+
+  /* ---- PREV / NEXT NAV ---- */
+  .post-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 48px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+  }
+  .nav-link {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 20px 24px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.25s;
+  }
+  .nav-link:hover {
+    border-color: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+  }
+  .nav-next { text-align: right; }
+  .nav-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--primary);
+  }
+  .nav-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.4;
+  }
+
+  /* ---- MARKDOWN CONTENT ---- */
+  .post-content :global(h1) {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin: 0 0 24px;
+    line-height: 1.2;
+  }
+  .post-content :global(h2) {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 48px 0 16px;
+  }
+  .post-content :global(h3) {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 32px 0 12px;
+  }
+  .post-content :global(h4) {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 24px 0 8px;
+  }
+  .post-content :global(p) {
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+  }
+  .post-content :global(blockquote) {
+    border-left: 3px solid var(--primary);
+    padding: 12px 20px;
+    margin: 24px 0;
+    background: rgba(198,122,82,0.05);
+    border-radius: 0 8px 8px 0;
+  }
+  .post-content :global(blockquote p) {
+    color: var(--text-secondary);
+    margin-bottom: 0;
+  }
+  .post-content :global(a) {
+    color: var(--primary);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(198,122,82,0.3);
+    transition: border-color 0.2s;
+    word-break: break-all;
+  }
+  .post-content :global(a:hover) {
+    border-bottom-color: var(--primary);
+  }
+  .post-content :global(code) {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.9em;
+    background: rgba(0,0,0,0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .post-content :global(pre) {
+    background: #1e1e2e;
+    border-radius: 12px;
+    padding: 20px 24px;
+    overflow-x: auto;
+    margin: 24px 0;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .post-content :global(pre code) {
+    background: none;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #cdd6f4;
+    word-break: normal;
+  }
+  .post-content :global(ul),
+  .post-content :global(ol) {
+    padding-left: 24px;
+    margin-bottom: 16px;
+  }
+  .post-content :global(li) {
+    font-size: 16px;
+    line-height: 1.8;
+    margin-bottom: 4px;
+  }
+  .post-content :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+    font-size: 14px;
+    display: block;
+    overflow-x: auto;
+  }
+  .post-content :global(th) {
+    background: var(--bg);
+    font-weight: 700;
+    text-align: left;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .post-content :global(td) {
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+  }
+  .post-content :global(strong) {
+    font-weight: 700;
+  }
+  .post-content :global(hr) {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+  }
+  .post-content :global(img) {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 16px 0;
+  }
+
+  @media (max-width: 600px) {
+    .blog-post { padding: 100px 20px 60px; }
+    .post-nav { grid-template-columns: 1fr; }
+    .nav-next { text-align: left; }
+  }
+</style>

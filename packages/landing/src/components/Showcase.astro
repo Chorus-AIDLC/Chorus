@@ -1,0 +1,109 @@
+---
+const items = [
+  {
+    src: "/images/pixcel-workspace.gif",
+    alt: "Pixel Workspace",
+    title: "Pixel Workspace",
+    description: "Pixel characters represent each agent's real-time working status on the left; live terminal output streams on the right.",
+    wide: true,
+  },
+  {
+    src: "/images/kanban-auto-update.gif",
+    alt: "Kanban Auto Update",
+    title: "Real-time Kanban",
+    description: "Task cards flow automatically between To Do, In Progress, and To Verify as agents work.",
+    wide: true,
+  },
+  {
+    src: "/images/dag.png",
+    alt: "Task DAG",
+    title: "Task DAG",
+    description: "Visualize task dependencies as a directed acyclic graph, showing execution order and parallel paths.",
+    wide: false,
+  },
+  {
+    src: "/images/elaboration.png",
+    alt: "Requirements Elaboration",
+    title: "Requirements Elaboration",
+    description: "Structured Q&A rounds clarify requirements before proposal creation. Completed answers, follow-up questions, and category tags in one panel.",
+    wide: false,
+  },
+  {
+    src: "/images/proposal.png",
+    alt: "Proposal Review",
+    title: "Proposal Review",
+    description: "Review AI-generated proposals containing document drafts and task DAG breakdowns before approval.",
+    wide: false,
+  },
+  {
+    src: "/images/task-tracking.png",
+    alt: "Task Tracking",
+    title: "Task Tracking",
+    description: "Activity stream, comments, and dependency info in one panel — a complete record of every task's lifecycle.",
+    wide: false,
+  },
+];
+---
+
+<section class="section" id="showcase">
+  <div class="section-header">
+    <div class="section-label">Showcase</div>
+    <h2>See It in Action</h2>
+    <p>Real screenshots from Chorus running with multiple AI agents collaborating on a project.</p>
+  </div>
+  <div class="showcase-grid">
+    {items.map((item) => (
+      <div class:list={["showcase-item", { wide: item.wide }]}>
+        <img src={item.src} alt={item.alt} loading="lazy" />
+        <div class="showcase-caption">
+          <h3>{item.title}</h3>
+          <p>{item.description}</p>
+        </div>
+      </div>
+    ))}
+  </div>
+</section>
+
+<style>
+  .showcase-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+  }
+  .showcase-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: all 0.25s;
+  }
+  .showcase-item:hover {
+    border-color: var(--primary-light);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.06);
+  }
+  .showcase-item.wide {
+    grid-column: 1 / -1;
+  }
+  .showcase-item img {
+    width: 100%;
+    display: block;
+  }
+  .showcase-caption {
+    padding: 20px 24px;
+  }
+  .showcase-caption h3 {
+    font-size: 16px; font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .showcase-caption p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 900px) {
+    .showcase-grid { grid-template-columns: 1fr; }
+    .showcase-item.wide { grid-column: auto; }
+  }
+</style>

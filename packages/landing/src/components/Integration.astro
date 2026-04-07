@@ -1,0 +1,227 @@
+<div class="integration" id="integration">
+  <div class="section-header">
+    <div class="section-label">Native Integrations</div>
+    <h2>Plug Into Your Agent Stack</h2>
+    <p>First-class plugins for Claude Code and OpenClaw — no glue code, no wrappers.</p>
+  </div>
+  <div class="integration-grid">
+    <div class="int-card int-card-featured">
+      <div class="int-card-header">
+        <div class="int-card-title-row">
+          <div class="int-icon int-icon-plugin">
+            <img src="/images/claudecode.png" alt="Claude Code" width="28" height="28" />
+          </div>
+          <h3>Claude Code Plugin</h3>
+        </div>
+        <p>11 lifecycle hooks, 6 workflow skills, and 2 independent review agents — a complete harness for Claude Code and Agent Teams.</p>
+      </div>
+      <div class="int-features">
+        <div class="int-feature">
+          <div class="int-feature-title">Lifecycle Hooks</div>
+          <div class="int-feature-desc">Session create/reuse/close, task checkin/checkout, heartbeat — all automated. Sub-agents get full workflow context injected on spawn.</div>
+          <div class="int-hooks">
+            <span class="int-hook">SessionStart</span>
+            <span class="int-hook">SubagentStart</span>
+            <span class="int-hook">SubagentStop</span>
+            <span class="int-hook">TeammateIdle</span>
+          </div>
+        </div>
+        <div class="int-feature">
+          <div class="int-feature-title">Review Sub-Agents</div>
+          <div class="int-feature-desc">Auto-spawned after proposal submission or task verification. Read-only agents that find what the author missed and post structured VERDICT comments.</div>
+          <div class="int-hooks">
+            <span class="int-hook">proposal-reviewer</span>
+            <span class="int-hook">task-reviewer</span>
+          </div>
+        </div>
+        <div class="int-feature">
+          <div class="int-feature-title">Workflow Skills</div>
+          <div class="int-feature-desc">Stage-specific guidance for the full AI-DLC pipeline — from idea elaboration to task verification.</div>
+          <div class="int-hooks">
+            <span class="int-hook">/chorus</span>
+            <span class="int-hook">/idea</span>
+            <span class="int-hook">/proposal</span>
+            <span class="int-hook">/develop</span>
+            <span class="int-hook">/quick-dev</span>
+            <span class="int-hook">/review</span>
+          </div>
+        </div>
+      </div>
+      <div class="int-code">
+        <span class="comment"># Install from Plugin Marketplace</span><br>
+        <span class="cmd">claude</span> <span class="flag">/plugin marketplace add</span> Chorus-AIDLC/chorus<br>
+        <span class="cmd">claude</span> <span class="flag">/plugin install</span> chorus@chorus-plugins
+      </div>
+    </div>
+    <div class="int-card">
+      <div class="int-icon int-icon-openclaw">
+        <img src="/images/openclaw.png" alt="OpenClaw" style="height:28px;width:auto;" />
+      </div>
+      <h3>OpenClaw Plugin</h3>
+      <p>Persistent SSE connection + MCP tool bridge. Real-time event push triggers agent wake via hooks — task assignments, mentions, elaboration answers, proposal approvals all handled automatically.</p>
+      <div class="int-hooks">
+        <span class="int-hook">SSE Push</span>
+        <span class="int-hook">MCP Bridge</span>
+        <span class="int-hook">Auto Wake</span>
+        <span class="int-hook">47 Tools</span>
+        <span class="int-hook">6 Skills</span>
+      </div>
+      <div class="int-code">
+        <span class="comment"># Install the plugin</span><br>
+        <span class="cmd">openclaw</span> <span class="flag">plugins install</span> @chorus-aidlc/chorus-openclaw-plugin
+      </div>
+    </div>
+    <div class="int-card">
+      <div class="int-icon int-icon-skill">
+        <svg width="24" height="24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      </div>
+      <h3>Universal Skills</h3>
+      <p>Downloadable SKILL.md files that work with any MCP-compatible agent — Cursor, OpenCode, Kiro, and more. No plugin required, just point your agent to the skill URL.</p>
+      <div class="int-hooks">
+        <span class="int-hook">chorus</span>
+        <span class="int-hook">idea</span>
+        <span class="int-hook">proposal</span>
+        <span class="int-hook">develop</span>
+        <span class="int-hook">quick-dev</span>
+        <span class="int-hook">review</span>
+      </div>
+      <div class="int-code">
+        <span class="comment"># Fetch a skill from any Chorus instance</span><br>
+        <span class="cmd">curl</span> <span class="flag">-sL</span> &lt;CHORUS_URL&gt;/skill/chorus/SKILL.md
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .integration {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    border-radius: 24px;
+    padding: 80px 48px;
+    margin: 100px 32px 0;
+    max-width: 1200px;
+    margin-left: auto; margin-right: auto;
+  }
+  .integration :global(.section-header) { margin-bottom: 48px; }
+  .integration :global(.section-label) { color: #7dd3fc; }
+  .integration :global(.section-header h2) { color: #fff; }
+  .integration :global(.section-header p) { color: rgba(255,255,255,0.6); }
+  .integration-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .int-card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: var(--radius);
+    padding: 32px;
+    transition: all 0.25s;
+  }
+  .int-card:hover {
+    background: rgba(255,255,255,0.1);
+    transform: translateY(-2px);
+  }
+  .int-icon {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+    font-size: 22px;
+  }
+  .int-card-featured {
+    grid-column: 1 / -1;
+  }
+  .int-card-title-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .int-card-title-row .int-icon {
+    margin-bottom: 0;
+  }
+  .int-card-title-row h3 {
+    margin-bottom: 0;
+  }
+  .int-card-header h3 {
+    font-size: 20px;
+  }
+  .int-card-header p {
+    margin-bottom: 0;
+  }
+  .int-features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin: 24px 0 0;
+    padding: 24px 0 0;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .int-feature-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.85);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .int-feature-desc {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+  .int-icon-plugin { background: rgba(125, 211, 252, 0.15); }
+  .int-icon-skill { background: rgba(52, 211, 153, 0.15); }
+  .int-icon-openclaw {
+    background: rgba(249, 115, 22, 0.15);
+    width: auto;
+    padding: 8px 16px;
+  }
+  .int-card h3 {
+    font-size: 18px; font-weight: 700;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+  .int-card p {
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    line-height: 1.65;
+    margin-bottom: 16px;
+  }
+  .int-hooks {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .int-hook {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.75);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .int-code {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    line-height: 1.7;
+    overflow-x: auto;
+    margin-top: 16px;
+  }
+  .int-code .cmd { color: #7dd3fc; }
+  .int-code .flag { color: #a78bfa; }
+  .int-code .comment { color: rgba(255,255,255,0.3); }
+
+  @media (max-width: 900px) {
+    .integration { padding: 48px 28px; margin: 60px 16px 0; }
+    .integration-grid { grid-template-columns: 1fr; }
+    .int-card-featured { grid-column: auto; }
+    .int-features { grid-template-columns: 1fr; }
+  }
+</style>
