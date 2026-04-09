@@ -282,17 +282,16 @@ export function IdeaDetailPanel({
     [idea, proposals, tasks],
   );
 
-  // Auto-select default tab when idea loads or changes, unless user has manually switched
+  // Auto-select default tab when idea loads/changes or when visible tabs update,
+  // unless user has manually switched
+  const desiredTab = idea ? getDefaultTab(idea.badgeHint) : "overview";
   useEffect(() => {
-    if (!idea) return;
-    if (!userHasSwitchedTab) {
-      const defaultTab = getDefaultTab(idea.badgeHint);
-      // Fall back to overview if the default tab isn't visible yet
-      const tab = visibleTabs.includes(defaultTab) ? defaultTab : "overview";
-      setActiveTab(tab);
-      setVisitedTabs(new Set([tab]));
-    }
-  }, [idea?.uuid, idea?.badgeHint]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!idea || userHasSwitchedTab) return;
+    // Wait until the desired tab becomes visible (proposals/tasks may load async)
+    const tab = visibleTabs.includes(desiredTab) ? desiredTab : "overview";
+    setActiveTab(tab);
+    setVisitedTabs((prev) => new Set([...prev, tab]));
+  }, [idea?.uuid, desiredTab, visibleTabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset user switch flag when idea changes
   useEffect(() => {
