@@ -47,7 +47,7 @@ export const PATCH = withErrorHandler(
   }
 );
 
-// DELETE /api/project-groups/[uuid]
+// DELETE /api/project-groups/[uuid]?deleteProjects=true
 export const DELETE = withErrorHandler(
   async (request: NextRequest, context: { params: Promise<{ uuid: string }> }) => {
     const auth = await getAuthContext(request);
@@ -55,7 +55,8 @@ export const DELETE = withErrorHandler(
     if (!isUser(auth)) return errors.forbidden("Only users can delete project groups");
 
     const { uuid } = await context.params;
-    const deleted = await deleteProjectGroup(auth.companyUuid, uuid);
+    const shouldDeleteProjects = request.nextUrl.searchParams.get("deleteProjects") === "true";
+    const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects);
 
     if (!deleted) return errors.notFound("Project group");
     return success({ deleted: true });

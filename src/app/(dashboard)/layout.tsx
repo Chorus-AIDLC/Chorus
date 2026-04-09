@@ -108,10 +108,9 @@ export default function DashboardLayout({
       .catch(() => setCurrentGroupName(null));
   }, [currentGroupUuid]);
 
-  // Global pages: /projects, /projects/new, /settings
+  // Global pages: /projects, /settings
   const isGlobalPage =
     pathname === "/projects" ||
-    pathname === "/projects/new" ||
     pathname === "/settings" ||
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
@@ -500,17 +499,15 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
-      {isProjectContext && currentProjectUuid ? (
-        <RealtimeProvider projectUuid={currentProjectUuid}>
-          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+      <RealtimeProvider projectUuid={isProjectContext ? currentProjectUuid : null}>
+        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+        {isProjectContext && currentProjectUuid && (
           <PixelCanvasWidget
             projectUuid={currentProjectUuid}
             projectName={currentProject?.name || ""}
           />
-        </RealtimeProvider>
-      ) : (
-        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
-      )}
+        )}
+      </RealtimeProvider>
     </div>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>

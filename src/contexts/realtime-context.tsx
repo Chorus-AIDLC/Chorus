@@ -51,7 +51,7 @@ interface RealtimeContextType {
 const RealtimeContext = createContext<RealtimeContextType | null>(null);
 
 interface RealtimeProviderProps {
-  projectUuid: string;
+  projectUuid?: string | null;
   children: ReactNode;
 }
 
@@ -91,7 +91,10 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     function connect() {
       // Close any existing connection before opening a new one
       disconnect();
-      es = new EventSource(`/api/events?projectUuid=${projectUuid}`);
+      const url = projectUuid
+        ? `/api/events?projectUuid=${projectUuid}`
+        : `/api/events`;
+      es = new EventSource(url);
       es.onmessage = (msg) => {
         // Parse event data
         let parsed: Record<string, unknown> | null = null;

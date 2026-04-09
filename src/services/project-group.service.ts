@@ -84,6 +84,14 @@ export async function createProjectGroup(
     },
   });
 
+  eventBus.emitChange({
+    companyUuid: params.companyUuid,
+    projectUuid: "",
+    entityType: "project_group",
+    entityUuid: group.uuid,
+    action: "created",
+  });
+
   return {
     uuid: group.uuid,
     name: group.name,
@@ -126,21 +134,37 @@ export async function updateProjectGroup(
 
 export async function deleteProjectGroup(
   companyUuid: string,
-  groupUuid: string
+  groupUuid: string,
+  deleteProjects = false
 ): Promise<boolean> {
   const existing = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
   if (!existing) return false;
 
-  // Unassign all projects from this group
-  await prisma.project.updateMany({
-    where: { groupUuid, companyUuid },
-    data: { groupUuid: null },
-  });
+  if (deleteProjects) {
+    // Delete all projects in this group (cascade deletes their children)
+    await prisma.project.deleteMany({
+      where: { groupUuid, companyUuid },
+    });
+  } else {
+    // Unassign all projects from this group (move to ungrouped)
+    await prisma.project.updateMany({
+      where: { groupUuid, companyUuid },
+      data: { groupUuid: null },
+    });
+  }
 
   await prisma.projectGroup.delete({
     where: { uuid: groupUuid },
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: "",
+    entityType: "project_group",
+    entityUuid: groupUuid,
+    action: "deleted",
   });
 
   return true;

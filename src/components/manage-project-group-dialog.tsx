@@ -75,10 +75,10 @@ export function ManageProjectGroupDialog({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      // If deleteProjects is true, we'd need a separate endpoint.
-      // For now, the delete endpoint just ungroups projects.
-      // TODO: Add delete-with-projects option to API if needed.
-      const res = await authFetch(`/api/project-groups/${groupUuid}`, {
+      const url = deleteProjects
+        ? `/api/project-groups/${groupUuid}?deleteProjects=true`
+        : `/api/project-groups/${groupUuid}`;
+      const res = await authFetch(url, {
         method: "DELETE",
       });
       const json = await res.json();

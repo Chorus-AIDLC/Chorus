@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { eventBus } from "@/lib/event-bus";
 
 export interface ProjectListParams {
   companyUuid: string;
@@ -108,7 +109,7 @@ export async function getProjectUuidsByGroup(companyUuid: string, groupUuid: str
 
 // Create project
 export async function createProject({ companyUuid, name, description, groupUuid }: ProjectCreateParams) {
-  return prisma.project.create({
+  const project = await prisma.project.create({
     data: { companyUuid, name, description, groupUuid: groupUuid ?? null },
     select: {
       uuid: true,
@@ -119,6 +120,16 @@ export async function createProject({ companyUuid, name, description, groupUuid 
       updatedAt: true,
     },
   });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: project.uuid,
+    entityType: "project",
+    entityUuid: project.uuid,
+    action: "created",
+  });
+
+  return project;
 }
 
 // Update project (scoped by companyUuid for multi-tenancy defense-in-depth)
@@ -152,6 +163,15 @@ export async function deleteProject(companyUuid: string, uuid: string) {
   if (!project) return false;
 
   await prisma.project.delete({ where: { uuid: project.uuid } });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: uuid,
+    entityType: "project",
+    entityUuid: uuid,
+    action: "deleted",
+  });
+
   return true;
 }
 

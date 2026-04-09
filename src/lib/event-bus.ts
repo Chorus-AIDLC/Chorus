@@ -8,7 +8,7 @@ import { isRedisEnabled, getRedisPublisher, getRedisSubscriber } from "./redis";
 export interface RealtimeEvent {
   companyUuid: string;
   projectUuid: string;
-  entityType: "task" | "idea" | "proposal" | "document" | "project";
+  entityType: "task" | "idea" | "proposal" | "document" | "project" | "project_group";
   entityUuid: string;
   action: "created" | "updated" | "deleted";
   actorUuid?: string;

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import {
   DragDropContext,
   Droppable,
@@ -29,6 +30,11 @@ import {
   SquareCheckBig,
   Lightbulb,
   FileText,
+  Copy,
+  Check as CheckIcon,
+  Bot,
+  Layers,
+  Sparkles,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
@@ -570,12 +576,15 @@ export default function ProjectsPage() {
 
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [createProjectTarget, setCreateProjectTarget] = useState<{ groupUuid: string | null; groupName: string } | null>(null);
+  const [hasAdminAgent, setHasAdminAgent] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
-      const [projectsRes, groupsRes] = await Promise.all([
+      const [projectsRes, groupsRes, agentsRes] = await Promise.all([
         fetch("/api/projects?pageSize=200"),
         fetch("/api/project-groups"),
+        fetch("/api/agents?pageSize=100"),
       ]);
       const projectsJson = await projectsRes.json();
       const groupsJson = await groupsRes.json();
@@ -584,6 +593,13 @@ export default function ProjectsPage() {
       }
       if (groupsJson.success) {
         setGroups(groupsJson.data.groups || []);
+      }
+      const agentsJson = await agentsRes.json();
+      if (agentsJson.success) {
+        const agents = agentsJson.data.data || agentsJson.data || [];
+        setHasAdminAgent(agents.some((a: { roles: string[] }) =>
+          a.roles.some((r: string) => r === "admin_agent" || r === "admin")
+        ));
       }
     } catch {
       // silently fail
@@ -595,6 +611,11 @@ export default function ProjectsPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Auto-refresh when projects or project groups change via SSE
+  useRealtimeEntityTypeEvent(["project", "project_group"], () => {
+    fetchData();
+  });
 
   // Group projects by groupUuid
   const projectsByGroup = new Map<string, ProjectData[]>();
@@ -740,22 +761,146 @@ export default function ProjectsPage() {
           </div>
 
           {projects.length === 0 && groups.length === 0 ? (
-            <Card className="flex flex-col items-center justify-center border-[#E5E0D8] p-12 text-center">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F2EC]">
-                <FolderOpen className="h-8 w-8 text-[#C67A52]" />
+            <div className="space-y-5">
+              {/* Welcome banner */}
+              <Card className="border-[#C67A5230] bg-[#C67A520A] p-6 md:p-8">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#C67A5220]">
+                    <Sparkles className="h-5 w-5 text-[#C67A52]" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-[#2C2C2C]">
+                      {t("projects.onboarding.welcomeTitle")}
+                    </h2>
+                    <p className="mt-1 text-sm text-[#6B6B6B]">
+                      {t("projects.onboarding.welcomeDesc")}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Concepts: Project Group vs Project */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card className="border-[#E5E2DC] p-5">
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C67A5215]">
+                      <Layers className="h-4 w-4 text-[#C67A52]" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                      {t("projects.onboarding.whatIsGroupTitle")}
+                    </h3>
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-[#6B6B6B]">
+                    {t("projects.onboarding.whatIsGroupDesc")}
+                  </p>
+                </Card>
+                <Card className="border-[#E5E2DC] p-5">
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C67A5215]">
+                      <FolderOpen className="h-4 w-4 text-[#C67A52]" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                      {t("projects.onboarding.whatIsProjectTitle")}
+                    </h3>
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-[#6B6B6B]">
+                    {t("projects.onboarding.whatIsProjectDesc")}
+                  </p>
+                </Card>
               </div>
-              <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">
-                {t("projects.noProjects")}
-              </h3>
-              <p className="mb-6 max-w-sm text-sm text-[#6B6B6B]">
-                {t("projects.noProjectsDesc")}
-              </p>
-              <Link href="/projects/new">
-                <Button className="bg-[#C67A52] text-white hover:bg-[#B56A42]">
-                  {t("projects.createFirst")}
-                </Button>
-              </Link>
-            </Card>
+
+              {/* Step-by-step guide */}
+              <Card className="border-[#E5E2DC] p-6 md:p-8">
+                <div className="space-y-6">
+                  {/* Step 1 */}
+                  <div className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#C67A52] text-xs font-bold text-white">
+                        1
+                      </div>
+                      <div className="mt-2 h-full w-px bg-[#E5E2DC]" />
+                    </div>
+                    <div className="flex-1 pb-6">
+                      <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                        {t("projects.onboarding.step1Title")}
+                      </h3>
+                      <p className="mt-1 text-[13px] text-[#6B6B6B]">
+                        {t("projects.onboarding.step1Desc")}
+                      </p>
+                      <Button
+                        className="mt-3 rounded-xl bg-[#C67A52] text-white hover:bg-[#B56A42]"
+                        onClick={() => setShowCreateGroup(true)}
+                      >
+                        <Layers className="mr-2 h-4 w-4" />
+                        {t("projects.onboarding.createGroupBtn")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#E5E2DC] text-xs font-bold text-[#9A9A9A]">
+                        2
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-semibold text-[#9A9A9A]">
+                        {t("projects.onboarding.step2Title")}
+                      </h3>
+                      <p className="mt-1 text-[13px] text-[#9A9A9A]">
+                        {t("projects.onboarding.step2Desc")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Admin agent tip */}
+              {hasAdminAgent && (
+                <Card className="border-[#E5E2DC] bg-[#F5F2EC] p-5 md:p-6">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#C67A5215]">
+                      <Bot className="h-4 w-4 text-[#C67A52]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                        {t("projects.onboarding.agentTipTitle")}
+                      </h3>
+                      <p className="mt-1 text-[13px] text-[#6B6B6B]">
+                        {t("projects.onboarding.agentTipDesc")}
+                      </p>
+                      <div className="mt-3 relative">
+                        <pre className="rounded-lg bg-white border border-[#E5E2DC] p-3 pr-10 text-xs text-[#2C2C2C] whitespace-pre-wrap break-words">
+                          {t("projects.onboarding.agentPromptDefault")}
+                        </pre>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-2 top-2 h-7 w-7 text-[#9A9A9A] hover:text-[#C67A52]"
+                          onClick={() => {
+                            navigator.clipboard.writeText(t("projects.onboarding.agentPromptDefault"));
+                            setPromptCopied(true);
+                            setTimeout(() => setPromptCopied(false), 2000);
+                          }}
+                        >
+                          {promptCopied ? (
+                            <CheckIcon className="h-3.5 w-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                      {promptCopied && (
+                        <p className="mt-1.5 text-xs text-green-600">
+                          {t("projects.onboarding.copiedPrompt")}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              )}
+            </div>
           ) : (
             <div className="space-y-4">
               {/* Groups */}

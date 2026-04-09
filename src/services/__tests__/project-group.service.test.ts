@@ -15,6 +15,7 @@ const mockPrisma = vi.hoisted(() => ({
     count: vi.fn(),
     groupBy: vi.fn(),
     updateMany: vi.fn(),
+    deleteMany: vi.fn(),
     update: vi.fn(),
   },
   task: {
@@ -262,6 +263,24 @@ describe("deleteProjectGroup", () => {
       where: { groupUuid, companyUuid },
       data: { groupUuid: null },
     });
+    expect(mockPrisma.projectGroup.delete).toHaveBeenCalledWith({
+      where: { uuid: groupUuid },
+    });
+  });
+
+  it("should delete projects when deleteProjects is true", async () => {
+    const group = makeProjectGroup();
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(group);
+    mockPrisma.project.deleteMany.mockResolvedValue({ count: 2 });
+    mockPrisma.projectGroup.delete.mockResolvedValue(group);
+
+    const result = await deleteProjectGroup(companyUuid, groupUuid, true);
+
+    expect(result).toBe(true);
+    expect(mockPrisma.project.deleteMany).toHaveBeenCalledWith({
+      where: { groupUuid, companyUuid },
+    });
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.projectGroup.delete).toHaveBeenCalledWith({
       where: { uuid: groupUuid },
     });
