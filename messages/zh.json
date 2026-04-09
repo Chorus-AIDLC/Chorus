@@ -1101,7 +1101,51 @@
         "resolved": "已完成"
       },
       "noProposals": "暂无与此想法关联的提案",
-      "viewProposal": "查看完整提案"
+      "viewProposal": "查看完整提案",
+      "tabs": {
+        "overview": "概览",
+        "elaboration": "需求细化",
+        "proposal": "提案",
+        "tasks": "任务",
+        "activity": "动态"
+      },
+      "tasksPlaceholder": "任务视图即将上线",
+      "activityPlaceholder": "动态视图即将上线",
+      "timeline": {
+        "ideaCreated": "创建 Idea",
+        "elaboration": "需求细化",
+        "proposal": "提案",
+        "tasksProgress": "任务进度",
+        "noElaboration": "未开始",
+        "elaborationComplete": "已完成（{count} 个问题）",
+        "elaborationInProgress": "进行中",
+        "elaborationSkipped": "已跳过",
+        "noProposal": "尚未创建",
+        "proposalApproved": "已批准",
+        "proposalPending": "待审核",
+        "proposalDraft": "草稿",
+        "proposalRejected": "已拒绝",
+        "tasksComplete": "{done}/{total} 已完成",
+        "noTasks": "暂无任务",
+        "createdBy": "由 {name} 创建",
+        "documents": "{count} 个文档",
+        "tasks": "{count} 个任务",
+        "rounds": "{count} 轮问答",
+        "moreItems": "+{count} 更多"
+      },
+      "taskList": {
+        "inProgress": "进行中",
+        "toVerify": "待验证",
+        "open": "待处理",
+        "done": "已完成",
+        "noTasks": "暂无可用任务",
+        "assigned": "已分配",
+        "closed": "已关闭"
+      },
+      "activityTab": {
+        "activity": "动态",
+        "comments": "评论"
+      }
     }
   },
   "search": {

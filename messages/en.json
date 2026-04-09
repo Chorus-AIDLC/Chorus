@@ -1100,7 +1100,51 @@
         "resolved": "Resolved"
       },
       "noProposals": "No proposals linked to this idea yet",
-      "viewProposal": "View Full Proposal"
+      "viewProposal": "View Full Proposal",
+      "tabs": {
+        "overview": "Overview",
+        "elaboration": "Elaboration",
+        "proposal": "Proposal",
+        "tasks": "Tasks",
+        "activity": "Activity"
+      },
+      "tasksPlaceholder": "Tasks view coming soon",
+      "activityPlaceholder": "Activity view coming soon",
+      "timeline": {
+        "ideaCreated": "Idea Created",
+        "elaboration": "Elaboration",
+        "proposal": "Proposal",
+        "tasksProgress": "Tasks",
+        "noElaboration": "Not started",
+        "elaborationComplete": "Resolved ({count} questions)",
+        "elaborationInProgress": "In progress",
+        "elaborationSkipped": "Skipped",
+        "noProposal": "Not created yet",
+        "proposalApproved": "Approved",
+        "proposalPending": "Pending review",
+        "proposalDraft": "Draft",
+        "proposalRejected": "Rejected",
+        "tasksComplete": "{done}/{total} completed",
+        "noTasks": "No tasks yet",
+        "createdBy": "Created by {name}",
+        "documents": "{count} documents",
+        "tasks": "{count} tasks",
+        "rounds": "{count, plural, one {# round} other {# rounds}}",
+        "moreItems": "+{count} more"
+      },
+      "taskList": {
+        "inProgress": "In Progress",
+        "toVerify": "To Verify",
+        "open": "Open",
+        "done": "Done",
+        "noTasks": "No tasks available",
+        "assigned": "Assigned",
+        "closed": "Closed"
+      },
+      "activityTab": {
+        "activity": "Activity",
+        "comments": "Comments"
+      }
     }
   },
   "search": {

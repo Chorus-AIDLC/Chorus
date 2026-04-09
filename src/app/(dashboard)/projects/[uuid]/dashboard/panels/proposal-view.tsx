@@ -40,7 +40,7 @@ interface DocDraftData {
   content?: string;
 }
 
-interface ProposalData {
+export interface ProposalData {
   uuid: string;
   title: string;
   description: string | null;
@@ -55,14 +55,15 @@ interface ProposalViewProps {
   projectUuid: string;
   onTaskClick?: (taskUuid: string) => void;
   onDocClick?: (doc: { title: string; type: string; content: string }) => void;
+  initialProposals?: ProposalData[];
 }
 
 
-export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick }: ProposalViewProps) {
+export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initialProposals }: ProposalViewProps) {
   const t = useTranslations("ideaTracker");
 
-  const [proposals, setProposals] = useState<ProposalData[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [proposals, setProposals] = useState<ProposalData[]>(initialProposals ?? []);
+  const [isLoading, setIsLoading] = useState(!initialProposals);
 
   const fetchProposals = useCallback(async () => {
     try {
@@ -78,8 +79,10 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick }: Pro
   }, [projectUuid, idea.uuid]);
 
   useEffect(() => {
-    fetchProposals();
-  }, [fetchProposals]);
+    if (!initialProposals) {
+      fetchProposals();
+    }
+  }, [fetchProposals, initialProposals]);
 
   if (isLoading) {
     return (

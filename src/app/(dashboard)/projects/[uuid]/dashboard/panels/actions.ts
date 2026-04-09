@@ -6,6 +6,8 @@ import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { getTask, listTasks } from "@/services/task.service";
 import { listProjects } from "@/services/project.service";
 import { listProjectGroups } from "@/services/project-group.service";
+import { getElaboration } from "@/services/elaboration.service";
+import type { ElaborationResponse } from "@/types/elaboration";
 
 export async function getIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
@@ -99,4 +101,27 @@ export async function getProjectsAndGroupsAction() {
   ]);
 
   return { success: true as const, data: { projects, groups } };
+}
+
+export async function getElaborationAction(
+  ideaUuid: string,
+): Promise<{ success: boolean; data?: ElaborationResponse; error?: string }> {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const data = await getElaboration({
+      companyUuid: auth.companyUuid,
+      ideaUuid,
+    });
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to get elaboration:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to get elaboration",
+    };
+  }
 }
