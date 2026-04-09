@@ -105,10 +105,10 @@ export async function getProjectsAndGroupsAction() {
 
 export async function getElaborationAction(
   ideaUuid: string,
-): Promise<{ success: boolean; data?: ElaborationResponse; error?: string }> {
+): Promise<{ success: true; data: ElaborationResponse } | { success: false; error: string }> {
   const auth = await getServerAuthContext();
   if (!auth) {
-    return { success: false, error: "Unauthorized" };
+    return { success: false as const, error: "Unauthorized" };
   }
 
   try {
@@ -116,11 +116,11 @@ export async function getElaborationAction(
       companyUuid: auth.companyUuid,
       ideaUuid,
     });
-    return { success: true, data };
+    return { success: true as const, data };
   } catch (error) {
     console.error("Failed to get elaboration:", error);
     return {
-      success: false,
+      success: false as const,
       error: error instanceof Error ? error.message : "Failed to get elaboration",
     };
   }

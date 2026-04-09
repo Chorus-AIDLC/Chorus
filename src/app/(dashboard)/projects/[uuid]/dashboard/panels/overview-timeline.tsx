@@ -14,16 +14,9 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { getElaborationAction } from "./actions";
-import { formatRelativeTime } from "../utils";
+import { formatRelativeTime, getTaskStatusDotColor, type FlatTask } from "../utils";
 import type { ProposalData } from "./proposal-view";
 import type { ElaborationResponse } from "@/types/elaboration";
-
-interface FlatTask {
-  uuid: string;
-  title: string;
-  status: string;
-  commentCount: number;
-}
 
 interface OverviewTimelineProps {
   idea: {
@@ -49,19 +42,6 @@ interface TimelineNode {
   labelKey: string;
   status: NodeStatus;
   icon: React.ReactNode;
-}
-
-function getTaskStatusDot(status: string) {
-  switch (status) {
-    case "done":
-      return "bg-[#00796B]";
-    case "in_progress":
-      return "bg-[#1976D2]";
-    case "to_verify":
-      return "bg-[#7B1FA2]";
-    default:
-      return "bg-[#D9D9D9]";
-  }
 }
 
 export function OverviewTimeline({
@@ -146,6 +126,7 @@ export function OverviewTimeline({
     if (activeNode) {
       setExpandedNodes(new Set([activeNode.id]));
     }
+    // Intentionally omitting nodes — only currentPhase should trigger re-expansion, not node array identity
   }, [currentPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleNode = useCallback((nodeId: string) => {
@@ -311,7 +292,7 @@ export function OverviewTimeline({
                       onClick={() => onSelectTask(task.uuid)}
                       className="flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#F5F2EC] transition-colors group"
                     >
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDot(task.status)}`} />
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDotColor(task.status)}`} />
                       <span className="flex-1 text-[12px] text-[#2C2C2C] truncate group-hover:text-[#C67A52]">
                         {task.title}
                       </span>

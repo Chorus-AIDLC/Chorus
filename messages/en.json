@@ -1108,8 +1108,6 @@
         "tasks": "Tasks",
         "activity": "Activity"
       },
-      "tasksPlaceholder": "Tasks view coming soon",
-      "activityPlaceholder": "Activity view coming soon",
       "timeline": {
         "ideaCreated": "Idea Created",
         "elaboration": "Elaboration",

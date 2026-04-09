@@ -80,18 +80,11 @@ interface TaskForPanel {
   dependedBy?: { uuid: string; title: string; status: string }[];
 }
 
-// Flattened task from listing API
-interface FlatTask {
-  uuid: string;
-  title: string;
-  status: string;
-  commentCount: number;
-}
-
 import {
   DERIVED_STATUS_COLORS as derivedStatusColors,
   DERIVED_STATUS_I18N_KEYS as derivedStatusI18nKeys,
   BADGE_HINT_I18N_KEYS,
+  type FlatTask,
 } from "../utils";
 
 // ===== Tab Types =====
@@ -250,20 +243,19 @@ export function IdeaDetailPanel({
       return;
     }
     try {
-      const allTasks: FlatTask[] = [];
-      for (const p of approvedProposals) {
-        const result = await getTasksForProposalAction(projectUuid, p.uuid);
-        if (result.success && result.data) {
-          for (const t of result.data) {
-            allTasks.push({
+      const results = await Promise.all(
+        approvedProposals.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+      );
+      const allTasks: FlatTask[] = results.flatMap((result) =>
+        result.success && result.data
+          ? result.data.map((t) => ({
               uuid: t.uuid,
               title: t.title,
               status: t.status,
               commentCount: (t as { commentCount?: number }).commentCount ?? 0,
-            });
-          }
-        }
-      }
+            }))
+          : []
+      );
       setTasks(allTasks);
     } catch (e) {
       console.error("Failed to fetch tasks:", e);
@@ -291,6 +283,7 @@ export function IdeaDetailPanel({
     const tab = visibleTabs.includes(desiredTab) ? desiredTab : "overview";
     setActiveTab(tab);
     setVisitedTabs((prev) => new Set([...prev, tab]));
+    // Intentionally omitting userHasSwitchedTab — it's checked inside but shouldn't trigger re-runs
   }, [idea?.uuid, desiredTab, visibleTabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset user switch flag when idea changes

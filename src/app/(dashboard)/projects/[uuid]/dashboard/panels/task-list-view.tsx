@@ -3,13 +3,7 @@
 import { useState, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { ChevronRight, ChevronDown, ListChecks } from "lucide-react";
-
-interface FlatTask {
-  uuid: string;
-  title: string;
-  status: string;
-  commentCount: number;
-}
+import { getTaskStatusDotColor, type FlatTask } from "../utils";
 
 interface TaskListViewProps {
   tasks: FlatTask[];
@@ -17,24 +11,6 @@ interface TaskListViewProps {
 }
 
 const STATUS_ORDER = ["in_progress", "to_verify", "open", "assigned", "done", "closed"] as const;
-
-function getStatusDotColor(status: string): string {
-  switch (status) {
-    case "in_progress":
-      return "bg-[#1976D2]";
-    case "to_verify":
-      return "bg-[#7B1FA2]";
-    case "open":
-    case "assigned":
-      return "bg-[#E65100]";
-    case "done":
-      return "bg-[#00796B]";
-    case "closed":
-      return "bg-[#9A9A9A]";
-    default:
-      return "bg-[#D9D9D9]";
-  }
-}
 
 function getStatusLabel(status: string, t: (key: string) => string): string {
   switch (status) {
@@ -117,7 +93,7 @@ export function TaskListView({ tasks, onSelectTask }: TaskListViewProps) {
               ) : (
                 <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A]" />
               )}
-              <span className={`h-2 w-2 rounded-full shrink-0 ${getStatusDotColor(group.status)}`} />
+              <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDotColor(group.status)}`} />
               <span className="text-[13px] font-medium text-[#2C2C2C]">
                 {getStatusLabel(group.status, t)}
               </span>
@@ -135,7 +111,7 @@ export function TaskListView({ tasks, onSelectTask }: TaskListViewProps) {
                     onClick={() => onSelectTask(task.uuid)}
                     className="flex items-center gap-2.5 w-full text-left rounded-md px-2.5 py-2 hover:bg-[#F5F2EC] transition-colors group"
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${getStatusDotColor(task.status)}`} />
+                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${getTaskStatusDotColor(task.status)}`} />
                     <span className="flex-1 text-[13px] text-[#2C2C2C] truncate group-hover:text-[#C67A52]">
                       {task.title}
                     </span>

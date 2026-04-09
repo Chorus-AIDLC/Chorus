@@ -1109,8 +1109,6 @@
         "tasks": "任务",
         "activity": "动态"
       },
-      "tasksPlaceholder": "任务视图即将上线",
-      "activityPlaceholder": "动态视图即将上线",
       "timeline": {
         "ideaCreated": "创建 Idea",
         "elaboration": "需求细化",
