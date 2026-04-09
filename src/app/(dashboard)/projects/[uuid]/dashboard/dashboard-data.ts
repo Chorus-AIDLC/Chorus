@@ -1,5 +1,3 @@
-"use server";
-
 import { redirect } from "next/navigation";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { getProject, getProjectStats } from "@/services/project.service";

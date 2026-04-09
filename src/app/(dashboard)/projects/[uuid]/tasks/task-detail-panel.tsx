@@ -55,6 +55,7 @@ import type { TaskSessionInfo } from "@/services/session.service";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
+import { PANEL_WIDTH_PX } from "@/app/(dashboard)/projects/[uuid]/dashboard/utils";
 
 interface DependencyTask {
   uuid: string;
@@ -672,8 +673,8 @@ export function TaskDetailPanel({
             : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
         }`}
         style={{
-          maxWidth: "480px",
-          ...(isSideBySide ? { right: "480px" } : {}),
+          maxWidth: `${PANEL_WIDTH_PX}px`,
+          ...(isSideBySide ? { right: `${PANEL_WIDTH_PX}px` } : {}),
         }}
       >
         {/* Panel Header */}
