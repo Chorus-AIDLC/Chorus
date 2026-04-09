@@ -152,7 +152,7 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
           // Reconnect and catch up — events were missed while disconnected.
           connect();
           notify();
-          for (const entityType of ["task", "idea", "proposal", "document", "project"]) {
+          for (const entityType of ["task", "idea", "proposal", "document", "project", "project_group"]) {
             notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
           }
         }

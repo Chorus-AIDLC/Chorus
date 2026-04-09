@@ -499,15 +499,22 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main Content - add top padding on mobile for the fixed header (now ~110px with search) */}
-      <RealtimeProvider projectUuid={isProjectContext ? currentProjectUuid : null}>
-        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
-        {isProjectContext && currentProjectUuid && (
+      {/* SSE: project pages get project-scoped events, /projects and /project-groups get company-wide, /settings gets none */}
+      {isProjectContext && currentProjectUuid ? (
+        <RealtimeProvider projectUuid={currentProjectUuid}>
+          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
           <PixelCanvasWidget
             projectUuid={currentProjectUuid}
             projectName={currentProject?.name || ""}
           />
-        )}
-      </RealtimeProvider>
+        </RealtimeProvider>
+      ) : pathname === "/projects" || pathname.startsWith("/project-groups") ? (
+        <RealtimeProvider>
+          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+        </RealtimeProvider>
+      ) : (
+        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+      )}
     </div>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>

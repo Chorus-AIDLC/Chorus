@@ -581,10 +581,9 @@ export default function ProjectsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [projectsRes, groupsRes, agentsRes] = await Promise.all([
+      const [projectsRes, groupsRes] = await Promise.all([
         fetch("/api/projects?pageSize=200"),
         fetch("/api/project-groups"),
-        fetch("/api/agents?pageSize=100"),
       ]);
       const projectsJson = await projectsRes.json();
       const groupsJson = await groupsRes.json();
@@ -594,13 +593,6 @@ export default function ProjectsPage() {
       if (groupsJson.success) {
         setGroups(groupsJson.data.groups || []);
       }
-      const agentsJson = await agentsRes.json();
-      if (agentsJson.success) {
-        const agents = agentsJson.data.data || agentsJson.data || [];
-        setHasAdminAgent(agents.some((a: { roles: string[] }) =>
-          a.roles.some((r: string) => r === "admin_agent" || r === "admin")
-        ));
-      }
     } catch {
       // silently fail
     } finally {
@@ -608,8 +600,20 @@ export default function ProjectsPage() {
     }
   }, []);
 
+  // Fetch admin agent status once on mount (only needed for empty-state onboarding)
   useEffect(() => {
     fetchData();
+    fetch("/api/agents?pageSize=100")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) {
+          const agents = json.data.data || json.data || [];
+          setHasAdminAgent(agents.some((a: { roles: string[] }) =>
+            a.roles.some((r: string) => r === "admin_agent" || r === "admin")
+          ));
+        }
+      })
+      .catch(() => {});
   }, [fetchData]);
 
   // Auto-refresh when projects or project groups change via SSE
