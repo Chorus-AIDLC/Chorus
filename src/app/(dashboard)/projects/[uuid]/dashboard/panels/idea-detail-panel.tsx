@@ -21,7 +21,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { usePanelUrl } from "@/hooks/use-panel-url";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
@@ -207,7 +206,12 @@ export function IdeaDetailPanel({
     return () => clearTimeout(timer);
   }, []);
 
-  const { switchTab } = usePanelUrl(`/projects/${projectUuid}/dashboard`, ideaUuid);
+  // Sync tab to URL query param (replaceState only, no history entry)
+  const switchTab = useCallback((tab: string) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", tab);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, []);
 
   // Fetch single idea
   const fetchIdea = useCallback(async () => {
@@ -336,7 +340,14 @@ export function IdeaDetailPanel({
         return;
       }
     } else {
-      tab = visibleTabs.includes(desiredTab) ? desiredTab : "overview";
+      if (visibleTabs.includes(desiredTab)) {
+        tab = desiredTab;
+      } else if (desiredTab === "overview") {
+        tab = "overview";
+      } else {
+        // Desired tab not yet visible (data loading) — wait instead of flashing "overview"
+        return;
+      }
     }
     setActiveTab(tab);
     setVisitedTabs((prev) => new Set([...prev, tab]));

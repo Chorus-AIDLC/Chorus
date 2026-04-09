@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { usePanelUrl } from "@/hooks/use-panel-url";
 import { IdeaTrackerList } from "./idea-tracker-list";
 import { IdeaTrackerStats } from "./idea-tracker-stats";
 import { IdeaDetailPanel } from "./panels/idea-detail-panel";
@@ -37,14 +38,15 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
   const [activeTab, setActiveTab] = useState<"ideas" | "stats">("ideas");
   const [isEmpty, setIsEmpty] = useState(false);
   const [showNewIdeaDialog, setShowNewIdeaDialog] = useState(false);
-  const [selectedIdeaUuid, setSelectedIdeaUuid] = useState<string | null>(initialSelectedIdeaUuid ?? null);
+
+  const basePath = `/projects/${projectUuid}/dashboard`;
+  const { selectedId: selectedIdeaUuid, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedIdeaUuid);
 
   return (
     <div className="flex h-full flex-col">
       {/* Header: Tabs + New Idea button */}
       {!isEmpty && (
         <div className="mb-4 flex items-center justify-between">
-          {/* Tab switcher */}
           <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] bg-[#F7F6F3] p-0.5">
             <Button
               variant="ghost"
@@ -72,7 +74,6 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
             </Button>
           </div>
 
-          {/* New Idea button — only on ideas tab */}
           {activeTab === "ideas" && (
             <Button
               onClick={() => setShowNewIdeaDialog(true)}
@@ -86,12 +87,11 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
         </div>
       )}
 
-      {/* Tab content */}
       {activeTab === "ideas" ? (
         <IdeaTrackerList
           projectUuid={projectUuid}
           initialData={initialTrackerData}
-          onIdeaClick={setSelectedIdeaUuid}
+          onIdeaClick={openPanel}
           onNewIdea={() => setShowNewIdeaDialog(true)}
           onEmptyChange={setIsEmpty}
         />
@@ -99,21 +99,19 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
         <IdeaTrackerStats projectUuid={projectUuid} initialData={initialStatsData} />
       )}
 
-      {/* New Idea Dialog */}
       <NewIdeaDialog
         open={showNewIdeaDialog}
         onOpenChange={setShowNewIdeaDialog}
         projectUuid={projectUuid}
-        onCreated={(uuid) => setSelectedIdeaUuid(uuid)}
+        onCreated={(uuid) => openPanel(uuid)}
       />
 
-      {/* Idea Detail Panel */}
       {selectedIdeaUuid && (
         <IdeaDetailPanel
           ideaUuid={selectedIdeaUuid}
           projectUuid={projectUuid}
           currentUserUuid={currentUserUuid}
-          onClose={() => setSelectedIdeaUuid(null)}
+          onClose={closePanel}
         />
       )}
     </div>
