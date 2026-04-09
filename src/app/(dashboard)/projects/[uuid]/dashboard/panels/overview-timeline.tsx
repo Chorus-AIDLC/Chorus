@@ -159,7 +159,7 @@ export function OverviewTimeline({
   const proposalSummary = useMemo(() => {
     if (proposals.length === 0) return t("panel.timeline.noProposal");
     const approved = proposals.filter((p) => p.status === "approved").length;
-    const pending = proposals.filter((p) => p.status === "pending_review").length;
+    const pending = proposals.filter((p) => p.status === "pending").length;
     if (approved > 0 && proposals.length === 1) return t("panel.timeline.proposalApproved");
     if (approved > 0) return t("panel.timeline.proposalsApproved", { count: approved, total: proposals.length });
     if (pending > 0) return t("panel.timeline.proposalPending");
