@@ -6,6 +6,7 @@ import {
   Check,
   Circle,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   FileText,
   ListChecks,
@@ -290,13 +291,13 @@ export function OverviewTimeline({
                     <button
                       key={task.uuid}
                       onClick={() => onSelectTask(task.uuid)}
-                      className="flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#F5F2EC] transition-colors group"
+                      className="flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#F5F2EC] transition-colors group cursor-pointer"
                     >
+                      <ChevronLeft className="h-3 w-3 text-[#D9D9D9] shrink-0 group-hover:text-[#C67A52]" />
                       <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDotColor(task.status)}`} />
                       <span className="flex-1 text-[12px] text-[#2C2C2C] truncate group-hover:text-[#C67A52]">
                         {task.title}
                       </span>
-                      <ChevronRight className="h-3 w-3 text-[#D9D9D9] shrink-0 group-hover:text-[#C67A52]" />
                     </button>
                   ))}
                   {tasks.length > 5 && (
@@ -368,7 +369,7 @@ export function OverviewTimeline({
             <div className={`flex-1 min-w-0 ${isLast ? "pb-0" : "pb-4"}`}>
               <button
                 onClick={() => toggleNode(node.id)}
-                className="flex items-center gap-1.5 w-full text-left group"
+                className="flex items-center gap-1.5 w-full text-left group cursor-pointer"
               >
                 {isExpanded ? (
                   <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A] shrink-0" />

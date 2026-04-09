@@ -1,16 +1,21 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import {
   ClipboardList,
   Loader2,
   ChevronRight,
+  ChevronLeft,
+  ChevronDown,
   ListChecks,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
+import { usePresence, injectPresence } from "@/hooks/use-presence";
+import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { Streamdown } from "streamdown";
 import { code as codePlugin } from "@streamdown/code";
 import { TaskDag, type TaskDagTask, type TaskDagEdge } from "@/components/task-dag";
@@ -84,6 +89,48 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
     }
   }, [fetchProposals, initialProposals]);
 
+  // Track previous proposals for diff (inject presence on new drafts)
+  const prevProposalsRef = useRef(proposals);
+  prevProposalsRef.current = proposals;
+  const { getPresence } = usePresence();
+
+  // SSE: refresh proposals when any proposal changes (draft added/removed/updated)
+  useRealtimeEntityTypeEvent("proposal", async () => {
+    const oldProposals = prevProposalsRef.current;
+    await fetchProposals();
+    // After fetch, compare old vs new to inject presence on newly created drafts
+    // Use a microtask to read updated state after React batches the setState
+    setTimeout(() => {
+      const newProposals = prevProposalsRef.current;
+      for (const np of newProposals) {
+        const op = oldProposals.find((o) => o.uuid === np.uuid);
+        if (!op) continue;
+        const oldDocIds = new Set((op.documentDrafts ?? []).map((d) => d.uuid));
+        const oldTaskIds = new Set((op.taskDrafts ?? []).map((d) => d.uuid));
+        const newDocs = (np.documentDrafts ?? []).filter((d) => d.uuid && !oldDocIds.has(d.uuid));
+        const newTasks = (np.taskDrafts ?? []).filter((d) => d.uuid && !oldTaskIds.has(d.uuid));
+        const allNewIds = [...newDocs.map((d) => d.uuid!), ...newTasks.map((d) => d.uuid!)];
+        if (allNewIds.length > 0) {
+          const presence = getPresence("proposal", np.uuid);
+          const agent = presence[0];
+          if (agent) {
+            for (const id of allNewIds) {
+              injectPresence({
+                entityType: "proposal",
+                entityUuid: np.uuid,
+                subEntityType: "draft",
+                subEntityUuid: id,
+                agentUuid: agent.agentUuid,
+                agentName: agent.agentName,
+                action: "mutate",
+              });
+            }
+          }
+        }
+      }
+    }, 0);
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -136,6 +183,7 @@ function ProposalContent({
   onDocClick?: (doc: { title: string; type: string; content: string }) => void;
 }) {
   const t = useTranslations("ideaTracker");
+  const tRoot = useTranslations();
   const tProposals = useTranslations("proposals");
   const tTasks = useTranslations("tasks");
   const tDocs = useTranslations("documents");
@@ -208,8 +256,27 @@ function ProposalContent({
     ? materializedTasks.filter((t) => t.status === "done" || t.status === "closed").length
     : 0;
 
+  const proposalStatusColors: Record<string, string> = {
+    draft: "bg-[#F5F5F5] text-[#6B6B6B]",
+    pending: "bg-[#FFF3E0] text-[#E65100]",
+    approved: "bg-[#E8F5E9] text-[#5A9E6F]",
+    rejected: "bg-[#FFEBEE] text-[#C4574C]",
+    revised: "bg-[#E3F2FD] text-[#1976D2]",
+    closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  };
+
   return (
     <div className="space-y-5">
+      {/* Title + Status */}
+      <div className="flex items-center gap-2">
+        <h3 className="text-[14px] font-semibold text-[#2C2C2C] truncate flex-1">
+          {proposal.title}
+        </h3>
+        <Badge className={`text-[11px] font-semibold border-0 shrink-0 ${proposalStatusColors[proposal.status] || ""}`}>
+          {tRoot(`status.${proposal.status}`)}
+        </Badge>
+      </div>
+
       {/* Description — plain text, markdown rendered */}
       {proposal.description && (
         <div className="max-h-[120px] overflow-y-auto text-[13px] leading-relaxed text-[#4A4A4A] prose prose-sm max-w-none [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs [&_p]:text-[13px] [&_p]:text-[#4A4A4A] [&_p]:my-1.5 [&_li]:text-[13px] [&_li]:text-[#4A4A4A] [&_ul]:my-1 [&_ol]:my-1 [&_strong]:text-[#2C2C2C]">
@@ -239,23 +306,24 @@ function ProposalContent({
           </div>
           <div className="space-y-0">
             {docDrafts.map((doc, i) => (
-              <Button
-                key={doc.uuid || i}
-                variant="ghost"
-                className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
-                onClick={() => doc.content && onDocClick?.({ title: doc.title, type: doc.type, content: doc.content })}
-              >
-                <Badge
-                  variant="outline"
-                  className="shrink-0 text-[10px] font-medium border-[#E5E0D8] text-[#6B6B6B] bg-[#F5F2EC] px-2 py-0.5 font-mono"
+              <PresenceIndicator key={doc.uuid || i} entityType="proposal" entityUuid={proposal.uuid} subEntityType="draft" subEntityUuid={doc.uuid || `draft-${i}`} badgeInside>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
+                  onClick={() => doc.content && onDocClick?.({ title: doc.title, type: doc.type, content: doc.content })}
                 >
-                  {tDocs(DOC_TYPE_I18N_KEYS[doc.type] || "typeOther")}
-                </Badge>
-                <span className="flex-1 min-w-0 text-left text-[13px] text-[#2C2C2A] truncate">
-                  {doc.title}
-                </span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
-              </Button>
+                  <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 text-[10px] font-medium border-[#E5E0D8] text-[#6B6B6B] bg-[#F5F2EC] px-2 py-0.5 font-mono"
+                  >
+                    {tDocs(DOC_TYPE_I18N_KEYS[doc.type] || "typeOther")}
+                  </Badge>
+                  <span className="flex-1 min-w-0 text-left text-[13px] text-[#2C2C2A] truncate">
+                    {doc.title}
+                  </span>
+                </Button>
+              </PresenceIndicator>
             ))}
           </div>
         </div>
@@ -317,22 +385,24 @@ function ProposalContent({
             <div className="space-y-0">
               {isApproved && materializedTasks.length > 0
                 ? materializedTasks.map((mt) => (
-                    <TaskDraftRow
-                      key={mt.uuid}
-                      task={{ uuid: mt.uuid, title: mt.title }}
-                      expanded={false}
-                      onToggle={() => {}}
-                      onNavigate={onTaskClick ? () => onTaskClick(mt.uuid) : undefined}
-                      taskStatus={mt.status}
-                    />
+                    <PresenceIndicator key={mt.uuid} entityType="task" entityUuid={mt.uuid} badgeInside>
+                      <TaskDraftRow
+                        task={{ uuid: mt.uuid, title: mt.title }}
+                        expanded={false}
+                        onToggle={() => {}}
+                        onNavigate={onTaskClick ? () => onTaskClick(mt.uuid) : undefined}
+                        taskStatus={mt.status}
+                      />
+                    </PresenceIndicator>
                   ))
                 : taskDrafts.map((task, i) => (
-                    <TaskDraftRow
-                      key={task.uuid}
-                      task={task}
-                      expanded={expandedTasks.has(i)}
-                      onToggle={() => toggleTask(i)}
-                    />
+                    <PresenceIndicator key={task.uuid} entityType="proposal" entityUuid={proposal.uuid} subEntityType="draft" subEntityUuid={task.uuid} badgeInside>
+                      <TaskDraftRow
+                        task={task}
+                        expanded={expandedTasks.has(i)}
+                        onToggle={() => toggleTask(i)}
+                      />
+                    </PresenceIndicator>
                   ))
               }
             </div>
@@ -432,10 +502,10 @@ function TaskDraftRow({
         onClick={onNavigate}
         className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg transition-colors"
       >
+        <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
         {dotEl}
         {titleEl}
         {badgeEl}
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
       </Button>
     );
   }
@@ -450,10 +520,14 @@ function TaskDraftRow({
           hasDetails ? "cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg" : ""
         } transition-colors`}
       >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+        )}
         {dotEl}
         {titleEl}
         {badgeEl}
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
       </Button>
 
       {expanded && hasDetails && (

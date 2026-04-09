@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { useRouter } from "next/navigation";
 import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { usePanelUrl } from "@/hooks/use-panel-url";
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView, type ProposalData } from "./proposal-view";
@@ -173,10 +174,31 @@ export function IdeaDetailPanel({
   // Move dialog state
   const [showMoveDialog, setShowMoveDialog] = useState(false);
 
-  // Child panel state
+  // Child panel state — only one secondary panel at a time
   const [selectedTaskUuid, setSelectedTaskUuid] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskForPanel | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<{ title: string; type: string; content: string } | null>(null);
+
+  const openTask = useCallback((taskUuid: string) => {
+    setSelectedDoc(null); // Close doc panel when opening task
+    setSelectedTaskUuid(taskUuid);
+  }, []);
+
+  const openDoc = useCallback((doc: { title: string; type: string; content: string }) => {
+    setSelectedTaskUuid(null); // Close task panel when opening doc
+    setSelectedTask(null);
+    setSelectedDoc(doc);
+  }, []);
+
+  // Wide screen detection for side-by-side panels
+  const [isWideScreen, setIsWideScreen] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 960px)");
+    setIsWideScreen(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsWideScreen(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
 
   // Slide-in animation
   const [hasAnimated, setHasAnimated] = useState(false);
@@ -185,7 +207,7 @@ export function IdeaDetailPanel({
     return () => clearTimeout(timer);
   }, []);
 
-  usePanelUrl(`/projects/${projectUuid}/dashboard`, ideaUuid);
+  const { switchTab } = usePanelUrl(`/projects/${projectUuid}/dashboard`, ideaUuid);
 
   // Fetch single idea
   const fetchIdea = useCallback(async () => {
@@ -210,6 +232,9 @@ export function IdeaDetailPanel({
   }, [fetchIdea]);
 
   useRealtimeEntityTypeEvent("idea", fetchIdea);
+  // Derived status depends on proposal/task state — refetch idea when they change
+  useRealtimeEntityTypeEvent("proposal", fetchIdea);
+  useRealtimeEntityTypeEvent("task", fetchIdea);
 
   // ===== Lift data fetching: Proposals =====
   const ideaUuidForFetch = idea?.uuid;
@@ -248,12 +273,24 @@ export function IdeaDetailPanel({
       );
       const allTasks: FlatTask[] = results.flatMap((result) =>
         result.success && result.data
-          ? result.data.map((t) => ({
-              uuid: t.uuid,
-              title: t.title,
-              status: t.status,
-              commentCount: (t as { commentCount?: number }).commentCount ?? 0,
-            }))
+          ? result.data.map((t) => {
+              const task = t as {
+                uuid: string;
+                title: string;
+                status: string;
+                commentCount?: number;
+                assignee?: { type: string; uuid: string; name: string } | null;
+                acceptanceSummary?: FlatTask["acceptanceSummary"];
+              };
+              return {
+                uuid: task.uuid,
+                title: task.title,
+                status: task.status,
+                commentCount: task.commentCount ?? 0,
+                assignee: task.assignee ?? null,
+                acceptanceSummary: task.acceptanceSummary ?? null,
+              };
+            })
           : []
       );
       setTasks(allTasks);
@@ -274,22 +311,44 @@ export function IdeaDetailPanel({
     [idea, proposals, tasks],
   );
 
+  // Read initial tab from URL (if present and valid) — consumed once on first auto-select
+  const urlTabRef = useRef<string | null>(
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tab")
+      : null
+  );
+
   // Auto-select default tab when idea loads/changes or when visible tabs update,
   // unless user has manually switched
   const desiredTab = idea ? getDefaultTab(idea.badgeHint) : "overview";
   useEffect(() => {
     if (!idea || userHasSwitchedTab) return;
-    // Wait until the desired tab becomes visible (proposals/tasks may load async)
-    const tab = visibleTabs.includes(desiredTab) ? desiredTab : "overview";
+    const urlTab = urlTabRef.current;
+    let tab: TabId;
+    if (urlTab) {
+      if (visibleTabs.includes(urlTab as TabId)) {
+        // URL tab is now visible — use it, consume the ref, and lock selection
+        tab = urlTab as TabId;
+        urlTabRef.current = null;
+        setUserHasSwitchedTab(true); // Prevent subsequent auto-routing from overriding
+      } else {
+        // URL tab not yet visible — don't consume, wait for next visibleTabs update
+        return;
+      }
+    } else {
+      tab = visibleTabs.includes(desiredTab) ? desiredTab : "overview";
+    }
     setActiveTab(tab);
     setVisitedTabs((prev) => new Set([...prev, tab]));
-    // Intentionally omitting userHasSwitchedTab — it's checked inside but shouldn't trigger re-runs
+    switchTab(tab); // Sync URL with auto-selected tab
+    // Intentionally omitting userHasSwitchedTab and switchTab — checked/used inside but shouldn't trigger re-runs
   }, [idea?.uuid, desiredTab, visibleTabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset user switch flag when idea changes
+  // Reset user switch flag when idea changes or when badgeHint changes phase
+  // (e.g., planning → building should auto-route to tasks tab)
   useEffect(() => {
     setUserHasSwitchedTab(false);
-  }, [ideaUuid]);
+  }, [ideaUuid, idea?.badgeHint]);
 
   // Ensure active tab is still visible (e.g., tasks cleared)
   useEffect(() => {
@@ -302,6 +361,7 @@ export function IdeaDetailPanel({
     setActiveTab(tab);
     setUserHasSwitchedTab(true);
     setVisitedTabs((prev) => new Set([...prev, tab]));
+    switchTab(tab);
   };
 
   // ===== Badge counts =====
@@ -311,7 +371,7 @@ export function IdeaDetailPanel({
   );
 
   // Fetch task when selected from any tab view
-  useEffect(() => {
+  const fetchSelectedTask = useCallback(() => {
     if (!selectedTaskUuid) {
       setSelectedTask(null);
       return;
@@ -320,6 +380,13 @@ export function IdeaDetailPanel({
       if (result.success) setSelectedTask(result.data);
     }).catch((e) => console.error("Failed to load task details:", e));
   }, [selectedTaskUuid]);
+
+  useEffect(() => {
+    fetchSelectedTask();
+  }, [fetchSelectedTask]);
+
+  // Re-fetch selected task on SSE task events (status changes, AC updates, etc.)
+  useRealtimeEntityTypeEvent("task", fetchSelectedTask);
 
   // Reset edit state when idea changes
   useEffect(() => {
@@ -481,7 +548,7 @@ export function IdeaDetailPanel({
                 <button
                   key={tab}
                   onClick={() => handleTabChange(tab)}
-                  className={`relative flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors ${
+                  className={`relative flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors cursor-pointer ${
                     activeTab === tab
                       ? "text-[#C67A52] border-b-2 border-[#C67A52]"
                       : "text-[#9A9A9A] hover:text-[#6B6B6B]"
@@ -563,7 +630,7 @@ export function IdeaDetailPanel({
                         idea={idea}
                         proposals={proposals}
                         tasks={tasks}
-                        onSelectTask={setSelectedTaskUuid}
+                        onSelectTask={openTask}
                       />
                     </div>
                   )}
@@ -584,8 +651,8 @@ export function IdeaDetailPanel({
                       <ProposalView
                         idea={idea}
                         projectUuid={projectUuid}
-                        onTaskClick={setSelectedTaskUuid}
-                        onDocClick={setSelectedDoc}
+                        onTaskClick={openTask}
+                        onDocClick={openDoc}
                         initialProposals={proposals}
                       />
                     </div>
@@ -596,7 +663,9 @@ export function IdeaDetailPanel({
                     <div style={{ display: activeTab === "tasks" ? "block" : "none" }}>
                       <TaskListView
                         tasks={tasks}
-                        onSelectTask={setSelectedTaskUuid}
+                        projectUuid={projectUuid}
+                        proposalUuids={proposals.filter((p) => p.status === "approved").map((p) => p.uuid)}
+                        onSelectTask={openTask}
                       />
                     </div>
                   )}
@@ -741,6 +810,7 @@ export function IdeaDetailPanel({
           task={selectedTask}
           projectUuid={projectUuid}
           currentUserUuid={currentUserUuid}
+          mode={isWideScreen ? "sidebyside" : "overlay"}
           onClose={() => {
             setSelectedTaskUuid(null);
             setSelectedTask(null);
@@ -758,6 +828,7 @@ export function IdeaDetailPanel({
           title={selectedDoc.title}
           type={selectedDoc.type}
           content={selectedDoc.content}
+          mode={isWideScreen ? "sidebyside" : "overlay"}
           onClose={() => setSelectedDoc(null)}
           onBack={() => setSelectedDoc(null)}
         />

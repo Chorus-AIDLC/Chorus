@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,12 @@ interface DocumentPanelProps {
   title: string;
   type: string;
   content: string;
+  mode?: "overlay" | "sidebyside";
   onClose: () => void;
   onBack?: () => void;
 }
 
-export function DocumentPanel({ title, type, content, onClose, onBack }: DocumentPanelProps) {
+export function DocumentPanel({ title, type, content, mode = "overlay", onClose, onBack }: DocumentPanelProps) {
   const tDocs = useTranslations("documents");
 
   const [hasAnimated, setHasAnimated] = useState(false);
@@ -27,18 +28,40 @@ export function DocumentPanel({ title, type, content, onClose, onBack }: Documen
     return () => clearTimeout(timer);
   }, []);
 
+  // Esc key: close this panel only (stopPropagation prevents parent from also closing)
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleKeyDown]);
+
+  const isSideBySide = mode === "sidebyside";
+
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/20"
-        onClick={onClose}
-      />
+      {/* Backdrop — only in overlay mode (sidebyside uses parent's backdrop) */}
+      {!isSideBySide && (
+        <div
+          className="fixed inset-0 z-40 bg-black/20"
+          onClick={onClose}
+        />
+      )}
 
       {/* Panel */}
       <div
-        className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
-          hasAnimated ? "" : "animate-in slide-in-from-right duration-300"
+        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+          isSideBySide
+            ? `z-40 right-[480px] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
+            : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
         }`}
       >
         {/* Header */}

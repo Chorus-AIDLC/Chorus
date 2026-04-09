@@ -59,8 +59,11 @@ export function IdeaTrackerList({
     }
   }, [projectUuid, t]);
 
-  // Realtime refresh — only re-fetch when idea entities change
+  // Realtime refresh — derived status depends on idea + proposal + task state
+  // TODO: SSE events lack field-level granularity; ideally only refresh on status changes, not every update
   useRealtimeEntityTypeEvent("idea", fetchData);
+  useRealtimeEntityTypeEvent("proposal", fetchData);
+  useRealtimeEntityTypeEvent("task", fetchData);
 
   // Only fetch on mount if no initial data was provided
   useEffect(() => {

@@ -1138,7 +1138,12 @@
         "done": "Done",
         "noTasks": "No tasks available",
         "assigned": "Assigned",
-        "closed": "Closed"
+        "closed": "Closed",
+        "summary": "{done}/{total} tasks done",
+        "acSummary": "{passed}/{total} criteria passed",
+        "agentWorking": "{count, plural, one {# agent working} other {# agents working}}",
+        "workersActive": "{count, plural, one {# worker} other {# workers}}",
+        "viewKanban": "Kanban"
       },
       "activityTab": {
         "activity": "Activity",

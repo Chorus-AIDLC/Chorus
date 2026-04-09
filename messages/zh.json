@@ -1139,7 +1139,12 @@
         "done": "已完成",
         "noTasks": "暂无可用任务",
         "assigned": "已分配",
-        "closed": "已关闭"
+        "closed": "已关闭",
+        "summary": "{done}/{total} 任务完成",
+        "acSummary": "{passed}/{total} 验收通过",
+        "agentWorking": "{count} 个 Agent 正在工作",
+        "workersActive": "{count} 个工作者",
+        "viewKanban": "看板"
       },
       "activityTab": {
         "activity": "动态",

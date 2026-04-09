@@ -14,6 +14,7 @@ interface IdeaTrackerProps {
   projectUuid: string;
   currentUserUuid: string;
   initialTrackerData: TrackerGroupsResult;
+  initialSelectedIdeaUuid?: string | null;
   initialStatsData: {
     stats: {
       ideas: { total: number; open: number };
@@ -31,12 +32,12 @@ interface IdeaTrackerProps {
   };
 }
 
-export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, initialStatsData }: IdeaTrackerProps) {
+export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
   const t = useTranslations("ideaTracker");
   const [activeTab, setActiveTab] = useState<"ideas" | "stats">("ideas");
   const [isEmpty, setIsEmpty] = useState(false);
   const [showNewIdeaDialog, setShowNewIdeaDialog] = useState(false);
-  const [selectedIdeaUuid, setSelectedIdeaUuid] = useState<string | null>(null);
+  const [selectedIdeaUuid, setSelectedIdeaUuid] = useState<string | null>(initialSelectedIdeaUuid ?? null);
 
   return (
     <div className="flex h-full flex-col">

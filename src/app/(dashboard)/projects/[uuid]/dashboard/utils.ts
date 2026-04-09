@@ -11,6 +11,17 @@ export interface FlatTask {
   title: string;
   status: string;
   commentCount: number;
+  assignee?: { type: string; uuid: string; name: string } | null;
+  acceptanceSummary?: {
+    total: number;
+    required: number;
+    passed: number;
+    failed: number;
+    pending: number;
+    requiredPassed: number;
+    requiredFailed: number;
+    requiredPending: number;
+  } | null;
 }
 
 /** Task status → dot color mapping (shared by overview-timeline and task-list-view) */

@@ -21,25 +21,15 @@ export function ActivityCommentsView({
   onCommentCountChange,
 }: ActivityCommentsViewProps) {
   const t = useTranslations("ideaTracker");
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>("activity");
+  const [activeSubTab, setActiveSubTab] = useState<SubTab>("comments");
 
   return (
     <div className="space-y-4">
       {/* Sub-tab toggle */}
       <div className="flex gap-1 rounded-lg bg-[#F5F2EC] p-0.5">
         <button
-          onClick={() => setActiveSubTab("activity")}
-          className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
-            activeSubTab === "activity"
-              ? "bg-white text-[#2C2C2C] shadow-sm"
-              : "text-[#9A9A9A] hover:text-[#6B6B6B]"
-          }`}
-        >
-          {t("panel.activityTab.activity")}
-        </button>
-        <button
           onClick={() => setActiveSubTab("comments")}
-          className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors flex items-center justify-center gap-1.5 ${
+          className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
             activeSubTab === "comments"
               ? "bg-white text-[#2C2C2C] shadow-sm"
               : "text-[#9A9A9A] hover:text-[#6B6B6B]"
@@ -51,6 +41,16 @@ export function ActivityCommentsView({
               {commentCount}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setActiveSubTab("activity")}
+          className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer ${
+            activeSubTab === "activity"
+              ? "bg-white text-[#2C2C2C] shadow-sm"
+              : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+          }`}
+        >
+          {t("panel.activityTab.activity")}
         </button>
       </div>
 
