@@ -74,8 +74,23 @@ export function ElaborationView({ idea, onRefresh }: ElaborationViewProps) {
             onRefresh={handleRefresh}
           />
         </div>
+      ) : idea.status === "open" ? (
+        /* Open idea — prompt to assign */
+        <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FFF3E0]">
+            <Bot className="h-5 w-5 text-[#E65100]" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-[#2C2C2C]">
+              {t("panel.elaborationNotStarted")}
+            </p>
+            <p className="mt-1 text-xs text-[#9A9A9A]">
+              {t("panel.elaborationNotStartedDesc")}
+            </p>
+          </div>
+        </div>
       ) : (
-        /* Agent waiting state */
+        /* Elaborating but no rounds yet — agent working */
         <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E3F2FD]">
             <Bot className="h-5 w-5 text-[#1976D2]" />

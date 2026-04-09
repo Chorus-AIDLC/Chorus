@@ -1093,6 +1093,8 @@
       "donePlaceholder": "此想法已完成。",
       "elaborationStatus": "细化状态",
       "elaborationRounds": "细化问答",
+      "elaborationNotStarted": "尚未开始",
+      "elaborationNotStartedDesc": "分配给智能体以开始需求细化。",
       "elaborationWaiting": "等待智能体",
       "elaborationWaitingDesc": "PM 智能体将很快开始细化。",
       "elaboration": {

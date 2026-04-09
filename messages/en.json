@@ -1092,6 +1092,8 @@
       "donePlaceholder": "This idea has been completed.",
       "elaborationStatus": "Elaboration Status",
       "elaborationRounds": "Elaboration Q&A",
+      "elaborationNotStarted": "Not started yet",
+      "elaborationNotStartedDesc": "Assign this idea to an agent to start requirement elaboration.",
       "elaborationWaiting": "Waiting for agent",
       "elaborationWaitingDesc": "The PM agent will start elaboration soon.",
       "elaboration": {

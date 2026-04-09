@@ -96,7 +96,7 @@ function getVisibleTabs(
   tasks: FlatTask[],
 ): TabId[] {
   const tabs: TabId[] = ["overview"];
-  if (idea.status !== "open") tabs.push("elaboration");
+  tabs.push("elaboration");
   if (proposals.length > 0) tabs.push("proposal");
   if (tasks.length > 0) tabs.push("tasks");
   tabs.push("activity");
@@ -106,7 +106,7 @@ function getVisibleTabs(
 function getDefaultTab(badgeHint: string | null): TabId {
   switch (badgeHint) {
     case "open":
-      return "overview";
+      return "elaboration";
     case "researching":
     case "answer_questions":
       return "elaboration";
