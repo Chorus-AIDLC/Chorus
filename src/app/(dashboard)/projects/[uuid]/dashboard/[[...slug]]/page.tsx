@@ -1,5 +1,6 @@
-// src/app/(dashboard)/projects/[uuid]/dashboard/page.tsx
+// src/app/(dashboard)/projects/[uuid]/dashboard/[[...slug]]/page.tsx
 // Server Component — Project Dashboard with Idea Tracker
+// Optional catch-all: /dashboard (no idea) or /dashboard/{ideaUuid} (deep link)
 
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -7,11 +8,11 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { getProject, getProjectStats } from "@/services/project.service";
 import { getTrackerGroups } from "@/services/idea.service";
 import { listActivitiesWithActorNames } from "@/services/activity.service";
-import { ProjectSettingsModal } from "./project-settings-modal";
-import { IdeaTracker } from "./idea-tracker";
+import { ProjectSettingsModal } from "../project-settings-modal";
+import { IdeaTracker } from "../idea-tracker";
 
 interface PageProps {
-  params: Promise<{ uuid: string }>;
+  params: Promise<{ uuid: string; slug?: string[] }>;
 }
 
 export default async function DashboardPage({ params }: PageProps) {
@@ -20,7 +21,8 @@ export default async function DashboardPage({ params }: PageProps) {
     redirect("/login");
   }
 
-  const { uuid: projectUuid } = await params;
+  const { uuid: projectUuid, slug } = await params;
+  const initialSelectedIdeaUuid = slug?.[0] ?? null;
   const t = await getTranslations();
 
   const project = await getProject(auth.companyUuid, projectUuid);
@@ -68,6 +70,7 @@ export default async function DashboardPage({ params }: PageProps) {
           currentUserUuid={auth.actorUuid}
           initialTrackerData={trackerData}
           initialStatsData={{ stats, recentActivities: activities }}
+          initialSelectedIdeaUuid={initialSelectedIdeaUuid}
         />
       </div>
     </div>

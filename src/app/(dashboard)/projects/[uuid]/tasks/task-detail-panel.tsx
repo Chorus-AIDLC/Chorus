@@ -665,11 +665,17 @@ export function TaskDetailPanel({
       )}
 
       {/* Panel */}
-      <div className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
-        isSideBySide
-          ? `z-40 right-[480px] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
-          : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
-      }`}>
+      <div
+        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+          isSideBySide
+            ? `z-40 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
+            : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
+        }`}
+        style={{
+          maxWidth: "480px",
+          ...(isSideBySide ? { right: "480px" } : {}),
+        }}
+      >
         {/* Panel Header */}
         <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
           {onBack && (

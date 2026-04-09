@@ -70,17 +70,19 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
   const [proposals, setProposals] = useState<ProposalData[]>(initialProposals ?? []);
   const [isLoading, setIsLoading] = useState(!initialProposals);
 
-  const fetchProposals = useCallback(async () => {
+  const fetchProposals = useCallback(async (): Promise<ProposalData[]> => {
     try {
       const result = await getProposalsForIdeaAction(projectUuid, idea.uuid);
       if (result.success) {
         setProposals(result.data);
+        return result.data;
       }
     } catch (e) {
       console.error("Failed to fetch proposals:", e);
     } finally {
       setIsLoading(false);
     }
+    return [];
   }, [projectUuid, idea.uuid]);
 
   useEffect(() => {
@@ -97,38 +99,35 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
   // SSE: refresh proposals when any proposal changes (draft added/removed/updated)
   useRealtimeEntityTypeEvent("proposal", async () => {
     const oldProposals = prevProposalsRef.current;
-    await fetchProposals();
-    // After fetch, compare old vs new to inject presence on newly created drafts
-    // Use a microtask to read updated state after React batches the setState
-    setTimeout(() => {
-      const newProposals = prevProposalsRef.current;
-      for (const np of newProposals) {
-        const op = oldProposals.find((o) => o.uuid === np.uuid);
-        if (!op) continue;
-        const oldDocIds = new Set((op.documentDrafts ?? []).map((d) => d.uuid));
-        const oldTaskIds = new Set((op.taskDrafts ?? []).map((d) => d.uuid));
-        const newDocs = (np.documentDrafts ?? []).filter((d) => d.uuid && !oldDocIds.has(d.uuid));
-        const newTasks = (np.taskDrafts ?? []).filter((d) => d.uuid && !oldTaskIds.has(d.uuid));
-        const allNewIds = [...newDocs.map((d) => d.uuid!), ...newTasks.map((d) => d.uuid!)];
-        if (allNewIds.length > 0) {
-          const presence = getPresence("proposal", np.uuid);
-          const agent = presence[0];
-          if (agent) {
-            for (const id of allNewIds) {
-              injectPresence({
-                entityType: "proposal",
-                entityUuid: np.uuid,
-                subEntityType: "draft",
-                subEntityUuid: id,
-                agentUuid: agent.agentUuid,
-                agentName: agent.agentName,
-                action: "mutate",
-              });
-            }
+    const newProposals = await fetchProposals();
+
+    // Inject presence on newly created drafts
+    for (const np of newProposals) {
+      const op = oldProposals.find((o) => o.uuid === np.uuid);
+      if (!op) continue;
+      const oldDocIds = new Set((op.documentDrafts ?? []).map((d) => d.uuid));
+      const oldTaskIds = new Set((op.taskDrafts ?? []).map((d) => d.uuid));
+      const newDocs = (np.documentDrafts ?? []).filter((d) => d.uuid && !oldDocIds.has(d.uuid));
+      const newTasks = (np.taskDrafts ?? []).filter((d) => d.uuid && !oldTaskIds.has(d.uuid));
+      const allNewIds = [...newDocs.map((d) => d.uuid!), ...newTasks.map((d) => d.uuid!)];
+      if (allNewIds.length > 0) {
+        const presence = getPresence("proposal", np.uuid);
+        const agent = presence[0];
+        if (agent) {
+          for (const id of allNewIds) {
+            injectPresence({
+              entityType: "proposal",
+              entityUuid: np.uuid,
+              subEntityType: "draft",
+              subEntityUuid: id,
+              agentUuid: agent.agentUuid,
+              agentName: agent.agentName,
+              action: "mutate",
+            });
           }
         }
       }
-    }, 0);
+    }
   });
 
   if (isLoading) {
@@ -170,6 +169,15 @@ interface MaterializedTask {
   title: string;
   status: string;
 }
+
+const PROPOSAL_STATUS_COLORS: Record<string, string> = {
+  draft: "bg-[#F5F5F5] text-[#6B6B6B]",
+  pending: "bg-[#FFF3E0] text-[#E65100]",
+  approved: "bg-[#E8F5E9] text-[#5A9E6F]",
+  rejected: "bg-[#FFEBEE] text-[#C4574C]",
+  revised: "bg-[#E3F2FD] text-[#1976D2]",
+  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+};
 
 function ProposalContent({
   proposal,
@@ -256,15 +264,6 @@ function ProposalContent({
     ? materializedTasks.filter((t) => t.status === "done" || t.status === "closed").length
     : 0;
 
-  const proposalStatusColors: Record<string, string> = {
-    draft: "bg-[#F5F5F5] text-[#6B6B6B]",
-    pending: "bg-[#FFF3E0] text-[#E65100]",
-    approved: "bg-[#E8F5E9] text-[#5A9E6F]",
-    rejected: "bg-[#FFEBEE] text-[#C4574C]",
-    revised: "bg-[#E3F2FD] text-[#1976D2]",
-    closed: "bg-[#F5F5F5] text-[#9A9A9A]",
-  };
-
   return (
     <div className="space-y-5">
       {/* Title + Status */}
@@ -272,7 +271,7 @@ function ProposalContent({
         <h3 className="text-[14px] font-semibold text-[#2C2C2C] truncate flex-1">
           {proposal.title}
         </h3>
-        <Badge className={`text-[11px] font-semibold border-0 shrink-0 ${proposalStatusColors[proposal.status] || ""}`}>
+        <Badge className={`text-[11px] font-semibold border-0 shrink-0 ${PROPOSAL_STATUS_COLORS[proposal.status] || ""}`}>
           {tRoot(`status.${proposal.status}`)}
         </Badge>
       </div>

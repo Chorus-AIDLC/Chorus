@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Streamdown } from "streamdown";
 import { code as codePlugin } from "@streamdown/code";
 import { normalizeNewlines, DOC_TYPE_I18N_KEYS } from "./utils";
+import { PANEL_WIDTH_PX } from "../utils";
 
 interface DocumentPanelProps {
   title: string;
@@ -28,21 +29,17 @@ export function DocumentPanel({ title, type, content, mode = "overlay", onClose,
     return () => clearTimeout(timer);
   }, []);
 
-  // Esc key: close this panel only (stopPropagation prevents parent from also closing)
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
+  // Esc key: close this panel only (bubble phase — modals/dialogs on top get priority)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
         onClose();
       }
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [handleKeyDown]);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const isSideBySide = mode === "sidebyside";
 
@@ -58,11 +55,15 @@ export function DocumentPanel({ title, type, content, mode = "overlay", onClose,
 
       {/* Panel */}
       <div
-        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
           isSideBySide
-            ? `z-40 right-[480px] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
+            ? `z-40 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
             : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
         }`}
+        style={{
+          width: `min(100%, ${PANEL_WIDTH_PX}px)`,
+          ...(isSideBySide ? { right: `${PANEL_WIDTH_PX}px` } : {}),
+        }}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">

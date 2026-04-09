@@ -344,11 +344,11 @@ export function IdeaDetailPanel({
     // Intentionally omitting userHasSwitchedTab and switchTab — checked/used inside but shouldn't trigger re-runs
   }, [idea?.uuid, desiredTab, visibleTabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset user switch flag when idea changes or when badgeHint changes phase
-  // (e.g., planning → building should auto-route to tasks tab)
+  // Reset user switch flag only when switching to a different idea
+  // (badgeHint changes mid-view should NOT yank the user to a different tab)
   useEffect(() => {
     setUserHasSwitchedTab(false);
-  }, [ideaUuid, idea?.badgeHint]);
+  }, [ideaUuid]);
 
   // Ensure active tab is still visible (e.g., tasks cleared)
   useEffect(() => {

@@ -3,6 +3,11 @@ import type { BadgeHint } from "@/services/idea.service";
 
 export type TranslateFn = ReturnType<typeof useTranslations>;
 
+// ===== Panel Layout Constants =====
+
+/** Width of side panels (idea detail, document, task detail) — used for side-by-side positioning */
+export const PANEL_WIDTH_PX = 480;
+
 // ===== Shared Task Types =====
 
 /** Flattened task shape used across panel components */
