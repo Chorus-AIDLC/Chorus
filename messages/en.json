@@ -1121,6 +1121,7 @@
         "elaborationSkipped": "Skipped",
         "noProposal": "Not created yet",
         "proposalApproved": "Approved",
+        "proposalsApproved": "{count}/{total} approved",
         "proposalPending": "Pending review",
         "proposalDraft": "Draft",
         "proposalRejected": "Rejected",

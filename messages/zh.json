@@ -1122,6 +1122,7 @@
         "elaborationSkipped": "已跳过",
         "noProposal": "尚未创建",
         "proposalApproved": "已批准",
+        "proposalsApproved": "{count}/{total} 已批准",
         "proposalPending": "待审核",
         "proposalDraft": "草稿",
         "proposalRejected": "已拒绝",

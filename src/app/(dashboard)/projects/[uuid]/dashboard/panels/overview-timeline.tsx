@@ -174,23 +174,32 @@ export function OverviewTimeline({
     return t("panel.timeline.noElaboration");
   }, [idea.status, idea.elaborationStatus, elaboration, t]);
 
-  // Proposal summary
+  // Proposal summary — aggregate across all proposals
   const proposalSummary = useMemo(() => {
     if (proposals.length === 0) return t("panel.timeline.noProposal");
+    const approved = proposals.filter((p) => p.status === "approved").length;
+    const pending = proposals.filter((p) => p.status === "pending_review").length;
+    if (approved > 0 && proposals.length === 1) return t("panel.timeline.proposalApproved");
+    if (approved > 0) return t("panel.timeline.proposalsApproved", { count: approved, total: proposals.length });
+    if (pending > 0) return t("panel.timeline.proposalPending");
     const latest = proposals[0];
     switch (latest.status) {
-      case "approved":
-        return t("panel.timeline.proposalApproved");
-      case "pending_review":
-        return t("panel.timeline.proposalPending");
-      case "draft":
-        return t("panel.timeline.proposalDraft");
-      case "rejected":
-        return t("panel.timeline.proposalRejected");
-      default:
-        return t("panel.timeline.proposalDraft");
+      case "draft": return t("panel.timeline.proposalDraft");
+      case "rejected": return t("panel.timeline.proposalRejected");
+      default: return t("panel.timeline.proposalDraft");
     }
   }, [proposals, t]);
+
+  // Aggregate doc/task counts across all proposals
+  const proposalStats = useMemo(() => {
+    let docCount = 0;
+    let taskDraftCount = 0;
+    for (const p of proposals) {
+      docCount += p.documentDrafts?.length ?? 0;
+      taskDraftCount += p.taskDrafts?.length ?? 0;
+    }
+    return { docCount, taskDraftCount };
+  }, [proposals]);
 
   // Task stats
   const taskStats = useMemo(() => {
@@ -243,16 +252,16 @@ export function OverviewTimeline({
             <p className="text-[12px] text-[#6B6B6B]">{proposalSummary}</p>
             {proposals.length > 0 && (
               <div className="space-y-1">
-                {proposals[0].documentDrafts && proposals[0].documentDrafts.length > 0 && (
+                {proposalStats.docCount > 0 && (
                   <div className="flex items-center gap-1.5 text-[12px] text-[#9A9A9A]">
                     <FileText className="h-3 w-3" />
-                    <span>{t("panel.timeline.documents", { count: proposals[0].documentDrafts.length })}</span>
+                    <span>{t("panel.timeline.documents", { count: proposalStats.docCount })}</span>
                   </div>
                 )}
-                {proposals[0].taskDrafts && proposals[0].taskDrafts.length > 0 && (
+                {proposalStats.taskDraftCount > 0 && (
                   <div className="flex items-center gap-1.5 text-[12px] text-[#9A9A9A]">
                     <ListChecks className="h-3 w-3" />
-                    <span>{t("panel.timeline.tasks", { count: proposals[0].taskDrafts.length })}</span>
+                    <span>{t("panel.timeline.tasks", { count: proposalStats.taskDraftCount })}</span>
                   </div>
                 )}
               </div>
