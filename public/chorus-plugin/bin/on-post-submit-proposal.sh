@@ -37,13 +37,18 @@ if [ -n "$PROPOSAL_TITLE" ]; then
   TITLE_DISPLAY=" '${PROPOSAL_TITLE}'"
 fi
 
+# Max rounds config (0 = unlimited)
+MAX_ROUNDS="${CLAUDE_PLUGIN_OPTION_MAXPROPOSALREVIEWROUNDS:-3}"
+
 CONTEXT="[Chorus Plugin — Proposal Submitted for Review]
 Proposal${TITLE_DISPLAY} (UUID: ${PROPOSAL_UUID}) has been submitted.
+
+Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 
 ACTION REQUIRED: Spawn the \`chorus:proposal-reviewer\` agent to perform an independent quality review before admin approval.
 
 Example:
-  Agent({ subagent_type: \"chorus:proposal-reviewer\", prompt: \"Review proposal ${PROPOSAL_UUID}. Fetch the proposal, check document quality, task granularity, AC alignment, and cross-task dependencies. Post your VERDICT as a comment on the proposal.\" })
+  Agent({ subagent_type: \"chorus:proposal-reviewer\", prompt: \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with review. Post your VERDICT as a comment on the proposal.\" })
 
 The reviewer is read-only and will post its VERDICT as a comment on the proposal. The result is advisory — you make the final approval decision.
 

@@ -11,7 +11,7 @@
       "name": "chorus",
       "source": "./public/chorus-plugin",
       "description": "Chorus AI-DLC collaboration platform plugin. Automates session lifecycle, provides MCP tools for PM/Developer/Admin workflows, and enables multi-agent team observability.",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "category": "project-management",
       "tags": ["ai-dlc", "collaboration", "mcp", "session", "multi-agent"]
     }

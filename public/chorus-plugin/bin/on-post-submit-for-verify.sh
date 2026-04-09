@@ -37,13 +37,18 @@ if [ -n "$TASK_TITLE" ]; then
   TITLE_DISPLAY=" '${TASK_TITLE}'"
 fi
 
+# Max rounds config (0 = unlimited)
+MAX_ROUNDS="${CLAUDE_PLUGIN_OPTION_MAXTASKREVIEWROUNDS:-3}"
+
 CONTEXT="[Chorus Plugin — Task Submitted for Verification]
 Task${TITLE_DISPLAY} (UUID: ${TASK_UUID}) has been submitted for verification.
+
+Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 
 ACTION REQUIRED: Spawn the \`chorus:task-reviewer\` agent to perform an independent review before admin verification.
 
 Example:
-  Agent({ subagent_type: \"chorus:task-reviewer\", prompt: \"Review task ${TASK_UUID}. Fetch the task and its AC, read the proposal documents, examine the code, run tests if available. Post your VERDICT as a comment on the task.\" })
+  Agent({ subagent_type: \"chorus:task-reviewer\", prompt: \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with review. Post your VERDICT as a comment on the task.\" })
 
 The reviewer is read-only and will post its VERDICT as a comment on the task. The result is advisory — the admin makes the final verification decision.
 
