@@ -700,11 +700,9 @@ export default function ProjectsPage() {
   if (loading) {
     return (
       <div className="bg-[#FAF8F4] p-4 md:px-8 md:py-6">
-        <div className="mx-auto max-w-[1200px]">
           <p className="text-sm text-[#6B6B6B]">
             {t("projects.loadingProjects")}
           </p>
-        </div>
       </div>
     );
   }
@@ -713,7 +711,6 @@ export default function ProjectsPage() {
     <>
       <DragDropContext onDragEnd={handleDragEnd}>
         <div className="bg-[#FAF8F4] p-4 md:px-8 md:py-6">
-        <div className="mx-auto max-w-[1200px]">
           {/* Header */}
           <div className="mb-4 md:mb-6">
             <div className="flex items-center justify-between">
@@ -941,7 +938,6 @@ export default function ProjectsPage() {
               </Button>
             </div>
           )}
-        </div>
         </div>
       </DragDropContext>
 

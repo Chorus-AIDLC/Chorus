@@ -114,6 +114,7 @@ export default function DashboardLayout({
     pathname === "/settings" ||
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
+  const isFullWidthPage = pathname.match(/^\/projects\/[a-f0-9-]{36}\/tasks(\/|$)/);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { checkSession(); }, []);
@@ -502,7 +503,7 @@ export default function DashboardLayout({
       {/* SSE: project pages get project-scoped events, /projects and /project-groups get company-wide, /settings gets none */}
       {isProjectContext && currentProjectUuid ? (
         <RealtimeProvider projectUuid={currentProjectUuid}>
-          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
           <PixelCanvasWidget
             projectUuid={currentProjectUuid}
             projectName={currentProject?.name || ""}
@@ -510,10 +511,10 @@ export default function DashboardLayout({
         </RealtimeProvider>
       ) : pathname === "/projects" || pathname.startsWith("/project-groups") ? (
         <RealtimeProvider>
-          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+          <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
         </RealtimeProvider>
       ) : (
-        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><PageTransition>{children}</PageTransition></main>
+        <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
       )}
     </div>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />

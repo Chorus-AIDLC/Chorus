@@ -45,7 +45,7 @@ export default async function NewProposalPage({ params, searchParams }: PageProp
 
   return (
     <div className="p-8">
-      <div className="mx-auto max-w-3xl">
+      <div>
         <h1 className="mb-6 text-2xl font-semibold text-[#2C2C2C]">
           {t("proposals.createProposal")}
         </h1>
