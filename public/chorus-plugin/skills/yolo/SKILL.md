@@ -334,8 +334,6 @@ loop:
 - Project UUID
 - NO session UUID, NO workflow boilerplate -- the plugin auto-injects everything via SubagentStart hook
 
-**No `TeamDelete` needed** -- Claude Code Agent Teams are ephemeral. Once all sub-agents in a team complete, the team is automatically cleaned up.
-
 #### Fallback: Main Agent (sequential)
 
 If `TeamCreate` fails (e.g., Agent Teams not available, permission denied, or sub-agents crash repeatedly), fall back to executing tasks sequentially as the main agent:
