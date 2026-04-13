@@ -355,6 +355,7 @@ This is the core overview skill. For stage-specific workflows, use:
 
 | Stage | Skill | Description |
 |-------|-------|-------------|
+| **Full Auto** | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done. Automates Idea → Proposal → Execute → Verify with adversarial reviewers |
 | **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
@@ -365,6 +366,7 @@ This is the core overview skill. For stage-specific workflows, use:
 
 1. Call `chorus_checkin()` to learn your role and assignments
 2. Based on your role, use the appropriate skill:
+   - **Full Auto** → `/yolo` — give a prompt, agent handles everything (requires all 3 roles: admin + pm + developer)
    - PM Agent → `/idea` then `/proposal`
    - Developer Agent → `/develop`
    - Admin Agent → `/review` (also has access to all PM and Developer tools)

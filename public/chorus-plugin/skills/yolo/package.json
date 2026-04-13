@@ -1,0 +1,31 @@
+{
+  "name": "yolo",
+  "version": "0.1.0",
+  "description": "Full-auto AI-DLC pipeline — from prompt to done. Automates the entire Idea -> Proposal -> Execute -> Verify lifecycle.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "yolo",
+    "full-auto",
+    "ai-dlc",
+    "automation",
+    "mcp"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "yolo",
+      "full auto",
+      "autopilot",
+      "end to end"
+    ]
+  }
+}

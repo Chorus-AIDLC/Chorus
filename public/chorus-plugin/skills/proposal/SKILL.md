@@ -195,14 +195,36 @@ chorus_add_comment({
 
 ### Step 6: Handle Feedback
 
-If the proposal is rejected, check the review note:
+After submission, a `chorus:proposal-reviewer` may run and post a VERDICT comment. If the VERDICT is **FAIL**, or an Admin rejects the proposal, you need to revise and resubmit.
 
-```
-chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
-chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
-```
+**IMPORTANT:** A proposal in `pending` status cannot be edited. You **must** reject it first to return it to `draft` status before editing any drafts.
 
-Revise the drafts and resubmit.
+1. **Read feedback:**
+   ```
+   chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+   chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
+   ```
+   Identify BLOCKERs from the reviewer VERDICT or rejection note.
+
+2. **Reject the proposal** (requires admin role — if you don't have it, ask an admin to reject):
+   ```
+   chorus_admin_reject_proposal({
+     proposalUuid: "<proposal-uuid>",
+     reviewNote: "Reviewer FAIL. Fixing BLOCKERs: <list>"
+   })
+   ```
+   This returns the proposal to `draft` status.
+
+3. **Revise the drafts:**
+   ```
+   chorus_pm_update_document_draft({ proposalUuid: "<proposal-uuid>", draftUuid: "<uuid>", content: "..." })
+   chorus_pm_update_task_draft({ proposalUuid: "<proposal-uuid>", draftUuid: "<uuid>", ... })
+   ```
+
+4. **Resubmit:**
+   ```
+   chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
+   ```
 
 ### Step 7: Post-Approval
 
