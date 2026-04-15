@@ -7,6 +7,7 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    upsert: vi.fn(),
   },
   company: {
     findFirst: vi.fn(),
@@ -202,7 +203,7 @@ describe("findOrCreateDefaultUser", () => {
     const company = makeCompany();
     const user = makeUser();
     mockPrisma.company.findFirst.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(user);
+    mockPrisma.user.upsert.mockResolvedValue(user);
 
     const result = await findOrCreateDefaultUser("user@test.com");
 
@@ -218,8 +219,7 @@ describe("findOrCreateDefaultUser", () => {
     const company = makeCompany();
     mockPrisma.company.findFirst.mockResolvedValue(null);
     mockPrisma.company.create.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(null);
-    mockPrisma.user.create.mockResolvedValue(makeUser());
+    mockPrisma.user.upsert.mockResolvedValue(makeUser());
 
     await findOrCreateDefaultUser("user@newdomain.com");
 
@@ -234,49 +234,65 @@ describe("findOrCreateDefaultUser", () => {
     );
   });
 
-  it("should return existing user in company", async () => {
+  it("should return existing user via upsert", async () => {
     const company = makeCompany();
     const user = makeUser();
     mockPrisma.company.findFirst.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(user);
+    mockPrisma.user.upsert.mockResolvedValue(user);
 
     const result = await findOrCreateDefaultUser("user@test.com");
 
     expect(result.uuid).toBe(userUuid);
-    expect(mockPrisma.user.create).not.toHaveBeenCalled();
-  });
-
-  it("should create new user when not found", async () => {
-    const company = makeCompany();
-    mockPrisma.company.findFirst.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(null);
-    mockPrisma.user.create.mockResolvedValue(makeUser());
-
-    const result = await findOrCreateDefaultUser("newuser@test.com");
-
-    expect(mockPrisma.user.create).toHaveBeenCalledWith(
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: {
-          email: "newuser@test.com",
-          name: "newuser",
-          oidcSub: "default_user",
-          companyUuid,
+        where: {
+          companyUuid_oidcSub: {
+            companyUuid,
+            oidcSub: "default_user@test.com",
+          },
         },
       })
     );
   });
 
-  it("should extract name from email", async () => {
+  it("should upsert user with per-email oidcSub", async () => {
     const company = makeCompany();
     mockPrisma.company.findFirst.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(null);
-    mockPrisma.user.create.mockResolvedValue(makeUser({ name: "john.doe" }));
+    mockPrisma.user.upsert.mockResolvedValue(makeUser());
+
+    await findOrCreateDefaultUser("newuser@test.com");
+
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyUuid_oidcSub: {
+            companyUuid,
+            oidcSub: "default_newuser@test.com",
+          },
+        },
+        create: {
+          email: "newuser@test.com",
+          name: "newuser",
+          oidcSub: "default_newuser@test.com",
+          companyUuid,
+        },
+        update: {
+          email: "newuser@test.com",
+        },
+      })
+    );
+  });
+
+  it("should extract name from email in create", async () => {
+    const company = makeCompany();
+    mockPrisma.company.findFirst.mockResolvedValue(company);
+    mockPrisma.user.upsert.mockResolvedValue(makeUser({ name: "john.doe" }));
 
     await findOrCreateDefaultUser("john.doe@test.com");
 
-    expect(mockPrisma.user.create).toHaveBeenCalledWith(
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ name: "john.doe" }),
+        create: expect.objectContaining({ name: "john.doe" }),
       })
     );
   });
@@ -284,7 +300,7 @@ describe("findOrCreateDefaultUser", () => {
   it("should handle lowercase domain conversion", async () => {
     const company = makeCompany();
     mockPrisma.company.findFirst.mockResolvedValue(company);
-    mockPrisma.user.findFirst.mockResolvedValue(makeUser());
+    mockPrisma.user.upsert.mockResolvedValue(makeUser());
 
     await findOrCreateDefaultUser("User@TEST.COM");
 

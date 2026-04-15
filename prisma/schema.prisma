@@ -43,7 +43,7 @@ model User {
   uuid        String   @unique @default(uuid())
   companyUuid String
   company     Company  @relation(fields: [companyUuid], references: [uuid])
-  oidcSub     String   @unique    // OIDC subject
+  oidcSub     String   // OIDC subject
   email       String?
   name        String?
   avatarUrl   String?
@@ -51,6 +51,7 @@ model User {
 
   ownedAgents Agent[]
 
+  @@unique([companyUuid, oidcSub])
   @@index([companyUuid])
 }
 

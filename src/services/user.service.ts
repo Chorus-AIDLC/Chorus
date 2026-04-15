@@ -155,54 +155,40 @@ export async function findOrCreateDefaultUser(email: string) {
     });
   }
 
-  // Look for existing user by email in that company
-  let user = await prisma.user.findFirst({
-    where: {
-      email,
-      companyUuid: company.uuid,
-    },
-    select: {
-      id: true,
-      uuid: true,
-      email: true,
-      name: true,
-      oidcSub: true,
-      companyUuid: true,
-      company: {
-        select: {
-          uuid: true,
-          name: true,
-        },
+  const oidcSub = `default_${email.toLowerCase()}`;
+  const userSelect = {
+    id: true,
+    uuid: true,
+    email: true,
+    name: true,
+    oidcSub: true,
+    companyUuid: true,
+    company: {
+      select: {
+        uuid: true,
+        name: true,
       },
     },
-  });
+  } as const;
 
-  if (user) {
-    return user;
-  }
-
-  // Create new user
-  user = await prisma.user.create({
-    data: {
+  // Upsert to handle concurrent requests safely
+  const user = await prisma.user.upsert({
+    where: {
+      companyUuid_oidcSub: {
+        companyUuid: company.uuid,
+        oidcSub,
+      },
+    },
+    update: {
+      email,
+    },
+    create: {
       email,
       name: email.split("@")[0],
-      oidcSub: "default_user",
+      oidcSub,
       companyUuid: company.uuid,
     },
-    select: {
-      id: true,
-      uuid: true,
-      email: true,
-      name: true,
-      oidcSub: true,
-      companyUuid: true,
-      company: {
-        select: {
-          uuid: true,
-          name: true,
-        },
-      },
-    },
+    select: userSelect,
   });
 
   return user;

@@ -38,15 +38,18 @@ export async function GET(request: NextRequest) {
     // Our JWT format has: userUuid, companyUuid, email, oidcSub, etc.
     // Also support raw OIDC tokens which have: sub, email
     const userUuid = payload.userUuid as string | undefined;
+    const companyUuid = payload.companyUuid as string | undefined;
     const oidcSub = (payload.oidcSub || payload.sub) as string | undefined;
 
     if (!userUuid && !oidcSub) {
       return errors.unauthorized("Token missing user identifier");
     }
 
-    // Find user - prefer userUuid, fallback to oidcSub (query by UUID)
+    // Find user - prefer userUuid, fallback to oidcSub+companyUuid
     const user = await prisma.user.findFirst({
-      where: userUuid ? { uuid: userUuid } : { oidcSub: oidcSub },
+      where: userUuid
+        ? { uuid: userUuid }
+        : { oidcSub, ...(companyUuid ? { companyUuid } : {}) },
       select: {
         uuid: true,
         email: true,
