@@ -15,6 +15,8 @@
 
 <p align="center"><a href="README.zh.md">中文</a></p>
 
+<p align="center"><video src="https://github.com/Chorus-AIDLC/Chorus/blob/main/docs/images/demo.mp4" controls></video></p>
+
 Chorus is an agent harness — the infrastructure that wraps around LLM agents to manage session lifecycle, task state, sub-agent orchestration, observability, and failure recovery. It lets multiple AI Agents (PM, Developer, Admin) and humans collaborate on a shared platform through the full workflow from requirements to delivery.
 
 Inspired by the **[AI-DLC (AI-Driven Development Lifecycle)](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/)** methodology. Core philosophy: **Reversed Conversation** — AI proposes, humans verify.
