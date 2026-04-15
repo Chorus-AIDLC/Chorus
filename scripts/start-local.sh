@@ -8,17 +8,28 @@ PORT="${PORT:-8637}"
 MAX_RETRIES=30
 
 cleanup() {
-  # Kill the entire process group of pglite-server (npx → node tree)
   if [ -n "${PGLITE_PID:-}" ]; then
-    kill -- -"$PGLITE_PID" 2>/dev/null || kill "$PGLITE_PID" 2>/dev/null || true
+    if [ "${USE_SETSID:-}" = true ]; then
+      # Kill the entire process group (setsid gave it its own PGID)
+      kill -- -"$PGLITE_PID" 2>/dev/null || true
+    else
+      # No setsid (macOS) — kill child tree manually
+      pkill -TERM -P "$PGLITE_PID" 2>/dev/null || true
+      kill "$PGLITE_PID" 2>/dev/null || true
+    fi
     wait "$PGLITE_PID" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT INT TERM
 
-# 1. Start pglite-server in its own process group (setsid)
+# 1. Start pglite-server in background
 echo "Starting embedded PostgreSQL (PGlite) on port ${PGLITE_PORT}..."
-setsid npx pglite-server --db="${PGLITE_DIR}" --port="${PGLITE_PORT}" --max-connections=10 &
+if command -v setsid >/dev/null 2>&1; then
+  USE_SETSID=true
+  setsid npx pglite-server --db="${PGLITE_DIR}" --port="${PGLITE_PORT}" --max-connections=10 &
+else
+  npx pglite-server --db="${PGLITE_DIR}" --port="${PGLITE_PORT}" --max-connections=10 &
+fi
 PGLITE_PID=$!
 
 # 2. Wait for readiness (pure bash TCP check — no pg_isready dependency)

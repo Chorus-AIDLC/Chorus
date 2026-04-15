@@ -14,8 +14,8 @@ services:
       - REDIS_URL=
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-chorus-local-secret}
       - COOKIE_SECURE=false
-      - DEFAULT_USER=dev@chorus.local
-      - DEFAULT_PASSWORD=chorus123
+      - DEFAULT_USER=${DEFAULT_USER:-admin@example.com}
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-changeme}
     volumes:
       - chorus-local-data:/app/data
 

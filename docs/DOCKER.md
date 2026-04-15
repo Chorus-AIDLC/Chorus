@@ -41,7 +41,7 @@ Then run:
 docker compose -f docker-compose.local.yml up -d
 ```
 
-Open http://localhost:8637 and log in with the default credentials (or override via `DEFAULT_USER` / `DEFAULT_PASSWORD` env vars).
+Open http://localhost:8637 and log in with `admin@example.com` / `changeme` (or override via `DEFAULT_USER` / `DEFAULT_PASSWORD` env vars).
 
 The embedded mode:
 - Starts PGlite on an internal port (5433), not exposed externally
@@ -166,7 +166,7 @@ If `DATABASE_URL` is not set, the entrypoint builds it from these individual var
 |---|---|
 | `DEFAULT_USER` | Email address for built-in login (bypasses OIDC). Auto-provisions the user and company on first login. |
 | `DEFAULT_PASSWORD` | Password for the default user (plain text, compared via bcrypt at runtime). |
-| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:8637`). Set this when running behind a reverse proxy. |
+| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:3000`). Set this when running behind a reverse proxy. |
 | `COOKIE_SECURE` | Set to `"false"` to disable secure cookies for HTTP-only deployments (default: `"false"` in docker-compose). Set to `"true"` when deploying with HTTPS in production. |
 
 ### Super Admin
