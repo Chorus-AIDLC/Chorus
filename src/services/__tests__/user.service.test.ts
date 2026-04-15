@@ -310,6 +310,43 @@ describe("findOrCreateDefaultUser", () => {
       })
     );
   });
+
+  it("should be idempotent for repeated calls with same email", async () => {
+    const company = makeCompany();
+    const user = makeUser();
+    mockPrisma.company.findFirst.mockResolvedValue(company);
+    mockPrisma.user.upsert.mockResolvedValue(user);
+
+    const [result1, result2] = await Promise.all([
+      findOrCreateDefaultUser("user@test.com"),
+      findOrCreateDefaultUser("user@test.com"),
+    ]);
+
+    expect(result1.uuid).toBe(result2.uuid);
+    // Both calls use upsert with the same compound key — no constraint violation
+    expect(mockPrisma.user.upsert).toHaveBeenCalledTimes(2);
+    for (const call of mockPrisma.user.upsert.mock.calls) {
+      expect(call[0].where).toEqual({
+        companyUuid_oidcSub: {
+          companyUuid,
+          oidcSub: "default_user@test.com",
+        },
+      });
+    }
+  });
+
+  it("should generate different oidcSub for different emails in same company", async () => {
+    const company = makeCompany();
+    mockPrisma.company.findFirst.mockResolvedValue(company);
+    mockPrisma.user.upsert.mockResolvedValue(makeUser());
+
+    await findOrCreateDefaultUser("alice@test.com");
+    await findOrCreateDefaultUser("bob@test.com");
+
+    const calls = mockPrisma.user.upsert.mock.calls;
+    expect(calls[0][0].where.companyUuid_oidcSub.oidcSub).toBe("default_alice@test.com");
+    expect(calls[1][0].where.companyUuid_oidcSub.oidcSub).toBe("default_bob@test.com");
+  });
 });
 
 // ===== getUserByUuid =====
