@@ -8,7 +8,50 @@
 docker pull chorusaidlc/chorus-app:latest
 ```
 
-### Docker Compose (Recommended)
+### Docker Compose — Standalone (Recommended)
+
+No external database needed. The image bundles [PGlite](https://pglite.dev) (embedded PostgreSQL) and starts everything automatically.
+
+Create a `docker-compose.local.yml`:
+
+```yaml
+# Standalone Chorus — embedded PGlite, no external PostgreSQL or Redis
+services:
+  app:
+    image: chorusaidlc/chorus-app:latest
+    ports:
+      - "8637:3000"
+    environment:
+      # No DATABASE_URL — entrypoint auto-starts embedded PGlite
+      - REDIS_URL=
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-chorus-local-secret}
+      - COOKIE_SECURE=false
+      - DEFAULT_USER=${DEFAULT_USER:-admin@example.com}
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-changeme}
+    volumes:
+      - chorus-local-data:/app/data
+
+volumes:
+  chorus-local-data:
+```
+
+Then run:
+
+```bash
+docker compose -f docker-compose.local.yml up -d
+```
+
+Open http://localhost:8637 and log in with the default credentials (or override via `DEFAULT_USER` / `DEFAULT_PASSWORD` env vars).
+
+The embedded mode:
+- Starts PGlite on an internal port (5433), not exposed externally
+- Stores data in a Docker volume — persists across container restarts
+- Disables Redis (falls back to in-memory EventBus — single-instance only)
+- Runs Prisma migrations automatically on startup
+
+### Production Deployment (PostgreSQL + Redis)
+
+For production with multiple replicas, use Docker Compose with external PostgreSQL and Redis.
 
 Create a `docker-compose.yml`:
 
@@ -17,7 +60,7 @@ services:
   app:
     image: chorusaidlc/chorus-app:latest
     ports:
-      - "3000:3000"
+      - "8637:3000"
     environment:
       - DATABASE_URL=postgresql://chorus:chorus@db:5432/chorus
       - REDIS_URL=redis://default:chorus-redis@redis:6379
@@ -66,17 +109,17 @@ Then run:
 docker compose up -d
 ```
 
-Open http://localhost:3000 and log in with the credentials you set in `DEFAULT_USER` / `DEFAULT_PASSWORD`.
+Open http://localhost:8637 and log in with the credentials you set in `DEFAULT_USER` / `DEFAULT_PASSWORD`.
 
 > **Note for HTTP-only deployments**: The default `docker-compose.yml` sets `COOKIE_SECURE=false` to support HTTP-only deployments (e.g., internal network testing). If you're deploying with HTTPS in production, make sure to set `COOKIE_SECURE=true` to enable secure cookies.
 
-### Docker Run (Standalone)
+### Docker Run (with existing PostgreSQL)
 
 If you already have PostgreSQL and Redis running:
 
 ```bash
 docker run -d \
-  -p 3000:3000 \
+  -p 8637:3000 \
   -e DATABASE_URL=postgresql://user:pass@your-db-host:5432/chorus \
   -e REDIS_URL=redis://default:password@your-redis-host:6379 \
   -e NEXTAUTH_SECRET=change-me-to-a-random-secret \
@@ -92,7 +135,7 @@ docker run -d \
 
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string. Format: `postgresql://user:password@host:port/dbname`. Alternatively, set individual `DB_*` variables (see below). |
+| `DATABASE_URL` | PostgreSQL connection string. Format: `postgresql://user:password@host:port/dbname`. Alternatively, set individual `DB_*` variables (see below). **If omitted**, the entrypoint starts an embedded PGlite instance automatically. |
 | `NEXTAUTH_SECRET` | Secret key for signing JWT session tokens. Use a random string (e.g., `openssl rand -base64 32`). |
 
 ### Database (Alternative to DATABASE_URL)
@@ -123,7 +166,7 @@ If `DATABASE_URL` is not set, the entrypoint builds it from these individual var
 |---|---|
 | `DEFAULT_USER` | Email address for built-in login (bypasses OIDC). Auto-provisions the user and company on first login. |
 | `DEFAULT_PASSWORD` | Password for the default user (plain text, compared via bcrypt at runtime). |
-| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:3000`). Set this when running behind a reverse proxy. |
+| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:8637`). Set this when running behind a reverse proxy. |
 | `COOKIE_SECURE` | Set to `"false"` to disable secure cookies for HTTP-only deployments (default: `"false"` in docker-compose). Set to `"true"` when deploying with HTTPS in production. |
 
 ### Super Admin
@@ -136,16 +179,17 @@ If `DATABASE_URL` is not set, the entrypoint builds it from these individual var
 ## Image Details
 
 - **Base image**: `node:22-alpine`
-- **Exposed port**: `3000`
+- **Internal port**: `3000` (mapped to `8637` externally by default)
 - **Entrypoint**: Runs Prisma migrations automatically on startup (retries for up to 5 minutes while waiting for the database)
 - **Build**: Next.js standalone output for minimal image size
 - **Architectures**: `linux/amd64`, `linux/arm64`
 
 ## Startup Behavior
 
-1. The entrypoint script runs `prisma migrate deploy` to apply any pending database migrations
-2. If the database is not ready, it retries every 10 seconds (up to 30 attempts)
-3. Once migrations succeed, the Next.js server starts on port 3000
+1. If `DATABASE_URL` is not set and no `DB_*` variables are provided, the entrypoint starts an embedded PGlite instance on an internal port
+2. The entrypoint runs `prisma migrate deploy` to apply any pending database migrations
+3. If the database is not ready, it retries every 10 seconds (up to 30 attempts)
+4. Once migrations succeed, the Next.js server starts on internal port 3000 (mapped to 8637 externally)
 
 ## Source Code
 

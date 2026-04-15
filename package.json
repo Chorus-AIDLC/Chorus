@@ -5,9 +5,13 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:local": "bash scripts/dev-local.sh",
     "dev:webpack": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "start:local": "bash scripts/start-local.sh",
+    "build:local": "DATABASE_URL='postgresql://x@localhost/x?sslmode=disable' prisma generate && DATABASE_URL='postgresql://x@localhost/x?sslmode=disable' next build",
+    "rebuild:local": "rm -rf .next && pnpm build:local",
     "lint": "eslint",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
@@ -75,7 +79,9 @@
     "sonner": "^2.0.7",
     "streamdown": "^2.4.0",
     "tailwind-merge": "^3.4.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@electric-sql/pglite": "^0.4.4",
+    "@electric-sql/pglite-socket": "^0.1.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",

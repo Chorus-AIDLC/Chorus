@@ -1,0 +1,23 @@
+# Standalone Chorus — embedded PGlite, no external PostgreSQL or Redis
+# Usage: docker compose -f docker-compose.local.yml up
+services:
+  app:
+    image: chorusaidlc/chorus-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "8637:3000"
+    environment:
+      # No DATABASE_URL — entrypoint auto-starts embedded PGlite
+      - REDIS_URL=
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-chorus-local-secret}
+      - COOKIE_SECURE=false
+      - DEFAULT_USER=dev@chorus.local
+      - DEFAULT_PASSWORD=chorus123
+    volumes:
+      - chorus-local-data:/app/data
+
+volumes:
+  chorus-local-data:

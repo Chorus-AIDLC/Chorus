@@ -265,30 +265,32 @@ Global search across Tasks, Ideas, Proposals, Documents, Projects, and Project G
 
 ### Quick Start with Docker (Recommended)
 
-The fastest way to run Chorus — no build tools required:
-
-**1. Clone the repository**
+The fastest way to run Chorus — no build tools or external databases required. The image bundles [PGlite](https://pglite.dev) (embedded PostgreSQL) and starts everything automatically:
 
 ```bash
 git clone https://github.com/Chorus-AIDLC/chorus.git
 cd chorus
+
+DEFAULT_USER=admin@example.com DEFAULT_PASSWORD=changeme \
+  docker compose -f docker-compose.local.yml up -d
 ```
 
-**2. Start with the pre-built image from Docker Hub**
+Open [http://localhost:8637](http://localhost:8637) and log in with the credentials above.
+
+> Data is persisted in a Docker volume. The embedded mode is single-instance only (no Redis).
+
+#### Production Deployment (PostgreSQL + Redis)
+
+For production with multiple replicas, use `docker-compose.yml` with external PostgreSQL and Redis:
 
 ```bash
-export DEFAULT_USER=admin@example.com 
-export DEFAULT_PASSWORD=changeme
-docker compose up -d
+DEFAULT_USER=admin@example.com DEFAULT_PASSWORD=changeme \
+  docker compose up -d
 ```
 
-> This pulls `chorusaidlc/chorus-app` (supports amd64 & arm64), starts PostgreSQL and Redis alongside it, and runs database migrations automatically.
+This starts PostgreSQL, Redis, and the Chorus app together, with automatic database migrations.
 
-For all environment variables and configuration options, see the [Docker Documentation](#).
-
-**3. Open your browser**
-
-Navigate to [http://localhost:3000](http://localhost:3000) and log in with the default credentials above.
+> See [Docker Documentation](docs/DOCKER.md) for all environment variables and configuration options.
 
 ---
 
@@ -312,6 +314,24 @@ pnpm dev
 # Open
 open http://localhost:3000
 ```
+
+### Local Development (no Docker)
+
+Don't have Docker? Use the embedded PostgreSQL mode powered by [PGlite](https://pglite.dev) — a WASM build of Postgres that runs directly in Node.js.
+
+Prerequisites: Node.js 22+, pnpm 9+
+
+```bash
+cp .env.example .env
+# Edit .env to configure OIDC (DATABASE_URL is handled automatically)
+
+pnpm install
+pnpm dev:local        # Dev server on http://localhost:8637
+# or
+pnpm start:local      # Production build on http://localhost:8637
+```
+
+Both commands start an embedded PGlite on port 5433, apply the schema, and launch the app on port **8637** (to avoid conflict with `pnpm dev` on 3000). `start:local` caches the production build and skips rebuild on subsequent runs (use `pnpm rebuild:local` to force). Redis is disabled (falls back to in-memory EventBus). Data is stored in `.pglite/` — delete it to reset.
 
 ### Deploy to AWS
 

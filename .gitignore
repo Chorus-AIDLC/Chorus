@@ -59,5 +59,8 @@ packages/chorus-cdk/lib/*.d.ts
 # Chorus plugin state
 .chorus/
 
+# PGlite local dev database
+.pglite/
+
 #demo
 dev-story-demo/

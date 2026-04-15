@@ -6,3 +6,5 @@ packages
 .env
 .env.*
 !.env.example
+.pglite
+.chorus

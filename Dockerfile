@@ -38,6 +38,11 @@ RUN pnpm install --frozen-lockfile || pnpm install
 COPY . .
 RUN pnpm build
 
+# Dereference pnpm symlinks for PGlite packages (needed in production stage)
+RUN mkdir -p /pglite-deps/node_modules/@electric-sql \
+ && cp -rL node_modules/@electric-sql/pglite /pglite-deps/node_modules/@electric-sql/pglite \
+ && cp -rL node_modules/@electric-sql/pglite-socket /pglite-deps/node_modules/@electric-sql/pglite-socket
+
 # Production stage (standalone)
 FROM node:22-alpine AS production
 
@@ -67,6 +72,9 @@ RUN pnpm add -g prisma
 
 # Copy dotenv for prisma.config.ts (standalone bundles it into server.js but doesn't keep the module)
 COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
+
+# Copy PGlite packages for embedded DB mode (when no DATABASE_URL is provided)
+COPY --from=builder /pglite-deps/node_modules/@electric-sql ./node_modules/@electric-sql
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/
