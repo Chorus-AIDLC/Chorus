@@ -3,6 +3,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "./api-response";
+import { createRequestLogger } from "./logger";
+import { requestContext, getRequestLogger } from "./request-context";
 
 // API Handler type
 export type ApiHandler<T = Record<string, string>> = (
@@ -35,10 +37,14 @@ export function withErrorHandler<T = Record<string, string>>(
   handler: ApiHandler<T>
 ): ApiHandler<T> {
   return async (request, context) => {
+    const requestId = crypto.randomUUID();
+    const reqLogger = createRequestLogger({ requestId });
+
+    return requestContext.run({ requestId, logger: reqLogger }, async () => {
     try {
       return await handler(request, context);
     } catch (err) {
-      console.error("API Error:", err);
+      getRequestLogger().error({ err }, "API error");
 
       // Custom API error
       if (err instanceof ApiError) {
@@ -83,6 +89,7 @@ export function withErrorHandler<T = Record<string, string>>(
 
       return errors.internal();
     }
+    });
   };
 }
 
