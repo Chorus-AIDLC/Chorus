@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { moveTaskToColumnAction, forceMoveTaskToColumnAction, fetchTasksAction } from "./actions";
+import { clientLogger } from "@/lib/logger-client";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
@@ -288,7 +289,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setForceDialogBlockers([]);
         refetchTasks();
       } else {
-        console.error("Failed to force move task:", result.error);
+        clientLogger.error("Failed to force move task:", result.error);
       }
     } finally {
       setForceMoving(false);

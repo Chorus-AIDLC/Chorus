@@ -27,6 +27,7 @@ import type { SessionResponse } from "@/services/session.service";
 import { locales, localeNames, type Locale } from "@/i18n/config";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotificationPreferencesForm } from "@/components/notification-preferences-form";
+import { clientLogger } from "@/lib/logger-client";
 
 interface ApiKey {
   uuid: string;
@@ -94,7 +95,7 @@ export default function SettingsPage() {
         setApiKeys(result.data);
       }
     } catch (error) {
-      console.error("Failed to fetch API keys:", error);
+      clientLogger.error("Failed to fetch API keys:", error);
     } finally {
       setLoading(false);
     }
@@ -113,10 +114,10 @@ export default function SettingsPage() {
       if (result.success) {
         setApiKeys(apiKeys.filter((k) => k.uuid !== keyToDelete));
       } else {
-        console.error("Failed to delete API key:", result.error);
+        clientLogger.error("Failed to delete API key:", result.error);
       }
     } catch (error) {
-      console.error("Failed to delete API key:", error);
+      clientLogger.error("Failed to delete API key:", error);
     } finally {
       setDeleteConfirmOpen(false);
       setKeyToDelete(null);
@@ -232,10 +233,10 @@ export default function SettingsPage() {
         );
         closeEditModal();
       } else {
-        console.error("Failed to update agent:", result.error);
+        clientLogger.error("Failed to update agent:", result.error);
       }
     } catch (error) {
-      console.error("Failed to update agent:", error);
+      clientLogger.error("Failed to update agent:", error);
     } finally {
       setSaving(false);
     }

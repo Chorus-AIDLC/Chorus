@@ -35,6 +35,7 @@ import { deleteIdeaAction, updateIdeaAction } from "@/app/(dashboard)/projects/[
 import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import type { IdeaResponse } from "@/services/idea.service";
+import { clientLogger } from "@/lib/logger-client";
 
 type IdeaWithDerivedStatus = IdeaResponse & { derivedStatus: string; badgeHint: string | null };
 
@@ -254,7 +255,7 @@ export function IdeaDetailPanel({
         setProposals(result.data);
       }
     } catch (e) {
-      console.error("Failed to fetch proposals:", e);
+      clientLogger.error("Failed to fetch proposals:", e);
     }
   }, [projectUuid, ideaUuidForFetch, ideaStatusForFetch]);
 
@@ -299,7 +300,7 @@ export function IdeaDetailPanel({
       );
       setTasks(allTasks);
     } catch (e) {
-      console.error("Failed to fetch tasks:", e);
+      clientLogger.error("Failed to fetch tasks:", e);
     }
   }, [projectUuid, proposals]);
 
@@ -389,7 +390,7 @@ export function IdeaDetailPanel({
     }
     getTaskAction(selectedTaskUuid).then((result) => {
       if (result.success) setSelectedTask(result.data);
-    }).catch((e) => console.error("Failed to load task details:", e));
+    }).catch((e) => clientLogger.error("Failed to load task details:", e));
   }, [selectedTaskUuid]);
 
   useEffect(() => {

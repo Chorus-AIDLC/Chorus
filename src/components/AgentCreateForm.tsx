@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Check, X, AlertTriangle, ShieldAlert } from "lucide-react";
+import { clientLogger } from "@/lib/logger-client";
 
 // PM Agent Persona presets (labels and descriptions use i18n keys)
 const PM_PERSONAS = [
@@ -101,10 +102,10 @@ export function AgentCreateForm({
           result.key
         );
       } else {
-        console.error("Failed to create API key:", result.error);
+        clientLogger.error("Failed to create API key:", result.error);
       }
     } catch (error) {
-      console.error("Failed to create API key:", error);
+      clientLogger.error("Failed to create API key:", error);
     } finally {
       setSubmitting(false);
     }
@@ -116,7 +117,7 @@ export function AgentCreateForm({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error("Failed to copy to clipboard:", error);
+      clientLogger.error("Failed to copy to clipboard:", error);
     }
   };
 

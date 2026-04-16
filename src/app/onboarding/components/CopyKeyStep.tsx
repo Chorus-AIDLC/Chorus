@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
 import { Copy, Check, AlertTriangle } from "lucide-react";
+import { clientLogger } from "@/lib/logger-client";
 
 interface CopyKeyStepProps {
   onNext: () => void;
@@ -36,7 +37,7 @@ export function CopyKeyStep({ onNext, apiKey }: CopyKeyStepProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error("Failed to copy to clipboard:", error);
+      clientLogger.error("Failed to copy to clipboard:", error);
     }
   };
 

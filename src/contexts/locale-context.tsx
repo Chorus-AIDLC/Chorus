@@ -18,6 +18,7 @@ import {
   detectBrowserLocale,
   type Locale,
 } from "@/i18n/config";
+import { clientLogger } from "@/lib/logger-client";
 
 const LOCALE_STORAGE_KEY = "chorus-locale";
 
@@ -70,7 +71,7 @@ export function LocaleProvider({ children }: LocaleProviderProps) {
         setMessages(mod.default);
       })
       .catch((err) => {
-        console.error(`Failed to load messages for locale ${locale}:`, err);
+        clientLogger.error(`Failed to load messages for locale ${locale}:`, err);
         // Fallback to default locale
         import(`../../messages/${defaultLocale}.json`).then((mod) => {
           setMessages(mod.default);

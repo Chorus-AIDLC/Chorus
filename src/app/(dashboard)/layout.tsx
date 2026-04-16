@@ -30,6 +30,7 @@ import { PageTransition } from "@/components/page-transition";
 import { Toaster } from "@/components/ui/sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { dropdownVariants } from "@/lib/animation";
+import { clientLogger } from "@/lib/logger-client";
 
 interface User {
   uuid: string;
@@ -158,7 +159,7 @@ export default function DashboardLayout({
           setSiblingProjects([]);
         }
       } catch (error) {
-        console.error("Failed to fetch current project:", error);
+        clientLogger.error("Failed to fetch current project:", error);
       }
     }
 
@@ -201,7 +202,7 @@ export default function DashboardLayout({
         return;
       }
     } catch (error) {
-      console.error("Session check failed:", error);
+      clientLogger.error("Session check failed:", error);
       clearUserManager();
       router.push("/login");
       return;

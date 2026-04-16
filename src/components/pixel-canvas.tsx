@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback } from "react";
+import { clientLogger } from "@/lib/logger-client";
 
 // ────────────────────────── Types ──────────────────────────
 
@@ -107,7 +108,7 @@ function loadImages(): Promise<Record<string, HTMLImageElement>> {
         if (loaded === total) resolve(images);
       };
       img.onerror = () => {
-        console.warn("Failed to load sprite:", name, file);
+        clientLogger.warn("Failed to load sprite:", name, file);
         loaded++;
         if (loaded === total) resolve(images);
       };

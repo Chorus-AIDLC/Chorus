@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2, Info, Copy, Check } from "lucide-react";
+import { clientLogger } from "@/lib/logger-client";
 
 export default function CompaniesPage() {
   const t = useTranslations();
@@ -44,7 +45,7 @@ export default function CompaniesPage() {
         setTotal(data.meta?.total || 0);
       }
     } catch (error) {
-      console.error("Failed to fetch companies:", error);
+      clientLogger.error("Failed to fetch companies:", error);
     } finally {
       setLoading(false);
     }

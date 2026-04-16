@@ -21,6 +21,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { moveIdeaAction, getProjectsAndGroupsAction } from "./actions";
+import { clientLogger } from "@/lib/logger-client";
 
 interface MoveGroup {
   uuid: string;
@@ -86,7 +87,7 @@ export function MoveIdeaDialog({ open, onOpenChange, ideaUuid, projectUuid, onMo
         setMoveGroups(groups);
       }
     } catch (e) {
-      console.error("Failed to load projects for move dialog:", e);
+      clientLogger.error("Failed to load projects for move dialog:", e);
       setMoveGroups([]);
     }
     setIsLoadingProjects(false);

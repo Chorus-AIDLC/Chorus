@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { clientLogger } from "@/lib/logger-client";
 
 interface SearchResult {
   entityType: "task" | "idea" | "proposal" | "document" | "project" | "project_group";
@@ -145,7 +146,7 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
       });
 
       if (!response.ok) {
-        console.error("Search failed:", response.status);
+        clientLogger.error("Search failed:", response.status);
         setResults([]);
         return;
       }
@@ -157,7 +158,7 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
         setResults([]);
       }
     } catch (error) {
-      console.error("Search error:", error);
+      clientLogger.error("Search error:", error);
       setResults([]);
     } finally {
       setLoading(false);

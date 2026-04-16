@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { LayoutDashboard, Building2, Shield, LogOut } from "lucide-react";
+import { clientLogger } from "@/lib/logger-client";
 
 interface AdminUser {
   email: string;
@@ -48,7 +49,7 @@ export default function AdminLayout({
       await fetch("/api/admin/session", { method: "DELETE" });
       router.push("/login");
     } catch {
-      console.error("Logout failed");
+      clientLogger.error("Logout failed");
     }
   };
 

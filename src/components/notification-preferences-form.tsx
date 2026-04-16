@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { clientLogger } from "@/lib/logger-client";
 
 interface NotificationPreferences {
   taskAssigned: boolean;
@@ -126,7 +127,7 @@ export function NotificationPreferencesForm() {
           }
         }
       } catch (error) {
-        console.error("Failed to fetch notification preferences:", error);
+        clientLogger.error("Failed to fetch notification preferences:", error);
       } finally {
         setLoading(false);
       }
@@ -149,7 +150,7 @@ export function NotificationPreferencesForm() {
             body: JSON.stringify(updated),
           });
         } catch (error) {
-          console.error("Failed to save notification preferences:", error);
+          clientLogger.error("Failed to save notification preferences:", error);
         }
       }, 500);
     },

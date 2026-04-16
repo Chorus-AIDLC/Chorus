@@ -18,6 +18,7 @@ import {
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
+import { clientLogger } from "@/lib/logger-client";
 
 // User info from OIDC
 interface UserInfo {
@@ -96,28 +97,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Handle token expiring (oidc-client-ts will auto-renew)
     const handleExpiring = () => {
-      console.log("OIDC token expiring, will be auto-renewed");
+      clientLogger.debug("OIDC token expiring, will be auto-renewed");
     };
 
     // Handle token expired
     const handleExpired = () => {
-      console.log("OIDC token expired");
+      clientLogger.debug("OIDC token expired");
       handleSessionExpired();
     };
 
     // Handle silent renew error
     const handleRenewError = (err: Error) => {
-      console.error("Silent renew error:", err);
+      clientLogger.error("Silent renew error:", err);
       handleSessionExpired();
     };
 
     // Handle user loaded (after silent renew) — sync new token + refresh token to cookie
     const handleUserLoaded = async (user: User) => {
-      console.log("OIDC user loaded/renewed, syncing token to cookie");
+      clientLogger.debug("OIDC user loaded/renewed, syncing token to cookie");
       try {
         await syncTokenToCookie(user.access_token, user.refresh_token);
       } catch (err) {
-        console.error("Failed to sync token after renewal:", err);
+        clientLogger.error("Failed to sync token after renewal:", err);
       }
     };
 
@@ -155,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCompany(null);
       router.push("/login");
     } catch (err) {
-      console.error("Logout error:", err);
+      clientLogger.error("Logout error:", err);
       // Clear state and redirect even on error
       clearUserManager();
       router.push("/login");

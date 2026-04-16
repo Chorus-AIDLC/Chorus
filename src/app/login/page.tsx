@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff } from "lucide-react";
+import { clientLogger } from "@/lib/logger-client";
 
 interface DefaultAuthInfo {
   enabled: boolean;
@@ -132,7 +133,7 @@ export default function LoginPage() {
         setError(result.message || t("login.noOrganizationFound"));
       }
     } catch (err) {
-      console.error("Login error:", err);
+      clientLogger.error("Login error:", err);
       setError(t("login.networkError"));
     } finally {
       setLoading(false);

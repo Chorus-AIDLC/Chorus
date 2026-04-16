@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { UserManager } from "oidc-client-ts";
 import { getStoredOidcConfig, createUserManager } from "@/lib/oidc";
+import { clientLogger } from "@/lib/logger-client";
 
 // Silent refresh page for OIDC token renewal
 // This page is loaded in a hidden iframe by oidc-client-ts
@@ -20,7 +21,7 @@ export default function SilentRefreshPage() {
 
     // Process the silent renew callback
     userManager.signinSilentCallback().catch((err) => {
-      console.error("Silent refresh callback error:", err);
+      clientLogger.error("Silent refresh callback error:", err);
     });
   }, []);
 

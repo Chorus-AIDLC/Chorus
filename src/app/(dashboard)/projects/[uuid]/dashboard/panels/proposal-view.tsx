@@ -22,6 +22,7 @@ import { TaskDag, type TaskDagTask, type TaskDagEdge } from "@/components/task-d
 import { normalizeNewlines, DOC_TYPE_I18N_KEYS } from "./utils";
 import { getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
 import type { IdeaResponse } from "@/services/idea.service";
+import { clientLogger } from "@/lib/logger-client";
 
 interface AcceptanceCriteriaItem {
   description: string;
@@ -78,7 +79,7 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
         return result.data;
       }
     } catch (e) {
-      console.error("Failed to fetch proposals:", e);
+      clientLogger.error("Failed to fetch proposals:", e);
     } finally {
       setIsLoading(false);
     }
@@ -208,7 +209,7 @@ function ProposalContent({
     if (!isApproved) return;
     getTasksForProposalAction(projectUuid, proposal.uuid).then((result) => {
       if (result.success) setMaterializedTasks(result.data || []);
-    }).catch((e) => console.error("Failed to fetch materialized tasks:", e));
+    }).catch((e) => clientLogger.error("Failed to fetch materialized tasks:", e));
   }, [isApproved, projectUuid, proposal.uuid]);
 
   // Map draft title → materialized task info for navigation + status

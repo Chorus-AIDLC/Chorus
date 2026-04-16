@@ -4,6 +4,7 @@
 
 import { UserManager, User } from "oidc-client-ts";
 import { createUserManager, getStoredOidcConfig, storeOidcConfig, clearOidcConfig, type OidcConfig } from "./oidc";
+import { clientLogger } from "@/lib/logger-client";
 
 // Singleton UserManager instance
 let userManager: UserManager | null = null;
@@ -86,7 +87,7 @@ export async function syncTokenToCookie(accessToken: string, refreshToken?: stri
     });
     return response.ok;
   } catch {
-    console.error("Failed to sync token to cookie");
+    clientLogger.error("Failed to sync token to cookie");
     return false;
   }
 }

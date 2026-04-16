@@ -52,6 +52,7 @@ import {
   updateTaskDraftAction,
 } from "./actions";
 import { TaskDraftDetailPanel } from "./task-draft-detail-panel";
+import { clientLogger } from "@/lib/logger-client";
 
 interface DocumentDraft {
   uuid: string;
@@ -299,7 +300,7 @@ export function ProposalEditor({
       }
       onStatusChange?.(latest.status ?? status);
     } catch (err) {
-      console.warn("[ProposalEditor] Failed to refresh drafts:", err);
+      clientLogger.warn("[ProposalEditor] Failed to refresh drafts:", err);
     }
   });
 
