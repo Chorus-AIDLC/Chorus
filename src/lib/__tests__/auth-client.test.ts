@@ -395,7 +395,7 @@ describe('syncTokenToCookie', () => {
     const result = await syncTokenToCookie('access-token');
 
     expect(result).toBe(false);
-    expect(console.error).toHaveBeenCalledWith('Failed to sync token to cookie');
+    expect(console.error).toHaveBeenCalledWith('[Chorus] Failed to sync token to cookie');
   });
 });
 
