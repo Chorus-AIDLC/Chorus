@@ -4,6 +4,9 @@
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
 import { isRedisEnabled, getRedisPublisher, getRedisSubscriber } from "./redis";
+import logger from "@/lib/logger";
+
+const ebLogger = logger.child({ module: "event-bus" });
 
 export interface RealtimeEvent {
   companyUuid: string;
@@ -166,6 +169,6 @@ export const eventBus = (globalForEventBus.chorusEventBus ??= new ChorusEventBus
 // Auto-connect on import (non-blocking)
 if (isRedisEnabled()) {
   eventBus.connect().catch((err) => {
-    console.error("[EventBus] Redis connect failed, falling back to memory:", err.message);
+    ebLogger.error({ err }, "Redis connect failed, falling back to memory");
   });
 }

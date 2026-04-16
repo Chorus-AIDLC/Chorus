@@ -9,6 +9,7 @@ import {
   type CommentWithOwner,
 } from "@/services/comment.service";
 import { createActivity } from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 const VALID_TARGET_TYPES = ["idea", "proposal", "task", "document"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
@@ -45,7 +46,7 @@ export async function getCommentsAction(
 
     return { success: true, comments: commentsWithOwner, total: result.total };
   } catch (error) {
-    console.error(`Failed to get ${targetType} comments:`, error);
+    logger.error({ err: error, targetType }, "Failed to get comments");
     return { success: false, error: `Failed to load comments` };
   }
 }
@@ -102,7 +103,7 @@ export async function createCommentAction(
 
     return { success: true, comment: commentWithOwner };
   } catch (error) {
-    console.error(`Failed to create ${targetType} comment:`, error);
+    logger.error({ err: error, targetType }, "Failed to create comment");
     return { success: false, error: "Failed to create comment" };
   }
 }

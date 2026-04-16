@@ -1,6 +1,9 @@
 // src/lib/redis.ts
 // Redis client singleton for Pub/Sub — lazy-initialized, graceful fallback
 import Redis from "ioredis";
+import logger from "@/lib/logger";
+
+const redisLogger = logger.child({ module: "redis" });
 
 /**
  * Build Redis connection URL from environment variables.
@@ -40,15 +43,15 @@ function createClient(name: string): Redis {
     maxRetriesPerRequest: null, // infinite retries for pub/sub
     retryStrategy(times) {
       const delay = Math.min(times * 200, 5000);
-      console.warn(`[Redis:${name}] reconnecting in ${delay}ms (attempt ${times})`);
+      redisLogger.warn({ name, delay, attempt: times }, "Reconnecting");
       return delay;
     },
   });
   client.on("error", (err) => {
-    console.error(`[Redis:${name}] error:`, err.message);
+    redisLogger.error({ name, err }, "Redis error");
   });
   client.on("connect", () => {
-    console.log(`[Redis:${name}] connected`);
+    redisLogger.info({ name }, "Connected");
   });
   return client;
 }

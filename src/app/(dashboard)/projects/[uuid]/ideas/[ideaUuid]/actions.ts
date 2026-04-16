@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { assignIdea, releaseIdea, getIdeaByUuid } from "@/services/idea.service";
 import { getAgentsByRole, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 export async function claimIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
@@ -48,7 +49,7 @@ export async function claimIdeaAction(ideaUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to claim idea:", error);
+    logger.error({ err: error }, "Failed to claim idea");
     return { success: false, error: "Failed to claim idea" };
   }
 }
@@ -95,7 +96,7 @@ export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to claim idea to agent:", error);
+    logger.error({ err: error }, "Failed to claim idea to agent");
     return { success: false, error: "Failed to claim idea" };
   }
 }
@@ -131,7 +132,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to claim idea to user:", error);
+    logger.error({ err: error }, "Failed to claim idea to user");
     return { success: false, error: "Failed to claim idea" };
   }
 }
@@ -161,7 +162,7 @@ export async function releaseIdeaAction(ideaUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to release idea:", error);
+    logger.error({ err: error }, "Failed to release idea");
     return { success: false, error: "Failed to release idea" };
   }
 }
@@ -180,7 +181,7 @@ export async function getPmAgentsAction() {
     ]);
     return { agents, users };
   } catch (error) {
-    console.error("Failed to get PM agents:", error);
+    logger.error({ err: error }, "Failed to get PM agents");
     return { agents: [], users: [] };
   }
 }

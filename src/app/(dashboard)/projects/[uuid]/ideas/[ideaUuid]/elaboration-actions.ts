@@ -13,6 +13,7 @@ import type {
   AnswerInput,
   ElaborationRoundResponse,
 } from "@/types/elaboration";
+import logger from "@/lib/logger";
 
 export async function getElaborationAction(
   ideaUuid: string
@@ -29,7 +30,7 @@ export async function getElaborationAction(
     });
     return { success: true, data };
   } catch (error) {
-    console.error("Failed to get elaboration:", error);
+    logger.error({ err: error }, "Failed to get elaboration");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to get elaboration",
@@ -66,7 +67,7 @@ export async function submitElaborationAnswersAction(
 
     return { success: true, data };
   } catch (error) {
-    console.error("Failed to submit elaboration answers:", error);
+    logger.error({ err: error }, "Failed to submit elaboration answers");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to submit answers",
@@ -101,7 +102,7 @@ export async function skipElaborationAction(
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to skip elaboration:", error);
+    logger.error({ err: error }, "Failed to skip elaboration");
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to skip elaboration",

@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { createDocument } from "@/services/document.service";
 import { createActivity } from "@/services/activity.service";
 import { projectExists } from "@/services/project.service";
+import logger from "@/lib/logger";
 
 export async function createDocumentAction(input: {
   projectUuid: string;
@@ -44,7 +45,7 @@ export async function createDocumentAction(input: {
     revalidatePath(`/projects/${input.projectUuid}/documents`);
     return { success: true, documentUuid: doc.uuid };
   } catch (error) {
-    console.error("Failed to create document:", error);
+    logger.error({ err: error }, "Failed to create document");
     return { success: false, error: "Failed to create document" };
   }
 }

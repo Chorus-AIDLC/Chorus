@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { deleteProject, updateProject } from "@/services/project.service";
 import { revalidatePath } from "next/cache";
 import { getActiveSessionsForProject, type TaskSessionInfo } from "@/services/session.service";
+import logger from "@/lib/logger";
 
 export async function deleteProjectAction(projectUuid: string) {
   const auth = await getServerAuthContext();
@@ -18,7 +19,7 @@ export async function deleteProjectAction(projectUuid: string) {
       return { success: false, error: "Project not found" };
     }
   } catch (error) {
-    console.error("Failed to delete project:", error);
+    logger.error({ err: error }, "Failed to delete project");
     return { success: false, error: "Failed to delete project" };
   }
 
@@ -42,7 +43,7 @@ export async function updateProjectAction(
     revalidatePath(`/projects/${projectUuid}/dashboard`);
     return { success: true, data: updated };
   } catch (error) {
-    console.error("Failed to update project:", error);
+    logger.error({ err: error }, "Failed to update project");
     return { success: false, error: "Failed to update project" };
   }
 }
@@ -61,7 +62,7 @@ export async function getProjectActiveSessionsAction(projectUuid: string): Promi
     const sessions = await getActiveSessionsForProject(auth.companyUuid, projectUuid);
     return { success: true, data: sessions };
   } catch (error) {
-    console.error("Failed to fetch active sessions:", error);
+    logger.error({ err: error }, "Failed to fetch active sessions");
     return { success: false, error: "Failed to fetch active sessions" };
   }
 }

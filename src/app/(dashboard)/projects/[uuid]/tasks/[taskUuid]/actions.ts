@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { getAgentsByRole, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 export async function claimTaskAction(taskUuid: string) {
   const auth = await getServerAuthContext();
@@ -49,7 +50,7 @@ export async function claimTaskAction(taskUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to claim task:", error);
+    logger.error({ err: error }, "Failed to claim task");
     return { success: false, error: "Failed to claim task" };
   }
 }
@@ -96,7 +97,7 @@ export async function claimTaskToAgentAction(taskUuid: string, agentUuid: string
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to claim task to agent:", error);
+    logger.error({ err: error }, "Failed to claim task to agent");
     return { success: false, error: "Failed to claim task" };
   }
 }
@@ -138,7 +139,7 @@ export async function releaseTaskAction(taskUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to release task:", error);
+    logger.error({ err: error }, "Failed to release task");
     return { success: false, error: "Failed to release task" };
   }
 }
@@ -175,7 +176,7 @@ export async function updateTaskStatusAction(taskUuid: string, newStatus: string
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to update task status:", error);
+    logger.error({ err: error }, "Failed to update task status");
     return { success: false, error: "Failed to update task status" };
   }
 }
@@ -210,7 +211,7 @@ export async function verifyTaskAction(taskUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to verify task:", error);
+    logger.error({ err: error }, "Failed to verify task");
     return { success: false, error: "Failed to verify task" };
   }
 }
@@ -257,7 +258,7 @@ export async function claimTaskToUserAction(taskUuid: string, userUuid: string) 
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to assign task to user:", error);
+    logger.error({ err: error }, "Failed to assign task to user");
     return { success: false, error: "Failed to assign task" };
   }
 }
@@ -304,7 +305,7 @@ export async function createTaskAction(input: CreateTaskInput) {
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
     return { success: true, taskUuid: task.uuid };
   } catch (error) {
-    console.error("Failed to create task:", error);
+    logger.error({ err: error }, "Failed to create task");
     return { success: false, error: "Failed to create task" };
   }
 }
@@ -343,7 +344,7 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
     return { success: true };
   } catch (error) {
-    console.error("Failed to update task:", error);
+    logger.error({ err: error }, "Failed to update task");
     return { success: false, error: "Failed to update task" };
   }
 }
@@ -365,7 +366,7 @@ export async function deleteTaskAction(taskUuid: string, projectUuid: string) {
     revalidatePath(`/projects/${projectUuid}/tasks`);
     return { success: true };
   } catch (error) {
-    console.error("Failed to delete task:", error);
+    logger.error({ err: error }, "Failed to delete task");
     return { success: false, error: "Failed to delete task" };
   }
 }
@@ -386,7 +387,7 @@ export async function getDeveloperAgentsAction() {
       currentUserUuid: auth.actorUuid
     };
   } catch (error) {
-    console.error("Failed to get developer agents:", error);
+    logger.error({ err: error }, "Failed to get developer agents");
     return { agents: [], users: [] };
   }
 }

@@ -3,6 +3,7 @@
 import { getServerAuthContext } from "@/lib/auth-server";
 import { listActivitiesWithActorNames, type ActivityResponse } from "@/services/activity.service";
 import { getIdeaByUuid } from "@/services/idea.service";
+import logger from "@/lib/logger";
 
 export async function getIdeaActivitiesAction(
   ideaUuid: string
@@ -27,7 +28,7 @@ export async function getIdeaActivitiesAction(
       take: 50,
     });
   } catch (error) {
-    console.error("Failed to get idea activities:", error);
+    logger.error({ err: error }, "Failed to get idea activities");
     return { activities: [], total: 0 };
   }
 }

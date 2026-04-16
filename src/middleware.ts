@@ -6,6 +6,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 import { ACCESS_TOKEN_EXPIRY, ACCESS_TOKEN_MAX_AGE } from "@/lib/user-session";
 import { getCookieOptions } from "@/lib/cookie-utils";
+import logger from "@/lib/logger";
+
+const mwLogger = logger.child({ module: "middleware" });
 
 // In-memory cache for OIDC discovery documents (per edge instance)
 const discoveryCache = new Map<string, { tokenEndpoint: string; expiresAt: number }>();
@@ -130,7 +133,7 @@ async function handleUserSessionRefresh(request: NextRequest): Promise<NextRespo
       .setExpirationTime(ACCESS_TOKEN_EXPIRY)
       .sign(secret);
 
-    console.log("[middleware] User session refreshed for", payload?.email || refreshPayload.userUuid);
+    mwLogger.info({ email: payload?.email, userUuid: refreshPayload.userUuid as string }, "User session refreshed");
 
     // Write the new access token to the request cookie so downstream Server Components read it
     request.cookies.set("user_session", newAccessToken);
@@ -144,7 +147,7 @@ async function handleUserSessionRefresh(request: NextRequest): Promise<NextRespo
 
     return response;
   } catch (error) {
-    console.error("[middleware] User session refresh error:", error);
+    mwLogger.error({ err: error }, "User session refresh error");
     return null; // Let page-level auth handle redirect
   }
 }
@@ -213,7 +216,7 @@ export async function middleware(request: NextRequest) {
   // Get the token endpoint
   const tokenEndpoint = await getTokenEndpoint(issuer);
   if (!tokenEndpoint) {
-    console.error("[middleware] Failed to discover token endpoint for issuer:", issuer);
+    mwLogger.error({ issuer }, "Failed to discover token endpoint for issuer");
     return clearAuthAndRedirect(request);
   }
 
@@ -230,7 +233,7 @@ export async function middleware(request: NextRequest) {
     });
 
     if (!tokenResponse.ok) {
-      console.error("[middleware] Token refresh failed:", tokenResponse.status);
+      mwLogger.error({ status: tokenResponse.status }, "Token refresh failed");
       return clearAuthAndRedirect(request);
     }
 
@@ -238,7 +241,7 @@ export async function middleware(request: NextRequest) {
     const newAccessToken = tokenData.access_token;
 
     if (!newAccessToken) {
-      console.error("[middleware] No access_token in refresh response");
+      mwLogger.error("No access_token in refresh response");
       return clearAuthAndRedirect(request);
     }
 
@@ -265,7 +268,7 @@ export async function middleware(request: NextRequest) {
 
     return response;
   } catch (error) {
-    console.error("[middleware] Token refresh error:", error);
+    mwLogger.error({ err: error }, "Token refresh error");
     return clearAuthAndRedirect(request);
   }
 }

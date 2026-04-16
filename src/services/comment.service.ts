@@ -11,6 +11,7 @@ import {
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 import { eventBus, type RealtimeEvent } from "@/lib/event-bus";
+import logger from "@/lib/logger";
 
 export interface CommentListParams {
   companyUuid: string;
@@ -165,7 +166,7 @@ export async function createComment({
     content,
     authorType,
     authorUuid,
-  ).catch((err) => console.error("[Comment] Failed to process mentions:", err));
+  ).catch((err) => logger.error({ err }, "Failed to process comment mentions"));
 
   return {
     uuid: comment.uuid,

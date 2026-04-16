@@ -3,6 +3,7 @@
 import { getServerAuthContext } from "@/lib/auth-server";
 import { listActivitiesWithActorNames, type ActivityResponse } from "@/services/activity.service";
 import { getTaskByUuid } from "@/services/task.service";
+import logger from "@/lib/logger";
 
 export async function getTaskActivitiesAction(
   taskUuid: string
@@ -28,7 +29,7 @@ export async function getTaskActivitiesAction(
       take: 50,
     });
   } catch (error) {
-    console.error("Failed to get task activities:", error);
+    logger.error({ err: error }, "Failed to get task activities");
     return { activities: [], total: 0 };
   }
 }

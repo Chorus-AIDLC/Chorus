@@ -6,6 +6,9 @@ import { eventBus } from "@/lib/event-bus";
 import { prisma } from "@/lib/prisma";
 import * as notificationService from "./notification.service";
 import type { NotificationCreateParams } from "./notification.service";
+import logger from "@/lib/logger";
+
+const nlLogger = logger.child({ module: "notification-listener" });
 
 // Map (action, targetType) → notification type
 // The activity action names from MCP tools are bare (e.g., "assigned", "submitted")
@@ -536,7 +539,7 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
 
     await notificationService.createBatch(notifications);
   } catch (error) {
-    console.error("[NotificationListener] Failed to process activity:", error);
+    nlLogger.error({ err: error }, "Failed to process activity");
   }
 }
 
@@ -546,4 +549,4 @@ eventBus.on("activity", (event: ActivityEvent) => {
   handleActivity(event);
 });
 
-console.log("[NotificationListener] Subscribed to activity events");
+nlLogger.info("Subscribed to activity events");

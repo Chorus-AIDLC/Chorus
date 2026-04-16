@@ -5,6 +5,7 @@
 import { NextRequest } from "next/server";
 import { success, errors } from "@/lib/api-response";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 
 // Decode JWT without verification (just to extract claims)
 function decodeJwt(token: string): Record<string, unknown> | null {
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
       company: user.company,
     });
   } catch (error) {
-    console.error("Auth me error:", error);
+    logger.error({ err: error }, "Auth me error");
     return errors.internal("Failed to get user info");
   }
 }

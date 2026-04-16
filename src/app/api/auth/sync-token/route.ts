@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { verifyOidcAccessToken } from "@/lib/oidc-auth";
 import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
+import logger from "@/lib/logger";
 
 // POST /api/auth/sync-token
 // Body: { accessToken: string }
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
-    console.error("Sync token error:", error);
+    logger.error({ err: error }, "Sync token error");
     return errors.internal("Failed to sync token");
   }
 }

@@ -8,6 +8,7 @@ import { listProjects } from "@/services/project.service";
 import { listProjectGroups } from "@/services/project-group.service";
 import { getElaboration } from "@/services/elaboration.service";
 import type { ElaborationResponse } from "@/types/elaboration";
+import logger from "@/lib/logger";
 
 export async function getIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
@@ -118,7 +119,7 @@ export async function getElaborationAction(
     });
     return { success: true as const, data };
   } catch (error) {
-    console.error("Failed to get elaboration:", error);
+    logger.error({ err: error }, "Failed to get elaboration");
     return {
       success: false as const,
       error: error instanceof Error ? error.message : "Failed to get elaboration",

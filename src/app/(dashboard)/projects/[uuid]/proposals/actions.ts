@@ -10,6 +10,7 @@ import {
   type TaskDraftInput,
 } from "@/services/proposal.service";
 import { projectExists } from "@/services/project.service";
+import logger from "@/lib/logger";
 
 // Create Proposal
 export async function createProposalAction(
@@ -78,7 +79,7 @@ export async function createProposalAction(
 
     return { success: true, proposal };
   } catch (error) {
-    console.error("Failed to create proposal:", error);
+    logger.error({ err: error }, "Failed to create proposal");
     return { success: false, error: error instanceof Error ? error.message : "Failed to create proposal" };
   }
 }
@@ -101,7 +102,7 @@ export async function fetchProposalsAction(projectUuid: string) {
     });
     return { success: true as const, data: proposals };
   } catch (error) {
-    console.error("Failed to fetch proposals:", error);
+    logger.error({ err: error }, "Failed to fetch proposals");
     return { success: false as const, error: "Failed to fetch proposals" };
   }
 }

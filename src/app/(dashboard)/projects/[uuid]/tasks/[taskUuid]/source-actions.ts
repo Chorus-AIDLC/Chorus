@@ -2,6 +2,7 @@
 
 import { getServerAuthContext } from "@/lib/auth-server";
 import { getProposalByUuid } from "@/services/proposal.service";
+import logger from "@/lib/logger";
 
 export interface ProposalSource {
   uuid: string;
@@ -27,7 +28,7 @@ export async function getTaskSourceAction(
       title: proposal.title,
     };
   } catch (error) {
-    console.error("Failed to get task source:", error);
+    logger.error({ err: error }, "Failed to get task source");
     return null;
   }
 }

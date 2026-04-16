@@ -9,6 +9,7 @@ import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/er
 import { batchCommentCounts } from "@/services/comment.service";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 // ===== Type Definitions =====
 
@@ -580,7 +581,7 @@ export async function updateTask(
       data.description,
       actorContext.actorType,
       actorContext.actorUuid,
-    ).catch((err) => console.error("[Task] Failed to process mentions:", err));
+    ).catch((err) => logger.error({ err }, "Failed to process task mentions"));
   }
 
   return formatTaskResponse(task);

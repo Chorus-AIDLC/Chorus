@@ -19,6 +19,7 @@ import {
   type TaskDraft,
 } from "@/services/proposal.service";
 import { createActivity } from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 export async function approveProposalAction(proposalUuid: string, reviewNote?: string) {
   const auth = await getServerAuthContext();
@@ -56,7 +57,7 @@ export async function approveProposalAction(proposalUuid: string, reviewNote?: s
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to approve proposal:", error);
+    logger.error({ err: error }, "Failed to approve proposal");
     return { success: false, error: "Failed to approve proposal" };
   }
 }
@@ -86,7 +87,7 @@ export async function submitProposalAction(proposalUuid: string) {
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to submit proposal:", error);
+    logger.error({ err: error }, "Failed to submit proposal");
     return { success: false, error: "Failed to submit proposal" };
   }
 }
@@ -127,7 +128,7 @@ export async function rejectProposalAction(proposalUuid: string, reviewNote?: st
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to reject proposal:", error);
+    logger.error({ err: error }, "Failed to reject proposal");
     return { success: false, error: "Failed to reject proposal" };
   }
 }
@@ -155,7 +156,7 @@ export async function closeProposalAction(proposalUuid: string, reviewNote: stri
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to close proposal:", error);
+    logger.error({ err: error }, "Failed to close proposal");
     return { success: false, error: "Failed to close proposal" };
   }
 }
@@ -178,7 +179,7 @@ export async function deleteProposalAction(proposalUuid: string, projectUuid: st
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to delete proposal:", error);
+    logger.error({ err: error }, "Failed to delete proposal");
     return { success: false, error: "Failed to delete proposal" };
   }
 }
@@ -204,7 +205,7 @@ export async function getProposalDraftsAction(proposalUuid: string) {
       taskDrafts: (proposal.taskDrafts ?? []) as unknown as TaskDraft[],
     };
   } catch (error) {
-    console.warn("[getProposalDraftsAction] Failed:", error);
+    logger.warn({ err: error }, "Failed to get proposal drafts");
     return { status: null, documentDrafts: [], taskDrafts: [] };
   }
 }
@@ -233,7 +234,7 @@ export async function addDocumentDraftAction(
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to add document draft:", error);
+    logger.error({ err: error }, "Failed to add document draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to add document draft" };
   }
 }
@@ -267,7 +268,7 @@ export async function addTaskDraftAction(
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to add task draft:", error);
+    logger.error({ err: error }, "Failed to add task draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to add task draft" };
   }
 }
@@ -295,7 +296,7 @@ export async function updateDocumentDraftAction(
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to update document draft:", error);
+    logger.error({ err: error }, "Failed to update document draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to update document draft" };
   }
 }
@@ -330,7 +331,7 @@ export async function updateTaskDraftAction(
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to update task draft:", error);
+    logger.error({ err: error }, "Failed to update task draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to update task draft" };
   }
 }
@@ -354,7 +355,7 @@ export async function removeDocumentDraftAction(proposalUuid: string, draftUuid:
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to remove document draft:", error);
+    logger.error({ err: error }, "Failed to remove document draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to remove document draft" };
   }
 }
@@ -378,7 +379,7 @@ export async function removeTaskDraftAction(proposalUuid: string, draftUuid: str
 
     return { success: true, proposal: updated };
   } catch (error) {
-    console.error("Failed to remove task draft:", error);
+    logger.error({ err: error }, "Failed to remove task draft");
     return { success: false, error: error instanceof Error ? error.message : "Failed to remove task draft" };
   }
 }

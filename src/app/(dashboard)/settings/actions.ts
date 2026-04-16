@@ -17,6 +17,7 @@ import {
   reopenSession,
   type SessionResponse,
 } from "@/services/session.service";
+import logger from "@/lib/logger";
 
 interface ApiKeyResponse {
   uuid: string;
@@ -57,7 +58,7 @@ export async function getApiKeysAction(): Promise<{
 
     return { success: true, data };
   } catch (error) {
-    console.error("Failed to fetch API keys:", error);
+    logger.error({ err: error }, "Failed to fetch API keys");
     return { success: false, error: "Failed to fetch API keys" };
   }
 }
@@ -98,7 +99,7 @@ export async function createAgentAndKeyAction(input: CreateAgentKeyInput): Promi
 
     return { success: true, key: apiKey.key, agentUuid: agent.uuid };
   } catch (error) {
-    console.error("Failed to create agent and API key:", error);
+    logger.error({ err: error }, "Failed to create agent and API key");
     return { success: false, error: "Failed to create API key" };
   }
 }
@@ -122,7 +123,7 @@ export async function deleteApiKeyAction(uuid: string): Promise<{
     await deleteAgent(apiKey.agentUuid);
     return { success: true };
   } catch (error) {
-    console.error("Failed to delete API key:", error);
+    logger.error({ err: error }, "Failed to delete API key");
     return { success: false, error: "Failed to delete API key" };
   }
 }
@@ -141,7 +142,7 @@ export async function getAgentSessionsAction(agentUuid: string): Promise<{
     const sessions = await listAgentSessions(auth.companyUuid, agentUuid);
     return { success: true, data: sessions };
   } catch (error) {
-    console.error("Failed to fetch agent sessions:", error);
+    logger.error({ err: error }, "Failed to fetch agent sessions");
     return { success: false, error: "Failed to fetch agent sessions" };
   }
 }
@@ -159,7 +160,7 @@ export async function closeSessionAction(sessionUuid: string): Promise<{
     await closeSession(auth.companyUuid, sessionUuid);
     return { success: true };
   } catch (error) {
-    console.error("Failed to close session:", error);
+    logger.error({ err: error }, "Failed to close session");
     return { success: false, error: "Failed to close session" };
   }
 }
@@ -177,7 +178,7 @@ export async function reopenSessionAction(sessionUuid: string): Promise<{
     await reopenSession(auth.companyUuid, sessionUuid);
     return { success: true };
   } catch (error) {
-    console.error("Failed to reopen session:", error);
+    logger.error({ err: error }, "Failed to reopen session");
     return { success: false, error: "Failed to reopen session" };
   }
 }
@@ -210,7 +211,7 @@ export async function updateAgentAction(input: UpdateAgentInput): Promise<{
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to update agent:", error);
+    logger.error({ err: error }, "Failed to update agent");
     return { success: false, error: "Failed to update agent" };
   }
 }

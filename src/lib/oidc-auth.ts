@@ -5,6 +5,7 @@
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
 import { prisma } from "./prisma";
 import { UserAuthContext } from "@/types/auth";
+import logger from "@/lib/logger";
 
 // Cache for JWKS
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -92,7 +93,7 @@ export async function verifyOidcAccessToken(
     };
   } catch (error) {
     // Token verification failed
-    console.error("OIDC token verification failed:", error);
+    logger.error({ err: error }, "OIDC token verification failed");
     return null;
   }
 }

@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { listIdeas, createIdea, updateIdea, deleteIdea } from "@/services/idea.service";
 import { checkIdeasAvailability } from "@/services/proposal.service";
 import { batchCommentCounts } from "@/services/comment.service";
+import logger from "@/lib/logger";
 
 interface Attachment {
   type: string;
@@ -39,7 +40,7 @@ export async function createIdeaAction(input: CreateIdeaInput) {
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, ideaUuid: idea.uuid };
   } catch (error) {
-    console.error("Failed to create idea:", error);
+    logger.error({ err: error }, "Failed to create idea");
     return { success: false, error: "Failed to create idea" };
   }
 }
@@ -66,7 +67,7 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, idea };
   } catch (error) {
-    console.error("Failed to update idea:", error);
+    logger.error({ err: error }, "Failed to update idea");
     return { success: false, error: "Failed to update idea" };
   }
 }
@@ -82,7 +83,7 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
     revalidatePath(`/projects/${projectUuid}/ideas`);
     return { success: true };
   } catch (error) {
-    console.error("Failed to delete idea:", error);
+    logger.error({ err: error }, "Failed to delete idea");
     return { success: false, error: "Failed to delete idea" };
   }
 }
@@ -129,7 +130,7 @@ export async function fetchIdeasAction(projectUuid: string) {
 
     return { success: true as const, data: { ideas, usedIdeaUuids, ideaProposalMap } };
   } catch (error) {
-    console.error("Failed to fetch ideas:", error);
+    logger.error({ err: error }, "Failed to fetch ideas");
     return { success: false as const, error: "Failed to fetch ideas" };
   }
 }

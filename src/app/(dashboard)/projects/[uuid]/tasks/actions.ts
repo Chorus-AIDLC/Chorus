@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { listTasks, updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { createActivity } from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 // Map column IDs to task statuses
 const columnToStatusMap: Record<string, string> = {
@@ -63,7 +64,7 @@ export async function moveTaskToColumnAction(
     revalidatePath(`/projects/${projectUuid}/tasks`);
     return { success: true };
   } catch (error) {
-    console.error("Failed to move task:", error);
+    logger.error({ err: error }, "Failed to move task");
     return { success: false, error: "Failed to move task" };
   }
 }
@@ -101,7 +102,7 @@ export async function forceMoveTaskToColumnAction(
 
     return { success: true };
   } catch (error) {
-    console.error("Failed to force move task:", error);
+    logger.error({ err: error }, "Failed to force move task");
     return { success: false, error: "Failed to force move task" };
   }
 }
@@ -121,7 +122,7 @@ export async function fetchTasksAction(projectUuid: string) {
     });
     return { success: true as const, data: tasks };
   } catch (error) {
-    console.error("Failed to fetch tasks:", error);
+    logger.error({ err: error }, "Failed to fetch tasks");
     return { success: false as const, error: "Failed to fetch tasks" };
   }
 }
@@ -135,7 +136,7 @@ export async function getProjectDependenciesAction(projectUuid: string) {
   try {
     return await getProjectTaskDependencies(auth.companyUuid, projectUuid);
   } catch (error) {
-    console.error("Failed to get project dependencies:", error);
+    logger.error({ err: error }, "Failed to get project dependencies");
     return { nodes: [], edges: [] };
   }
 }

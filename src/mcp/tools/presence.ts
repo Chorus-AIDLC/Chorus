@@ -6,6 +6,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { eventBus, type PresenceEvent } from "@/lib/event-bus";
 import type { AgentAuthContext } from "@/types/auth";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
+
+const presenceLogger = logger.child({ module: "presence" });
 
 // Entity types that presence events support
 const ENTITY_UUID_FIELDS: Record<string, PresenceEvent["entityType"]> = {
@@ -125,7 +128,7 @@ async function resolveProjectUuid(
     }
     return projectUuid;
   } catch (err) {
-    console.warn("[Presence] Failed to resolve projectUuid:", err);
+    presenceLogger.warn({ err }, "Failed to resolve projectUuid");
     return null;
   }
 }
@@ -165,7 +168,7 @@ async function emitPresenceAsync(
       eventBus.emitPresence(presenceEvent);
     }
   } catch (err) {
-    console.warn("[Presence] Failed to emit presence event:", err);
+    presenceLogger.warn({ err }, "Failed to emit presence event");
   }
 }
 

@@ -9,6 +9,7 @@ import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/er
 import { ApiError } from "@/lib/api-handler";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
+import logger from "@/lib/logger";
 
 // ===== Derived Status =====
 
@@ -295,7 +296,7 @@ export async function updateIdea(
       data.content,
       actorContext.actorType,
       actorContext.actorUuid,
-    ).catch((err) => console.error("[Idea] Failed to process mentions:", err));
+    ).catch((err) => logger.error({ err }, "Failed to process idea mentions"));
   }
 
   return formatIdeaResponse(idea);

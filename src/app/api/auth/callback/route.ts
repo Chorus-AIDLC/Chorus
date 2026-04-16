@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { findOrCreateUserByOidc, getCompanyByUuid } from "@/services/user.service";
 import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
+import logger from "@/lib/logger";
 
 // POST /api/auth/callback
 // Body: { companyUuid, oidcSub, email, name?, accessToken }
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
-    console.error("OIDC callback error:", error);
+    logger.error({ err: error }, "OIDC callback error");
     return errors.internal("Failed to process OIDC callback");
   }
 }
