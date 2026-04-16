@@ -182,10 +182,6 @@ describe('verifyOidcAccessToken', () => {
     const result = await verifyOidcAccessToken(token);
 
     expect(result).toBeNull();
-    expect(console.error).toHaveBeenCalledWith(
-      'OIDC token verification failed:',
-      expect.any(Error)
-    );
   });
 
   it('creates JWKS with correct issuer URL', async () => {

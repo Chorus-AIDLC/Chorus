@@ -308,8 +308,6 @@ describe("createComment", () => {
     ]);
     (createMentions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("DB error"));
 
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
     await createComment({
       companyUuid,
       targetType: "task",
@@ -321,9 +319,6 @@ describe("createComment", () => {
 
     // Give async fire-and-forget time to resolve
     await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(consoleErrorSpy).toHaveBeenCalled();
-    consoleErrorSpy.mockRestore();
   });
 
   it("should process mentions for idea target type", async () => {

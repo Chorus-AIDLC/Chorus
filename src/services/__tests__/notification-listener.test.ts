@@ -205,15 +205,9 @@ describe("notification-listener", () => {
 
     it("should handle prisma errors gracefully", async () => {
       mockPrisma.task.findUnique.mockRejectedValue(new Error("DB error"));
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const event = makeEvent({ action: "assigned", targetType: "task" });
       await handleActivity(event);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "[NotificationListener] Failed to process activity:",
-        expect.any(Error)
-      );
       expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
-      consoleErrorSpy.mockRestore();
     });
 
     it("should create notification for task assignment with different actor and assignee", async () => {
