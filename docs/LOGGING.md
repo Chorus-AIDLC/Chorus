@@ -22,12 +22,11 @@ Chorus uses four: **debug**, **info**, **warn**, **error**.
 
 | Condition | Format |
 |-----------|--------|
-| `NODE_ENV !== "production"` | Colorized pretty output via [pino-pretty](https://github.com/pinojs/pino-pretty) (synchronous stream, no worker threads) |
-| `NODE_ENV === "production"` | Newline-delimited JSON to stdout (CloudWatch / ELK ready) |
-| `LOG_PRETTY=true` | Forces pretty output regardless of `NODE_ENV` |
-| Edge Runtime (middleware) | Always JSON — Edge loads `pino/browser.js` which cannot use pino-pretty |
+| `NODE_ENV !== "production"` (local dev) | Colorized pretty output via [pino-pretty](https://github.com/pinojs/pino-pretty) transport |
+| `NODE_ENV === "production"` (Docker / ECS) | Newline-delimited JSON to stdout (CloudWatch / ELK ready) |
+| Edge Runtime (middleware) | Always JSON — Edge loads `pino/browser.js` which silently ignores the transport option |
 
-> **Why not `transport`?** pino's `transport` option spawns a Worker Thread via `thread-stream`. Next.js webpack/turbopack cannot resolve `thread-stream/lib/worker.js` at build time, causing `MODULE_NOT_FOUND`. Instead, Chorus loads pino-pretty as a synchronous Transform stream via dynamic `require()`, which avoids worker threads entirely.
+pino-pretty is a devDependency loaded via pino's `transport` option in development only. In production builds, the transport config is excluded entirely so webpack never encounters pino-pretty's Node.js-specific imports.
 
 ### Child Loggers
 
@@ -94,7 +93,6 @@ clientLogger.error("Failed to fetch", error);
 | Variable | Scope | Default | Description |
 |----------|-------|---------|-------------|
 | `LOG_LEVEL` | Server | `debug` (dev) / `info` (prod) | Minimum server log level. Accepts: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent` |
-| `LOG_PRETTY` | Server | — | Set to `true` or `1` to force colorized pino-pretty output in production |
 | `NEXT_PUBLIC_LOG_LEVEL` | Client | `debug` (dev) / `warn` (prod) | Minimum browser log level. Accepts: `debug`, `info`, `warn`, `error` |
 | `NODE_ENV` | Both | — | Controls default levels and whether pino-pretty is loaded |
 
@@ -110,11 +108,8 @@ LOG_LEVEL=info pnpm dev
 # Development — only errors
 LOG_LEVEL=error pnpm dev
 
-# Production — JSON output, info and above
+# Production / Docker — JSON output, info and above
 NODE_ENV=production node .next/standalone/server.js
-
-# Production — force pretty output for debugging
-LOG_PRETTY=true NODE_ENV=production node .next/standalone/server.js
 
 # Silence all server logs
 LOG_LEVEL=silent pnpm dev

@@ -16,8 +16,6 @@ services:
       - COOKIE_SECURE=false
       - DEFAULT_USER=${DEFAULT_USER:-admin@example.com}
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-changeme}
-      # Colorized log output for local development (disable for log aggregators)
-      - LOG_PRETTY=true
     volumes:
       - chorus-local-data:/app/data
 
