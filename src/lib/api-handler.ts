@@ -41,54 +41,56 @@ export function withErrorHandler<T = Record<string, string>>(
     const reqLogger = createRequestLogger({ requestId });
 
     return requestContext.run({ requestId, logger: reqLogger }, async () => {
-    try {
-      return await handler(request, context);
-    } catch (err) {
-      getRequestLogger().error({ err }, "API error");
+      try {
+        return await handler(request, context);
+      } catch (err) {
+        getRequestLogger().error({ err }, "API error");
 
-      // Custom API error
-      if (err instanceof ApiError) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: err.code,
-              message: err.message,
-              details: err.details,
+        // Custom API error
+        if (err instanceof ApiError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: err.code,
+                message: err.message,
+                details: err.details,
+              },
             },
-          },
-          { status: err.status }
-        );
-      }
-
-      // Prisma error
-      if (err && typeof err === "object" && "code" in err) {
-        const prismaErr = err as { code: string; meta?: unknown };
-        const errorMessage =
-          PRISMA_ERROR_CODES[prismaErr.code as keyof typeof PRISMA_ERROR_CODES];
-
-        if (errorMessage) {
-          if (prismaErr.code === "P2025") {
-            return errors.notFound();
-          }
-          if (prismaErr.code === "P2002") {
-            return errors.conflict(errorMessage);
-          }
-          return errors.database(errorMessage);
+            { status: err.status }
+          );
         }
-      }
 
-      // Generic error
-      if (err instanceof Error) {
-        return errors.internal(
-          process.env.NODE_ENV === "development"
-            ? err.message
-            : "Internal server error"
-        );
-      }
+        // Prisma error
+        if (err && typeof err === "object" && "code" in err) {
+          const prismaErr = err as { code: string; meta?: unknown };
+          const errorMessage =
+            PRISMA_ERROR_CODES[
+              prismaErr.code as keyof typeof PRISMA_ERROR_CODES
+            ];
 
-      return errors.internal();
-    }
+          if (errorMessage) {
+            if (prismaErr.code === "P2025") {
+              return errors.notFound();
+            }
+            if (prismaErr.code === "P2002") {
+              return errors.conflict(errorMessage);
+            }
+            return errors.database(errorMessage);
+          }
+        }
+
+        // Generic error
+        if (err instanceof Error) {
+          return errors.internal(
+            process.env.NODE_ENV === "development"
+              ? err.message
+              : "Internal server error"
+          );
+        }
+
+        return errors.internal();
+      }
     });
   };
 }

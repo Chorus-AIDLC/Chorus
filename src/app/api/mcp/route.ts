@@ -10,6 +10,8 @@ import { getProjectUuidsByGroup } from "@/services/project.service";
 import type { AgentAuthContext } from "@/types/auth";
 import logger from "@/lib/logger";
 
+const mcpLogger = logger.child({ module: "mcp" });
+
 // Store active session transports
 // Sessions are cleaned up via: client DELETE request, transport onclose callback,
 // or process restart. No idle timeout — MCP SDK design does not require one,
@@ -106,7 +108,7 @@ export async function POST(request: NextRequest) {
     const response = await transport.handleRequest(request);
     return response;
   } catch (error) {
-    logger.error({ err: error, module: "mcp" }, "MCP endpoint error");
+    mcpLogger.error({ err: error }, "MCP endpoint error");
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
@@ -134,7 +136,7 @@ export async function DELETE(request: NextRequest) {
 
     return new Response(null, { status: 204 });
   } catch (error) {
-    logger.error({ err: error, module: "mcp" }, "MCP session close error");
+    mcpLogger.error({ err: error }, "MCP session close error");
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

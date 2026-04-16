@@ -42,7 +42,10 @@ export const prisma =
         : [{ emit: "event", level: "error" }],
   });
 
-// Route Prisma logs through pino ($on may not exist in test mocks)
+// Route Prisma logs through pino ($on may not exist in test mocks).
+// `as never` casts: Prisma 7 types $on() for "query"/"warn"/"error" only when
+// the matching `emit: "event"` is declared in the `log` config above, but TS
+// can't narrow the union from a runtime-conditional array, so we cast.
 if (!globalForPrisma.prisma && typeof prisma.$on === "function") {
   prisma.$on("query" as never, (e: { query: string; duration: number }) => {
     dbLogger.debug({ duration: e.duration }, e.query);
