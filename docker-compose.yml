@@ -14,6 +14,8 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - DEFAULT_USER=${DEFAULT_USER:-}
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
+      # Colorized log output — set to false or remove for log aggregators (CloudWatch/ELK)
+      - LOG_PRETTY=true
     depends_on:
       db:
         condition: service_healthy

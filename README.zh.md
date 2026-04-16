@@ -436,6 +436,7 @@ Skill 文件包含：MCP 配置指南、三个角色的完整工作流、Session
 | [Search](docs/SEARCH.md) | 全局搜索技术设计 |
 | [AI-DLC Gap Analysis](docs/AIDLC_GAP_ANALYSIS.md) | AI-DLC 方法论差距分析 |
 | [Docker](docs/DOCKER.md) | Docker 镜像使用、环境变量、部署说明 |
+| [Logging](docs/LOGGING.md) | 结构化日志架构（pino、日志级别、环境变量） |
 | [CLAUDE.md](CLAUDE.md) | 项目开发规范（给 AI Agent 的编码指南） |
 
 ---
