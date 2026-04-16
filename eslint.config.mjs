@@ -14,6 +14,11 @@ const eslintConfig = [
   {
     ignores: [".next/**", "out/**", "build/**", "src/generated/**", "src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"],
   },
+  {
+    rules: {
+      "no-console": "warn",
+    },
+  },
 ];
 
 export default eslintConfig;

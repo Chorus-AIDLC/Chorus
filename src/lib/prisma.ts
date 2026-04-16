@@ -1,6 +1,7 @@
 import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import logger from "./logger";
 
 // Use DATABASE_URL if set, otherwise build from individual env vars (ECS Secrets Manager)
 const connectionString =
@@ -25,15 +26,34 @@ const pool =
 // Create adapter
 const adapter = new PrismaPg(pool);
 
+const dbLogger = logger.child({ module: "prisma" });
+
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     adapter,
     log:
       process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
-        : ["error"],
+        ? [
+            { emit: "event", level: "query" },
+            { emit: "event", level: "warn" },
+            { emit: "event", level: "error" },
+          ]
+        : [{ emit: "event", level: "error" }],
   });
+
+// Route Prisma logs through pino ($on may not exist in test mocks)
+if (!globalForPrisma.prisma && typeof prisma.$on === "function") {
+  prisma.$on("query" as never, (e: { query: string; duration: number }) => {
+    dbLogger.debug({ duration: e.duration }, e.query);
+  });
+  prisma.$on("warn" as never, (e: { message: string }) => {
+    dbLogger.warn(e.message);
+  });
+  prisma.$on("error" as never, (e: { message: string }) => {
+    dbLogger.error(e.message);
+  });
+}
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
