@@ -1,37 +1,28 @@
 import pino from "pino";
-import type { DestinationStream } from "pino";
 
-// Edge Runtime (middleware) uses pino/browser.js which lacks pino.destination
-// and cannot require("pino-pretty"). Detect via typeof.
-const isEdge = typeof pino.destination !== "function";
+// This module is imported by both Node.js server code AND Edge Runtime
+// (middleware). pino and pino-pretty are in serverExternalPackages so webpack
+// does not bundle them — they are loaded from node_modules at runtime.
+//
+// In Edge Runtime, pino resolves to pino/browser.js which ignores the
+// transport option silently, so the same code works in both environments.
+const forcePretty = process.env.LOG_PRETTY === "true" || process.env.LOG_PRETTY === "1";
+const usePretty = forcePretty || process.env.NODE_ENV !== "production";
 
-function getDevStream(): DestinationStream | undefined {
-  const forcePretty = process.env.LOG_PRETTY === "true" || process.env.LOG_PRETTY === "1";
-  if (isEdge || (process.env.NODE_ENV === "production" && !forcePretty)) return undefined;
-  try {
-    // Dynamic require avoids bundling pino-pretty in production.
-    // pinoPretty() returns a synchronous Transform stream — no worker thread.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pinoPretty = require("pino-pretty") as (opts: Record<string, unknown>) => DestinationStream;
-    return pinoPretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" });
-  } catch {
-    return undefined;
-  }
-}
-
-const devStream = getDevStream();
-
-const loggerOpts = {
+const logger = pino({
   level:
     process.env.LOG_LEVEL ||
     (process.env.NODE_ENV === "production" ? "info" : "debug"),
   base: { service: "chorus" },
-};
-
-// In Edge: pino(opts) only. In Node: pino(opts, stream).
-const logger = devStream
-  ? pino(loggerOpts, devStream)
-  : pino(loggerOpts);
+  ...(usePretty
+    ? {
+        transport: {
+          target: "pino-pretty",
+          options: { colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" },
+        },
+      }
+    : {}),
+});
 
 export default logger;
 
