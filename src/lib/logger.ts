@@ -6,7 +6,8 @@ import type { DestinationStream } from "pino";
 const isEdge = typeof pino.destination !== "function";
 
 function getDevStream(): DestinationStream | undefined {
-  if (isEdge || process.env.NODE_ENV === "production") return undefined;
+  const forcePretty = process.env.LOG_PRETTY === "true" || process.env.LOG_PRETTY === "1";
+  if (isEdge || (process.env.NODE_ENV === "production" && !forcePretty)) return undefined;
   try {
     // Dynamic require avoids bundling pino-pretty in production.
     // pinoPretty() returns a synchronous Transform stream — no worker thread.
