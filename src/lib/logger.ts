@@ -1,8 +1,12 @@
 import pino from "pino";
 import type { DestinationStream } from "pino";
 
+// Edge Runtime (middleware) uses pino/browser.js which lacks pino.destination
+// and cannot require("pino-pretty"). Detect via typeof.
+const isEdge = typeof pino.destination !== "function";
+
 function getDevStream(): DestinationStream | undefined {
-  if (process.env.NODE_ENV === "production") return undefined;
+  if (isEdge || process.env.NODE_ENV === "production") return undefined;
   try {
     // Dynamic require avoids bundling pino-pretty in production.
     // pinoPretty() returns a synchronous Transform stream — no worker thread.
@@ -10,21 +14,23 @@ function getDevStream(): DestinationStream | undefined {
     const pinoPretty = require("pino-pretty") as (opts: Record<string, unknown>) => DestinationStream;
     return pinoPretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" });
   } catch {
-    return undefined; // pino-pretty not installed (production image), fall back to JSON
+    return undefined;
   }
 }
 
 const devStream = getDevStream();
 
-const logger = pino(
-  {
-    level:
-      process.env.LOG_LEVEL ||
-      (process.env.NODE_ENV === "production" ? "info" : "debug"),
-    base: { service: "chorus" },
-  },
-  devStream ?? pino.destination(1), // stdout
-);
+const loggerOpts = {
+  level:
+    process.env.LOG_LEVEL ||
+    (process.env.NODE_ENV === "production" ? "info" : "debug"),
+  base: { service: "chorus" },
+};
+
+// In Edge: pino(opts) only. In Node: pino(opts, stream).
+const logger = devStream
+  ? pino(loggerOpts, devStream)
+  : pino(loggerOpts);
 
 export default logger;
 
