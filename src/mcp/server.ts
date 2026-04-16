@@ -7,6 +7,7 @@ import { registerPmTools } from "./tools/pm";
 import { registerDeveloperTools } from "./tools/developer";
 import { registerAdminTools } from "./tools/admin";
 import { registerSessionTools } from "./tools/session";
+import { enableToolCallLogging } from "./tools/tool-logger";
 import { enablePresence } from "./tools/presence";
 import type { AgentAuthContext } from "@/types/auth";
 
@@ -16,6 +17,9 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
     name: "chorus",
     version: "1.0.0",
   });
+
+  // Enable tool-call logging (must be before enablePresence so it wraps the outermost layer)
+  enableToolCallLogging(server, auth);
 
   // Enable presence event emission for all tools (must be called before registerTool calls)
   enablePresence(server, auth);
