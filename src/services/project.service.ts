@@ -200,7 +200,7 @@ export async function listProjectsWithStats({ companyUuid, skip, take }: Project
   const projectUuids = projects.map((p) => p.uuid);
   const doneCounts = await prisma.task.groupBy({
     by: ["projectUuid"],
-    where: { companyUuid, projectUuid: { in: projectUuids }, status: "done" },
+    where: { companyUuid, projectUuid: { in: projectUuids }, status: { in: ["done", "closed"] } },
     _count: true,
   });
   const doneMap = new Map(doneCounts.map((d) => [d.projectUuid, d._count]));

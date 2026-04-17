@@ -386,7 +386,31 @@ describe("listProjectsWithStats", () => {
       where: {
         companyUuid,
         projectUuid: { in: [project1.uuid, project2.uuid] },
-        status: "done",
+        status: { in: ["done", "closed"] },
+      },
+      _count: true,
+    });
+  });
+
+  it("should count closed tasks as completed (done + closed)", async () => {
+    const project = makeProject({ uuid: "project-0000-0000-0000-000000000001" });
+
+    mockPrisma.project.findMany.mockResolvedValue([project]);
+    mockPrisma.project.count.mockResolvedValue(1);
+    // groupBy returns combined count of done + closed tasks
+    mockPrisma.task.groupBy.mockResolvedValue([
+      { projectUuid: "project-0000-0000-0000-000000000001", _count: 7 },
+    ]);
+
+    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20 });
+
+    expect(result.projects[0].tasksDone).toBe(7);
+    expect(mockPrisma.task.groupBy).toHaveBeenCalledWith({
+      by: ["projectUuid"],
+      where: {
+        companyUuid,
+        projectUuid: { in: [project.uuid] },
+        status: { in: ["done", "closed"] },
       },
       _count: true,
     });
