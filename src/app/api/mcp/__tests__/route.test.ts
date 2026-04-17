@@ -2,11 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockHandleRequest = vi.hoisted(() => vi.fn().mockResolvedValue(new Response()));
-const mockConnect = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-
-vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
-  McpServer: vi.fn(),
-}));
 
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
   WebStandardStreamableHTTPServerTransport: vi.fn(function (this: Record<string, unknown>) {
@@ -16,7 +11,7 @@ vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => (
 
 vi.mock("@/mcp/server", () => ({
   createMcpServer: vi.fn().mockReturnValue({
-    connect: mockConnect,
+    connect: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 
@@ -34,14 +29,12 @@ vi.mock("@/lib/api-key", () => ({
 }));
 
 describe("Stateless MCP Endpoint", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    const { _resetServerCacheForTest } = await import("@/app/api/mcp/route");
-    _resetServerCacheForTest();
   });
 
-  describe("POST - Request Handling", () => {
-    it("should create transport and handle request", async () => {
+  describe("POST - Stateless Request Handling", () => {
+    it("should create fresh server+transport and handle request", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 
       const request = new NextRequest("http://localhost:3000/api/mcp", {
@@ -57,7 +50,7 @@ describe("Stateless MCP Endpoint", () => {
       expect(response).toBeInstanceOf(Response);
     });
 
-    it("should create a new transport per request but reuse cached server", async () => {
+    it("should create independent server+transport per request", async () => {
       const { POST } = await import("@/app/api/mcp/route");
       const { createMcpServer } = await import("@/mcp/server");
       const { WebStandardStreamableHTTPServerTransport } = await import(
@@ -77,44 +70,7 @@ describe("Stateless MCP Endpoint", () => {
       await POST(request1);
       await POST(request2);
 
-      // Two transports created (one per request)
       expect(WebStandardStreamableHTTPServerTransport).toHaveBeenCalledTimes(2);
-      // Server created only once (cached by API key)
-      expect(createMcpServer).toHaveBeenCalledTimes(1);
-    });
-
-    it("should create separate servers for different agents", async () => {
-      const { POST } = await import("@/app/api/mcp/route");
-      const { createMcpServer } = await import("@/mcp/server");
-      const apiKeyLib = await import("@/lib/api-key");
-
-      const request1 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: { authorization: "Bearer key-1" },
-      });
-
-      await POST(request1);
-
-      // Change agent for second request
-      vi.mocked(apiKeyLib.validateApiKey).mockResolvedValueOnce({
-        valid: true,
-        agent: {
-          uuid: "agent-uuid-2",
-          companyUuid: "company-uuid",
-          roles: ["pm"],
-          name: "PM Agent",
-          ownerUuid: null,
-        },
-      });
-
-      const request2 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: { authorization: "Bearer key-2" },
-      });
-
-      await POST(request2);
-
-      // Different agents = different servers
       expect(createMcpServer).toHaveBeenCalledTimes(2);
     });
 

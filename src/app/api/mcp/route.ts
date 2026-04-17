@@ -1,10 +1,8 @@
 // src/app/api/mcp/route.ts
-// Stateless MCP HTTP Endpoint with per-API-key server caching.
-// No session state — each request gets a fresh transport but reuses the
-// cached McpServer (tool registrations) for the same API key.
+// Stateless MCP HTTP Endpoint — each request creates a fresh server+transport.
+// No session state, no caching. Supports horizontal scaling natively.
 
 import { NextRequest, NextResponse } from "next/server";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "@/mcp/server";
 import { extractApiKey, validateApiKey } from "@/lib/api-key";
@@ -13,45 +11,6 @@ import type { AgentAuthContext } from "@/types/auth";
 import logger from "@/lib/logger";
 
 const mcpLogger = logger.child({ module: "mcp" });
-
-const SERVER_CACHE_MAX = 100;
-
-interface CachedServer {
-  server: McpServer;
-  lastUsed: number;
-}
-
-const serverCache = new Map<string, CachedServer>();
-
-export function _resetServerCacheForTest() {
-  serverCache.clear();
-}
-
-function getOrCreateServer(cacheKey: string, auth: AgentAuthContext): McpServer {
-  const cached = serverCache.get(cacheKey);
-  if (cached) {
-    cached.lastUsed = Date.now();
-    return cached.server;
-  }
-
-  const server = createMcpServer(auth);
-
-  // Evict oldest entry if at capacity
-  if (serverCache.size >= SERVER_CACHE_MAX) {
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-    for (const [key, entry] of serverCache) {
-      if (entry.lastUsed < oldestTime) {
-        oldestTime = entry.lastUsed;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) serverCache.delete(oldestKey);
-  }
-
-  serverCache.set(cacheKey, { server, lastUsed: Date.now() });
-  return server;
-}
 
 // POST /api/mcp - MCP HTTP Endpoint
 export async function POST(request: NextRequest) {
@@ -98,12 +57,9 @@ export async function POST(request: NextRequest) {
       projectUuids,
     };
 
-    // Cache key: agent UUID + sorted project scope (same key = same tools)
-    const scopeKey = projectUuids ? projectUuids.slice().sort().join(",") : "";
-    const cacheKey = `${validation.agent.uuid}:${scopeKey}`;
-
-    const server = getOrCreateServer(cacheKey, auth);
+    // Stateless: fresh server+transport per request, no session state
     const transport = new WebStandardStreamableHTTPServerTransport({});
+    const server = createMcpServer(auth);
     await server.connect(transport);
 
     const response = await transport.handleRequest(request);
