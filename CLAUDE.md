@@ -58,7 +58,7 @@ packages/chorus-cdk/        # AWS CDK for deployment
 ## Key Commands
 
 ```bash
-pnpm dev                    # Dev server with Turbopack (:3000)
+pnpm dev                    # Dev server with Turbopack (:8637)
 pnpm build                  # Production build (runs prisma generate first)
 pnpm lint                   # ESLint
 npx tsc --noEmit            # Type check

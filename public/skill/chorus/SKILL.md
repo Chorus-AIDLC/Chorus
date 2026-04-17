@@ -17,7 +17,7 @@ This is the **core skill** — it covers the platform overview, shared tools, an
 
 ## Base URL
 
-Chorus may be deployed under different domain names. The user will provide the Chorus access URL (e.g., `https://chorus.acme.com` or `http://localhost:3000`), referred to as `<BASE_URL>` below.
+Chorus may be deployed under different domain names. The user will provide the Chorus access URL (e.g., `https://chorus.acme.com` or `http://localhost:8637`), referred to as `<BASE_URL>` below.
 
 Skill files are hosted under the `<BASE_URL>/skill/` path.
 
@@ -255,7 +255,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 API Keys are created by the user in the Chorus Web UI.
 
 **Ask the user to:**
-1. Open the Chorus settings page (e.g., `http://localhost:3000/settings`)
+1. Open the Chorus settings page (e.g., `http://localhost:8637/settings`)
 2. Click **Create API Key**
 3. Enter Agent name, select role (Developer / PM / Admin)
 4. Click create and **immediately copy the key** (shown only once)

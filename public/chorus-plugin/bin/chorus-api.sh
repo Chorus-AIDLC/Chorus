@@ -3,7 +3,7 @@
 # Used by hook scripts to communicate with Chorus backend.
 #
 # Environment variables:
-#   CHORUS_URL      — Chorus base URL (e.g., http://localhost:3000)
+#   CHORUS_URL      — Chorus base URL (e.g., http://localhost:8637)
 #   CHORUS_API_KEY  — Agent API key (cho_xxx)
 #
 # State file: $CLAUDE_PROJECT_DIR/.chorus/state.json (gitignored)

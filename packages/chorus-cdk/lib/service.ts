@@ -25,7 +25,7 @@ import { Database, DB_NAME } from './database';
 import { Network } from './network';
 import { Cache } from './cache';
 
-const SERVICE_PORT = 3000;
+const SERVICE_PORT = 8637;
 
 export interface ServiceProps {
   readonly vpc: ec2.IVpc;
@@ -230,7 +230,7 @@ export class Service extends Construct {
     const service = new ecs.FargateService(this, 'FargateService', {
       cluster,
       taskDefinition,
-      desiredCount: props.desiredCount ?? 1,
+      desiredCount: props.desiredCount ?? 2,
       circuitBreaker: { rollback: true },
       securityGroups: [props.networkStack.serviceSecurityGroup],
       vpcSubnets: props.networkStack.vpc.selectSubnets({

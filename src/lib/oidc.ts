@@ -16,7 +16,7 @@ export function createOidcSettings(config: OidcConfig): UserManagerSettings {
   const baseUrl =
     typeof window !== "undefined"
       ? window.location.origin
-      : process.env.NEXTAUTH_URL || "http://localhost:3000";
+      : process.env.NEXTAUTH_URL || "http://localhost:8637";
 
   // Use localStorage for persistent token storage
   const userStore = typeof window !== "undefined"
