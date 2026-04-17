@@ -103,6 +103,7 @@ describe("Stateless MCP Endpoint", () => {
           companyUuid: "company-uuid",
           roles: ["pm"],
           name: "PM Agent",
+          ownerUuid: null,
         },
       });
 
