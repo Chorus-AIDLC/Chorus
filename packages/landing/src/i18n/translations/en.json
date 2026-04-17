@@ -193,10 +193,10 @@
   "quickstart": {
     "badge": "Docker",
     "title": "Run Chorus in 60 Seconds",
-    "subtitle": "Pre-built image on <a>Docker Hub</a>. Supports amd64 & arm64 (Apple Silicon).",
+    "subtitle": "Pre-built image on <a>Docker Hub</a>. No external database needed — embedded PGlite included.",
     "step1": "Create a <code>docker-compose.yml</code>",
-    "step2": "Start everything",
-    "step3": "Open <a>http://localhost:3000</a> and log in with your DEFAULT_USER credentials",
+    "step2": "Start it",
+    "step3": "Open <a>http://localhost:8637</a> and log in with your DEFAULT_USER credentials",
     "dockerHub": "Docker Hub",
     "github": "GitHub"
   },

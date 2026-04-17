@@ -96,7 +96,7 @@ describe('createOidcSettings', () => {
 
     const settings = createOidcSettings(mockConfig);
 
-    expect(settings.redirect_uri).toBe('http://localhost:3000/login/callback');
+    expect(settings.redirect_uri).toBe('http://localhost:8637/login/callback');
   });
 
   it('sets userStore to undefined when window is undefined', () => {

@@ -20,7 +20,7 @@ services:
   app:
     image: chorusaidlc/chorus-app:latest
     ports:
-      - "8637:3000"
+      - "8637:8637"
     environment:
       # No DATABASE_URL — entrypoint auto-starts embedded PGlite
       - REDIS_URL=
@@ -60,7 +60,7 @@ services:
   app:
     image: chorusaidlc/chorus-app:latest
     ports:
-      - "8637:3000"
+      - "8637:8637"
     environment:
       - DATABASE_URL=postgresql://chorus:chorus@db:5432/chorus
       - REDIS_URL=redis://default:chorus-redis@redis:6379
@@ -119,7 +119,7 @@ If you already have PostgreSQL and Redis running:
 
 ```bash
 docker run -d \
-  -p 8637:3000 \
+  -p 8637:8637 \
   -e DATABASE_URL=postgresql://user:pass@your-db-host:5432/chorus \
   -e REDIS_URL=redis://default:password@your-redis-host:6379 \
   -e NEXTAUTH_SECRET=change-me-to-a-random-secret \
@@ -166,7 +166,7 @@ If `DATABASE_URL` is not set, the entrypoint builds it from these individual var
 |---|---|
 | `DEFAULT_USER` | Email address for built-in login (bypasses OIDC). Auto-provisions the user and company on first login. |
 | `DEFAULT_PASSWORD` | Password for the default user (plain text, compared via bcrypt at runtime). |
-| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:3000`). Set this when running behind a reverse proxy. |
+| `NEXTAUTH_URL` | Public-facing base URL of the app (default: `http://localhost:8637`). Set this when running behind a reverse proxy. |
 | `COOKIE_SECURE` | Set to `"false"` to disable secure cookies for HTTP-only deployments (default: `"false"` in docker-compose). Set to `"true"` when deploying with HTTPS in production. |
 
 ### Logging
@@ -190,7 +190,7 @@ Production Docker images always output JSON to stdout (ready for CloudWatch / EL
 ## Image Details
 
 - **Base image**: `node:22-alpine`
-- **Internal port**: `3000` (mapped to `8637` externally by default)
+- **Internal port**: `8637`
 - **Entrypoint**: Runs Prisma migrations automatically on startup (retries for up to 5 minutes while waiting for the database)
 - **Build**: Next.js standalone output for minimal image size
 - **Architectures**: `linux/amd64`, `linux/arm64`
@@ -200,7 +200,7 @@ Production Docker images always output JSON to stdout (ready for CloudWatch / EL
 1. If `DATABASE_URL` is not set and no `DB_*` variables are provided, the entrypoint starts an embedded PGlite instance on an internal port
 2. The entrypoint runs `prisma migrate deploy` to apply any pending database migrations
 3. If the database is not ready, it retries every 10 seconds (up to 30 attempts)
-4. Once migrations succeed, the Next.js server starts on internal port 3000 (mapped to 8637 externally)
+4. Once migrations succeed, the Next.js server starts on port 8637
 
 ## Source Code
 

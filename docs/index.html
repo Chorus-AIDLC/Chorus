@@ -1103,7 +1103,7 @@
       <span class="quickstart-badge">Docker</span>
     </div>
     <h2>Run Chorus in 60 Seconds</h2>
-    <p>Pre-built image on <a href="https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general">Docker Hub</a>. Supports amd64 &amp; arm64 (Apple Silicon).</p>
+    <p>Pre-built image on <a href="https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general">Docker Hub</a>. No external database needed &mdash; embedded PGlite included.</p>
     <div class="qs-steps">
       <div class="qs-step">
         <div class="qs-num">1</div>
@@ -1113,42 +1113,28 @@
 services:
   app:
     <span class="qs-flag">image</span>: chorusaidlc/chorus-app:<span class="qs-env">latest</span>
-    <span class="qs-flag">ports</span>: [<span class="qs-env">"3000:3000"</span>]
+    <span class="qs-flag">ports</span>: [<span class="qs-env">"8637:8637"</span>]
     <span class="qs-flag">environment</span>:
-      - DATABASE_URL=<span class="qs-env">postgresql://chorus:chorus@db:5432/chorus</span>
-      - REDIS_URL=<span class="qs-env">redis://default:chorus-redis@redis:6379</span>
       - NEXTAUTH_SECRET=<span class="qs-env">change-me-to-a-random-secret</span>
       - DEFAULT_USER=<span class="qs-env">admin@example.com</span>
       - DEFAULT_PASSWORD=<span class="qs-env">changeme</span>
-    <span class="qs-flag">depends_on</span>:
-      db: { <span class="qs-flag">condition</span>: service_healthy }
-      redis: { <span class="qs-flag">condition</span>: service_healthy }
-  redis:
-    <span class="qs-flag">image</span>: redis:7-alpine
-    <span class="qs-flag">command</span>: redis-server --requirepass chorus-redis
-    <span class="qs-flag">healthcheck</span>:
-      <span class="qs-flag">test</span>: [<span class="qs-env">"CMD"</span>, <span class="qs-env">"redis-cli"</span>, <span class="qs-env">"-a"</span>, <span class="qs-env">"chorus-redis"</span>, <span class="qs-env">"ping"</span>]
-  db:
-    <span class="qs-flag">image</span>: postgres:16-alpine
-    <span class="qs-flag">environment</span>:
-      POSTGRES_USER: <span class="qs-env">chorus</span>
-      POSTGRES_PASSWORD: <span class="qs-env">chorus</span>
-      POSTGRES_DB: <span class="qs-env">chorus</span>
-    <span class="qs-flag">healthcheck</span>:
-      <span class="qs-flag">test</span>: [<span class="qs-env">"CMD-SHELL"</span>, <span class="qs-env">"pg_isready -U chorus"</span>]</div></div>
+    <span class="qs-flag">volumes</span>:
+      - chorus-data:/app/data
+<span class="qs-flag">volumes</span>:
+  chorus-data:</div></div>
         </div>
       </div>
       <div class="qs-step">
         <div class="qs-num">2</div>
         <div class="qs-content">
-          <p>Start everything</p>
+          <p>Start it</p>
           <div class="qs-code-wrap"><button class="qs-copy" onclick="copyCode(this)" title="Copy"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg></button><div class="qs-code"><span class="qs-cmd">docker compose</span> up -d</div></div>
         </div>
       </div>
       <div class="qs-step">
         <div class="qs-num">3</div>
         <div class="qs-content">
-          <p>Open <a href="http://localhost:3000" style="color:#7dd3fc;text-decoration:none;">http://localhost:3000</a> and log in with your DEFAULT_USER credentials</p>
+          <p>Open <a href="http://localhost:8637" style="color:#7dd3fc;text-decoration:none;">http://localhost:8637</a> and log in with your DEFAULT_USER credentials</p>
           <div class="qs-arch">
             <span class="qs-arch-tag">linux/amd64</span>
             <span class="qs-arch-tag">linux/arm64</span>

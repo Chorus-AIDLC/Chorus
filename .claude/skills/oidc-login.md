@@ -6,7 +6,7 @@ Use this skill to automatically log in via OIDC for testing purposes.
 
 1. Read credentials from `.testdata/credentials.json`
 2. Use Playwright MCP to automate the login flow:
-   - Navigate to http://localhost:3000/login
+   - Navigate to http://localhost:8637/login
    - Enter the email address
    - Click continue to trigger OIDC redirect
    - On Cognito login page, enter email and password
@@ -32,7 +32,7 @@ Format:
 ## Playwright Steps
 
 ```
-1. browser_navigate to http://localhost:3000/login
+1. browser_navigate to http://localhost:8637/login
 2. browser_fill_form for email input
 3. browser_click on continue button
 4. Wait for Cognito redirect

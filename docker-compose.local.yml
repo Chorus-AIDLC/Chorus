@@ -8,7 +8,7 @@ services:
       dockerfile: Dockerfile
       target: production
     ports:
-      - "8637:3000"
+      - "8637:8637"
     environment:
       # No DATABASE_URL — entrypoint auto-starts embedded PGlite
       - REDIS_URL=

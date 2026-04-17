@@ -1084,7 +1084,7 @@ Agents can filter results by project(s) using optional HTTP headers:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:3000/api/mcp",
+      "url": "http://localhost:8637/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_xxx",
         "X-Chorus-Project": "project-uuid-1,project-uuid-2"
@@ -1574,10 +1574,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "8637:8637"
     environment:
       - DATABASE_URL=postgres://chorus:chorus@db:5432/chorus
-      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_URL=http://localhost:8637
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - OIDC_ISSUER=${OIDC_ISSUER}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
@@ -1706,7 +1706,7 @@ volumes:
 DATABASE_URL=postgres://chorus:chorus@localhost:5432/chorus
 
 # NextAuth
-NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_URL=http://localhost:8637
 NEXTAUTH_SECRET=your-secret-key
 
 # Super Admin (system startup config, manages Companies and global settings)

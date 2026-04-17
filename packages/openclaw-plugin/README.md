@@ -365,7 +365,7 @@ Add to `~/.openclaw/openclaw.json`:
       "chorus-openclaw-plugin": {
         "enabled": true,
         "config": {
-          "chorusUrl": "http://localhost:3000",
+          "chorusUrl": "http://localhost:8637",
           "apiKey": "cho_your_dev_key",
           "autoStart": true
         }
