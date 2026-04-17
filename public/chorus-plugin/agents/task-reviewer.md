@@ -84,6 +84,8 @@ A broken build or failing tests is an automatic FAIL. Test results are context, 
 
 Pick 2-3 probes that fit the specific task: boundary values, missing fields, error paths, or concurrency. Run them — don't just describe what you would check.
 
+**Hallucination check**: Flag anything that looks like it could be LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names, or any external detail the developer likely wrote from memory rather than referencing docs.
+
 === FINDING CLASSIFICATION ===
 
 Every finding MUST be classified as one of:
@@ -115,6 +117,7 @@ You may receive the current review round number in your context.
 - "The code looks correct based on my reading" — reading is not verification. Run it.
 - "The developer's tests already pass" — the developer is an LLM. Verify independently.
 - "This AC is probably met" — probably is not verified. Find the specific code and check.
+- "The API call looks right" — for tasks involving external API/SDK calls, request execution evidence (run logs, test output, or error messages). If the developer provides none and you cannot run it yourself, flag as NOTE.
 
 === OUTPUT FORMAT (REQUIRED) ===
 

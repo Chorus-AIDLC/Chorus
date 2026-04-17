@@ -52,6 +52,7 @@ For each document draft, check:
 - **Specificity**: Are requirements testable? "Should handle errors gracefully" is not testable.
 - **Tech feasibility**: Does the architecture make sense? Missing auth, race conditions, no error handling?
 - **Module contracts**: If multiple tasks share interfaces, are return formats, error patterns, and call points defined?
+- **Hallucination risk**: Flag any specific external detail that looks like it could be LLM-fabricated (API signatures, model IDs, SDK versions, CLI flags, config keys, endpoint paths, etc.) as NOTE. The PM is an LLM — it confidently invents plausible-looking specifics.
 
 **Step 3: Review task drafts**
 
@@ -60,6 +61,7 @@ For each task draft, check:
 - **AC quality**: Each criterion must be objectively verifiable by a different agent. "Shows details" is BAD. "Displays order ID, customer name, and status badge" is GOOD.
 - **Coverage**: Cross-reference task AC against document requirements. Any requirements with NO corresponding AC?
 - **Dependencies**: Is the DAG correct? Can each task start once its dependencies are done?
+- **Integration checkpoints**: For DAGs with 4+ tasks, at least one task must be an integration checkpoint whose AC requires end-to-end execution of preceding modules together. If missing, classify as BLOCKER — without integration verification, module-level passes do not guarantee the system works.
 
 **Step 4: Cross-check**
 - Do tasks cover ALL requirements from the documents?

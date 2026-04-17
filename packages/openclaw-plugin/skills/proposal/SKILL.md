@@ -379,6 +379,8 @@ Good tasks are:
 - **Sized** — 1-8 story points (hours of agent work)
 - **Ordered** — Use `dependsOnDraftUuids` to express execution order in the DAG
 - **Descriptive** — Include enough context for a developer agent to start without questions. For tasks with cross-module dependencies, reference the tech design's Module Contracts in the AC
+- **Integration checkpoints** — For DAGs with 4+ tasks, include at least one integration checkpoint task at a convergence point whose AC requires end-to-end execution of preceding modules together
+- **Hallucination-aware** — When tasks involve external dependencies, note in the task description that developers should verify specifics (API signatures, CLI flags, config keys, model IDs, etc.) against official docs rather than relying on LLM memory
 
 ### Task Granularity
 
