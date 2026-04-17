@@ -185,6 +185,7 @@ export class Service extends Construct {
         healthyHttpCodes: '200-399',
         interval: Duration.seconds(30),
       },
+      stickinessCookieDuration: Duration.hours(24),
     });
 
     // ALB DNS rule (priority 1)

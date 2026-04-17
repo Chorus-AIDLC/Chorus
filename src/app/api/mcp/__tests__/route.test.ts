@@ -1,25 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-// Track onclose callbacks per transport instance
-let oncloseCallback: (() => void) | null = null;
-
-// Create mock transport using vi.hoisted to make it available in mock factory
-const mockTransport = vi.hoisted(() => ({
-  handleRequest: vi.fn().mockResolvedValue(new Response()),
-  close: vi.fn().mockResolvedValue(undefined),
-}));
+const mockHandleRequest = vi.hoisted(() => vi.fn().mockResolvedValue(new Response()));
 
 vi.mock("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js", () => ({
-  WebStandardStreamableHTTPServerTransport: vi.fn(function () {
-    const transport = { ...mockTransport };
-    Object.defineProperty(transport, "onclose", {
-      set(fn: () => void) {
-        oncloseCallback = fn;
-      },
-      configurable: true,
-    });
-    return transport;
+  WebStandardStreamableHTTPServerTransport: vi.fn(function (this: Record<string, unknown>) {
+    this.handleRequest = mockHandleRequest;
   }),
 }));
 
@@ -42,14 +28,13 @@ vi.mock("@/lib/api-key", () => ({
   }),
 }));
 
-describe("MCP Session Management", () => {
+describe("Stateless MCP Endpoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    oncloseCallback = null;
   });
 
-  describe("Session Lifecycle", () => {
-    it("should create session and call handleRequest", async () => {
+  describe("POST - Stateless Request Handling", () => {
+    it("should create transport and handle request", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 
       const request = new NextRequest("http://localhost:3000/api/mcp", {
@@ -61,85 +46,56 @@ describe("MCP Session Management", () => {
 
       const response = await POST(request);
 
-      expect(mockTransport.handleRequest).toHaveBeenCalled();
+      expect(mockHandleRequest).toHaveBeenCalled();
       expect(response).toBeInstanceOf(Response);
     });
 
-    it("should return 404 for unknown session ID", async () => {
+    it("should handle consecutive requests independently", async () => {
       const { POST } = await import("@/app/api/mcp/route");
+      const { WebStandardStreamableHTTPServerTransport } = await import(
+        "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
+      );
 
-      const request = new NextRequest("http://localhost:3000/api/mcp", {
+      const request1 = new NextRequest("http://localhost:3000/api/mcp", {
         method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-          "mcp-session-id": "nonexistent-session-id",
-        },
+        headers: { authorization: "Bearer test-key" },
       });
 
-      const response = await POST(request);
+      const request2 = new NextRequest("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer test-key-2" },
+      });
 
-      expect(response.status).toBe(404);
-      const body = await response.json();
-      expect(body.error.message).toBe(
-        "Session not found. Please reinitialize."
-      );
+      await POST(request1);
+      await POST(request2);
+
+      expect(WebStandardStreamableHTTPServerTransport).toHaveBeenCalledTimes(2);
     });
 
-    it("should clean up session when transport onclose fires", async () => {
+    it("should create transport without sessionIdGenerator", async () => {
       const { POST } = await import("@/app/api/mcp/route");
+      const { WebStandardStreamableHTTPServerTransport } = await import(
+        "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
+      );
 
-      // Create session
       const request = new NextRequest("http://localhost:3000/api/mcp", {
         method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-        },
+        headers: { authorization: "Bearer test-key" },
       });
 
       await POST(request);
-      expect(oncloseCallback).not.toBeNull();
 
-      // Simulate transport close (e.g., client disconnected)
-      oncloseCallback!();
-
-      // The session should now be removed — any session ID that was valid
-      // would now return 404 (tested indirectly via unknown session ID test above)
+      const constructorArgs = vi.mocked(WebStandardStreamableHTTPServerTransport).mock.calls[0][0];
+      expect(constructorArgs).not.toHaveProperty("sessionIdGenerator");
     });
   });
 
-  describe("Session Deletion", () => {
-    it("should delete session on DELETE request", async () => {
-      const { POST, DELETE } = await import("@/app/api/mcp/route");
+  describe("DELETE - Method Not Allowed", () => {
+    it("should return 405 for DELETE requests", async () => {
+      const { DELETE } = await import("@/app/api/mcp/route");
 
-      // First create a session
-      const createRequest = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-key",
-        },
-      });
-
-      await POST(createRequest);
-
-      // Delete with missing session ID should return 400
-      const deleteRequest1 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "DELETE",
-        headers: {},
-      });
-
-      const response1 = await DELETE(deleteRequest1);
-      expect(response1.status).toBe(400);
-
-      // Delete with a session ID
-      const deleteRequest2 = new NextRequest("http://localhost:3000/api/mcp", {
-        method: "DELETE",
-        headers: {
-          "mcp-session-id": "test-session-id",
-        },
-      });
-
-      const response2 = await DELETE(deleteRequest2);
-      expect(response2.status).toBe(204);
+      const response = await DELETE();
+      expect(response.status).toBe(405);
     });
   });
 

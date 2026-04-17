@@ -1,6 +1,6 @@
 // src/app/api/mcp/route.ts
-// MCP HTTP Endpoint (ARCHITECTURE.md §5.2)
-// UUID-Based Architecture: All operations use UUIDs
+// Stateless MCP HTTP Endpoint — each request creates a fresh transport+server.
+// No session state, no in-memory Map. Supports horizontal scaling natively.
 
 import { NextRequest, NextResponse } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -11,17 +11,6 @@ import type { AgentAuthContext } from "@/types/auth";
 import logger from "@/lib/logger";
 
 const mcpLogger = logger.child({ module: "mcp" });
-
-// Store active session transports
-// Sessions are cleaned up via: client DELETE request, transport onclose callback,
-// or process restart. No idle timeout — MCP SDK design does not require one,
-// and always-on clients (e.g., OpenClaw) need indefinite sessions.
-const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
-
-// Generate session ID
-function generateSessionId(): string {
-  return crypto.randomUUID();
-}
 
 // POST /api/mcp - MCP HTTP Endpoint
 export async function POST(request: NextRequest) {
@@ -53,10 +42,8 @@ export async function POST(request: NextRequest) {
     const projectHeader = request.headers.get("x-chorus-project");
 
     if (projectGroupUuid) {
-      // Query all projects in the group via service layer
       projectUuids = await getProjectUuidsByGroup(validation.agent.companyUuid, projectGroupUuid);
     } else if (projectHeader) {
-      // Parse comma-separated project UUIDs
       projectUuids = projectHeader.split(",").map((s) => s.trim()).filter(Boolean);
     }
 
@@ -70,41 +57,11 @@ export async function POST(request: NextRequest) {
       projectUuids,
     };
 
-    // Check session ID
-    const sessionId = request.headers.get("mcp-session-id");
+    // Stateless: create fresh transport+server per request, no sessionIdGenerator
+    const transport = new WebStandardStreamableHTTPServerTransport({});
+    const server = createMcpServer(auth);
+    await server.connect(transport);
 
-    let transport: WebStandardStreamableHTTPServerTransport;
-
-    if (sessionId && sessions.has(sessionId)) {
-      // Reuse existing session
-      transport = sessions.get(sessionId)!;
-    } else if (sessionId && !sessions.has(sessionId)) {
-      // Client sent an expired/invalid session ID (session lost after server restart)
-      // Return 404 to let client know it needs to reinitialize
-      return NextResponse.json(
-        { jsonrpc: "2.0", error: { code: -32001, message: "Session not found. Please reinitialize." }, id: null },
-        { status: 404 }
-      );
-    } else {
-      // No session ID — new connection, create new session
-      const newSessionId = generateSessionId();
-      transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => newSessionId,
-      });
-
-      // Create and connect MCP Server
-      const server = createMcpServer(auth);
-      await server.connect(transport);
-
-      // Clean up session when transport closes (client DELETE or connection drop)
-      transport.onclose = () => {
-        sessions.delete(newSessionId);
-      };
-
-      sessions.set(newSessionId, transport);
-    }
-
-    // Handle request using Web Standard transport
     const response = await transport.handleRequest(request);
     return response;
   } catch (error) {
@@ -116,32 +73,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE /api/mcp - Close MCP Session
-export async function DELETE(request: NextRequest) {
-  try {
-    const sessionId = request.headers.get("mcp-session-id");
-
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: "Missing session ID" },
-        { status: 400 }
-      );
-    }
-
-    const transport = sessions.get(sessionId);
-    if (transport) {
-      await transport.close();
-      sessions.delete(sessionId);
-    }
-
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    mcpLogger.error({ err: error }, "MCP session close error");
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
-  }
+// DELETE /api/mcp - No sessions to close in stateless mode
+export async function DELETE() {
+  return NextResponse.json(
+    { jsonrpc: "2.0", error: { code: -32601, message: "Method not allowed: stateless server has no sessions" }, id: null },
+    { status: 405 }
+  );
 }
 
 // OPTIONS - CORS Preflight
@@ -150,8 +87,8 @@ export async function OPTIONS() {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-protocol-version",
     },
   });
 }
