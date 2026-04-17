@@ -62,6 +62,7 @@ For each task draft, check:
 - **Coverage**: Cross-reference task AC against document requirements. Any requirements with NO corresponding AC?
 - **Dependencies**: Is the DAG correct? Can each task start once its dependencies are done?
 - **Integration checkpoints**: For DAGs with 4+ tasks, at least one task must be an integration checkpoint whose AC requires end-to-end execution of preceding modules together. If missing, classify as BLOCKER — without integration verification, module-level passes do not guarantee the system works.
+- **Hallucination risk**: Task descriptions and AC may contain LLM-fabricated specifics (SDK versions, API paths, CLI flags). Flag as NOTE — same rule as Step 2.
 
 **Step 4: Cross-check**
 - Do tasks cover ALL requirements from the documents?
