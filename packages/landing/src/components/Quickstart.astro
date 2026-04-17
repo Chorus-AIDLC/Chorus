@@ -14,15 +14,29 @@ const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
 const composeYml = `services:
   app:
     image: chorusaidlc/chorus-app:latest
-    ports: ["8637:8637"]
+    ports: ["3000:3000"]
     environment:
+      - DATABASE_URL=postgresql://chorus:chorus@db:5432/chorus
+      - REDIS_URL=redis://default:chorus-redis@redis:6379
       - NEXTAUTH_SECRET=change-me-to-a-random-secret
       - DEFAULT_USER=admin@example.com
       - DEFAULT_PASSWORD=changeme
-    volumes:
-      - chorus-data:/app/data
-volumes:
-  chorus-data:`;
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass chorus-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "chorus-redis", "ping"]
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chorus
+      POSTGRES_PASSWORD: chorus
+      POSTGRES_DB: chorus
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chorus"]`;
 ---
 
 <div class="quickstart" id="quickstart">
@@ -45,15 +59,29 @@ volumes:
 services:
   app:
     `}<span class="qs-flag">image</span>: chorusaidlc/chorus-app:<span class="qs-env">latest</span>{`
-    `}<span class="qs-flag">ports</span>: [<span class="qs-env">"8637:8637"</span>]{`
+    `}<span class="qs-flag">ports</span>: [<span class="qs-env">"3000:3000"</span>]{`
     `}<span class="qs-flag">environment</span>:{`
+      - DATABASE_URL=`}<span class="qs-env">postgresql://chorus:chorus@db:5432/chorus</span>{`
+      - REDIS_URL=`}<span class="qs-env">redis://default:chorus-redis@redis:6379</span>{`
       - NEXTAUTH_SECRET=`}<span class="qs-env">change-me-to-a-random-secret</span>{`
       - DEFAULT_USER=`}<span class="qs-env">admin@example.com</span>{`
       - DEFAULT_PASSWORD=`}<span class="qs-env">changeme</span>{`
-    `}<span class="qs-flag">volumes</span>:{`
-      - chorus-data:/app/data
-`}<span class="qs-flag">volumes</span>:{`
-  chorus-data:`}</pre>
+    `}<span class="qs-flag">depends_on</span>:{`
+      db: { `}<span class="qs-flag">condition</span>: service_healthy {`}
+      redis: { `}<span class="qs-flag">condition</span>: service_healthy {`}
+  redis:
+    `}<span class="qs-flag">image</span>: redis:7-alpine{`
+    `}<span class="qs-flag">command</span>: redis-server --requirepass chorus-redis{`
+    `}<span class="qs-flag">healthcheck</span>:{`
+      `}<span class="qs-flag">test</span>: [<span class="qs-env">"CMD"</span>, <span class="qs-env">"redis-cli"</span>, <span class="qs-env">"-a"</span>, <span class="qs-env">"chorus-redis"</span>, <span class="qs-env">"ping"</span>]{`
+  db:
+    `}<span class="qs-flag">image</span>: postgres:16-alpine{`
+    `}<span class="qs-flag">environment</span>:{`
+      POSTGRES_USER: `}<span class="qs-env">chorus</span>{`
+      POSTGRES_PASSWORD: `}<span class="qs-env">chorus</span>{`
+      POSTGRES_DB: `}<span class="qs-env">chorus</span>{`
+    `}<span class="qs-flag">healthcheck</span>:{`
+      `}<span class="qs-flag">test</span>: [<span class="qs-env">"CMD-SHELL"</span>, <span class="qs-env">"pg_isready -U chorus"</span>]</pre>
           </div>
         </div>
       </div>
@@ -72,7 +100,7 @@ services:
       <div class="qs-step">
         <div class="qs-num">3</div>
         <div class="qs-content">
-          <p>{t(lang, 'quickstart.step3').split('<a>')[0]}<a href="http://localhost:8637">{t(lang, 'quickstart.step3').match(/<a>(.*?)<\/a>/)?.[1] ?? 'http://localhost:8637'}</a>{t(lang, 'quickstart.step3').split('</a>')[1] ?? ''}</p>
+          <p>{t(lang, 'quickstart.step3').split('<a>')[0]}<a href="http://localhost:3000">{t(lang, 'quickstart.step3').match(/<a>(.*?)<\/a>/)?.[1] ?? 'http://localhost:3000'}</a>{t(lang, 'quickstart.step3').split('</a>')[1] ?? ''}</p>
           <div class="qs-arch">
             <span class="qs-arch-tag">linux/amd64</span>
             <span class="qs-arch-tag">linux/arm64</span>

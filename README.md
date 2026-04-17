@@ -202,7 +202,7 @@ Global search across Tasks, Ideas, Proposals, Documents, Projects, and Project G
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                 Chorus — Agent Harness (:8637)                    │
+│                 Chorus — Agent Harness (:3000)                    │
 │                                                                  │
 │  ┌── Harness Capabilities ───────────────────────────────────┐   │
 │  │  Session Lifecycle │ Task State Machine │ Context Inject   │   │
@@ -312,7 +312,7 @@ pnpm db:migrate:dev
 pnpm dev
 
 # Open
-open http://localhost:8637
+open http://localhost:3000
 ```
 
 ### Local Development (no Docker)
@@ -331,7 +331,7 @@ pnpm dev:local        # Dev server on http://localhost:8637
 pnpm start:local      # Production build on http://localhost:8637
 ```
 
-Both commands start an embedded PGlite on port 5433, apply the schema, and launch the app on port **8637**. `start:local` caches the production build and skips rebuild on subsequent runs (use `pnpm rebuild:local` to force). Redis is disabled (falls back to in-memory EventBus). Data is stored in `.pglite/` — delete it to reset.
+Both commands start an embedded PGlite on port 5433, apply the schema, and launch the app on port **8637** (to avoid conflict with `pnpm dev` on 3000). `start:local` caches the production build and skips rebuild on subsequent runs (use `pnpm rebuild:local` to force). Redis is disabled (falls back to in-memory EventBus). Data is stored in `.pglite/` — delete it to reset.
 
 ### Deploy to AWS
 
@@ -366,7 +366,7 @@ The Chorus Plugin provides automated Session management and Skill documentation 
 Set environment variables after installation:
 
 ```bash
-export CHORUS_URL="http://localhost:8637"
+export CHORUS_URL="http://localhost:3000"
 export CHORUS_API_KEY="cho_your_api_key"
 ```
 
@@ -417,7 +417,7 @@ Create `.mcp.json` in the project root:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8637/api/mcp",
+      "url": "http://localhost:3000/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_your_api_key"
       }

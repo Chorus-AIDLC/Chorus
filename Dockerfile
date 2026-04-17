@@ -19,7 +19,7 @@ COPY . .
 RUN pnpm db:generate
 
 # Expose port
-EXPOSE 8637
+EXPOSE 3000
 
 # Development command (overridden in docker-compose)
 CMD ["pnpm", "dev"]
@@ -80,10 +80,10 @@ COPY --from=builder /pglite-deps/node_modules/@electric-sql ./node_modules/@elec
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-EXPOSE 8637
+EXPOSE 3000
 
 ENV HOSTNAME="0.0.0.0"
-ENV PORT=8637
+ENV PORT=3000
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]

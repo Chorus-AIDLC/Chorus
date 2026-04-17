@@ -44,7 +44,7 @@ The following tools respect project filtering:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8637/api/mcp",
+      "url": "http://localhost:3000/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_xxx",
         "X-Chorus-Project": "project-uuid-here"
@@ -58,7 +58,7 @@ The following tools respect project filtering:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8637/api/mcp",
+      "url": "http://localhost:3000/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_xxx",
         "X-Chorus-Project": "uuid1,uuid2,uuid3"
@@ -72,7 +72,7 @@ The following tools respect project filtering:
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8637/api/mcp",
+      "url": "http://localhost:3000/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_xxx",
         "X-Chorus-Project-Group": "group-uuid-here"
@@ -1440,7 +1440,7 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 ### Test Environment
 - Agent: Sr. Claude (uuid: 1e7019fd-..., roles: developer_agent, pm_agent, admin_agent)
-- Server: localhost:8637
+- Server: localhost:3000
 
 ### Test Flow and Results
 

@@ -59,7 +59,7 @@ This means sub-agents **never leave behind dangling checkins or open sessions**.
 Set the following environment variables (e.g., in `.env` or your shell profile):
 
 ```bash
-export CHORUS_URL="https://chorus.example.com"   # or http://localhost:8637
+export CHORUS_URL="https://chorus.example.com"   # or http://localhost:3000
 export CHORUS_API_KEY="cho_your_api_key_here"
 ```
 
@@ -81,7 +81,7 @@ CHORUS_URL=<url> CHORUS_API_KEY=cho_xxx claude --plugin-dir .chorus-plugin
 
 For local development within this repo:
 ```bash
-CHORUS_URL=http://localhost:8637 CHORUS_API_KEY=cho_xxx claude --plugin-dir public/chorus-plugin
+CHORUS_URL=http://localhost:3000 CHORUS_API_KEY=cho_xxx claude --plugin-dir public/chorus-plugin
 ```
 
 ### 4. MCP Server
@@ -200,7 +200,7 @@ Per-agent session files live in `$CLAUDE_PROJECT_DIR/.chorus/sessions/<agent_nam
   "agentId": "agent_abc123",
   "agentName": "frontend-worker",
   "agentType": "general-purpose",
-  "chorusUrl": "http://localhost:8637",
+  "chorusUrl": "http://localhost:3000",
   "createdAt": "2026-02-16T01:00:00Z"
 }
 ```
@@ -268,7 +268,7 @@ When the Claude Code task is completed, the `TaskCompleted` hook will automatica
 
 Set the environment variables before starting Claude Code:
 ```bash
-export CHORUS_URL="http://localhost:8637"
+export CHORUS_URL="http://localhost:3000"
 export CHORUS_API_KEY="cho_your_key"
 ```
 

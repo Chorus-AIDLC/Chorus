@@ -1502,10 +1502,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8637:8637"
+      - "3000:3000"
     environment:
       - DATABASE_URL=postgres://chorus:chorus@db:5432/chorus
-      - NEXTAUTH_URL=http://localhost:8637
+      - NEXTAUTH_URL=http://localhost:3000
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - OIDC_ISSUER=${OIDC_ISSUER}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
@@ -1634,7 +1634,7 @@ volumes:
 DATABASE_URL=postgres://chorus:chorus@localhost:5432/chorus
 
 # NextAuth
-NEXTAUTH_URL=http://localhost:8637
+NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=your-secret-key
 
 # Super Admin（系统启动配置，管理 Company 和全局设置）

@@ -78,7 +78,7 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
   "mcpServers": {
     "chorus": {
       "type": "http",
-      "url": "http://localhost:8637/api/mcp",
+      "url": "http://localhost:3000/api/mcp",
       "headers": {
         "Authorization": "Bearer cho_xxx",
         "X-Chorus-Project": "project-uuid-1,project-uuid-2"
@@ -226,7 +226,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 API Keys must be created manually by the user in the Chorus Web UI.
 
 **Ask the user to:**
-1. Open the Chorus settings page (e.g., `http://localhost:8637/settings`)
+1. Open the Chorus settings page (e.g., `http://localhost:3000/settings`)
 2. Click **Create API Key**
 3. Enter Agent name, select role (Developer / PM / Admin)
 4. Click create and **immediately copy the key** (shown only once)
