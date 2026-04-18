@@ -60,6 +60,8 @@ chorus
 
 That's it. Chorus starts with an embedded PostgreSQL (PGlite), runs migrations automatically, and opens at **http://localhost:8637**.
 
+> **Note:** PGlite is an embedded, single-process PostgreSQL — great for local single-user usage, but its connection handling has limits under concurrent load. If you plan to run multiple agents or users simultaneously, use an external PostgreSQL via `DATABASE_URL=postgresql://...` or the full [Docker Compose](#quick-start-with-docker-recommended) stack.
+
 Default login: `admin@chorus.local` / `chorus`
 
 ### Options

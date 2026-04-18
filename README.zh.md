@@ -51,6 +51,8 @@ chorus
 
 Chorus 会自动启动内嵌 PostgreSQL (PGlite)、执行数据库迁移，然后在 **http://localhost:8637** 提供服务。
 
+> **提示：** PGlite 是嵌入式单进程 PostgreSQL，本地单人使用完全没问题，但并发能力有限。如果需要多人或多 Agent 同时使用，建议通过 `DATABASE_URL=postgresql://...` 连接外部 PostgreSQL，或使用完整的 [Docker Compose](#docker-一键启动推荐) 部署。
+
 默认登录账号：`admin@chorus.local` / `chorus`
 
 ### 参数选项

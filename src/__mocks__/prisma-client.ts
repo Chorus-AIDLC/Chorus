@@ -5,6 +5,9 @@ export class PrismaClient {
   constructor() {
     // no-op
   }
+  $extends() {
+    return this;
+  }
 }
 
 export const Prisma = {
