@@ -25,7 +25,7 @@ echo ""
 
 # --- 1. Pre-flight checks ---
 
-echo "[1/6] Pre-flight checks..."
+echo "[1/4] Pre-flight checks..."
 
 if ! command -v npm &>/dev/null; then
   echo "ERROR: npm not found" >&2
