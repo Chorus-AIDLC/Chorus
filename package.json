@@ -1,13 +1,20 @@
 {
   "name": "@chorus-aidlc/chorus",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "The Agent Harness for AI-Human Collaboration — session lifecycle, task state, sub-agent orchestration, observability, and failure recovery",
   "homepage": "https://github.com/Chorus-AIDLC/Chorus",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Chorus-AIDLC/Chorus.git"
   },
-  "keywords": ["agent-harness", "ai-dlc", "mcp", "agent-orchestration", "session-lifecycle", "task-dag"],
+  "keywords": [
+    "agent-harness",
+    "ai-dlc",
+    "mcp",
+    "agent-orchestration",
+    "session-lifecycle",
+    "task-dag"
+  ],
   "license": "AGPL-3.0",
   "packageManager": "pnpm@9.15.0",
   "bin": {
@@ -80,7 +87,7 @@
     "@tiptap/starter-kit": "^3.20.0",
     "@tiptap/suggestion": "^3.20.0",
     "@xyflow/react": "^12.10.0",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -95,6 +102,7 @@
     "oidc-client-ts": "^3.4.1",
     "pg": "^8.13.1",
     "pino": "^10.3.1",
+    "prisma": "^7.0.0",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -102,13 +110,12 @@
     "sonner": "^2.0.7",
     "streamdown": "^2.4.0",
     "tailwind-merge": "^3.4.0",
-    "zod": "^4.3.6",
-    "prisma": "^7.0.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",
     "@tailwindcss/postcss": "^4",
-    "@types/bcrypt": "^6.0.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/dagre": "^0.7.53",
     "@types/node": "^22",
     "@types/pg": "^8.11.10",

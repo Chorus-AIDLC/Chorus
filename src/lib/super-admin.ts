@@ -2,7 +2,7 @@
 // Super Admin Authentication Utilities
 
 import { SignJWT, jwtVerify } from "jose";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import { SuperAdminAuthContext } from "@/types/auth";
 import { getCookieOptions } from "@/lib/cookie-utils";

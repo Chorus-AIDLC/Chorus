@@ -18,7 +18,7 @@ vi.mock('jose', () => {
 });
 
 // Mock bcrypt
-vi.mock('bcrypt', () => ({
+vi.mock('bcryptjs', () => ({
   default: {
     compare: vi.fn(),
   },
@@ -46,7 +46,7 @@ import {
   getAdminCookieName,
 } from '../super-admin';
 import { SignJWT, jwtVerify } from 'jose';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { getCookieOptions } from '@/lib/cookie-utils';
 
 describe('isSuperAdminEmail', () => {
