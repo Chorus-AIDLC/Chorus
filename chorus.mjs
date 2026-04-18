@@ -50,7 +50,8 @@ USAGE
 OPTIONS
   -p, --port <port>        HTTP server port             (default: 8637, env: PORT)
   -d, --data-dir <path>    Data directory for PGlite    (default: ~/.chorus-data, env: CHORUS_DATA_DIR)
-      --hostname <host>    Bind address                 (default: 0.0.0.0, env: HOSTNAME)
+      --hostname <host>    Bind address                 (default: 0.0.0.0)
+      --pglite-port <port> Embedded PGlite port         (default: 5433, env: CHORUS_PGLITE_PORT)
   -h, --help               Show this help message
   -v, --version            Show version number
 
@@ -85,8 +86,8 @@ const port = Number(getArg("--port", "-p") ?? process.env.PORT ?? 8637);
 const dataDir = resolve(
   getArg("--data-dir", "-d") ?? process.env.CHORUS_DATA_DIR ?? join(homedir(), ".chorus-data")
 );
-const hostname = getArg("--hostname") ?? process.env.HOSTNAME ?? "0.0.0.0";
-const PGLITE_PORT = 5433;
+const hostname = getArg("--hostname") ?? "0.0.0.0";
+const PGLITE_PORT = Number(getArg("--pglite-port") ?? process.env.CHORUS_PGLITE_PORT ?? 5433);
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -232,7 +233,10 @@ async function main() {
   console.log(`  Data:      ${dataDir}`);
   console.log(`  Database:  ${useExternalDb ? "external PostgreSQL" : "PGlite (embedded)"}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
-  console.log(`  Login:     ${process.env.DEFAULT_USER} / ${process.env.DEFAULT_PASSWORD}`);
+  const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"
+    ? "chorus"
+    : "****";
+  console.log(`  Login:     ${process.env.DEFAULT_USER} / ${maskedPassword}`);
   console.log("");
 
   // 7. Ensure static assets are accessible inside standalone directory
@@ -294,6 +298,6 @@ process.on("exit", () => {
 
 main().catch((err) => {
   console.error("Fatal error:", err);
-  if (pgliteProcess) pgliteProcess.kill("SIGTERM");
+  if (pgliteProcess && !pgliteProcess.killed) pgliteProcess.kill("SIGTERM");
   process.exit(1);
 });

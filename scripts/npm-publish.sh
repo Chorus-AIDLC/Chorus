@@ -57,21 +57,9 @@ fi
 echo "  version: ${PKG_VERSION}"
 echo ""
 
-# --- 2. Build ---
+# --- 2. Pack (triggers prepack: build + dereference + copy static) ---
 
-echo "[2/6] Building..."
-pnpm build
-echo ""
-
-# --- 3. Prepack (dereference symlinks + copy static assets) ---
-
-echo "[3/6] Running prepack..."
-node scripts/prepack-pglite.mjs
-echo ""
-
-# --- 4. Pack and inspect ---
-
-echo "[4/6] Packing tarball..."
+echo "[2/4] Packing tarball (runs prepack automatically)..."
 TARBALL=$(npm pack --pack-destination /tmp/ 2>&1 | tail -1)
 TARBALL_PATH="/tmp/${TARBALL}"
 TARBALL_SIZE=$(du -h "$TARBALL_PATH" | cut -f1)
@@ -79,9 +67,9 @@ echo "  tarball: ${TARBALL}"
 echo "  size:    ${TARBALL_SIZE}"
 echo ""
 
-# --- 5. Smoke test ---
+# --- 3. Smoke test ---
 
-echo "[5/6] Smoke test..."
+echo "[3/4] Smoke test..."
 INSTALL_DIR=$(mktemp -d)
 npm install --prefix "$INSTALL_DIR" "$TARBALL_PATH" --no-save 2>/dev/null
 
@@ -103,9 +91,9 @@ echo "  chorus --version: ${INSTALLED_VERSION} ✓"
 rm -rf "$INSTALL_DIR"
 echo ""
 
-# --- 6. Publish ---
+# --- 4. Publish ---
 
-echo "[6/6] Publishing..."
+echo "[4/4] Publishing..."
 if [[ "$DRY_RUN" == true ]]; then
   echo "  DRY RUN — skipping actual publish"
   echo ""
