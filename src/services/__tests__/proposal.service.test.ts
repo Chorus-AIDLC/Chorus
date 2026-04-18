@@ -1015,9 +1015,10 @@ describe("approveProposal", () => {
   });
 
   it("should update status to approved and materialize documents", async () => {
+    const docDraft = validDocDraft();
     const proposal = dbProposal({
       status: "pending",
-      documentDrafts: [validDocDraft()],
+      documentDrafts: [docDraft],
       taskDrafts: null,
       inputType: "manual",
       inputUuids: ["source-1"],
@@ -1025,18 +1026,18 @@ describe("approveProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     const updatedRow = dbProposal({ ...proposal, status: "approved" });
-    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
-      const tx = {
-        proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
-        taskDependency: { createMany: vi.fn() },
-        acceptanceCriterion: { createMany: vi.fn() },
-      };
-      return cb(tx);
-    });
+    const txMock = {
+      proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+      document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid-1", title: docDraft.title }]) },
+      task: { createManyAndReturn: vi.fn() },
+      taskDependency: { createMany: vi.fn() },
+      acceptanceCriterion: { createMany: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
     const result = await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", "Looks good");
 
-    expect(mockCreateDoc).toHaveBeenCalledOnce();
+    expect(txMock.document.createManyAndReturn).toHaveBeenCalledOnce();
     expect(result.status).toBe("approved");
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: "proposal", action: "updated" })
@@ -1057,14 +1058,13 @@ describe("approveProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const draftToTaskUuidMap = new Map([
-      ["td-1", "real-task-1"],
-      ["td-2", "real-task-2"],
-    ]);
-    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap });
-
     const txMock = {
       proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
+      task: { createManyAndReturn: vi.fn().mockResolvedValue([
+        { uuid: "real-task-1", title: "Task 1" },
+        { uuid: "real-task-2", title: "Task 2" },
+      ]) },
       taskDependency: { createMany: vi.fn() },
       acceptanceCriterion: { createMany: vi.fn() },
     };
@@ -1072,7 +1072,7 @@ describe("approveProposal", () => {
 
     await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
 
-    expect(mockCreateTasks).toHaveBeenCalledOnce();
+    expect(txMock.task.createManyAndReturn).toHaveBeenCalledOnce();
     expect(txMock.taskDependency.createMany).toHaveBeenCalledWith({
       data: [{ taskUuid: "real-task-2", dependsOnUuid: "real-task-1" }],
     });
@@ -1097,11 +1097,10 @@ describe("approveProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const draftToTaskUuidMap = new Map([["td-1", "real-task-1"]]);
-    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap });
-
     const txMock = {
       proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
+      task: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "real-task-1", title: "Task 1" }]) },
       taskDependency: { createMany: vi.fn() },
       acceptanceCriterion: { createMany: vi.fn() },
     };
@@ -1136,6 +1135,8 @@ describe("approveProposal", () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+        document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
+        task: { createManyAndReturn: vi.fn() },
         taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
@@ -1161,6 +1162,8 @@ describe("approveProposal", () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+        document: { createManyAndReturn: vi.fn() },
+        task: { createManyAndReturn: vi.fn() },
         taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
@@ -1633,73 +1636,62 @@ describe("checkIdeasAssignee", () => {
 
 // ===== approveProposal edge cases =====
 describe("approveProposal - edge cases", () => {
-  it("should skip dependencies when taskUuid not found in map", async () => {
+  it("should handle tasks with no dependencies gracefully", async () => {
     const proposalWithDeps = dbProposal({
       status: "pending",
       documentDrafts: [{ uuid: "doc-1", type: "prd", title: "PRD", content: LONG_CONTENT }],
       taskDrafts: [
         { uuid: "task-1", title: "Task 1", description: "Task 1", acceptanceCriteriaItems: [{ description: "Criteria", required: true }] },
-        { uuid: "task-2", title: "Task 2", description: "Task 2", acceptanceCriteriaItems: [{ description: "Criteria", required: true }], dependsOnDraftUuids: ["task-1"] },
+        { uuid: "task-2", title: "Task 2", description: "Task 2", acceptanceCriteriaItems: [{ description: "Criteria", required: true }] },
       ],
     });
 
     mockPrisma.proposal.findFirst.mockResolvedValue(proposalWithDeps);
 
-    // Create a map that only has task-2, not task-1
-    const partialMap = new Map([["task-2", "real-task-2"]]);
-    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap: partialMap });
-
-    mockPrisma.$transaction.mockImplementation(async (callback) => {
-      const txMock = {
-        proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithDeps, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
-        taskDependency: { createMany: vi.fn() },
-        acceptanceCriterion: { createMany: vi.fn() },
-      };
-      return callback(txMock);
-    });
+    const txMock = {
+      proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithDeps, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
+      document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "PRD" }]) },
+      task: { createManyAndReturn: vi.fn().mockResolvedValue([
+        { uuid: "real-task-1", title: "Task 1" },
+        { uuid: "real-task-2", title: "Task 2" },
+      ]) },
+      taskDependency: { createMany: vi.fn() },
+      acceptanceCriterion: { createMany: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (callback) => callback(txMock));
 
     await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved");
 
-    // Should not throw, and taskDependency.create should not be called (both continue branches)
-    expect(mockCreateTasks).toHaveBeenCalled();
+    // No dependencies, so taskDependency.createMany should not be called
+    expect(txMock.taskDependency.createMany).not.toHaveBeenCalled();
+    expect(txMock.task.createManyAndReturn).toHaveBeenCalled();
   });
 
-  it("should skip acceptance criteria when taskUuid not found in map", async () => {
+  it("should handle tasks with no acceptance criteria gracefully", async () => {
     const proposalWithAC = dbProposal({
       status: "pending",
       documentDrafts: [{ uuid: "doc-1", type: "prd", title: "PRD", content: LONG_CONTENT }],
       taskDrafts: [
-        {
-          uuid: "task-1",
-          title: "Task 1",
-          description: "Task 1",
-          acceptanceCriteriaItems: [
-            { description: "Criterion 1", required: true },
-            { description: "Criterion 2", required: false },
-          ],
-        },
+        { uuid: "task-1", title: "Task 1", description: "Task 1" },
       ],
     });
 
     mockPrisma.proposal.findFirst.mockResolvedValue(proposalWithAC);
 
-    // Create a map that doesn't include task-1
-    const emptyMap = new Map();
-    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap: emptyMap });
-
-    mockPrisma.$transaction.mockImplementation(async (callback) => {
-      const txMock = {
-        proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithAC, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
-        taskDependency: { createMany: vi.fn() },
-        acceptanceCriterion: { createMany: vi.fn() },
-      };
-      return callback(txMock);
-    });
+    const txMock = {
+      proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithAC, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
+      document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "PRD" }]) },
+      task: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "real-task-1", title: "Task 1" }]) },
+      taskDependency: { createMany: vi.fn() },
+      acceptanceCriterion: { createMany: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (callback) => callback(txMock));
 
     await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved");
 
-    // Should not throw, acceptance criteria creation should be skipped
-    expect(mockCreateTasks).toHaveBeenCalled();
+    // No AC items, so acceptanceCriterion.createMany should not be called
+    expect(txMock.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(txMock.task.createManyAndReturn).toHaveBeenCalled();
   });
 });
 
@@ -1839,12 +1831,13 @@ describe("Idea reuse - approveProposal with completed Idea", () => {
           reviewedByUuid: "reviewer-uuid", reviewNote: "Approved", reviewedAt: now,
           project: { uuid: PROJECT_UUID, name: "Test" },
         }) },
+        document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "PRD" }]) },
+        task: { createManyAndReturn: vi.fn() },
         taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return callback(txMock);
     });
-    mockCreateTasks.mockResolvedValue({ draftToTaskUuidMap: new Map() });
 
     await approveProposal("proposal-reuse-2", COMPANY_UUID, "reviewer-uuid", "Approved");
 

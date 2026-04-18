@@ -632,7 +632,7 @@ export async function approveProposal(
 
   // Start transaction
   const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {
-    // Update Proposal status
+    // 1. Update Proposal status
     const updated = await tx.proposal.update({
       where: { uuid: proposalUuid },
       data: {
@@ -646,32 +646,35 @@ export async function approveProposal(
       },
     });
 
-    // Create artifacts from container content
     const documentDrafts = proposal.documentDrafts as DocumentDraft[] | null;
     const taskDrafts = proposal.taskDrafts as TaskDraft[] | null;
 
-    // Track materialized entities
     const matTasks: Array<{ draftUuid: string; taskUuid: string; title: string }> = [];
     const matDocs: Array<{ draftUuid: string; documentUuid: string; title: string }> = [];
 
-    // Create documents (if document drafts exist)
+    // 2. Batch create documents (1 SQL)
     if (documentDrafts && documentDrafts.length > 0) {
-      for (const draft of documentDrafts) {
-        const doc = await createDocumentFromProposal(
-          proposal.companyUuid,
-          proposal.projectUuid,
-          proposal.uuid,
-          proposal.createdByUuid,
-          draft,
-          tx
-        );
-        matDocs.push({ draftUuid: draft.uuid, documentUuid: doc.uuid, title: doc.title });
+      const createdDocs = await tx.document.createManyAndReturn({
+        data: documentDrafts.map((draft) => ({
+          companyUuid: proposal.companyUuid,
+          projectUuid: proposal.projectUuid,
+          type: draft.type || "prd",
+          title: draft.title,
+          content: draft.content || null,
+          version: 1,
+          proposalUuid: proposal.uuid,
+          createdByUuid: proposal.createdByUuid,
+        })),
+        select: { uuid: true, title: true },
+      });
+      for (let i = 0; i < documentDrafts.length; i++) {
+        matDocs.push({ draftUuid: documentDrafts[i].uuid, documentUuid: createdDocs[i].uuid, title: createdDocs[i].title });
       }
     }
 
-    // Create tasks (if task drafts exist)
+    // 3. Batch create tasks (1 SQL)
     if (taskDrafts && taskDrafts.length > 0) {
-      // Validate acceptanceCriteriaItems before materializing
+      // Validate AC items before materializing
       for (const draft of taskDrafts) {
         if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
           for (let i = 0; i < draft.acceptanceCriteriaItems.length; i++) {
@@ -685,30 +688,35 @@ export async function approveProposal(
         }
       }
 
-      const { draftToTaskUuidMap } = await createTasksFromProposal(
-        proposal.companyUuid,
-        proposal.projectUuid,
-        proposal.uuid,
-        proposal.createdByUuid,
-        taskDrafts,
-        tx
-      );
+      const createdTasks = await tx.task.createManyAndReturn({
+        data: taskDrafts.map((draft) => ({
+          companyUuid: proposal.companyUuid,
+          projectUuid: proposal.projectUuid,
+          title: draft.title,
+          description: draft.description || null,
+          status: "open",
+          priority: draft.priority || "medium",
+          storyPoints: draft.storyPoints || null,
+          acceptanceCriteria: draft.acceptanceCriteria || null,
+          proposalUuid: proposal.uuid,
+          createdByUuid: proposal.createdByUuid,
+        })),
+        select: { uuid: true, title: true },
+      });
 
-      // Build materialized tasks list
-      for (const draft of taskDrafts) {
-        const taskUuid = draftToTaskUuidMap.get(draft.uuid);
-        if (taskUuid) {
-          matTasks.push({ draftUuid: draft.uuid, taskUuid, title: draft.title });
-        }
+      // Build draftUuid -> taskUuid mapping
+      const draftToTaskUuidMap = new Map<string, string>();
+      for (let i = 0; i < taskDrafts.length; i++) {
+        draftToTaskUuidMap.set(taskDrafts[i].uuid, createdTasks[i].uuid);
+        matTasks.push({ draftUuid: taskDrafts[i].uuid, taskUuid: createdTasks[i].uuid, title: createdTasks[i].title });
       }
 
-      // Materialize dependencies: batch all into a single createMany
+      // 4. Batch create dependencies (1 SQL)
       const allDeps: Array<{ taskUuid: string; dependsOnUuid: string }> = [];
       for (const draft of taskDrafts) {
         if (draft.dependsOnDraftUuids && draft.dependsOnDraftUuids.length > 0) {
           const taskUuid = draftToTaskUuidMap.get(draft.uuid);
           if (!taskUuid) continue;
-
           for (const depDraftUuid of draft.dependsOnDraftUuids) {
             const depTaskUuid = draftToTaskUuidMap.get(depDraftUuid);
             if (!depTaskUuid) continue;
@@ -720,26 +728,30 @@ export async function approveProposal(
         await tx.taskDependency.createMany({ data: allDeps });
       }
 
-      // Materialize acceptance criteria items per task
+      // 5. Batch create ALL acceptance criteria (1 SQL)
+      const allAC: Array<{ taskUuid: string; description: string; required: boolean; sortOrder: number }> = [];
       for (const draft of taskDrafts) {
         if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
           const taskUuid = draftToTaskUuidMap.get(draft.uuid);
           if (!taskUuid) continue;
-
-          await tx.acceptanceCriterion.createMany({
-            data: draft.acceptanceCriteriaItems.map((item, index) => ({
+          for (let i = 0; i < draft.acceptanceCriteriaItems.length; i++) {
+            const item = draft.acceptanceCriteriaItems[i];
+            allAC.push({
               taskUuid,
               description: item.description.trim(),
               required: item.required ?? true,
-              sortOrder: index,
-            })),
-          });
+              sortOrder: i,
+            });
+          }
         }
+      }
+      if (allAC.length > 0) {
+        await tx.acceptanceCriterion.createMany({ data: allAC });
       }
     }
 
     return { updatedProposal: updated, materializedTasks: matTasks, materializedDocuments: matDocs };
-  }, { timeout: 30000 });
+  }, { timeout: 15000 });
 
   eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
 
