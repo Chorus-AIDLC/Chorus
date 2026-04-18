@@ -40,6 +40,46 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ---
 
+## 快速开始
+
+两条命令在本地运行 Chorus——无需数据库、无需 Docker、无需配置文件。
+
+```bash
+npm install -g @chorus-aidlc/chorus
+chorus
+```
+
+Chorus 会自动启动内嵌 PostgreSQL (PGlite)、执行数据库迁移，然后在 **http://localhost:8637** 提供服务。
+
+默认登录账号：`admin@chorus.local` / `chorus`
+
+### 参数选项
+
+```bash
+# 自定义端口
+chorus --port 3000
+
+# 自定义数据目录（默认：~/.chorus-data）
+chorus --data-dir /path/to/data
+
+# 自定义登录账号
+DEFAULT_USER=me@example.com DEFAULT_PASSWORD=secret chorus
+
+# 使用外部 PostgreSQL（跳过内嵌 PGlite）
+DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
+```
+
+### 其他部署方式
+
+| 方式 | 命令 |
+|------|------|
+| **npm**（最简单） | `npm i -g @chorus-aidlc/chorus && chorus` |
+| **Docker（单镜像）** | [`docker compose -f docker-compose.local.yml up`](#docker-一键启动推荐) |
+| **Docker（完整版）** | [`docker compose up`](#docker-一键启动推荐)（PostgreSQL + Redis + Chorus） |
+| **AWS CDK** | [部署到 AWS](#部署到-aws) |
+
+---
+
 ## 界面预览
 
 ### Proposal——AI Agent 实时生成计划

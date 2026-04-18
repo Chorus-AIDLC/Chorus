@@ -59,8 +59,14 @@ packages/chorus-cdk/lib/*.d.ts
 # Chorus plugin state
 .chorus/
 
+# Chorus CLI data directory
+.chorus-data/
+
 # PGlite local dev database
 .pglite/
+
+# npm pack output
+*.tgz
 
 #demo
 dev-story-demo/

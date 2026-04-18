@@ -49,6 +49,46 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ---
 
+## Quick Start
+
+Run Chorus locally with two commands — no database, no Docker, no config files needed.
+
+```bash
+npm install -g @chorus-aidlc/chorus
+chorus
+```
+
+That's it. Chorus starts with an embedded PostgreSQL (PGlite), runs migrations automatically, and opens at **http://localhost:8637**.
+
+Default login: `admin@chorus.local` / `chorus`
+
+### Options
+
+```bash
+# Custom port
+chorus --port 3000
+
+# Custom data directory (default: ~/.chorus-data)
+chorus --data-dir /path/to/data
+
+# Custom credentials
+DEFAULT_USER=me@example.com DEFAULT_PASSWORD=secret chorus
+
+# Use an external PostgreSQL instead of embedded PGlite
+DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
+```
+
+### Other deployment options
+
+| Method | Command |
+|--------|---------|
+| **npm** (simplest) | `npm i -g @chorus-aidlc/chorus && chorus` |
+| **Docker (standalone)** | [`docker compose -f docker-compose.local.yml up`](#quick-start-with-docker-recommended) |
+| **Docker (full stack)** | [`docker compose up`](#quick-start-with-docker-recommended) (PostgreSQL + Redis + Chorus) |
+| **AWS CDK** | [Deploy to AWS](#deploy-to-aws) |
+
+---
+
 ## Screenshots
 
 ### Proposal — AI Agent Generates Plans in Real Time
