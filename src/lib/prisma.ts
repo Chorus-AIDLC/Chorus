@@ -1,7 +1,9 @@
-import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import logger from "./logger";
+
+export type TransactionClient = Prisma.TransactionClient;
 
 // Use DATABASE_URL if set, otherwise build from individual env vars (ECS Secrets Manager)
 const connectionString =

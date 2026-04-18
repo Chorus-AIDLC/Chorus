@@ -28,7 +28,7 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
       updateMany: vi.fn(),
     },
     taskDependency: {
-      create: vi.fn(),
+      createMany: vi.fn(),
     },
     acceptanceCriterion: {
       createMany: vi.fn(),
@@ -1028,7 +1028,7 @@ describe("approveProposal", () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return cb(tx);
@@ -1065,7 +1065,7 @@ describe("approveProposal", () => {
 
     const txMock = {
       proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
-      taskDependency: { create: vi.fn() },
+      taskDependency: { createMany: vi.fn() },
       acceptanceCriterion: { createMany: vi.fn() },
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
@@ -1073,8 +1073,8 @@ describe("approveProposal", () => {
     await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
 
     expect(mockCreateTasks).toHaveBeenCalledOnce();
-    expect(txMock.taskDependency.create).toHaveBeenCalledWith({
-      data: { taskUuid: "real-task-2", dependsOnUuid: "real-task-1" },
+    expect(txMock.taskDependency.createMany).toHaveBeenCalledWith({
+      data: [{ taskUuid: "real-task-2", dependsOnUuid: "real-task-1" }],
     });
   });
 
@@ -1102,7 +1102,7 @@ describe("approveProposal", () => {
 
     const txMock = {
       proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
-      taskDependency: { create: vi.fn() },
+      taskDependency: { createMany: vi.fn() },
       acceptanceCriterion: { createMany: vi.fn() },
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
@@ -1136,7 +1136,7 @@ describe("approveProposal", () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return cb(tx);
@@ -1161,7 +1161,7 @@ describe("approveProposal", () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return cb(tx);
@@ -1652,7 +1652,7 @@ describe("approveProposal - edge cases", () => {
     mockPrisma.$transaction.mockImplementation(async (callback) => {
       const txMock = {
         proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithDeps, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return callback(txMock);
@@ -1690,7 +1690,7 @@ describe("approveProposal - edge cases", () => {
     mockPrisma.$transaction.mockImplementation(async (callback) => {
       const txMock = {
         proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithAC, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return callback(txMock);
@@ -1839,7 +1839,7 @@ describe("Idea reuse - approveProposal with completed Idea", () => {
           reviewedByUuid: "reviewer-uuid", reviewNote: "Approved", reviewedAt: now,
           project: { uuid: PROJECT_UUID, name: "Test" },
         }) },
-        taskDependency: { create: vi.fn() },
+        taskDependency: { createMany: vi.fn() },
         acceptanceCriterion: { createMany: vi.fn() },
       };
       return callback(txMock);

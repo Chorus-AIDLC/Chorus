@@ -2,7 +2,7 @@
 // Task Service Layer (ARCHITECTURE.md §3.1 Service Layer)
 // UUID-Based Architecture: All operations use UUIDs
 
-import { prisma } from "@/lib/prisma";
+import { prisma, TransactionClient } from "@/lib/prisma";
 import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -663,12 +663,14 @@ export async function createTasksFromProposal(
   projectUuid: string,
   proposalUuid: string,
   createdByUuid: string,
-  tasks: Array<{ uuid?: string; title: string; description?: string; priority?: string; storyPoints?: number; acceptanceCriteria?: string }>
+  tasks: Array<{ uuid?: string; title: string; description?: string; priority?: string; storyPoints?: number; acceptanceCriteria?: string }>,
+  tx?: TransactionClient
 ): Promise<{ tasks: TaskResponse[]; draftToTaskUuidMap: Map<string, string> }> {
+  const db = tx ?? prisma;
   const draftToTaskUuidMap = new Map<string, string>();
 
   const createPromises = tasks.map((task) =>
-    prisma.task.create({
+    db.task.create({
       data: {
         companyUuid,
         projectUuid,

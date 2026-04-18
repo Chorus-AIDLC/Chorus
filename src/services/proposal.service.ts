@@ -662,7 +662,8 @@ export async function approveProposal(
           proposal.projectUuid,
           proposal.uuid,
           proposal.createdByUuid,
-          draft
+          draft,
+          tx
         );
         matDocs.push({ draftUuid: draft.uuid, documentUuid: doc.uuid, title: doc.title });
       }
@@ -689,7 +690,8 @@ export async function approveProposal(
         proposal.projectUuid,
         proposal.uuid,
         proposal.createdByUuid,
-        taskDrafts
+        taskDrafts,
+        tx
       );
 
       // Build materialized tasks list
@@ -700,7 +702,8 @@ export async function approveProposal(
         }
       }
 
-      // Materialize dependencies: convert draftUuid references to real taskUuids
+      // Materialize dependencies: batch all into a single createMany
+      const allDeps: Array<{ taskUuid: string; dependsOnUuid: string }> = [];
       for (const draft of taskDrafts) {
         if (draft.dependsOnDraftUuids && draft.dependsOnDraftUuids.length > 0) {
           const taskUuid = draftToTaskUuidMap.get(draft.uuid);
@@ -709,14 +712,16 @@ export async function approveProposal(
           for (const depDraftUuid of draft.dependsOnDraftUuids) {
             const depTaskUuid = draftToTaskUuidMap.get(depDraftUuid);
             if (!depTaskUuid) continue;
-
-            await tx.taskDependency.create({
-              data: { taskUuid, dependsOnUuid: depTaskUuid },
-            });
+            allDeps.push({ taskUuid, dependsOnUuid: depTaskUuid });
           }
         }
+      }
+      if (allDeps.length > 0) {
+        await tx.taskDependency.createMany({ data: allDeps });
+      }
 
-        // Materialize acceptance criteria items
+      // Materialize acceptance criteria items per task
+      for (const draft of taskDrafts) {
         if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
           const taskUuid = draftToTaskUuidMap.get(draft.uuid);
           if (!taskUuid) continue;
@@ -734,7 +739,7 @@ export async function approveProposal(
     }
 
     return { updatedProposal: updated, materializedTasks: matTasks, materializedDocuments: matDocs };
-  });
+  }, { timeout: 30000 });
 
   eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
 

@@ -2,7 +2,7 @@
 // Document Service Layer (ARCHITECTURE.md §3.1 Service Layer)
 // UUID-Based Architecture: All operations use UUIDs
 
-import { prisma } from "@/lib/prisma";
+import { prisma, TransactionClient } from "@/lib/prisma";
 import { formatCreatedBy } from "@/lib/uuid-resolver";
 
 // ===== Type Definitions =====
@@ -222,9 +222,11 @@ export async function createDocumentFromProposal(
   projectUuid: string,
   proposalUuid: string,
   createdByUuid: string,
-  doc: { type: string; title: string; content?: string }
+  doc: { type: string; title: string; content?: string },
+  tx?: TransactionClient
 ): Promise<DocumentResponse> {
-  const created = await prisma.document.create({
+  const db = tx ?? prisma;
+  const created = await db.document.create({
     data: {
       companyUuid,
       projectUuid,
