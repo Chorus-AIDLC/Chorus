@@ -252,23 +252,34 @@ JSONEOF
       -d "$init_payload" \
       "$mcp_url" 2>/dev/null) || { rm -f "$headers_file"; die "MCP initialize failed"; }
 
-    # Extract session ID from response headers
-    session_id=$(grep -i "^mcp-session-id:" "$headers_file" | tr -d '\r' | awk '{print $2}')
+    # Extract session ID from response headers (optional — stateless servers don't return one)
+    session_id=$(grep -i "^mcp-session-id:" "$headers_file" 2>/dev/null | tr -d '\r' | awk '{print $2}') || true
     rm -f "$headers_file"
 
-    if [ -z "$session_id" ]; then
-      die "No MCP session ID returned"
+    # Build session header (empty string if stateless server returned no session ID)
+    local session_header=""
+    if [ -n "$session_id" ]; then
+      session_header="mcp-session-id: $session_id"
     fi
 
     # Step 2: Send initialized notification
     local notif_payload='{"jsonrpc":"2.0","method":"notifications/initialized"}'
-    curl -s -S -X POST \
-      -H "$auth_header" \
-      -H "Content-Type: application/json" \
-      -H "Accept: application/json, text/event-stream" \
-      -H "mcp-session-id: $session_id" \
-      -d "$notif_payload" \
-      "$mcp_url" >/dev/null 2>&1 || true
+    if [ -n "$session_header" ]; then
+      curl -s -S -X POST \
+        -H "$auth_header" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
+        -H "$session_header" \
+        -d "$notif_payload" \
+        "$mcp_url" >/dev/null 2>&1 || true
+    else
+      curl -s -S -X POST \
+        -H "$auth_header" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
+        -d "$notif_payload" \
+        "$mcp_url" >/dev/null 2>&1 || true
+    fi
 
     # Step 3: Call the tool
     local call_payload
@@ -279,15 +290,26 @@ JSONEOF
     local response_file
     response_file=$(mktemp "${STATE_DIR}/.mcp_response.XXXXXX")
 
-    http_code=$(curl -s -S -X POST \
-      -H "$auth_header" \
-      -H "Content-Type: application/json" \
-      -H "Accept: application/json, text/event-stream" \
-      -H "mcp-session-id: $session_id" \
-      -d "$call_payload" \
-      -w "%{http_code}" \
-      -o "$response_file" \
-      "$mcp_url" 2>/dev/null) || http_code="000"
+    if [ -n "$session_header" ]; then
+      http_code=$(curl -s -S -X POST \
+        -H "$auth_header" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
+        -H "$session_header" \
+        -d "$call_payload" \
+        -w "%{http_code}" \
+        -o "$response_file" \
+        "$mcp_url" 2>/dev/null) || http_code="000"
+    else
+      http_code=$(curl -s -S -X POST \
+        -H "$auth_header" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
+        -d "$call_payload" \
+        -w "%{http_code}" \
+        -o "$response_file" \
+        "$mcp_url" 2>/dev/null) || http_code="000"
+    fi
 
     # Check if session expired (404)
     if [ "$http_code" = "404" ]; then
@@ -310,7 +332,7 @@ JSONEOF
     break
   done
 
-  # Step 4: Close session (best effort)
+  # Step 4: Close session (best effort, only for stateful servers)
   if [ -n "$session_id" ]; then
     curl -s -S -X DELETE \
       -H "$auth_header" \
