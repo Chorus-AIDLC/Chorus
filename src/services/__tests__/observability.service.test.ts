@@ -13,6 +13,10 @@ const mockPrisma = vi.hoisted(() => ({
   tokenUsageRecord: {
     findMany: vi.fn(),
     createMany: vi.fn(),
+    deleteMany: vi.fn(),
+  },
+  idea: {
+    findMany: vi.fn(),
   },
   proposal: {
     findMany: vi.fn(),
@@ -33,6 +37,8 @@ import {
   getAgentObservability,
   batchInsertClientToolEvents,
   classifyPhase,
+  resolveProjectUuids,
+  insertAttributedTokenUsage,
 } from "@/services/observability.service";
 
 // ===== Helpers =====
@@ -499,6 +505,88 @@ describe("batchInsertClientToolEvents", () => {
     expect(args.data[0].isError).toBe(true);
     expect(args.data[0].errorText).toBe("boom");
     expect(args.data[0].sessionUuid).toBe(null);
+  });
+});
+
+// ===== resolveProjectUuids =====
+describe("resolveProjectUuids", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("resolves idea → projectUuid directly", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: ideaUuid, projectUuid }]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+
+    const records = [{ entityType: "idea", entityUuid: ideaUuid }] as Parameters<typeof resolveProjectUuids>[1];
+    const result = await resolveProjectUuids(companyUuid, records);
+    expect(result.get(ideaUuid)).toBe(projectUuid);
+  });
+
+  it("resolves proposal → projectUuid directly", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.proposal.findMany.mockResolvedValue([{ uuid: proposalUuid, projectUuid }]);
+
+    const records = [{ entityType: "proposal", entityUuid: proposalUuid }] as Parameters<typeof resolveProjectUuids>[1];
+    const result = await resolveProjectUuids(companyUuid, records);
+    expect(result.get(proposalUuid)).toBe(projectUuid);
+  });
+
+  it("resolves task → proposal → projectUuid via join", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: taskUuidA, proposalUuid }]);
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    // Only one proposal.findMany call: task→proposalUuid lookup (direct proposal lookup skipped since no proposal entity)
+    mockPrisma.proposal.findMany.mockResolvedValue([{ uuid: proposalUuid, projectUuid }]);
+
+    const records = [{ entityType: "task", entityUuid: taskUuidA }] as Parameters<typeof resolveProjectUuids>[1];
+    const result = await resolveProjectUuids(companyUuid, records);
+    expect(result.get(taskUuidA)).toBe(projectUuid);
+  });
+
+  it("returns empty map for records without entities", async () => {
+    const records = [{ entityType: null, entityUuid: null }] as Parameters<typeof resolveProjectUuids>[1];
+    const result = await resolveProjectUuids(companyUuid, records);
+    expect(result.size).toBe(0);
+  });
+});
+
+// ===== insertAttributedTokenUsage =====
+describe("insertAttributedTokenUsage", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns zero for empty records", async () => {
+    const result = await insertAttributedTokenUsage([]);
+    expect(result).toEqual({ inserted: 0 });
+    expect(mockPrisma.tokenUsageRecord.createMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes old records by sourceSessionId before inserting", async () => {
+    mockPrisma.tokenUsageRecord.deleteMany.mockResolvedValue({ count: 1 });
+    mockPrisma.tokenUsageRecord.createMany.mockResolvedValue({ count: 2 });
+
+    const records = [
+      { sourceSessionId: "sess-1", companyUuid, agentUuid, sessionUuid: null, projectUuid: null, entityType: "task", entityUuid: taskUuidA, inputTokens: 10, outputTokens: 20, cacheCreationInputTokens: 30, cacheReadInputTokens: 40, isReviewer: false, turnTimestamp: null },
+      { sourceSessionId: "sess-1", companyUuid, agentUuid, sessionUuid: null, projectUuid: null, entityType: "idea", entityUuid: ideaUuid, inputTokens: 5, outputTokens: 15, cacheCreationInputTokens: 25, cacheReadInputTokens: 35, isReviewer: false, turnTimestamp: null },
+    ] as Parameters<typeof insertAttributedTokenUsage>[0];
+
+    const result = await insertAttributedTokenUsage(records);
+    expect(mockPrisma.tokenUsageRecord.deleteMany).toHaveBeenCalledWith({
+      where: { sourceSessionId: { in: ["sess-1"] } },
+    });
+    expect(mockPrisma.tokenUsageRecord.createMany).toHaveBeenCalledWith({ data: records });
+    expect(result).toEqual({ inserted: 2 });
+  });
+
+  it("skips delete when no sourceSessionId", async () => {
+    mockPrisma.tokenUsageRecord.createMany.mockResolvedValue({ count: 1 });
+
+    const records = [
+      { sourceSessionId: null, companyUuid, agentUuid, sessionUuid: "s1", projectUuid: null, entityType: "task", entityUuid: taskUuidA, inputTokens: 10, outputTokens: 20, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, isReviewer: false, turnTimestamp: null },
+    ] as Parameters<typeof insertAttributedTokenUsage>[0];
+
+    const result = await insertAttributedTokenUsage(records);
+    expect(mockPrisma.tokenUsageRecord.deleteMany).not.toHaveBeenCalled();
+    expect(result).toEqual({ inserted: 1 });
   });
 });
 
