@@ -28,6 +28,7 @@ import { ProposalEditor } from "./proposal-editor";
 import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
 import { DiscussionDrawer } from "./discussion-drawer";
+import { TokenUsageCard } from "./token-usage-card";
 import { batchCommentCounts } from "@/services/comment.service";
 import { normalizeNewlines } from "../../dashboard/panels/utils";
 
@@ -269,6 +270,12 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               </div>
             </CardContent>
           </Card>
+
+          {/* Token Usage Card — renders nothing when no data exists */}
+          <TokenUsageCard
+            companyUuid={auth.companyUuid}
+            proposalUuid={proposalUuid}
+          />
 
           {/* Source Ideas Card */}
           {sourceIdeas.length > 0 && (

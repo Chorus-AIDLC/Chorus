@@ -56,6 +56,7 @@ import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import { PANEL_WIDTH_PX } from "@/app/(dashboard)/projects/[uuid]/dashboard/utils";
+import { TaskTokensView } from "./task-tokens-view";
 
 interface DependencyTask {
   uuid: string;
@@ -247,6 +248,7 @@ export function TaskDetailPanel({
   }, []);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<"details" | "tokens">("details");
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [source, setSource] = useState<ProposalSource | null>(null);
@@ -739,11 +741,35 @@ export function TaskDetailPanel({
           </div>
         </div>
 
+        {/* Tab Bar - only when viewing existing task (not edit/create mode) */}
+        {task && !isEditing && (
+          <div className="border-b border-[#F5F2EC] px-6">
+            <div className="flex gap-0 -mb-px">
+              {(["details", "tokens"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`relative flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors cursor-pointer ${
+                    activeTab === tab
+                      ? "text-[#C67A52] border-b-2 border-[#C67A52]"
+                      : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                  }`}
+                >
+                  {tab === "details" ? t("common.details") : t("observability.title")}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Panel Body - Scrollable */}
         <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <div className="flex min-h-full flex-col px-6 py-5">
             {isEditing ? (
               renderEditForm()
+            ) : task && activeTab === "tokens" ? (
+              <TaskTokensView taskUuid={task.uuid} projectUuid={projectUuid} />
             ) : task ? (
               <motion.div variants={fadeIn} initial="initial" animate="animate">
                 {/* Assignee Section */}

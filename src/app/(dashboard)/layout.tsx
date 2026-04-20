@@ -14,6 +14,7 @@ import {
   Tags,
   CheckSquare,
   Activity,
+  BarChart3,
   FolderKanban,
   Settings,
   LogOut,
@@ -241,6 +242,7 @@ export default function DashboardLayout({
     { href: `/projects/${projectUuid}/proposals`, label: t("nav.proposals"), icon: Tags },
     { href: `/projects/${projectUuid}/tasks`, label: t("nav.tasks"), icon: CheckSquare },
     { href: `/projects/${projectUuid}/activity`, label: t("nav.activity"), icon: Activity },
+    { href: `/projects/${projectUuid}/observability`, label: t("nav.observability"), icon: BarChart3 },
   ];
 
   // Global navigation items

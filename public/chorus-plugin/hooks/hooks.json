@@ -39,6 +39,16 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-submit-for-verify.sh"
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-tool-log.sh",
+            "async": true
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -107,6 +117,18 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-task-completed.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-stop.sh",
+            "async": true
           }
         ]
       }

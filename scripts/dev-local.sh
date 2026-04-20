@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PGLITE_DIR=".pglite"
+PGLITE_DIR="${PGLITE_DIR:-.pglite}"
+# Resolve ~ to $HOME (tilde isn't expanded inside quotes)
+PGLITE_DIR="${PGLITE_DIR/#\~/$HOME}"
 PGLITE_PORT=5433
 DATABASE_URL="postgresql://postgres:postgres@localhost:${PGLITE_PORT}/postgres?sslmode=disable"
 MAX_RETRIES=30

@@ -72,6 +72,8 @@ run_test "on-task-completed.sh"  '{"task_id":"task-001"}'
 # --- PostToolUse hooks ---
 run_test "on-post-submit-proposal.sh"  '{"tool_input":{"proposalUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"pending","title":"Test proposal"}}'
 run_test "on-post-submit-for-verify.sh" '{"tool_input":{"taskUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"to_verify","title":"Test task"}}'
+run_test "on-post-tool-log.sh"         '{"tool_name":"mcp__chorus__chorus_get_task","tool_use_id":"toolu_01","agent_id":"agent-xyz","tool_input":{"taskUuid":"11111111-2222-3333-4444-555555555555"},"tool_response":{"uuid":"11111111-2222-3333-4444-555555555555","title":"X"}}'
+run_test "on-post-tool-log.sh"         '{"tool_name":"Bash","tool_use_id":"toolu_02","agent_id":"agent-xyz","tool_input":{"command":"ls"},"tool_response":"hello world"}'
 
 # --- Session hooks ---
 run_test "on-session-start.sh"   '{}'

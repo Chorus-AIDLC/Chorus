@@ -2,11 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { truncateParams, extractErrorText } from "../tools/tool-logger";
 import type { AgentAuthContext } from "@/types/auth";
 
-// Mock logger — vi.hoisted ensures fns exist before vi.mock runs
-const { mockDebug, mockWarn, mockError } = vi.hoisted(() => ({
+// Mocks — vi.hoisted ensures fns exist before vi.mock runs
+const {
+  mockDebug,
+  mockWarn,
+  mockError,
+  mockToolUsageEventCreate,
+  mockDetectResource,
+  mockResolveProjectUuid,
+} = vi.hoisted(() => ({
   mockDebug: vi.fn(),
   mockWarn: vi.fn(),
   mockError: vi.fn(),
+  mockToolUsageEventCreate: vi.fn().mockResolvedValue({}),
+  mockDetectResource: vi.fn(),
+  mockResolveProjectUuid: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -19,7 +29,18 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-// Import after mock so enableToolCallLogging gets the mocked logger
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    toolUsageEvent: { create: mockToolUsageEventCreate },
+  },
+}));
+
+vi.mock("../tools/presence", () => ({
+  detectResource: mockDetectResource,
+  resolveProjectUuid: mockResolveProjectUuid,
+}));
+
+// Import after mocks so enableToolCallLogging gets mocked deps
 import { enableToolCallLogging } from "../tools/tool-logger";
 
 // Minimal McpServer stub
@@ -46,9 +67,20 @@ const mockAuth: AgentAuthContext = {
   roles: ["developer_agent"],
 };
 
+// Helper to flush microtask queue so fire-and-forget persistence completes before assertions.
+async function flushMicrotasks() {
+  // Several awaits to drain chained promises inside persistToolUsage.
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("tool-logger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockToolUsageEventCreate.mockResolvedValue({});
+    mockDetectResource.mockReturnValue(null);
+    mockResolveProjectUuid.mockResolvedValue(null);
   });
 
   describe("truncateParams", () => {
@@ -190,6 +222,164 @@ describe("tool-logger", () => {
       expect(logObj.params.projectUuid).toBe("p-1");
       expect((logObj.params.content as string).length).toBeLessThan(600);
       expect((logObj.params.content as string)).toContain("...");
+    });
+  });
+
+  describe("ToolUsageEvent persistence", () => {
+    it("persists a row with entity + projectUuid from detectResource on successful call", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue({
+        entityType: "task",
+        entityUuid: "task-1",
+        projectUuid: "project-1",
+      });
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      server.registerTool("chorus_get_task", {}, handler);
+
+      await server.callTool("chorus_get_task", { taskUuid: "task-1" });
+      await flushMicrotasks();
+
+      expect(mockToolUsageEventCreate).toHaveBeenCalledOnce();
+      const call = mockToolUsageEventCreate.mock.calls[0][0];
+      expect(call.data.companyUuid).toBe("company-1");
+      expect(call.data.agentUuid).toBe("agent-1");
+      expect(call.data.toolName).toBe("chorus_get_task");
+      expect(call.data.source).toBe("mcp");
+      expect(call.data.isError).toBe(false);
+      expect(call.data.errorText).toBeNull();
+      expect(call.data.entityType).toBe("task");
+      expect(call.data.entityUuid).toBe("task-1");
+      expect(call.data.projectUuid).toBe("project-1");
+      expect(typeof call.data.durationMs).toBe("number");
+      expect(typeof call.data.inputSize).toBe("number");
+      expect(typeof call.data.outputSize).toBe("number");
+      // resolveProjectUuid should NOT be called when params already carry projectUuid
+      expect(mockResolveProjectUuid).not.toHaveBeenCalled();
+    });
+
+    it("falls back to resolveProjectUuid when resource carries no projectUuid", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue({
+        entityType: "task",
+        entityUuid: "task-2",
+      });
+      mockResolveProjectUuid.mockResolvedValue("project-resolved");
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      server.registerTool("chorus_update_task", {}, handler);
+
+      await server.callTool("chorus_update_task", { taskUuid: "task-2" });
+      await flushMicrotasks();
+
+      expect(mockResolveProjectUuid).toHaveBeenCalledOnce();
+      expect(mockResolveProjectUuid.mock.calls[0][0]).toBe("task");
+      expect(mockResolveProjectUuid.mock.calls[0][1]).toBe("task-2");
+      expect(mockToolUsageEventCreate.mock.calls[0][0].data.projectUuid).toBe("project-resolved");
+    });
+
+    it("persists errorText and isError=true on business rejection", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue(null);
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({
+        isError: true,
+        content: [{ type: "text", text: "Task already claimed" }],
+      });
+      server.registerTool("chorus_claim_task", {}, handler);
+
+      await server.callTool("chorus_claim_task", { taskUuid: "t-1" });
+      await flushMicrotasks();
+
+      expect(mockToolUsageEventCreate).toHaveBeenCalledOnce();
+      const data = mockToolUsageEventCreate.mock.calls[0][0].data;
+      expect(data.isError).toBe(true);
+      expect(data.errorText).toBe("Task already claimed");
+      expect(data.entityType).toBeNull();
+      expect(data.entityUuid).toBeNull();
+      expect(data.projectUuid).toBeNull();
+    });
+
+    it("writes null entity fields when detectResource returns null", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue(null);
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      server.registerTool("chorus_list_projects", {}, handler);
+
+      await server.callTool("chorus_list_projects", {});
+      await flushMicrotasks();
+
+      const data = mockToolUsageEventCreate.mock.calls[0][0].data;
+      expect(data.entityType).toBeNull();
+      expect(data.entityUuid).toBeNull();
+      expect(data.projectUuid).toBeNull();
+      expect(mockResolveProjectUuid).not.toHaveBeenCalled();
+    });
+
+    it("extracts sessionUuid from params when provided", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue(null);
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      server.registerTool("chorus_report_work", {}, handler);
+
+      await server.callTool("chorus_report_work", {
+        taskUuid: "t-1",
+        report: "progress",
+        sessionUuid: "session-xyz",
+      });
+      await flushMicrotasks();
+
+      expect(mockToolUsageEventCreate.mock.calls[0][0].data.sessionUuid).toBe("session-xyz");
+    });
+
+    it("does not block or alter the tool response when persistence rejects", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue(null);
+      mockToolUsageEventCreate.mockRejectedValueOnce(new Error("db down"));
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const response = { content: [{ type: "text", text: "ok" }] };
+      const handler = vi.fn().mockResolvedValue(response);
+      server.registerTool("chorus_get_task", {}, handler);
+
+      const result = await server.callTool("chorus_get_task", { taskUuid: "t-1" });
+      expect(result).toBe(response);
+
+      await flushMicrotasks();
+
+      // A warn log should record the persistence failure — no silent errors.
+      const persistWarn = mockWarn.mock.calls.find(
+        (c) => c[1] === "Failed to persist ToolUsageEvent"
+      );
+      expect(persistWarn).toBeDefined();
+    });
+
+    it("does not await persistence before returning tool result (fire-and-forget)", async () => {
+      const server = createMockServer();
+      mockDetectResource.mockReturnValue(null);
+
+      let resolvePersist: (v: unknown) => void = () => {};
+      mockToolUsageEventCreate.mockImplementation(
+        () => new Promise((r) => { resolvePersist = r; })
+      );
+      enableToolCallLogging(server as unknown as Parameters<typeof enableToolCallLogging>[0], mockAuth);
+
+      const handler = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      server.registerTool("chorus_get_task", {}, handler);
+
+      // Tool must resolve even though persistence promise is still pending.
+      const result = await server.callTool("chorus_get_task", { taskUuid: "t-1" });
+      expect(result).toBeDefined();
+
+      // Now resolve the pending persistence so the test doesn't leak.
+      resolvePersist({});
     });
   });
 });

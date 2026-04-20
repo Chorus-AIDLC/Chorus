@@ -28,6 +28,7 @@ import { ProposalView, type ProposalData } from "./proposal-view";
 import { OverviewTimeline } from "./overview-timeline";
 import { TaskListView } from "./task-list-view";
 import { ActivityCommentsView } from "./activity-comments-view";
+import { TokensView } from "./tokens-view";
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
 import { DocumentPanel } from "./document-panel";
 import { MoveIdeaDialog } from "./move-idea-dialog";
@@ -89,7 +90,7 @@ import {
 } from "../utils";
 
 // ===== Tab Types =====
-type TabId = "overview" | "elaboration" | "proposal" | "tasks" | "activity";
+type TabId = "overview" | "elaboration" | "proposal" | "tasks" | "tokens" | "activity";
 
 function getVisibleTabs(
   idea: IdeaWithDerivedStatus,
@@ -100,6 +101,7 @@ function getVisibleTabs(
   tabs.push("elaboration");
   if (proposals.length > 0) tabs.push("proposal");
   if (tasks.length > 0) tabs.push("tasks");
+  tabs.push("tokens");
   tabs.push("activity");
   return tabs;
 }
@@ -677,6 +679,17 @@ export function IdeaDetailPanel({
                         tasks={tasks}
                         projectUuid={projectUuid}
                         proposalUuids={proposals.filter((p) => p.status === "approved").map((p) => p.uuid)}
+                        onSelectTask={openTask}
+                      />
+                    </div>
+                  )}
+
+                  {/* Tokens Tab */}
+                  {visibleTabs.includes("tokens") && visitedTabs.has("tokens") && (
+                    <div style={{ display: activeTab === "tokens" ? "block" : "none" }}>
+                      <TokensView
+                        ideaUuid={idea.uuid}
+                        projectUuid={projectUuid}
                         onSelectTask={openTask}
                       />
                     </div>

@@ -365,6 +365,62 @@ model AgentSession {
   @@index([status])
 }
 
+// Tool Usage Event (Layer 1 observability — MCP tool-logger persistence)
+// Every MCP tool call is persisted asynchronously for aggregation queries.
+model ToolUsageEvent {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @unique @default(uuid())
+  companyUuid String
+  agentUuid   String
+  sessionUuid String?
+  toolName    String
+  source      String   @default("mcp")  // "mcp" (server-side) | "client" (CC hook upload)
+  durationMs  Int
+  inputSize   Int      // JSON.stringify(params).length
+  outputSize  Int      // JSON.stringify(result).length
+  isError     Boolean  @default(false)
+  errorText   String?
+  // Entity association (reuses presence.ts detectResource logic)
+  entityType  String?  // "task" | "idea" | "proposal" | "document"
+  entityUuid  String?
+  projectUuid String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyUuid, createdAt])
+  @@index([agentUuid, createdAt])
+  @@index([sessionUuid])
+  @@index([entityType, entityUuid])
+  @@index([projectUuid, createdAt])
+}
+
+// Token Usage Record (Layer 3 observability — transcript-parsed token attribution)
+// Each record attributes token usage to a specific entity (task/idea/proposal/project).
+// Written incrementally per turn via Stop hook, with server-side dedup on (sourceSessionId, turnTimestamp).
+model TokenUsageRecord {
+  id                       Int       @id @default(autoincrement())
+  uuid                     String    @unique @default(uuid())
+  companyUuid              String
+  agentUuid                String
+  sessionUuid              String?
+  projectUuid              String?
+  entityType               String?   // "task" | "idea" | "proposal" | "project"
+  entityUuid               String?
+  inputTokens              Int       @default(0)
+  outputTokens             Int       @default(0)
+  cacheCreationInputTokens Int       @default(0)
+  cacheReadInputTokens     Int       @default(0)
+  isReviewer               Boolean   @default(false)
+  sourceSessionId          String?   // client session identifier (CC session_id, etc.) for dedup
+  turnTimestamp            DateTime? // assistant turn timestamp from transcript for dedup
+  createdAt                DateTime  @default(now())
+
+  @@unique([sourceSessionId, turnTimestamp])
+  @@index([companyUuid])
+  @@index([agentUuid])
+  @@index([projectUuid])
+  @@index([entityType, entityUuid])
+}
+
 // Session-Task checkin relation (many-to-many)
 model SessionTaskCheckin {
   id              Int           @id @default(autoincrement())
