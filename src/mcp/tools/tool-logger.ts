@@ -6,7 +6,9 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentAuthContext } from "@/types/auth";
+import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { detectResource, resolveProjectUuid } from "./presence";
 
 const toolLogger = logger.child({ module: "mcp-tool" });
 
@@ -42,16 +44,89 @@ function extractErrorText(result: unknown): string | undefined {
   return undefined;
 }
 
+/** Safely compute byte size of a JSON-serializable value (returns 0 on failure). */
+function safeJsonSize(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Extract sessionUuid from tool params, if present as a string. */
+function extractSessionUuid(params: Record<string, unknown>): string | null {
+  return typeof params.sessionUuid === "string" ? params.sessionUuid : null;
+}
+
+interface PersistParams {
+  auth: AgentAuthContext;
+  toolName: string;
+  params: Record<string, unknown>;
+  result: unknown;
+  durationMs: number;
+  isError: boolean;
+  errorText: string | null;
+  projectUuidCache: Map<string, string>;
+}
+
+/**
+ * Fire-and-forget persistence of a ToolUsageEvent row.
+ * Must never throw — callers rely on this not blocking tool response.
+ */
+async function persistToolUsage(p: PersistParams): Promise<void> {
+  const resource = detectResource(p.params, p.toolName);
+
+  let entityType: string | null = null;
+  let entityUuid: string | null = null;
+  let projectUuid: string | null = null;
+
+  if (resource) {
+    entityType = resource.entityType;
+    entityUuid = resource.entityUuid;
+    projectUuid = resource.projectUuid ?? null;
+    if (!projectUuid) {
+      projectUuid = await resolveProjectUuid(
+        resource.entityType,
+        resource.entityUuid,
+        p.projectUuidCache
+      );
+    }
+  }
+
+  await prisma.toolUsageEvent.create({
+    data: {
+      companyUuid: p.auth.companyUuid,
+      agentUuid: p.auth.actorUuid,
+      sessionUuid: extractSessionUuid(p.params),
+      toolName: p.toolName,
+      source: "mcp",
+      durationMs: p.durationMs,
+      inputSize: safeJsonSize(p.params),
+      outputSize: safeJsonSize(p.result),
+      isError: p.isError,
+      errorText: p.errorText,
+      entityType,
+      entityUuid,
+      projectUuid,
+    },
+  });
+}
+
 /**
  * Wraps a McpServer to log all tool calls.
  * - Business rejections (isError: true) → warn
  * - Successful calls → debug
  * - Unhandled exceptions → error + re-throw
  *
+ * Also persists each call to ToolUsageEvent asynchronously (fire-and-forget).
+ *
  * Call BEFORE enablePresence so this wrapper is the outermost layer.
  */
 export function enableToolCallLogging(server: McpServer, auth: AgentAuthContext): void {
   const agent = { uuid: auth.actorUuid, name: auth.agentName || "Unknown Agent" };
+  // Session-scoped cache for projectUuid resolution (shared across all tool calls
+  // for this MCP session), mirrors the pattern used in presence.ts enablePresence.
+  const projectUuidCache = new Map<string, string>();
   const originalRegisterTool = server.registerTool.bind(server);
 
   server.registerTool = function (name: string, config: unknown, handler: unknown) {
@@ -73,9 +148,11 @@ export function enableToolCallLogging(server: McpServer, auth: AgentAuthContext)
       }
 
       const durationMs = Date.now() - start;
+      const isErrorResult =
+        typeof result === "object" && result !== null && (result as { isError?: boolean }).isError === true;
+      const errorText = isErrorResult ? extractErrorText(result) : undefined;
 
-      if (typeof result === "object" && result !== null && (result as { isError?: boolean }).isError) {
-        const errorText = extractErrorText(result);
+      if (isErrorResult) {
         toolLogger.warn(
           { tool: name, agent, params: truncateParams(params), error: errorText, durationMs },
           "MCP tool business rejection"
@@ -87,6 +164,20 @@ export function enableToolCallLogging(server: McpServer, auth: AgentAuthContext)
         );
       }
 
+      // Fire-and-forget persistence — never block the tool response.
+      persistToolUsage({
+        auth,
+        toolName: name,
+        params,
+        result,
+        durationMs,
+        isError: isErrorResult,
+        errorText: errorText ?? null,
+        projectUuidCache,
+      }).catch((err) => {
+        toolLogger.warn({ tool: name, err }, "Failed to persist ToolUsageEvent");
+      });
+
       return result;
     };
 
@@ -95,4 +186,4 @@ export function enableToolCallLogging(server: McpServer, auth: AgentAuthContext)
 }
 
 // Exported for testing
-export { truncateParams, extractErrorText };
+export { truncateParams, extractErrorText, safeJsonSize, extractSessionUuid };

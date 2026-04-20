@@ -97,15 +97,6 @@ When you or your sub-agents receive @mentions or other notifications:
 
 Projects are organized into Project Groups. Before creating a new project, call \`chorus_get_project_groups()\` to see existing groups and pass the \`groupUuid\` to \`chorus_admin_create_project()\` to assign the project to the correct group. Creating a project without specifying a group puts it in Ungrouped."
 
-# Check for existing state (resumed session)
-MAIN_SESSION=$("$API" state-get "main_session_uuid" 2>/dev/null) || true
-if [ -n "$MAIN_SESSION" ]; then
-  CONTEXT="${CONTEXT}
-
-Resuming with existing Chorus session: ${MAIN_SESSION}"
-  "$API" mcp-tool "chorus_session_heartbeat" "$(printf '{"sessionUuid":"%s"}' "$MAIN_SESSION")" >/dev/null 2>&1 || true
-fi
-
 # Plan A: Session discovery for sub-agents
 SESSIONS_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/sessions"
 if [ -d "$SESSIONS_DIR" ]; then
@@ -141,8 +132,5 @@ fi
 
 # Build user-visible message
 USER_MSG="Chorus connected at ${CHORUS_URL}"
-if [ -n "$MAIN_SESSION" ]; then
-  USER_MSG="${USER_MSG} (resumed session)"
-fi
 
 "$API" hook-output "$USER_MSG" "$CONTEXT" "SessionStart"

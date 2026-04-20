@@ -68,6 +68,10 @@ if [ -n "$SESSION_DETAIL" ]; then
   done
 fi
 
+# Final flush of Layer-2 tool events before closing the session. Best-effort;
+# if the upload fails the pending file is retained for retry by the next idle.
+"$API" flush-tool-log "$SESSION_UUID" >/dev/null 2>&1 || true
+
 # Close the Chorus session via MCP
 CLOSE_OK=true
 "$API" mcp-tool "chorus_close_session" "$(printf '{"sessionUuid":"%s"}' "$SESSION_UUID")" >/dev/null 2>&1 || CLOSE_OK=false
@@ -90,6 +94,73 @@ fi
 CLAIMED_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/claimed"
 if [ -n "$AGENT_ID" ] && [ -f "${CLAIMED_DIR}/${AGENT_ID}" ]; then
   rm -f "${CLAIMED_DIR}/${AGENT_ID}"
+fi
+
+# === Layer 3: Sub-agent token usage → POST to server ===
+# Per-API-call usage: dedup streaming chunks + delta cache_read.
+# SubagentStop fires once per sub-agent.
+
+TRANSCRIPT_PATH=$(echo "$EVENT" | jq -r '.agent_transcript_path // .agentTranscriptPath // .transcript_path // empty' 2>/dev/null) || true
+
+if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ] && command -v jq >/dev/null 2>&1; then
+  L3_STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus"
+  mkdir -p "$L3_STATE_DIR"
+
+  TURNS_FILE=$(mktemp "${L3_STATE_DIR}/.turns.XXXXXX")
+  TIMELINE_FILE=$(mktemp "${L3_STATE_DIR}/.timeline.XXXXXX")
+  PAYLOAD_FILE=$(mktemp "${L3_STATE_DIR}/.payload.XXXXXX")
+  L3_CLEANUP() { rm -f "$TURNS_FILE" "$TIMELINE_FILE" "$PAYLOAD_FILE"; }
+  trap L3_CLEANUP EXIT
+
+  # Last assistant turn = session snapshot (matches CC's total_tokens).
+  # Sub-agents have one primary entity, so no per-turn attribution needed.
+  cat "$TRANSCRIPT_PATH" | jq -cs '
+    [.[] | select(.type == "assistant" and .message.usage != null)] | last // empty |
+    [{ts: (.timestamp // null),
+      input_tokens: (.message.usage.input_tokens // 0),
+      output_tokens: (.message.usage.output_tokens // 0),
+      cache_creation_input_tokens: (.message.usage.cache_creation_input_tokens // 0),
+      cache_read_input_tokens: (.message.usage.cache_read_input_tokens // 0)}]
+  ' > "$TURNS_FILE" 2>/dev/null || echo "[]" > "$TURNS_FILE"
+
+  HAS_TURNS=$(jq -r 'length > 0' "$TURNS_FILE" 2>/dev/null) || HAS_TURNS="false"
+  if [ "$HAS_TURNS" = "true" ]; then
+    cat "$TRANSCRIPT_PATH" | jq -cs '
+      [.[] | select(.type == "assistant") |
+       .timestamp as $ts |
+       (.message.content[]? // empty) |
+       select(.type == "tool_use" and (.name | test("chorus"))) |
+       .input as $in |
+       (if $in.taskUuid then {ts: $ts, entity_type: "task", entity_uuid: $in.taskUuid}
+        elif $in.proposalUuid then {ts: $ts, entity_type: "proposal", entity_uuid: $in.proposalUuid}
+        elif $in.ideaUuid then {ts: $ts, entity_type: "idea", entity_uuid: $in.ideaUuid}
+        elif $in.documentUuid then {ts: $ts, entity_type: "document", entity_uuid: $in.documentUuid}
+        else empty end)]
+    ' > "$TIMELINE_FILE" 2>/dev/null || echo "[]" > "$TIMELINE_FILE"
+
+    # Detect reviewer from agent name (set by SubagentStart hook)
+    IS_REVIEWER="false"
+    AGENT_NAME_LC=$(echo "${AGENT_NAME:-}" | tr '[:upper:]' '[:lower:]')
+    case "$AGENT_NAME_LC" in
+      *reviewer*) IS_REVIEWER="true" ;;
+    esac
+
+    jq -cn \
+      --arg s "$SESSION_UUID" \
+      --argjson reviewer "$IS_REVIEWER" \
+      '{sessionUuid: $s, sourceSessionId: $s, isReviewer: $reviewer}' 2>/dev/null | \
+      jq --slurpfile turns "$TURNS_FILE" --slurpfile timeline "$TIMELINE_FILE" \
+      '. + {turns: $turns[0], timeline: $timeline[0]}' > "$PAYLOAD_FILE" 2>/dev/null
+
+    if [ -s "$PAYLOAD_FILE" ]; then
+      curl -sS -X POST \
+        -H "Authorization: Bearer ${CHORUS_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d @"$PAYLOAD_FILE" \
+        "${CHORUS_URL}/api/agent-report/token-usage" \
+        >/dev/null 2>&1 || true
+    fi
+  fi
 fi
 
 # === Auto-dispatch: discover unblocked tasks ===

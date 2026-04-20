@@ -43,5 +43,9 @@ fi
 # Send heartbeat via MCP (suppress all output — heartbeats are too frequent to notify)
 "$API" mcp-tool "chorus_session_heartbeat" "$(printf '{"sessionUuid":"%s"}' "$SESSION_UUID")" >/dev/null 2>&1 || true
 
+# Batch upload any buffered Layer-2 tool events. Best-effort; failures retry on
+# the next idle tick (flush-tool-log restores the pending file on non-2xx).
+"$API" flush-tool-log "$SESSION_UUID" >/dev/null 2>&1 || true
+
 # Suppress output entirely — no systemMessage for heartbeats
 echo '{"suppressOutput": true}'

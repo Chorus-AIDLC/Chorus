@@ -213,6 +213,105 @@ cmd_checkin() {
   api_call GET "/api/health"
 }
 
+# Flush the local tool-log JSONL to Chorus.
+# Atomic-mv the log aside, stream it as a single batch to
+# POST /api/agent-report/tool-usage, delete on success, restore on failure.
+#
+# Usage: cmd_flush_tool_log [SESSION_UUID]
+#   SESSION_UUID is optional — server accepts null and still records events.
+cmd_flush_tool_log() {
+  local session_uuid="${1:-}"
+  ensure_state
+  local log_file="${STATE_DIR}/tool-log.jsonl"
+  local lock_file="${log_file}.lock"
+
+  # Nothing to do
+  [ -s "$log_file" ] || return 0
+
+  # Require jq for JSON array construction
+  command -v jq >/dev/null 2>&1 || return 0
+  require_env
+
+  # Atomic-move the log aside so new events keep accumulating in a fresh file.
+  local pending
+  pending="${log_file}.pending.$$"
+  (
+    if command -v flock >/dev/null 2>&1; then
+      flock -w 2 202 || exit 1
+    fi
+    [ -s "$log_file" ] || exit 2
+    mv "$log_file" "$pending"
+  ) 202>"$lock_file" || return 0
+
+  [ -s "$pending" ] || { rm -f "$pending"; return 0; }
+
+  # Build the JSON body: { sessionUuid?, events: [...] }
+  # Slurp JSONL into an array; if session_uuid is set, include it.
+  local body
+  if [ -n "$session_uuid" ]; then
+    body=$(jq -cs --arg s "$session_uuid" '{sessionUuid: $s, events: .}' "$pending" 2>/dev/null) || body=""
+  else
+    body=$(jq -cs '{events: .}' "$pending" 2>/dev/null) || body=""
+  fi
+
+  if [ -z "$body" ]; then
+    # Malformed JSONL — drop the batch rather than looping forever.
+    rm -f "$pending"
+    return 0
+  fi
+
+  # Send the batch. Capture HTTP status so we can keep the pending file on failure.
+  local resp_file
+  resp_file=$(mktemp "${STATE_DIR}/.tool_upload_resp.XXXXXX")
+  local http_code
+  http_code=$(curl -s -S -X POST \
+    -H "Authorization: Bearer ${CHORUS_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "$body" \
+    -w "%{http_code}" \
+    -o "$resp_file" \
+    "${CHORUS_URL}/api/agent-report/tool-usage" 2>/dev/null) || http_code="000"
+  rm -f "$resp_file"
+
+  # 2xx → success: drop pending. Otherwise: put pending back at the head of
+  # the log file so we retry on the next idle tick.
+  case "$http_code" in
+    2??)
+      rm -f "$pending"
+      ;;
+    *)
+      # Restore: append any newly-arrived events after the pending batch.
+      (
+        if command -v flock >/dev/null 2>&1; then
+          flock -w 2 203 || exit 1
+        fi
+        if [ -f "$log_file" ]; then
+          cat "$log_file" >> "$pending"
+          mv "$pending" "$log_file"
+        else
+          mv "$pending" "$log_file"
+        fi
+      ) 203>"$lock_file" || rm -f "$pending"
+      return 1
+      ;;
+  esac
+}
+
+# Direct REST call with Bearer auth
+# Usage: cmd_api_call METHOD PATH [DATA]
+# DATA may also be piped on stdin when given as "-"
+cmd_api_call() {
+  local method="${1:-}"
+  local path="${2:-}"
+  local data="${3:-}"
+  [ -n "$method" ] && [ -n "$path" ] || die "Usage: chorus-api.sh api-call METHOD PATH [DATA|-]"
+  if [ "$data" = "-" ]; then
+    data=$(cat)
+  fi
+  require_env
+  api_call "$method" "$path" "$data"
+}
+
 # Call an MCP tool via JSON-RPC over HTTP Streamable Transport
 # Usage: cmd_mcp_tool <tool_name> [arguments_json]
 # Returns the text content from the tool result
@@ -364,6 +463,8 @@ shift || true
 
 case "$cmd" in
   checkin)          cmd_checkin "$@" ;;
+  api-call)         cmd_api_call "$@" ;;
+  flush-tool-log)   cmd_flush_tool_log "$@" ;;
   mcp-tool)         cmd_mcp_tool "$@" ;;
   state-get)        state_get "${1:-}" ;;
   state-set)        state_set "${1:-}" "${2:-}" ;;
@@ -376,6 +477,8 @@ case "$cmd" in
     echo ""
     echo "Commands:"
     echo "  checkin                                Check connectivity with Chorus"
+    echo "  api-call METHOD PATH [DATA|-]          Direct REST call (Bearer auth); use '-' to read DATA from stdin"
+    echo "  flush-tool-log [sessionUuid]           Upload .chorus/tool-log.jsonl to /api/agent-report/tool-usage"
     echo "  mcp-tool <name> [args_json]            Call an MCP tool via JSON-RPC"
     echo "  state-get <key>                        Read from state.json"
     echo "  state-set <key> <value>                Write to state.json"
