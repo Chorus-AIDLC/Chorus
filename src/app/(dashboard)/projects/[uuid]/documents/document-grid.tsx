@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { FileText } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
+import { ExportDropdown } from "@/components/export-dropdown";
 import { docTypeConfig } from "./doc-type-config";
 
 interface DocumentGridProps {
@@ -24,28 +25,47 @@ export function DocumentGrid({ documents, projectUuid }: DocumentGridProps) {
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {documents.map((doc) => (
-        <Link key={doc.uuid} href={`/projects/${projectUuid}/documents/${doc.uuid}`}>
-          <PresenceIndicator entityType="document" entityUuid={doc.uuid}>
-            <Card className="group cursor-pointer border-[#E5E0D8] p-5 transition-all hover:border-[#C67A52] hover:shadow-md">
-              <div className="mb-3 flex items-start justify-between">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#F5F2EC]">
-                  {(() => { const Icon = docTypeConfig[doc.type]?.icon || FileText; return <Icon className="h-5 w-5 text-[#6B6B6B]" />; })()}
+      {documents.map((doc) => {
+        const typeConf = docTypeConfig[doc.type];
+        const Icon = typeConf?.icon || FileText;
+        return (
+          <PresenceIndicator key={doc.uuid} entityType="document" entityUuid={doc.uuid}>
+            <Card className="group relative flex flex-col border-[#E5E0D8] transition-all hover:border-[#C67A52] hover:shadow-md">
+              <Link
+                href={`/projects/${projectUuid}/documents/${doc.uuid}`}
+                className="flex flex-1 flex-col p-5 pb-0"
+              >
+                <div className="mb-3 flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F5F2EC]">
+                    <Icon className="h-5 w-5 text-[#6B6B6B]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-medium text-[#2C2C2C] leading-snug group-hover:text-[#C67A52] line-clamp-2">
+                      {doc.title}
+                    </h3>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-[#9A9A9A]">
+                      <span>v{doc.version}</span>
+                      <span>·</span>
+                      <span>{t("documents.updated", { date: new Date(doc.updatedAt).toLocaleDateString() })}</span>
+                    </div>
+                  </div>
                 </div>
-                <Badge className={docTypeConfig[doc.type]?.color || ""}>
-                  {t(docTypeConfig[doc.type]?.labelKey || "documents.typeOther")}
+              </Link>
+              <div className="flex items-center justify-between border-t border-[#F5F2EC] px-5 py-2.5">
+                <Badge className={`text-[11px] ${typeConf?.color || ""}`}>
+                  {t(typeConf?.labelKey || "documents.typeOther")}
                 </Badge>
-              </div>
-              <h3 className="mb-1 font-medium text-[#2C2C2C] group-hover:text-[#C67A52]">{doc.title}</h3>
-              <div className="flex items-center gap-3 text-xs text-[#9A9A9A]">
-                <span>v{doc.version}</span>
-                <span>·</span>
-                <span>{t("documents.updated", { date: new Date(doc.updatedAt).toLocaleDateString() })}</span>
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <ExportDropdown documentUuid={doc.uuid} variant="compact" />
+                </div>
               </div>
             </Card>
           </PresenceIndicator>
-        </Link>
-      ))}
+        );
+      })}
     </div>
   );
 }

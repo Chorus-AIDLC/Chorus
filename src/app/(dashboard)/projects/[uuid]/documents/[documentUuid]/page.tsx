@@ -89,6 +89,16 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <DocumentActions
           documentUuid={documentUuid}
           projectUuid={projectUuid}
+          exportDoc={{
+            title: document.title,
+            content: document.content ?? "",
+            type: document.type,
+            version: document.version,
+            createdAt: document.createdAt,
+            updatedAt: document.updatedAt,
+            createdByName: document.createdBy?.name ?? "",
+            projectName: document.project?.name ?? "",
+          }}
         />
       </div>
 

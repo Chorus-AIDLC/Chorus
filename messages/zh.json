@@ -640,6 +640,17 @@
     "typeNote": "笔记",
     "typeOther": "其他"
   },
+  "export": {
+    "exportDocument": "导出",
+    "exportAs": "导出为 {format}",
+    "formatMd": "Markdown (.md)",
+    "formatPdf": "PDF (.pdf)",
+    "formatDocx": "Word (.docx)",
+    "exporting": "导出中...",
+    "exportSuccess": "文档导出成功",
+    "exportError": "文档导出失败",
+    "fetchingContent": "加载文档中..."
+  },
   "settings": {
     "title": "设置",
     "subtitle": "管理您的账户和智能体配置",

@@ -639,6 +639,17 @@
     "typeNote": "Note",
     "typeOther": "Other"
   },
+  "export": {
+    "exportDocument": "Export",
+    "exportAs": "Export as {format}",
+    "formatMd": "Markdown (.md)",
+    "formatPdf": "PDF (.pdf)",
+    "formatDocx": "Word (.docx)",
+    "exporting": "Exporting...",
+    "exportSuccess": "Document exported successfully",
+    "exportError": "Failed to export document",
+    "fetchingContent": "Loading document..."
+  },
   "settings": {
     "title": "Settings",
     "subtitle": "Manage your account and agent configurations",

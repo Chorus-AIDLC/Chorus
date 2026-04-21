@@ -23,6 +23,7 @@ import { usePresence, injectPresence } from "@/hooks/use-presence";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { findNew, findDeleted, shouldRefresh } from "./draft-diff";
+import { ExportDropdown } from "@/components/export-dropdown";
 import { getProposalDraftsAction } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -550,27 +551,38 @@ export function ProposalEditor({
                           )}
                         </span>
                       </button>
-                      {canEdit && (
-                        <div className="flex gap-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEditDocDialog(doc)}
-                            className="h-6 text-[11px] text-muted-foreground hover:text-foreground"
-                          >
-                            {t("proposals.editDraft")}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteDoc(doc)}
-                            disabled={isPending}
-                            className="h-6 text-[11px] text-[#C4574C] hover:bg-[#FFEBEE] hover:text-[#C4574C]"
-                          >
-                            {t("proposals.deleteDraft")}
-                          </Button>
-                        </div>
-                      )}
+                      <div className="flex gap-1 shrink-0">
+                        <ExportDropdown
+                          document={{
+                            title: doc.title,
+                            content: doc.content ?? "",
+                            type: doc.type,
+                            version: "Draft",
+                          }}
+                          variant="compact"
+                        />
+                        {canEdit && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditDocDialog(doc)}
+                              className="h-6 text-[11px] text-muted-foreground hover:text-foreground"
+                            >
+                              {t("proposals.editDraft")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteDoc(doc)}
+                              disabled={isPending}
+                              className="h-6 text-[11px] text-[#C4574C] hover:bg-[#FFEBEE] hover:text-[#C4574C]"
+                            >
+                              {t("proposals.deleteDraft")}
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     {/* Document content (collapsible) */}
                     {isExpanded && doc.content && (
