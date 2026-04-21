@@ -777,7 +777,7 @@ export async function approveProposal(
 export async function getMaterializedEntities(companyUuid: string, proposalUuid: string) {
   const [tasks, documents] = await Promise.all([
     prisma.task.findMany({
-      where: { companyUuid, proposalUuid },
+      where: { companyUuid, proposalUuid, status: { not: "closed" } },
       select: { uuid: true, title: true, status: true },
       orderBy: { createdAt: "asc" },
     }),
@@ -814,7 +814,7 @@ export async function revokeProposal(
   // 2. Find all materialized Tasks and Documents before the transaction
   const [tasksToClose, docsToDelete] = await Promise.all([
     prisma.task.findMany({
-      where: { proposalUuid: proposal.uuid },
+      where: { proposalUuid: proposal.uuid, status: { not: "closed" } },
       select: { uuid: true, title: true },
     }),
     prisma.document.findMany({
