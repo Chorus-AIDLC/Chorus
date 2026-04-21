@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MarkdownContent } from "@/components/markdown-content";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { getProposal, type DocumentDraft, type TaskDraft } from "@/services/proposal.service";
+import { getProposal, type DocumentDraft, type TaskDraft, getMaterializedEntities } from "@/services/proposal.service";
 import { getIdea } from "@/services/idea.service";
 import { projectExists } from "@/services/project.service";
 import { ProposalActions } from "./proposal-actions";
@@ -106,6 +106,11 @@ export default async function ProposalDetailPage({ params }: PageProps) {
       )).filter(Boolean) as Awaited<ReturnType<typeof getIdea>>[]
     : [];
 
+  // Fetch materialized entities for revoke dialog (approved only)
+  const materializedEntities = proposal.status === "approved"
+    ? await getMaterializedEntities(proposalUuid)
+    : null;
+
   // Fetch comment count for the discussion drawer badge
   const commentCounts = await batchCommentCounts(auth.companyUuid, "proposal", [proposalUuid]);
   const commentCount = commentCounts[proposalUuid] || 0;
@@ -178,6 +183,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             proposalUuid={proposalUuid}
             projectUuid={projectUuid}
             status={proposal.status}
+            materializedEntities={materializedEntities}
           />
         </div>
       </div>

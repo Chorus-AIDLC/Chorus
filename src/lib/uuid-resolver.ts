@@ -136,17 +136,24 @@ export async function formatReview(
   if (!reviewedByUuid) return null;
 
   const userName = await getActorName("user", reviewedByUuid);
-  if (!userName) return null;
+  if (userName && userName !== "Unknown") {
+    return {
+      reviewedBy: { type: "user", uuid: reviewedByUuid, name: userName },
+      reviewNote,
+      reviewedAt: reviewedAt?.toISOString() ?? null,
+    };
+  }
 
-  return {
-    reviewedBy: {
-      type: "user",
-      uuid: reviewedByUuid,
-      name: userName,
-    },
-    reviewNote,
-    reviewedAt: reviewedAt?.toISOString() ?? null,
-  };
+  const agentName = await getActorName("agent", reviewedByUuid);
+  if (agentName) {
+    return {
+      reviewedBy: { type: "agent", uuid: reviewedByUuid, name: agentName },
+      reviewNote,
+      reviewedAt: reviewedAt?.toISOString() ?? null,
+    };
+  }
+
+  return null;
 }
 
 // Batch get actor names - 2 queries total instead of N individual queries

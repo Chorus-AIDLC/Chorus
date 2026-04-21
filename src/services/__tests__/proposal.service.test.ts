@@ -3,7 +3,8 @@
  *
  * Tests cover: createProposal, addTaskDraft, addDocumentDraft, updateTaskDraft,
  * updateDocumentDraft, removeTaskDraft, removeDocumentDraft, submitProposal,
- * validateProposal (10+ business rules), approveProposal, rejectProposal, closeProposal.
+ * validateProposal (10+ business rules), approveProposal, rejectProposal, closeProposal,
+ * revokeProposal.
  *
  * Pure function tests (ensureDocumentDraftUuid, ensureTaskDraftUuid) live in
  * proposal.service.pure.test.ts — not duplicated here.
@@ -29,12 +30,26 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
     },
     taskDependency: {
       createMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     acceptanceCriterion: {
       createMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     task: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
       groupBy: vi.fn(),
+    },
+    document: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    sessionTaskCheckin: {
+      deleteMany: vi.fn(),
+    },
+    comment: {
+      deleteMany: vi.fn(),
     },
     $transaction: vi.fn(),
   };
@@ -82,6 +97,7 @@ import {
   approveProposal,
   rejectProposal,
   closeProposal,
+  revokeProposal,
   deleteProposal,
   getProjectProposals,
 } from "@/services/proposal.service";
@@ -1238,6 +1254,166 @@ describe("closeProposal", () => {
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: "proposal", action: "updated" })
     );
+  });
+});
+
+// ====================================================================
+// revokeProposal
+// ====================================================================
+
+describe("revokeProposal", () => {
+  it("should revoke an approved proposal and return closed tasks and deleted documents", async () => {
+    const proposal = dbProposal({ status: "approved" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "task-uuid-1", title: "Task 1" },
+      { uuid: "task-uuid-2", title: "Task 2" },
+    ]);
+    mockPrisma.document.findMany.mockResolvedValue([
+      { uuid: "doc-uuid-1", title: "PRD" },
+    ]);
+
+    const txMock = {
+      sessionTaskCheckin: { deleteMany: vi.fn() },
+      acceptanceCriterion: { deleteMany: vi.fn() },
+      taskDependency: { deleteMany: vi.fn() },
+      comment: { deleteMany: vi.fn() },
+      task: { updateMany: vi.fn() },
+      document: { deleteMany: vi.fn() },
+      proposal: { update: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoking due to scope change");
+
+    expect(result.proposalUuid).toBe(proposal.uuid);
+    expect(result.closedTasks).toEqual([
+      { uuid: "task-uuid-1", title: "Task 1" },
+      { uuid: "task-uuid-2", title: "Task 2" },
+    ]);
+    expect(result.deletedDocuments).toEqual([
+      { uuid: "doc-uuid-1", title: "PRD" },
+    ]);
+
+    // Verify transaction operations
+    expect(txMock.sessionTaskCheckin.deleteMany).toHaveBeenCalled();
+    expect(txMock.task.updateMany).toHaveBeenCalledWith({
+      where: { proposalUuid: proposal.uuid },
+      data: { status: "closed" },
+    });
+    expect(txMock.document.deleteMany).toHaveBeenCalledWith({
+      where: { proposalUuid: proposal.uuid },
+    });
+    expect(txMock.proposal.update).toHaveBeenCalledWith({
+      where: { uuid: proposal.uuid },
+      data: {
+        status: "draft",
+        reviewedByUuid: ACTOR_UUID,
+        reviewedAt: expect.any(Date),
+        reviewNote: "Revoking due to scope change",
+      },
+    });
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "updated" })
+    );
+  });
+
+  it("should throw if proposal is not found", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+
+    await expect(
+      revokeProposal("nonexistent", COMPANY_UUID, ACTOR_UUID, "Revoke")
+    ).rejects.toThrow("Proposal not found");
+  });
+
+  it("should throw if proposal is not in approved status", async () => {
+    const draftProposal = dbProposal({ status: "draft" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(draftProposal);
+
+    await expect(
+      revokeProposal(draftProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke")
+    ).rejects.toThrow("Only approved proposals can be revoked");
+
+    const pendingProposal = dbProposal({ status: "pending" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(pendingProposal);
+
+    await expect(
+      revokeProposal(pendingProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke")
+    ).rejects.toThrow("Only approved proposals can be revoked");
+  });
+
+  it("should return closedTasks and deletedDocuments with uuid and title", async () => {
+    const proposal = dbProposal({ status: "approved" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "task-a", title: "Alpha Task" },
+    ]);
+    mockPrisma.document.findMany.mockResolvedValue([
+      { uuid: "doc-a", title: "Alpha Doc" },
+      { uuid: "doc-b", title: "Beta Doc" },
+    ]);
+
+    const txMock = {
+      sessionTaskCheckin: { deleteMany: vi.fn() },
+      acceptanceCriterion: { deleteMany: vi.fn() },
+      taskDependency: { deleteMany: vi.fn() },
+      comment: { deleteMany: vi.fn() },
+      task: { updateMany: vi.fn() },
+      document: { deleteMany: vi.fn() },
+      proposal: { update: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke note");
+
+    // Verify return value shape
+    expect(result.closedTasks).toHaveLength(1);
+    expect(result.closedTasks[0]).toEqual({ uuid: "task-a", title: "Alpha Task" });
+    expect(result.deletedDocuments).toHaveLength(2);
+    expect(result.deletedDocuments[0]).toEqual({ uuid: "doc-a", title: "Alpha Doc" });
+    expect(result.deletedDocuments[1]).toEqual({ uuid: "doc-b", title: "Beta Doc" });
+  });
+
+  it("should handle empty tasks and documents gracefully", async () => {
+    const proposal = dbProposal({ status: "approved" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.document.findMany.mockResolvedValue([]);
+
+    const txMock = {
+      sessionTaskCheckin: { deleteMany: vi.fn() },
+      acceptanceCriterion: { deleteMany: vi.fn() },
+      taskDependency: { deleteMany: vi.fn() },
+      comment: { deleteMany: vi.fn() },
+      task: { updateMany: vi.fn() },
+      document: { deleteMany: vi.fn() },
+      proposal: { update: vi.fn() },
+    };
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke empty");
+
+    expect(result.proposalUuid).toBe(proposal.uuid);
+    expect(result.closedTasks).toEqual([]);
+    expect(result.deletedDocuments).toEqual([]);
+
+    // When no tasks, task cleanup operations should NOT be called
+    expect(txMock.sessionTaskCheckin.deleteMany).not.toHaveBeenCalled();
+    expect(txMock.task.updateMany).not.toHaveBeenCalled();
+
+    // When no documents, document cleanup should NOT be called
+    expect(txMock.document.deleteMany).not.toHaveBeenCalled();
+
+    // Proposal update should always happen
+    expect(txMock.proposal.update).toHaveBeenCalledWith({
+      where: { uuid: proposal.uuid },
+      data: {
+        status: "draft",
+        reviewedByUuid: ACTOR_UUID,
+        reviewedAt: expect.any(Date),
+        reviewNote: "Revoke empty",
+      },
+    });
   });
 });
 

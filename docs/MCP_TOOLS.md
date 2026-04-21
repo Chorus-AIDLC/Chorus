@@ -1275,6 +1275,33 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Output**: Updated Proposal JSON
 
+### chorus_admin_revoke_proposal
+
+**Description**: Revoke an approved Proposal (approved → draft). Cascade-closes all materialized Tasks and deletes all materialized Documents. Use when an approved Proposal's direction is wrong and you need to undo the approval.
+
+**Difference from reject**: `reject` works on pending → draft (before approval), `revoke` works on approved → draft (undo approval).
+
+**Cascade behavior**:
+- All materialized Tasks → closed
+- All materialized Documents → deleted
+- Associated AcceptanceCriteria, TaskDependencies, and SessionCheckins are cleaned up
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| proposalUuid | string | Yes | Proposal UUID |
+| reviewNote | string | Yes | Reason for revoking (required) |
+
+**Output**:
+```json
+{
+  "proposalUuid": "...",
+  "status": "draft",
+  "closedTasks": [{ "uuid": "...", "title": "..." }],
+  "deletedDocuments": [{ "uuid": "...", "title": "..." }]
+}
+```
+
 ### chorus_report_criteria_self_check
 
 **Description**: Report self-check results on acceptance criteria for a task (Developer tool)

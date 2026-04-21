@@ -6,6 +6,7 @@ import {
   approveProposal,
   rejectProposal,
   closeProposal,
+  revokeProposal,
   submitProposal,
   deleteProposal,
   getProposalByUuid,
@@ -158,6 +159,49 @@ export async function closeProposalAction(proposalUuid: string, reviewNote: stri
   } catch (error) {
     logger.error({ err: error }, "Failed to close proposal");
     return { success: false, error: "Failed to close proposal" };
+  }
+}
+
+export async function revokeProposalAction(proposalUuid: string, reviewNote?: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
+    if (!proposal) {
+      return { success: false, error: "Proposal not found" };
+    }
+
+    if (proposal.status !== "approved") {
+      return { success: false, error: "Proposal is not approved" };
+    }
+
+    const result = await revokeProposal(proposalUuid, auth.companyUuid, auth.actorUuid, reviewNote);
+
+    await createActivity({
+      companyUuid: auth.companyUuid,
+      projectUuid: proposal.projectUuid,
+      targetType: "proposal",
+      targetUuid: proposalUuid,
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
+      action: "revoked",
+      value: {
+        reviewNote,
+        closedTaskCount: result.closedTasks.length,
+        deletedDocumentCount: result.deletedDocuments.length,
+      },
+    });
+
+    revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
+    revalidatePath(`/projects/${proposal.projectUuid}/proposals`);
+
+    return { success: true };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to revoke proposal");
+    return { success: false, error: "Failed to revoke proposal" };
   }
 }
 

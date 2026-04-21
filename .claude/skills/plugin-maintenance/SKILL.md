@@ -53,12 +53,21 @@ public/skill/                   ← Standalone skill (non-CC agents)
 
 ## Version Bump Checklist
 
-Every time the plugin content changes, bump the version in **both** files:
+Every time the plugin content changes, bump the version in **all** of these locations:
 
 1. `public/chorus-plugin/.claude-plugin/plugin.json` — `"version": "X.Y.Z"`
 2. `.claude-plugin/marketplace.json` — `"version": "X.Y.Z"`
+3. Every plugin skill's YAML frontmatter `metadata.version` field — `public/chorus-plugin/skills/*/SKILL.md`
+4. Every standalone skill's YAML frontmatter `metadata.version` field — `public/skill/*/SKILL.md` (only if the standalone skill was modified)
 
-Both must match. Users update via:
+Items 1-3 must always match the same plugin version. Item 4 is independent — bump only the standalone skills that changed, using their own version sequence.
+
+Quick way to check all versions:
+```bash
+grep -r 'version' public/chorus-plugin/.claude-plugin/plugin.json public/chorus-plugin/skills/*/SKILL.md public/skill/*/SKILL.md | grep -v '^--'
+```
+
+Users update via:
 ```bash
 /plugin update chorus@chorus-plugins
 ```

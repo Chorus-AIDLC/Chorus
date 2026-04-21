@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.2.0"
+  version: "0.3.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -35,6 +35,7 @@ Key responsibilities:
 | `chorus_admin_create_project` | Create a new project (optional `groupUuid` for group assignment) |
 | `chorus_admin_approve_proposal` | Approve proposal (materializes documents + tasks) |
 | `chorus_admin_reject_proposal` | Reject proposal with review note |
+| `chorus_admin_revoke_proposal` | Revoke an approved proposal (approved -> draft). Cascade-closes tasks, deletes documents. |
 | `chorus_admin_verify_task` | Verify completed task (to_verify -> done). Blocked if required AC not all passed. |
 | `chorus_mark_acceptance_criteria` | Mark acceptance criteria as passed/failed during verification (batch) |
 | `chorus_admin_reopen_task` | Reopen task for rework (to_verify -> in_progress) |
@@ -157,6 +158,19 @@ chorus_add_comment({
   content: "Specific feedback:\n1. Add error scenarios to PRD\n2. Task 3 AC should include performance benchmarks"
 })
 ```
+
+### Workflow A2: Revoking Approved Proposals
+
+If an approved Proposal's direction turns out to be wrong, use `chorus_admin_revoke_proposal` to undo the approval. Unlike `reject` (which acts on pending proposals), `revoke` acts on already-approved proposals and rolls back all materialized resources.
+
+```
+chorus_admin_revoke_proposal({
+  proposalUuid: "<proposal-uuid>",
+  reviewNote: "Requirements changed — original approach no longer viable."
+})
+```
+
+Cascade effects: all materialized Tasks are closed, all materialized Documents are deleted, and related AcceptanceCriteria/TaskDependencies/SessionCheckins are cleaned up. The Proposal returns to `draft` status so the PM can revise and resubmit.
 
 ### Workflow B: Task Verification
 

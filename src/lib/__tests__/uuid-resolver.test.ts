@@ -324,18 +324,27 @@ describe('formatReview', () => {
     expect(result).toBeNull();
   });
 
-  it('returns review with Unknown name if reviewer not found', async () => {
+  it('returns null if reviewer not found in user or agent tables', async () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.agent.findUnique.mockResolvedValue(null);
+
+    const result = await formatReview('missing', 'note', new Date());
+    expect(result).toBeNull();
+  });
+
+  it('resolves agent reviewer when not found as user', async () => {
+    prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.agent.findUnique.mockResolvedValue({ name: 'Admin Agent' });
 
     const reviewedAt = new Date('2026-01-20T12:00:00Z');
-    const result = await formatReview('missing', 'note', reviewedAt);
+    const result = await formatReview('agent-1', 'Approved', reviewedAt);
     expect(result).toEqual({
       reviewedBy: {
-        type: 'user',
-        uuid: 'missing',
-        name: 'Unknown',
+        type: 'agent',
+        uuid: 'agent-1',
+        name: 'Admin Agent',
       },
-      reviewNote: 'note',
+      reviewNote: 'Approved',
       reviewedAt: '2026-01-20T12:00:00.000Z',
     });
   });

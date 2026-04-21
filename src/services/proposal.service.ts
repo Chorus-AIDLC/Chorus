@@ -616,6 +616,12 @@ export interface ApprovalResult extends ProposalResponse {
   materializedDocuments?: Array<{ draftUuid: string; documentUuid: string; title: string }>;
 }
 
+export interface RevokeResult {
+  proposalUuid: string;
+  closedTasks: { uuid: string; title: string }[];
+  deletedDocuments: { uuid: string; title: string }[];
+}
+
 export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
@@ -766,6 +772,110 @@ export async function approveProposal(
   if (materializedTasks.length > 0) response.materializedTasks = materializedTasks;
   if (materializedDocuments.length > 0) response.materializedDocuments = materializedDocuments;
   return response;
+}
+
+export async function getMaterializedEntities(proposalUuid: string) {
+  const [tasks, documents] = await Promise.all([
+    prisma.task.findMany({
+      where: { proposalUuid },
+      select: { uuid: true, title: true, status: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.document.findMany({
+      where: { proposalUuid },
+      select: { uuid: true, title: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  return { tasks, documents };
+}
+
+// Revoke Proposal (approved -> draft, undo materialization)
+// Cascade-closes tasks, deletes documents, cleans up related records
+export async function revokeProposal(
+  proposalUuid: string,
+  companyUuid: string,
+  revokedByUuid: string,
+  reviewNote?: string
+): Promise<RevokeResult> {
+  // 1. Validate proposal exists, belongs to company, status === 'approved'
+  const proposal = await prisma.proposal.findFirst({
+    where: { uuid: proposalUuid, companyUuid },
+  });
+
+  if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+
+  if (proposal.status !== "approved") {
+    throw new Error("Only approved proposals can be revoked");
+  }
+
+  // 2. Find all materialized Tasks and Documents before the transaction
+  const [tasksToClose, docsToDelete] = await Promise.all([
+    prisma.task.findMany({
+      where: { proposalUuid: proposal.uuid },
+      select: { uuid: true, title: true },
+    }),
+    prisma.document.findMany({
+      where: { proposalUuid: proposal.uuid },
+      select: { uuid: true, title: true },
+    }),
+  ]);
+
+  const closedTasks = tasksToClose.map((t) => ({ uuid: t.uuid, title: t.title }));
+  const deletedDocuments = docsToDelete.map((d) => ({ uuid: d.uuid, title: d.title }));
+
+  // 3. Execute all cleanup within a transaction
+  const updatedProposal = await prisma.$transaction(async (tx) => {
+    const taskUuids = closedTasks.map((t) => t.uuid);
+    const docUuids = deletedDocuments.map((d) => d.uuid);
+
+    if (taskUuids.length > 0) {
+      await tx.sessionTaskCheckin.deleteMany({
+        where: { taskUuid: { in: taskUuids } },
+      });
+
+      // Remove external dependencies (other tasks depending on revoked tasks)
+      // Internal deps (both sides in taskUuids) are kept for history
+      await tx.taskDependency.deleteMany({
+        where: {
+          dependsOnUuid: { in: taskUuids },
+          taskUuid: { notIn: taskUuids },
+        },
+      });
+
+      await tx.task.updateMany({
+        where: { proposalUuid: proposal.uuid },
+        data: { status: "closed" },
+      });
+    }
+
+    if (docUuids.length > 0) {
+      await tx.comment.deleteMany({
+        where: { targetType: "document", targetUuid: { in: docUuids } },
+      });
+
+      await tx.document.deleteMany({
+        where: { proposalUuid: proposal.uuid },
+      });
+    }
+
+    // 4h. Update proposal: revert to draft, clear review info, set reviewNote
+    await tx.proposal.update({
+      where: { uuid: proposalUuid },
+      data: {
+        status: "draft",
+        reviewedByUuid: revokedByUuid,
+        reviewedAt: new Date(),
+        reviewNote: reviewNote || null,
+      },
+    });
+  }, { timeout: 15000 });
+
+  eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+
+  return { proposalUuid, closedTasks, deletedDocuments };
 }
 
 // Reject Proposal (reject -> draft, can be re-edited)

@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.2.0"
+  version: "0.3.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -351,6 +351,7 @@ open --> assigned --> in_progress --> to_verify --> done
 ```
 draft --> pending --> approved
                  \-> rejected --> revised --> pending ...
+approved --> draft  (via revoke — cascade-closes tasks, deletes documents)
 ```
 
 ---

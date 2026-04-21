@@ -177,6 +177,59 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
+  // chorus_admin_revoke_proposal - Revoke an approved Proposal (approved -> draft)
+  server.registerTool(
+    "chorus_admin_revoke_proposal",
+    {
+      description: "Revoke an approved Proposal (approved -> draft). Cascade-closes all materialized Tasks and deletes all materialized Documents.",
+      inputSchema: z.object({
+        proposalUuid: z.string().describe("Proposal UUID"),
+        reviewNote: z.string().optional().describe("Reason for revoking (optional)"),
+      }),
+    },
+    async ({ proposalUuid, reviewNote }) => {
+      const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
+      if (!proposal) {
+        return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
+      }
+
+      if (proposal.status !== "approved") {
+        return { content: [{ type: "text", text: `Can only revoke approved Proposals, current status: ${proposal.status}` }], isError: true };
+      }
+
+      const result = await proposalService.revokeProposal(
+        proposal.uuid,
+        auth.companyUuid,
+        auth.actorUuid,
+        reviewNote
+      );
+
+      await activityService.createActivity({
+        companyUuid: auth.companyUuid,
+        projectUuid: proposal.projectUuid,
+        targetType: "proposal",
+        targetUuid: proposalUuid,
+        actorType: "agent",
+        actorUuid: auth.actorUuid,
+        action: "revoked",
+        value: {
+          reviewNote,
+          closedTasks: result.closedTasks.length,
+          deletedDocuments: result.deletedDocuments.length,
+        },
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          uuid: result.proposalUuid,
+          status: "draft",
+          closedTasks: result.closedTasks,
+          deletedDocuments: result.deletedDocuments,
+        }, null, 2) }],
+      };
+    }
+  );
+
   // chorus_admin_verify_task - Verify a Task (to_verify -> done)
   server.registerTool(
     "chorus_admin_verify_task",

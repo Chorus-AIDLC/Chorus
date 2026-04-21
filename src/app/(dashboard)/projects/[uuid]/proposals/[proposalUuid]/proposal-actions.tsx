@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
-import { MoreHorizontal, Send, Check, X, Archive, Trash2 } from "lucide-react";
+import { MoreHorizontal, Send, Check, X, Archive, Trash2, Undo2, FileText, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,15 +21,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { approveProposalAction, rejectProposalAction, closeProposalAction, submitProposalAction, deleteProposalAction } from "./actions";
+import { approveProposalAction, rejectProposalAction, closeProposalAction, revokeProposalAction, submitProposalAction, deleteProposalAction } from "./actions";
+
+interface MaterializedEntities {
+  tasks: { uuid: string; title: string; status: string }[];
+  documents: { uuid: string; title: string }[];
+}
 
 interface ProposalActionsProps {
   proposalUuid: string;
   projectUuid: string;
   status: string;
+  materializedEntities?: MaterializedEntities | null;
 }
 
-export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalActionsProps) {
+export function ProposalActions({ proposalUuid, projectUuid, status, materializedEntities }: ProposalActionsProps) {
   const t = useTranslations();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -39,6 +45,8 @@ export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalA
   const [rejectReason, setRejectReason] = useState("");
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closeReason, setCloseReason] = useState("");
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [revokeReason, setRevokeReason] = useState("");
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
@@ -80,6 +88,17 @@ export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalA
       if (result.success) {
         setCloseDialogOpen(false);
         setCloseReason("");
+        router.refresh();
+      }
+    });
+  };
+
+  const handleRevoke = () => {
+    startTransition(async () => {
+      const result = await revokeProposalAction(proposalUuid, revokeReason.trim() || undefined);
+      if (result.success) {
+        setRevokeDialogOpen(false);
+        setRevokeReason("");
         router.refresh();
       }
     });
@@ -132,7 +151,13 @@ export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalA
               </DropdownMenuItem>
             </>
           )}
-          {(status === "draft" || status === "pending") && <DropdownMenuSeparator />}
+          {status === "approved" && (
+            <DropdownMenuItem onClick={() => setRevokeDialogOpen(true)}>
+              <Undo2 className="h-4 w-4" />
+              {t("proposals.revokeProposal")}
+            </DropdownMenuItem>
+          )}
+          {(status === "draft" || status === "pending" || status === "approved") && <DropdownMenuSeparator />}
           <DropdownMenuItem
             variant="destructive"
             onClick={() => setDeleteDialogOpen(true)}
@@ -256,6 +281,72 @@ export function ProposalActions({ proposalUuid, projectUuid, status }: ProposalA
               className="bg-[#6B6B6B] hover:bg-[#555555] text-white"
             >
               {isPending ? t("common.processing") : t("proposals.closeProposal")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("proposals.revokeProposal")}</DialogTitle>
+            <DialogDescription>{t("proposals.revokeProposalDesc")}</DialogDescription>
+          </DialogHeader>
+          {materializedEntities && (materializedEntities.tasks.length > 0 || materializedEntities.documents.length > 0) && (
+            <div className="space-y-3 rounded-lg border border-[#FFCDD2] bg-[#FFF5F5] p-3">
+              {materializedEntities.tasks.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] mb-1.5">
+                    <ListChecks className="h-3.5 w-3.5" />
+                    {t("proposals.revokeTasksToClose", { count: materializedEntities.tasks.length })}
+                  </div>
+                  <ul className="space-y-1 pl-5">
+                    {materializedEntities.tasks.map((task) => (
+                      <li key={task.uuid} className="text-xs text-[#6B6B6B]">
+                        {task.title}
+                        <span className="ml-1.5 text-[10px] text-muted-foreground">({task.status})</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {materializedEntities.documents.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] mb-1.5">
+                    <FileText className="h-3.5 w-3.5" />
+                    {t("proposals.revokeDocsToDelete", { count: materializedEntities.documents.length })}
+                  </div>
+                  <ul className="space-y-1 pl-5">
+                    {materializedEntities.documents.map((doc) => (
+                      <li key={doc.uuid} className="text-xs text-[#6B6B6B]">
+                        {doc.title}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <Textarea
+            value={revokeReason}
+            onChange={(e) => setRevokeReason(e.target.value)}
+            placeholder={t("proposals.revokeReasonPlaceholder")}
+            className="min-h-[100px] border-[#E5E0D8]"
+          />
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setRevokeDialogOpen(false)}
+              className="border-[#E5E0D8] text-[#6B6B6B]"
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleRevoke}
+              disabled={isPending}
+              className="bg-[#D32F2F] hover:bg-[#B71C1C] text-white"
+            >
+              {isPending ? t("common.processing") : t("proposals.revokeProposal")}
             </Button>
           </DialogFooter>
         </DialogContent>

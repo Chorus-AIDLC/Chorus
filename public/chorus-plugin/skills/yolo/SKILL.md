@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.1.0"
+  version: "0.7.3"
   category: project-management
   mcp_server: chorus
 ---
