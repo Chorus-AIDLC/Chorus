@@ -214,8 +214,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         action: "revoked",
         value: {
           reviewNote,
-          closedTasks: result.closedTasks.length,
-          deletedDocuments: result.deletedDocuments.length,
+          closedTaskCount: result.closedTasks.length,
+          deletedDocumentCount: result.deletedDocuments.length,
         },
       });
 

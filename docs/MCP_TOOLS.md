@@ -1284,13 +1284,15 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 **Cascade behavior**:
 - All materialized Tasks → closed
 - All materialized Documents → deleted
-- Associated AcceptanceCriteria, TaskDependencies, and SessionCheckins are cleaned up
+- External task dependencies (other tasks depending on revoked tasks) are removed
+- SessionCheckins are cleaned up
+- AcceptanceCriteria and internal dependencies remain attached to closed tasks for history
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | proposalUuid | string | Yes | Proposal UUID |
-| reviewNote | string | Yes | Reason for revoking (required) |
+| reviewNote | string | No | Reason for revoking (optional) |
 
 **Output**:
 ```json

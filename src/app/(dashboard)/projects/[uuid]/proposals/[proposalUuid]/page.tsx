@@ -108,7 +108,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
   // Fetch materialized entities for revoke dialog (approved only)
   const materializedEntities = proposal.status === "approved"
-    ? await getMaterializedEntities(proposalUuid)
+    ? await getMaterializedEntities(auth.companyUuid, proposalUuid)
     : null;
 
   // Fetch comment count for the discussion drawer badge

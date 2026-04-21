@@ -774,15 +774,15 @@ export async function approveProposal(
   return response;
 }
 
-export async function getMaterializedEntities(proposalUuid: string) {
+export async function getMaterializedEntities(companyUuid: string, proposalUuid: string) {
   const [tasks, documents] = await Promise.all([
     prisma.task.findMany({
-      where: { proposalUuid },
+      where: { companyUuid, proposalUuid },
       select: { uuid: true, title: true, status: true },
       orderBy: { createdAt: "asc" },
     }),
     prisma.document.findMany({
-      where: { proposalUuid },
+      where: { companyUuid, proposalUuid },
       select: { uuid: true, title: true },
       orderBy: { createdAt: "asc" },
     }),
@@ -827,7 +827,7 @@ export async function revokeProposal(
   const deletedDocuments = docsToDelete.map((d) => ({ uuid: d.uuid, title: d.title }));
 
   // 3. Execute all cleanup within a transaction
-  const updatedProposal = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const taskUuids = closedTasks.map((t) => t.uuid);
     const docUuids = deletedDocuments.map((d) => d.uuid);
 
