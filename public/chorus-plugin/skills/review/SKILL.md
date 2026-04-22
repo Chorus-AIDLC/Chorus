@@ -55,6 +55,17 @@ Key responsibilities:
 
 ---
 
+## Review Strategy
+
+When reviewing proposals or tasks, prefer spawning an independent reviewer sub-agent over reviewing manually:
+
+1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. It posts a VERDICT comment with detailed findings.
+2. **Act on the VERDICT.** Read the reviewer's comment, then approve/reject (proposals) or verify/reopen (tasks) based on its findings. VERDICT: FAIL is advisory — you make the final call.
+3. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
+4. **Fallback.** If the reviewer is unavailable (e.g., agent type not registered, sub-agent spawn fails), review the item yourself using the quality checklists in the workflows below.
+
+---
+
 ## Workflow
 
 ### Step 1: Check In
@@ -121,11 +132,9 @@ This returns: title, description, input ideas, **document drafts** (PRD, tech de
 chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 ```
 
-#### A3.5: Independent Review (Automatic)
+#### A3.5: Independent Review
 
-After `chorus_pm_submit_proposal`, the Chorus plugin's PostToolUse hook suggests spawning `chorus:proposal-reviewer` — a read-only agent that adversarially reviews the proposal's document quality, task granularity, AC alignment, and dependency DAG. Check for its VERDICT comment before approving.
-
-> **VERDICT: FAIL is advisory** — the reviewer's opinion does not block approval. The admin reads the review comment and makes the final decision.
+Spawn `chorus:proposal-reviewer` per the [Review Strategy](#review-strategy) above. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
 
@@ -187,6 +196,10 @@ Check: developer's work summary, acceptance criteria, self-check results.
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
+
+#### B2.5: Independent Review
+
+Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above. Read its VERDICT comment before proceeding.
 
 #### B3: Mark Acceptance Criteria
 
