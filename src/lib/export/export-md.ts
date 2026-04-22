@@ -73,6 +73,28 @@ export function renderFrontmatter(metadata: ExportMetadata): string {
 }
 
 /**
+ * Build a rendered markdown metadata header for PDF/DOCX export.
+ * Uses a markdown table (not YAML frontmatter) so it renders visually
+ * in the unified pipeline output.
+ */
+export function buildMetadataMarkdown(doc: ExportableDocument): string {
+  const meta = buildMetadata(doc);
+  const rows: string[] = [];
+  if (meta.type) rows.push(`| **Type** | ${meta.type} |`);
+  if (meta.version) rows.push(`| **Version** | ${meta.version} |`);
+  if (meta.author) rows.push(`| **Author** | ${meta.author} |`);
+  if (meta.created) rows.push(`| **Created** | ${meta.created} |`);
+  if (meta.updated) rows.push(`| **Updated** | ${meta.updated} |`);
+  if (meta.project) rows.push(`| **Project** | ${meta.project} |`);
+
+  const table = rows.length > 0
+    ? `| | |\n|---|---|\n${rows.join("\n")}\n`
+    : "";
+
+  return `# ${meta.title}\n\n${table}`;
+}
+
+/**
  * Export a document as a Markdown string: YAML frontmatter + blank line + body.
  */
 export function exportAsMarkdown(doc: ExportableDocument): string {

@@ -94,13 +94,10 @@
     "dagre": "^0.8.5",
     "dotenv": "^16.4.7",
     "framer-motion": "^12.38.0",
-    "html-docx-js-typescript": "^0.1.5",
     "html-to-image": "^1.11.13",
     "ioredis": "^5.9.3",
     "jose": "^6.1.3",
-    "jspdf": "^4.2.1",
     "lucide-react": "^0.563.0",
-    "marked": "^18.0.2",
     "mermaid": "^11.14.0",
     "next": "^15.5.11",
     "next-intl": "^4.8.2",
@@ -111,10 +108,16 @@
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "remark-docx": "^0.3.26",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-pdf": "^0.2.4",
     "shiki": "3.23.0",
     "sonner": "^2.0.7",
     "streamdown": "^2.4.0",
     "tailwind-merge": "^3.4.0",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -136,5 +139,10 @@
     "typescript": "^5",
     "vitest": "^4.1.0",
     "vitest-mock-extended": "^3.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "docx": "9.6.1"
+    }
   }
 }

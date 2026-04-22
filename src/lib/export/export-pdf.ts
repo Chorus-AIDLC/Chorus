@@ -1,58 +1,86 @@
 import type { ExportableDocument } from "@/types/export";
-import { buildMetadata } from "./export-md";
 
 export async function exportAsPdf(doc: ExportableDocument): Promise<Blob> {
-  const [{ marked }, { renderMermaidBlocks, buildPdfContent, convertInlineCodeForPdf }, { jsPDF }] =
+  const [{ unified }, { default: remarkParse }, { default: remarkGfm }, { default: remarkPdf }, { default: remarkMermaid }, { buildMetadataMarkdown }] =
     await Promise.all([
-      import("marked"),
-      import("./mermaid-renderer"),
-      import("jspdf"),
+      import("unified"),
+      import("remark-parse"),
+      import("remark-gfm"),
+      import("remark-pdf"),
+      import("./remark-mermaid"),
+      import("./export-md"),
     ]);
 
-  const metadata = buildMetadata(doc);
-  const rawHtml = await marked.parse(doc.content ?? "");
-  const withMermaid = await renderMermaidBlocks(rawHtml);
-  const withInlineCode = convertInlineCodeForPdf(withMermaid);
-  const content = buildPdfContent(withInlineCode, metadata);
+  const markdown = buildMetadataMarkdown(doc) + "\n\n" + (doc.content ?? "");
 
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = content;
-  wrapper.style.position = "fixed";
-  wrapper.style.top = "0";
-  wrapper.style.left = "0";
-  wrapper.style.width = "750px";
-  wrapper.style.background = "white";
-  wrapper.style.zIndex = "99999";
-  wrapper.style.pointerEvents = "none";
-  document.body.appendChild(wrapper);
-
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  const target = wrapper.querySelector(".export-root") as HTMLElement;
-
-  try {
-    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-
-    await new Promise<void>((resolve, reject) => {
-      pdf.html(target, {
-        callback: () => resolve(),
-        x: 0,
-        y: 0,
-        width: 170,
-        windowWidth: 750,
-        margin: [15, 20, 15, 20],
-        autoPaging: "text",
-        html2canvas: {
-          scale: 0.2267,
-          useCORS: true,
-          logging: false,
-          allowTaint: true,
+  const processor = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkMermaid)
+    .use(remarkPdf, {
+      fonts: ["Helvetica", "Courier"],
+      size: "A4",
+      margin: { top: 60, bottom: 60, left: 65, right: 65 },
+      spacing: 6,
+      styles: {
+        default: {
+          fontSize: 10.5,
+          color: "#24292f",
         },
-      }).catch(reject);
+        head1: {
+          fontSize: 24,
+          bold: true,
+          color: "#1f2328",
+        },
+        head2: {
+          fontSize: 18,
+          bold: true,
+          color: "#1f2328",
+        },
+        head3: {
+          fontSize: 15,
+          bold: true,
+          color: "#1f2328",
+        },
+        head4: {
+          fontSize: 12.5,
+          bold: true,
+          color: "#1f2328",
+        },
+        head5: {
+          fontSize: 11,
+          bold: true,
+          color: "#1f2328",
+        },
+        head6: {
+          fontSize: 10.5,
+          bold: true,
+          italic: true,
+          color: "#656d76",
+        },
+        link: {
+          color: "#0969da",
+          underline: true,
+        },
+        inlineCode: {
+          font: "Courier",
+          color: "#1f2328",
+          fontSize: 9.5,
+          bold: true,
+        },
+        code: {
+          font: "Courier",
+          fontSize: 9,
+          color: "#1f2328",
+        },
+        blockquote: {
+          color: "#656d76",
+          italic: true,
+        },
+      },
     });
 
-    return pdf.output("blob");
-  } finally {
-    document.body.removeChild(wrapper);
-  }
+  const file = await processor.process(markdown);
+  const arrayBuffer = await file.result;
+  return new Blob([arrayBuffer], { type: "application/pdf" });
 }
