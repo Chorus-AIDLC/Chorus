@@ -13,7 +13,8 @@ export async function exportAsPdf(doc: ExportableDocument): Promise<Blob> {
 
   const markdown = buildMetadataMarkdown(doc) + "\n\n" + (doc.content ?? "");
 
-  const processor = unified()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const processor = (unified() as any)
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMermaid)

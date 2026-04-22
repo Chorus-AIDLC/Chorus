@@ -1,6 +1,7 @@
 import type { Plugin } from "unified";
-import type { Root, Code, Image, Paragraph, Parent } from "mdast";
 import { visit } from "unist-util-visit";
+
+interface MdastNode { type: string; children?: MdastNode[]; [key: string]: unknown }
 
 let mermaidInitialized = false;
 
@@ -62,29 +63,24 @@ async function renderMermaidToPng(code: string): Promise<string | null> {
   }
 }
 
-const remarkMermaid: Plugin<[], Root> = () => {
-  return async (tree: Root) => {
-    const mermaidNodes: { node: Code; index: number; parent: Parent }[] = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const remarkMermaid: Plugin = () => {
+  return async (tree: any) => {
+    const mermaidNodes: { node: any; index: number; parent: any }[] = [];
 
-    visit(tree, "code", (node: Code, index, parent) => {
+    visit(tree, "code", (node: any, index, parent) => {
       if (node.lang === "mermaid" && index !== undefined && parent) {
-        mermaidNodes.push({ node, index, parent: parent as Parent });
+        mermaidNodes.push({ node, index, parent });
       }
     });
 
     for (const { node, index, parent } of mermaidNodes) {
-      const pngDataUrl = await renderMermaidToPng(node.value);
+      const pngDataUrl = await renderMermaidToPng(node.value as string);
       if (pngDataUrl) {
-        const imageNode: Image = {
-          type: "image",
-          url: pngDataUrl,
-          alt: "Mermaid diagram",
-        };
-        const wrappedNode: Paragraph = {
+        parent.children[index] = {
           type: "paragraph",
-          children: [imageNode],
+          children: [{ type: "image", url: pngDataUrl, alt: "Mermaid diagram" }],
         };
-        parent.children[index] = wrappedNode;
       }
     }
   };
