@@ -125,6 +125,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/dagre": "^0.7.53",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^22",
     "@types/pg": "^8.11.10",
     "@types/react": "^19",
