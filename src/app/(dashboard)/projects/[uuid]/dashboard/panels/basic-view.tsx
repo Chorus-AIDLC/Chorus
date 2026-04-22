@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations, useLocale } from "next-intl";
+import { useTranslations } from "next-intl";
 import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,7 @@ import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
+import { formatDateTime } from "@/lib/format-date";
 import type { IdeaResponse } from "@/services/idea.service";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import { AssigneeSection } from "./assignee-section";
@@ -24,7 +25,6 @@ interface BasicViewProps {
 export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: BasicViewProps) {
   const t = useTranslations("ideaTracker");
   const tCommon = useTranslations("common");
-  const locale = useLocale();
   const [showAssignModal, setShowAssignModal] = useState(false);
 
   return (
@@ -66,7 +66,7 @@ export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: Bas
             </span>
           )}
           <span className="text-xs text-[#9A9A9A]">
-            {new Date(idea.createdAt).toLocaleDateString(locale)}
+            {formatDateTime(idea.createdAt)}
           </span>
         </div>
       </div>

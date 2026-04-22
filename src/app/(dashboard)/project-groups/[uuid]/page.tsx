@@ -16,6 +16,7 @@ import { authFetch } from "@/lib/auth-client";
 import { ManageProjectGroupDialog } from "@/components/manage-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor } from "@/lib/project-colors";
+import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ──────────────────────────────────────────────────────
 interface GroupDashboardData {
@@ -69,7 +70,8 @@ function formatRelativeTime(dateStr: string, t: ReturnType<typeof useTranslation
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return t("time.hoursAgo", { hours });
   const days = Math.floor(hours / 24);
-  return t("time.daysAgo", { days });
+  if (days < 7) return t("time.daysAgo", { days });
+  return formatDateTime(dateStr);
 }
 
 function formatActivityText(activity: GroupDashboardData["recentActivity"][0]): string {

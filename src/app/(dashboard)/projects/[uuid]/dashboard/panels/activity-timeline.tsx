@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useTranslations, useLocale } from "next-intl";
+import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { getIdeaActivitiesAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/activity-actions";
@@ -48,7 +48,6 @@ interface ActivityTimelineProps {
 
 export function ActivityTimeline({ ideaUuid }: ActivityTimelineProps) {
   const t = useTranslations();
-  const locale = useLocale();
 
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -89,7 +88,7 @@ export function ActivityTimeline({ ideaUuid }: ActivityTimelineProps) {
                 <p className="text-[13px] text-[#2C2C2C]">
                   {formatActivityMessage(activity, t as TranslateFn)}
                 </p>
-                <p className="text-[11px] text-[#9A9A9A]">{formatRelativeTime(activity.createdAt, t as TranslateFn, locale)}</p>
+                <p className="text-[11px] text-[#9A9A9A]">{formatRelativeTime(activity.createdAt, t as TranslateFn)}</p>
               </div>
             </div>
           ))

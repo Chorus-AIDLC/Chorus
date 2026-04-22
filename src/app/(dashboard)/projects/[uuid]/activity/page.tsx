@@ -6,6 +6,7 @@ import { getTranslations } from "next-intl/server";
 import { Card } from "@/components/ui/card";
 import { Monitor, User, Settings } from "lucide-react";
 import { getServerAuthContext } from "@/lib/auth-server";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { listActivities } from "@/services/activity.service";
 import { projectExists } from "@/services/project.service";
 import { prisma } from "@/lib/prisma";
@@ -40,7 +41,7 @@ const entityTypeConfig: Record<string, { i18nKey: string; color: string }> = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatDate(date: Date, t: any): string {
+function formatRelativeOrNull(date: Date, t: any): string | null {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const minutes = Math.floor(diff / 60000);
@@ -51,7 +52,7 @@ function formatDate(date: Date, t: any): string {
   if (minutes < 60) return t("time.minutesAgo", { minutes });
   if (hours < 24) return t("time.hoursAgo", { hours });
   if (days < 7) return t("time.daysAgo", { days });
-  return date.toLocaleDateString();
+  return null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,7 +200,7 @@ export default async function ActivityPage({ params }: PageProps) {
                       </div>
 
                       <div className="text-xs text-[#9A9A9A] whitespace-nowrap">
-                        {formatDate(activity.createdAt, t)}
+                        {formatRelativeOrNull(activity.createdAt, t) ?? <FormattedDateTime date={activity.createdAt} />}
                       </div>
                     </Card>
                   );

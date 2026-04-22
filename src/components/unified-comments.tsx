@@ -16,6 +16,7 @@ import { ContentWithMentions } from "@/components/mention-renderer";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { getAgentColor } from "@/lib/agent-color";
+import { formatDateTime } from "@/lib/format-date";
 import { toast } from "sonner";
 
 type TargetType = "idea" | "proposal" | "task" | "document";
@@ -35,7 +36,7 @@ function formatRelativeTime(dateString: string, t: TranslateFn): string {
   if (diffMins < 60) return t("time.minutesAgo", { minutes: diffMins });
   if (diffHours < 24) return t("time.hoursAgo", { hours: diffHours });
   if (diffDays < 7) return t("time.daysAgo", { days: diffDays });
-  return date.toLocaleDateString();
+  return formatDateTime(date);
 }
 
 interface UnifiedCommentsProps {

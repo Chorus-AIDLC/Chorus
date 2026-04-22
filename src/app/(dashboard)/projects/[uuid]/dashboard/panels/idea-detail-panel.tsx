@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useTranslations, useLocale } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForPro
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import type { IdeaResponse } from "@/services/idea.service";
 import { clientLogger } from "@/lib/logger-client";
+import { formatDateTime } from "@/lib/format-date";
 
 type IdeaWithDerivedStatus = IdeaResponse & { derivedStatus: string; badgeHint: string | null };
 
@@ -140,7 +141,6 @@ export function IdeaDetailPanel({
   const t = useTranslations();
   const tTracker = useTranslations("ideaTracker");
   const tStatus = useTranslations("status");
-  const locale = useLocale();
   const router = useRouter();
 
   // Core idea state
@@ -506,7 +506,7 @@ export function IdeaDetailPanel({
                         : tStatus(derivedStatusI18nKeys[status] || "todo")}
                     </Badge>
                     <span className="text-xs text-[#9A9A9A]">
-                      {new Date(idea.createdAt).toLocaleDateString(locale)}
+                      {formatDateTime(idea.createdAt)}
                     </span>
                   </div>
                 </>

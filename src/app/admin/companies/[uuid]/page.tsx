@@ -24,6 +24,7 @@ import {
   Trash2,
   Key,
 } from "lucide-react";
+import { formatDateTime } from "@/lib/format-date";
 
 interface CompanyDetail {
   uuid: string;
@@ -199,7 +200,7 @@ export default function CompanyDetailPage({
             {company.name}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {t("admin.createdOn", { date: new Date(company.createdAt).toLocaleDateString() })}
+            {t("admin.createdOn", { date: formatDateTime(company.createdAt) })}
           </p>
         </div>
         <Button variant="destructive" onClick={handleDelete}>

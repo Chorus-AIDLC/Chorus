@@ -28,6 +28,7 @@ import { locales, localeNames, type Locale } from "@/i18n/config";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotificationPreferencesForm } from "@/components/notification-preferences-form";
 import { clientLogger } from "@/lib/logger-client";
+import { formatDateTime } from "@/lib/format-date";
 
 interface ApiKey {
   uuid: string;
@@ -366,7 +367,7 @@ export default function SettingsPage() {
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {key.keyPrefix}... · {t("settings.created")}{" "}
-                        {new Date(key.createdAt).toLocaleDateString()}
+                        {formatDateTime(key.createdAt)}
                       </div>
                     </div>
                   </div>

@@ -7,6 +7,7 @@ import { FileText } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { ExportDropdown } from "@/components/export-dropdown";
+import { formatDateTime } from "@/lib/format-date";
 import { docTypeConfig } from "./doc-type-config";
 
 interface DocumentGridProps {
@@ -46,7 +47,7 @@ export function DocumentGrid({ documents, projectUuid }: DocumentGridProps) {
                     <div className="mt-1 flex items-center gap-2 text-xs text-[#9A9A9A]">
                       <span>v{doc.version}</span>
                       <span>·</span>
-                      <span>{t("documents.updated", { date: new Date(doc.updatedAt).toLocaleDateString() })}</span>
+                      <span>{t("documents.updated", { date: formatDateTime(doc.updatedAt) })}</span>
                     </div>
                   </div>
                 </div>

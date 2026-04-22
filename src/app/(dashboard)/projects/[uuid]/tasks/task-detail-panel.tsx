@@ -52,6 +52,7 @@ import {
 } from "./[taskUuid]/dependency-actions";
 import { getTaskSessionsAction } from "./session-actions";
 import type { TaskSessionInfo } from "@/services/session.service";
+import { formatDateTime } from "@/lib/format-date";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
@@ -169,7 +170,7 @@ function formatRelativeTime(dateString: string, t: any): string {
   if (diffMins < 60) return t("time.minutesAgo", { minutes: diffMins });
   if (diffHours < 24) return t("time.hoursAgo", { hours: diffHours });
   if (diffDays < 7) return t("time.daysAgo", { days: diffDays });
-  return date.toLocaleDateString();
+  return formatDateTime(date);
 }
 
 // Activity dot color
@@ -769,7 +770,7 @@ export function TaskDetailPanel({
                           </div>
                           <div className="text-xs text-[#6B6B6B]">
                             {task.assignee.type === "agent"
-                              ? `${t("common.agent")} • ${task.assignee.assignedAt ? new Date(task.assignee.assignedAt).toLocaleDateString() : ''}`
+                              ? `${t("common.agent")} • ${task.assignee.assignedAt ? formatDateTime(task.assignee.assignedAt) : ''}`
                               : t("common.user")}
                           </div>
                         </div>

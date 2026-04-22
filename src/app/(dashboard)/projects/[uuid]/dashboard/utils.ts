@@ -1,5 +1,6 @@
 import type { useTranslations } from "next-intl";
 import type { BadgeHint } from "@/services/idea.service";
+import { formatDateTime } from "@/lib/format-date";
 
 export type TranslateFn = ReturnType<typeof useTranslations>;
 
@@ -50,7 +51,7 @@ export function getTaskStatusDotColor(status: string): string {
 
 // ===== Relative Time Formatting =====
 
-export function formatRelativeTime(dateString: string, t: TranslateFn, locale?: string): string {
+export function formatRelativeTime(dateString: string, t: TranslateFn): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -62,7 +63,7 @@ export function formatRelativeTime(dateString: string, t: TranslateFn, locale?: 
   if (diffMins < 60) return t("time.minutesAgo", { minutes: diffMins });
   if (diffHours < 24) return t("time.hoursAgo", { hours: diffHours });
   if (diffDays < 7) return t("time.daysAgo", { days: diffDays });
-  return date.toLocaleDateString(locale);
+  return formatDateTime(date);
 }
 
 // ===== Derived Status UI Mapping =====

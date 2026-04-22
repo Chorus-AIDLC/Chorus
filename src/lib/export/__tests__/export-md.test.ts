@@ -7,15 +7,21 @@ import {
   exportAsMarkdownBlob,
   renderFrontmatter,
 } from "../export-md";
+import { formatDateTime } from "@/lib/format-date";
 import type { ExportableDocument } from "@/types/export";
+
+const CREATED_AT = "2026-04-21T10:00:00.000Z";
+const UPDATED_AT = "2026-04-21T11:00:00.000Z";
+const CREATED_AT_FORMATTED = formatDateTime(CREATED_AT);
+const UPDATED_AT_FORMATTED = formatDateTime(UPDATED_AT);
 
 const fullDoc: ExportableDocument = {
   title: "Design Doc",
   content: "# Hello\n\nBody text.",
   type: "tech_design",
   version: 3,
-  createdAt: "2026-04-21T10:00:00.000Z",
-  updatedAt: "2026-04-21T11:00:00.000Z",
+  createdAt: CREATED_AT,
+  updatedAt: UPDATED_AT,
   createdByName: "Alice",
   projectName: "Chorus 0.7.0",
 };
@@ -28,8 +34,10 @@ describe("buildMetadata", () => {
     expect(meta.project).toBe("Chorus 0.7.0");
     expect(meta.title).toBe("Design Doc");
     expect(meta.type).toBe("tech_design");
-    expect(meta.created).toBe("2026-04-21T10:00:00.000Z");
-    expect(meta.updated).toBe("2026-04-21T11:00:00.000Z");
+    expect(meta.created).toBe(CREATED_AT_FORMATTED);
+    expect(meta.updated).toBe(UPDATED_AT_FORMATTED);
+    expect(meta.created).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(meta.updated).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   });
 
   it("keeps string versions verbatim", () => {
@@ -69,8 +77,8 @@ describe("renderFrontmatter", () => {
     expect(yaml).toContain("type: tech_design");
     expect(yaml).toContain("version: v3");
     expect(yaml).toContain("author: Alice");
-    expect(yaml).toContain('created: "2026-04-21T10:00:00.000Z"');
-    expect(yaml).toContain('updated: "2026-04-21T11:00:00.000Z"');
+    expect(yaml).toContain(`created: "${CREATED_AT_FORMATTED}"`);
+    expect(yaml).toContain(`updated: "${UPDATED_AT_FORMATTED}"`);
     expect(yaml).toContain("project: Chorus 0.7.0");
   });
 
@@ -140,6 +148,8 @@ describe("buildMetadataMarkdown", () => {
     expect(md).toContain("| **Type** | tech_design |");
     expect(md).toContain("| **Version** | v3 |");
     expect(md).toContain("| **Author** | Alice |");
+    expect(md).toContain(`| **Created** | ${CREATED_AT_FORMATTED} |`);
+    expect(md).toContain(`| **Updated** | ${UPDATED_AT_FORMATTED} |`);
     expect(md).toContain("| **Project** | Chorus 0.7.0 |");
   });
 

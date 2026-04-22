@@ -2,6 +2,7 @@
 // Markdown export: prepend YAML frontmatter metadata header to the raw markdown content.
 
 import type { ExportMetadata, ExportableDocument } from "@/types/export";
+import { formatDateTime } from "@/lib/format-date";
 
 /**
  * Escape a value for inclusion as a YAML scalar inside frontmatter.
@@ -47,8 +48,8 @@ export function buildMetadata(doc: ExportableDocument): ExportMetadata {
     type: doc.type ?? "",
     version,
     author: doc.createdByName ?? "",
-    created: doc.createdAt ?? "",
-    updated: doc.updatedAt ?? "",
+    created: doc.createdAt ? formatDateTime(doc.createdAt) : "",
+    updated: doc.updatedAt ? formatDateTime(doc.updatedAt) : "",
     project: doc.projectName ?? "",
   };
 }

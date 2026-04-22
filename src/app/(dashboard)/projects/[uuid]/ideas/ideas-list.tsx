@@ -21,6 +21,7 @@ import { usePanelUrl } from "@/hooks/use-panel-url";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { StaggerList, StaggerItem } from "@/components/stagger-list";
 import { fetchIdeasAction } from "./actions";
+import { formatDateTime } from "@/lib/format-date";
 
 interface IdeaItem {
   uuid: string;
@@ -79,7 +80,7 @@ function formatRelativeTime(dateString: string, t: any): string {
   if (diffMins < 60) return t("time.minutesAgo", { minutes: diffMins });
   if (diffHours < 24) return t("time.hoursAgo", { hours: diffHours });
   if (diffDays < 7) return t("time.daysAgo", { days: diffDays });
-  return date.toLocaleDateString();
+  return formatDateTime(date);
 }
 
 export function IdeasList({

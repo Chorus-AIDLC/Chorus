@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClipboardList, FileEdit, Palette, BookOpen, FileText, ChevronRight, type LucideIcon } from "lucide-react";
 import { getServerAuthContext } from "@/lib/auth-server";
+import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getDocument } from "@/services/document.service";
 import { projectExists } from "@/services/project.service";
 import { DocumentActions } from "./document-actions";
@@ -82,7 +83,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
             </div>
             <h1 className="text-xl font-semibold text-[#2C2C2C] md:text-2xl">{document.title}</h1>
             <div className="mt-1 flex items-center gap-3 text-sm text-[#6B6B6B] md:mt-2">
-              <span>{t("common.updated")} {new Date(document.updatedAt).toLocaleDateString()}</span>
+              <span>{t("common.updated")} <FormattedDateTime date={document.updatedAt} /></span>
             </div>
           </div>
         </div>
@@ -155,13 +156,13 @@ export default async function DocumentDetailPage({ params }: PageProps) {
               <div className="flex justify-between text-sm">
                 <dt className="text-[#9A9A9A]">{t("common.created")}</dt>
                 <dd className="font-medium text-[#2C2C2C]">
-                  {new Date(document.createdAt).toLocaleDateString()}
+                  <FormattedDateTime date={document.createdAt} />
                 </dd>
               </div>
               <div className="flex justify-between text-sm">
                 <dt className="text-[#9A9A9A]">{t("common.updated")}</dt>
                 <dd className="font-medium text-[#2C2C2C]">
-                  {new Date(document.updatedAt).toLocaleDateString()}
+                  <FormattedDateTime date={document.updatedAt} />
                 </dd>
               </div>
             </dl>

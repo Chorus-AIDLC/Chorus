@@ -52,6 +52,7 @@ import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/r
 import type { ElaborationResponse } from "@/types/elaboration";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
+import { formatDateTime } from "@/lib/format-date";
 
 interface Idea {
   uuid: string;
@@ -104,7 +105,7 @@ function formatRelativeTime(dateString: string, t: any): string {
   if (diffMins < 60) return t("time.minutesAgo", { minutes: diffMins });
   if (diffHours < 24) return t("time.hoursAgo", { hours: diffHours });
   if (diffDays < 7) return t("time.daysAgo", { days: diffDays });
-  return date.toLocaleDateString();
+  return formatDateTime(date);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -415,7 +416,7 @@ export function IdeaDetailPanel({
                     {t(`status.${statusI18nKeys[idea.status] || idea.status}`)}
                   </Badge>
                   <span className="text-xs text-[#9A9A9A]">
-                    {new Date(idea.createdAt).toLocaleDateString()}
+                    {formatDateTime(idea.createdAt)}
                   </span>
                 </div>
               </>
@@ -519,7 +520,7 @@ export function IdeaDetailPanel({
                           </div>
                           <div className="text-xs text-[#6B6B6B]">
                             {idea.assignee.type === "agent"
-                              ? `${t("common.agent")} • ${idea.assignee.assignedAt ? new Date(idea.assignee.assignedAt).toLocaleDateString() : ""}`
+                              ? `${t("common.agent")} • ${idea.assignee.assignedAt ? formatDateTime(idea.assignee.assignedAt) : ""}`
                               : t("common.user")}
                           </div>
                         </div>

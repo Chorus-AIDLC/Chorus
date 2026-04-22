@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useTranslations, useLocale } from "next-intl";
+import { useTranslations } from "next-intl";
 import {
   Check,
   Circle,
@@ -53,7 +53,6 @@ export function OverviewTimeline({
 }: OverviewTimelineProps) {
   const t = useTranslations("ideaTracker");
   const tRoot = useTranslations();
-  const locale = useLocale();
 
   const [elaboration, setElaboration] = useState<ElaborationResponse | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -205,7 +204,7 @@ export function OverviewTimeline({
               </p>
             )}
             <p className="text-[12px] text-[#9A9A9A]">
-              {formatRelativeTime(idea.createdAt, tRoot, locale)}
+              {formatRelativeTime(idea.createdAt, tRoot)}
             </p>
             {idea.content && (
               <p className="text-[12px] text-[#6B6B6B] line-clamp-2">
