@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { formatDateTime } from "@/lib/format-date";
+import { formatShortDate } from "@/lib/format-date";
 
 export interface IdeaCardItem {
   uuid: string;
@@ -70,7 +70,7 @@ export function IdeaCard({ idea, onClick }: IdeaRowProps) {
 
       {/* Right: Date */}
       <span className="shrink-0 pl-4 text-[12px] text-[#888780]">
-        {formatDateTime(idea.createdAt)}
+        {formatShortDate(idea.createdAt)}
       </span>
     </div>
   );

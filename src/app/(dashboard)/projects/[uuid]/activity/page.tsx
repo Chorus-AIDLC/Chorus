@@ -40,8 +40,7 @@ const entityTypeConfig: Record<string, { i18nKey: string; color: string }> = {
   project: { i18nKey: "activity.entityProject", color: "bg-[#FFF3E0] text-[#E65100]" },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function formatRelativeOrNull(date: Date, t: any): string | null {
+function formatRelativeOrNull(date: Date, t: Awaited<ReturnType<typeof getTranslations>>): string | null {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const minutes = Math.floor(diff / 60000);
