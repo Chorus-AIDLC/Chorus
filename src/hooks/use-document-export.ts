@@ -47,16 +47,9 @@ export interface UseDocumentExportResult {
 /**
  * React hook for exporting a Document as Markdown, PDF, or Word.
  *
- * - Manages `isExporting` and `exportError` state.
- * - Dispatches to format-specific modules. MD is imported statically (lightweight);
- *   PDF and Word modules are loaded lazily via `dynamic import()` so their heavy
- *   dependencies (mermaid, html2pdf.js, html-docx-js, marked) do not affect the
- *   initial bundle.
- * - Triggers a browser download of the resulting Blob.
- *
- * PDF and Word support is added by subsequent tasks in this proposal; calling
- * those formats before their modules exist will set `exportError` rather than
- * throwing.
+ * PDF and Word modules are loaded lazily via dynamic import() so their heavy
+ * dependencies (unified, remark-pdf, remark-docx, mermaid) do not affect the
+ * initial bundle.
  */
 export function useDocumentExport(): UseDocumentExportResult {
   const [isExporting, setIsExporting] = useState(false);

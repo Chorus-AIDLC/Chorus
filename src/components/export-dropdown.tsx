@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Download, FileText, FileType, FileSpreadsheet, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
@@ -31,7 +32,7 @@ type ExportDropdownProps = ExportDropdownWithDoc | ExportDropdownWithUuid;
 
 export function ExportDropdown({ document, documentUuid, variant = "default" }: ExportDropdownProps) {
   const t = useTranslations();
-  const { exportDocument, isExporting } = useDocumentExport();
+  const { exportDocument, isExporting, exportError } = useDocumentExport();
   const [activeFormat, setActiveFormat] = useState<ExportFormat | null>(null);
 
   async function handleExport(format: ExportFormat) {
@@ -41,7 +42,10 @@ export function ExportDropdown({ document, documentUuid, variant = "default" }: 
       if (!doc && documentUuid) {
         const res = await fetch(`/api/documents/${documentUuid}`);
         const json = await res.json();
-        if (!json.success || !json.data) return;
+        if (!json.success || !json.data) {
+          toast.error(t("export.exportError"));
+          return;
+        }
         const d = json.data;
         doc = {
           title: d.title,
@@ -59,6 +63,9 @@ export function ExportDropdown({ document, documentUuid, variant = "default" }: 
       }
     } finally {
       setActiveFormat(null);
+      if (exportError) {
+        toast.error(exportError);
+      }
     }
   }
 

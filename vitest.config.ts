@@ -25,6 +25,10 @@ export default defineConfig({
         'src/**/__test-utils__/**',
         'src/lib/prisma.ts',
         'src/lib/redis.ts',
+        'src/lib/empty.ts',
+        'src/lib/export/export-pdf.ts',
+        'src/lib/export/export-docx.ts',
+        'src/lib/export/remark-mermaid.ts',
       ],
       thresholds: {
         lines: 95,

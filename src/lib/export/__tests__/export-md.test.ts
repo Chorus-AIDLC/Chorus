@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   buildMetadata,
+  buildMetadataMarkdown,
   exportAsMarkdown,
   exportAsMarkdownBlob,
   renderFrontmatter,
@@ -129,6 +130,39 @@ describe("renderFrontmatter", () => {
       project: "",
     });
     expect(yaml).toContain('title: "trailing "');
+  });
+});
+
+describe("buildMetadataMarkdown", () => {
+  it("renders title as h1 and metadata as a table", () => {
+    const md = buildMetadataMarkdown(fullDoc);
+    expect(md).toContain("# Design Doc");
+    expect(md).toContain("| **Type** | tech_design |");
+    expect(md).toContain("| **Version** | v3 |");
+    expect(md).toContain("| **Author** | Alice |");
+    expect(md).toContain("| **Project** | Chorus 0.7.0 |");
+  });
+
+  it("includes table header row", () => {
+    const md = buildMetadataMarkdown(fullDoc);
+    expect(md).toContain("| | |\n|---|---|");
+  });
+
+  it("omits empty metadata rows", () => {
+    const md = buildMetadataMarkdown({
+      title: "Minimal",
+      content: "body",
+      type: "",
+    });
+    expect(md).toContain("# Minimal");
+    expect(md).not.toContain("| **Type**");
+    expect(md).not.toContain("| **Version**");
+    expect(md).not.toContain("| **Author**");
+  });
+
+  it("does not contain thematic break separator", () => {
+    const md = buildMetadataMarkdown(fullDoc);
+    expect(md).not.toContain("\n---\n");
   });
 });
 
