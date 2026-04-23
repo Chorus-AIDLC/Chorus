@@ -685,6 +685,26 @@ describe("notification-listener", () => {
     });
   });
 
+  describe("_remote flag (Redis relay deduplication)", () => {
+    it("should call handleActivity for local events (no _remote flag)", async () => {
+      const event = makeEvent({ action: "assigned", targetType: "task" });
+      mockState.activityHandler!(event);
+      // Let the fire-and-forget promise resolve
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
+    });
+
+    it("should NOT call handleActivity when event has _remote: true", async () => {
+      const event = { ...makeEvent({ action: "assigned", targetType: "task" }), _remote: true };
+      mockState.activityHandler!(event);
+      // Wait to ensure no async work happens
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+      // Also verify no prisma lookups happened — confirms early return
+      expect(mockPrisma.task.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe("recipient resolution edge cases", () => {
     it("should handle comment_added excluding comment author", async () => {
       mockPrisma.task.findUnique.mockResolvedValue({

@@ -544,7 +544,10 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
 }
 
 // Subscribe to activity events
-eventBus.on("activity", (event: ActivityEvent) => {
+eventBus.on("activity", (event: ActivityEvent & { _remote?: boolean }) => {
+  // Skip events relayed from other instances via Redis — the originating
+  // instance already created notifications, so processing again would duplicate.
+  if (event._remote) return;
   // Fire-and-forget — don't block the activity creation flow
   handleActivity(event);
 });

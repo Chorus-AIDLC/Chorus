@@ -72,8 +72,13 @@ class ChorusEventBus extends EventEmitter {
         const envelope: RedisEnvelope = JSON.parse(message);
         // Skip messages we published ourselves — already delivered locally
         if (envelope._origin === this._instanceId) return;
-        // Emit locally using the original channel name for cross-instance delivery
-        super.emit(envelope.channel, envelope.data);
+        // Tag cross-instance payloads so listeners can distinguish them
+        // from local emits (e.g., skip duplicate DB writes on relayed events)
+        const data =
+          envelope.data !== null && typeof envelope.data === "object"
+            ? { ...(envelope.data as Record<string, unknown>), _remote: true }
+            : envelope.data;
+        super.emit(envelope.channel, data);
       } catch {
         // Ignore malformed messages
       }

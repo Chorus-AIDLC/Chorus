@@ -353,6 +353,142 @@ describe('eventBus', () => {
     expect(parsed.data).toEqual(event);
   });
 
+  it('tags Redis-relayed events with _remote: true', async () => {
+    let messageHandler: ((channel: string, message: string) => void) | null = null;
+
+    const mockSub = {
+      ...mockRedis.mockSubscriber,
+      on: vi.fn((event, handler) => {
+        if (event === 'message') {
+          messageHandler = handler;
+        }
+      }),
+    };
+
+    mockRedis.isRedisEnabled.mockReturnValue(true);
+    mockRedis.getRedisPublisher.mockReturnValue(mockRedis.mockPublisher);
+    mockRedis.getRedisSubscriber.mockReturnValue(mockSub);
+
+    vi.resetModules();
+    mockRedis.isRedisEnabled.mockReturnValue(true);
+    mockRedis.getRedisPublisher.mockReturnValue(mockRedis.mockPublisher);
+    mockRedis.getRedisSubscriber.mockReturnValue(mockSub);
+
+    const { eventBus } = await import('../event-bus');
+    // Singleton may already be connected from a prior test — reset and reconnect
+    // so the fresh mock subscriber's `on("message", ...)` handler is registered.
+    await eventBus.disconnect();
+    await eventBus.connect();
+
+    const listener = vi.fn();
+    eventBus.on('change', listener);
+
+    const event: RealtimeEvent = {
+      companyUuid: 'comp-1',
+      projectUuid: 'proj-1',
+      entityType: 'task',
+      entityUuid: 'remote-task-1',
+      action: 'created',
+    };
+
+    const envelope = JSON.stringify({
+      _origin: 'other-instance-id',
+      channel: 'change',
+      data: event,
+    });
+
+    if (messageHandler) {
+      (messageHandler as (channel: string, message: string) => void)('chorus:events', envelope);
+    }
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const received = listener.mock.calls[0][0];
+    expect(received).toMatchObject(event);
+    expect(received._remote).toBe(true);
+
+    // Original envelope data must not be mutated
+    expect((event as RealtimeEvent & { _remote?: boolean })._remote).toBeUndefined();
+
+    eventBus.off('change', listener);
+  });
+
+  it('does not add _remote to locally emitted events', async () => {
+    mockRedis.isRedisEnabled.mockReturnValue(false);
+    mockRedis.getRedisPublisher.mockReturnValue(null);
+    mockRedis.getRedisSubscriber.mockReturnValue(null);
+
+    vi.resetModules();
+    mockRedis.isRedisEnabled.mockReturnValue(false);
+    mockRedis.getRedisPublisher.mockReturnValue(null);
+    mockRedis.getRedisSubscriber.mockReturnValue(null);
+
+    const { eventBus } = await import('../event-bus');
+
+    const listener = vi.fn();
+    eventBus.on('change', listener);
+
+    const event: RealtimeEvent = {
+      companyUuid: 'comp-1',
+      projectUuid: 'proj-1',
+      entityType: 'task',
+      entityUuid: 'local-task-1',
+      action: 'created',
+    };
+
+    eventBus.emitChange(event);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const received = listener.mock.calls[0][0];
+    expect(received).toEqual(event);
+    expect(received).not.toHaveProperty('_remote');
+
+    eventBus.off('change', listener);
+  });
+
+  it('does not add _remote when relayed data is a primitive', async () => {
+    let messageHandler: ((channel: string, message: string) => void) | null = null;
+
+    const mockSub = {
+      ...mockRedis.mockSubscriber,
+      on: vi.fn((event, handler) => {
+        if (event === 'message') {
+          messageHandler = handler;
+        }
+      }),
+    };
+
+    mockRedis.isRedisEnabled.mockReturnValue(true);
+    mockRedis.getRedisPublisher.mockReturnValue(mockRedis.mockPublisher);
+    mockRedis.getRedisSubscriber.mockReturnValue(mockSub);
+
+    vi.resetModules();
+    mockRedis.isRedisEnabled.mockReturnValue(true);
+    mockRedis.getRedisPublisher.mockReturnValue(mockRedis.mockPublisher);
+    mockRedis.getRedisSubscriber.mockReturnValue(mockSub);
+
+    const { eventBus } = await import('../event-bus');
+    await eventBus.disconnect();
+    await eventBus.connect();
+
+    const listener = vi.fn();
+    eventBus.on('ping', listener);
+
+    const envelope = JSON.stringify({
+      _origin: 'other-instance-id',
+      channel: 'ping',
+      data: 'hello',
+    });
+
+    if (messageHandler) {
+      (messageHandler as (channel: string, message: string) => void)('chorus:events', envelope);
+    }
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0]).toBe('hello');
+
+    eventBus.off('ping', listener);
+  });
+
   it('ignores malformed Redis messages', async () => {
     let messageHandler: ((channel: string, message: string) => void) | null = null;
 
