@@ -1504,7 +1504,7 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 | 40 | chorus_get_activity | Get activity stream | ✅ Pass | Recorded submit, comment_added, etc. |
 | 41 | chorus_release_idea | Release claimed Idea | ✅ Pass | assigned → open |
 | 42 | chorus_admin_close_idea | Close Idea | ✅ Pass | any → closed |
-| 43 | chorus_admin_reject_proposal | Reject Proposal | ✅ Pass | pending → rejected, includes reviewNote |
+| 43 | chorus_pm_reject_proposal | Reject Proposal | ✅ Pass | pending → draft, includes reviewNote |
 | 44 | chorus_admin_delete_task | Delete Task | ✅ Pass | |
 | 45 | chorus_admin_delete_document | Delete Document | ✅ Pass | |
 | 46 | chorus_admin_delete_idea | Delete Idea | ✅ Pass | |

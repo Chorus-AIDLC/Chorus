@@ -452,7 +452,7 @@ Admin Agent has human-level permissions and can perform approval, verification, 
 - `chorus_admin_create_project` - Create project
 - `chorus_admin_create_idea` - Create Idea (proxy human requirement submission)
 - `chorus_admin_approve_proposal` - Approve Proposal
-- `chorus_admin_reject_proposal` - Reject Proposal
+- `chorus_pm_reject_proposal` - Reject Proposal (PM: own only, Admin: any)
 - `chorus_admin_verify_task` - Verify Task
 - `chorus_admin_reopen_task` - Reopen Task
 - `chorus_admin_close_task` - Close Task

@@ -1115,7 +1115,7 @@ Header: Authorization: Bearer {api_key}
 | 工具 | 描述 |
 |-----|------|
 | `chorus_admin_create_project` | 创建项目 |
-| `chorus_admin_approve_proposal` / `chorus_admin_reject_proposal` / `chorus_admin_close_proposal` | Proposal 审批 |
+| `chorus_admin_approve_proposal` / `chorus_pm_reject_proposal` / `chorus_admin_close_proposal` | Proposal 审批 |
 | `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` | Task 验证/管理 |
 | `chorus_admin_close_idea` / `chorus_admin_delete_idea` | Idea 管理 |
 | `chorus_admin_delete_task` / `chorus_admin_delete_document` | 删除管理 |

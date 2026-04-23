@@ -1179,7 +1179,7 @@ Time 1:00  - Cleanup runs, session deleted
 | Tool | Description |
 |-----|------|
 | `chorus_admin_create_project` | Create project |
-| `chorus_admin_approve_proposal` / `chorus_admin_reject_proposal` / `chorus_admin_close_proposal` | Proposal approval |
+| `chorus_admin_approve_proposal` / `chorus_pm_reject_proposal` / `chorus_admin_close_proposal` | Proposal approval |
 | `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` | Task verification/management |
 | `chorus_admin_close_idea` / `chorus_admin_delete_idea` | Idea management |
 | `chorus_admin_delete_task` / `chorus_admin_delete_document` | Delete management |
