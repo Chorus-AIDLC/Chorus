@@ -21,6 +21,7 @@ import * as projectGroupService from "@/services/project-group.service";
 import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
+import * as checkinService from "@/services/checkin.service";
 import { prisma } from "@/lib/prisma";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
@@ -331,93 +332,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_checkin",
     {
-      description: "Agent check-in. Returns agent identity (including owner/master info), roles, assigned work, and pending counts. Recommended at session start.",
+      description:
+        "Agent check-in. Returns agent identity (owner, roles, persona), a project-grouped idea tracker with derived statuses and proposal/task counts, and up to 5 recent unread notifications (auto-marked read). Recommended at session start.",
       inputSchema: z.object({}),
     },
     async () => {
-      // Update last active time and get Agent info (query by UUID)
-      const agent = await prisma.agent.update({
-        where: { uuid: auth.actorUuid },
-        data: { lastActiveAt: new Date() },
-        select: {
-          uuid: true,
-          name: true,
-          roles: true,
-          persona: true,
-          systemPrompt: true,
-          ownerUuid: true,
-          owner: { select: { uuid: true, name: true, email: true } },
-        },
-      });
-
-      // Get pending Ideas and Tasks
-      const { ideas, tasks } = await assignmentService.getMyAssignments(auth, auth.projectUuids);
-
-      // Get unread notification count
-      const unreadNotificationCount = await notificationService.getUnreadCount(
-        auth.companyUuid,
-        auth.type,
-        auth.actorUuid
-      );
-
-      // Build default persona (if no custom persona is set)
-      const defaultPersonas: Record<string, string> = {
-        pm: `你是一个经验丰富的产品经理 Agent。你的职责是：
-- 分析用户需求，提炼核心问题
-- 将模糊的想法转化为清晰的 PRD
-- 合理拆分任务，估算工作量（以 Agent 小时为单位）
-- 识别风险和依赖关系
-- 与团队保持沟通，推动项目进展
-
-工作风格：务实、注重细节、善于沟通`,
-        developer: `你是一个专业的开发者 Agent。你的职责是：
-- 理解任务需求，编写高质量代码
-- 遵循项目的代码规范和架构约定
-- 完成任务后及时报告进度
-- 遇到问题主动沟通，不做假设
-
-工作风格：严谨、高效、注重代码质量`,
-      };
-
-      // Determine the effective persona
-      let effectivePersona = agent.persona;
-      if (!effectivePersona && agent.roles.length > 0) {
-        effectivePersona = defaultPersonas[agent.roles[0]] || null;
-      }
-
-      // Emit agent_checkin notification to owner on first checkin
-      if (agent.ownerUuid) {
-        await notificationService.emitAgentCheckinIfFirst({
-          companyUuid: auth.companyUuid,
-          agentUuid: agent.uuid,
-          agentName: agent.name,
-          ownerUuid: agent.ownerUuid,
-        });
-      }
-
-      const result = {
-        checkinTime: new Date().toISOString(),
-        agent: {
-          uuid: agent.uuid,
-          name: agent.name,
-          roles: agent.roles,
-          persona: effectivePersona,
-          systemPrompt: agent.systemPrompt,
-          owner: agent.owner ? { uuid: agent.owner.uuid, name: agent.owner.name, email: agent.owner.email } : null,
-        },
-        assignments: {
-          ideas: ideas.filter(i => ["assigned", "in_progress"].includes(i.status)),
-          tasks: tasks.filter(t => ["assigned", "in_progress"].includes(t.status)),
-        },
-        pending: {
-          ideasCount: ideas.length,
-          tasksCount: tasks.length,
-        },
-        notifications: {
-          unreadCount: unreadNotificationCount,
-        },
-      };
-
+      const result = await checkinService.buildCheckinResponse(auth);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };

@@ -655,6 +655,9 @@ export interface IdeaWithDerivedStatus {
   badgeHint: BadgeHint;
   createdAt: Date;
   updatedAt: Date;
+  projectUuid: string;
+  proposalCount: number;
+  taskCount: number;
 }
 
 /**
@@ -696,14 +699,16 @@ export async function getIdeasWithDerivedStatus(
   });
 
   // Build ideaUuid → latest approved Proposal mapping
-  // Also track which ideas have a pending proposal
+  // Also track which ideas have a pending proposal and count pending+approved per idea
   const ideaToLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
   const ideasWithPendingProposal = new Set<string>();
+  const ideaProposalCounts = new Map<string, number>();
 
   for (const proposal of proposals) {
     const inputUuids = proposal.inputUuids as string[];
     if (!Array.isArray(inputUuids)) continue;
     for (const ideaUuid of inputUuids) {
+      ideaProposalCounts.set(ideaUuid, (ideaProposalCounts.get(ideaUuid) ?? 0) + 1);
       if (proposal.status === "pending") {
         ideasWithPendingProposal.add(ideaUuid);
       } else if (proposal.status === "approved") {
@@ -763,6 +768,9 @@ export async function getIdeasWithDerivedStatus(
       badgeHint,
       createdAt: idea.createdAt,
       updatedAt: idea.updatedAt,
+      projectUuid,
+      proposalCount: ideaProposalCounts.get(idea.uuid) ?? 0,
+      taskCount: taskStatuses.length,
     };
   });
 }
