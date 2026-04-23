@@ -128,14 +128,7 @@ export function TestConnectionStep({
               <p className="text-center text-sm font-medium text-green-600">
                 {t("testConnection.connected")}
               </p>
-              <div className="flex gap-2">
-                {onBack && (
-                  <Button variant="outline" onClick={onBack}>
-                    {t("back")}
-                  </Button>
-                )}
-                <Button onClick={onNext}>{t("next")}</Button>
-              </div>
+              <Button onClick={onNext}>{t("next")}</Button>
             </div>
           )}
         </CardContent>

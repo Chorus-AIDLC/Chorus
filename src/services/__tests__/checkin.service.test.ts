@@ -142,7 +142,7 @@ describe("buildCheckinResponse — agent info", () => {
     expect(mockNotificationService.emitAgentCheckin).not.toHaveBeenCalled();
   });
 
-  it("emits first-checkin notification when owner is present", async () => {
+  it("emits checkin notification when owner is present", async () => {
     await buildCheckinResponse(auth);
 
     expect(mockNotificationService.emitAgentCheckin).toHaveBeenCalledWith({

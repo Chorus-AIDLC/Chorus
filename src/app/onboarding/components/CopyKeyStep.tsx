@@ -11,11 +11,10 @@ import { clientLogger } from "@/lib/logger-client";
 
 interface CopyKeyStepProps {
   onNext: () => void;
-  onBack?: () => void;
   apiKey: string | null;
 }
 
-export function CopyKeyStep({ onNext, onBack, apiKey }: CopyKeyStepProps) {
+export function CopyKeyStep({ onNext, apiKey }: CopyKeyStepProps) {
   const t = useTranslations("onboarding");
   const [copied, setCopied] = useState(false);
 
@@ -89,17 +88,9 @@ export function CopyKeyStep({ onNext, onBack, apiKey }: CopyKeyStepProps) {
             </p>
           </div>
 
-          {/* Navigation buttons */}
-          <div className="flex w-full gap-2">
-            {onBack && (
-              <Button variant="outline" onClick={onBack} className="flex-1">
-                {t("back")}
-              </Button>
-            )}
-            <Button onClick={onNext} className="flex-1">
-              {t("next")}
-            </Button>
-          </div>
+          <Button onClick={onNext} className="w-full">
+            {t("next")}
+          </Button>
         </CardContent>
       </Card>
     </motion.div>
