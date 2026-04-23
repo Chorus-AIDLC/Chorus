@@ -31,7 +31,7 @@ import {
   markAllRead,
   getUnreadCount,
   archive,
-  emitAgentCheckinIfFirst,
+  emitAgentCheckin,
 } from "@/services/notification.service";
 
 // ===== Helpers =====
@@ -286,6 +286,7 @@ describe("getUnreadCount", () => {
         where: expect.objectContaining({
           readAt: null,
           archivedAt: null,
+          action: { not: "agent_checkin" },
         }),
       })
     );
@@ -320,9 +321,9 @@ describe("archive", () => {
   });
 });
 
-// ===== emitAgentCheckinIfFirst =====
+// ===== emitAgentCheckin =====
 
-describe("emitAgentCheckinIfFirst", () => {
+describe("emitAgentCheckin", () => {
   const agentUuid = "agent-0000-0000-0000-000000000001";
   const agentName = "Test Agent";
   const ownerUuid = "user-0000-0000-0000-000000000001";
@@ -331,10 +332,7 @@ describe("emitAgentCheckinIfFirst", () => {
     vi.clearAllMocks();
   });
 
-  it("should create agent_checkin notification on first checkin", async () => {
-    // No existing notification
-    mockPrisma.notification.findFirst.mockResolvedValue(null);
-    // Mock create
+  it("should create agent_checkin notification on every checkin", async () => {
     mockPrisma.notification.create.mockResolvedValue({
       uuid: "notif-new",
       companyUuid,
@@ -357,25 +355,13 @@ describe("emitAgentCheckinIfFirst", () => {
     });
     mockPrisma.notification.count.mockResolvedValue(1);
 
-    const result = await emitAgentCheckinIfFirst({
+    await emitAgentCheckin({
       companyUuid,
       agentUuid,
       agentName,
       ownerUuid,
     });
 
-    expect(result).toBe(true);
-    // Verify findFirst was called with correct filters
-    expect(mockPrisma.notification.findFirst).toHaveBeenCalledWith({
-      where: {
-        companyUuid,
-        action: "agent_checkin",
-        actorType: "agent",
-        actorUuid: agentUuid,
-      },
-      select: { uuid: true },
-    });
-    // Verify notification was created
     expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
     expect(mockPrisma.notification.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -388,28 +374,9 @@ describe("emitAgentCheckinIfFirst", () => {
         }),
       })
     );
-    // Verify SSE event was emitted
     expect(mockEventBus.emit).toHaveBeenCalledWith(
       `notification:user:${ownerUuid}`,
       expect.objectContaining({ type: "new_notification" })
     );
-  });
-
-  it("should NOT create duplicate notification on subsequent checkin", async () => {
-    // Existing notification found
-    mockPrisma.notification.findFirst.mockResolvedValue({ uuid: "existing-notif" });
-
-    const result = await emitAgentCheckinIfFirst({
-      companyUuid,
-      agentUuid,
-      agentName,
-      ownerUuid,
-    });
-
-    expect(result).toBe(false);
-    // Verify create was NOT called
-    expect(mockPrisma.notification.create).not.toHaveBeenCalled();
-    // Verify no SSE event
-    expect(mockEventBus.emit).not.toHaveBeenCalled();
   });
 });

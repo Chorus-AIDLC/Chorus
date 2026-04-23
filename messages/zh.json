@@ -963,6 +963,7 @@
   "onboarding": {
     "skip": "暂时跳过",
     "next": "下一步",
+    "back": "返回",
     "steps": {
       "welcome": "欢迎",
       "createAgent": "创建智能体",
@@ -1037,9 +1038,8 @@
       "waiting": "等待智能体连接...",
       "waitingFor": "正在监听 {name} 的签到",
       "connected": "智能体连接成功！",
-      "timeout": "仍在等待连接。请检查安装步骤后重试。",
-      "retry": "重试",
-      "skipHint": "您可以稍后在设置中测试连接。"
+      "checkinHint": "复制以下提示词并发送给你的智能体，以验证连接：",
+      "checkinPrompt": "请连接到 Chorus 并执行 chorus_checkin() 验证连接。"
     },
     "placeholder": {
       "createAgent": "此步骤将用于创建 AI 智能体。即将推出。",

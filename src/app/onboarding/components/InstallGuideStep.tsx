@@ -17,9 +17,10 @@ import { CodeBlock } from "./CodeBlock";
 interface InstallGuideStepProps {
   apiKey: string | null;
   onNext: () => void;
+  onBack?: () => void;
 }
 
-export function InstallGuideStep({ apiKey, onNext }: InstallGuideStepProps) {
+export function InstallGuideStep({ apiKey, onNext, onBack }: InstallGuideStepProps) {
   const t = useTranslations("onboarding");
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const displayKey = apiKey || "<YOUR_API_KEY>";
@@ -179,7 +180,14 @@ then call chorus_checkin() to verify the connection.`}
         </CardContent>
       </Card>
 
-      <Button onClick={onNext}>{t("next")}</Button>
+      <div className="flex gap-2">
+        {onBack && (
+          <Button variant="outline" onClick={onBack}>
+            {t("back")}
+          </Button>
+        )}
+        <Button onClick={onNext}>{t("next")}</Button>
+      </div>
     </motion.div>
   );
 }

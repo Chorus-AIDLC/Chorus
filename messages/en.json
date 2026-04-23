@@ -962,6 +962,7 @@
   "onboarding": {
     "skip": "Skip for now",
     "next": "Next",
+    "back": "Back",
     "steps": {
       "welcome": "Welcome",
       "createAgent": "Create Agent",
@@ -1036,9 +1037,8 @@
       "waiting": "Waiting for your agent to connect...",
       "waitingFor": "Listening for {name} to check in",
       "connected": "Agent connected successfully!",
-      "timeout": "Still waiting for a connection. Please check your install steps and try again.",
-      "retry": "Retry",
-      "skipHint": "You can test the connection later from Settings."
+      "checkinHint": "Copy and send this prompt to your agent to verify the connection:",
+      "checkinPrompt": "Please connect to Chorus and verify the connection by running chorus_checkin()."
     },
     "placeholder": {
       "createAgent": "This step will let you create an AI agent. Coming soon.",

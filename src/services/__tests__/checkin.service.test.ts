@@ -26,7 +26,7 @@ const { mockNotificationService } = vi.hoisted(() => ({
   mockNotificationService: {
     list: vi.fn(),
     markRead: vi.fn(),
-    emitAgentCheckinIfFirst: vi.fn(),
+    emitAgentCheckin: vi.fn(),
   },
 }));
 
@@ -98,7 +98,7 @@ beforeEach(() => {
   mockPrisma.project.findMany.mockResolvedValue([]);
   mockNotificationService.list.mockResolvedValue(emptyNotifications());
   mockNotificationService.markRead.mockResolvedValue({});
-  mockNotificationService.emitAgentCheckinIfFirst.mockResolvedValue(true);
+  mockNotificationService.emitAgentCheckin.mockResolvedValue(true);
 });
 
 // ===== Agent info =====
@@ -139,13 +139,13 @@ describe("buildCheckinResponse — agent info", () => {
     const result = await buildCheckinResponse({ ...auth, ownerUuid: undefined });
 
     expect(result.agent.owner).toBeNull();
-    expect(mockNotificationService.emitAgentCheckinIfFirst).not.toHaveBeenCalled();
+    expect(mockNotificationService.emitAgentCheckin).not.toHaveBeenCalled();
   });
 
   it("emits first-checkin notification when owner is present", async () => {
     await buildCheckinResponse(auth);
 
-    expect(mockNotificationService.emitAgentCheckinIfFirst).toHaveBeenCalledWith({
+    expect(mockNotificationService.emitAgentCheckin).toHaveBeenCalledWith({
       companyUuid: COMPANY_UUID,
       agentUuid: AGENT_UUID,
       agentName: "Dev Agent",

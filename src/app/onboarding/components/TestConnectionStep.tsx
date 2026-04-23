@@ -6,36 +6,32 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
-import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import { CodeBlock } from "./CodeBlock";
 
 interface TestConnectionStepProps {
   onNext: () => void;
+  onBack?: () => void;
   agentUuid: string | null;
   agentName: string | null;
   onConnectionVerified: () => void;
 }
 
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-
 export function TestConnectionStep({
   onNext,
+  onBack,
   agentUuid,
   agentName,
   onConnectionVerified,
 }: TestConnectionStepProps) {
   const t = useTranslations("onboarding");
-  const [status, setStatus] = useState<"waiting" | "connected" | "timeout">("waiting");
+  const [status, setStatus] = useState<"waiting" | "connected">("waiting");
   const eventSourceRef = useRef<EventSource | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cleanup = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
-    }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
     }
   }, []);
 
@@ -49,8 +45,6 @@ export function TestConnectionStep({
     es.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
-        // SSE pushes { type: "new_notification", notificationUuid, unreadCount }
-        // Fetch recent notifications to check if agent_checkin arrived
         if (data.type === "new_notification" && agentUuid) {
           const res = await fetch("/api/notifications?unreadOnly=true");
           const result = await res.json();
@@ -73,14 +67,6 @@ export function TestConnectionStep({
     es.onerror = () => {
       // EventSource auto-reconnects; no action needed
     };
-
-    timeoutRef.current = setTimeout(() => {
-      setStatus("timeout");
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-    }, TIMEOUT_MS);
   }, [agentUuid, cleanup, onConnectionVerified]);
 
   useEffect(() => {
@@ -103,7 +89,7 @@ export function TestConnectionStep({
           </h2>
 
           {status === "waiting" && (
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex w-full flex-col items-center gap-4">
               <div className="relative flex h-16 w-16 items-center justify-center">
                 <div className="absolute h-16 w-16 animate-ping rounded-full bg-primary/20" />
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -115,6 +101,17 @@ export function TestConnectionStep({
                 <p className="text-center text-xs text-muted-foreground">
                   {t("testConnection.waitingFor", { name: agentName })}
                 </p>
+              )}
+              <div className="w-full">
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  {t("testConnection.checkinHint")}
+                </p>
+                <CodeBlock code={t("testConnection.checkinPrompt")} />
+              </div>
+              {onBack && (
+                <Button variant="outline" onClick={onBack}>
+                  {t("back")}
+                </Button>
               )}
             </div>
           )}
@@ -131,22 +128,14 @@ export function TestConnectionStep({
               <p className="text-center text-sm font-medium text-green-600">
                 {t("testConnection.connected")}
               </p>
-              <Button onClick={onNext}>{t("next")}</Button>
-            </div>
-          )}
-
-          {status === "timeout" && (
-            <div className="flex flex-col items-center gap-4">
-              <p className="text-center text-sm text-muted-foreground">
-                {t("testConnection.timeout")}
-              </p>
-              <Button variant="outline" onClick={startListening}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {t("testConnection.retry")}
-              </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                {t("testConnection.skipHint")}
-              </p>
+              <div className="flex gap-2">
+                {onBack && (
+                  <Button variant="outline" onClick={onBack}>
+                    {t("back")}
+                  </Button>
+                )}
+                <Button onClick={onNext}>{t("next")}</Button>
+              </div>
             </div>
           )}
         </CardContent>

@@ -35,6 +35,10 @@ export function OnboardingWizard() {
     setCurrentStep((prev) => Math.min(prev + 1, TOTAL_STEPS - 1));
   }, []);
 
+  const handleBack = useCallback(() => {
+    setCurrentStep((prev) => Math.max(prev - 1, 0));
+  }, []);
+
   const handleSkip = useCallback(() => {
     localStorage.setItem("chorus_onboarding_completed", "skipped");
     router.push("/projects");
@@ -77,12 +81,13 @@ export function OnboardingWizard() {
           <CopyKeyStep key="copyKey" onNext={handleNext} apiKey={apiKey} />
         )}
         {currentStep === 3 && (
-          <InstallGuideStep key="installGuide" apiKey={apiKey} onNext={handleNext} />
+          <InstallGuideStep key="installGuide" apiKey={apiKey} onNext={handleNext} onBack={handleBack} />
         )}
         {currentStep === 4 && (
           <TestConnectionStep
             key="testConnection"
             onNext={handleNext}
+            onBack={handleBack}
             agentUuid={createdAgent?.uuid ?? null}
             agentName={createdAgent?.name ?? null}
             onConnectionVerified={handleConnectionVerified}
