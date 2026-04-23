@@ -64,7 +64,7 @@ Key responsibilities:
 
 When reviewing proposals or tasks, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
-1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. It posts a VERDICT comment with detailed findings.
+1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. **Run it in foreground** (do NOT set `run_in_background: true`) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
@@ -142,7 +142,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Spawn `chorus:proposal-reviewer` per the [Review Strategy](#review-strategy) above. Read its VERDICT comment before proceeding.
+Spawn `chorus:proposal-reviewer` per the [Review Strategy](#review-strategy) above — foreground, not background. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
 
@@ -207,7 +207,7 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above. After it completes, read its VERDICT:
+Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above — foreground, not background. After it completes, read its VERDICT:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
