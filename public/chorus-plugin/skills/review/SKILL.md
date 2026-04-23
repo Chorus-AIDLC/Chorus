@@ -64,7 +64,7 @@ Key responsibilities:
 
 When reviewing proposals or tasks, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
-1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. **Run it in foreground** (do NOT set `run_in_background: true`) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
+1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. **Run it in foreground** (do NOT set `run_in_background`) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.

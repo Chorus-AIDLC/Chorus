@@ -214,7 +214,7 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn `chorus:task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Run it in foreground** (do NOT set `run_in_background: true`) — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn `chorus:task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Run it in foreground** (do NOT set `run_in_background`) — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
 
 After the reviewer completes, read its VERDICT:
 ```

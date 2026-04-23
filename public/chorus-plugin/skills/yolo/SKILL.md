@@ -242,13 +242,13 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    ```
    chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
    ```
-   After this call, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST spawn it yourself in **foreground** (do NOT set `run_in_background: true`) — it is NOT auto-launched.
+   After this call, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST spawn it yourself in **foreground** (do NOT set `run_in_background`) — it is NOT auto-launched.
 
 ---
 
 ### Phase 2: Proposal Review Loop
 
-After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent in **foreground** (do NOT set `run_in_background: true`). Wait for it to complete, then:
+After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent in **foreground** (do NOT set `run_in_background`). Wait for it to complete, then:
 
 1. **Read the reviewer's VERDICT:**
    ```
