@@ -42,22 +42,17 @@ export function TestConnectionStep({
     const es = new EventSource("/api/events/notifications");
     eventSourceRef.current = es;
 
-    es.onmessage = async (event) => {
+    es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === "new_notification" && agentUuid) {
-          const res = await fetch("/api/notifications?unreadOnly=true");
-          const result = await res.json();
-          const notifications = result.success ? result.data?.notifications ?? [] : [];
-          const match = notifications.find(
-            (n: { action: string; entityUuid: string }) =>
-              n.action === "agent_checkin" && n.entityUuid === agentUuid
-          );
-          if (match) {
-            setStatus("connected");
-            cleanup();
-            onConnectionVerified();
-          }
+        if (
+          data.type === "new_notification" &&
+          data.action === "agent_checkin" &&
+          data.entityUuid === agentUuid
+        ) {
+          setStatus("connected");
+          cleanup();
+          onConnectionVerified();
         }
       } catch {
         // Ignore non-JSON messages (heartbeats, etc.)

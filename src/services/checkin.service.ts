@@ -84,8 +84,7 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
   ]);
 
   if (agent.ownerUuid) {
-    await notificationService.emitAgentCheckin({
-      companyUuid: auth.companyUuid,
+    notificationService.emitAgentCheckin({
       agentUuid: agent.uuid,
       agentName: agent.name,
       ownerUuid: agent.ownerUuid,

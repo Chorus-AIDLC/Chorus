@@ -291,7 +291,6 @@ export async function getUnreadCount(
       recipientUuid,
       readAt: null,
       archivedAt: null,
-      action: { not: "agent_checkin" },
     },
   });
 }
@@ -400,27 +399,20 @@ export async function archive(
 }
 
 /**
- * Emit an agent_checkin notification to the agent's owner on every checkin.
+ * Emit an agent_checkin SSE event to the agent's owner. No DB row created —
+ * only used for real-time detection (e.g., onboarding connection test).
  */
-export async function emitAgentCheckin(params: {
-  companyUuid: string;
+export function emitAgentCheckin(params: {
   agentUuid: string;
   agentName: string;
   ownerUuid: string;
-}): Promise<void> {
-  await create({
-    companyUuid: params.companyUuid,
-    projectUuid: "system",
-    recipientType: "user",
-    recipientUuid: params.ownerUuid,
+}): void {
+  eventBus.emit(`notification:user:${params.ownerUuid}`, {
+    type: "new_notification",
+    action: "agent_checkin",
     entityType: "agent",
     entityUuid: params.agentUuid,
     entityTitle: params.agentName,
-    projectName: "",
-    action: "agent_checkin",
-    message: `Agent "${params.agentName}" connected successfully`,
-    actorType: "agent",
-    actorUuid: params.agentUuid,
     actorName: params.agentName,
   });
 }

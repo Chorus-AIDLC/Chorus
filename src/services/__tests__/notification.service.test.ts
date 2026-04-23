@@ -286,7 +286,6 @@ describe("getUnreadCount", () => {
         where: expect.objectContaining({
           readAt: null,
           archivedAt: null,
-          action: { not: "agent_checkin" },
         }),
       })
     );
@@ -328,55 +327,17 @@ describe("emitAgentCheckin", () => {
   const agentName = "Test Agent";
   const ownerUuid = "user-0000-0000-0000-000000000001";
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  it("should emit SSE event without creating a DB row", () => {
+    emitAgentCheckin({ agentUuid, agentName, ownerUuid });
 
-  it("should create agent_checkin notification on every checkin", async () => {
-    mockPrisma.notification.create.mockResolvedValue({
-      uuid: "notif-new",
-      companyUuid,
-      projectUuid: "system",
-      recipientType: "user",
-      recipientUuid: ownerUuid,
-      entityType: "agent",
-      entityUuid: agentUuid,
-      entityTitle: agentName,
-      projectName: "",
-      action: "agent_checkin",
-      message: `Agent "${agentName}" connected successfully`,
-      actorType: "agent",
-      actorUuid: agentUuid,
-      actorName: agentName,
-      readAt: null,
-      archivedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    });
-    mockPrisma.notification.count.mockResolvedValue(1);
-
-    await emitAgentCheckin({
-      companyUuid,
-      agentUuid,
-      agentName,
-      ownerUuid,
-    });
-
-    expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          action: "agent_checkin",
-          recipientType: "user",
-          recipientUuid: ownerUuid,
-          entityUuid: agentUuid,
-          actorUuid: agentUuid,
-        }),
-      })
-    );
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled();
     expect(mockEventBus.emit).toHaveBeenCalledWith(
       `notification:user:${ownerUuid}`,
-      expect.objectContaining({ type: "new_notification" })
+      expect.objectContaining({
+        type: "new_notification",
+        action: "agent_checkin",
+        entityUuid: agentUuid,
+      })
     );
   });
 });

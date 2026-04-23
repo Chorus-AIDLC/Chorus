@@ -98,7 +98,7 @@ beforeEach(() => {
   mockPrisma.project.findMany.mockResolvedValue([]);
   mockNotificationService.list.mockResolvedValue(emptyNotifications());
   mockNotificationService.markRead.mockResolvedValue({});
-  mockNotificationService.emitAgentCheckin.mockResolvedValue(true);
+  mockNotificationService.emitAgentCheckin.mockReturnValue(undefined);
 });
 
 // ===== Agent info =====
@@ -146,7 +146,6 @@ describe("buildCheckinResponse — agent info", () => {
     await buildCheckinResponse(auth);
 
     expect(mockNotificationService.emitAgentCheckin).toHaveBeenCalledWith({
-      companyUuid: COMPANY_UUID,
       agentUuid: AGENT_UUID,
       agentName: "Dev Agent",
       ownerUuid: OWNER_UUID,
