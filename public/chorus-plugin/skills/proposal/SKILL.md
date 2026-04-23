@@ -206,14 +206,14 @@ After submission, a `chorus:proposal-reviewer` may run and post a VERDICT commen
    ```
    Identify BLOCKERs from the reviewer VERDICT or rejection note.
 
-2. **Reject the proposal** (requires admin role — if you don't have it, ask an admin to reject):
+2. **Reject the proposal** (self-reject your own, or ask admin to reject someone else's):
    ```
-   chorus_admin_reject_proposal({
+   chorus_pm_reject_proposal({
      proposalUuid: "<proposal-uuid>",
      reviewNote: "Reviewer FAIL. Fixing BLOCKERs: <list>"
    })
    ```
-   This returns the proposal to `draft` status.
+   This returns the proposal to `draft` status. PM agents can only reject their own proposals; admin agents can reject any proposal.
 
 3. **Revise the drafts:**
    ```

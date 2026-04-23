@@ -34,8 +34,6 @@ Key responsibilities:
 |------|---------|
 | `chorus_admin_create_project` | Create a new project (optional `groupUuid` for group assignment) |
 | `chorus_admin_approve_proposal` | Approve proposal (materializes documents + tasks) |
-| `chorus_admin_reject_proposal` | Reject proposal with review note |
-| `chorus_admin_revoke_proposal` | Revoke an approved proposal (approved -> draft). Cascade-closes tasks, deletes documents. |
 | `chorus_admin_verify_task` | Verify completed task (to_verify -> done). Blocked if required AC not all passed. |
 | `chorus_mark_acceptance_criteria` | Mark acceptance criteria as passed/failed during verification (batch) |
 | `chorus_admin_reopen_task` | Reopen task for rework (to_verify -> in_progress) |
@@ -48,6 +46,13 @@ Key responsibilities:
 | `chorus_admin_update_project_group` | Update a project group (name, description) |
 | `chorus_admin_delete_project_group` | Delete a project group (projects become ungrouped) |
 | `chorus_admin_move_project_to_group` | Move a project to a group or ungroup it |
+
+**PM + Admin (proposal reject/revoke):**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_pm_reject_proposal` | Reject a pending proposal (pending -> draft). PM: own proposals only. Admin: any proposal. |
+| `chorus_pm_revoke_proposal` | Revoke an approved proposal (approved -> draft). Cascade-closes tasks, deletes documents. PM: own only. Admin: any. |
 
 **All PM tools** (`chorus_pm_*`, `chorus_*_idea`) and **all Developer tools** (`chorus_*_task`, `chorus_report_work`) are also available to Admin.
 
@@ -147,7 +152,7 @@ When approved:
 **Reject:**
 
 ```
-chorus_admin_reject_proposal({
+chorus_pm_reject_proposal({
   proposalUuid: "<proposal-uuid>",
   reviewNote: "PRD missing error handling requirements. Task 3 needs clearer AC."
 })
@@ -161,10 +166,10 @@ chorus_add_comment({
 
 ### Workflow A2: Revoking Approved Proposals
 
-If an approved Proposal's direction turns out to be wrong, use `chorus_admin_revoke_proposal` to undo the approval. Unlike `reject` (which acts on pending proposals), `revoke` acts on already-approved proposals and rolls back all materialized resources.
+If an approved Proposal's direction turns out to be wrong, use `chorus_pm_revoke_proposal` to undo the approval. Unlike `reject` (which acts on pending proposals), `revoke` acts on already-approved proposals and rolls back all materialized resources.
 
 ```
-chorus_admin_revoke_proposal({
+chorus_pm_revoke_proposal({
   proposalUuid: "<proposal-uuid>",
   reviewNote: "Requirements changed — original approach no longer viable."
 })

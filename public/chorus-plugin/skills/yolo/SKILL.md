@@ -270,7 +270,7 @@ After `chorus_pm_submit_proposal`, the PostToolUse hook auto-spawns `chorus:prop
    - **FAIL** --
      Read the BLOCKERs from the reviewer comment. Then:
      ```
-     chorus_admin_reject_proposal({
+     chorus_pm_reject_proposal({
        proposalUuid: "<proposal-uuid>",
        reviewNote: "FAIL from reviewer. Fixing BLOCKERs: <list>"
      })
