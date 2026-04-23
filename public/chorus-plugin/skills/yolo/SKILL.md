@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.3"
+  version: "0.7.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -242,13 +242,13 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    ```
    chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
    ```
-   The PostToolUse hook will auto-spawn `chorus:proposal-reviewer`. Do NOT manually spawn it.
+   After this call, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST spawn it yourself — it is NOT auto-launched.
 
 ---
 
 ### Phase 2: Proposal Review Loop
 
-After `chorus_pm_submit_proposal`, the PostToolUse hook auto-spawns `chorus:proposal-reviewer` as a read-only sub-agent. Wait for it to complete, then:
+After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent. Wait for it to complete, then:
 
 1. **Read the reviewer's VERDICT:**
    ```
@@ -279,7 +279,7 @@ After `chorus_pm_submit_proposal`, the PostToolUse hook auto-spawns `chorus:prop
      ```
      chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
      ```
-     The hook spawns the reviewer again for Round 2.
+     After resubmission, the hook injects context again — spawn the reviewer yourself for Round 2.
 
 3. **Max rounds:** Loop up to `maxProposalReviewRounds` (from plugin config, default 3). If exhausted:
    ```
@@ -323,7 +323,7 @@ loop:
   # 4. Wait for all sub-agents to complete
   #    Each sub-agent follows the /develop workflow:
   #    claim -> in_progress -> develop -> report -> self-check AC -> submit_for_verify
-  #    PostToolUse hook auto-spawns task-reviewer after submit_for_verify
+  #    PostToolUse hook injects context — main agent must spawn task-reviewer after submit_for_verify
 
   # 5. Proceed to Phase 4 (verification) for this wave
   wave += 1
@@ -350,11 +350,11 @@ for each task in unblocked:
   chorus_report_criteria_self_check({ taskUuid: "<task-uuid>", criteria: [...] })
   chorus_submit_for_verify({ taskUuid: "<task-uuid>", summary: "..." })
 
-  # PostToolUse hook still triggers task-reviewer
+  # PostToolUse hook injects context — you must spawn task-reviewer yourself
   # Proceed to Phase 4 verification for this task before moving to next
 ```
 
-The fallback is slower (sequential, not parallel) but still completes the pipeline. All reviewer hooks and verification work the same way.
+The fallback is slower (sequential, not parallel) but still completes the pipeline. The PostToolUse hook injects reviewer instructions the same way in both modes — you must always spawn the reviewer manually.
 
 ---
 
@@ -371,13 +371,16 @@ for each task in wave_tasks:
     # Sub-agent may have failed; skip or handle
     continue
 
-  # 2. Read task-reviewer VERDICT
-  comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
-  # Find most recent VERDICT comment
+  # 2. Spawn task-reviewer (hook injects context — you must spawn it yourself)
+  Agent({ subagent_type: "chorus:task-reviewer", prompt: "Review task <task-uuid>..." })
 
-  # 3. Act on VERDICT
-  if VERDICT is PASS or PASS WITH NOTES:
-    # Mark all AC as passed
+  # 3. Read task-reviewer VERDICT
+  comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
+  # Find the most recent comment containing "VERDICT:"
+
+  # 4. Act on VERDICT — three possible outcomes:
+  if VERDICT is "PASS":
+    # All AC verified, no issues. Mark AC and verify.
     chorus_mark_acceptance_criteria({
       taskUuid: "<task-uuid>",
       criteria: [
@@ -388,7 +391,13 @@ for each task in wave_tasks:
     chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
     # Task is now "done" -- unblocks dependents
 
-  if VERDICT is FAIL:
+  if VERDICT is "PASS WITH NOTES":
+    # All AC verified, minor non-blocking notes. Still mark AC and verify.
+    chorus_mark_acceptance_criteria({ ... })
+    chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
+
+  if VERDICT is "FAIL":
+    # BLOCKERs found. Do NOT verify. Reopen for rework.
     chorus_admin_reopen_task({ taskUuid: "<task-uuid>" })
     # Task returns to "open", will be picked up in next wave
 ```

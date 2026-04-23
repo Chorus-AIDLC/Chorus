@@ -50,8 +50,13 @@ ACTION REQUIRED: Spawn the \`chorus:task-reviewer\` agent to perform an independ
 Example:
   Agent({ subagent_type: \"chorus:task-reviewer\", prompt: \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with review. Post your VERDICT as a comment on the task.\" })
 
-The reviewer is read-only and will post its VERDICT as a comment on the task. The result is advisory — the admin makes the final verification decision.
+The reviewer is read-only and will post its VERDICT as a comment on the task.
 
-IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding with admin verification."
+After the reviewer completes, read comments and find the most recent \`VERDICT:\` line:
+- **VERDICT: PASS** — All AC verified, no issues. Proceed to mark AC and call chorus_admin_verify_task.
+- **VERDICT: PASS WITH NOTES** — All AC verified, minor non-blocking notes. Still proceed to verify.
+- **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Reopen the task (chorus_admin_reopen_task) and fix the BLOCKERs.
+
+IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding."
 
 "$API" hook-output "" "$CONTEXT" "PostToolUse"

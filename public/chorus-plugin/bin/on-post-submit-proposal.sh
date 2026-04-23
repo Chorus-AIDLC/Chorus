@@ -50,8 +50,13 @@ ACTION REQUIRED: Spawn the \`chorus:proposal-reviewer\` agent to perform an inde
 Example:
   Agent({ subagent_type: \"chorus:proposal-reviewer\", prompt: \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with review. Post your VERDICT as a comment on the proposal.\" })
 
-The reviewer is read-only and will post its VERDICT as a comment on the proposal. The result is advisory — you make the final approval decision.
+The reviewer is read-only and will post its VERDICT as a comment on the proposal.
 
-IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding with approval."
+After the reviewer completes, read comments and find the most recent \`VERDICT:\` line:
+- **VERDICT: PASS** — No issues found. Proceed to approve (chorus_admin_approve_proposal).
+- **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still proceed to approve.
+- **VERDICT: FAIL** — BLOCKERs found. Do NOT approve. Reject the proposal (chorus_pm_reject_proposal), fix BLOCKERs, and resubmit.
+
+IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding."
 
 "$API" hook-output "" "$CONTEXT" "PostToolUse"

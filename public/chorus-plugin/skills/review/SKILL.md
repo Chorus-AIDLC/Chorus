@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.3"
+  version: "0.7.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -65,7 +65,10 @@ Key responsibilities:
 When reviewing proposals or tasks, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
 1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals) or `chorus:task-reviewer` (for tasks) as a read-only sub-agent. It posts a VERDICT comment with detailed findings.
-2. **Act on the VERDICT.** Read the reviewer's comment, then approve/reject (proposals) or verify/reopen (tasks) based on its findings. VERDICT: FAIL is advisory — you make the final call.
+2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+   - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
+   - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
+   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). Fix the specific BLOCKERs listed in the comment before resubmitting.
 3. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
 4. **Fallback.** If the reviewer is unavailable (e.g., agent type not registered, sub-agent spawn fails), review the item yourself using the quality checklists in the workflows below.
 
@@ -204,7 +207,10 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above. Read its VERDICT comment before proceeding.
+Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above. After it completes, read its VERDICT:
+
+- **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
+- **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
 
 #### B3: Mark Acceptance Criteria
 

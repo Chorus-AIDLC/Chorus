@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.3"
+  version: "0.7.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -214,18 +214,31 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook will suggest spawning `chorus:task-reviewer` — an independent, read-only review agent. Follow the suggestion to get an adversarial review before admin verification. The reviewer posts a VERDICT comment on the task. Its result is advisory (does not block verification).
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn `chorus:task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). The reviewer posts a VERDICT comment on the task.
+
+After the reviewer completes, read its VERDICT:
+```
+chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
+```
+Find the most recent comment containing `VERDICT:` and act on it:
+
+- **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
+- **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
+- **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
 ### Step 9: Handle Review Feedback
 
-If reopened (verification failed), **all acceptance criteria are reset to pending**.
+If the reviewer returns **FAIL**, or the task is reopened after verification:
+
+**All acceptance criteria are reset to pending** when a task is reopened.
 
 1. Check feedback:
    ```
    chorus_get_task({ taskUuid: "<task-uuid>" })
    chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
    ```
-2. Checkin again, fix issues, report fixes, resubmit.
+2. Fix every BLOCKER listed in the reviewer's FAIL comment.
+3. Checkin again, fix issues, report fixes, resubmit.
 
 ### Step 10: Task Complete
 

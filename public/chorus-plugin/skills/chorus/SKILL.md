@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.3"
+  version: "0.7.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -279,7 +279,7 @@ If it fails, check: API Key correct (`cho_` prefix)? URL reachable? Claude Code 
 
 ### 5. Review Agent Configuration
 
-The plugin includes two independent review agents that auto-trigger after proposal submission and task verification. Both are **enabled by default**.
+The plugin includes two independent review agents. After proposal submission or task verification, a PostToolUse hook injects context instructing the main agent to spawn the reviewer. The main agent must spawn it manually — it is NOT auto-launched. Both are **enabled by default**.
 
 | Setting | Controls | Default |
 |---------|----------|---------|
@@ -301,7 +301,7 @@ To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.c
 }
 ```
 
-When enabled, reviewers run as read-only sub-agents and post a VERDICT comment (PASS/FAIL/PARTIAL) on the proposal/task. Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
+When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
 
 ---
 
