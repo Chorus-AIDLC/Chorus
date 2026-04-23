@@ -191,12 +191,15 @@
     ]
   },
   "quickstart": {
-    "badge": "Docker",
-    "title": "60 秒跑起来",
-    "subtitle": "镜像已发布到 <a>Docker Hub</a>，内置数据库，无需额外依赖。",
-    "step1": "创建 <code>docker-compose.yml</code>",
-    "step2": "一键启动",
-    "step3": "打开 <a>http://localhost:8637</a>，用 DEFAULT_USER 登录",
+    "badge": "Quick Start",
+    "title": "一行命令，直接跑",
+    "subtitle": "不用装 Docker，不用配数据库。内置 PGlite，开箱即用。",
+    "step1": "在终端里执行",
+    "step2": "打开 <a>http://localhost:8637</a> 登录即可",
+    "output1": "Installing @chorus-aidlc/chorus...",
+    "output2": "Running migrations...",
+    "output3": "Chorus is ready",
+    "docker": "生产环境部署？前往 <a>Docker Hub</a> 查看 Docker Compose 方式。",
     "dockerHub": "Docker Hub",
     "github": "GitHub"
   },

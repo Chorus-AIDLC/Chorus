@@ -191,12 +191,15 @@
     ]
   },
   "quickstart": {
-    "badge": "Docker",
-    "title": "Run Chorus in 60 Seconds",
-    "subtitle": "Pre-built image on <a>Docker Hub</a>. No external database needed — embedded PGlite included.",
-    "step1": "Create a <code>docker-compose.yml</code>",
-    "step2": "Start it",
-    "step3": "Open <a>http://localhost:8637</a> and log in with your DEFAULT_USER credentials",
+    "badge": "Quick Start",
+    "title": "One Command, Zero Setup",
+    "subtitle": "No Docker, no database, no config files. Embedded PGlite handles everything.",
+    "step1": "Run this in your terminal",
+    "step2": "Open <a>http://localhost:8637</a> and log in — that's it",
+    "output1": "Installing @chorus-aidlc/chorus...",
+    "output2": "Running migrations...",
+    "output3": "Chorus is ready",
+    "docker": "Need production deployment? See <a>Docker Hub</a> for Docker Compose setup.",
     "dockerHub": "Docker Hub",
     "github": "GitHub"
   },

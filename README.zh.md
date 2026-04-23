@@ -26,6 +26,8 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ## 最近更新
 
+**[v0.6.6](https://chorus-ai.dev/zh/blog/chorus-v0.6.6-release/)** — npm 一键安装（`npx @chorus-aidlc/chorus`）、文档导出（MD/PDF/Word）、Proposal 撤回、优化 Agent Checkin 快速获取工作状态。
+
 **[v0.6.2](https://chorus-ai.dev/zh/blog/chorus-v0.6.2-release/)** — 嵌入式 PGlite 模式（零依赖部署）、Pino 结构化日志、无状态 MCP 支持水平扩展、默认端口改为 8637。
 
 **[v0.6.1](https://chorus-ai.dev/zh/blog/chorus-v0.6.1-release/)** — `/yolo` 技能：全自动 AI-DLC 流水线（Idea → Proposal → Execute → Verify），支持 Agent Team 并行执行。

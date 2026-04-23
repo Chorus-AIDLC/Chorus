@@ -9,83 +9,49 @@ interface Props {
 const { lang } = Astro.props;
 
 const dockerHubUrl = "https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general";
-const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
-
-const composeYml = `services:
-  app:
-    image: chorusaidlc/chorus-app:latest
-    ports: ["8637:8637"]
-    environment:
-      - NEXTAUTH_SECRET=change-me-to-a-random-secret
-      - DEFAULT_USER=admin@example.com
-      - DEFAULT_PASSWORD=changeme
-    volumes:
-      - chorus-data:/app/data
-volumes:
-  chorus-data:`;
+const npxCmd = "npx @chorus-aidlc/chorus";
 ---
 
-<div class="quickstart" id="quickstart">
-  <div class="quickstart-card">
-    <div class="quickstart-header">
-      <span class="quickstart-badge">{t(lang, 'quickstart.badge')}</span>
+<section class="quickstart" id="quickstart">
+  <div class="qs-inner">
+    <div class="qs-left">
+      <div class="qs-label">{t(lang, 'quickstart.badge')}</div>
+      <h2>{t(lang, 'quickstart.title')}</h2>
+      <p class="qs-subtitle">{t(lang, 'quickstart.subtitle')}</p>
+      <div class="qs-platforms">
+        <span class="qs-platform">macOS ARM</span>
+        <span class="qs-platform">Linux x86</span>
+        <span class="qs-platform">Linux ARM</span>
+      </div>
+      <p class="qs-docker">{t(lang, 'quickstart.docker').split('<a>')[0]}<a href={dockerHubUrl} target="_blank" rel="noopener noreferrer">{t(lang, 'quickstart.docker').match(/<a>(.*?)<\/a>/)?.[1] ?? 'Docker Hub'}</a>{t(lang, 'quickstart.docker').split('</a>')[1] ?? ''}</p>
     </div>
-    <h2>{t(lang, 'quickstart.title')}</h2>
-    <p>{t(lang, 'quickstart.subtitle').split('<a>')[0]}<a href={dockerHubUrl}>{t(lang, 'quickstart.subtitle').match(/<a>(.*?)<\/a>/)?.[1] ?? 'Docker Hub'}</a>{t(lang, 'quickstart.subtitle').split('</a>')[1] ?? ''}</p>
-    <div class="qs-steps">
-      <div class="qs-step">
-        <div class="qs-num">1</div>
-        <div class="qs-content">
-          <p>{t(lang, 'quickstart.step1').split('<code>')[0]}<code>{t(lang, 'quickstart.step1').match(/<code>(.*?)<\/code>/)?.[1] ?? 'docker-compose.yml'}</code>{t(lang, 'quickstart.step1').split('</code>')[1] ?? ''}</p>
-          <div class="qs-code-wrap">
-            <button class="qs-copy" title="Copy" data-code={composeYml}>
-              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>
+    <div class="qs-right">
+      <div class="qs-terminal">
+        <div class="qs-terminal-bar">
+          <span class="qs-dot"></span>
+          <span class="qs-dot"></span>
+          <span class="qs-dot"></span>
+        </div>
+        <div class="qs-terminal-body">
+          <div class="qs-line">
+            <span class="qs-prompt">$</span>
+            <span class="qs-cmd">npx</span> @chorus-aidlc/chorus
+            <button class="qs-copy" title="Copy" data-code={npxCmd}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="6" height="6" rx="1"/><path d="M4 10H3.5a1 1 0 01-1-1V3.5a1 1 0 011-1H9a1 1 0 011 1V4"/></svg>
             </button>
-            <pre class="qs-code"><span class="qs-comment"># docker-compose.yml</span>{`
-services:
-  app:
-    `}<span class="qs-flag">image</span>: chorusaidlc/chorus-app:<span class="qs-env">latest</span>{`
-    `}<span class="qs-flag">ports</span>: [<span class="qs-env">"8637:8637"</span>]{`
-    `}<span class="qs-flag">environment</span>:{`
-      - NEXTAUTH_SECRET=`}<span class="qs-env">change-me-to-a-random-secret</span>{`
-      - DEFAULT_USER=`}<span class="qs-env">admin@example.com</span>{`
-      - DEFAULT_PASSWORD=`}<span class="qs-env">changeme</span>{`
-    `}<span class="qs-flag">volumes</span>:{`
-      - chorus-data:/app/data
-`}<span class="qs-flag">volumes</span>:{`
-  chorus-data:`}</pre>
+          </div>
+          <div class="qs-output">
+            <span class="qs-ok">&#10003;</span> {t(lang, 'quickstart.output1')}<br>
+            <span class="qs-ok">&#10003;</span> {t(lang, 'quickstart.output2')}<br>
+            <span class="qs-ok">&#10003;</span> {t(lang, 'quickstart.output3')}<br>
+            <br>
+            <span class="qs-ready">&#9654;</span> <a href="http://localhost:8637" class="qs-url" target="_blank" rel="noopener noreferrer">http://localhost:8637</a>
           </div>
         </div>
       </div>
-      <div class="qs-step">
-        <div class="qs-num">2</div>
-        <div class="qs-content">
-          <p>{t(lang, 'quickstart.step2')}</p>
-          <div class="qs-code-wrap">
-            <button class="qs-copy" title="Copy" data-code="docker compose up -d">
-              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>
-            </button>
-            <pre class="qs-code"><span class="qs-cmd">docker compose</span> up -d</pre>
-          </div>
-        </div>
-      </div>
-      <div class="qs-step">
-        <div class="qs-num">3</div>
-        <div class="qs-content">
-          <p>{t(lang, 'quickstart.step3').split('<a>')[0]}<a href="http://localhost:8637">{t(lang, 'quickstart.step3').match(/<a>(.*?)<\/a>/)?.[1] ?? 'http://localhost:8637'}</a>{t(lang, 'quickstart.step3').split('</a>')[1] ?? ''}</p>
-          <div class="qs-arch">
-            <span class="qs-arch-tag">linux/amd64</span>
-            <span class="qs-arch-tag">linux/arm64</span>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="qs-footer">
-      <a href={dockerHubUrl} class="qs-link qs-link-primary">{t(lang, 'quickstart.dockerHub')}</a>
-      <a href={githubUrl} class="qs-link qs-link-outline">{t(lang, 'quickstart.github')}</a>
     </div>
   </div>
-</div>
+</section>
 
 <script>
   document.querySelectorAll('.qs-copy').forEach(btn => {
@@ -93,10 +59,10 @@ services:
       const code = (btn as HTMLElement).dataset.code || '';
       navigator.clipboard.writeText(code).then(() => {
         btn.classList.add('copied');
-        btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 8 7 11 12 5"/></svg>';
+        btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 7 6 10 11 4"/></svg>';
         setTimeout(() => {
           btn.classList.remove('copied');
-          btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="7" height="7" rx="1"/><path d="M5 11H4a1 1 0 01-1-1V4a1 1 0 011-1h6a1 1 0 011 1v1"/></svg>';
+          btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="6" height="6" rx="1"/><path d="M4 10H3.5a1 1 0 01-1-1V3.5a1 1 0 011-1H9a1 1 0 011 1V4"/></svg>';
         }, 2000);
       });
     });
@@ -105,144 +71,165 @@ services:
 
 <style>
   .quickstart {
-    max-width: 800px; margin: 0 auto;
-    padding: 0 32px 80px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 32px 20px;
   }
-  .quickstart-card {
-    background: var(--text-primary);
-    border-radius: 20px;
-    padding: 48px;
-    position: relative;
-    overflow: hidden;
+  .qs-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 60px;
+    align-items: center;
   }
-  .quickstart-card::before {
-    content: '';
-    position: absolute; top: 0; right: 0;
-    width: 200px; height: 200px;
-    background: radial-gradient(circle, rgba(198,122,82,0.15), transparent 70%);
+  .qs-label {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--primary);
+    margin-bottom: 12px;
   }
-  .quickstart-header {
-    display: flex; align-items: center; gap: 12px;
-    margin-bottom: 8px;
+  .qs-left h2 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 800;
+    letter-spacing: -0.8px;
+    line-height: 1.15;
+    margin-bottom: 16px;
   }
-  .quickstart-badge {
+  .qs-subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 20px;
+  }
+  .qs-platforms {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .qs-platform {
     padding: 4px 12px;
     border-radius: 6px;
-    font-size: 12px; font-weight: 700;
-    background: rgba(198,122,82,0.2);
-    color: var(--primary-light);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: rgba(198,122,82,0.08);
+    color: var(--primary-dark);
+    border: 1px solid rgba(198,122,82,0.15);
   }
-  .quickstart-card h2 {
-    font-size: 28px; font-weight: 800;
-    color: #fff;
-    margin-bottom: 8px;
-  }
-  .quickstart-card > p {
-    font-size: 15px;
-    color: rgba(255,255,255,0.5);
-    margin-bottom: 28px;
-  }
-  .quickstart-card > p a {
-    color: var(--primary-light);
-    text-decoration: none;
-  }
-  .quickstart-card > p a:hover { text-decoration: underline; }
-  .qs-steps {
-    display: flex; flex-direction: column; gap: 20px;
-  }
-  .qs-step {
-    display: flex; gap: 16px; align-items: flex-start;
-  }
-  .qs-num {
-    width: 28px; height: 28px;
-    border-radius: 8px;
-    background: var(--primary);
-    color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-  .qs-content { flex: 1; }
-  .qs-content p {
+  .qs-docker {
     font-size: 14px;
-    color: rgba(255,255,255,0.6);
-    margin-bottom: 8px;
+    color: var(--text-tertiary);
+    line-height: 1.6;
   }
-  .qs-content p a {
+  .qs-docker a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .qs-docker a:hover { text-decoration: underline; }
+
+  /* Terminal */
+  .qs-terminal {
+    background: #1a1a2e;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow:
+      0 20px 60px rgba(0,0,0,0.15),
+      0 0 0 1px rgba(255,255,255,0.05) inset;
+  }
+  .qs-terminal-bar {
+    display: flex;
+    gap: 7px;
+    padding: 14px 18px;
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .qs-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+  }
+  .qs-dot:first-child { background: #ff5f57; }
+  .qs-dot:nth-child(2) { background: #febc2e; }
+  .qs-dot:nth-child(3) { background: #28c840; }
+  .qs-terminal-body {
+    padding: 20px 22px 24px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 13.5px;
+    line-height: 1.8;
+  }
+  .qs-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .qs-prompt {
+    color: #28c840;
+    font-weight: 700;
+    user-select: none;
+  }
+  .qs-cmd {
+    color: #7dd3fc;
+  }
+  .qs-copy {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .qs-copy:hover {
+    background: rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.7);
+  }
+  .qs-copy:global(.copied) {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+  }
+  .qs-output {
+    color: rgba(255,255,255,0.45);
+    font-size: 12.5px;
+    line-height: 2;
+  }
+  .qs-ok {
+    color: #28c840;
+  }
+  .qs-ready {
+    color: var(--primary);
+  }
+  .qs-url {
     color: #7dd3fc;
     text-decoration: none;
   }
-  .qs-content p a:hover { text-decoration: underline; }
-  .qs-content code {
-    color: rgba(255,255,255,0.8);
+  .qs-url:hover {
+    text-decoration: underline;
   }
-  .qs-code-wrap { position: relative; }
-  .qs-code {
-    background: rgba(0,0,0,0.35);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 14px 18px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    color: rgba(255,255,255,0.8);
-    line-height: 1.7;
-    overflow-x: auto;
-    white-space: pre;
-    margin: 0;
+
+  @media (max-width: 900px) {
+    .qs-inner {
+      grid-template-columns: 1fr;
+      gap: 36px;
+    }
+    .quickstart { padding: 0 20px 60px; }
   }
-  .qs-code :global(.qs-cmd) { color: #7dd3fc; }
-  .qs-code :global(.qs-flag) { color: #a78bfa; }
-  .qs-code :global(.qs-env) { color: #86efac; }
-  .qs-code :global(.qs-comment) { color: rgba(255,255,255,0.3); }
-  .qs-copy {
-    position: absolute; top: 10px; right: 10px;
-    width: 32px; height: 32px;
-    border-radius: 6px;
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.12);
-    color: rgba(255,255,255,0.5);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.2s;
-    z-index: 1;
+  @media (max-width: 480px) {
+    .quickstart { padding: 0 16px 40px; }
+    .qs-terminal-body { padding: 16px; font-size: 12px; }
   }
-  .qs-copy:hover { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.8); }
-  .qs-copy:global(.copied) { background: var(--green); border-color: var(--green); color: #fff; }
-  .qs-arch {
-    display: flex; gap: 6px; margin-top: 12px;
-  }
-  .qs-arch-tag {
-    padding: 3px 10px;
-    border-radius: 5px;
-    font-size: 11px; font-weight: 600;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    background: rgba(255,255,255,0.06);
-    color: rgba(255,255,255,0.45);
-    border: 1px solid rgba(255,255,255,0.08);
-  }
-  .qs-footer {
-    margin-top: 28px;
-    display: flex; gap: 12px; flex-wrap: wrap;
-  }
-  .qs-link {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 8px 18px;
-    border-radius: 8px;
-    font-size: 13px; font-weight: 600;
-    text-decoration: none;
-    transition: all 0.2s;
-  }
-  .qs-link-primary {
-    background: var(--primary); color: #fff;
-  }
-  .qs-link-primary:hover { background: var(--primary-dark); }
-  .qs-link-outline {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.15);
-    color: rgba(255,255,255,0.7);
-  }
-  .qs-link-outline:hover { border-color: var(--primary); color: var(--primary-light); }
 </style>
