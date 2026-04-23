@@ -44,7 +44,7 @@ AGENT_TYPE=$(echo "$EVENT" | jq -r '.agent_type // .agentType // empty' 2>/dev/n
 
 # Skip non-worker agent types (read-only agents don't need sessions)
 case "$(printf '%s' "$AGENT_TYPE" | tr '[:upper:]' '[:lower:]')" in
-  explore|plan|haiku|claude-code-guide|statusline-setup)
+  explore|plan|haiku|claude-code-guide|statusline-setup|chorus:proposal-reviewer|chorus:task-reviewer)
     exit 0
     ;;
 esac
@@ -228,6 +228,16 @@ The plugin manages session lifecycle (heartbeat, close). Do NOT call chorus_crea
    chorus_report_criteria_self_check({ taskUuid: \"<TASK_UUID>\", criteria: [{ uuid: \"<CRITERION_UUID>\", devStatus: \"passed\", devEvidence: \"...\" }] })
 5. Check out: chorus_session_checkout_task({ sessionUuid: \"${SESSION_UUID}\", taskUuid: \"<TASK_UUID>\" })
 6. Submit: chorus_submit_for_verify({ taskUuid: \"<TASK_UUID>\", summary: \"...\" })
+
+**IMPORTANT — include this in your final response to the main agent:**
+When you finish and return your summary, you MUST end it with:
+\`\`\`
+[Chorus post-completion] Task '<TASK_TITLE>' (<TASK_UUID>) submitted for verify.
+Next steps for main agent:
+1. REVIEW — spawn a task-reviewer agent to check code quality
+2. VERIFY — if you have admin_agent role, mark acceptance criteria and call chorus_admin_verify_task; otherwise, stop and ask the user to review and verify this task
+\`\`\`
+This ensures the main agent knows to run review and verification.
 
 Replace <TASK_UUID> with the actual Chorus task UUID from your prompt.${OWNER_SECTION}"
 
