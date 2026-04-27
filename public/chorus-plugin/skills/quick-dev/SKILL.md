@@ -1,6 +1,6 @@
 ---
 name: quick-dev
-version: 0.7.4
+version: 0.7.5
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
 ---
 

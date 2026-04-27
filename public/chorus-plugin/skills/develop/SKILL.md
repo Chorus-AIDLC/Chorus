@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.4"
+  version: "0.7.5"
   category: project-management
   mcp_server: chorus
 ---
@@ -225,6 +225,8 @@ Find the most recent comment containing `VERDICT:` and act on it:
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
+
+If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its `maxTurns` budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
 
 ### Step 9: Handle Review Feedback
 

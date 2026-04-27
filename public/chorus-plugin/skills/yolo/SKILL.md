@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.4"
+  version: "0.7.5"
   category: project-management
   mcp_server: chorus
 ---
@@ -288,6 +288,8 @@ After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instruct
           Proposal UUID: <uuid>"
    ```
 
+4. **No new VERDICT comment after reviewer returns?** The reviewer exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If the second attempt still produces no VERDICT, treat the proposal as PASS WITH NOTES and proceed — the pipeline cannot loop forever on a silent reviewer.
+
 ---
 
 ### Phase 3: Task Execution (Wave-Based)
@@ -414,6 +416,8 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 ```
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
+
+**No new VERDICT comment after the task-reviewer returns?** It exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt also produces no VERDICT, treat as PASS WITH NOTES and proceed — do not loop indefinitely.
 
 ---
 

@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.4"
+  version: "0.7.5"
   category: project-management
   mcp_server: chorus
 ---
