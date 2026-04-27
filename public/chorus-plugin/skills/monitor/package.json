@@ -1,0 +1,32 @@
+{
+  "name": "monitor",
+  "version": "0.1.0",
+  "description": "Start real-time Chorus AIDLC event notifications via SSE Monitor integration.",
+  "author": "chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "monitor",
+    "sse",
+    "real-time",
+    "notifications",
+    "ai-dlc"
+  ],
+  "chorus": {
+    "category": "project-management",
+    "mcp_server": "chorus",
+    "files": {
+      "SKILL.md": "SKILL.md"
+    },
+    "requires": {
+      "mcp": ["chorus"]
+    },
+    "triggers": [
+      "monitor",
+      "sse",
+      "event notifications",
+      "real-time",
+      "watch events"
+    ]
+  }
+}

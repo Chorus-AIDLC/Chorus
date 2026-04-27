@@ -32,6 +32,12 @@
       "title": "Max Task Review Rounds",
       "description": "Maximum review rounds before escalating to human. Set to 0 for unlimited.",
       "default": 3
+    },
+    "enableMonitor": {
+      "type": "boolean",
+      "title": "Enable SSE Monitor",
+      "description": "Show a tip on session start to run /chorus:monitor for real-time AIDLC event notifications via SSE.",
+      "default": true
     }
   },
   "keywords": [

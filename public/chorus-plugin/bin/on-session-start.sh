@@ -79,6 +79,14 @@ Resuming with existing Chorus session: ${MAIN_SESSION}"
   "$API" mcp-tool "chorus_session_heartbeat" "$(printf '{"sessionUuid":"%s"}' "$MAIN_SESSION")" >/dev/null 2>&1 || true
 fi
 
+# Monitor tip (when enableMonitor is true and not explicitly disabled)
+ENABLE_MONITOR="${user_config_enableMonitor:-true}"
+if [ "$ENABLE_MONITOR" = "true" ]; then
+  CONTEXT="${CONTEXT}
+
+Tip: Run /chorus:monitor to enable real-time AIDLC event notifications via SSE."
+fi
+
 # Build user-visible message
 USER_MSG="Chorus connected at ${CHORUS_URL}"
 if [ -n "$MAIN_SESSION" ]; then

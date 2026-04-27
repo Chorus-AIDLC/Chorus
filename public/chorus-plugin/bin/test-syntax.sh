@@ -80,6 +80,20 @@ run_test "on-session-end.sh"     '{}'
 # --- User prompt hook ---
 run_test "on-user-prompt.sh"     '{}'
 
+# --- SSE monitor script ---
+# chorus-sse-monitor.sh enters an infinite loop, so we only do a syntax check
+printf "  "
+if "$BASH" -n "$DIR/chorus-sse-monitor.sh" 2>/tmp/chorus-test-err-$$; then
+  printf "PASS  chorus-sse-monitor.sh (syntax-only)\n"
+  PASS=$((PASS + 1))
+else
+  printf "FAIL  chorus-sse-monitor.sh (bash compatibility error)\n"
+  sed 's/^/         /' /tmp/chorus-test-err-$$
+  FAIL=$((FAIL + 1))
+  FAILED="$FAILED chorus-sse-monitor.sh"
+fi
+rm -f /tmp/chorus-test-err-$$
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 
