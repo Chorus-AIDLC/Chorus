@@ -17,6 +17,25 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
+// Dependency resolution (hoist-safe — see issue #214)
+// ---------------------------------------------------------------------------
+// Use import.meta.resolve so the correct copy of each dependency is found
+// regardless of how the user's package manager laid out node_modules
+// (nested, hoisted to global root, yarn classic link, etc.).
+
+function resolveOrDie(specifier) {
+  try {
+    return fileURLToPath(import.meta.resolve(specifier));
+  } catch {
+    console.error(`\nERROR: cannot resolve dependency "${specifier}".`);
+    console.error(`This usually means your package manager hoisted deps in an`);
+    console.error(`unexpected layout. Try reinstalling with npm, or see`);
+    console.error(`https://github.com/Chorus-AIDLC/Chorus/issues/214 for context.`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CLI argument parsing (zero dependencies)
 // ---------------------------------------------------------------------------
 
@@ -149,15 +168,12 @@ async function main() {
     // Start embedded PGlite
     console.log(`Starting embedded PostgreSQL (PGlite) on port ${PGLITE_PORT}...`);
 
-    const serverScript = join(
-      __dirname,
-      "node_modules",
-      "@electric-sql",
-      "pglite-socket",
-      "dist",
-      "scripts",
-      "server.js"
-    );
+    // @electric-sql/pglite-socket does not expose `./dist/scripts/server.js`
+    // via the "exports" field, so we resolve the package entry (which IS
+    // exported) and derive the sibling server.js path. This remains
+    // hoist-safe — see issue #214.
+    const pgliteSocketEntry = resolveOrDie("@electric-sql/pglite-socket");
+    const serverScript = resolve(dirname(pgliteSocketEntry), "scripts", "server.js");
 
     pgliteProcess = fork(serverScript, [
       `--db=${join(dataDir, "pglite")}`,
@@ -166,7 +182,13 @@ async function main() {
     ], { stdio: "ignore", detached: false });
 
     pgliteProcess.on("error", (err) => {
-      console.error("PGlite process error:", err.message);
+      // MODULE_NOT_FOUND is unreachable after the resolveOrDie fix above, but
+      // guard against regressions (see issue #214).
+      if (err.code === "MODULE_NOT_FOUND") {
+        console.error(`PGlite server script unreachable: ${err.message}`);
+      } else {
+        console.error("PGlite process error:", err.message);
+      }
       process.exit(1);
     });
 
@@ -191,9 +213,9 @@ async function main() {
 
   // 3. Run database migrations
   console.log("Running database migrations...");
-  const prismaPath = join(__dirname, "node_modules", ".bin", "prisma");
+  const prismaBin = resolveOrDie("prisma/build/index.js");
   try {
-    execSync(`"${prismaPath}" migrate deploy`, {
+    execSync(`"${process.execPath}" "${prismaBin}" migrate deploy`, {
       cwd: __dirname,
       stdio: "inherit",
       env: { ...process.env },

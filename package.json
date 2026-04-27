@@ -1,6 +1,6 @@
 {
   "name": "@chorus-aidlc/chorus",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "The Agent Harness for AI-Human Collaboration — session lifecycle, task state, sub-agent orchestration, observability, and failure recovery",
   "homepage": "https://github.com/Chorus-AIDLC/Chorus",
   "repository": {
@@ -25,9 +25,7 @@
     ".next/standalone/",
     "prisma/schema.prisma",
     "prisma/migrations/",
-    "prisma.config.ts",
-    "node_modules/@electric-sql/",
-    "node_modules/dotenv/"
+    "prisma.config.ts"
   ],
   "scripts": {
     "dev": "next dev --turbopack --port 8637",

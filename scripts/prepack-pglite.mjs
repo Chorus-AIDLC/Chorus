@@ -1,14 +1,16 @@
 /**
- * Dereference pnpm symlinks before npm pack.
+ * Dereference pnpm symlinks inside .next/standalone/ before npm pack.
  *
  * pnpm uses a content-addressable store with symlinks in node_modules/.
  * npm pack follows symlinks for `files` entries, but the resulting tarball
  * contains the pnpm .pnpm/ directory structure which breaks when installed
- * elsewhere. This script replaces symlinks with real copies in two places:
+ * elsewhere. This script replaces symlinks with real copies inside the
+ * Next.js standalone directory, then also copies the static assets and
+ * public/ folder next to standalone/server.js.
  *
- * 1. Root node_modules/ — PGlite and dotenv packages needed at runtime
- * 2. .next/standalone/node_modules/ — ALL pnpm symlinks that Next.js
- *    standalone traced as runtime dependencies
+ * Root node_modules/ is NOT touched — runtime deps are resolved via
+ * import.meta.resolve in chorus.mjs, so the user's package manager owns
+ * installation (see issue #214 for context).
  */
 
 import {
@@ -35,30 +37,7 @@ function derefSymlink(target) {
   return true;
 }
 
-// --- 1. Root node_modules: explicit packages ---
-
-console.log("Dereferencing root node_modules packages...");
-const rootPackages = [
-  "node_modules/@electric-sql/pglite",
-  "node_modules/@electric-sql/pglite-socket",
-  "node_modules/dotenv",
-];
-
-for (const pkg of rootPackages) {
-  const target = join(process.cwd(), pkg);
-  if (derefSymlink(target)) {
-    console.log(`  deref: ${pkg}`);
-  } else {
-    try {
-      lstatSync(target);
-      console.log(`  ok:    ${pkg}`);
-    } catch {
-      console.log(`  skip:  ${pkg} (not found)`);
-    }
-  }
-}
-
-// --- 2. Standalone node_modules: walk and dereference all symlinks ---
+// --- 1. Standalone node_modules: walk and dereference all symlinks ---
 
 console.log("Dereferencing .next/standalone/node_modules symlinks...");
 const standaloneNm = join(process.cwd(), ".next", "standalone", "node_modules");
@@ -100,7 +79,7 @@ function walkAndDeref(dir) {
 walkAndDeref(standaloneNm);
 console.log(`  dereferenced ${derefCount} symlinks`);
 
-// --- 3. Remove the now-orphaned .pnpm directory ---
+// --- 2. Remove the now-orphaned .pnpm directory ---
 
 const pnpmDir = join(standaloneNm, ".pnpm");
 try {
@@ -110,7 +89,7 @@ try {
   // ignore
 }
 
-// --- 4. Copy static assets and public/ into standalone directory ---
+// --- 3. Copy static assets and public/ into standalone directory ---
 // Next.js standalone server.js expects .next/static/ and public/ relative
 // to its own directory (.next/standalone/), but `next build` outputs them
 // at the project root. Docker does this via COPY; we do it here for npm.
