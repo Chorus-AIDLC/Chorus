@@ -260,15 +260,12 @@ Once Admin verifies (status: `done`), move to the next available task (back to S
 
 ---
 
-## Session (Sub-Agents Only)
+## Session (Optional, Codex Port)
 
-The Chorus Plugin **fully automates** session lifecycle — creation, heartbeat, and cleanup are all handled by hooks. Sub-agents only do 3 things manually:
+The Codex port is **intentionally stateless** — no hook auto-creates, heartbeats, or closes Chorus sessions (Codex has no `SubagentStart`/`SubagentStop` event). Treat `sessionUuid` as optional per-worker observability, not a requirement:
 
-1. `chorus_session_checkin_task({ sessionUuid, taskUuid })` — before starting work
-2. `chorus_session_checkout_task({ sessionUuid, taskUuid })` — when done (recommended; plugin also auto-checkouts on exit)
-3. Pass `sessionUuid` to `chorus_update_task` and `chorus_report_work` for attribution
-
-**Main agent / Team Lead**: no session needed — call tools without `sessionUuid`.
+- **Single-agent developer work**: skip session tools entirely. `chorus_update_task` / `chorus_report_work` / `chorus_submit_for_verify` all work without a `sessionUuid`.
+- **Team Lead orchestrating workers via `spawn_agent`**: manually call `chorus_create_session` before spawning, pass `sessionUuid` into each worker's initial message, and `chorus_close_session` after `wait_agent` returns. See the Multi-Agent Workers section below.
 
 ---
 

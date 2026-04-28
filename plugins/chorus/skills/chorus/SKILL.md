@@ -57,7 +57,7 @@ The checkin response includes **owner/master information** for the agent:
 
 #### Project Filtering
 
-Results can be filtered by project(s) using optional HTTP headers in your `.mcp.json` configuration:
+Results can be filtered by project(s) using optional HTTP headers on the Chorus MCP server. Add them to the `[mcp_servers.chorus.http_headers]` block in `~/.codex/config.toml`:
 
 | Header | Format | Example |
 |--------|--------|---------|
@@ -72,31 +72,24 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
 
 **Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
 
-**Example `.mcp.json`**:
-```json
-{
-  "mcpServers": {
-    "chorus": {
-      "type": "http",
-      "url": "http://localhost:8637/api/mcp",
-      "headers": {
-        "Authorization": "Bearer cho_xxx",
-        "X-Chorus-Project": "project-uuid-1,project-uuid-2"
-      }
-    }
-  }
-}
+**Example (`~/.codex/config.toml`)**:
+```toml
+[mcp_servers.chorus]
+url = "<BASE_URL>/api/mcp"
+
+[mcp_servers.chorus.http_headers]
+Authorization = "Bearer cho_xxx"
+X-Chorus-Project = "project-uuid-1,project-uuid-2"
 ```
 
-### Session (Sub-Agents Only)
+### Session (Optional, Codex Port)
 
-The Chorus Plugin **fully automates** session lifecycle. Sub-agents only need to:
+The Codex port is **intentionally stateless**: it does NOT auto-create, heartbeat, or close Chorus sessions. Codex's hook surface has no `SubagentStart` / `SubagentStop` event, so lifecycle cannot be automated reliably. Sessions are optional bookkeeping you may use when running multiple workers in parallel:
 
-1. `chorus_session_checkin_task` — before starting work on a task
-2. `chorus_session_checkout_task` — when done with a task
-3. Pass `sessionUuid` to `chorus_update_task` and `chorus_report_work`
+- Single-agent work — skip session tools entirely. Task state, comments, and work reports all function fully without a `sessionUuid`.
+- Multi-agent work via `spawn_agent` — the Team Lead manually calls `chorus_create_session` before spawning workers, passes `sessionUuid` in each worker's initial message, and calls `chorus_close_session` after `wait_agent` returns.
 
-Main agent / Team Lead: no session needed — call tools without `sessionUuid`. See `/develop` for details.
+See `$develop` for the multi-worker pattern.
 
 ### Project Groups
 
@@ -241,14 +234,14 @@ Codex CLI reads MCP config from `~/.codex/config.toml` (global) or `<repo>/.code
 
 ```toml
 [mcp_servers.chorus]
-type = "http"
 url = "<BASE_URL>/api/mcp"
 
-[mcp_servers.chorus.headers]
+[mcp_servers.chorus.http_headers]
 Authorization = "Bearer <your-api-key>"
 ```
 
-> Alternatively, if this plugin is installed via the marketplace, the MCP server is declared in `mcp.json` at the plugin root and Codex registers it automatically — you still need to set `CHORUS_URL` and `CHORUS_API_KEY` as environment variables.
+> The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. The header table key is `http_headers`, not `headers`.
+> Easier path: run `curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash` and it will write this block for you (plus the hook wrapper).
 
 Restart Codex CLI after configuration.
 
@@ -283,7 +276,7 @@ The plugin includes two independent review agents. After proposal submission or 
 | `enableProposalReviewer` | Spawn `chorus-proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
 | `enableTaskReviewer` | Spawn `chorus-task-reviewer` after `chorus_submit_for_verify` | `true` (enabled) |
 
-To disable in the Codex port, remove or disable the corresponding `PostToolUse` hook in `~/.codex/hooks.json` (see `install-hooks.sh` in the plugin root). Alternatively, the main agent can choose not to spawn the reviewer when the hook's `additionalContext` suggests it.
+To disable in the Codex port, delete (or comment out) the matching `PostToolUse` entry in `~/.codex/hooks.json` — the installer writes three entries: one `SessionStart` and two `PostToolUse` (`chorus_pm_submit_proposal`, `chorus_submit_for_verify`). Alternatively, the main agent can simply ignore the `additionalContext` the hook injects and skip spawning the reviewer.
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
 

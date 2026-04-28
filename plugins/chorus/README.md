@@ -19,7 +19,7 @@ Chorus AI-DLC collaboration platform plugin for OpenAI Codex CLI, ported from th
 ### One-shot installer (recommended)
 
 ```bash
-curl -sSL https://chorus.ai/install-codex.sh | bash
+curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash
 ```
 
 The installer:
@@ -41,7 +41,7 @@ Re-run at any time to rotate the API key — existing `[mcp_servers.chorus*]` se
 ```
 codex
 > /plugins
-→ chorus-plugins → chorus → Install
+→ chorus (INSTALLED_BY_DEFAULT; one-click Install if auto-install does not fire)
 ```
 
 That copies the plugin (skills + agents + hooks) into `~/.codex/plugins/cache/chorus-plugins/chorus/<version>/` and flips `[plugins."chorus@chorus-plugins"] enabled = true` in your config.
@@ -59,7 +59,7 @@ Inside Codex, type `$chorus` (or any of `$idea` / `$proposal` / `$develop` / `$r
 ```bash
 CHORUS_URL="https://chorus.example.com/api/mcp" \
 CHORUS_API_KEY="cho_..." \
-  bash <(curl -sSL https://chorus.ai/install-codex.sh)
+  bash <(curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh)
 ```
 
 `CHORUS_MARKETPLACE_SOURCE` can also be overridden (e.g. to a fork URL or local clone path).
@@ -80,7 +80,7 @@ Then register the marketplace and install:
 
 ```bash
 codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus
-codex   # /plugins → chorus → Install
+codex   # plugin auto-installs on first launch; use /plugins to confirm
 ```
 
 ## What's different from the Claude Code version

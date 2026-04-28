@@ -6,7 +6,7 @@ Codex 版 Chorus 插件的设计说明与安装指南。Claude Code 版在 `publ
 
 ## 1. 一句话结论
 
-- **安装方式**:`curl -sSL https://chorus.ai/install-codex.sh | bash` → `codex` → `/plugins` → Install。
+- **安装方式**:`curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash` → 启动 `codex`(marketplace policy `INSTALLED_BY_DEFAULT`,首次启动自动装)。若未自动,`/plugins` 一键 Install 回退。
 - **插件内容**(`plugins/chorus/`): 7 个 skills + 2 个 reviewer sub-agents + 2 个 hooks(`SessionStart` + 2× `PostToolUse`)。
 - **MCP server**: **不**在插件 `plugin.json` 里声明,由 installer 单独写到 `~/.codex/config.toml` 的 `[mcp_servers.chorus]`。
 - **Marketplace 源**: `https://github.com/Chorus-AIDLC/Chorus`(Codex 读 `.agents/plugins/marketplace.json`)。
@@ -58,7 +58,7 @@ Chorus/                                         (repo root)
 ### 3.1 一键脚本(推荐)
 
 ```bash
-curl -sSL https://chorus.ai/install-codex.sh | bash
+curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash
 ```
 
 脚本会:
@@ -76,7 +76,7 @@ curl -sSL https://chorus.ai/install-codex.sh | bash
 ```bash
 CHORUS_URL=https://chorus.example.com/api/mcp \
 CHORUS_API_KEY=cho_xxx \
-  bash <(curl -sSL https://chorus.ai/install-codex.sh)
+  bash <(curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh)
 ```
 
 ### 3.3 完成插件安装
@@ -133,7 +133,7 @@ Install 后,重启 session 就能看到 skills(`$chorus:chorus`、`$chorus:devel
 **字段含义**(以 Codex 0.125 实际读取为准):
 
 - `source.source`: `"local"` 用 `path`,`"git"` 用 `repo`/`ref`;我们用 local。Codex 从 marketplace `source` 拉 repo 时,用的也是同一份 `marketplace.json`,所以本地验证 == 线上分发。
-- `policy.installation`: `AVAILABLE`(需用户确认)、`INSTALLED_BY_DEFAULT`(随 marketplace 自动装)、`NOT_AVAILABLE`(藏起来)。我们用 `AVAILABLE` —— 用户 `/plugins` 看见它,手动 Install。
+- `policy.installation`: `AVAILABLE`(需用户确认)、`INSTALLED_BY_DEFAULT`(首次启动自动装)、`NOT_AVAILABLE`(藏起来)。我们用 `INSTALLED_BY_DEFAULT` —— Codex 首次 TUI 启动即自动安装,无 CLI `plugin install` 的遗憾在用户侧最小化。若自动未触发(旧 Codex),回退为 `/plugins` 一键 Install。
 - `policy.authentication`: `ON_INSTALL`(安装时要凭据)、`ON_USE`(每次用 MCP 时)。我们用 `ON_INSTALL`(插件本身自带 auth 提示);真正的 bearer 由 `install-codex.sh` 写 config.toml。
 
 ### 4.2 Marketplace source
@@ -146,7 +146,7 @@ Installer 默认往这里 `codex plugin marketplace add`。覆盖:
 
 ```bash
 CHORUS_MARKETPLACE_SOURCE=git+https://github.com/myfork/Chorus@branch \
-  bash <(curl -sSL https://chorus.ai/install-codex.sh)
+  bash <(curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh)
 ```
 
 ---
@@ -345,7 +345,7 @@ Claude 版依赖 `.chorus/sessions/*.json` 追踪多 agent 协作时的 session 
 
 ### 9.3 插件 Install 必须走 TUI
 
-Codex 0.125 的 `codex plugin` 子命令只有 `marketplace add/upgrade/remove`,**没有** `plugin install <name>`。单个插件 install 要进 TUI `/plugins`。Installer 用明显的 "Last step" 提示引导用户。
+Codex 0.125 的 `codex plugin` 子命令只有 `marketplace add/upgrade/remove`,**没有** `plugin install <name>`。脚本把 marketplace `policy.installation` 设为 `INSTALLED_BY_DEFAULT`,让 Codex 首次启动时自动装入。若未自动触发(不同 Codex 版本实现略异),Installer 的 epilogue 指引用户进 `/plugins` 一键 Install 作为 fallback。
 
 ---
 

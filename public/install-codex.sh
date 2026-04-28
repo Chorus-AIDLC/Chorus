@@ -2,16 +2,17 @@
 # Chorus + Codex CLI one-shot installer
 #
 # Usage:
-#   curl -sSL https://chorus.ai/install-codex.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash
 #   # or non-interactive:
 #   CHORUS_URL=https://... CHORUS_API_KEY=cho_... \
-#     bash <(curl -sSL https://chorus.ai/install-codex.sh)
+#     bash <(curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh)
 #
 # What this does (idempotent, safe to re-run):
 #   1. Verifies `codex` CLI is installed.
 #   2. Registers the Chorus plugin marketplace.
 #   3. Writes [mcp_servers.chorus] (url + Authorization header) into ~/.codex/config.toml.
-#   4. Tells you to finish with `/plugins` → Install Chorus inside the TUI.
+#   4. Registers plugin as INSTALLED_BY_DEFAULT — Codex picks it up on first launch
+#      (falls back to one-click `/plugins → Install` if auto-install does not fire).
 
 set -euo pipefail
 
@@ -152,36 +153,59 @@ ok "Wrote [mcp_servers.chorus] → ${CONFIG_TOML}"
 # ---------- step 5: install hooks ----------
 hdr "5/5  Installing Chorus hooks"
 
-# Locate the installed plugin version on disk (glob picks the first / newest version).
-# If the plugin has not been installed from /plugins yet, we skip this step with a hint.
-PLUGIN_CACHE_GLOB="$CODEX_HOME/plugins/cache/chorus-plugins/chorus"
-if [ ! -d "$PLUGIN_CACHE_GLOB" ]; then
-  warn "Plugin not yet installed — skipping hooks. Run Codex TUI \`/plugins → Install\` first, then re-run this installer."
-else
-  # Newest installed version directory (lexicographic max; version dirs are semver).
-  PLUGIN_VER_DIR="$(ls -1 "$PLUGIN_CACHE_GLOB" 2>/dev/null | sort -V | tail -1)"
-  if [ -z "$PLUGIN_VER_DIR" ]; then
-    warn "Plugin cache dir is empty — skipping hooks. Finish installing via \`/plugins\` first."
+# Install a tiny wrapper that lazily resolves the newest plugin cache at
+# hook-run time. This lets us write hooks.json BEFORE `/plugins → Install`
+# has materialized the plugin cache — first-run UX becomes truly one-shot.
+WRAPPER_DIR="$CODEX_HOME/hooks/chorus"
+WRAPPER="$WRAPPER_DIR/run-hook.sh"
+mkdir -p "$WRAPPER_DIR"
+cat > "$WRAPPER" <<'WRAP'
+#!/usr/bin/env bash
+# Chorus hook wrapper (installed by public/install-codex.sh).
+# Resolves the newest installed Chorus plugin version at runtime and execs
+# the named hook script from its hooks/ directory. Exits 0 (no-op) if the
+# plugin has not been installed yet, so Codex sessions still start cleanly.
+set -eu
+HOOK_NAME="${1:-}"
+if [ -z "$HOOK_NAME" ]; then
+  echo '{}' ; exit 0
+fi
+shift
+CODEX_HOME_RESOLVED="${CODEX_HOME:-$HOME/.codex}"
+PLUGIN_ROOT="$CODEX_HOME_RESOLVED/plugins/cache/chorus-plugins/chorus"
+if [ ! -d "$PLUGIN_ROOT" ]; then
+  echo '{}' ; exit 0
+fi
+VER="$(ls -1 "$PLUGIN_ROOT" 2>/dev/null | sort -V | tail -1)"
+if [ -z "$VER" ]; then
+  echo '{}' ; exit 0
+fi
+SCRIPT="$PLUGIN_ROOT/$VER/hooks/$HOOK_NAME"
+if [ ! -x "$SCRIPT" ]; then
+  if [ -f "$SCRIPT" ]; then
+    chmod +x "$SCRIPT" 2>/dev/null || true
   else
-    HOOKS_DIR="$PLUGIN_CACHE_GLOB/$PLUGIN_VER_DIR/hooks"
-    if [ ! -d "$HOOKS_DIR" ]; then
-      warn "Hooks directory not found at $HOOKS_DIR — skipping."
-    else
-      HOOKS_JSON="$CODEX_HOME/hooks.json"
-      # Only write/overwrite if the file is absent, or is clearly a previous Chorus-owned file.
-      if [ -f "$HOOKS_JSON" ] && ! grep -q "chorus-plugins/chorus" "$HOOKS_JSON" 2>/dev/null; then
-        warn "Found a non-Chorus $HOOKS_JSON — not overwriting."
-        warn "  Add the Chorus hook entries manually (see $HOOKS_DIR/*.sh), or move your existing hooks.json aside and re-run."
-      else
-        # Write a fresh Chorus hooks.json with absolute paths into the installed plugin cache.
-        cat > "$HOOKS_JSON" <<HJSON
+    echo '{}' ; exit 0
+  fi
+fi
+exec "$SCRIPT" "$@"
+WRAP
+chmod +x "$WRAPPER"
+ok "Installed hook wrapper → $WRAPPER"
+
+HOOKS_JSON="$CODEX_HOME/hooks.json"
+if [ -f "$HOOKS_JSON" ] && ! grep -q "hooks/chorus/run-hook.sh\|chorus-plugins/chorus" "$HOOKS_JSON" 2>/dev/null; then
+  warn "Found a non-Chorus $HOOKS_JSON — not overwriting."
+  warn "  Add Chorus hook entries manually (command = $WRAPPER on-session-start.sh | on-post-submit-proposal.sh | on-post-submit-for-verify.sh)."
+else
+  cat > "$HOOKS_JSON" <<HJSON
 {
   "hooks": {
     "SessionStart": [
       {
         "matcher": "startup|resume|clear",
         "hooks": [
-          { "type": "command", "command": "$HOOKS_DIR/on-session-start.sh", "timeout": 20, "statusMessage": "Chorus: checkin" }
+          { "type": "command", "command": "$WRAPPER on-session-start.sh", "timeout": 20, "statusMessage": "Chorus: checkin" }
         ]
       }
     ],
@@ -189,60 +213,59 @@ else
       {
         "matcher": ".*chorus_pm_submit_proposal",
         "hooks": [
-          { "type": "command", "command": "$HOOKS_DIR/on-post-submit-proposal.sh", "timeout": 10 }
+          { "type": "command", "command": "$WRAPPER on-post-submit-proposal.sh", "timeout": 10 }
         ]
       },
       {
         "matcher": ".*chorus_submit_for_verify",
         "hooks": [
-          { "type": "command", "command": "$HOOKS_DIR/on-post-submit-for-verify.sh", "timeout": 10 }
+          { "type": "command", "command": "$WRAPPER on-post-submit-for-verify.sh", "timeout": 10 }
         ]
       }
     ]
   }
 }
 HJSON
-        ok "Wrote $HOOKS_JSON (pointing at $HOOKS_DIR/*.sh)"
-      fi
+  ok "Wrote $HOOKS_JSON (routing through $WRAPPER)"
+fi
 
-      # Enable the codex_hooks feature flag in config.toml (idempotent).
-      if grep -qE "^\[features\]" "$CONFIG_TOML"; then
-        # [features] section already exists; ensure codex_hooks = true is present.
-        if ! grep -qE "^codex_hooks\s*=\s*true" "$CONFIG_TOML"; then
-          # Insert codex_hooks = true right after the [features] header.
-          tmp="$(mktemp "${TMPDIR:-/tmp}/chorus-features.XXXXXX")"
-          awk '
-            /^\[features\][[:space:]]*$/ { print; print "codex_hooks = true"; inserted=1; next }
-            { print }
-          ' "$CONFIG_TOML" > "$tmp" && mv "$tmp" "$CONFIG_TOML"
-          ok "Added codex_hooks = true under existing [features]"
-        else
-          ok "codex_hooks feature flag already enabled"
-        fi
-      else
-        cat >> "$CONFIG_TOML" <<'TFEAT'
+# Enable the codex_hooks feature flag in config.toml (idempotent).
+if grep -qE "^\[features\]" "$CONFIG_TOML"; then
+  if ! grep -qE "^codex_hooks\s*=\s*true" "$CONFIG_TOML"; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/chorus-features.XXXXXX")"
+    awk '
+      /^\[features\][[:space:]]*$/ { print; print "codex_hooks = true"; inserted=1; next }
+      { print }
+    ' "$CONFIG_TOML" > "$tmp" && mv "$tmp" "$CONFIG_TOML"
+    ok "Added codex_hooks = true under existing [features]"
+  else
+    ok "codex_hooks feature flag already enabled"
+  fi
+else
+  cat >> "$CONFIG_TOML" <<'TFEAT'
 
 [features]
 codex_hooks = true
 TFEAT
-        ok "Appended [features] codex_hooks = true"
-      fi
-    fi
-  fi
+  ok "Appended [features] codex_hooks = true"
 fi
 
 # ---------- epilogue ----------
 hdr "Done."
 cat <<NEXT
 
-Last step (install the plugin inside the Codex TUI):
+Start Codex — the plugin is registered as INSTALLED_BY_DEFAULT so it
+should activate on first launch:
 
   ${BOLD}codex${RESET}
-  > /plugins
-  → select "chorus-plugins" → "chorus" → Install
+
+If /plugins does not show "chorus" as installed on first launch, open it
+and click Install once (Codex has no \`plugin install\` CLI command yet,
+so one manual click is the fallback path).
 
 Verify anytime:
   ${BOLD}codex mcp list${RESET}         # 'chorus' row, Auth = 'Bearer token'
+  ${BOLD}codex features list${RESET}    # codex_hooks + plugins both true
 
 Then in Codex type ${BOLD}\$chorus${RESET} (or \$develop, \$review, \$proposal, …) to
 activate a skill. To change your API key later, just re-run this installer.
