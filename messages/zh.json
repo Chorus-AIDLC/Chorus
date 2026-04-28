@@ -727,6 +727,14 @@
       "error": "邮箱或密码错误",
       "ssoLink": "使用 SSO 登录",
       "orDivider": "或"
+    },
+    "pickWorkspace": {
+      "title": "选择一个 workspace",
+      "subtitle": "该邮箱关联 {count} 个 workspace，请选择一个登录。",
+      "differentEmail": "换个邮箱",
+      "loading": "加载 workspace...",
+      "noCandidates": "未找到该邮箱对应的 workspace。",
+      "errorLoading": "加载 workspace 失败，请重试。"
     }
   },
   "projectOverview": {

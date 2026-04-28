@@ -726,6 +726,14 @@
       "error": "Invalid email or password",
       "ssoLink": "Use SSO instead",
       "orDivider": "or"
+    },
+    "pickWorkspace": {
+      "title": "Choose a workspace",
+      "subtitle": "Your email is registered in {count} workspaces. Pick one to sign in.",
+      "differentEmail": "Use a different email",
+      "loading": "Loading workspaces...",
+      "noCandidates": "No workspaces found for this email.",
+      "errorLoading": "Failed to load workspaces. Please try again."
     }
   },
   "projectOverview": {

@@ -42,16 +42,6 @@ export const POST = withErrorHandler(
       return errors.validationError({ name: "Name is required" });
     }
 
-    // Validate email domain uniqueness
-    if (body.emailDomains && body.emailDomains.length > 0) {
-      for (const domain of body.emailDomains) {
-        const isTaken = await companyService.isEmailDomainTaken(domain);
-        if (isTaken) {
-          return errors.conflict(`Email domain "${domain}" is already in use`);
-        }
-      }
-    }
-
     // Validate OIDC config (issuer and clientId must be provided together)
     if (body.oidcIssuer && !body.oidcClientId) {
       return errors.validationError({ oidcClientId: "Client ID is required when OIDC Issuer is provided" });

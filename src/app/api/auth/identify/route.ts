@@ -1,11 +1,12 @@
 // src/app/api/auth/identify/route.ts
-// Email Identification API - Determine if Super Admin or Company OIDC
+// Email Identification API - Determine if Super Admin, default auth, or Company OIDC
 
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { isSuperAdminEmail } from "@/lib/super-admin";
 import { isDefaultAuthEnabled, getDefaultUserEmail } from "@/lib/default-auth";
+import { parseHost } from "@/lib/oidc-utils";
 import * as companyService from "@/services/company.service";
 import { IdentifyResponse } from "@/types/admin";
 
@@ -44,26 +45,37 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return success(response);
   }
 
-  // Find Company by email domain
-  const company = await companyService.getCompanyByEmailDomain(email);
+  const candidates = await companyService.getCandidateCompaniesForEmail(email);
 
-  if (company && company.oidcIssuer && company.oidcClientId) {
+  if (candidates.length === 0) {
+    const response: IdentifyResponse = {
+      type: "not_found",
+      message: "No organization found for this email domain",
+    };
+    return success(response);
+  }
+
+  if (candidates.length === 1) {
+    const c = candidates[0];
     const response: IdentifyResponse = {
       type: "oidc",
       company: {
-        uuid: company.uuid,
-        name: company.name,
-        oidcIssuer: company.oidcIssuer,
-        oidcClientId: company.oidcClientId,
+        uuid: c.uuid,
+        name: c.name,
+        oidcIssuer: c.oidcIssuer,
+        oidcClientId: c.oidcClientId,
       },
     };
     return success(response);
   }
 
-  // No matching Company found
   const response: IdentifyResponse = {
-    type: "not_found",
-    message: "No organization found for this email domain",
+    type: "oidc_multi_match",
+    candidates: candidates.map((c) => ({
+      uuid: c.uuid,
+      name: c.name,
+      oidcIssuerHost: parseHost(c.oidcIssuer),
+    })),
   };
   return success(response);
 });

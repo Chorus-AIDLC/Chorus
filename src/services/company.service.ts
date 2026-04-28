@@ -186,6 +186,88 @@ export async function getCompanyStats() {
   return { totalCompanies, totalUsers, totalAgents };
 }
 
+// ===== Find All Candidate Companies for an Email (domain ∪ existing User.email) =====
+export async function getCandidateCompaniesForEmail(
+  email: string
+): Promise<
+  Array<{
+    uuid: string;
+    name: string;
+    oidcIssuer: string;
+    oidcClientId: string;
+  }>
+> {
+  const normalized = email.trim().toLowerCase();
+  const domain = normalized.split("@")[1];
+  if (!domain) {
+    return [];
+  }
+
+  const oidcReady = {
+    oidcEnabled: true,
+    oidcIssuer: { not: null },
+    oidcClientId: { not: null },
+  } as const;
+
+  const [domainMatches, users] = await Promise.all([
+    prisma.company.findMany({
+      where: {
+        emailDomains: { has: domain },
+        ...oidcReady,
+      },
+      select: {
+        uuid: true,
+        name: true,
+        oidcIssuer: true,
+        oidcClientId: true,
+      },
+    }),
+    prisma.user.findMany({
+      where: { email: normalized },
+      select: { companyUuid: true },
+    }),
+  ]);
+
+  const userCompanyUuids = Array.from(
+    new Set(users.map((u) => u.companyUuid))
+  );
+
+  const userCompanyMatches = userCompanyUuids.length
+    ? await prisma.company.findMany({
+        where: {
+          uuid: { in: userCompanyUuids },
+          ...oidcReady,
+        },
+        select: {
+          uuid: true,
+          name: true,
+          oidcIssuer: true,
+          oidcClientId: true,
+        },
+      })
+    : [];
+
+  const merged = new Map<
+    string,
+    { uuid: string; name: string; oidcIssuer: string; oidcClientId: string }
+  >();
+  for (const c of [...domainMatches, ...userCompanyMatches]) {
+    if (!c.oidcIssuer || !c.oidcClientId) continue;
+    if (!merged.has(c.uuid)) {
+      merged.set(c.uuid, {
+        uuid: c.uuid,
+        name: c.name,
+        oidcIssuer: c.oidcIssuer,
+        oidcClientId: c.oidcClientId,
+      });
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
+
 // ===== Find Company by Email Domain (without oidcEnabled restriction) =====
 export async function getCompanyByEmailDomainAny(email: string) {
   const domain = email.split("@")[1]?.toLowerCase();
@@ -208,22 +290,4 @@ export async function getCompanyByEmailDomainAny(email: string) {
       oidcEnabled: true,
     },
   });
-}
-
-// ===== Check if Email Domain is Already Taken =====
-export async function isEmailDomainTaken(
-  domain: string,
-  excludeCompanyId?: number
-) {
-  const company = await prisma.company.findFirst({
-    where: {
-      emailDomains: {
-        has: domain.toLowerCase(),
-      },
-      ...(excludeCompanyId ? { id: { not: excludeCompanyId } } : {}),
-    },
-    select: { id: true },
-  });
-
-  return !!company;
 }

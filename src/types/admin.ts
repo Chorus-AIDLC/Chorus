@@ -36,14 +36,29 @@ export interface CompanyUpdateInput {
   oidcEnabled?: boolean;
 }
 
+// Candidate workspace entry for oidc_multi_match responses.
+// oidcIssuerHost is the parsed hostname of the Company's oidcIssuer URL
+// (falls back to the raw string when URL parsing fails).
+export interface IdentifyCandidate {
+  uuid: string;
+  name: string;
+  oidcIssuerHost: string;
+}
+
 // Email identification response
 export interface IdentifyResponse {
-  type: "super_admin" | "oidc" | "default_auth" | "not_found";
+  type:
+    | "super_admin"
+    | "oidc"
+    | "oidc_multi_match"
+    | "default_auth"
+    | "not_found";
   company?: {
     uuid: string;
     name: string;
     oidcIssuer: string;
     oidcClientId: string;
   };
+  candidates?: IdentifyCandidate[];
   message?: string;
 }

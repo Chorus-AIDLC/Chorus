@@ -14,6 +14,7 @@ const mockPrisma = vi.hoisted(() => ({
   user: {
     count: vi.fn(),
     deleteMany: vi.fn(),
+    findMany: vi.fn(),
   },
   agent: {
     count: vi.fn(),
@@ -51,12 +52,12 @@ import {
   listCompanies,
   getCompanyByUuid,
   getCompanyByEmailDomain,
+  getCandidateCompaniesForEmail,
   createCompany,
   updateCompany,
   deleteCompany,
   getCompanyStats,
   getCompanyByEmailDomainAny,
-  isEmailDomainTaken,
 } from "@/services/company.service";
 
 // ===== Helpers =====
@@ -209,6 +210,180 @@ describe("getCompanyByEmailDomain", () => {
   it("should return null for email without domain", async () => {
     const result = await getCompanyByEmailDomain("user@");
     expect(result).toBeNull();
+  });
+});
+
+// ===== getCandidateCompaniesForEmail =====
+describe("getCandidateCompaniesForEmail", () => {
+  const companyA = "company-aaaa-0000-0000-000000000001";
+  const companyB = "company-bbbb-0000-0000-000000000002";
+
+  function candidate(overrides: Record<string, unknown> = {}) {
+    return {
+      uuid: companyA,
+      name: "Acme",
+      oidcIssuer: "https://auth.acme.com",
+      oidcClientId: "client-a",
+      ...overrides,
+    };
+  }
+
+  it("returns [] when email has no domain", async () => {
+    const result = await getCandidateCompaniesForEmail("notanemail");
+    expect(result).toEqual([]);
+    expect(mockPrisma.company.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns [] when nothing matches (0 hits)", async () => {
+    mockPrisma.company.findMany.mockResolvedValue([]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    const result = await getCandidateCompaniesForEmail("nobody@nowhere.com");
+
+    expect(result).toEqual([]);
+    expect(mockPrisma.company.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          emailDomains: { has: "nowhere.com" },
+          oidcEnabled: true,
+          oidcIssuer: { not: null },
+          oidcClientId: { not: null },
+        }),
+      })
+    );
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+      where: { email: "nobody@nowhere.com" },
+      select: { companyUuid: true },
+    });
+  });
+
+  it("returns domain-only matches", async () => {
+    mockPrisma.company.findMany.mockResolvedValueOnce([candidate()]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    const result = await getCandidateCompaniesForEmail("alice@acme.com");
+
+    expect(result).toEqual([
+      {
+        uuid: companyA,
+        name: "Acme",
+        oidcIssuer: "https://auth.acme.com",
+        oidcClientId: "client-a",
+      },
+    ]);
+  });
+
+  it("returns User.email-only matches", async () => {
+    mockPrisma.company.findMany.mockResolvedValueOnce([]);
+    mockPrisma.user.findMany.mockResolvedValue([{ companyUuid: companyB }]);
+    mockPrisma.company.findMany.mockResolvedValueOnce([
+      candidate({ uuid: companyB, name: "Bravo", oidcClientId: "client-b" }),
+    ]);
+
+    const result = await getCandidateCompaniesForEmail("alice@other.com");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].uuid).toBe(companyB);
+    expect(result[0].name).toBe("Bravo");
+  });
+
+  it("deduplicates when both paths hit the same Company", async () => {
+    const both = candidate();
+    mockPrisma.company.findMany.mockResolvedValueOnce([both]);
+    mockPrisma.user.findMany.mockResolvedValue([{ companyUuid: companyA }]);
+    mockPrisma.company.findMany.mockResolvedValueOnce([both]);
+
+    const result = await getCandidateCompaniesForEmail("alice@acme.com");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].uuid).toBe(companyA);
+  });
+
+  it("merges two different Companies across both paths, sorted by name asc", async () => {
+    mockPrisma.company.findMany.mockResolvedValueOnce([
+      candidate({ uuid: companyB, name: "Zephyr", oidcClientId: "client-b" }),
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([{ companyUuid: companyA }]);
+    mockPrisma.company.findMany.mockResolvedValueOnce([
+      candidate({ uuid: companyA, name: "Acme", oidcClientId: "client-a" }),
+    ]);
+
+    const result = await getCandidateCompaniesForEmail("alice@zephyr.com");
+
+    expect(result.map((c) => c.name)).toEqual(["Acme", "Zephyr"]);
+    expect(result.map((c) => c.uuid)).toEqual([companyA, companyB]);
+  });
+
+  it("filters out Companies missing oidcIssuer or oidcClientId", async () => {
+    // The queries themselves filter via { not: null }, but also guard defensively
+    mockPrisma.company.findMany.mockResolvedValueOnce([
+      candidate({ oidcIssuer: null }),
+      candidate({ uuid: companyB, oidcClientId: null }),
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    const result = await getCandidateCompaniesForEmail("alice@acme.com");
+
+    expect(result).toEqual([]);
+  });
+
+  it("excludes Company with matching emailDomain but oidcEnabled=false", async () => {
+    // Prisma query filters oidcEnabled=true, so such Companies never appear in the result set.
+    // Simulate that by returning [] from company.findMany.
+    mockPrisma.company.findMany.mockResolvedValueOnce([]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    const result = await getCandidateCompaniesForEmail("alice@acme.com");
+
+    expect(result).toEqual([]);
+    expect(mockPrisma.company.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ oidcEnabled: true }),
+      })
+    );
+  });
+
+  it("excludes Company reached via User.email when that Company has oidcEnabled=false", async () => {
+    mockPrisma.company.findMany.mockResolvedValueOnce([]);
+    mockPrisma.user.findMany.mockResolvedValue([{ companyUuid: companyA }]);
+    // Second findMany (for user companies) filters oidcEnabled=true, so returns []
+    mockPrisma.company.findMany.mockResolvedValueOnce([]);
+
+    const result = await getCandidateCompaniesForEmail("alice@nowhere.com");
+
+    expect(result).toEqual([]);
+    // Second call must include oidcEnabled=true constraint
+    expect(mockPrisma.company.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          uuid: { in: [companyA] },
+          oidcEnabled: true,
+          oidcIssuer: { not: null },
+          oidcClientId: { not: null },
+        }),
+      })
+    );
+  });
+
+  it("normalizes email (trim + lowercase) before querying", async () => {
+    mockPrisma.company.findMany.mockResolvedValue([]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+
+    await getCandidateCompaniesForEmail("  Alice@ACME.com  ");
+
+    expect(mockPrisma.company.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          emailDomains: { has: "acme.com" },
+        }),
+      })
+    );
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+      where: { email: "alice@acme.com" },
+      select: { companyUuid: true },
+    });
   });
 });
 
@@ -455,60 +630,5 @@ describe("getCompanyStats", () => {
       totalUsers: 0,
       totalAgents: 0,
     });
-  });
-});
-
-// ===== isEmailDomainTaken =====
-describe("isEmailDomainTaken", () => {
-  it("should return true when domain exists", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue({ id: 1 });
-
-    const result = await isEmailDomainTaken("example.com");
-
-    expect(result).toBe(true);
-    expect(mockPrisma.company.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          emailDomains: { has: "example.com" },
-        }),
-      })
-    );
-  });
-
-  it("should return false when domain does not exist", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue(null);
-
-    const result = await isEmailDomainTaken("notfound.com");
-
-    expect(result).toBe(false);
-  });
-
-  it("should exclude specified company id", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue(null);
-
-    await isEmailDomainTaken("example.com", 5);
-
-    expect(mockPrisma.company.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          emailDomains: { has: "example.com" },
-          id: { not: 5 },
-        }),
-      })
-    );
-  });
-
-  it("should lowercase domain before checking", async () => {
-    mockPrisma.company.findFirst.mockResolvedValue(null);
-
-    await isEmailDomainTaken("EXAMPLE.COM");
-
-    expect(mockPrisma.company.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          emailDomains: { has: "example.com" },
-        }),
-      })
-    );
   });
 });

@@ -1,7 +1,9 @@
 import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
+  plugins: [react()],
   resolve: {
     alias: [
       // Must come before the general '@' alias to avoid @/ matching first
@@ -13,7 +15,7 @@ export default defineConfig({
     reporters: process.env.GITHUB_ACTIONS === 'true' ? ['default', 'github-actions'] : ['default'],
     globals: true,
     environment: 'node',
-    include: ['src/**/__tests__/**/*.test.ts'],
+    include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
     exclude: ['node_modules', '.next', 'packages'],
     coverage: {
       provider: 'v8',

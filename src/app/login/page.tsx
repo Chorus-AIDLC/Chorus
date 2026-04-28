@@ -113,6 +113,8 @@ export default function LoginPage() {
 
       if (result.type === "super_admin") {
         router.push(`/login/admin?email=${encodeURIComponent(email)}`);
+      } else if (result.type === "oidc_multi_match") {
+        router.push(`/login/pick-workspace?email=${encodeURIComponent(email)}`);
       } else if (result.type === "oidc" && result.company) {
         const oidcConfig: OidcConfig = {
           issuer: result.company.oidcIssuer,

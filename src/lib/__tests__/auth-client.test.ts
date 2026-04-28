@@ -624,7 +624,7 @@ describe('logout', () => {
     expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' });
   });
 
-  it('calls signoutRedirect when active user exists', async () => {
+  it('does not call signoutRedirect — stays on local session clear only', async () => {
     vi.stubGlobal('window', { localStorage: {} });
     const mockUser = createMockUser();
     const mockManager = createMockUserManager({
@@ -636,31 +636,15 @@ describe('logout', () => {
 
     await logout();
 
-    expect(mockManager.signoutRedirect).toHaveBeenCalled();
-    expect(clearOidcConfig).not.toHaveBeenCalled(); // signoutRedirect navigates away
+    expect(mockManager.signoutRedirect).not.toHaveBeenCalled();
+    expect(mockManager.removeUser).toHaveBeenCalled();
+    expect(clearOidcConfig).toHaveBeenCalled();
   });
 
   it('calls removeUser and clears state when no active user', async () => {
     vi.stubGlobal('window', { localStorage: {} });
     const mockManager = createMockUserManager({
       getUser: vi.fn().mockResolvedValue(null),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-
-    await logout();
-
-    expect(mockManager.removeUser).toHaveBeenCalled();
-    expect(clearOidcConfig).toHaveBeenCalled();
-  });
-
-  it('cleans up locally when signoutRedirect fails', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-      signoutRedirect: vi.fn().mockRejectedValue(new Error('Redirect failed')),
     });
     vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(createUserManager).mockReturnValue(mockManager as any);

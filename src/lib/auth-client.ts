@@ -163,29 +163,17 @@ export async function login(): Promise<void> {
   }
 }
 
-// Logout
+// Logout — clears local session only. Does NOT call OIDC end_session;
+// the user keeps their IdP session and next login can SSO back in silently.
 export async function logout(): Promise<void> {
-  // Clear HTTP-only cookies (both OIDC and default auth)
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {
-    // Ignore errors, continue with logout
+    // Ignore errors, continue with local cleanup
   }
 
   const manager = getUserManager();
   if (manager) {
-    // Only attempt OIDC signout redirect if there's an active OIDC user session.
-    // Without this check, stale OIDC config in localStorage would cause default
-    // auth users to be redirected to the OIDC provider on logout.
-    try {
-      const user = await manager.getUser();
-      if (user) {
-        await manager.signoutRedirect();
-        return; // signoutRedirect navigates away from the page
-      }
-    } catch {
-      // Signout redirect may fail, clean up locally
-    }
     try {
       await manager.removeUser();
     } catch {

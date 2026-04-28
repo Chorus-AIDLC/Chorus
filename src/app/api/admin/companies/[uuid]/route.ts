@@ -55,19 +55,6 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       return errors.validationError({ name: "Name cannot be empty" });
     }
 
-    // Validate email domain uniqueness
-    if (body.emailDomains && body.emailDomains.length > 0) {
-      for (const domain of body.emailDomains) {
-        const isTaken = await companyService.isEmailDomainTaken(
-          domain,
-          company.id
-        );
-        if (isTaken) {
-          return errors.conflict(`Email domain "${domain}" is already in use`);
-        }
-      }
-    }
-
     // Build update data
     const updateData: CompanyUpdateInput = {};
     if (body.name !== undefined) updateData.name = body.name.trim();
