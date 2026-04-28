@@ -21,14 +21,12 @@ import { NextRequest } from "next/server";
 // --- Mocks that must be hoisted so the module-under-test picks them up ---
 
 const mockGetCandidateCompaniesForEmail = vi.hoisted(() => vi.fn());
-const mockGetCompanyByUuid = vi.hoisted(() => vi.fn());
 const mockIsSuperAdminEmail = vi.hoisted(() => vi.fn());
 const mockIsDefaultAuthEnabled = vi.hoisted(() => vi.fn());
 const mockGetDefaultUserEmail = vi.hoisted(() => vi.fn());
 
 vi.mock("@/services/company.service", () => ({
   getCandidateCompaniesForEmail: mockGetCandidateCompaniesForEmail,
-  getCompanyByUuid: mockGetCompanyByUuid,
 }));
 vi.mock("@/lib/super-admin", () => ({
   isSuperAdminEmail: mockIsSuperAdminEmail,
@@ -201,9 +199,65 @@ describe("POST /api/auth/identify (integration)", () => {
 // ---------- AC 2/3/4: company-oidc exposes clientId only when enabled ----------
 
 describe("GET /api/auth/company-oidc (integration)", () => {
-  it("returns OIDC config (including oidcClientId) for an enabled Company", async () => {
-    mockGetCompanyByUuid.mockResolvedValue(COMPANY_A);
+  it("returns OIDC config when uuid is in the email's candidate list", async () => {
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([COMPANY_A, COMPANY_B]);
 
+    const res = await companyOidcGET(
+      new NextRequest(
+        new URL(
+          `http://localhost/api/auth/company-oidc?uuid=${COMPANY_A.uuid}&email=alice%40example.com`
+        )
+      ),
+      { params: Promise.resolve({}) }
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.oidcClientId).toBe(COMPANY_A.oidcClientId);
+    expect(json.data.oidcIssuer).toBe(COMPANY_A.oidcIssuer);
+    expect(mockGetCandidateCompaniesForEmail).toHaveBeenCalledWith(
+      "alice@example.com"
+    );
+  });
+
+  it("404s when uuid is NOT in the email's candidate list (prevents enumeration)", async () => {
+    // Email resolves to Company A only; asking for Company B must 404.
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([COMPANY_A]);
+
+    const res = await companyOidcGET(
+      new NextRequest(
+        new URL(
+          `http://localhost/api/auth/company-oidc?uuid=${COMPANY_B.uuid}&email=alice%40example.com`
+        )
+      ),
+      { params: Promise.resolve({}) }
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(json.success).toBe(false);
+  });
+
+  it("404s when the target Company has oidcEnabled=false (filtered at service level)", async () => {
+    // Service already filters oidcEnabled=false out; the route sees an empty
+    // or reduced candidate list for that uuid.
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([]);
+
+    const res = await companyOidcGET(
+      new NextRequest(
+        new URL(
+          `http://localhost/api/auth/company-oidc?uuid=${COMPANY_DISABLED.uuid}&email=alice%40example.com`
+        )
+      ),
+      { params: Promise.resolve({}) }
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(json.success).toBe(false);
+  });
+
+  it("400s when email query param is missing", async () => {
     const res = await companyOidcGET(
       new NextRequest(
         new URL(
@@ -214,26 +268,9 @@ describe("GET /api/auth/company-oidc (integration)", () => {
     );
     const json = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(json.data.oidcClientId).toBe(COMPANY_A.oidcClientId);
-    expect(json.data.oidcIssuer).toBe(COMPANY_A.oidcIssuer);
-  });
-
-  it("404s when the target Company has oidcEnabled=false", async () => {
-    mockGetCompanyByUuid.mockResolvedValue(COMPANY_DISABLED);
-
-    const res = await companyOidcGET(
-      new NextRequest(
-        new URL(
-          `http://localhost/api/auth/company-oidc?uuid=${COMPANY_DISABLED.uuid}`
-        )
-      ),
-      { params: Promise.resolve({}) }
-    );
-    const json = await res.json();
-
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(422);
     expect(json.success).toBe(false);
+    expect(json.error.code).toBe("VALIDATION_ERROR");
   });
 });
 
@@ -242,7 +279,6 @@ describe("GET /api/auth/company-oidc (integration)", () => {
 describe("PickWorkspacePage (integration)", () => {
   it("identify multi-match → renders 2 cards → click first → company-oidc + storeOidcConfig + signinRedirect", async () => {
     mockGetCandidateCompaniesForEmail.mockResolvedValue([COMPANY_A, COMPANY_B]);
-    mockGetCompanyByUuid.mockResolvedValue(COMPANY_A);
 
     render(<PickWorkspacePage />);
 
@@ -281,19 +317,23 @@ describe("PickWorkspacePage (integration)", () => {
     expect(firstCardButton).not.toBeNull();
     await userEvent.click(firstCardButton!);
 
-    // company-oidc called with the correct uuid.
+    // company-oidc called with both uuid AND email (prevents UUID-only enumeration).
     await waitFor(() => {
-      expect(mockGetCompanyByUuid).toHaveBeenCalledWith(COMPANY_A.uuid);
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const u = String(input);
+          return (
+            u.startsWith("/api/auth/company-oidc?") &&
+            u.includes(`uuid=${encodeURIComponent(COMPANY_A.uuid)}`) &&
+            u.includes(`email=${encodeURIComponent("alice@example.com")}`)
+          );
+        })
+      ).toBe(true);
     });
-    expect(
-      fetchMock.mock.calls.some(([input]) => {
-        const u = String(input);
-        return (
-          u.startsWith("/api/auth/company-oidc?") &&
-          u.includes(`uuid=${encodeURIComponent(COMPANY_A.uuid)}`)
-        );
-      })
-    ).toBe(true);
+    // Service is re-queried with the email to re-validate candidacy on the server.
+    expect(mockGetCandidateCompaniesForEmail).toHaveBeenCalledWith(
+      "alice@example.com"
+    );
 
     // storeOidcConfig invoked with the OIDC config assembled from company-oidc response.
     await waitFor(() => {

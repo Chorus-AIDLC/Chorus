@@ -120,7 +120,9 @@ export default function PickWorkspacePage() {
       setPendingUuid(candidate.uuid);
       try {
         const response = await fetch(
-          `/api/auth/company-oidc?uuid=${encodeURIComponent(candidate.uuid)}`
+          `/api/auth/company-oidc?uuid=${encodeURIComponent(
+            candidate.uuid
+          )}&email=${encodeURIComponent(email)}`
         );
         const payload = await response.json();
         if (!payload.success || !payload.data) {
