@@ -35,6 +35,8 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ## What's New
 
+**[v0.6.7](https://chorus-ai.dev/blog/chorus-v0.6.7-release/)** — Chorus plugin for Codex CLI (one-command installer), workspace picker when one email belongs to multiple Companies, per-client connect guides.
+
 **[v0.6.6](https://chorus-ai.dev/blog/chorus-v0.6.6-release/)** — npm one-click install (`npx @chorus-aidlc/chorus`), document export (MD/PDF/Word), proposal revoke, faster agent checkin with work status at a glance.
 
 **[v0.6.2](https://chorus-ai.dev/blog/chorus-v0.6.2-release/)** — Embedded PGlite mode (zero-dependency deployment), structured logging with Pino, stateless MCP for horizontal scaling, default port changed to 8637.

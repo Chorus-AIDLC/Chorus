@@ -26,6 +26,8 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ## 最近更新
 
+**[v0.6.7](https://chorus-ai.dev/zh/blog/chorus-v0.6.7-release/)** — Codex CLI 版 Chorus 插件（一条命令装完）、同一邮箱属于多个 Company 时的工作区选择器、每种客户端的接入文档。
+
 **[v0.6.6](https://chorus-ai.dev/zh/blog/chorus-v0.6.6-release/)** — npm 一键安装（`npx @chorus-aidlc/chorus`）、文档导出（MD/PDF/Word）、Proposal 撤回、优化 Agent Checkin 快速获取工作状态。
 
 **[v0.6.2](https://chorus-ai.dev/zh/blog/chorus-v0.6.2-release/)** — 嵌入式 PGlite 模式（零依赖部署）、Pino 结构化日志、无状态 MCP 支持水平扩展、默认端口改为 8637。
