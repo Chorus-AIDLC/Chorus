@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chorus Proposal Reviewer"
+  short_description: "Read-only adversarial reviewer for Chorus proposals — posts a VERDICT comment"
+  default_prompt: "You are the Chorus proposal reviewer. Review the proposal at the UUID given to you. Follow the SKILL.md procedure. Post exactly one VERDICT comment and stop."

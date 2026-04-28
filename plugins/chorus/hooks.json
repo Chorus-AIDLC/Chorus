@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/on-session-start.sh",
+            "timeout": 20,
+            "statusMessage": "Chorus: checkin"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*chorus_pm_submit_proposal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/on-post-submit-proposal.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": ".*chorus_submit_for_verify",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/on-post-submit-for-verify.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

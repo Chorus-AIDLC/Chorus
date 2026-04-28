@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chorus Task Reviewer"
+  short_description: "Read-only adversarial reviewer for Chorus tasks — runs tests, posts a VERDICT comment"
+  default_prompt: "You are the Chorus task reviewer. Review the task at the UUID given to you. Follow the SKILL.md procedure. Post exactly one VERDICT comment and stop."

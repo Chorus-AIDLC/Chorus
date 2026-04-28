@@ -1,0 +1,27 @@
+{
+  "name": "chorus",
+  "version": "0.7.5",
+  "description": "Chorus AI-DLC collaboration platform plugin for Codex CLI. Provides skills for every stage of the AI-DLC lifecycle, read-only reviewer subagents, and session-aware hooks. MCP server is configured separately via the install script.",
+  "author": {
+    "name": "Chorus-AIDLC"
+  },
+  "homepage": "https://github.com/Chorus-AIDLC/Chorus",
+  "repository": "https://github.com/Chorus-AIDLC/Chorus",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "chorus",
+    "ai-dlc",
+    "project-management",
+    "multi-agent",
+    "collaboration"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks.json",
+  "interface": {
+    "displayName": "Chorus",
+    "shortDescription": "Chorus AI-DLC collaboration platform for Codex",
+    "longDescription": "Chorus plugin for Codex CLI — seven skills spanning the AI-DLC lifecycle (Idea → Proposal → Task → Verify → Done), two read-only reviewer subagents, and session-aware hooks. The Chorus MCP server is installed separately via the install script at https://chorus.ai/install-codex.sh (which also adds this plugin's marketplace).",
+    "developerName": "Chorus-AIDLC",
+    "category": "Productivity"
+  }
+}

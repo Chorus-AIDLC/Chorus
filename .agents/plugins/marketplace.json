@@ -1,0 +1,20 @@
+{
+  "name": "chorus-plugins",
+  "interface": {
+    "displayName": "Chorus AI-DLC"
+  },
+  "plugins": [
+    {
+      "name": "chorus",
+      "source": {
+        "source": "local",
+        "path": "./plugins/chorus"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
