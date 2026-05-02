@@ -47,8 +47,19 @@ interface ApiKey {
 
 type EditPreset = PresetKey | "custom";
 
-function derivePresetFromRoles(roles: string[]): EditPreset {
-  if (roles.length === 1 && roles[0] in ROLE_PRESETS) {
+// A stored agent is treated as preset-mode only when its roles match a single
+// preset AND it has no extra custom permissions layered on top. Any extras
+// (possible via PATCH /api/agents or a future UI) force Custom mode so the
+// edit modal preserves them instead of silently zeroing them out on save.
+function deriveEditPreset(
+  roles: string[],
+  customPermissions: string[],
+): EditPreset {
+  if (
+    roles.length === 1 &&
+    roles[0] in ROLE_PRESETS &&
+    customPermissions.length === 0
+  ) {
     return roles[0] as PresetKey;
   }
   return "custom";
@@ -161,7 +172,7 @@ export default function SettingsPage() {
 
   // Edit modal helpers
   const openEditModal = (key: ApiKey) => {
-    const preset = derivePresetFromRoles(key.roles);
+    const preset = deriveEditPreset(key.roles, key.permissions);
     const effective = key.effectivePermissions as Permission[];
     const pickerPermissions: Permission[] =
       preset === "custom" ? effective : [];

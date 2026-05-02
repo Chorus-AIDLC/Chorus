@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { getIdeaByUuid, claimIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
 
@@ -46,17 +47,31 @@ export const POST = withErrorHandler<{ uuid: string }>(
       }>(request);
 
       if (body.agentUuid) {
-        // Assign to a specific Agent (by UUID)
+        // Assign to any agent with idea:write — the assignee is whoever the
+        // user picks from the agent modal, gated by the same permission the
+        // agent itself would need to claim directly. We verify the permission
+        // post-lookup rather than filtering in the DB so custom-preset agents
+        // with idea-relevant bits are eligible too.
         const agent = await prisma.agent.findFirst({
           where: {
             uuid: body.agentUuid,
             companyUuid: auth.companyUuid,
-            roles: { has: "pm" }, // Can only assign to PM Agents
           },
+          select: { uuid: true, roles: true, permissions: true },
         });
 
         if (!agent) {
-          return errors.notFound("PM Agent");
+          return errors.notFound("Agent");
+        }
+
+        const agentPerms = computeEffectivePermissions(
+          agent.roles,
+          agent.permissions,
+        );
+        if (!agentPerms.has("idea:write")) {
+          return errors.forbidden(
+            "Selected agent does not have idea:write permission",
+          );
         }
 
         assigneeType = "agent";

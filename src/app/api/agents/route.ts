@@ -93,8 +93,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.validationError({ name: "Name is required" });
   }
 
-  // Validate roles
-  const validRoles = ["pm_agent", "developer_agent", "admin_agent", "pm", "developer", "admin"];
+  const validRoles = ["pm_agent", "developer_agent", "admin_agent"];
   const roles = body.roles || ["developer_agent"];
   for (const role of roles) {
     if (!validRoles.includes(role)) {

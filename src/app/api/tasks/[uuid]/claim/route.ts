@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { getTaskByUuid, claimTask } from "@/services/task.service";
 import { AlreadyClaimedError } from "@/lib/errors";
 
@@ -46,17 +47,29 @@ export const POST = withErrorHandler<{ uuid: string }>(
       }>(request);
 
       if (body.agentUuid) {
-        // Assign to a specific Agent (by UUID)
+        // Assign to any agent with task:write — matches the permission gate a
+        // self-claiming agent hits above, which keeps custom-preset agents
+        // (e.g. pm preset + task:admin extras) eligible.
         const agent = await prisma.agent.findFirst({
           where: {
             uuid: body.agentUuid,
             companyUuid: auth.companyUuid,
-            roles: { has: "developer" }, // Can only assign to Developer Agents
           },
+          select: { uuid: true, roles: true, permissions: true },
         });
 
         if (!agent) {
-          return errors.notFound("Developer Agent");
+          return errors.notFound("Agent");
+        }
+
+        const agentPerms = computeEffectivePermissions(
+          agent.roles,
+          agent.permissions,
+        );
+        if (!agentPerms.has("task:write")) {
+          return errors.forbidden(
+            "Selected agent does not have task:write permission",
+          );
         }
 
         assigneeType = "agent";

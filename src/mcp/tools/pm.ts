@@ -17,6 +17,7 @@ import { getAgentByUuid } from "@/services/agent.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
+import { hasPermission } from "@/lib/auth";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_idea - Claim an Idea
@@ -1036,7 +1037,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  const hasAdminRole = auth.roles.some(r => r === "admin" || r === "admin_agent");
+  // Proposal admin can reject/revoke any proposal; otherwise PM agents can only
+  // touch their own. `proposal:admin` aligns with chorus_admin_approve_proposal
+  // and avoids conflating bypass-power with the `admin_agent` preset.
+  const canAdminAnyProposal = hasPermission(auth, "proposal:admin");
 
   // chorus_pm_reject_proposal - Reject a pending proposal (pending -> draft)
   registerPermissionedTool(
@@ -1057,7 +1061,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
 
-      if (!hasAdminRole && proposal.createdByUuid !== auth.actorUuid) {
+      if (!canAdminAnyProposal && proposal.createdByUuid !== auth.actorUuid) {
         return { content: [{ type: "text", text: "You can only reject your own proposals" }], isError: true };
       }
 
@@ -1107,7 +1111,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
 
-      if (!hasAdminRole && proposal.createdByUuid !== auth.actorUuid) {
+      if (!canAdminAnyProposal && proposal.createdByUuid !== auth.actorUuid) {
         return { content: [{ type: "text", text: "You can only revoke your own proposals" }], isError: true };
       }
 

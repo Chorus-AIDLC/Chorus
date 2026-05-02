@@ -1,8 +1,17 @@
 // src/mcp/tools/permission-map.ts
-// Central mapping of MCP tools to their required Permission.
-// Covers every permission-gated tool (pm.ts, developer.ts, admin.ts).
-// Public tools (public.ts) and session tools (session.ts) are NOT gated
-// and therefore intentionally absent from this map. See Tech Design §5.3.
+//
+// Coverage contract for permission-gated MCP tools.
+//
+// This map is the *source of truth for tests* (src/mcp/__tests__/server.test.ts):
+// it lets the suite assert that every tool in pm.ts / developer.ts / admin.ts
+// is registered under the expected Permission, and catches drift when someone
+// adds a new tool without a gate. Production tool registration in pm.ts /
+// developer.ts / admin.ts uses `registerPermissionedTool` with its Permission
+// inlined at the call site — the map is intentionally not consulted at runtime
+// so the permission for each tool stays visible next to the handler.
+//
+// Public tools (public.ts) and session tools (session.ts) are NOT gated and
+// are intentionally absent from this map. See Tech Design §5.3.
 
 import type { Permission } from "@/lib/authz/types";
 
