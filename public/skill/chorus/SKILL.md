@@ -336,8 +336,6 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_admin_delete_idea` | `idea:admin` | No | No | Yes |
 | `chorus_admin_delete_document` | `document:admin` | No | No | Yes |
 
-> Changes in 0.7.0: the `pm_agent` preset now also carries `task:write` (for `claim/release/submit/report`) and `project:write` (for project and group management). This widens PM's MCP tool surface by 10 tools vs 0.6.x — handler-level assignee / authorship guards still prevent misuse. See `<BASE_URL>/docs/MCP_TOOLS.md` for the complete tool → permission map.
-
 ---
 
 ## Execution Rules

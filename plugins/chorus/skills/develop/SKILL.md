@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.5"
+  version: "0.8.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -354,7 +354,7 @@ Sub-agents spawned via `spawn_agent` inherit the parent's MCP configuration. Ens
 
 | Problem | Solution |
 |---------|----------|
-| Worker can't access Chorus MCP tools | Verify MCP is configured and `CHORUS_API_KEY` has `developer_agent` role |
+| Worker can't access Chorus MCP tools | Verify MCP is configured and `CHORUS_API_KEY` has `task: ["write"]` permission |
 | UI doesn't show active worker | Worker forgot `chorus_session_checkin_task`, or main agent didn't create a session. Sessions are optional — it's fine to not have one |
 | Session shows "inactive" (yellow) | No heartbeat — backend session TTL will clean it up, or call `chorus_close_session` explicitly |
 | Task stuck in wrong status | Use `chorus_update_task` to reset status manually |

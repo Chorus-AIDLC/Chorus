@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.7.5"
+  version: "0.8.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -53,28 +53,25 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 ## Prerequisites
 
-**All 3 agent roles are required on the API key:**
+The API key needs write + admin on every resource it touches:
 
-| Role | Why |
+| Needs | Why |
 |------|-----|
-| `pm_agent` | Idea creation, elaboration, proposal management (`chorus_pm_*` tools) |
-| `admin_agent` | Proposal approval, task verification (`chorus_admin_*` tools) |
-| `developer_agent` | Sub-agents claim and execute tasks (`chorus_claim_task`, `chorus_update_task`) |
-
-Sub-agents share the same API key as the main agent. The plugin injects session info into sub-agents, but **roles come from the API key itself**, not from hook injection.
+| `idea: [write]` | Create ideas, run elaboration |
+| `proposal: [write, admin]` | Create proposals; approve them |
+| `task: [write, admin]` | Create, execute, verify tasks |
+| `project: [write]` | Create the project if none is given |
 
 **Check at startup:**
 
 ```
-result = chorus_checkin()
-roles = result.agent.roles
+perms = chorus_checkin().agent.permissions
+need = { idea: ["write"], proposal: ["write","admin"],
+         task: ["write","admin"], project: ["write"] }
 
-required = ["pm_agent", "admin_agent", "developer_agent"]
-missing = [r for r in required if r not in roles]
-
-if missing:
-  ABORT: "Cannot run /yolo. Missing required roles: {missing}. 
-          Your API key must have all 3 roles: pm_agent, admin_agent, developer_agent."
+for resource, actions in need:
+  missing = [a for a in actions if a not in (perms[resource] or [])]
+  if missing: ABORT "/yolo needs {resource}: {missing}. Use an Admin-preset API key."
 ```
 
 ---

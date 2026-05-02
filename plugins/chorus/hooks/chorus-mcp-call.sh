@@ -54,7 +54,7 @@ ACCEPT="Accept: application/json, text/event-stream"
 CT="Content-Type: application/json"
 
 INIT=$(cat <<JSON
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-codex-hook","version":"0.7.5"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-codex-hook","version":"0.8.0"}}}
 JSON
 )
 
