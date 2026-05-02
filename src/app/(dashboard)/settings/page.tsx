@@ -3,10 +3,6 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,9 +13,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Key, Check, X, Globe, AlertTriangle, ShieldAlert, ChevronDown, ChevronRight, Activity, Bell, Pencil, Rocket } from "lucide-react";
+import { Plus, Key, X, Globe, ChevronDown, ChevronRight, Activity, Bell, Pencil, Rocket } from "lucide-react";
 import Link from "next/link";
 import { AgentCreateForm } from "@/components/AgentCreateForm";
+import { AgentFormFields } from "@/components/AgentFormFields";
+import type { AgentPermissionPickerChange } from "@/components/AgentPermissionPicker";
 import { Badge } from "@/components/ui/badge";
 import { useLocale } from "@/contexts/locale-context";
 import { getApiKeysAction, createAgentAndKeyAction, deleteApiKeyAction, getAgentSessionsAction, closeSessionAction, reopenSessionAction, updateAgentAction } from "./actions";
@@ -29,6 +27,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NotificationPreferencesForm } from "@/components/notification-preferences-form";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
+import { ROLE_PRESETS, type PresetKey } from "@/lib/authz/presets";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
+import type { Permission } from "@/lib/authz/types";
 
 interface ApiKey {
   uuid: string;
@@ -38,29 +39,20 @@ interface ApiKey {
   expiresAt: string | null;
   createdAt: string;
   roles: string[];
+  permissions: string[];
+  effectivePermissions: string[];
   agentUuid: string;
   persona: string | null;
 }
 
-// PM Agent Persona presets (labels and descriptions use i18n keys)
-const PM_PERSONAS = [
-  { id: "dev_pm", labelKey: "personas.devPm", descKey: "personas.devPmDesc" },
-  { id: "full_pm", labelKey: "personas.fullPm", descKey: "personas.fullPmDesc" },
-  { id: "simple_pm", labelKey: "personas.simplePm", descKey: "personas.simplePmDesc" },
-];
+type EditPreset = PresetKey | "custom";
 
-// Developer Agent Persona presets
-const DEV_PERSONAS = [
-  { id: "senior_dev", labelKey: "personas.seniorDev", descKey: "personas.seniorDevDesc" },
-  { id: "fullstack_dev", labelKey: "personas.fullstackDev", descKey: "personas.fullstackDevDesc" },
-  { id: "pragmatic_dev", labelKey: "personas.pragmaticDev", descKey: "personas.pragmaticDevDesc" },
-];
-
-// Admin Agent Persona presets
-const ADMIN_PERSONAS = [
-  { id: "careful_admin", labelKey: "personas.carefulAdmin", descKey: "personas.carefulAdminDesc" },
-  { id: "efficient_admin", labelKey: "personas.efficientAdmin", descKey: "personas.efficientAdminDesc" },
-];
+function derivePresetFromRoles(roles: string[]): EditPreset {
+  if (roles.length === 1 && roles[0] in ROLE_PRESETS) {
+    return roles[0] as PresetKey;
+  }
+  return "custom";
+}
 
 export default function SettingsPage() {
   const t = useTranslations();
@@ -80,9 +72,9 @@ export default function SettingsPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
   const [editName, setEditName] = useState("");
-  const [editRoles, setEditRoles] = useState<string[]>([]);
+  const [editPreset, setEditPreset] = useState<EditPreset>("custom");
+  const [editPermissions, setEditPermissions] = useState<Permission[]>([]);
   const [editPersona, setEditPersona] = useState("");
-  const [editAdminConfirmed, setEditAdminConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -169,11 +161,15 @@ export default function SettingsPage() {
 
   // Edit modal helpers
   const openEditModal = (key: ApiKey) => {
+    const preset = derivePresetFromRoles(key.roles);
+    const effective = key.effectivePermissions as Permission[];
+    const pickerPermissions: Permission[] =
+      preset === "custom" ? effective : [];
     setEditingKey(key);
     setEditName(key.name || "");
-    setEditRoles([...key.roles]);
+    setEditPreset(preset);
+    setEditPermissions(pickerPermissions);
     setEditPersona(key.persona || "");
-    setEditAdminConfirmed(key.roles.includes("admin_agent"));
     setShowEditModal(true);
   };
 
@@ -181,54 +177,52 @@ export default function SettingsPage() {
     setShowEditModal(false);
     setEditingKey(null);
     setEditName("");
-    setEditRoles([]);
+    setEditPreset("custom");
+    setEditPermissions([]);
     setEditPersona("");
-    setEditAdminConfirmed(false);
   };
 
-  const toggleEditRole = (role: string) => {
-    setEditRoles((prev) => {
-      const newRoles = prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role];
-      if (role === "admin_agent" && prev.includes(role)) {
-        setEditAdminConfirmed(false);
-      }
-      return newRoles;
-    });
-  };
-
-  const getEditAvailablePersonas = () => {
-    const personas: { id: string; labelKey: string; descKey: string }[] = [];
-    if (editRoles.includes("pm_agent")) {
-      personas.push(...PM_PERSONAS);
-    }
-    if (editRoles.includes("developer_agent")) {
-      personas.push(...DEV_PERSONAS);
-    }
-    if (editRoles.includes("admin_agent")) {
-      personas.push(...ADMIN_PERSONAS);
-    }
-    return personas;
+  const handlePickerChange = (next: AgentPermissionPickerChange) => {
+    setEditPreset(next.preset);
+    setEditPermissions(next.permissions as Permission[]);
   };
 
   const handleUpdateAgent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingKey || !editName || editRoles.length === 0) return;
+    if (!editingKey || !editName) return;
+
+    // Custom mode persists the full effective set (not a delta). Preset mode
+    // persists the role and empty permissions so future preset tweaks are
+    // picked up automatically.
+    const saveRoles = editPreset === "custom" ? [] : [editPreset];
+    const savePermissions =
+      editPreset === "custom" ? editPermissions : [];
 
     setSaving(true);
     try {
       const result = await updateAgentAction({
         agentUuid: editingKey.agentUuid,
         name: editName,
-        roles: editRoles,
+        roles: saveRoles,
+        permissions: savePermissions,
         persona: editPersona || null,
       });
 
       if (result.success) {
-        // Update local state to reflect changes
+        const nextEffective = Array.from(
+          computeEffectivePermissions(saveRoles, savePermissions),
+        );
         setApiKeys((prev) =>
           prev.map((k) =>
             k.agentUuid === editingKey.agentUuid
-              ? { ...k, name: editName, roles: editRoles, persona: editPersona || null }
+              ? {
+                  ...k,
+                  name: editName,
+                  roles: saveRoles,
+                  permissions: savePermissions,
+                  effectivePermissions: nextEffective,
+                  persona: editPersona || null,
+                }
               : k
           )
         );
@@ -242,8 +236,6 @@ export default function SettingsPage() {
       setSaving(false);
     }
   };
-
-  const editHasAdminRole = editRoles.includes("admin_agent");
 
   if (loading) {
     return (
@@ -388,28 +380,6 @@ export default function SettingsPage() {
                     >
                       {t("common.delete")}
                     </Button>
-                  </div>
-                </div>
-
-                {/* Roles Row */}
-                <div className="mt-4 flex items-center gap-4">
-                  <span className="text-xs text-muted-foreground">{t("settings.roles")}</span>
-                  <div className="flex items-center gap-2">
-                    {key.roles.includes("developer_agent") && (
-                      <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-50 dark:bg-blue-950 dark:text-blue-300">
-                        {t("settings.developerAgent")}
-                      </Badge>
-                    )}
-                    {key.roles.includes("pm_agent") && (
-                      <Badge variant="secondary" className="bg-orange-50 text-orange-700 hover:bg-orange-50 dark:bg-orange-950 dark:text-orange-300">
-                        {t("settings.pmAgent")}
-                      </Badge>
-                    )}
-                    {key.roles.includes("admin_agent") && (
-                      <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-50 dark:bg-red-950 dark:text-red-300">
-                        {t("settings.adminAgent")}
-                      </Badge>
-                    )}
                   </div>
                 </div>
 
@@ -562,197 +532,18 @@ export default function SettingsPage() {
               </div>
 
               {/* Modal Body */}
-              <div className="space-y-5 p-6">
-                {/* Name Field */}
-                <div className="space-y-2">
-                  <Label htmlFor="editName" className="text-[13px]">
-                    {t("settings.name")}
-                  </Label>
-                  <Input
-                    id="editName"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder={t("settings.namePlaceholder")}
-                    className="border-[#E5E0D8]"
-                    required
-                  />
-                </div>
-
-                {/* Agent Roles */}
-                <div className="space-y-3">
-                  <Label className="text-[13px]">{t("settings.agentRoles")}</Label>
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.agentRolesDesc")}
-                  </p>
-                  <div className="space-y-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => toggleEditRole("developer_agent")}
-                      className={`flex h-auto w-full items-start justify-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                        editRoles.includes("developer_agent")
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary"
-                      }`}
-                    >
-                      <div
-                        className={`mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded ${
-                          editRoles.includes("developer_agent")
-                            ? "bg-primary"
-                            : "border-2 border-border"
-                        }`}
-                      >
-                        {editRoles.includes("developer_agent") && (
-                          <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-foreground">
-                          {t("settings.developerAgent")}
-                        </div>
-                        <div className="text-xs font-normal text-muted-foreground">
-                          {t("settings.developerAgentDesc")}
-                        </div>
-                      </div>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => toggleEditRole("pm_agent")}
-                      className={`flex h-auto w-full items-start justify-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                        editRoles.includes("pm_agent")
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary"
-                      }`}
-                    >
-                      <div
-                        className={`mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded ${
-                          editRoles.includes("pm_agent")
-                            ? "bg-primary"
-                            : "border-2 border-border"
-                        }`}
-                      >
-                        {editRoles.includes("pm_agent") && (
-                          <Check className="h-3 w-3 text-primary-foreground" strokeWidth={3} />
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-foreground">
-                          {t("settings.pmAgent")}
-                        </div>
-                        <div className="text-xs font-normal text-muted-foreground">
-                          {t("settings.pmAgentDesc")}
-                        </div>
-                      </div>
-                    </Button>
-                    {/* Admin Agent - with danger styling */}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => toggleEditRole("admin_agent")}
-                      className={`flex h-auto w-full items-start justify-start gap-3 rounded-lg border p-3 text-left transition-colors ${
-                        editRoles.includes("admin_agent")
-                          ? "border-red-500 bg-red-50 dark:bg-red-950"
-                          : "border-border hover:border-red-400"
-                      }`}
-                    >
-                      <div
-                        className={`mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded ${
-                          editRoles.includes("admin_agent")
-                            ? "bg-red-500"
-                            : "border-2 border-red-300"
-                        }`}
-                      >
-                        {editRoles.includes("admin_agent") && (
-                          <Check className="h-3 w-3 text-white" strokeWidth={3} />
-                        )}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400">
-                          <ShieldAlert className="h-4 w-4" />
-                          {t("settings.adminAgent")}
-                        </div>
-                        <div className="text-xs font-normal text-red-500/80 dark:text-red-400/80">
-                          {t("settings.adminAgentDesc")}
-                        </div>
-                      </div>
-                    </Button>
-                  </div>
-
-                  {/* Admin Warning Box */}
-                  {editHasAdminRole && !editingKey.roles.includes("admin_agent") && (
-                    <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950">
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="h-5 w-5 flex-shrink-0 text-red-600 dark:text-red-400" />
-                        <div className="space-y-2">
-                          <p className="text-sm font-semibold text-red-700 dark:text-red-300">
-                            {t("settings.adminWarningTitle")}
-                          </p>
-                          <p className="text-xs text-red-600 dark:text-red-400">
-                            {t("settings.adminWarningDesc")}
-                          </p>
-                          <ul className="list-inside list-disc space-y-1 text-xs text-red-600 dark:text-red-400">
-                            <li>{t("settings.adminWarningItem1")}</li>
-                            <li>{t("settings.adminWarningItem2")}</li>
-                            <li>{t("settings.adminWarningItem3")}</li>
-                            <li>{t("settings.adminWarningItem4")}</li>
-                          </ul>
-                          <div className="mt-3 flex cursor-pointer items-center gap-2">
-                            <Checkbox
-                              id="editAdminConfirm"
-                              checked={editAdminConfirmed}
-                              onCheckedChange={(checked) => setEditAdminConfirmed(checked === true)}
-                              className="border-red-300 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
-                            />
-                            <Label htmlFor="editAdminConfirm" className="cursor-pointer text-xs font-medium text-red-700 dark:text-red-300">
-                              {t("settings.adminConfirmCheckbox")}
-                            </Label>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Agent Persona */}
-                <div className="space-y-3">
-                  <Label className="text-[13px]">{t("settings.agentPersona")}</Label>
-                  <p className="text-xs text-muted-foreground">
-                    {editRoles.length > 0
-                      ? t("settings.agentPersonaDesc")
-                      : t("settings.agentPersonaDescNoRoles")}
-                  </p>
-
-                  {/* Persona Presets */}
-                  {editRoles.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {getEditAvailablePersonas().map((persona) => (
-                        <Button
-                          key={persona.id}
-                          type="button"
-                          variant={editPersona === t(persona.descKey) ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setEditPersona(t(persona.descKey))}
-                          className="rounded-full"
-                        >
-                          {t(persona.labelKey)}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-
-                  <Textarea
-                    value={editPersona}
-                    onChange={(e) => setEditPersona(e.target.value)}
-                    placeholder={t("settings.personaPlaceholder")}
-                    rows={4}
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    {editRoles.length > 0
-                      ? t("settings.personaHint")
-                      : t("settings.personaHintNoRoles")}
-                  </p>
-                </div>
+              <div className="p-6">
+                <AgentFormFields
+                  name={editName}
+                  onNameChange={setEditName}
+                  preset={editPreset}
+                  permissions={editPermissions}
+                  onPermissionsChange={handlePickerChange}
+                  persona={editPersona}
+                  onPersonaChange={setEditPersona}
+                  nameInputId="editName"
+                  personaInputId="edit-agent-persona"
+                />
               </div>
 
               {/* Modal Footer */}
@@ -767,10 +558,10 @@ export default function SettingsPage() {
                 <Button
                   type="submit"
                   disabled={
-                    !editName || editRoles.length === 0 || saving ||
-                    (editHasAdminRole && !editingKey.roles.includes("admin_agent") && !editAdminConfirmed)
+                    !editName ||
+                    (editPreset === "custom" && editPermissions.length === 0) ||
+                    saving
                   }
-                  className={editHasAdminRole && !editingKey.roles.includes("admin_agent") ? "bg-red-600 hover:bg-red-700" : ""}
                 >
                   {saving ? t("settings.saving") : t("settings.saveChanges")}
                 </Button>

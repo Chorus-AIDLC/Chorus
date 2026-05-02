@@ -46,10 +46,17 @@ if command -v jq >/dev/null 2>&1; then
     "$API" state-set "owner_uuid" "$_OWNER_UUID"
   fi
 
-  # Cache agent roles for TaskCompleted and Stop hooks (e.g. "developer_agent,pm_agent,admin_agent")
-  _ROLES=$(echo "$CHECKIN_RESULT" | jq -r '.agent.roles | join(",") // empty' 2>/dev/null) || true
-  if [ -n "$_ROLES" ]; then
-    "$API" state-set "agent_roles" "$_ROLES"
+  # Cache effective permissions for downstream hooks.
+  # Stored as comma-separated "resource:action" pairs so hooks can substring-match
+  # without re-parsing JSON. Example: "idea:read,idea:write,task:read,task:write,task:admin".
+  _PERMS=$(echo "$CHECKIN_RESULT" | jq -r '
+    .agent.permissions // {}
+    | to_entries
+    | map(.key as $r | .value[] | "\($r):\(.)")
+    | join(",")
+  ' 2>/dev/null) || true
+  if [ -n "$_PERMS" ]; then
+    "$API" state-set "agent_permissions" "$_PERMS"
   fi
 
 fi

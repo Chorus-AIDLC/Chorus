@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
+import { isValidPermission, computeEffectivePermissions } from "@/lib/authz/permissions";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -50,6 +51,10 @@ export const GET = withErrorHandler<{ uuid: string }>(
       uuid: agent.uuid,
       name: agent.name,
       roles: agent.roles,
+      permissions: agent.permissions,
+      effectivePermissions: Array.from(
+        computeEffectivePermissions(agent.roles, agent.permissions),
+      ),
       persona: agent.persona,
       systemPrompt: agent.systemPrompt,
       ownerUuid: agent.ownerUuid,
@@ -95,6 +100,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       roles?: string[];
       persona?: string | null;
       systemPrompt?: string | null;
+      permissions?: string[];
     }>(request);
 
     const updateData: {
@@ -102,6 +108,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       roles?: string[];
       persona?: string | null;
       systemPrompt?: string | null;
+      permissions?: string[];
     } = {};
 
     if (body.name !== undefined) {
@@ -128,6 +135,15 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       updateData.roles = body.roles;
     }
 
+    if (body.permissions !== undefined) {
+      for (const p of body.permissions) {
+        if (!isValidPermission(p)) {
+          return errors.badRequest(`Invalid permission: ${p}`);
+        }
+      }
+      updateData.permissions = body.permissions;
+    }
+
     if (body.persona !== undefined) {
       updateData.persona = body.persona?.trim() || null;
     }
@@ -143,6 +159,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
         uuid: true,
         name: true,
         roles: true,
+        permissions: true,
         persona: true,
         systemPrompt: true,
         ownerUuid: true,
@@ -155,6 +172,10 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       uuid: updated.uuid,
       name: updated.name,
       roles: updated.roles,
+      permissions: updated.permissions,
+      effectivePermissions: Array.from(
+        computeEffectivePermissions(updated.roles, updated.permissions),
+      ),
       persona: updated.persona,
       systemPrompt: updated.systemPrompt,
       ownerUuid: updated.ownerUuid,

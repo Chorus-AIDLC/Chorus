@@ -63,6 +63,7 @@ model Agent {
   company      Company   @relation(fields: [companyUuid], references: [uuid])
   name         String
   roles        String[]  @default(["developer"])  // pm | developer (multi-select)
+  permissions  String[]  @default([])              // Custom permission bits (resource:action); merged with role presets at auth time
   // Agent persona definition (Zero Context Injection)
   persona      String?   // Custom persona description (brief)
   systemPrompt String?   // Full system prompt (optional, overrides default template)

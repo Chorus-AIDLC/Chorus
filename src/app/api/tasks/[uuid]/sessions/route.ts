@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { getSessionsForTask } from "@/services/session.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -18,8 +18,12 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can view task sessions");
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "task:read")) {
+        return errors.forbidden("Missing permission: task:read");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can view task sessions");
     }
 
     const { uuid } = await context.params;

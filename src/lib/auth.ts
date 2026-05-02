@@ -12,6 +12,8 @@ import type {
   SuperAdminAuthContext,
   AgentRole,
 } from "@/types/auth";
+import type { Permission } from "@/lib/authz/types";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { getSuperAdminFromRequest } from "./super-admin";
 import { getUserSessionFromRequest } from "./user-session";
 import { verifyOidcAccessToken, isOidcToken } from "./oidc-auth";
@@ -30,11 +32,16 @@ export async function getAuthContext(
     if (token.startsWith("cho_")) {
       const result = await validateApiKey(token);
       if (result.valid && result.agent) {
+        const effective = computeEffectivePermissions(
+          result.agent.roles,
+          result.agent.permissions,
+        );
         const agentContext: AgentAuthContext = {
           type: "agent",
           companyUuid: result.agent.companyUuid,
           actorUuid: result.agent.uuid,
           roles: result.agent.roles as AgentRole[],
+          permissions: Array.from(effective),
           ownerUuid: result.agent.ownerUuid ?? undefined,
           agentName: result.agent.name,
         };
@@ -166,6 +173,63 @@ export function requireAgentRole<T>(
     }
     if (!hasRole(auth, role)) {
       return errors.forbidden(`This operation requires ${role} role`);
+    }
+    return handler(request, context, auth);
+  };
+}
+
+// Check if an auth context holds a specific permission.
+// SuperAdmin always passes; agents delegate to the precomputed effective permission set.
+export function hasPermission(
+  ctx: AgentAuthContext | SuperAdminAuthContext,
+  permission: Permission,
+): boolean {
+  if (ctx.type === "super_admin") return true;
+  return ctx.permissions.includes(permission);
+}
+
+// Gate an agent request by permission, passing users and super_admins through unchanged.
+// For routes that serve both humans and agents: humans keep their existing access,
+// agents must carry the required permission bit (super_admin bypasses).
+// Returns null when the request is allowed; returns a 403 response when the agent lacks the permission.
+export function checkAgentPermission(
+  ctx: AuthContext | SuperAdminAuthContext,
+  permission: Permission,
+): NextResponse | null {
+  if (ctx.type === "agent" && !hasPermission(ctx as AgentAuthContext, permission)) {
+    return errors.forbidden(`Missing permission: ${permission}`);
+  }
+  return null;
+}
+
+// Require a specific fine-grained permission on the Agent/SuperAdmin context.
+// Matches the shape of requireAgentRole / requireSuperAdmin. super_admin bypasses.
+// Returns 401 when unauthenticated, 403 when the agent lacks the permission.
+export function requireAgentPermission<T>(
+  permission: Permission,
+  handler: (
+    request: NextRequest,
+    context: { params: Promise<T> },
+    auth: AgentAuthContext | SuperAdminAuthContext,
+  ) => Promise<NextResponse>,
+) {
+  return async (
+    request: NextRequest,
+    context: { params: Promise<T> },
+  ): Promise<NextResponse> => {
+    const superAdmin = await getSuperAdminFromRequest(request);
+    if (superAdmin) {
+      return handler(request, context, superAdmin);
+    }
+    const auth = await getAuthContext(request);
+    if (!auth) {
+      return errors.unauthorized();
+    }
+    if (!isAgent(auth)) {
+      return errors.forbidden("This operation requires agent authentication");
+    }
+    if (!hasPermission(auth, permission)) {
+      return errors.forbidden(`Missing permission: ${permission}`);
     }
     return handler(request, context, auth);
   };

@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import {
   getDocument,
   getDocumentByUuid,
@@ -22,6 +22,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "document:read");
+    if (denied) return denied;
 
     const { uuid } = await context.params;
     const document = await getDocument(auth.companyUuid, uuid);
@@ -42,9 +44,13 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Only users can update Documents
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can update documents");
+    // Updating requires document:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "document:write")) {
+        return errors.forbidden("Missing permission: document:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can update documents");
     }
 
     const { uuid } = await context.params;
@@ -84,9 +90,13 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Only users can delete Documents
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can delete documents");
+    // Deleting requires document:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "document:write")) {
+        return errors.forbidden("Missing permission: document:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can delete documents");
     }
 
     const { uuid } = await context.params;

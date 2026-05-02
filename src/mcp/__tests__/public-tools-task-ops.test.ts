@@ -79,6 +79,7 @@ const AUTH: AgentAuthContext = {
   actorUuid: "agent-1",
   ownerUuid: "owner-1",
   roles: ["developer"],
+  permissions: [],
   agentName: "Test Agent",
 };
 

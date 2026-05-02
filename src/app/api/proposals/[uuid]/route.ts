@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext } from "@/lib/auth";
+import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { getProposal } from "@/services/proposal.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -17,6 +17,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "proposal:read");
+    if (denied) return denied;
 
     const { uuid } = await context.params;
     const proposal = await getProposal(auth.companyUuid, uuid);

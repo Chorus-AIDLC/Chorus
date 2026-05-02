@@ -16,10 +16,14 @@ import * as elaborationService from "@/services/elaboration.service";
 import { getAgentByUuid } from "@/services/agent.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { zArray } from "./schema-utils";
+import { registerPermissionedTool } from "./register-helpers";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_idea - Claim an Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_claim_idea",
     {
       description: "Claim an Idea (open -> elaborating). Claiming automatically transitions the Idea to 'elaborating' status. After claiming, start elaboration with chorus_pm_start_elaboration or skip with chorus_pm_skip_elaboration.",
@@ -65,7 +69,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_release_idea - Release a claimed Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_release_idea",
     {
       description: "Release a claimed Idea (assigned -> open)",
@@ -114,7 +121,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_create_proposal - Create a Proposal (container model)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_create_proposal",
     {
       description: "Create an empty Proposal container. Use chorus_pm_add_document_draft and chorus_pm_add_task_draft to populate it afterwards.",
@@ -176,7 +186,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_validate_proposal - Validate Proposal completeness
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_validate_proposal",
     {
       description: "Validate a Proposal's completeness before submission. Returns errors (block submission), warnings (advisory), and info (hints). Call this before chorus_pm_submit_proposal to preview issues.",
@@ -203,7 +216,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_submit_proposal - Submit Proposal for approval
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_submit_proposal",
     {
       description: "Submit a Proposal for approval (draft -> pending). Requires all input Ideas to have elaborationStatus = 'resolved'. Call chorus_pm_start_elaboration or chorus_pm_skip_elaboration first to resolve elaboration before submitting.",
@@ -230,7 +246,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_create_document - Create a document
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
     "chorus_pm_create_document",
     {
       description: "Create a document (PRD, tech design, ADR, etc.)",
@@ -274,7 +293,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
 
   // chorus_pm_create_tasks - Deprecated alias for chorus_create_tasks (now in public.ts)
   // Kept for backward compatibility with existing agents that reference the old name.
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_create_tasks",
     {
       description: "[Deprecated — use chorus_create_tasks instead] Batch create tasks (can associate with a Proposal, supports intra-batch dependencies)",
@@ -397,7 +419,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_update_document - Update document content
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
     "chorus_pm_update_document",
     {
       description: "Update document content (increments version number)",
@@ -428,7 +453,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // ===== Proposal Draft Management Tools =====
 
   // chorus_pm_add_document_draft - Add document draft to Proposal
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_add_document_draft",
     {
       description: "Add a document draft to a pending Proposal container",
@@ -461,7 +489,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_add_task_draft - Add task draft to Proposal
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_add_task_draft",
     {
       description: "Add a task draft to a pending Proposal container",
@@ -500,7 +531,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_update_document_draft - Update document draft
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_update_document_draft",
     {
       description: "Update a document draft in a Proposal",
@@ -538,7 +572,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_update_task_draft - Update task draft
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_update_task_draft",
     {
       description: "Update a task draft in a Proposal",
@@ -585,7 +622,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_remove_document_draft - Remove document draft
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_remove_document_draft",
     {
       description: "Remove a document draft from a Proposal",
@@ -614,7 +654,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_remove_task_draft - Remove task draft
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_remove_task_draft",
     {
       description: "Remove a task draft from a Proposal",
@@ -643,7 +686,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_add_task_dependency - Add task dependency
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_add_task_dependency",
     {
       description: "Add a task dependency (taskUuid depends on dependsOnTaskUuid). Includes same-project validation, self-dependency check, and cycle detection.",
@@ -668,7 +714,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_remove_task_dependency - Remove task dependency
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_remove_task_dependency",
     {
       description: "Remove a task dependency",
@@ -693,7 +742,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_assign_task - Assign task to a Developer Agent
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_assign_task",
     {
       description: "Assign a task to a specified Developer Agent (task must be in open or assigned status)",
@@ -815,7 +867,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // ===== Elaboration Tools =====
 
   // chorus_pm_start_elaboration - Start elaboration for an Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_pm_start_elaboration",
     {
       description: "Start an elaboration round for an Idea. Creates structured questions for the Idea creator/stakeholder to answer, clarifying requirements before proposal creation. Recommended for every Idea. Structured elaboration improves Proposal quality and reduces rejection cycles. IMPORTANT: After this tool returns pending_answers, you MUST use an interactive prompt tool (e.g., AskUserQuestion in Claude Code) to present the questions to the user — do NOT display questions as plain text. Collect answers interactively, then call chorus_answer_elaboration. IMPORTANT: Even if the user discusses requirements with you outside of elaboration (e.g., in chat), you should still record key decisions and clarifications as elaboration rounds so they are persisted to the Idea as an audit trail. Do NOT include an 'Other' option — the UI automatically adds a free-text 'Other' option to every question.",
@@ -859,7 +914,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_validate_elaboration - Validate answers from an elaboration round
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_pm_validate_elaboration",
     {
       description: "Validate answers from an elaboration round. If no issues are found, the elaboration is marked as resolved. If issues exist, optionally provide follow-up questions for a new round. IMPORTANT: Before resolving (empty issues), always confirm with the user that they have no remaining concerns or topics to discuss.",
@@ -909,7 +967,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_skip_elaboration - Skip elaboration for an Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_pm_skip_elaboration",
     {
       description: "Skip elaboration for an Idea (marks as resolved with minimal depth). Use only for trivially clear Ideas (e.g., bug fixes with clear reproduction steps). A reason is required and logged in the activity stream. IMPORTANT: You MUST ask the user for permission before skipping — never skip on your own judgment alone. Prefer chorus_pm_start_elaboration for most Ideas.",
@@ -941,7 +1002,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_move_idea - Move an Idea to a different project
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_move_idea",
     {
       description: "Move an Idea to a different project within the same company. Also moves linked draft/pending Proposals.",
@@ -975,7 +1039,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   const hasAdminRole = auth.roles.some(r => r === "admin" || r === "admin_agent");
 
   // chorus_pm_reject_proposal - Reject a pending proposal (pending -> draft)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_reject_proposal",
     {
       description: "Reject a Proposal (pending -> draft). PM agents can only reject their own proposals; admin agents can reject any proposal. After rejection, the Proposal returns to draft status for revision.",
@@ -1022,7 +1089,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_revoke_proposal - Revoke an approved proposal (approved -> draft)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_pm_revoke_proposal",
     {
       description: "Revoke an approved Proposal (approved -> draft). PM agents can only revoke their own proposals; admin agents can revoke any proposal. Cascade-closes all materialized Tasks and deletes all materialized Documents.",
@@ -1079,7 +1149,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_pm_create_idea - Create an Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
     "chorus_pm_create_idea",
     {
       description: "Create an Idea (submits requirements on behalf of humans)",

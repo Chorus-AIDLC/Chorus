@@ -4,7 +4,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import {
   listProjectGroups,
   createProjectGroup,
@@ -14,6 +14,8 @@ import {
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const auth = await getAuthContext(request);
   if (!auth) return errors.unauthorized();
+  const denied = checkAgentPermission(auth, "project:read");
+  if (denied) return denied;
 
   const result = await listProjectGroups(auth.companyUuid);
   return success(result);
@@ -23,7 +25,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await getAuthContext(request);
   if (!auth) return errors.unauthorized();
-  if (!isUser(auth)) return errors.forbidden("Only users can create project groups");
+  if (isAgent(auth)) {
+    if (!hasPermission(auth, "project:write")) {
+      return errors.forbidden("Missing permission: project:write");
+    }
+  } else if (!isUser(auth)) {
+    return errors.forbidden("Only users or permitted agents can create project groups");
+  }
 
   const body = await parseBody<{ name: string; description?: string }>(request);
   if (!body.name || body.name.trim() === "") {

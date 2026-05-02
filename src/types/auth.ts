@@ -2,6 +2,8 @@
 // Authentication related type definitions (ARCHITECTURE.md §6)
 // UUID-Based Architecture: All IDs are UUIDs
 
+import type { Permission } from "@/lib/authz/types";
+
 export type ActorType = "user" | "agent" | "super_admin";
 export type AgentRole = "pm" | "developer" | "admin" | "pm_agent" | "developer_agent" | "admin_agent";
 
@@ -25,6 +27,9 @@ export interface UserAuthContext extends AuthContext {
 export interface AgentAuthContext extends AuthContext {
   type: "agent";
   roles: AgentRole[];
+  // Effective permissions = expandRoles(roles) ∪ custom permissions.
+  // Plain string array (not Set) so the context survives JSON serialization across hook / RSC boundaries.
+  permissions: Permission[];
   ownerUuid?: string;
   agentName: string;
   projectUuids?: string[]; // Default projects from X-Chorus-Project/X-Chorus-Project-Group headers (optional)
@@ -44,6 +49,7 @@ export interface ApiKeyValidationResult {
     companyUuid: string;
     name: string;
     roles: string[];
+    permissions: string[];
     ownerUuid: string | null;
   };
   apiKey?: {

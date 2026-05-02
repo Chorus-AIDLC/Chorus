@@ -14,10 +14,14 @@ import * as documentService from "@/services/document.service";
 import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
 import { zArray } from "./schema-utils";
+import { registerPermissionedTool } from "./register-helpers";
 
 export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_admin_create_project - Create a new project
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:write",
     "chorus_admin_create_project",
     {
       description: "Create a new project (Admin exclusive, acts on behalf of humans). To assign to a project group, first call chorus_get_project_groups to list available groups, then pass the groupUuid.",
@@ -44,7 +48,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_admin_create_idea moved to pm.ts as chorus_pm_create_idea
 
   // chorus_admin_approve_proposal - Approve a Proposal
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:admin",
     "chorus_admin_approve_proposal",
     {
       description: "Approve a Proposal (Admin exclusive, acts on behalf of humans). On approval, documentDrafts and taskDrafts in the Proposal are automatically materialized into real Document and Task entities -- no need to manually call create_document/create_tasks.",
@@ -92,7 +99,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_close_proposal - Close a Proposal (terminal state)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:admin",
     "chorus_admin_close_proposal",
     {
       description: "Close a Proposal (Admin exclusive, permanently closes the proposal). After closing, the Proposal enters the closed terminal state and cannot be edited.",
@@ -135,7 +145,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_verify_task - Verify a Task (to_verify -> done)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:admin",
     "chorus_admin_verify_task",
     {
       description: "Verify a Task (to_verify -> done, Admin exclusive, acts on behalf of humans)",
@@ -178,7 +191,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_reopen_task - Reopen a Task (to_verify -> in_progress)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:admin",
     "chorus_admin_reopen_task",
     {
       description: "Reopen a Task (to_verify -> in_progress, used when verification fails). If the task has unresolved dependencies, use force=true to bypass the dependency check.",
@@ -248,7 +264,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_mark_acceptance_criteria - Mark acceptance criteria as passed or failed
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:admin",
     "chorus_mark_acceptance_criteria",
     {
       description: "Mark acceptance criteria as passed or failed (admin verification)",
@@ -273,7 +292,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_close_task - Close a Task (any -> closed)
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:admin",
     "chorus_admin_close_task",
     {
       description: "Close a Task (any status -> closed, Admin exclusive)",
@@ -310,7 +332,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_delete_idea - Delete an Idea
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:admin",
     "chorus_admin_delete_idea",
     {
       description: "Delete an Idea (Admin exclusive, can delete any Idea)",
@@ -333,7 +358,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_delete_task - Delete a Task
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:admin",
     "chorus_admin_delete_task",
     {
       description: "Delete a Task (Admin exclusive, can delete any Task)",
@@ -356,7 +384,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_delete_document - Delete a Document
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:admin",
     "chorus_admin_delete_document",
     {
       description: "Delete a Document (Admin exclusive, can delete any Document)",
@@ -381,7 +412,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // ===== Project Group Admin Tools =====
 
   // chorus_admin_create_project_group - Create a new project group
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:write",
     "chorus_admin_create_project_group",
     {
       description: "Create a new project group (Admin exclusive)",
@@ -404,7 +438,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_update_project_group - Update a project group
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:write",
     "chorus_admin_update_project_group",
     {
       description: "Update a project group (Admin exclusive)",
@@ -433,7 +470,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_delete_project_group - Delete a project group
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:write",
     "chorus_admin_delete_project_group",
     {
       description: "Delete a project group (Admin exclusive). Projects in the group become ungrouped.",
@@ -455,7 +495,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   );
 
   // chorus_admin_move_project_to_group - Move a project to a group or ungroup it
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:write",
     "chorus_admin_move_project_to_group",
     {
       description: "Move a project to a different group or ungroup it (Admin exclusive). Set groupUuid to null to ungroup.",

@@ -4,13 +4,81 @@ This document covers all tools provided by the Chorus MCP Server, including tool
 
 ## Overview
 
-The Chorus MCP Server provides different tool sets based on Agent roles:
+Tool visibility is driven by a **fine-grained permission model**: 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each gated tool declares a single **required permission**. Public tools (discover, comment, session) carry no gate and are always available.
+
+Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) that expands to a fixed permission set, and/or **custom permissions** added on top. The effective permission set is the union of preset + custom. See `src/lib/authz/presets.ts` for the authoritative preset mapping, `src/mcp/tools/permission-map.ts` for the tool → permission map, and [ARCHITECTURE.md §6.3](./ARCHITECTURE.md#63-permission-model) for the conceptual overview.
+
+### Role Preset → Permission Set
+
+| Preset | Permission Set |
+|--------|----------------|
+| `developer_agent` | `*:read` + `task:write` (6 perms) |
+| `pm_agent` | `*:read` + `idea:write`, `proposal:write`, `document:write`, `task:write`, `project:write` (10 perms) |
+| `admin_agent` | all 15 perms (`*:read` + `*:write` + `*:admin`) |
+
+Read-only tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and available to any agent regardless of preset/permissions — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row.
+
+> Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
+
+### Gated Tool → Required Permission Matrix
+
+The following table summarizes every permission-gated MCP tool. Each tool has exactly one required permission; possessing that permission (via preset or custom) is the **necessary** condition for the tool to appear in the agent's tool list. Additional handler-level guards (ownership, assignee, status) may still apply.
+
+| Tool | Required Permission |
+|------|---------------------|
+| `chorus_claim_idea` | `idea:write` |
+| `chorus_release_idea` | `idea:write` |
+| `chorus_move_idea` | `idea:write` |
+| `chorus_pm_create_idea` | `idea:write` |
+| `chorus_pm_start_elaboration` | `idea:write` |
+| `chorus_pm_validate_elaboration` | `idea:write` |
+| `chorus_pm_skip_elaboration` | `idea:write` |
+| `chorus_pm_create_proposal` | `proposal:write` |
+| `chorus_pm_validate_proposal` | `proposal:write` |
+| `chorus_pm_submit_proposal` | `proposal:write` |
+| `chorus_pm_add_document_draft` | `proposal:write` |
+| `chorus_pm_add_task_draft` | `proposal:write` |
+| `chorus_pm_update_document_draft` | `proposal:write` |
+| `chorus_pm_update_task_draft` | `proposal:write` |
+| `chorus_pm_remove_document_draft` | `proposal:write` |
+| `chorus_pm_remove_task_draft` | `proposal:write` |
+| `chorus_pm_reject_proposal` | `proposal:write` |
+| `chorus_pm_revoke_proposal` | `proposal:write` |
+| `chorus_pm_create_tasks` | `proposal:write` |
+| `chorus_add_task_dependency` | `proposal:write` |
+| `chorus_remove_task_dependency` | `proposal:write` |
+| `chorus_pm_assign_task` | `proposal:write` |
+| `chorus_pm_create_document` | `document:write` |
+| `chorus_pm_update_document` | `document:write` |
+| `chorus_claim_task` | `task:write` |
+| `chorus_release_task` | `task:write` |
+| `chorus_submit_for_verify` | `task:write` |
+| `chorus_report_criteria_self_check` | `task:write` |
+| `chorus_report_work` | `task:write` |
+| `chorus_admin_create_project` | `project:write` |
+| `chorus_admin_create_project_group` | `project:write` |
+| `chorus_admin_update_project_group` | `project:write` |
+| `chorus_admin_delete_project_group` | `project:write` |
+| `chorus_admin_move_project_to_group` | `project:write` |
+| `chorus_admin_approve_proposal` | `proposal:admin` |
+| `chorus_admin_close_proposal` | `proposal:admin` |
+| `chorus_admin_verify_task` | `task:admin` |
+| `chorus_admin_reopen_task` | `task:admin` |
+| `chorus_admin_close_task` | `task:admin` |
+| `chorus_mark_acceptance_criteria` | `task:admin` |
+| `chorus_admin_delete_task` | `task:admin` |
+| `chorus_admin_delete_idea` | `idea:admin` |
+| `chorus_admin_delete_document` | `document:admin` |
+
+### Legacy Role → Tool Set View
+
+For agents that rely on the preset alone (no custom permissions), this is the resulting tool set:
 
 | Role | Tool Set |
 |------|----------|
-| Developer Agent | Public + Session + Developer |
-| PM Agent | Public + Session + PM |
-| Admin Agent | Public + Session + Admin + PM + Developer |
+| Developer Agent | Public + Session + Developer (`task:write` tools) |
+| PM Agent | Public + Session + PM (`idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` tools — includes Developer's `task:write` tools and `project:write` project-management tools) |
+| Admin Agent | Public + Session + PM + Developer + Admin (all 15 permissions) |
 
 ## Project Filtering
 
@@ -738,6 +806,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Claim an Idea (open → elaborating). Claiming automatically transitions the Idea to 'elaborating' status. After claiming, start elaboration with chorus_pm_start_elaboration or skip with chorus_pm_skip_elaboration.
 
+**Required Permission**: `idea:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -749,28 +819,20 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Release a claimed Idea (elaborating → open)
 
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| ideaUuid | string | Yes | Idea UUID |
-
-**Output**: Updated Idea JSON
-
-### chorus_update_idea_status
-
-**Description**: Update Idea status (only the assignee can perform this). Valid statuses: open, elaborating, proposal_created, completed, closed. Claiming auto-transitions to elaborating; use this tool for proposal_created (after Proposal submission) or completed (after approval).
+**Required Permission**: `idea:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
-| status | enum | Yes | New status: proposal_created, completed |
 
 **Output**: Updated Idea JSON
 
 ### chorus_pm_create_proposal
 
 **Description**: Create a proposal container (can include document drafts and task drafts)
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -788,6 +850,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_validate_proposal
 
 **Description**: Validate a Proposal's completeness before submission. Returns errors (block submission), warnings (advisory), and info (hints). Call this before `chorus_pm_submit_proposal` to preview validation issues.
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -837,6 +901,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Submit a Proposal for approval (draft → pending). Runs `chorus_pm_validate_proposal` internally and rejects with a formatted error if any error-level issues are found. Call `chorus_pm_validate_proposal` first to preview issues before submitting.
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -847,6 +913,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_create_document
 
 **Description**: Create a document (PRD, technical design, ADR, etc.)
+
+**Required Permission**: `document:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -862,6 +930,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_create_tasks
 
 **Description**: Batch create tasks (can be associated with a Proposal, supports intra-batch dependencies)
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -899,6 +969,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Update document content (increments version number)
 
+**Required Permission**: `document:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -911,6 +983,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_add_document_draft
 
 **Description**: Add a document draft to a pending Proposal container
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -925,6 +999,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_add_task_draft
 
 **Description**: Add a task draft to a pending Proposal container
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -944,6 +1020,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Update a document draft in a Proposal
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -958,6 +1036,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_update_task_draft
 
 **Description**: Update a task draft in a Proposal
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -977,6 +1057,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Remove a document draft from a Proposal
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -989,6 +1071,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Remove a task draft from a Proposal
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1000,6 +1084,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_add_task_dependency
 
 **Description**: Add a task dependency (taskUuid depends on dependsOnTaskUuid). Includes same-project validation, self-dependency check, and DFS cycle detection.
+
+**Required Permission**: `proposal:write` (kept out of `task:write` to preserve 0.6.x developer boundaries — see `permission-map.ts`)
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1026,6 +1112,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Remove a task dependency
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1045,6 +1133,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Assign a task to a specified Developer Agent (task must be in open or assigned status)
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1061,6 +1151,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_start_elaboration
 
 **Description**: Start an elaboration round for an Idea. Creates structured questions for the Idea creator/stakeholder to answer, clarifying requirements before proposal creation. Recommended for every Idea. Structured elaboration improves Proposal quality and reduces rejection cycles.
+
+**Required Permission**: `idea:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1091,6 +1183,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Validate answers from an elaboration round. If no issues are found, the elaboration is marked as resolved. If issues exist, optionally provide follow-up questions for a new round.
 
+**Required Permission**: `idea:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1114,6 +1208,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Skip elaboration for an Idea (marks as resolved with minimal depth). Use only for trivially clear Ideas (e.g., bug fixes with clear reproduction steps). A reason is required and logged in the activity stream. Prefer chorus_pm_start_elaboration for most Ideas.
 
+**Required Permission**: `idea:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1133,6 +1229,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Move an Idea to a different project within the same company. Also moves linked draft/pending Proposals.
 
+**Required Permission**: `idea:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1144,6 +1242,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_create_idea
 
 **Description**: Create an Idea in a project (submit requirements on behalf of humans or from discovered requirements)
+
+**Required Permission**: `idea:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1157,6 +1257,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 ### chorus_pm_reject_proposal
 
 **Description**: Reject a Proposal (pending -> draft). PM agents can only reject their own proposals; admin agents can reject any proposal. The reviewNote is preserved as reference.
+
+**Required Permission**: `proposal:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1172,6 +1274,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Description**: Revoke an approved Proposal (approved -> draft). PM agents can only revoke their own proposals; admin agents can revoke any proposal. Cascade-closes all materialized Tasks and deletes all materialized Documents.
 
+**Required Permission**: `proposal:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1186,11 +1290,15 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ## Developer Agent Tools
 
-Available to Developer Agent and Admin Agent. Not available to PM Agent.
+Tools gated by `task:write`. Available to any agent whose effective permissions include `task:write` — by default this is `developer_agent`, `pm_agent`, and `admin_agent` presets, plus any custom agent with `task:write` added.
+
+> Note: `task:write` grants tool visibility. Handler-level guards still enforce that only the assignee can execute operational transitions (e.g., `chorus_submit_for_verify`, `chorus_report_work`) — a `pm_agent` cannot operate on a task unless they have claimed/been assigned it.
 
 ### chorus_claim_task
 
 **Description**: Claim a Task (open → assigned)
+
+**Required Permission**: `task:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1203,6 +1311,8 @@ Available to Developer Agent and Admin Agent. Not available to PM Agent.
 
 **Description**: Release a claimed Task (assigned → open)
 
+**Required Permission**: `task:write`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1212,7 +1322,9 @@ Available to Developer Agent and Admin Agent. Not available to PM Agent.
 
 ### chorus_update_task
 
-**Description**: Update task status (only the assignee can perform this)
+**Description**: Update task status and fields (only the assignee can perform status transitions; any agent with read access can edit fields like title, description, priority, storyPoints).
+
+> **Public tool** — not permission-gated. Available to every agent. Handler-level guards enforce that only the assignee can transition `status`. Moved from developer tools to public in 0.7.0 as part of the permission refactor.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1231,6 +1343,8 @@ Available to Developer Agent and Admin Agent. Not available to PM Agent.
 
 **Description**: Submit a task for human verification (in_progress → to_verify)
 
+**Required Permission**: `task:write` (handler also checks caller is the assignee)
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1242,6 +1356,8 @@ Available to Developer Agent and Admin Agent. Not available to PM Agent.
 ### chorus_report_work
 
 **Description**: Report work progress or completion
+
+**Required Permission**: `task:write` (handler also checks caller is the assignee)
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1259,11 +1375,13 @@ Available to Developer Agent and Admin Agent. Not available to PM Agent.
 
 ## Admin Agent Tools
 
-Available only to Admin Agent. Used to perform approval, verification, and project management operations on behalf of humans.
+Tools gated by one of the `*:admin` permissions or `project:write`. Available to any agent whose effective permissions cover the required permission listed under each tool. The `admin_agent` preset carries all `*:admin` permissions, but individual admin tools can be granted to other agents via custom permissions.
 
 ### chorus_admin_create_project
 
 **Description**: Create a new project
+
+**Required Permission**: `project:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1276,6 +1394,8 @@ Available only to Admin Agent. Used to perform approval, verification, and proje
 ### chorus_admin_approve_proposal
 
 **Description**: Approve a Proposal
+
+**Required Permission**: `proposal:admin`
 
 **Important behavior**: Upon approval, the system automatically materializes all drafts in the Proposal into actual resources:
 - `documentDrafts` → Automatically creates corresponding Documents (linked to this Proposal)
@@ -1291,9 +1411,25 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Output**: Updated Proposal JSON
 
+### chorus_admin_close_proposal
+
+**Description**: Close a Proposal (pending → closed). Permanently closes the proposal; cannot be edited after.
+
+**Required Permission**: `proposal:admin`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| proposalUuid | string | Yes | Proposal UUID |
+| reviewNote | string | Yes | Reason for closing |
+
+**Output**: Updated Proposal JSON (`{ uuid, status: "closed" }`)
+
 ### chorus_report_criteria_self_check
 
 **Description**: Report self-check results on acceptance criteria for a task (Developer tool)
+
+**Required Permission**: `task:write` (handler also checks caller is the assignee)
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1307,6 +1443,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Description**: Mark acceptance criteria as passed or failed during admin verification (batch)
 
+**Required Permission**: `task:admin` (kept out of `task:write` so developer preset cannot self-approve — see `permission-map.ts`)
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1319,6 +1457,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Description**: Verify a Task (to_verify → done). **Acceptance criteria gate**: If the task has structured acceptance criteria, all required criteria must have `status: "passed"` before verification is allowed. Tasks without structured criteria are not gated (backward compatible).
 
+**Required Permission**: `task:admin`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1329,6 +1469,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 ### chorus_admin_reopen_task
 
 **Description**: Reopen a Task (to_verify → in_progress, used when verification fails). If the task has unresolved dependencies, use `force=true` to bypass the dependency check.
+
+**Required Permission**: `task:admin`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1342,6 +1484,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Description**: Close a Task (any status → closed)
 
+**Required Permission**: `task:admin`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1349,20 +1493,11 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Output**: Updated Task JSON
 
-### chorus_admin_close_idea
-
-**Description**: Close an Idea (any status → closed)
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| ideaUuid | string | Yes | Idea UUID |
-
-**Output**: Updated Idea JSON
-
 ### chorus_admin_delete_idea
 
 **Description**: Delete an Idea
+
+**Required Permission**: `idea:admin`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1375,6 +1510,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Description**: Delete a Task
 
+**Required Permission**: `task:admin`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1386,6 +1523,8 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 **Description**: Delete a Document
 
+**Required Permission**: `document:admin`
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1395,7 +1534,9 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 ### chorus_admin_create_project_group
 
-**Description**: Create a new project group (Admin exclusive)
+**Description**: Create a new project group
+
+**Required Permission**: `project:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1407,7 +1548,9 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 ### chorus_admin_update_project_group
 
-**Description**: Update a project group (Admin exclusive)
+**Description**: Update a project group
+
+**Required Permission**: `project:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1420,7 +1563,9 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 ### chorus_admin_delete_project_group
 
-**Description**: Delete a project group (Admin exclusive). Projects in the group become ungrouped.
+**Description**: Delete a project group. Projects in the group become ungrouped.
+
+**Required Permission**: `project:write`
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1431,7 +1576,9 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 ### chorus_admin_move_project_to_group
 
-**Description**: Move a project to a different group or ungroup it (Admin exclusive). Set groupUuid to null to ungroup.
+**Description**: Move a project to a different group or ungroup it. Set groupUuid to null to ungroup.
+
+**Required Permission**: `project:write`
 
 **Input**:
 | Parameter | Type | Required | Description |

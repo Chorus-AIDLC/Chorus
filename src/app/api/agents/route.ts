@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
+import { isValidPermission, computeEffectivePermissions } from "@/lib/authz/permissions";
 
 // GET /api/agents - List Agents
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -36,6 +37,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         uuid: true,
         name: true,
         roles: true,
+        permissions: true,
         persona: true,
         ownerUuid: true,
         lastActiveAt: true,
@@ -52,6 +54,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     uuid: a.uuid,
     name: a.name,
     roles: a.roles,
+    permissions: a.permissions,
+    effectivePermissions: Array.from(
+      computeEffectivePermissions(a.roles, a.permissions),
+    ),
     persona: a.persona,
     ownerUuid: a.ownerUuid,
     lastActiveAt: a.lastActiveAt?.toISOString() || null,
@@ -79,6 +85,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     roles?: string[];
     persona?: string | null;
     systemPrompt?: string | null;
+    permissions?: string[];
   }>(request);
 
   // Validate required fields
@@ -97,11 +104,20 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
+  // Validate permissions
+  const permissions = body.permissions ?? [];
+  for (const p of permissions) {
+    if (!isValidPermission(p)) {
+      return errors.badRequest(`Invalid permission: ${p}`);
+    }
+  }
+
   const agent = await prisma.agent.create({
     data: {
       companyUuid: auth.companyUuid,
       name: body.name.trim(),
       roles,
+      permissions,
       persona: body.persona?.trim() || null,
       systemPrompt: body.systemPrompt?.trim() || null,
       ownerUuid: auth.actorUuid,
@@ -110,6 +126,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       uuid: true,
       name: true,
       roles: true,
+      permissions: true,
       persona: true,
       systemPrompt: true,
       ownerUuid: true,
@@ -121,6 +138,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     uuid: agent.uuid,
     name: agent.name,
     roles: agent.roles,
+    permissions: agent.permissions,
+    effectivePermissions: Array.from(
+      computeEffectivePermissions(agent.roles, agent.permissions),
+    ),
     persona: agent.persona,
     systemPrompt: agent.systemPrompt,
     ownerUuid: agent.ownerUuid,

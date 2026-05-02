@@ -11,10 +11,14 @@ import * as commentService from "@/services/comment.service";
 import * as sessionService from "@/services/session.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { zArray } from "./schema-utils";
+import { registerPermissionedTool } from "./register-helpers";
 
 export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_task - Claim a Task
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:write",
     "chorus_claim_task",
     {
       description: "Claim a Task (open -> assigned)",
@@ -101,7 +105,10 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
   );
 
   // chorus_release_task - Release a claimed Task
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:write",
     "chorus_release_task",
     {
       description: "Release a claimed Task (assigned -> open)",
@@ -152,7 +159,10 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
   // chorus_update_task — migrated to public.ts (available to all roles, enhanced with field editing)
 
   // chorus_submit_for_verify - Submit task for human verification
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:write",
     "chorus_submit_for_verify",
     {
       description: "Submit task for human verification (in_progress -> to_verify)",
@@ -201,7 +211,10 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
   );
 
   // chorus_report_criteria_self_check - Report self-check results on acceptance criteria
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:write",
     "chorus_report_criteria_self_check",
     {
       description: "Report self-check results on acceptance criteria for a task you're working on",
@@ -234,7 +247,10 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
   );
 
   // chorus_report_work - Report work progress or completion
-  server.registerTool(
+  registerPermissionedTool(
+    server,
+    auth,
+    "task:write",
     "chorus_report_work",
     {
       description: "Report work progress or completion",

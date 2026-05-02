@@ -10,16 +10,29 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
 
 interface CompletionStepProps {
-  createdAgent: { name: string; roles: string[] } | null;
+  createdAgent: {
+    name: string;
+    roles: string[];
+    permissions: string[];
+  } | null;
 }
 
 export function CompletionStep({ createdAgent }: CompletionStepProps) {
   const router = useRouter();
   const t = useTranslations("onboarding");
+  const tAgent = useTranslations("agent.permissions");
 
   useEffect(() => {
     localStorage.setItem("chorus_onboarding_completed", "done");
   }, []);
+
+  const presetLabel = (() => {
+    if (!createdAgent) return null;
+    if (createdAgent.roles.includes("admin_agent")) return tAgent("presetAdmin");
+    if (createdAgent.roles.includes("pm_agent")) return tAgent("presetPm");
+    if (createdAgent.roles.includes("developer_agent")) return tAgent("presetDev");
+    return tAgent("presetCustom");
+  })();
 
   return (
     <motion.div
@@ -57,11 +70,22 @@ export function CompletionStep({ createdAgent }: CompletionStepProps) {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>{t("completion.agentRoles")}</span>
+                <span>{t("completion.agentPreset")}</span>
                 <span className="font-medium text-foreground">
-                  {createdAgent.roles.join(", ")}
+                  {presetLabel}
                 </span>
               </div>
+              {createdAgent.roles.length === 0 &&
+                createdAgent.permissions.length > 0 && (
+                  <div className="flex justify-between">
+                    <span>{t("completion.agentPermissions")}</span>
+                    <span className="font-medium text-foreground">
+                      {t("completion.permissionsCount", {
+                        count: createdAgent.permissions.length,
+                      })}
+                    </span>
+                  </div>
+                )}
             </div>
           </CardContent>
         </Card>

@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
-import { getAuthContext, isUser, isPmAgent } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import { projectExists } from "@/services/project.service";
 import { listTasks, createTask } from "@/services/task.service";
 
@@ -18,6 +18,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "task:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
     const { page, pageSize, skip, take } = parsePagination(request);
@@ -55,9 +57,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Users and PM Agents can create Tasks
-    if (!isUser(auth) && !isPmAgent(auth)) {
-      return errors.forbidden("Only users and PM agents can create tasks");
+    // Creating requires task:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "task:write")) {
+        return errors.forbidden("Missing permission: task:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can create tasks");
     }
 
     const { uuid: projectUuid } = await context.params;

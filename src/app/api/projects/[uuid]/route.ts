@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import {
   getProject,
   updateProject,
@@ -20,6 +20,8 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
   if (!auth) {
     return errors.unauthorized();
   }
+  const denied = checkAgentPermission(auth, "project:read");
+  if (denied) return denied;
 
   const { uuid } = await context.params;
   const project = await getProject(auth.companyUuid, uuid);
@@ -52,8 +54,13 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     return errors.unauthorized();
   }
 
-  if (!isUser(auth)) {
-    return errors.forbidden("Only users can update projects");
+  // Updating requires project:write for agents, or a human user
+  if (isAgent(auth)) {
+    if (!hasPermission(auth, "project:write")) {
+      return errors.forbidden("Missing permission: project:write");
+    }
+  } else if (!isUser(auth)) {
+    return errors.forbidden("Only users or permitted agents can update projects");
   }
 
   const { uuid } = await context.params;
@@ -97,8 +104,13 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
     return errors.unauthorized();
   }
 
-  if (!isUser(auth)) {
-    return errors.forbidden("Only users can delete projects");
+  // Deleting requires project:write for agents, or a human user
+  if (isAgent(auth)) {
+    if (!hasPermission(auth, "project:write")) {
+      return errors.forbidden("Missing permission: project:write");
+    }
+  } else if (!isUser(auth)) {
+    return errors.forbidden("Only users or permitted agents can delete projects");
   }
 
   const { uuid } = await context.params;

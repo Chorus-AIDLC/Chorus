@@ -7,13 +7,22 @@ import type { AuthContext } from "@/types/auth";
 import { computeDerivedStatus } from "@/services/idea.service";
 import type { DerivedIdeaStatus } from "@/services/idea.service";
 import * as notificationService from "@/services/notification.service";
+import {
+  computeEffectivePermissions,
+  groupPermissionsByResource,
+} from "@/lib/authz/permissions";
+import type { Action, Resource } from "@/lib/authz/types";
 
 // ===== Response shape =====
 
 export interface CheckinAgentInfo {
   uuid: string;
   name: string;
-  roles: string[];
+  /**
+   * Effective permissions grouped by resource. Resources with no granted
+   * actions are omitted. Example: `{ idea: ["read","write","admin"], task: ["read","write"] }`.
+   */
+  permissions: Partial<Record<Resource, Action[]>>;
   persona: string | null;
   systemPrompt: string | null;
   owner: { uuid: string; name: string | null; email: string | null } | null;
@@ -70,12 +79,19 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
       uuid: true,
       name: true,
       roles: true,
+      permissions: true,
       persona: true,
       systemPrompt: true,
       ownerUuid: true,
       owner: { select: { uuid: true, name: true, email: true } },
     },
   });
+
+  const effective = computeEffectivePermissions(
+    agent.roles,
+    agent.permissions,
+  );
+  const groupedPermissions = groupPermissionsByResource(effective);
 
   // Build idea tracker and fetch notification summary in parallel
   const [ideaTracker, notifications] = await Promise.all([
@@ -96,7 +112,7 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
     agent: {
       uuid: agent.uuid,
       name: agent.name,
-      roles: agent.roles,
+      permissions: groupedPermissions,
       persona: agent.persona,
       systemPrompt: agent.systemPrompt,
       owner: agent.owner

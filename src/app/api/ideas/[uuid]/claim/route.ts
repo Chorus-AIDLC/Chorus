@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser, isAgent, isPmAgent } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { getIdeaByUuid, claimIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
 
@@ -32,9 +32,9 @@ export const POST = withErrorHandler<{ uuid: string }>(
     let assignedByUuid: string | null = null;
 
     if (isAgent(auth)) {
-      // Agent claim - must be a PM Agent
-      if (!isPmAgent(auth)) {
-        return errors.forbidden("Only PM agents can claim ideas");
+      // Agents need idea:write permission to claim
+      if (!hasPermission(auth, "idea:write")) {
+        return errors.forbidden("Missing permission: idea:write");
       }
       assigneeType = "agent";
       assigneeUuid = auth.actorUuid;

@@ -107,13 +107,13 @@ if [ "$CLOSE_OK" = true ] && [ -n "$SESSION_DETAIL" ]; then
       TASK_STATUS=$(echo "$TASK_DETAIL" | jq -r '.status // empty' 2>/dev/null) || true
 
       if [ "$TASK_STATUS" = "to_verify" ]; then
-        AGENT_ROLES=$("$API" state-get "agent_roles" 2>/dev/null) || true
-        IS_ADMIN="false"
-        case ",$AGENT_ROLES," in
-          *,admin_agent,*) IS_ADMIN="true" ;;
+        AGENT_PERMS=$("$API" state-get "agent_permissions" 2>/dev/null) || true
+        CAN_VERIFY_TASK="false"
+        case ",$AGENT_PERMS," in
+          *,task:admin,*) CAN_VERIFY_TASK="true" ;;
         esac
 
-        if [ "$IS_ADMIN" = "true" ]; then
+        if [ "$CAN_VERIFY_TASK" = "true" ]; then
           AC_TOTAL=$(echo "$TASK_DETAIL" | jq -r '.acceptanceSummary.required // 0' 2>/dev/null) || true
           ADMIN_PASSED=$(echo "$TASK_DETAIL" | jq -r '.acceptanceSummary.requiredPassed // 0' 2>/dev/null) || true
 

@@ -19,7 +19,16 @@ vi.mock("@/services/project.service", () => ({
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
   isUser: (auth: { type: string }) => auth.type === "user",
+  isAgent: (auth: { type: string }) => auth.type === "agent",
   isPmAgent: (auth: { roles?: string[] }) => auth.roles?.includes("pm_agent") ?? false,
+  hasPermission: (auth: { permissions?: string[] }, perm: string) =>
+    auth.permissions?.includes(perm) ?? false,
+  checkAgentPermission: (auth: { type: string; permissions?: string[] }, perm: string) => {
+    if (auth.type === "agent" && !(auth.permissions?.includes(perm) ?? false)) {
+      return new Response(JSON.stringify({ success: false, error: { message: `Missing permission: ${perm}` } }), { status: 403 });
+    }
+    return null;
+  },
 }));
 
 import { GET } from "@/app/api/projects/[uuid]/tasks/route";

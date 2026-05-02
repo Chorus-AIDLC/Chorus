@@ -44,6 +44,7 @@ const mockAuth: AgentAuthContext = {
   actorUuid: "agent-1",
   agentName: "Test Agent",
   roles: ["developer_agent"],
+  permissions: [],
 };
 
 describe("tool-logger", () => {

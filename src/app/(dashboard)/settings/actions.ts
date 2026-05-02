@@ -18,6 +18,10 @@ import {
   type SessionResponse,
 } from "@/services/session.service";
 import logger from "@/lib/logger";
+import {
+  computeEffectivePermissions,
+  isValidPermission,
+} from "@/lib/authz/permissions";
 
 interface ApiKeyResponse {
   uuid: string;
@@ -27,6 +31,8 @@ interface ApiKeyResponse {
   expiresAt: string | null;
   createdAt: string;
   roles: string[];
+  permissions: string[];
+  effectivePermissions: string[];
   agentUuid: string;
   persona: string | null;
 }
@@ -44,17 +50,25 @@ export async function getApiKeysAction(): Promise<{
   try {
     const { apiKeys } = await listApiKeys(auth.companyUuid, 0, 100, auth.actorUuid);
 
-    const data = apiKeys.map((key) => ({
-      uuid: key.uuid,
-      keyPrefix: key.keyPrefix,
-      name: key.agent?.name || key.name,
-      lastUsed: null,
-      expiresAt: key.expiresAt?.toISOString() || null,
-      createdAt: key.createdAt.toISOString(),
-      roles: key.agent?.roles || [],
-      agentUuid: key.agent?.uuid || "",
-      persona: key.agent?.persona || null,
-    }));
+    const data = apiKeys.map((key) => {
+      const roles = key.agent?.roles || [];
+      const permissions = key.agent?.permissions || [];
+      return {
+        uuid: key.uuid,
+        keyPrefix: key.keyPrefix,
+        name: key.agent?.name || key.name,
+        lastUsed: null,
+        expiresAt: key.expiresAt?.toISOString() || null,
+        createdAt: key.createdAt.toISOString(),
+        roles,
+        permissions,
+        effectivePermissions: Array.from(
+          computeEffectivePermissions(roles, permissions),
+        ),
+        agentUuid: key.agent?.uuid || "",
+        persona: key.agent?.persona || null,
+      };
+    });
 
     return { success: true, data };
   } catch (error) {
@@ -67,6 +81,7 @@ interface CreateAgentKeyInput {
   name: string;
   roles: string[];
   persona: string | null;
+  permissions?: string[];
 }
 
 export async function createAgentAndKeyAction(input: CreateAgentKeyInput): Promise<{
@@ -81,13 +96,22 @@ export async function createAgentAndKeyAction(input: CreateAgentKeyInput): Promi
   }
 
   try {
-    // Create agent with specified roles and persona
+    if (input.permissions) {
+      for (const p of input.permissions) {
+        if (!isValidPermission(p)) {
+          return { success: false, error: `Invalid permission: ${p}` };
+        }
+      }
+    }
+
+    // Create agent with specified roles, persona, and permissions
     const agent = await createAgent({
       companyUuid: auth.companyUuid,
       name: input.name,
       roles: input.roles,
       ownerUuid: auth.actorUuid,
       persona: input.persona,
+      permissions: input.permissions,
     });
 
     // Create API key for the agent
@@ -185,9 +209,10 @@ export async function reopenSessionAction(sessionUuid: string): Promise<{
 
 interface UpdateAgentInput {
   agentUuid: string;
-  name: string;
-  roles: string[];
-  persona: string | null;
+  name?: string;
+  roles?: string[];
+  persona?: string | null;
+  permissions?: string[];
 }
 
 export async function updateAgentAction(input: UpdateAgentInput): Promise<{
@@ -200,14 +225,31 @@ export async function updateAgentAction(input: UpdateAgentInput): Promise<{
   }
 
   try {
-    await updateAgent(input.agentUuid, {
-      name: input.name,
-      roles: input.roles,
-      persona: input.persona,
-    }, auth.companyUuid);
+    if (input.permissions) {
+      for (const p of input.permissions) {
+        if (!isValidPermission(p)) {
+          return { success: false, error: `Invalid permission: ${p}` };
+        }
+      }
+    }
+
+    const updateData: {
+      name?: string;
+      roles?: string[];
+      persona?: string | null;
+      permissions?: string[];
+    } = {};
+    if (input.name !== undefined) updateData.name = input.name;
+    if (input.roles !== undefined) updateData.roles = input.roles;
+    if (input.persona !== undefined) updateData.persona = input.persona;
+    if (input.permissions !== undefined) updateData.permissions = input.permissions;
+
+    await updateAgent(input.agentUuid, updateData, auth.companyUuid);
 
     // Sync API key names to match the updated agent name
-    await syncApiKeyNames(input.agentUuid, input.name);
+    if (input.name !== undefined) {
+      await syncApiKeyNames(input.agentUuid, input.name);
+    }
 
     return { success: true };
   } catch (error) {

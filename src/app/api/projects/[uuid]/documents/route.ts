@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import { projectExists } from "@/services/project.service";
 import { listDocuments, createDocument } from "@/services/document.service";
 
@@ -18,6 +18,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "document:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
     const { page, pageSize, skip, take } = parsePagination(request);
@@ -51,9 +53,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Only users can create Documents directly
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can create documents directly");
+    // Creating requires document:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "document:write")) {
+        return errors.forbidden("Missing permission: document:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can create documents");
     }
 
     const { uuid: projectUuid } = await context.params;

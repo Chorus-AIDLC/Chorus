@@ -6,7 +6,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
-import { getAuthContext, isAgent, isPmAgent, isUser } from "@/lib/auth";
+import { getAuthContext, isAgent, isUser, checkAgentPermission, hasPermission } from "@/lib/auth";
 import { projectExists } from "@/services/project.service";
 import { listProposals, createProposal, type DocumentDraft, type TaskDraft } from "@/services/proposal.service";
 
@@ -19,6 +19,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "proposal:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
     const { page, pageSize, skip, take } = parsePagination(request);
@@ -52,10 +54,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // PM Agent or User can create Proposals
-    const canCreate = isUser(auth) || (isAgent(auth) && isPmAgent(auth));
-    if (!canCreate) {
-      return errors.forbidden("Only PM agents or users can create proposals");
+    // Creating a proposal requires proposal:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "proposal:write")) {
+        return errors.forbidden("Missing permission: proposal:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can create proposals");
     }
 
     const { uuid: projectUuid } = await context.params;

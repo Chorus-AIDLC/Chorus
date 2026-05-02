@@ -25,6 +25,8 @@ import {
   isAssignee,
   isSuperAdmin,
   requireSuperAdmin,
+  hasPermission,
+  requireAgentPermission,
 } from '../auth';
 import type { AgentAuthContext, UserAuthContext, AuthContext, SuperAdminAuthContext } from '@/types/auth';
 import { validateApiKey } from '@/lib/api-key';
@@ -45,6 +47,7 @@ const agentCtx: AgentAuthContext = {
   companyUuid: 'comp-uuid',
   actorUuid: 'agent-uuid',
   roles: ['developer'],
+  permissions: [],
   agentName: 'Dev Agent',
 };
 
@@ -53,6 +56,7 @@ const pmAgentCtx: AgentAuthContext = {
   companyUuid: 'comp-uuid',
   actorUuid: 'pm-uuid',
   roles: ['pm'],
+  permissions: [],
   agentName: 'PM Agent',
 };
 
@@ -61,6 +65,7 @@ const multiRoleCtx: AgentAuthContext = {
   companyUuid: 'comp-uuid',
   actorUuid: 'multi-uuid',
   roles: ['pm', 'developer'],
+  permissions: [],
   agentName: 'Multi Agent',
 };
 
@@ -155,6 +160,7 @@ describe('getAuthContext', () => {
       companyUuid: 'company-uuid',
       name: 'Test Agent',
       roles: ['developer'],
+      permissions: [],
       ownerUuid: 'owner-uuid',
     };
 
@@ -171,6 +177,14 @@ describe('getAuthContext', () => {
       companyUuid: 'company-uuid',
       actorUuid: 'agent-uuid',
       roles: ['developer'],
+      permissions: expect.arrayContaining([
+        'idea:read',
+        'proposal:read',
+        'document:read',
+        'project:read',
+        'task:read',
+        'task:write',
+      ]),
       ownerUuid: 'owner-uuid',
       agentName: 'Test Agent',
     });
@@ -342,6 +356,7 @@ describe('requireUser', () => {
       companyUuid: 'company-uuid',
       actorUuid: 'agent-uuid',
       roles: ['developer'],
+      permissions: [],
       agentName: 'Test Agent',
     };
 
@@ -373,6 +388,7 @@ describe('requireAgentRole', () => {
       companyUuid: 'company-uuid',
       actorUuid: 'agent-uuid',
       roles: ['developer'],
+      permissions: [],
       agentName: 'Test Agent',
     };
 
@@ -395,6 +411,7 @@ describe('requireAgentRole', () => {
       companyUuid: 'company-uuid',
       actorUuid: 'agent-uuid',
       roles: ['developer'],
+      permissions: [],
       agentName: 'Test Agent',
     };
 
@@ -537,5 +554,149 @@ describe('requireSuperAdmin', () => {
     expect(response.status).toBe(401);
     const body = await response.json();
     expect(body.error.message).toContain('Super Admin');
+  });
+});
+
+describe('hasPermission', () => {
+  const superAdminCtx: SuperAdminAuthContext = {
+    type: 'super_admin',
+    email: 'admin@test.com',
+  };
+
+  const devAgentCtx: AgentAuthContext = {
+    type: 'agent',
+    companyUuid: 'comp-uuid',
+    actorUuid: 'dev-uuid',
+    roles: ['developer_agent'],
+    permissions: [
+      'idea:read',
+      'proposal:read',
+      'document:read',
+      'project:read',
+      'task:read',
+      'task:write',
+    ],
+    agentName: 'Dev',
+  };
+
+  it('returns true for developer_agent with task:read', () => {
+    expect(hasPermission(devAgentCtx, 'task:read')).toBe(true);
+  });
+
+  it('returns false for developer_agent with task:admin', () => {
+    expect(hasPermission(devAgentCtx, 'task:admin')).toBe(false);
+  });
+
+  it('returns true for super_admin regardless of permission asked', () => {
+    expect(hasPermission(superAdminCtx, 'task:admin')).toBe(true);
+    expect(hasPermission(superAdminCtx, 'proposal:admin')).toBe(true);
+    expect(hasPermission(superAdminCtx, 'idea:read')).toBe(true);
+  });
+
+  it('returns false for an agent with empty permissions array', () => {
+    const noPerms: AgentAuthContext = { ...devAgentCtx, permissions: [] };
+    expect(hasPermission(noPerms, 'task:read')).toBe(false);
+  });
+});
+
+describe('requireAgentPermission', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function buildAgent(permissions: AgentAuthContext['permissions']): AgentAuthContext {
+    return {
+      type: 'agent',
+      companyUuid: 'comp-uuid',
+      actorUuid: 'agent-uuid',
+      roles: [],
+      permissions,
+      agentName: 'Test Agent',
+    };
+  }
+
+  it('passes through when agent has the required permission', async () => {
+    const agent = buildAgent(['task:read']);
+    vi.mocked(getSuperAdminFromRequest).mockResolvedValue(null);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(agent as unknown as UserAuthContext);
+
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ success: true }));
+    const wrapped = requireAgentPermission('task:read', handler);
+
+    const req = new NextRequest(new URL('http://localhost:3000/api/test'));
+    const context = { params: Promise.resolve({}) };
+    await wrapped(req, context);
+
+    expect(handler).toHaveBeenCalledWith(req, context, agent);
+  });
+
+  it('returns 403 when agent lacks the required permission', async () => {
+    const agent = buildAgent(['task:read']);
+    vi.mocked(getSuperAdminFromRequest).mockResolvedValue(null);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(agent as unknown as UserAuthContext);
+
+    const handler = vi.fn();
+    const wrapped = requireAgentPermission('proposal:admin', handler);
+
+    const req = new NextRequest(new URL('http://localhost:3000/api/test'));
+    const context = { params: Promise.resolve({}) };
+    const response = await wrapped(req, context);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error.message).toContain('Missing permission: proposal:admin');
+  });
+
+  it('bypasses permission check for super_admin', async () => {
+    const superAdmin: SuperAdminAuthContext = { type: 'super_admin', email: 'admin@test.com' };
+    vi.mocked(getSuperAdminFromRequest).mockResolvedValue(superAdmin);
+
+    const handler = vi.fn().mockResolvedValue(NextResponse.json({ success: true }));
+    const wrapped = requireAgentPermission('task:admin', handler);
+
+    const req = new NextRequest(new URL('http://localhost:3000/api/test'));
+    const context = { params: Promise.resolve({}) };
+    await wrapped(req, context);
+
+    expect(handler).toHaveBeenCalledWith(req, context, superAdmin);
+  });
+
+  it('returns 401 when unauthenticated', async () => {
+    vi.mocked(getSuperAdminFromRequest).mockResolvedValue(null);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(null);
+    vi.mocked(isOidcToken).mockReturnValue(false);
+
+    const handler = vi.fn();
+    const wrapped = requireAgentPermission('task:read', handler);
+
+    const req = new NextRequest(new URL('http://localhost:3000/api/test'));
+    const context = { params: Promise.resolve({}) };
+    const response = await wrapped(req, context);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.status).toBe(401);
+  });
+
+  it('returns 403 when authenticated as plain user (not agent)', async () => {
+    const user: UserAuthContext = {
+      type: 'user',
+      companyUuid: 'comp-uuid',
+      actorUuid: 'user-uuid',
+    };
+    vi.mocked(getSuperAdminFromRequest).mockResolvedValue(null);
+    vi.mocked(getUserSessionFromRequest).mockResolvedValue(user);
+
+    const handler = vi.fn();
+    const wrapped = requireAgentPermission('task:read', handler);
+
+    const req = new NextRequest(new URL('http://localhost:3000/api/test'));
+    const context = { params: Promise.resolve({}) };
+    const response = await wrapped(req, context);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error.message).toContain('agent authentication');
   });
 });

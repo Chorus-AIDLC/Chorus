@@ -1,0 +1,75 @@
+// src/mcp/tools/permission-map.ts
+// Central mapping of MCP tools to their required Permission.
+// Covers every permission-gated tool (pm.ts, developer.ts, admin.ts).
+// Public tools (public.ts) and session tools (session.ts) are NOT gated
+// and therefore intentionally absent from this map. See Tech Design §5.3.
+
+import type { Permission } from "@/lib/authz/types";
+
+export const TOOL_PERMISSIONS = {
+  // ===== pm.ts =====
+  // Idea mutations
+  chorus_claim_idea: "idea:write",
+  chorus_release_idea: "idea:write",
+  chorus_move_idea: "idea:write",
+  chorus_pm_create_idea: "idea:write",
+  // Elaboration (idea:write per §5.3)
+  chorus_pm_start_elaboration: "idea:write",
+  chorus_pm_validate_elaboration: "idea:write",
+  chorus_pm_skip_elaboration: "idea:write",
+  // Proposal writes
+  chorus_pm_create_proposal: "proposal:write",
+  chorus_pm_validate_proposal: "proposal:write",
+  chorus_pm_submit_proposal: "proposal:write",
+  chorus_pm_add_document_draft: "proposal:write",
+  chorus_pm_add_task_draft: "proposal:write",
+  chorus_pm_update_document_draft: "proposal:write",
+  chorus_pm_update_task_draft: "proposal:write",
+  chorus_pm_remove_document_draft: "proposal:write",
+  chorus_pm_remove_task_draft: "proposal:write",
+  chorus_pm_reject_proposal: "proposal:write",
+  chorus_pm_revoke_proposal: "proposal:write",
+  // Document writes
+  chorus_pm_create_document: "document:write",
+  chorus_pm_update_document: "document:write",
+  // Task-editing tools historically on the PM surface.
+  // Mapped to proposal:write to preserve 0.6.x dev boundaries (AC4): dev has
+  // task:write but not proposal:write, so dev keeps exactly its 0.6.x tool set.
+  chorus_pm_create_tasks: "proposal:write",
+  chorus_add_task_dependency: "proposal:write",
+  chorus_remove_task_dependency: "proposal:write",
+  chorus_pm_assign_task: "proposal:write",
+
+  // ===== developer.ts =====
+  chorus_claim_task: "task:write",
+  chorus_release_task: "task:write",
+  chorus_submit_for_verify: "task:write",
+  chorus_report_criteria_self_check: "task:write",
+  chorus_report_work: "task:write",
+
+  // ===== admin.ts =====
+  // Project write (includes Project and ProjectGroup mutations per §2.3)
+  chorus_admin_create_project: "project:write",
+  chorus_admin_create_project_group: "project:write",
+  chorus_admin_update_project_group: "project:write",
+  chorus_admin_delete_project_group: "project:write",
+  chorus_admin_move_project_to_group: "project:write",
+  // Proposal admin (approve + admin-only close)
+  chorus_admin_approve_proposal: "proposal:admin",
+  chorus_admin_close_proposal: "proposal:admin",
+  // Task admin (verify, reopen, close)
+  chorus_admin_verify_task: "task:admin",
+  chorus_admin_reopen_task: "task:admin",
+  chorus_admin_close_task: "task:admin",
+  // Admin-only task tools in 0.6.x (mark_acceptance_criteria, admin_delete_task).
+  // Mapped to task:admin so backward-compat AC4 (dev) holds — dev does not have task:admin.
+  chorus_mark_acceptance_criteria: "task:admin",
+  chorus_admin_delete_task: "task:admin",
+  // Admin-only destructive tools in 0.6.x. Mapped to the *:admin permission so pm
+  // doesn't inherit them via idea:write / document:write — keeps admin-only surface
+  // for these delete operations.
+  chorus_admin_delete_idea: "idea:admin",
+  chorus_admin_delete_document: "document:admin",
+} as const satisfies Record<string, Permission>;
+
+export type ManagedToolName = keyof typeof TOOL_PERMISSIONS;

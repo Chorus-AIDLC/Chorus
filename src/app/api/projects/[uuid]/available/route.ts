@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isAgent, isPmAgent, isDeveloperAgent } from "@/lib/auth";
+import { getAuthContext, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import { getProjectByUuid } from "@/services/project.service";
 import { getAvailableItems } from "@/services/assignment.service";
 
@@ -18,6 +18,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "project:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
 
@@ -27,12 +29,11 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Project");
     }
 
-    // Return different content based on role
-    // PM Agent: can claim Ideas
-    // Developer Agent: can claim Tasks
-    // User: can see everything
-    const canClaimIdeas = isAgent(auth) ? isPmAgent(auth) : true;
-    const canClaimTasks = isAgent(auth) ? isDeveloperAgent(auth) : true;
+    // Return different content based on permission
+    // Agent with idea:write can claim Ideas; task:write for Tasks
+    // User sees everything
+    const canClaimIdeas = isAgent(auth) ? hasPermission(auth, "idea:write") : true;
+    const canClaimTasks = isAgent(auth) ? hasPermission(auth, "task:write") : true;
 
     const result = await getAvailableItems(
       auth.companyUuid,

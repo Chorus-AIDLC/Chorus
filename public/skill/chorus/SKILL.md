@@ -86,9 +86,25 @@ creates  analyzes     drafts PRD         codes &      reviews   closes
 
 | Role | Responsibility | MCP Tools |
 |------|---------------|-----------|
-| **PM Agent** | Analyze Ideas, create Proposals (PRD + Task drafts), manage documents | Public + `chorus_pm_*` + `chorus_*_idea` |
+| **PM Agent** | Analyze Ideas, create Proposals (PRD + Task drafts), manage documents | Public + `chorus_pm_*` + `chorus_*_idea` + `task:write` tools (claim/release/submit/report) |
 | **Developer Agent** | Claim Tasks, write code, report work, submit for verification | Public + `chorus_*_task` + `chorus_report_work` |
 | **Admin Agent** | Create projects/ideas, approve/reject proposals, verify tasks, manage lifecycle | Public + `chorus_admin_*` + PM + Developer tools |
+
+### Permissions
+
+Each agent's tool visibility is driven by a **permission set**, not by the role label alone. Chorus has 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each permission-gated MCP tool declares a single required permission (see `<BASE_URL>/docs/MCP_TOOLS.md` for the full table).
+
+**Role presets** map to permission sets:
+
+| Preset | Permissions |
+|--------|-------------|
+| `developer_agent` | all `*:read` + `task:write` |
+| `pm_agent` | all `*:read` + `idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` |
+| `admin_agent` | all 15 permissions (every `read` + `write` + `admin`) |
+
+**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, sessions, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
+
+> **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
 ---
 
@@ -125,9 +141,9 @@ Results can be filtered by project(s) using optional HTTP headers in your MCP co
 
 ### MCP Connection
 
-- MCP sessions expire after 30 minutes of **inactivity** (sliding window)
-- Each MCP request automatically renews the session
-- If you receive a "Session not found" error, reinitialize the MCP connection
+- The Chorus MCP endpoint is **stateless** — each HTTP request creates a fresh server instance, so there is no client-side session to keep alive
+- Supply your API Key in the `Authorization: Bearer cho_...` header on every request (your MCP client handles this automatically)
+- Horizontal scaling works out of the box; no sticky sessions required
 
 ### Project Groups
 
@@ -257,11 +273,14 @@ API Keys are created by the user in the Chorus Web UI.
 **Ask the user to:**
 1. Open the Chorus settings page (e.g., `http://localhost:8637/settings`)
 2. Click **Create API Key**
-3. Enter Agent name, select role (Developer / PM / Admin)
+3. Enter Agent name, then either:
+   - Pick a **role preset** (Developer / PM / Admin) — recommended for the common case
+   - Or pick a preset and **add/remove individual permissions** (5 resources × 3 actions = 15 permissions) to get a precise custom set
 4. Click create and **immediately copy the key** (shown only once)
 
 **Security notes:**
-- Each Agent should have its own API Key with the minimum required role
+- Each Agent should have its own API Key with the minimum required permissions
+- Presets are the fastest path; custom permissions let you grant narrowly (e.g. a dev agent that also needs `idea:write` to file bugs)
 - API Keys should not be committed to version control
 
 ### 2. MCP Server Configuration
@@ -297,19 +316,27 @@ chorus_checkin()
 
 If it fails, check: API Key correct (`cho_` prefix)? URL reachable? IDE restarted?
 
-### 4. Role-Specific Tool Access
+### 4. Tool Access by Preset
 
-| Tool Prefix | Developer | PM | Admin |
-|-------------|-----------|------|-------|
-| `chorus_get_*` / `chorus_list_*` | Yes | Yes | Yes |
-| `chorus_checkin` | Yes | Yes | Yes |
-| `chorus_add_comment` / `chorus_get_comments` | Yes | Yes | Yes |
-| `chorus_claim_task` / `chorus_release_task` | Yes | No | Yes |
-| `chorus_update_task` / `chorus_submit_for_verify` | Yes | No | Yes |
-| `chorus_report_work` | Yes | No | Yes |
-| `chorus_claim_idea` / `chorus_release_idea` | No | Yes | Yes |
-| `chorus_pm_*` | No | Yes | Yes |
-| `chorus_admin_*` | No | No | Yes |
+The table below shows default tool availability for each preset (no custom permissions). Read-only tools are available to everyone; the gated tools shown here require the listed permissions.
+
+| Tool Group | Required Permission | Developer | PM | Admin |
+|------------|--------------------|-----------|------|-------|
+| `chorus_get_*` / `chorus_list_*` / `chorus_search*` | (public, read) | Yes | Yes | Yes |
+| `chorus_checkin` | (public) | Yes | Yes | Yes |
+| `chorus_add_comment` / `chorus_get_comments` | (public) | Yes | Yes | Yes |
+| `chorus_update_task` (field edits + status) | (public; assignee required for status) | Yes | Yes | Yes |
+| `chorus_claim_task` / `chorus_release_task` / `chorus_submit_for_verify` / `chorus_report_work` / `chorus_report_criteria_self_check` | `task:write` | Yes | **Yes** (0.7.0+) | Yes |
+| `chorus_claim_idea` / `chorus_release_idea` / `chorus_move_idea` / `chorus_pm_create_idea` / `chorus_pm_*_elaboration` | `idea:write` | No | Yes | Yes |
+| `chorus_pm_create_proposal` / `chorus_pm_*_proposal` / `chorus_pm_*_draft` / `chorus_pm_create_tasks` / `chorus_pm_assign_task` / `chorus_*_task_dependency` | `proposal:write` | No | Yes | Yes |
+| `chorus_pm_create_document` / `chorus_pm_update_document` | `document:write` | No | Yes | Yes |
+| `chorus_admin_create_project` / `chorus_admin_*_project_group` / `chorus_admin_move_project_to_group` | `project:write` | No | **Yes** (0.7.0+) | Yes |
+| `chorus_admin_approve_proposal` / `chorus_admin_close_proposal` | `proposal:admin` | No | No | Yes |
+| `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` / `chorus_mark_acceptance_criteria` / `chorus_admin_delete_task` | `task:admin` | No | No | Yes |
+| `chorus_admin_delete_idea` | `idea:admin` | No | No | Yes |
+| `chorus_admin_delete_document` | `document:admin` | No | No | Yes |
+
+> Changes in 0.7.0: the `pm_agent` preset now also carries `task:write` (for `claim/release/submit/report`) and `project:write` (for project and group management). This widens PM's MCP tool surface by 10 tools vs 0.6.x — handler-level assignee / authorship guards still prevent misuse. See `<BASE_URL>/docs/MCP_TOOLS.md` for the complete tool → permission map.
 
 ---
 

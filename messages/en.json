@@ -667,13 +667,6 @@
     "pmAgentDesc": "Analyze requirements, write proposals, manage tasks",
     "adminAgent": "Admin Agent",
     "adminAgentDesc": "Human-level permissions: approve proposals, verify tasks, create projects",
-    "adminWarningTitle": "Danger: Admin Agent Permissions",
-    "adminWarningDesc": "You are creating an Agent with human-level permissions. This Agent will be able to:",
-    "adminWarningItem1": "Approve or reject Proposals",
-    "adminWarningItem2": "Verify and close Tasks",
-    "adminWarningItem3": "Create and manage Projects",
-    "adminWarningItem4": "Delete any content (Ideas, Tasks, Documents)",
-    "adminConfirmCheckbox": "I understand the risks and confirm creating an Admin Agent",
     "created": "Created",
     "apiKeyCreated": "API Key Created",
     "apiKeyCreatedDesc": "Copy this key now. You won't be able to see it again!",
@@ -685,7 +678,7 @@
     "agentPersonaDesc": "Select a preset or write your own persona. This defines how the agent behaves in all interactions.",
     "agentPersonaDescNoRoles": "Define how this agent should behave in all interactions.",
     "personaPlaceholder": "Describe how this agent should behave. For example: 'You are a helpful assistant that focuses on clarity and simplicity...'",
-    "personaHint": "You can edit the text above or write your own custom persona.",
+    "personaHint": "The persona is injected into the agent's context on every check-in.",
     "personaHintNoRoles": "Write a custom persona for your agent.",
     "creating": "Creating...",
     "confirmDelete": "Are you sure you want to delete this API key?",
@@ -699,7 +692,10 @@
     "updateFailed": "Failed to update agent",
     "setupGuide": "Setup Guide",
     "setupGuideDesc": "Set up your AI agent connection step by step",
-    "openSetupGuide": "Open Setup Guide"
+    "openSetupGuide": "Open Setup Guide",
+    "effectivePermissions": "Effective permissions",
+    "noEffectivePermissions": "No permissions granted",
+    "customRole": "Custom"
   },
   "login": {
     "title": "Chorus",
@@ -999,12 +995,22 @@
       "summary": "Setup Summary",
       "agentName": "Agent Name",
       "agentRoles": "Roles",
+      "agentPreset": "Preset",
+      "agentPermissions": "Permissions",
+      "permissionsCount": "{count} {count, plural, one {permission} other {permissions}}",
       "goToProjects": "Go to Projects",
       "goToSettings": "Go to Settings"
     },
     "createAgent": {
       "title": "Create Your AI Agent",
-      "description": "Set up an AI agent with the roles and persona that match your workflow. This will generate an API key for the agent."
+      "description": "Set up an AI agent with the permissions and persona that match your workflow. This will generate an API key for the agent.",
+      "nameLabel": "Agent name",
+      "namePlaceholder": "e.g. my-dev-agent",
+      "personaLabel": "Persona (optional)",
+      "personaPlaceholder": "Describe how this agent should behave — tone, priorities, constraints.",
+      "personaHint": "The persona is appended to the agent's system prompt to shape its behavior.",
+      "submit": "Create agent",
+      "creating": "Creating agent..."
     },
     "copyKey": {
       "title": "Copy Your API Key",
@@ -1225,6 +1231,36 @@
       "document": "Document",
       "project": "Project",
       "project_group": "Group"
+    }
+  },
+  "agent": {
+    "permissions": {
+      "title": "Permissions",
+      "description": "Start from a preset, or customize the permission matrix directly.",
+      "presetLabel": "Preset",
+      "presetAdmin": "Admin",
+      "presetPm": "PM",
+      "presetDev": "Developer",
+      "presetCustom": "Custom",
+      "resourceHeader": "Resource",
+      "resources": {
+        "idea": "Idea",
+        "proposal": "Proposal",
+        "document": "Document",
+        "task": "Task",
+        "project": "Project"
+      },
+      "actions": {
+        "read": "Read",
+        "write": "Write",
+        "admin": "Admin"
+      },
+      "help": {
+        "admin": "Full access across all resources, including approve / verify / reopen. Recommended for administrative agents.",
+        "pm": "Plan and drive work: manage ideas, proposals, documents, tasks, and projects. No approval or verification authority.",
+        "dev": "Execute work: read ideas, proposals, documents, and projects; create and update tasks. Cannot approve or verify.",
+        "custom": "Pick individual permissions. Admin-column actions (approve / verify / close) are only reachable in Custom mode."
+      }
     }
   }
 }

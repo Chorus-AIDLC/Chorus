@@ -4,7 +4,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext } from "@/lib/auth";
+import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { getProject, getProjectStats } from "@/services/project.service";
 import { listActivitiesWithActorNames } from "@/services/activity.service";
 
@@ -17,6 +17,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "project:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
 

@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { getProposalByUuid, closeProposal } from "@/services/proposal.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -18,9 +18,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Only users can close
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can close proposals");
+    // Close requires proposal:admin for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "proposal:admin")) {
+        return errors.forbidden("Missing permission: proposal:admin");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or admin agents can close proposals");
     }
 
     const { uuid } = await context.params;

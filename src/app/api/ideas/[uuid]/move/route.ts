@@ -4,7 +4,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext } from "@/lib/auth";
+import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { moveIdea } from "@/services/idea.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -16,6 +16,8 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "idea:write");
+    if (denied) return denied;
 
     const { uuid } = await context.params;
     const body = await parseBody<{ targetProjectUuid: string }>(request);

@@ -1,6 +1,6 @@
 ---
 name: quick-dev
-version: 0.7.5
+version: 0.8.0
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
 ---
 
@@ -37,7 +37,7 @@ For complex work, use `/idea` + `/proposal` instead.
 
 ## Pre-Flight: Admin Self-Verify Check
 
-**Before creating tasks**, if you have the `admin_agent` role, ask the user:
+**Before creating tasks**, if `chorus_checkin().agent.permissions.task` includes `"admin"`, ask the user:
 
 > "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify?"
 
@@ -149,7 +149,7 @@ chorus_submit_for_verify({
 })
 ```
 
-**Admin self-verification:** If you have the `admin_agent` role and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
+**Admin self-verification:** If you have `task: ["admin"]` in `permissions` and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
 
 ```
 chorus_admin_verify_task({ taskUuid: "<task-uuid>" })

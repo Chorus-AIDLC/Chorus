@@ -4,7 +4,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext } from "@/lib/auth";
+import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { getTaskByUuid, removeTaskDependency } from "@/services/task.service";
 
 type RouteContext = { params: Promise<{ uuid: string; dependsOnUuid: string }> };
@@ -16,6 +16,8 @@ export const DELETE = withErrorHandler<{ uuid: string; dependsOnUuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "task:write");
+    if (denied) return denied;
 
     const { uuid, dependsOnUuid } = await context.params;
 

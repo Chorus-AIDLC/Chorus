@@ -101,6 +101,7 @@ export async function validateApiKey(
         companyUuid: apiKey.agent.companyUuid,
         name: apiKey.agent.name,
         roles: apiKey.agent.roles,
+        permissions: apiKey.agent.permissions,
         ownerUuid: apiKey.agent.ownerUuid,
       },
       apiKey: {

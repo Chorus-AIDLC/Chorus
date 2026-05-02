@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { getProposalByUuid, revokeProposal } from "@/services/proposal.service";
 import { createActivity } from "@/services/activity.service";
 
@@ -19,9 +19,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.unauthorized();
     }
 
-    // Only users can revoke
-    if (!isUser(auth)) {
-      return errors.forbidden("Only users can revoke proposals");
+    // Revoke requires proposal:write for agents, or a human user
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "proposal:write")) {
+        return errors.forbidden("Missing permission: proposal:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can revoke proposals");
     }
 
     const { uuid } = await context.params;
@@ -52,7 +56,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       projectUuid: proposal.projectUuid,
       targetType: "proposal",
       targetUuid: proposal.uuid,
-      actorType: "user",
+      actorType: auth.type,
       actorUuid: auth.actorUuid,
       action: "revoked",
       value: {

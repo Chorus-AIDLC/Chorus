@@ -325,20 +325,20 @@
     "complete": "完成",
     "createNew": {
       "title": "创建新项目",
-      "subtitle": "设置项目详情，之后再将想法分配给 PM 智能体",
+      "subtitle": "设置项目详情，之后再将想法分配给 产品经理智能体",
       "gettingStartedTitle": "开始使用",
-      "gettingStartedDesc": "填写以下基本信息。创建后，您可以添加想法并分配给 PM 智能体生成提案。",
+      "gettingStartedDesc": "填写以下基本信息。创建后，您可以添加想法并分配给 产品经理智能体生成提案。",
       "basicInfo": "基本信息",
       "projectName": "项目名称",
       "projectNamePlaceholder": "例如：项目 Alpha",
       "descriptionLabel": "描述",
       "descriptionPlaceholder": "简要描述这个项目是关于什么的...",
       "initialIdeas": "初始想法",
-      "initialIdeasDesc": "分享任何初始想法或需求，供 PM 智能体在生成提案时参考",
+      "initialIdeasDesc": "分享任何初始想法或需求，供 产品经理智能体在生成提案时参考",
       "ideaPlaceholder": "例如：我们需要支持 OAuth 的用户认证...",
       "addAnother": "添加另一个想法",
       "documents": "文档",
-      "documentsDesc": "上传 PRD、技术设计或任何参考文档供 PM 智能体分析",
+      "documentsDesc": "上传 PRD、技术设计或任何参考文档供 产品经理智能体分析",
       "dragDrop": "拖放文件到此处，或点击浏览",
       "fileTypes": "Markdown（.md）文档",
       "createProject": "创建项目"
@@ -366,11 +366,11 @@
     "usedInProposal": "已用于提案",
     "noIdeasWithStatus": "暂无{status}的想法",
     "selectIdeaAssignee": "选择如何分配此想法",
-    "assignToMyselfIdeaDesc": "您的所有 PM 智能体都可以查看并处理此想法",
-    "orAssignToPmAgent": "分配给特定 PM 智能体",
-    "onlySelectedPmAgentCanWork": "只有选中的 PM 智能体可以处理此想法",
-    "selectPmAgent": "选择一个 PM 智能体",
-    "noPmAgentsAvailable": "没有可用的 PM 智能体",
+    "assignToMyselfIdeaDesc": "您的所有 产品经理智能体都可以查看并处理此想法",
+    "orAssignToPmAgent": "分配给特定 产品经理智能体",
+    "onlySelectedPmAgentCanWork": "只有选中的 产品经理智能体可以处理此想法",
+    "selectPmAgent": "选择一个 产品经理智能体",
+    "noPmAgentsAvailable": "没有可用的 产品经理智能体",
     "releaseIdeaAssigneeDesc": "移除当前负责人，使此想法重新可用",
     "proposalGenerated": "已生成提案",
     "viewProposal": "查看提案",
@@ -471,7 +471,7 @@
     "all": "全部",
     "pendingReview": "待审核",
     "noProposals": "暂无提案",
-    "noProposalsDesc": "当 PM 智能体分析想法时会创建提案。它们将在此显示供您审核。",
+    "noProposalsDesc": "当 产品经理智能体分析想法时会创建提案。它们将在此显示供您审核。",
     "loadingProposals": "加载提案中...",
     "proposalNotFound": "提案未找到",
     "backToProposals": "返回提案列表",
@@ -664,17 +664,10 @@
     "roles": "角色:",
     "developerAgent": "开发智能体",
     "developerAgentDesc": "执行任务、编写代码、报告问题、提交代码",
-    "pmAgent": "产品智能体",
+    "pmAgent": "产品经理智能体",
     "pmAgentDesc": "分析需求、撰写提案、管理任务",
     "adminAgent": "管理员智能体",
     "adminAgentDesc": "人类级别权限：审批提案、验证任务、创建项目",
-    "adminWarningTitle": "危险：管理员智能体权限",
-    "adminWarningDesc": "您正在创建具有人类级别权限的智能体。此智能体将能够：",
-    "adminWarningItem1": "批准或拒绝提案",
-    "adminWarningItem2": "验证并关闭任务",
-    "adminWarningItem3": "创建和管理项目",
-    "adminWarningItem4": "删除任意内容（想法、任务、文档）",
-    "adminConfirmCheckbox": "我已了解风险，确认创建管理员智能体",
     "created": "创建于",
     "apiKeyCreated": "API 密钥已创建",
     "apiKeyCreatedDesc": "请立即复制此密钥。您将无法再次查看它！",
@@ -686,7 +679,7 @@
     "agentPersonaDesc": "选择预设或编写您自己的人设。这定义了智能体在所有交互中的行为方式。",
     "agentPersonaDescNoRoles": "定义此智能体在所有交互中的行为方式。",
     "personaPlaceholder": "描述此智能体应如何行为。例如：'您是一个专注于清晰和简洁的助手...'",
-    "personaHint": "您可以编辑上面的文字或编写自己的自定义人设。",
+    "personaHint": "人设会在每次 check-in 时自动注入到智能体的上下文。",
     "personaHintNoRoles": "为您的智能体编写自定义人设。",
     "creating": "创建中...",
     "confirmDelete": "确定要删除此 API 密钥吗？",
@@ -700,7 +693,10 @@
     "updateFailed": "更新智能体失败",
     "setupGuide": "设置向导",
     "setupGuideDesc": "逐步设置您的 AI 智能体连接",
-    "openSetupGuide": "打开设置向导"
+    "openSetupGuide": "打开设置向导",
+    "effectivePermissions": "生效的权限",
+    "noEffectivePermissions": "尚未授予任何权限",
+    "customRole": "自定义"
   },
   "login": {
     "title": "Chorus",
@@ -754,11 +750,11 @@
     "deleteProjectConfirm": "确定要删除「{name}」吗？此操作无法撤销，将永久删除所有关联的想法、提案、任务、文档和动态。"
   },
   "personas": {
-    "devPm": "开发者导向 PM",
+    "devPm": "开发导向产品经理",
     "devPmDesc": "您是一位优先考虑开发者体验并构建开发者优先产品的产品经理。您理解技术约束，并能与工程团队有效沟通。",
-    "fullPm": "全能 PM",
+    "fullPm": "全能产品经理",
     "fullPmDesc": "您是一位全面的产品经理，以构建能为目标受众解决实际问题的产品为己任。您平衡业务目标、用户需求和技术可行性。",
-    "simplePm": "简约 PM",
+    "simplePm": "简约产品经理",
     "simplePmDesc": "您是一位专注的产品经理，优先考虑核心功能，避免过度设计。您相信快速交付、收集反馈、快速迭代。",
     "seniorDev": "高级开发者",
     "seniorDevDesc": "您是一位经验丰富的高级软件开发者，擅长构建可扩展的系统。您编写简洁、可维护的代码并遵循最佳实践。您指导初级开发者并做出架构决策。",
@@ -1000,12 +996,22 @@
       "summary": "配置摘要",
       "agentName": "智能体名称",
       "agentRoles": "角色",
+      "agentPreset": "预设",
+      "agentPermissions": "权限",
+      "permissionsCount": "{count} 项权限",
       "goToProjects": "前往项目",
       "goToSettings": "前往设置"
     },
     "createAgent": {
       "title": "创建您的 AI 智能体",
-      "description": "设置一个具有匹配您工作流程的角色和人设的 AI 智能体。这将为智能体生成一个 API 密钥。"
+      "description": "设置一个具有匹配您工作流程的权限和人设的 AI 智能体。这将为智能体生成一个 API 密钥。",
+      "nameLabel": "智能体名称",
+      "namePlaceholder": "例如：my-dev-agent",
+      "personaLabel": "人设（可选）",
+      "personaPlaceholder": "描述该智能体的行为方式——语气、优先级、约束。",
+      "personaHint": "人设会追加到智能体的系统提示词中，用于塑造其行为。",
+      "submit": "创建智能体",
+      "creating": "正在创建..."
     },
     "copyKey": {
       "title": "复制您的 API 密钥",
@@ -1148,7 +1154,7 @@
       "elaborationNotStarted": "尚未开始",
       "elaborationNotStartedDesc": "分配给智能体以开始需求细化。",
       "elaborationWaiting": "等待智能体",
-      "elaborationWaitingDesc": "PM 智能体将很快开始细化。",
+      "elaborationWaitingDesc": "产品经理智能体将很快开始细化。",
       "elaboration": {
         "pendingAnswers": "待回答",
         "validating": "验证中",
@@ -1226,6 +1232,36 @@
       "document": "文档",
       "project": "项目",
       "project_group": "分组"
+    }
+  },
+  "agent": {
+    "permissions": {
+      "title": "权限",
+      "description": "从预设开始，或直接自定义权限矩阵。",
+      "presetLabel": "预设",
+      "presetAdmin": "管理员",
+      "presetPm": "产品经理",
+      "presetDev": "开发者",
+      "presetCustom": "自定义",
+      "resourceHeader": "资源",
+      "resources": {
+        "idea": "想法",
+        "proposal": "提案",
+        "document": "文档",
+        "task": "任务",
+        "project": "项目"
+      },
+      "actions": {
+        "read": "读取",
+        "write": "写入",
+        "admin": "管理"
+      },
+      "help": {
+        "admin": "对所有资源拥有完整权限，包含审批 / 验收 / 重开。推荐用于管理员 Agent。",
+        "pm": "推进工作：管理想法、提案、文档、任务、项目。没有审批或验收权限。",
+        "dev": "执行工作：可读取想法、提案、文档与项目；可创建与更新任务。无审批或验收权限。",
+        "custom": "自由勾选权限位。只有在自定义模式下，才能开启「管理」列的审批 / 验收 / 关闭动作。"
+      }
     }
   }
 }

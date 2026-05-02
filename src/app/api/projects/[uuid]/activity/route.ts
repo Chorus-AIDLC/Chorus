@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parsePagination } from "@/lib/api-handler";
 import { paginated, errors } from "@/lib/api-response";
-import { getAuthContext } from "@/lib/auth";
+import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -17,6 +17,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "project:read");
+    if (denied) return denied;
 
     const { uuid: projectUuid } = await context.params;
     const { page, pageSize, skip, take } = parsePagination(request);

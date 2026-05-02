@@ -5,7 +5,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser, isAssignee } from "@/lib/auth";
+import { getAuthContext, isUser, isAssignee, checkAgentPermission } from "@/lib/auth";
 import {
   getIdea,
   getIdeaByUuid,
@@ -23,6 +23,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "idea:read");
+    if (denied) return denied;
 
     const { uuid } = await context.params;
     const idea = await getIdea(auth.companyUuid, uuid);
@@ -42,6 +44,8 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     if (!auth) {
       return errors.unauthorized();
     }
+    const denied = checkAgentPermission(auth, "idea:write");
+    if (denied) return denied;
 
     const { uuid } = await context.params;
 

@@ -16,6 +16,12 @@ vi.mock("@/services/project.service", () => ({
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
+  checkAgentPermission: (auth: { type: string; permissions?: string[] }, perm: string) => {
+    if (auth.type === "agent" && !(auth.permissions?.includes(perm) ?? false)) {
+      return new Response(JSON.stringify({ success: false, error: { message: `Missing permission: ${perm}` } }), { status: 403 });
+    }
+    return null;
+  },
 }));
 
 import { GET } from "@/app/api/projects/[uuid]/proposals/summary/route";

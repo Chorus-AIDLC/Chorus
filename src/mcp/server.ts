@@ -24,29 +24,15 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
   // Enable presence event emission for all tools (must be called before registerTool calls)
   enablePresence(server, auth);
 
-  // Register public tools (available to all Agents)
+  // Public tools — available to every authenticated agent (no permission gating)
   registerPublicTools(server, auth);
-
-  // Register Session tools (available to all Agents)
   registerSessionTools(server, auth);
 
-  // Register role-specific tools based on agent roles
-  const roles = auth.roles || [];
-
-  // Support two role formats: "pm" / "pm_agent", "developer" / "developer_agent", "admin" / "admin_agent"
-  const hasPmRole = roles.some(r => r === "pm" || r === "pm_agent");
-  const hasDevRole = roles.some(r => r === "developer" || r === "developer_agent");
-  const hasAdminRole = roles.some(r => r === "admin" || r === "admin_agent");
-
-  if (hasAdminRole) {
-    registerAdminTools(server, auth);
-  }
-  if (hasPmRole || hasAdminRole) {
-    registerPmTools(server, auth);
-  }
-  if (hasDevRole || hasAdminRole) {
-    registerDeveloperTools(server, auth);
-  }
+  // Permission-gated tools. Each register function calls registerPermissionedTool
+  // per tool, which checks auth.permissions.includes(required) before registering.
+  registerPmTools(server, auth);
+  registerDeveloperTools(server, auth);
+  registerAdminTools(server, auth);
 
   return server;
 }

@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 
 // GET /api/projects - List Projects
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -14,6 +14,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (!auth) {
     return errors.unauthorized();
   }
+  const denied = checkAgentPermission(auth, "project:read");
+  if (denied) return denied;
 
   const { page, pageSize, skip, take } = parsePagination(request);
 
@@ -76,9 +78,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.unauthorized();
   }
 
-  // Only users can create projects
-  if (!isUser(auth)) {
-    return errors.forbidden("Only users can create projects");
+  // Creating requires project:write for agents, or a human user
+  if (isAgent(auth)) {
+    if (!hasPermission(auth, "project:write")) {
+      return errors.forbidden("Missing permission: project:write");
+    }
+  } else if (!isUser(auth)) {
+    return errors.forbidden("Only users or permitted agents can create projects");
   }
 
   const body = await parseBody<{

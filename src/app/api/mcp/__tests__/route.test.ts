@@ -23,6 +23,7 @@ vi.mock("@/lib/api-key", () => ({
       uuid: "agent-uuid",
       companyUuid: "company-uuid",
       roles: ["developer"],
+      permissions: [],
       name: "Test Agent",
     },
   }),

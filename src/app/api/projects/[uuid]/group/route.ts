@@ -4,7 +4,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
-import { getAuthContext, isUser } from "@/lib/auth";
+import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { moveProjectToGroup } from "@/services/project-group.service";
 
 // PATCH /api/projects/[uuid]/group
@@ -12,7 +12,13 @@ export const PATCH = withErrorHandler(
   async (request: NextRequest, context: { params: Promise<{ uuid: string }> }) => {
     const auth = await getAuthContext(request);
     if (!auth) return errors.unauthorized();
-    if (!isUser(auth)) return errors.forbidden("Only users can move projects between groups");
+    if (isAgent(auth)) {
+      if (!hasPermission(auth, "project:write")) {
+        return errors.forbidden("Missing permission: project:write");
+      }
+    } else if (!isUser(auth)) {
+      return errors.forbidden("Only users or permitted agents can move projects between groups");
+    }
 
     const { uuid } = await context.params;
     const body = await parseBody<{ groupUuid: string | null }>(request);

@@ -8,6 +8,7 @@ import { createMcpServer } from "@/mcp/server";
 import { extractApiKey, validateApiKey } from "@/lib/api-key";
 import { getProjectUuidsByGroup } from "@/services/project.service";
 import type { AgentAuthContext } from "@/types/auth";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import logger from "@/lib/logger";
 
 const mcpLogger = logger.child({ module: "mcp" });
@@ -47,11 +48,16 @@ export async function POST(request: NextRequest) {
       projectUuids = projectHeader.split(",").map((s) => s.trim()).filter(Boolean);
     }
 
+    const effective = computeEffectivePermissions(
+      validation.agent.roles,
+      validation.agent.permissions,
+    );
     const auth: AgentAuthContext = {
       type: "agent",
       companyUuid: validation.agent.companyUuid,
       actorUuid: validation.agent.uuid,
       roles: validation.agent.roles as ("pm" | "developer" | "admin")[],
+      permissions: Array.from(effective),
       ownerUuid: validation.agent.ownerUuid ?? undefined,
       agentName: validation.agent.name,
       projectUuids,

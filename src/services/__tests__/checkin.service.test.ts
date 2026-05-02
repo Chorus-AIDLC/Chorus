@@ -59,6 +59,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     uuid: AGENT_UUID,
     name: "Dev Agent",
     roles: ["developer"],
+    permissions: [],
     persona: null,
     systemPrompt: null,
     ownerUuid: OWNER_UUID,
@@ -109,7 +110,14 @@ describe("buildCheckinResponse — agent info", () => {
 
     expect(result.agent.uuid).toBe(AGENT_UUID);
     expect(result.agent.name).toBe("Dev Agent");
-    expect(result.agent.roles).toEqual(["developer"]);
+    // developer preset → idea/proposal/document/project read, task read+write
+    expect(result.agent.permissions).toEqual({
+      idea: ["read"],
+      proposal: ["read"],
+      document: ["read"],
+      task: ["read", "write"],
+      project: ["read"],
+    });
     expect(result.agent.owner).toEqual({
       uuid: OWNER_UUID,
       name: "Owner User",
@@ -526,7 +534,13 @@ describe("buildCheckinResponse — empty state", () => {
       agent: {
         uuid: AGENT_UUID,
         name: "Dev Agent",
-        roles: ["developer"],
+        permissions: {
+          idea: ["read"],
+          proposal: ["read"],
+          document: ["read"],
+          task: ["read", "write"],
+          project: ["read"],
+        },
         persona: null,
         systemPrompt: null,
         owner: { uuid: OWNER_UUID, name: "Owner User", email: "owner@example.com" },

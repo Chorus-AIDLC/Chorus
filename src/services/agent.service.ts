@@ -18,6 +18,7 @@ export interface AgentCreateParams {
   ownerUuid: string;
   persona?: string | null;
   systemPrompt?: string | null;
+  permissions?: string[];
 }
 
 export interface AgentUpdateParams {
@@ -25,6 +26,7 @@ export interface AgentUpdateParams {
   roles?: string[];
   persona?: string | null;
   systemPrompt?: string | null;
+  permissions?: string[];
 }
 
 export interface ApiKeyCreateParams {
@@ -46,6 +48,7 @@ export async function listAgents({ companyUuid, skip, take }: AgentListParams) {
         uuid: true,
         name: true,
         roles: true,
+        permissions: true,
         persona: true,
         ownerUuid: true,
         lastActiveAt: true,
@@ -83,7 +86,7 @@ export async function getAgent(companyUuid: string, uuid: string) {
 export async function getAgentByUuid(companyUuid: string, uuid: string) {
   return prisma.agent.findFirst({
     where: { uuid, companyUuid },
-    select: { uuid: true, name: true, roles: true },
+    select: { uuid: true, name: true, roles: true, permissions: true },
   });
 }
 
@@ -95,13 +98,23 @@ export async function createAgent({
   ownerUuid,
   persona,
   systemPrompt,
+  permissions,
 }: AgentCreateParams) {
   return prisma.agent.create({
-    data: { companyUuid, name, roles, ownerUuid, persona, systemPrompt },
+    data: {
+      companyUuid,
+      name,
+      roles,
+      ownerUuid,
+      persona,
+      systemPrompt,
+      ...(permissions !== undefined && { permissions }),
+    },
     select: {
       uuid: true,
       name: true,
       roles: true,
+      permissions: true,
       persona: true,
       systemPrompt: true,
       ownerUuid: true,
@@ -130,6 +143,7 @@ export async function updateAgent(uuid: string, data: AgentUpdateParams, company
       uuid: true,
       name: true,
       roles: true,
+      permissions: true,
       persona: true,
       systemPrompt: true,
       ownerUuid: true,
@@ -167,7 +181,7 @@ export async function listApiKeys(companyUuid: string, skip: number, take: numbe
       take,
       orderBy: { createdAt: "desc" },
       include: {
-        agent: { select: { uuid: true, name: true, roles: true, persona: true } },
+        agent: { select: { uuid: true, name: true, roles: true, permissions: true, persona: true } },
       },
     }),
     prisma.apiKey.count({ where }),

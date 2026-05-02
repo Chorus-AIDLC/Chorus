@@ -236,7 +236,7 @@ When you finish and return your summary, you MUST end it with:
 Next steps for main agent:
 1. REVIEW — spawn chorus:task-reviewer agent, then read its VERDICT comment
 2. ACT ON VERDICT: PASS/PASS WITH NOTES → mark AC passed + verify task. FAIL → reopen task and fix BLOCKERs.
-3. If no admin_agent role, stop and ask the user to review and verify this task
+3. If you do not have the task:admin permission, stop and ask the user to review and verify this task
 \`\`\`
 This ensures the main agent knows to run review and verification.
 

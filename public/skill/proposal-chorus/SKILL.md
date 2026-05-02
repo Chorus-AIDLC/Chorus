@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.2.0"
+  version: "0.2.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -244,7 +244,7 @@ chorus_pm_assign_task({ taskUuid: "<task-uuid>", agentUuid: "<developer-agent-uu
 ```
 
 - Task should be `open` or `assigned`
-- Target agent should have `developer` or `developer_agent` role
+- Target agent must have `task: ["write"]` permission
 
 ---
 
