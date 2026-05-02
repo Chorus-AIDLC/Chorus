@@ -142,6 +142,21 @@ describe("POST /api/agents", () => {
     expect(mockPrisma.agent.create).not.toHaveBeenCalled();
   });
 
+  it("rejects legacy role aliases (pm/developer/admin) with 400", async () => {
+    const req = jsonRequest("/api/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Test", roles: ["pm"] }),
+    });
+    const res = await POST(req, emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(body.success).toBe(false);
+    expect(body.error.details?.roles).toMatch(/pm_agent, developer_agent, or admin_agent/);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when unauthenticated", async () => {
     mockGetAuthContext.mockResolvedValue(null);
 
