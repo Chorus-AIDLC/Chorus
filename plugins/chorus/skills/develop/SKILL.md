@@ -289,8 +289,8 @@ chorus_list_tasks({ projectUuid: "<project-uuid>" })
 chorus_get_unblocked_tasks({ projectUuid: "<project-uuid>" })
 
 # 2. For each worker you intend to spawn, create a Chorus session
-session_a = chorus_create_session({ name: "frontend-worker", roles: ["developer_agent"] })
-session_b = chorus_create_session({ name: "backend-worker", roles: ["developer_agent"] })
+session_a = chorus_create_session({ name: "frontend-worker" })
+session_b = chorus_create_session({ name: "backend-worker" })
 
 # 3. Spawn workers, pass sessionUuid + taskUuid(s) in the message
 spawn_agent(

@@ -449,7 +449,7 @@ After all waves complete, output a markdown summary:
 
 | Scenario | Action |
 |----------|--------|
-| Missing roles at startup | Abort with message listing all 3 required roles and which are missing |
+| Missing permissions at startup | Abort with message listing the missing resource/action pairs (see Prerequisites). Recommend an Admin-preset API key. |
 | Project creation fails | Report error, suggest user create project manually and retry with `--project` |
 | Proposal reviewer FAIL after maxRounds | Stop pipeline, report persisting BLOCKERs, suggest manual review |
 | Task reviewer FAIL after maxRounds | Flag task as escalation-needed, continue with other tasks |
@@ -465,7 +465,7 @@ After all waves complete, output a markdown summary:
 - Watch the wave count -- if tasks keep getting reopened, consider Ctrl+C and manually reviewing the feedback
 - All audit trail is preserved: elaboration Q&A, reviewer VERDICTs, work reports. Check Chorus UI for full history
 - For small/simple tasks, consider `/quick-dev` instead -- it skips the Idea->Proposal overhead
-- Sub-agents share your API key; ensure it has all 3 roles before starting
+- Sub-agents share your API key; ensure it has the permissions listed in Prerequisites before starting
 
 ---
 

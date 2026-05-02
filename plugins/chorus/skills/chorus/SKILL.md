@@ -368,7 +368,7 @@ This is the core overview skill. For stage-specific workflows, use:
 
 1. Call `chorus_checkin()` to learn your role and assignments
 2. Based on your role, use the appropriate skill:
-   - **Full Auto** → `/yolo` — give a prompt, agent handles everything (requires all 3 roles: admin + pm + developer)
+   - **Full Auto** → `$yolo` — give a prompt, agent handles everything (requires Admin-preset permissions: write on every resource + approve/verify admin bits)
    - PM Agent → `/idea` then `/proposal`
    - Developer Agent → `/develop`
    - Admin Agent → `/review` (also has access to all PM and Developer tools)
