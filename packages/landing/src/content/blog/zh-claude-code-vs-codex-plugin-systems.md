@@ -14,7 +14,7 @@ postSlug: claude-code-vs-codex-plugin-systems
 
 > 基准版本: Claude Code `2.1.126`，Codex CLI `0.128.0`。两边都在快速迭代，后面版本应该会修掉其中一些问题。
 
-Claude Code 那版我之前写过实现细节: [为 Claude Code Agent Teams 构建插件](/blog/zh-building-claude-code-plugin-for-agent-teams)。这篇重点在 Codex 踩过的坑，以及这些坑给插件开发者意味着什么。
+Claude Code 那版我之前写过实现细节: [为 Claude Code Agent Teams 构建插件](/blog/building-claude-code-plugin-for-agent-teams)。这篇重点在 Codex 踩过的坑，以及这些坑给插件开发者意味着什么。
 
 ---
 
