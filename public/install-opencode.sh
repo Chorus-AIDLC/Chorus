@@ -87,9 +87,48 @@ else
   fi
 
   # Case C1: plugin array already contains opencode-chorus → no-op.
-  # grep matches both "opencode-chorus" in a plugin entry and other strings;
-  # to be specific we look for the quoted token.
-  if grep -q "\"$PLUGIN_NAME\"" "$CONFIG_FILE"; then
+  # Scope the check to the "plugin" array itself: a top-level occurrence of
+  # "opencode-chorus" outside that array (e.g. in a "lastInstalled" field)
+  # must not trigger the no-op shortcut.
+  plugin_contains_self() {
+    awk -v plugin="$PLUGIN_NAME" '
+      # Track whether we are currently inside the first "plugin" array.
+      # State machine:
+      #   0 = before the plugin key
+      #   1 = inside the plugin array (between its [ and matching ])
+      BEGIN { state = 0 }
+      state == 0 {
+        # Is the "plugin" key on this line?
+        if (match($0, /"plugin"[[:space:]]*:[[:space:]]*\[/)) {
+          # Consume the rest of the line starting at the [
+          rest = substr($0, RSTART + RLENGTH - 1)
+          state = 1
+          # Fall through to state == 1 handling for this rest.
+          $0 = rest
+        } else {
+          next
+        }
+      }
+      state == 1 {
+        # Look for the closing ] on this line (naive — good enough for
+        # standard JSON because plugin entries are plain strings).
+        close_pos = index($0, "]")
+        if (close_pos > 0) {
+          chunk = substr($0, 1, close_pos - 1)
+        } else {
+          chunk = $0
+        }
+        # Check for the quoted token inside the array chunk only.
+        if (index(chunk, "\"" plugin "\"") > 0) {
+          print "yes"
+          exit 0
+        }
+        if (close_pos > 0) exit 0
+      }
+    ' "$CONFIG_FILE"
+  }
+
+  if [ "$(plugin_contains_self)" = "yes" ]; then
     ok "$PLUGIN_NAME already present in $CONFIG_FILE — nothing to do"
   else
     # Decide: Case B (no plugin key) vs Case C2 (plugin key exists without this plugin).
