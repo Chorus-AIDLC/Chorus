@@ -1025,6 +1025,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "其他智能体"
       },
@@ -1040,6 +1041,27 @@
         "step2Tip": "脚本会自动注册 plugin marketplace 并写入 ~/.codex/config.toml 的 MCP 服务器配置。",
         "step3Title": "第 3 步：验证连接",
         "step3Desc": "打开 Codex，让它 check in 到 Chorus，例如输入 \"check in to chorus\"。"
+      },
+      "opencode": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，插件会在 OpenCode 启动时读取这两个变量。",
+        "step2Title": "第 2 步：启用 Chorus 插件",
+        "step2Tip": "安装脚本会幂等地把 \"opencode-chorus\" 加入 ~/.config/opencode/opencode.json 的 \"plugin\" 数组，不会修改你的 shell rc。OpenCode 首次启动时 Bun 会自动安装该插件。",
+        "step3Title": "第 3 步：验证连接",
+        "step3Desc": "打开 OpenCode，告诉 agent \"check in to chorus\"。连接成功后本步骤会自动跳转。",
+        "troubleshootingTitle": "故障排除",
+        "issueCache": {
+          "title": "插件未加载",
+          "fix": "清空插件缓存：`rm -rf ~/.cache/opencode/packages/opencode-chorus@latest`，然后重启 OpenCode。"
+        },
+        "issueEnv": {
+          "title": "环境变量未生效",
+          "fix": "确认启动 OpenCode 的 shell 已 export CHORUS_URL 和 CHORUS_API_KEY。如有需要，先 re-source 一下 shell rc。"
+        },
+        "issueCheckin": {
+          "title": "check-in 无响应",
+          "fix": "核对 CHORUS_API_KEY 是否有错字或多余空格。如果插件仍然加载失败，尝试升级 OpenCode。"
+        }
       },
       "openClaw": {
         "step1Title": "第 1 步：安装插件",

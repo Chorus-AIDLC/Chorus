@@ -84340,6 +84340,414 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "gKGZ6",
+      "x": 4620,
+      "y": 11240,
+      "name": "Onboarding - Install Guide (OpenCode tab) (v0.7.0)",
+      "width": 1440,
+      "height": 820,
+      "fill": "#FAF8F4",
+      "layout": "vertical",
+      "gap": 24,
+      "padding": 48,
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "Ggucb",
+          "name": "header",
+          "layout": "vertical",
+          "gap": 8,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "OjsdP",
+              "name": "title",
+              "fill": "#2C2C2C",
+              "content": "Install the Chorus plugin",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 22,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "hwcW4",
+              "name": "subtitle",
+              "fill": "#6B6B6B",
+              "content": "Choose your AI agent client and follow the setup instructions below.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "HVci9",
+          "name": "card",
+          "width": 680,
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "stroke": {
+            "thickness": 1,
+            "fill": "#E5E0D8"
+          },
+          "layout": "vertical",
+          "gap": 16,
+          "padding": 24,
+          "children": [
+            {
+              "type": "frame",
+              "id": "r8BWdq",
+              "name": "tabs",
+              "width": "fill_container",
+              "fill": "#F5F2EC",
+              "cornerRadius": 8,
+              "gap": 4,
+              "padding": 4,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mAYma",
+                  "name": "tab1",
+                  "width": "fill_container",
+                  "cornerRadius": 6,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "b8rld",
+                      "name": "tab1t",
+                      "fill": "#6B6B6B",
+                      "content": "Claude Code",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MnDfc",
+                  "name": "tab2",
+                  "width": "fill_container",
+                  "cornerRadius": 6,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "HrF5V",
+                      "name": "tab2t",
+                      "fill": "#6B6B6B",
+                      "content": "Codex",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "baMaJ",
+                  "name": "tab3",
+                  "width": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "thickness": 1,
+                    "fill": "#C67A52"
+                  },
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "HUNOT",
+                      "name": "tab3t",
+                      "fill": "#C67A52",
+                      "content": "OpenCode",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "THUx6",
+                  "name": "tab4",
+                  "width": "fill_container",
+                  "cornerRadius": 6,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "d26NxE",
+                      "name": "tab4t",
+                      "fill": "#6B6B6B",
+                      "content": "OpenClaw",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rQRNe",
+                  "name": "tab5",
+                  "width": "fill_container",
+                  "cornerRadius": 6,
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VGFVN",
+                      "name": "tab5t",
+                      "fill": "#6B6B6B",
+                      "content": "Other Agents",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ZAlK7",
+              "name": "body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 20,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "D1HPqP",
+                  "name": "step1",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "qf8pd",
+                      "name": "step1Title",
+                      "fill": "#2C2C2C",
+                      "content": "Step 1: Set environment variables",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lemDW",
+                      "name": "step1Code",
+                      "width": "fill_container",
+                      "fill": "#1F1F1F",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 4,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "A7Nbu",
+                          "name": "step1Line1",
+                          "fill": "#E5E5E5",
+                          "content": "export CHORUS_URL=\"https://chorus.example.com\"",
+                          "fontFamily": "IBM Plex Mono",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "n1FYe",
+                          "name": "step1Line2",
+                          "fill": "#E5E5E5",
+                          "content": "export CHORUS_API_KEY=\"cho_...\"",
+                          "fontFamily": "IBM Plex Mono",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "j5k0y",
+                      "name": "step1Tip",
+                      "fill": "#9A9A9A",
+                      "content": "Tip: Add these to ~/.bashrc or ~/.zshrc so the plugin can read them on OpenCode startup.",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "IhWrr",
+                  "name": "step2",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "fB5SA",
+                      "name": "step2Title",
+                      "fill": "#2C2C2C",
+                      "content": "Step 2: Enable the Chorus plugin",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ZGk2C",
+                      "name": "step2Code",
+                      "width": "fill_container",
+                      "fill": "#1F1F1F",
+                      "cornerRadius": 8,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "J6ZK0z",
+                          "name": "step2Line",
+                          "fill": "#E5E5E5",
+                          "content": "curl -fsSL https://chorus.example.com/install-opencode.sh | bash",
+                          "fontFamily": "IBM Plex Mono",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "ibfKF",
+                      "name": "step2Tip",
+                      "fill": "#9A9A9A",
+                      "content": "The installer idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc.",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "EJdCA",
+                  "name": "step3",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "aIsrV",
+                      "name": "step3Title",
+                      "fill": "#2C2C2C",
+                      "content": "Step 3: Verify connection",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VDf7s",
+                      "name": "step3Desc",
+                      "fill": "#6B6B6B",
+                      "content": "Open OpenCode and ask the agent to \"check in to chorus\". This step auto-advances when the connection succeeds.",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QcdmD",
+                  "name": "ts",
+                  "width": "fill_container",
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "thickness": 1,
+                    "fill": "#E5E0D8"
+                  },
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "v3tun",
+                      "name": "tsTitle",
+                      "width": "fill_container",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "jMtJc",
+                          "name": "tsChevron",
+                          "fill": "#9A9A9A",
+                          "content": "▸",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "S5E2ZK",
+                          "name": "tsLabel",
+                          "fill": "#6B6B6B",
+                          "content": "Troubleshooting",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {

@@ -52,6 +52,9 @@ export function InstallGuideStep({ apiKey, onNext, onBack }: InstallGuideStepPro
               <TabsTrigger value="codex" className="flex-1">
                 {t("install.tabs.codex")}
               </TabsTrigger>
+              <TabsTrigger value="opencode" className="flex-1">
+                {t("install.tabs.opencode")}
+              </TabsTrigger>
               <TabsTrigger value="openclaw" className="flex-1">
                 {t("install.tabs.openClaw")}
               </TabsTrigger>
@@ -122,6 +125,80 @@ export function InstallGuideStep({ apiKey, onNext, onBack }: InstallGuideStepPro
                   {t("install.codex.step3Desc")}
                 </p>
               </div>
+            </TabsContent>
+
+            {/* OpenCode Tab */}
+            <TabsContent value="opencode" className="mt-4 space-y-4">
+              <div>
+                <h3 className="mb-2 text-sm font-medium text-foreground">
+                  {t("install.opencode.step1Title")}
+                </h3>
+                <CodeBlock
+                  language="bash"
+                  code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"`}
+                />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("install.opencode.step1Tip")}
+                </p>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-medium text-foreground">
+                  {t("install.opencode.step2Title")}
+                </h3>
+                <CodeBlock
+                  language="bash"
+                  code={`curl -fsSL ${origin}/install-opencode.sh | bash`}
+                />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("install.opencode.step2Tip")}
+                </p>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-medium text-foreground">
+                  {t("install.opencode.step3Title")}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {t("install.opencode.step3Desc")}
+                </p>
+              </div>
+
+              {/* Troubleshooting collapsible */}
+              <Collapsible>
+                <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                  <ChevronDown className="size-4 transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+                  {t("install.opencode.troubleshootingTitle")}
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 space-y-2">
+                    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+                      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                        {t("install.opencode.issueCache.title")}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t("install.opencode.issueCache.fix")}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+                      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                        {t("install.opencode.issueEnv.title")}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t("install.opencode.issueEnv.fix")}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+                      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                        {t("install.opencode.issueCheckin.title")}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t("install.opencode.issueCheckin.fix")}
+                      </p>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </TabsContent>
 
             {/* OpenClaw Tab */}

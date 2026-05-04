@@ -1024,6 +1024,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "Other Agents"
       },
@@ -1039,6 +1040,27 @@
         "step2Tip": "The script registers the plugin marketplace and writes the MCP server entry into ~/.codex/config.toml.",
         "step3Title": "Step 3: Verify connection",
         "step3Desc": "Open Codex and ask it to check in to Chorus — e.g. type \"check in to chorus\"."
+      },
+      "opencode": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so the plugin can read them on OpenCode startup.",
+        "step2Title": "Step 2: Enable the Chorus plugin",
+        "step2Tip": "The installer idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc. OpenCode installs the plugin via Bun on first launch.",
+        "step3Title": "Step 3: Verify connection",
+        "step3Desc": "Open OpenCode and ask the agent to \"check in to chorus\". This step auto-advances when the connection succeeds.",
+        "troubleshootingTitle": "Troubleshooting",
+        "issueCache": {
+          "title": "Plugin not loaded",
+          "fix": "Clear the plugin cache with `rm -rf ~/.cache/opencode/packages/opencode-chorus@latest` and restart OpenCode."
+        },
+        "issueEnv": {
+          "title": "Environment variables not taking effect",
+          "fix": "Confirm you launched OpenCode from a shell where CHORUS_URL and CHORUS_API_KEY are exported. Re-source your shell rc file if needed."
+        },
+        "issueCheckin": {
+          "title": "check-in not responding",
+          "fix": "Double-check CHORUS_API_KEY for typos or trailing whitespace. If the plugin still fails to load, try upgrading OpenCode."
+        }
       },
       "openClaw": {
         "step1Title": "Step 1: Install plugin",
