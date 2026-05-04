@@ -294,7 +294,7 @@ The interactive installer provisions VPC, Aurora Serverless v2, ElastiCache Serv
 
 ### Connect AI Agents
 
-The fastest path is the in-app setup wizard: open the Web UI, go to **Settings → Setup Guide → Open setup guide**, and follow the step-by-step instructions for your client (Claude Code, Codex, OpenClaw, or other agents). The wizard creates the API key for you, shows the exact commands, and walks through verifying the connection.
+The fastest path is the in-app setup wizard: open the Web UI, go to **Settings → Setup Guide → Open setup guide**, and follow the step-by-step instructions for your client (Claude Code, Codex, OpenCode, OpenClaw, or other agents). The wizard creates the API key for you, shows the exact commands, and walks through verifying the connection.
 
 If you'd rather read the full docs:
 
@@ -302,7 +302,10 @@ If you'd rather read the full docs:
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | Other MCP agents (Cursor, Continue, custom, …) | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
+
+† OpenCode support is provided by the community-maintained [`opencode-chorus`](https://github.com/etnperlong/opencode-chorus) plugin (npm: [`opencode-chorus`](https://www.npmjs.com/package/opencode-chorus)), authored by [@etnperlong](https://github.com/etnperlong). Thanks!
 
 Create API Keys in the Web UI under **Settings → Agents → Create API Key**. Keys start with `cho_` and are shown only once.
 

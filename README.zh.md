@@ -285,7 +285,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 
 ### 连接 AI Agent
 
-最快的方式是用应用内的 setup 向导：打开 Web UI，进入 **Settings → Setup Guide → 打开设置向导**，按照向导给出的分步指引接入自己的客户端（Claude Code、Codex、OpenClaw 或其他 agent）。向导会帮你创建 API Key、展示完整命令，并引导你验证连接。
+最快的方式是用应用内的 setup 向导：打开 Web UI，进入 **Settings → Setup Guide → 打开设置向导**，按照向导给出的分步指引接入自己的客户端（Claude Code、Codex、OpenCode、OpenClaw 或其他 agent）。向导会帮你创建 API Key、展示完整命令，并引导你验证连接。
 
 如果偏好文档：
 
@@ -293,7 +293,10 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 |--------|---------|
 | Claude Code | [CONNECT_CLAUDE_CODE.zh.md](docs/CONNECT_CLAUDE_CODE.zh.md) |
 | Codex CLI | [CONNECT_CODEX.zh.md](docs/CONNECT_CODEX.zh.md) |
+| OpenCode † | [CONNECT_OPENCODE.zh.md](docs/CONNECT_OPENCODE.zh.md) |
 | 其他 MCP agent（Cursor / Continue / 自研等） | [CONNECT_OTHER_AGENTS.zh.md](docs/CONNECT_OTHER_AGENTS.zh.md) |
+
+† OpenCode 的接入由社区维护的 [`opencode-chorus`](https://github.com/etnperlong/opencode-chorus) 插件提供（npm: [`opencode-chorus`](https://www.npmjs.com/package/opencode-chorus)），作者 [@etnperlong](https://github.com/etnperlong)，特此感谢！
 
 在 Web UI 的 **Settings → Agents → Create API Key** 创建 API Key。Key 以 `cho_` 开头，仅在创建时显示一次。
 
