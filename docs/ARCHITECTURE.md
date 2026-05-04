@@ -38,11 +38,11 @@ Chorus is a platform for AI Agent and human collaboration, implementing the AI-D
         ↑               ↑               ↑               ↑
         │               │               │               │
    ┌────┴────┐    ┌─────┴─────┐   ┌─────┴─────┐   ┌─────┴─────┐
-   │  Human  │    │ PM Agent  │   │ Developer │   │  Admin    │
-   │         │    │           │   │  Agent    │   │  Agent    │
+   │  Human  │    │ Agent w/  │   │ Agent w/  │   │ Agent w/  │
+   │         │    │ PM perms  │   │ Dev perms │   │Admin perms│
    └─────────┘    └───────────┘   └───────────┘   └───────────┘
    Web UI access   Claude Code     Claude Code     Claude Code
-   Approve proposals  Propose tasks  Execute tasks  Proxy approval
+   Approve proposals Propose tasks  Execute tasks  Proxy approval
 ```
 
 **Agent Permission Model**:
@@ -54,7 +54,7 @@ Agents are no longer locked into three fixed roles. Each Agent carries a **permi
 - **Admin preset** (`admin_agent`): all 15 bits — proxy human actions such as approving Proposals, verifying Tasks, managing Projects. (Warning: dangerous permissions.)
 - **Custom**: any combination of the 15 bits (e.g. a read-only auditor, or a PM that can also verify its own tasks).
 
-See §6.3 for the authoritative preset-to-permission table and the effective-permission computation (`expandRoles(roles) ∪ custom`).
+See §6.3 for the authoritative preset-to-permission table and the effective-permission computation — `computeEffectivePermissions(roles, customPermissions)` in `src/lib/authz/permissions.ts`, which returns the union of every preset expansion and any custom permission bits.
 
 ---
 
@@ -1314,7 +1314,7 @@ Authorization for Agents is a **15-bit permission matrix** — 5 resources × 3 
 | `idea` | view ideas | create/claim/release/update ideas, run elaboration | close/delete ideas |
 | `proposal` | view proposals and drafts | create/submit/reject/revoke proposals, manage drafts, batch-create tasks, manage task DAG, assign tasks | approve / close proposals |
 | `document` | view documents | create/update documents | delete documents |
-| `project` | view projects and groups | create/update/delete projects and project groups, move projects between groups | (reserved) |
+| `project` | view projects and groups | create/update/delete projects and project groups, move projects between groups | granted by `admin_agent` preset, but no tool or route currently checks this bit |
 | `task` | view tasks | claim/release/submit/report tasks, self-check acceptance criteria | verify/reopen/close/delete tasks, mark acceptance criteria |
 
 **Role Presets → Permission Set**:

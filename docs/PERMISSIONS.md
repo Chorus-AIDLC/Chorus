@@ -16,7 +16,7 @@ Every Agent carries a **permission set** — a subset of 15 permission bits draw
 | **`proposal`** | view proposals and drafts | create / submit / reject / revoke proposals; manage drafts; batch-create tasks; manage task DAG; assign tasks | approve / close proposals |
 | **`document`** | view documents | create / update documents | delete documents |
 | **`task`** | view tasks | claim / release / submit / report tasks; self-check acceptance criteria | verify / reopen / close / delete tasks; mark acceptance criteria |
-| **`project`** | view projects and project groups | create / update / delete projects and project groups; move projects between groups | (reserved for future use) |
+| **`project`** | view projects and project groups | create / update / delete projects and project groups; move projects between groups | granted by the `admin_agent` preset but currently not gated by any tool or route (reserved — treat as forward-compatibility) |
 
 A permission is written as `{resource}:{action}` — for example `task:write` or `proposal:admin`.
 
@@ -43,8 +43,8 @@ The authoritative mapping lives in `src/lib/authz/presets.ts`.
 Any Agent can layer additional permission bits on top of (or instead of) a preset. The UI calls this **Custom**; the API calls it `permissions[]` on the Agent record. Common combinations:
 
 - **Read-only auditor**: no preset, custom = `*:read` only → can list and inspect everything, cannot mutate.
-- **Self-verifying developer**: `developer_agent` preset + `task:admin` → can verify its own work without waiting for an admin.
-- **PM with limited admin rights**: `pm_agent` preset + `proposal:admin` → can approve its own proposals (usually not advisable, but possible).
+- **Self-verifying developer**: `developer_agent` preset + `task:admin` → can verify tasks without waiting for an admin. Note that `task:admin` is not author-scoped — it lets the agent verify any task in its company, not just ones it worked on.
+- **PM with admin approval**: `pm_agent` preset + `proposal:admin` → can approve proposals (any proposal, not only its own — admin bits don't distinguish author from reviewer, so this effectively bypasses human review across the whole pipeline).
 
 ---
 
@@ -85,7 +85,9 @@ An Agent with `roles: ["pm_agent"]` and `permissions: ["task:admin"]` has:
 Each permission-gated MCP tool declares **exactly one** required permission. The mapping lives in `src/mcp/tools/permission-map.ts`.
 
 - At registration time, `registerPermissionedTool` (in `src/mcp/tools/register-helpers.ts`) checks whether the agent's effective set contains the tool's required permission. If yes, the tool is registered on the MCP server; if no, it's simply absent from the tool list the agent sees.
-- **Public tools** (`chorus_checkin`, `chorus_get_*`, `chorus_list_*`, `chorus_search*`, `chorus_add_comment`, session tools, `chorus_create_tasks`, `chorus_update_task`) have no gate — they appear for every agent. Handler-level assignee / authorship guards enforce who can actually mutate state on the tools that look "public but sensitive."
+- **Public tools** (`chorus_checkin`, `chorus_get_*`, `chorus_list_*`, `chorus_search*`, `chorus_add_comment`, session tools, `chorus_create_tasks`, `chorus_update_task`) have no permission gate — they appear for every agent. Two caveats worth spelling out:
+  - `chorus_update_task` allows field edits (title, description, priority, etc.) for any agent, but **status transitions** (`in_progress`, `to_verify`) are restricted to the task's assignee via a handler-level check (`src/mcp/tools/public.ts`).
+  - `chorus_create_tasks` has **no handler-level guard** — any authenticated agent can batch-create tasks in any project of its company. If you need tighter control (e.g. only PMs create tasks), treat that as a follow-up and add a permission gate on this tool.
 
 For the full tool → required-permission matrix, see [MCP_TOOLS.md](./MCP_TOOLS.md).
 

@@ -38,8 +38,8 @@ Chorus 是一个 AI Agent 与人类协作的平台，实现 AI-DLC（AI-Driven D
         ↑               ↑               ↑               ↑
         │               │               │               │
    ┌────┴────┐    ┌─────┴─────┐   ┌─────┴─────┐   ┌─────┴─────┐
-   │  Human  │    │ PM Agent  │   │ Developer │   │  Admin    │
-   │         │    │           │   │  Agent    │   │  Agent    │
+   │  Human  │    │ Agent 带  │   │ Agent 带  │   │ Agent 带  │
+   │         │    │ PM 权限   │   │ Dev 权限  │   │Admin 权限 │
    └─────────┘    └───────────┘   └───────────┘   └───────────┘
    Web UI 访问     Claude Code     Claude Code     Claude Code
    审批提议        提议任务        执行任务        代理审批
@@ -54,7 +54,7 @@ Agent 不再被固定分成三种角色。每个 Agent 带有一份**权限集**
 - **Admin 预设**（`admin_agent`）：全部 15 个权限位 —— 代理人类执行审批 Proposal、验证 Task、管理 Project 等操作（⚠️ 危险权限）。
 - **Custom**：任意组合 15 个权限位（例如只读审计 Agent，或带 `task:admin` 可自行验收任务的 PM）。
 
-具体预设映射和有效权限计算（`expandRoles(roles) ∪ custom`）见 §6.3。
+具体预设映射和有效权限计算见 §6.3 —— 实现是 `src/lib/authz/permissions.ts` 中的 `computeEffectivePermissions(roles, customPermissions)`，返回所有预设展开与自定义权限位的并集。
 
 ---
 
@@ -1229,7 +1229,7 @@ SUPER_ADMIN_PASSWORD_HASH=$2b$10$...  # bcrypt 哈希
      │                │ <─────────────────│
      │                │                   │
      │                │  按权限集过滤工具  │
-     │                │  Return Tools     │
+     │                │  返回工具列表      │
      │                │                   │
      │  MCP Response  │                   │
      │ <──────────────│                   │
@@ -1246,7 +1246,7 @@ Agent 的授权是一个 **15 位权限矩阵** —— 5 类资源 × 3 种动�
 | `idea` | 查看 Ideas | 创建 / 认领 / 释放 / 更新 Ideas，运行需求澄清 | 关闭 / 删除 Ideas |
 | `proposal` | 查看 Proposals 和草稿 | 创建 / 提交 / 拒绝 / 撤回 Proposals，管理草稿、批量建任务、管理任务 DAG、分配任务 | 审批 / 关闭 Proposals |
 | `document` | 查看 Documents | 创建 / 更新 Documents | 删除 Documents |
-| `project` | 查看 Projects 和 Project Groups | 创建 / 更新 / 删除 Projects 和 Project Groups，在 Group 间移动 Project | （保留） |
+| `project` | 查看 Projects 和 Project Groups | 创建 / 更新 / 删除 Projects 和 Project Groups，在 Group 间移动 Project | `admin_agent` 预设会授予该位，但目前没有工具或路由对此位做门禁 |
 | `task` | 查看 Tasks | 认领 / 释放 / 提交 / 汇报 Tasks，自检 Acceptance Criteria | 验证 / 重开 / 关闭 / 删除 Tasks、标记 Acceptance Criteria |
 
 **角色预设 → 权限集**：
