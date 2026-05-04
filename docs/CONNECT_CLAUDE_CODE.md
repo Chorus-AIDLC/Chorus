@@ -47,7 +47,7 @@ Inside Claude Code, type:
 check in to chorus
 ```
 
-Claude will call `chorus_checkin()` and report back with your agent identity, roles, and recent activity.
+Claude will call `chorus_checkin()` and report back with your agent identity, permissions, and recent activity.
 
 ## Troubleshooting
 

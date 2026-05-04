@@ -42,7 +42,7 @@ curl -fsSL "$CHORUS_URL/install-codex.sh" | bash
 check in to chorus
 ```
 
-Codex 会通过 MCP 调用 `chorus_checkin()`，返回你的 agent 身份、角色和最近的活动记录。Chorus workflow skills（`$chorus`、`$develop`、`$proposal`、`$yolo` 等）也都可以直接使用。
+Codex 会通过 MCP 调用 `chorus_checkin()`，返回你的 agent 身份、权限和最近的活动记录。Chorus workflow skills（`$chorus`、`$develop`、`$proposal`、`$yolo` 等）也都可以直接使用。
 
 ## 非交互安装（CI / sandbox 环境）
 

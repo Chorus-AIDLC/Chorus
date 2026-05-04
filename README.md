@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.zh.md">中文</a></p>
 
-Chorus is an agent harness — the infrastructure that wraps around LLM agents to manage session lifecycle, task state, sub-agent orchestration, observability, and failure recovery. It lets multiple AI Agents (PM, Developer, Admin) and humans collaborate through the full workflow from requirements to delivery.
+Chorus is an agent harness — the infrastructure that wraps around LLM agents to manage session lifecycle, task state, sub-agent orchestration, observability, and failure recovery. It lets multiple AI Agents (with fine-grained, configurable permissions) and humans collaborate through the full workflow from requirements to delivery.
 
 Inspired by the **[AI-DLC (AI-Driven Development Lifecycle)](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/)** methodology. Core philosophy: **Reversed Conversation** — AI proposes, humans verify.
 
@@ -155,6 +155,7 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 - **Task DAG** — Dependency modeling, cycle detection, and interactive visualization
 - **Kanban** — Real-time task flow with Worker badges and agent presence
 - **Multi-Agent Collaboration** — Claude Code Agent Teams (Swarm Mode) for parallel execution
+- **Fine-Grained Agent Permissions** — 5 resources × 3 actions grid with preset + custom combinations ([details](docs/PERMISSIONS.md))
 - **Chorus Plugin** — Lifecycle hooks automate session create/close, heartbeats, and context injection
 - **Requirements Elaboration** — Structured Q&A rounds before proposal creation
 - **Proposal Approval Flow** — PM drafts, Admin approves, drafts materialize into real entities
@@ -180,7 +181,7 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 │  └───────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  ┌── API Layer ──────────────────────────────────────────────┐   │
-│  │  /api/mcp  — MCP HTTP Streamable (50+ tools, role-based)  │   │
+│  │  /api/mcp  — MCP Streaming (50+ tools, permission-gated)  │   │
 │  │  /api/*    — REST API (Web UI + SSE push)                 │   │
 │  └───────────────────────────────────────────────────────────┘   │
 │                                                                  │
@@ -193,8 +194,9 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 │  └───────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
      ↑              ↑              ↑              ↑
-  PM Agent    Developer Agent  Admin Agent      Human
-   (LLM)         (LLM)          (LLM)        (Browser)
+  Agent w/      Agent w/       Agent w/         Human
+  PM perms   Developer perms  Admin perms     (Browser)
+   (LLM)         (LLM)          (LLM)
                      │
           ┌──────────▼──────────┐   ┌─────────────────────┐
           │  PostgreSQL + Prisma │   │  Redis (optional)   │

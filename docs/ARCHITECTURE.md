@@ -45,10 +45,16 @@ Chorus is a platform for AI Agent and human collaboration, implementing the AI-D
    Approve proposals  Propose tasks  Execute tasks  Proxy approval
 ```
 
-**Agent Role Descriptions**:
-- **PM Agent**: Requirements analysis, task breakdown, proposal creation
-- **Developer Agent**: Execute tasks, report work, submit for verification
-- **Admin Agent**: Proxy human actions such as approving Proposals, verifying Tasks, creating Projects, etc. (Warning: dangerous permissions)
+**Agent Permission Model**:
+
+Agents are no longer locked into three fixed roles. Each Agent carries a **permission set** built from 5 resources (`idea`, `proposal`, `document`, `project`, `task`) × 3 actions (`read`, `write`, `admin`) = 15 bits. The UI offers three **presets** plus a **Custom** option:
+
+- **Developer preset** (`developer_agent`): all `*:read` + `task:write` — execute tasks, report work, submit for verification.
+- **PM preset** (`pm_agent`): Developer preset + `idea:write`, `proposal:write`, `document:write`, `project:write` — requirements analysis, task breakdown, proposal creation.
+- **Admin preset** (`admin_agent`): all 15 bits — proxy human actions such as approving Proposals, verifying Tasks, managing Projects. (Warning: dangerous permissions.)
+- **Custom**: any combination of the 15 bits (e.g. a read-only auditor, or a PM that can also verify its own tasks).
+
+See §6.3 for the authoritative preset-to-permission table and the effective-permission computation (`expandRoles(roles) ∪ custom`).
 
 ---
 
@@ -826,11 +832,12 @@ model Task {
 #### Agent
 - AI Agent entity (Claude Code, etc.)
 - `companyUuid`: Parent company UUID
-- `roles`: Role array (`pm` | `developer`)
+- `roles`: Preset selector array — one or more of `developer_agent` / `pm_agent` / `admin_agent` (legacy `pm` / `developer` aliases still resolve as the corresponding presets). Roles only select the preset; actual authorization is driven by `permissions`.
+- `permissions`: Custom permission bits layered on top of the preset(s). Effective set = union of expanded presets + custom. See §6.3.
 - `ownerUuid`: Creator User UUID
 - `persona`: Custom personality description
 - `systemPrompt`: Full system prompt
-- One Agent can have multiple API Keys
+- One Agent can have multiple API Keys (all inherit the Agent's effective permissions)
 
 #### ApiKey
 - Independently managed, supports rotation and revocation
@@ -1058,7 +1065,7 @@ Streamable HTTP Transport (supports SSE)
 Header: Authorization: Bearer {api_key}
 ```
 
-Based on the Agent role associated with the API Key, different tool sets are returned.
+Based on the Agent's effective **permission set** (associated with the API Key), different tool sets are returned. Each gated MCP tool declares a single required permission (e.g. `task:write`, `proposal:admin`); only tools whose required permission is present in the caller's permission set are exposed. Public tools (discover, comment, session) carry no gate. See [MCP_TOOLS.md](./MCP_TOOLS.md) for the complete tool → permission mapping.
 
 #### Project Filtering (Optional)
 
@@ -1151,42 +1158,25 @@ Time 1:00  - Cleanup runs, session deleted
 | `chorus_session_checkin_task` / `chorus_session_checkout_task` | Task Checkin/Checkout |
 | `chorus_session_heartbeat` | Session heartbeat |
 
-#### Developer Agent Tools
+#### Gated Tools by Required Permission
 
-| Tool | Description |
-|-----|------|
-| `chorus_claim_task` / `chorus_release_task` | Claim/release Task |
-| `chorus_update_task` | Update task status (with sessionUuid attribution) |
-| `chorus_submit_for_verify` | Submit task for verification |
-| `chorus_report_work` | Report work (with sessionUuid attribution) |
+Gated tools are grouped below by the permission they require. An agent sees a tool if and only if that permission is in its effective set (preset-expanded + custom). The full tool → permission matrix is maintained in [MCP_TOOLS.md](./MCP_TOOLS.md) and in source at `src/mcp/tools/permission-map.ts`.
 
-#### PM Agent Tools
+| Required Permission | Representative Tools |
+|-----|-----|
+| `idea:write` | `chorus_claim_idea`, `chorus_release_idea`, `chorus_move_idea`, `chorus_pm_create_idea`, `chorus_pm_start_elaboration`, `chorus_pm_validate_elaboration`, `chorus_pm_skip_elaboration` |
+| `proposal:write` | `chorus_pm_create_proposal`, `chorus_pm_submit_proposal`, `chorus_pm_validate_proposal`, `chorus_pm_{add,update,remove}_document_draft`, `chorus_pm_{add,update,remove}_task_draft`, `chorus_pm_create_tasks`, `chorus_pm_assign_task`, `chorus_{add,remove}_task_dependency`, `chorus_pm_{reject,revoke}_proposal` |
+| `document:write` | `chorus_pm_create_document`, `chorus_pm_update_document` |
+| `task:write` | `chorus_claim_task`, `chorus_release_task`, `chorus_submit_for_verify`, `chorus_report_work`, `chorus_report_criteria_self_check` |
+| `project:write` | `chorus_admin_create_project`, `chorus_admin_{create,update,delete}_project_group`, `chorus_admin_move_project_to_group` |
+| `proposal:admin` | `chorus_admin_approve_proposal`, `chorus_admin_close_proposal` |
+| `task:admin` | `chorus_admin_verify_task`, `chorus_admin_reopen_task`, `chorus_admin_close_task`, `chorus_mark_acceptance_criteria`, `chorus_admin_delete_task` |
+| `idea:admin` | `chorus_admin_delete_idea` |
+| `document:admin` | `chorus_admin_delete_document` |
 
-| Tool | Description |
-|-----|------|
-| `chorus_claim_idea` / `chorus_release_idea` | Claim/release Idea |
-| `chorus_update_idea_status` | Update Idea status |
-| `chorus_pm_create_proposal` / `chorus_pm_submit_proposal` | Create/submit Proposal |
-| `chorus_pm_create_document` / `chorus_pm_update_document` | Document CRUD |
-| `chorus_pm_create_tasks` | Batch create Tasks |
-| `chorus_pm_assign_task` | Assign Task |
-| `chorus_pm_add_document_draft` / `chorus_pm_update_document_draft` / `chorus_pm_remove_document_draft` | Document draft management |
-| `chorus_pm_add_task_draft` / `chorus_pm_update_task_draft` / `chorus_pm_remove_task_draft` | Task draft management |
-| `chorus_add_task_dependency` / `chorus_remove_task_dependency` | Task dependency DAG management |
+The `admin_agent` preset grants all `*:admin` bits and so exposes every tool in the table above. Any custom combination (e.g. Developer preset + `task:admin` to self-verify) produces the corresponding tool set automatically.
 
-#### Admin Agent Tools
-
-| Tool | Description |
-|-----|------|
-| `chorus_admin_create_project` | Create project |
-| `chorus_admin_approve_proposal` / `chorus_pm_reject_proposal` / `chorus_admin_close_proposal` | Proposal approval |
-| `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` | Task verification/management |
-| `chorus_admin_close_idea` / `chorus_admin_delete_idea` | Idea management |
-| `chorus_admin_delete_task` / `chorus_admin_delete_document` | Delete management |
-
-Admin Agent also has all PM and Developer tools.
-
-**Warning**: Admin Agent has human-level permissions and can perform critical operations such as approval, verification, etc. Creating this type of Agent requires caution and should only be used when automation of human approval workflows is needed.
+**Warning**: `*:admin` permissions are human-level — they cover Proposal approval, Task verification, Idea/Document deletion. Grant them only to Agents that are intentionally automating human approval workflows.
 
 #### Proposal Input/Output Description
 
@@ -1303,11 +1293,11 @@ SUPER_ADMIN_PASSWORD_HASH=$2b$10$...  # bcrypt hash
      │                │  Validate Key     │
      │                │ ─────────────────>│
      │                │                   │
-     │                │  Agent + Role     │
+     │                │  Agent+Perms      │
      │                │ <─────────────────│
      │                │                   │
-     │                │  Check Role       │
-     │                │  Return Tools     │
+     │                │  Filter tools by  │
+     │                │  permission set   │
      │                │                   │
      │  MCP Response  │                   │
      │ <──────────────│                   │
@@ -1315,15 +1305,45 @@ SUPER_ADMIN_PASSWORD_HASH=$2b$10$...  # bcrypt hash
 
 ### 6.3 Permission Model
 
-| Operation | User | PM Agent | Personal Agent |
-|-----|------|----------|----------------|
-| Create project | Yes | No | No |
-| View project | Yes | Yes | Yes |
-| Create task | Yes | Yes | No |
-| Update task | Yes | Yes | Yes (only assigned to self) |
-| Create proposal | No | Yes | No |
-| Approve proposal | Yes | No | No |
-| Manage Agent | Yes | No | No |
+Authorization for Agents is a **15-bit permission matrix** — 5 resources × 3 actions. The UI exposes three presets plus a Custom option.
+
+**Resources × Actions**:
+
+| Resource | `read` | `write` | `admin` |
+|-----|:---:|:---:|:---:|
+| `idea` | view ideas | create/claim/release/update ideas, run elaboration | close/delete ideas |
+| `proposal` | view proposals and drafts | create/submit/reject/revoke proposals, manage drafts, batch-create tasks, manage task DAG, assign tasks | approve / close proposals |
+| `document` | view documents | create/update documents | delete documents |
+| `project` | view projects and groups | create/update/delete projects and project groups, move projects between groups | (reserved) |
+| `task` | view tasks | claim/release/submit/report tasks, self-check acceptance criteria | verify/reopen/close/delete tasks, mark acceptance criteria |
+
+**Role Presets → Permission Set**:
+
+| Preset | Expanded permissions | Total |
+|-----|------|:---:|
+| `developer_agent` | `*:read` + `task:write` | 6 |
+| `pm_agent` | `*:read` + `idea:write`, `proposal:write`, `document:write`, `task:write`, `project:write` | 10 |
+| `admin_agent` | all 15 bits (`*:read` + `*:write` + `*:admin`) | 15 |
+
+**Effective permission computation**: `computeEffectivePermissions(roles, customPermissions)` returns the **union** of every preset's expansion and any custom bits attached to the Agent (see `src/lib/authz/permissions.ts`). Both REST gating (`requireAgentPermission`) and MCP tool visibility (`permission-map.ts` + `registerPermissionedTool`) consult this effective set.
+
+**Human users** do not go through the Agent permission matrix — REST routes gate them via the standard UserAuthContext path. SuperAdmin bypasses all checks.
+
+**Checkin output**: `chorus_checkin` (and the `/api/agents/me` endpoint) surfaces permissions as a resource-aggregated object for token efficiency:
+
+```json
+{
+  "permissions": {
+    "idea": ["read", "write"],
+    "proposal": ["read", "write"],
+    "document": ["read", "write"],
+    "project": ["read"],
+    "task": ["read", "write"]
+  }
+}
+```
+
+Skills and plugin hooks read this aggregated shape directly instead of scanning a flat list.
 
 ---
 

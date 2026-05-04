@@ -31,24 +31,31 @@ AuthContext = UserAuthContext | AgentAuthContext | SuperAdminAuthContext
 | Context Type | `type` field | Key fields | Produced by |
 |---|---|---|---|
 | `UserAuthContext` | `"user"` | `companyUuid`, `actorUuid`, `email`, `name` | OIDC, Default Auth |
-| `AgentAuthContext` | `"agent"` | `companyUuid`, `actorUuid`, `roles[]`, `agentName`, `ownerUuid` | API Key |
+| `AgentAuthContext` | `"agent"` | `companyUuid`, `actorUuid`, `roles[]` (preset selector), `permissions[]` (effective 15-bit set), `agentName`, `ownerUuid` | API Key |
 | `SuperAdminAuthContext` | `"super_admin"` | `email` (no companyUuid) | Super Admin cookie |
 
 Downstream code uses type guards to branch on context type:
 
 ```typescript
-import { isAgent, isUser, hasRole } from "@/lib/auth";
+import { isAgent, isUser, hasPermission, requireAgentPermission } from "@/lib/auth";
 
 if (isAgent(auth)) {
-  // auth.roles, auth.agentName available
+  // auth.roles (preset selector), auth.permissions (effective set), auth.agentName available
 }
 if (isUser(auth)) {
   // auth.email, auth.name available
 }
-if (hasRole(auth, "pm")) {
-  // PM-specific logic
+if (isAgent(auth) && hasPermission(auth, "proposal:admin")) {
+  // Permission-specific logic (preferred over role checks)
 }
+
+// For REST route handlers, gate with requireAgentPermission:
+export const POST = requireAgentPermission("task:admin", async (req, ctx, auth) => {
+  /* ... */
+});
 ```
+
+The legacy `hasRole(auth, "pm")` helper still exists for back-compat, but new code should gate on `hasPermission` / `requireAgentPermission` — roles are only preset selectors, not the authorization source of truth.
 
 ---
 
@@ -66,19 +73,23 @@ if (hasRole(auth, "pm")) {
 2. `getAuthContext()` detects the `cho_` prefix
 3. `validateApiKey(token)` hashes the token with SHA-256 and looks up `prisma.apiKey` by `keyHash`
 4. Checks: not revoked, not expired
-5. Returns `AgentAuthContext` with the agent's `roles`, `companyUuid`, `actorUuid`
+5. Returns `AgentAuthContext` with the agent's `roles` (preset selector), `permissions` (effective 15-bit set — preset expansion ∪ custom), `companyUuid`, `actorUuid`
 
 **Key generation**: `generateApiKey()` creates `cho_<32-byte-random-base64url>`. The raw key is shown once at creation time; only the SHA-256 hash is stored in the database.
 
 **Security**: Comparison uses `crypto.timingSafeEqual()` to prevent timing attacks.
 
-**Agent roles** (`roles[]`) determine which MCP tools are registered:
+**Agent permissions** determine which MCP tools are registered. Each Agent carries a **15-bit permission matrix** (5 resources × 3 actions). `roles[]` only selects one of three presets; the real authorization source is the effective `permissions[]` set (preset expansion ∪ custom permissions). See [ARCHITECTURE.md §6.3](./ARCHITECTURE.md#63-permission-model) for the full matrix.
 
-| Role | Tools |
-|---|---|
-| `developer_agent` | Task claim/release, status updates, work reporting, sessions |
-| `pm_agent` | Proposal/document/task creation, assignment |
-| `admin_agent` | Approve/reject proposals, verify tasks, manage entities |
+**Role Preset → Expanded Permissions** (see `src/lib/authz/presets.ts`):
+
+| Preset | Expanded Permissions | Representative Tools |
+|---|---|---|
+| `developer_agent` | `*:read` + `task:write` (6 perms) | Task claim/release, submit for verify, report work, sessions |
+| `pm_agent` | `*:read` + `idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` (10 perms) | Proposal/document/task creation, draft management, assignment |
+| `admin_agent` | All 15 perms (`*:read` + `*:write` + `*:admin`) | Approve/reject proposals, verify/reopen/close tasks, delete entities |
+
+Custom agents layer additional permission bits on top of any preset (e.g. a Developer agent with `task:admin` to self-verify, or a read-only auditor with only `*:read`). MCP tool visibility is driven by the effective set; REST routes gate via `requireAgentPermission("resource:action", ...)`.
 
 ### 2.2 OIDC (User)
 

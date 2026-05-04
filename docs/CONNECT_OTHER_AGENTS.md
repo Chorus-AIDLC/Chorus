@@ -44,7 +44,7 @@ All of them converge on the same two pieces of config:
 | MCP server URL | `{CHORUS_URL}/api/mcp` |
 | Auth header | `Authorization: Bearer {API_KEY}` |
 
-The agent should then call `chorus_checkin` — if that returns your agent's identity and roles, you're connected.
+The agent should then call `chorus_checkin` — if that returns your agent's identity and permissions, you're connected.
 
 ## Verification
 
@@ -54,7 +54,7 @@ Ask the agent:
 check in to chorus
 ```
 
-You should see a JSON response describing the agent, its roles, and recent Chorus activity. If the agent can also list the available MCP tools (e.g. `chorus_pm_create_idea`, `chorus_claim_task`), the connection is fully working.
+You should see a JSON response describing the agent, its permissions, and recent Chorus activity. If the agent can also list the available MCP tools (e.g. `chorus_pm_create_idea`, `chorus_claim_task`), the connection is fully working.
 
 ## Troubleshooting
 

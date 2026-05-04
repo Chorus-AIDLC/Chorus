@@ -45,10 +45,16 @@ Chorus 是一个 AI Agent 与人类协作的平台，实现 AI-DLC（AI-Driven D
    审批提议        提议任务        执行任务        代理审批
 ```
 
-**Agent 角色说明**：
-- **PM Agent**: 需求分析、任务拆解、创建提议
-- **Developer Agent**: 执行任务、报告工作、提交验证
-- **Admin Agent**: 代理人类执行审批 Proposal、验证 Task、创建 Project 等操作（⚠️ 危险权限）
+**Agent 权限模型**：
+
+Agent 不再被固定分成三种角色。每个 Agent 带有一份**权限集**，由 5 类资源（`idea`、`proposal`、`document`、`project`、`task`）× 3 种动作（`read`、`write`、`admin`）共 15 个权限位组成。UI 提供三个**预设**，外加一个 **Custom** 选项：
+
+- **Developer 预设**（`developer_agent`）：全部 `*:read` + `task:write` —— 执行任务、报告工作、提交验证。
+- **PM 预设**（`pm_agent`）：Developer 预设基础上再加 `idea:write`、`proposal:write`、`document:write`、`project:write` —— 需求分析、任务拆解、创建提议。
+- **Admin 预设**（`admin_agent`）：全部 15 个权限位 —— 代理人类执行审批 Proposal、验证 Task、管理 Project 等操作（⚠️ 危险权限）。
+- **Custom**：任意组合 15 个权限位（例如只读审计 Agent，或带 `task:admin` 可自行验收任务的 PM）。
+
+具体预设映射和有效权限计算（`expandRoles(roles) ∪ custom`）见 §6.3。
 
 ---
 
@@ -826,11 +832,12 @@ model Task {
 #### Agent（代理）
 - AI Agent 实体（Claude Code 等）
 - `companyUuid`: 所属公司 UUID
-- `roles`: 角色数组（`pm` | `developer`）
+- `roles`: 预设选择数组 —— `developer_agent` / `pm_agent` / `admin_agent` 三个取值之一或多个（历史别名 `pm` / `developer` 仍会解析为对应预设）。`roles` 只用来选预设，真正的授权由 `permissions` 决定。
+- `permissions`: 在预设基础上叠加的自定义权限位。有效权限集 = 预设展开 ∪ 自定义。详见 §6.3。
 - `ownerUuid`: 创建者 User UUID
 - `persona`: 自定义人格描述
 - `systemPrompt`: 完整系统提示
-- 一个 Agent 可以有多个 API Key
+- 一个 Agent 可以有多个 API Key（所有 API Key 继承 Agent 的有效权限集）
 
 #### ApiKey（API 密钥）
 - 独立管理，支持轮换和撤销
@@ -1058,7 +1065,7 @@ Streamable HTTP Transport（支持 SSE）
 Header: Authorization: Bearer {api_key}
 ```
 
-根据 API Key 关联的 Agent role，返回不同的工具集。
+根据 API Key 关联的 Agent **有效权限集**，返回不同的工具集。每个受控 MCP 工具声明一个必需权限位（例如 `task:write`、`proposal:admin`），只有必需权限位在调用者权限集中的工具才会被暴露。公共工具（查询、评论、session）无权限门禁。完整的工具 → 权限映射见 [MCP_TOOLS.md](./MCP_TOOLS.md)。
 
 #### 公共工具（All Agents）
 
@@ -1087,42 +1094,25 @@ Header: Authorization: Bearer {api_key}
 | `chorus_session_checkin_task` / `chorus_session_checkout_task` | Task Checkin/Checkout |
 | `chorus_session_heartbeat` | Session 心跳 |
 
-#### Developer Agent 工具
+#### 按必需权限分组的受控工具
 
-| 工具 | 描述 |
-|-----|------|
-| `chorus_claim_task` / `chorus_release_task` | 认领/释放 Task |
-| `chorus_update_task` | 更新任务状态（含 sessionUuid 归因） |
-| `chorus_submit_for_verify` | 提交任务验证 |
-| `chorus_report_work` | 报告工作（含 sessionUuid 归因） |
+受控工具按所需权限分组列在下方。Agent 当且仅当该权限位在其有效权限集（预设展开 + 自定义）中时才能看到对应工具。完整工具 → 权限映射表维护在 [MCP_TOOLS.md](./MCP_TOOLS.md) 和源码 `src/mcp/tools/permission-map.ts`。
 
-#### PM Agent 工具
+| 必需权限 | 代表性工具 |
+|-----|-----|
+| `idea:write` | `chorus_claim_idea`、`chorus_release_idea`、`chorus_move_idea`、`chorus_pm_create_idea`、`chorus_pm_start_elaboration`、`chorus_pm_validate_elaboration`、`chorus_pm_skip_elaboration` |
+| `proposal:write` | `chorus_pm_create_proposal`、`chorus_pm_submit_proposal`、`chorus_pm_validate_proposal`、`chorus_pm_{add,update,remove}_document_draft`、`chorus_pm_{add,update,remove}_task_draft`、`chorus_pm_create_tasks`、`chorus_pm_assign_task`、`chorus_{add,remove}_task_dependency`、`chorus_pm_{reject,revoke}_proposal` |
+| `document:write` | `chorus_pm_create_document`、`chorus_pm_update_document` |
+| `task:write` | `chorus_claim_task`、`chorus_release_task`、`chorus_submit_for_verify`、`chorus_report_work`、`chorus_report_criteria_self_check` |
+| `project:write` | `chorus_admin_create_project`、`chorus_admin_{create,update,delete}_project_group`、`chorus_admin_move_project_to_group` |
+| `proposal:admin` | `chorus_admin_approve_proposal`、`chorus_admin_close_proposal` |
+| `task:admin` | `chorus_admin_verify_task`、`chorus_admin_reopen_task`、`chorus_admin_close_task`、`chorus_mark_acceptance_criteria`、`chorus_admin_delete_task` |
+| `idea:admin` | `chorus_admin_delete_idea` |
+| `document:admin` | `chorus_admin_delete_document` |
 
-| 工具 | 描述 |
-|-----|------|
-| `chorus_claim_idea` / `chorus_release_idea` | 认领/释放 Idea |
-| `chorus_update_idea_status` | 更新 Idea 状态 |
-| `chorus_pm_create_proposal` / `chorus_pm_submit_proposal` | 创建/提交 Proposal |
-| `chorus_pm_create_document` / `chorus_pm_update_document` | Document CRUD |
-| `chorus_pm_create_tasks` | 批量创建 Tasks |
-| `chorus_pm_assign_task` | 分配 Task |
-| `chorus_pm_add_document_draft` / `chorus_pm_update_document_draft` / `chorus_pm_remove_document_draft` | 文档草稿管理 |
-| `chorus_pm_add_task_draft` / `chorus_pm_update_task_draft` / `chorus_pm_remove_task_draft` | 任务草稿管理 |
-| `chorus_add_task_dependency` / `chorus_remove_task_dependency` | Task 依赖 DAG 管理 |
+`admin_agent` 预设拥有所有 `*:admin` 位，因此会暴露上表全部工具。任意自定义组合（例如 Developer 预设 + `task:admin` 让 Agent 自行验收任务）会自动得到对应工具集。
 
-#### Admin Agent 工具
-
-| 工具 | 描述 |
-|-----|------|
-| `chorus_admin_create_project` | 创建项目 |
-| `chorus_admin_approve_proposal` / `chorus_pm_reject_proposal` / `chorus_admin_close_proposal` | Proposal 审批 |
-| `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` | Task 验证/管理 |
-| `chorus_admin_close_idea` / `chorus_admin_delete_idea` | Idea 管理 |
-| `chorus_admin_delete_task` / `chorus_admin_delete_document` | 删除管理 |
-
-Admin Agent 同时拥有 PM 和 Developer 的所有工具。
-
-**⚠️ 安全警告**：Admin Agent 拥有人类级别的权限，可以执行审批、验证等关键操作。创建此类型的 Agent 需要谨慎，仅在需要自动化人类审批流程时使用。
+**⚠️ 安全警告**：`*:admin` 权限是人类级别的 —— 覆盖 Proposal 审批、Task 验证、Idea/Document 删除。只在确实需要自动化人类审批流程时授予这些权限。
 
 #### Proposal 输入/输出说明
 
@@ -1235,10 +1225,10 @@ SUPER_ADMIN_PASSWORD_HASH=$2b$10$...  # bcrypt 哈希
      │                │  Validate Key     │
      │                │ ─────────────────>│
      │                │                   │
-     │                │  Agent + Role     │
+     │                │  Agent+Perms      │
      │                │ <─────────────────│
      │                │                   │
-     │                │  Check Role       │
+     │                │  按权限集过滤工具  │
      │                │  Return Tools     │
      │                │                   │
      │  MCP Response  │                   │
@@ -1247,15 +1237,45 @@ SUPER_ADMIN_PASSWORD_HASH=$2b$10$...  # bcrypt 哈希
 
 ### 6.3 权限模型
 
-| 操作 | User | PM Agent | Personal Agent |
-|-----|------|----------|----------------|
-| 创建项目 | ✓ | ✗ | ✗ |
-| 查看项目 | ✓ | ✓ | ✓ |
-| 创建任务 | ✓ | ✓ | ✗ |
-| 更新任务 | ✓ | ✓ | ✓（仅分配给自己的） |
-| 创建提议 | ✗ | ✓ | ✗ |
-| 审批提议 | ✓ | ✗ | ✗ |
-| 管理 Agent | ✓ | ✗ | ✗ |
+Agent 的授权是一个 **15 位权限矩阵** —— 5 类资源 × 3 种动作。UI 暴露三个预设外加 Custom 选项。
+
+**资源 × 动作**：
+
+| 资源 | `read` | `write` | `admin` |
+|-----|:---:|:---:|:---:|
+| `idea` | 查看 Ideas | 创建 / 认领 / 释放 / 更新 Ideas，运行需求澄清 | 关闭 / 删除 Ideas |
+| `proposal` | 查看 Proposals 和草稿 | 创建 / 提交 / 拒绝 / 撤回 Proposals，管理草稿、批量建任务、管理任务 DAG、分配任务 | 审批 / 关闭 Proposals |
+| `document` | 查看 Documents | 创建 / 更新 Documents | 删除 Documents |
+| `project` | 查看 Projects 和 Project Groups | 创建 / 更新 / 删除 Projects 和 Project Groups，在 Group 间移动 Project | （保留） |
+| `task` | 查看 Tasks | 认领 / 释放 / 提交 / 汇报 Tasks，自检 Acceptance Criteria | 验证 / 重开 / 关闭 / 删除 Tasks、标记 Acceptance Criteria |
+
+**角色预设 → 权限集**：
+
+| 预设 | 展开后的权限 | 总数 |
+|-----|------|:---:|
+| `developer_agent` | `*:read` + `task:write` | 6 |
+| `pm_agent` | `*:read` + `idea:write`、`proposal:write`、`document:write`、`task:write`、`project:write` | 10 |
+| `admin_agent` | 全部 15 位（`*:read` + `*:write` + `*:admin`） | 15 |
+
+**有效权限计算**：`computeEffectivePermissions(roles, customPermissions)` 返回所有预设展开和 Agent 身上自定义权限位的**并集**（见 `src/lib/authz/permissions.ts`）。REST 门禁（`requireAgentPermission`）和 MCP 工具可见性（`permission-map.ts` + `registerPermissionedTool`）都是基于这个有效集合。
+
+**人类用户**不走 Agent 权限矩阵 —— REST 路由通过标准的 UserAuthContext 处理。SuperAdmin 绕过所有权限检查。
+
+**Checkin 输出**：`chorus_checkin`（以及 `/api/agents/me`）把权限按资源聚合输出，节省 token：
+
+```json
+{
+  "permissions": {
+    "idea": ["read", "write"],
+    "proposal": ["read", "write"],
+    "document": ["read", "write"],
+    "project": ["read"],
+    "task": ["read", "write"]
+  }
+}
+```
+
+Skills 和插件 hook 直接消费这个聚合结构，不再需要扫描平铺的权限列表。
 
 ---
 

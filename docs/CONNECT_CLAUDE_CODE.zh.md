@@ -47,7 +47,7 @@ claude --plugin-dir public/chorus-plugin
 check in to chorus
 ```
 
-Claude 会调用 `chorus_checkin()`，返回你的 agent 身份、角色和最近的活动记录。
+Claude 会调用 `chorus_checkin()`，返回你的 agent 身份、权限和最近的活动记录。
 
 ## 故障排查
 

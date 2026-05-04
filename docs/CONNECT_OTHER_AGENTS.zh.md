@@ -44,7 +44,7 @@ Web UI 的 setup 向导（**Settings → Setup Guide → 打开设置向导 → 
 | MCP server URL | `{CHORUS_URL}/api/mcp` |
 | Auth header | `Authorization: Bearer {API_KEY}` |
 
-配好之后让 agent 调用 `chorus_checkin` —— 如果能返回你的 agent 身份和角色，就说明连上了。
+配好之后让 agent 调用 `chorus_checkin` —— 如果能返回你的 agent 身份和权限，就说明连上了。
 
 ## 验证
 
@@ -54,7 +54,7 @@ Web UI 的 setup 向导（**Settings → Setup Guide → 打开设置向导 → 
 check in to chorus
 ```
 
-你应该能看到一份描述 agent、角色、最近 Chorus 活动的 JSON 响应。如果 agent 还能列出可用的 MCP 工具（例如 `chorus_pm_create_idea`、`chorus_claim_task`），那就是完全 OK 了。
+你应该能看到一份描述 agent、权限、最近 Chorus 活动的 JSON 响应。如果 agent 还能列出可用的 MCP 工具（例如 `chorus_pm_create_idea`、`chorus_claim_task`），那就是完全 OK 了。
 
 ## 故障排查
 

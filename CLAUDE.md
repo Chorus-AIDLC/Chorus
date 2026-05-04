@@ -2,7 +2,7 @@
 
 ## What is Chorus
 
-Chorus is an AI Agent & Human collaboration platform implementing the **AI-DLC (AI-Driven Development Lifecycle)** workflow. Multiple AI Agents (PM, Developer, Admin) and humans work together through a shared Idea → Proposal → Document + Task → Execute → Verify → Done pipeline.
+Chorus is an AI Agent & Human collaboration platform implementing the **AI-DLC (AI-Driven Development Lifecycle)** workflow. AI Agents (with fine-grained, configurable permissions) and humans work together through a shared Idea → Proposal → Document + Task → Execute → Verify → Done pipeline.
 
 Core philosophy: **"Reversed Conversation"** — AI proposes, humans verify (not human prompt → AI execute).
 
@@ -34,9 +34,11 @@ src/
 │   └── login/              # OIDC login flow
 ├── lib/                    # Core utilities (auth, prisma, api-response, uuid-resolver)
 ├── services/               # Business logic layer (all UUID-based)
-├── mcp/                    # MCP Server factory + role-based tool modules
+├── mcp/                    # MCP Server factory + permission-gated tool modules
 │   ├── server.ts           # Creates per-auth MCP server instance
-│   └── tools/              # public.ts, developer.ts, pm.ts, admin.ts, session.ts
+│   └── tools/              # public.ts, developer.ts, pm.ts, admin.ts, session.ts, presence.ts
+│                           # + permission-map.ts (tool → required permission)
+│                           # + register-helpers.ts (registerPermissionedTool)
 ├── components/ui/          # shadcn/ui primitives
 ├── contexts/               # React contexts (locale)
 ├── i18n/                   # config.ts + request.ts
@@ -86,7 +88,7 @@ Business logic lives in `src/services/*.service.ts`. API routes and MCP tools bo
 
 Every request resolves to an `AuthContext` with `type` ("user" | "agent" | "super_admin"), `companyUuid`, and `actorUuid`. The `getAuthContext(request)` function in `src/lib/auth.ts` checks: Bearer token (API Key or OIDC) → Session cookie (user_session / admin_session) → OIDC cookie (oidc_access_token).
 
-Agent auth carries `roles: string[]` (pm_agent, developer_agent, admin_agent) which determines MCP tool visibility.
+Agent auth carries `permissions: Permission[]` — the flat effective set derived from a role preset (`developer_agent` / `pm_agent` / `admin_agent`) plus any custom permissions. Each permission is a `{resource}:{action}` bit across 5 resources (idea, proposal, document, project, task) × 3 actions (read, write, admin) = 15 possible bits. Tool visibility and REST gating are driven by this permission set, not by the legacy `roles[]` field (which is still present but serves only as a preset selector). See `src/lib/authz/` for types, presets, and `hasPermission` / `requireAgentPermission`.
 
 ### Polymorphic Assignment
 
@@ -94,7 +96,7 @@ Tasks and Ideas use `assigneeType` ("user" | "agent") + `assigneeUuid` for flexi
 
 ### MCP Server
 
-The MCP endpoint at `POST /api/mcp` creates per-session server instances. Each session is tied to an authenticated agent. Tools are registered based on the agent's roles. Sessions auto-expire after 30 minutes of inactivity.
+The MCP endpoint at `POST /api/mcp` is stateless — each request authenticates via API Key and a fresh per-request server instance is built. Tools are registered based on the agent's effective permission set: each gated tool declares a single required permission (see `src/mcp/tools/permission-map.ts`), and only tools whose permission is present are exposed. Public tools (discover, comment, session) carry no gate.
 
 Tool registration pattern:
 ```typescript
@@ -201,7 +203,7 @@ When implementing any user-facing feature or UI change, you **must** update `doc
 
 1. **Prisma client stale after schema change**: If you modify `prisma/schema.prisma`, you must run `npx prisma generate` AND restart the dev server. The running process caches the old Prisma client in memory.
 
-2. **MCP session expiry**: MCP sessions expire after 30 minutes. The client must handle 404 by reinitializing.
+2. **MCP is stateless**: Each `/api/mcp` request is self-contained — no server-side session. There is no 30-minute expiry or 404-on-expiry path; clients just hit the endpoint with their API Key each time.
 
 3. **Multi-tenancy**: All queries must be scoped by `companyUuid`. Never return data across company boundaries.
 

@@ -42,7 +42,7 @@ Open Codex and type:
 check in to chorus
 ```
 
-Codex will call `chorus_checkin()` via the MCP server and report back with your agent identity, roles, and recent activity. The Chorus workflow skills (`$chorus`, `$develop`, `$proposal`, `$yolo`, etc.) are also available.
+Codex will call `chorus_checkin()` via the MCP server and report back with your agent identity, permissions, and recent activity. The Chorus workflow skills (`$chorus`, `$develop`, `$proposal`, `$yolo`, etc.) are also available.
 
 ## Non-interactive install (CI / sandboxed environments)
 
