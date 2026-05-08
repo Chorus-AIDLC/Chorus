@@ -102,7 +102,7 @@ Agents can filter results by project(s) using HTTP headers during MCP connection
 
 The following tools respect project filtering:
 - `chorus_checkin` - Returns filtered assignments
-- `chorus_get_my_assignments` - Returns filtered ideas and tasks
+- `chorus_get_my_assignments` - Returns filtered idea/task tracker (grouped by project)
 
 ### Usage Example
 
@@ -388,22 +388,55 @@ Tools available to all Agents.
 
 ### chorus_get_my_assignments
 
-**Description**: Get all Ideas and Tasks assigned to the current Agent
+**Description**: Get the agent's idea/task tracker, grouped by project. Output is structurally identical to `chorus_checkin.ideaTracker` (see `chorus_checkin`) — the only difference is that `chorus_get_my_assignments` returns the full set of in-progress ideas (no `maxIdeas` cap), plus a `taskTracker` for tasks.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
 - `X-Chorus-Project-Group`: Project group UUID (includes all projects in the group)
 - No header: Returns all projects (default behavior)
 
+**Filtering**: Excludes ideas with `status=closed` and ideas whose derived status is `done` (rolled-up completion based on linked proposals + tasks). Excludes tasks with `status` in `[done, closed]`.
+
 **Input**: None
 
 **Output**:
 ```json
 {
-  "ideas": [...],
-  "tasks": [...]
+  "ideaTracker": {
+    "<projectUuid>": {
+      "name": "Project Name",
+      "ideas": [
+        {
+          "uuid": "...",
+          "title": "...",
+          "status": "in_progress",
+          "proposals": 1,
+          "tasks": 3
+        }
+      ]
+    }
+  },
+  "taskTracker": {
+    "<projectUuid>": {
+      "name": "Project Name",
+      "tasks": [
+        {
+          "uuid": "...",
+          "title": "...",
+          "status": "in_progress",
+          "priority": "high",
+          "assignedAt": "2026-05-08T01:25:58.833Z",
+          "ac": { "passed": 2, "total": 5 }
+        }
+      ]
+    }
+  }
 }
 ```
+
+Each idea entry's `status` is the derived status (`todo` / `in_progress` / `human_conduct_required`); each task entry's `ac` reports admin-verified acceptance-criteria progress.
+
+> **BREAKING (0.7.2)**: prior to 0.7.2 this tool returned a flat `{ ideas: [], tasks: [] }`. The new shape aligns 1:1 with `chorus_checkin.ideaTracker`.
 
 ### chorus_get_available_ideas
 
@@ -1618,7 +1651,7 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 | 7 | chorus_get_available_ideas | Get claimable Ideas | ✅ Pass | |
 | 8 | chorus_claim_idea | Claim Idea | ✅ Pass | open → elaborating |
 | 9 | chorus_update_idea_status | Update Idea status | ✅ Pass | (status transitions) |
-| 10 | chorus_get_my_assignments | Get my assignments | ✅ Pass | ideas and tasks lists |
+| 10 | chorus_get_my_assignments | Get my assignments | ✅ Pass | ideaTracker + taskTracker grouped by project (0.7.2) |
 | 11 | chorus_add_comment (idea) | Comment on Idea | ✅ Pass | |
 | 12 | chorus_get_comments | Get comments list | ✅ Pass | |
 | 13 | chorus_pm_create_proposal | Create Proposal | ✅ Pass | Contains documentDrafts + taskDrafts, status=draft |

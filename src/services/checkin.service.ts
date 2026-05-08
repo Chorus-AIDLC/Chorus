@@ -1,11 +1,12 @@
 // src/services/checkin.service.ts
 // Checkin service — builds the agent checkin response with ideaTracker + notifications.
-// Uses an agent-centric batch (3 queries + project-name lookup) to avoid per-project N+1.
+// The idea-tracker logic lives in idea-tracker.service so that chorus_get_my_assignments
+// stays in lockstep with checkin (see Chorus 0.7.2).
 
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
-import { computeDerivedStatus } from "@/services/idea.service";
 import type { DerivedIdeaStatus } from "@/services/idea.service";
+import { buildIdeaTracker as buildIdeaTrackerService } from "@/services/idea-tracker.service";
 import * as notificationService from "@/services/notification.service";
 import {
   computeEffectivePermissions,
@@ -124,158 +125,10 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
   };
 }
 
-// ===== Idea tracker (agent-centric 3-query batch) =====
+// ===== Idea tracker (delegates to idea-tracker.service) =====
 
 async function buildIdeaTracker(auth: AuthContext): Promise<Record<string, CheckinProject>> {
-  // Q1: Ideas assigned to the agent OR to the agent's owner.
-  // Exclude legacy "closed" status (terminal) — elaborated/completed/etc. still flow to
-  // ideaTracker so the agent sees downstream proposal/task work.
-  const assigneeConditions: Array<{ assigneeType: string; assigneeUuid: string }> = [
-    { assigneeType: "agent", assigneeUuid: auth.actorUuid },
-  ];
-  if (auth.ownerUuid) {
-    assigneeConditions.push({ assigneeType: "user", assigneeUuid: auth.ownerUuid });
-  }
-
-  const rawIdeas = await prisma.idea.findMany({
-    where: {
-      companyUuid: auth.companyUuid,
-      OR: assigneeConditions,
-      status: { not: "closed" },
-    },
-    select: {
-      uuid: true,
-      title: true,
-      status: true,
-      elaborationStatus: true,
-      projectUuid: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  if (rawIdeas.length === 0) return {};
-
-  const ideaUuidSet = new Set(rawIdeas.map((i) => i.uuid));
-  const projectUuidSet = new Set(rawIdeas.map((i) => i.projectUuid));
-  const projectUuids = [...projectUuidSet];
-
-  // Q2: Pending + approved proposals in those projects, filtered in-memory by inputUuids overlap.
-  // Scoping by projectUuid keeps the fetch small; JSON overlap filtering in Prisma is awkward.
-  const rawProposals = await prisma.proposal.findMany({
-    where: {
-      companyUuid: auth.companyUuid,
-      projectUuid: { in: projectUuids },
-      status: { in: ["pending", "approved"] },
-      inputType: "idea",
-    },
-    select: {
-      uuid: true,
-      status: true,
-      inputUuids: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  // Map ideaUuid → { proposalCount, latestApproved, hasPending }
-  const ideaProposalCount = new Map<string, number>();
-  const ideaHasPending = new Set<string>();
-  const ideaLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
-
-  for (const proposal of rawProposals) {
-    const inputUuids = proposal.inputUuids as unknown;
-    if (!Array.isArray(inputUuids)) continue;
-    for (const ideaUuid of inputUuids) {
-      if (typeof ideaUuid !== "string" || !ideaUuidSet.has(ideaUuid)) continue;
-      ideaProposalCount.set(ideaUuid, (ideaProposalCount.get(ideaUuid) ?? 0) + 1);
-      if (proposal.status === "pending") {
-        ideaHasPending.add(ideaUuid);
-      } else if (proposal.status === "approved") {
-        const existing = ideaLatestApproved.get(ideaUuid);
-        if (!existing || proposal.createdAt > existing.createdAt) {
-          ideaLatestApproved.set(ideaUuid, { uuid: proposal.uuid, createdAt: proposal.createdAt });
-        }
-      }
-    }
-  }
-
-  const approvedProposalUuids = [
-    ...new Set([...ideaLatestApproved.values()].map((p) => p.uuid)),
-  ];
-
-  // Q3: Tasks on the approved proposals
-  const proposalToTaskStatuses = new Map<string, string[]>();
-  if (approvedProposalUuids.length > 0) {
-    const tasks = await prisma.task.findMany({
-      where: {
-        companyUuid: auth.companyUuid,
-        proposalUuid: { in: approvedProposalUuids },
-      },
-      select: { proposalUuid: true, status: true },
-    });
-
-    for (const task of tasks) {
-      if (!task.proposalUuid) continue;
-      const statuses = proposalToTaskStatuses.get(task.proposalUuid) ?? [];
-      statuses.push(task.status);
-      proposalToTaskStatuses.set(task.proposalUuid, statuses);
-    }
-  }
-
-  // Q4: Project names (only for projects that have surviving ideas)
-  const projects = await prisma.project.findMany({
-    where: {
-      companyUuid: auth.companyUuid,
-      uuid: { in: projectUuids },
-    },
-    select: { uuid: true, name: true },
-  });
-  const projectNames = new Map(projects.map((p) => [p.uuid, p.name]));
-
-  // Compute derivedStatus + group by project, filter out "done", cap at 10 ideas
-  const MAX_IDEAS = 10;
-  const tracker: Record<string, CheckinProject> = {};
-  let count = 0;
-
-  for (const idea of rawIdeas) {
-    if (count >= MAX_IDEAS) break;
-
-    const latestApproved = ideaLatestApproved.get(idea.uuid);
-    const taskStatuses = latestApproved
-      ? proposalToTaskStatuses.get(latestApproved.uuid) ?? []
-      : [];
-
-    const { derivedStatus } = computeDerivedStatus({
-      ideaStatus: idea.status,
-      elaborationStatus: idea.elaborationStatus,
-      hasPendingProposal: ideaHasPending.has(idea.uuid),
-      hasApprovedProposal: !!latestApproved,
-      taskStatuses,
-    });
-
-    if (derivedStatus === "done") continue;
-
-    const projectUuid = idea.projectUuid;
-    if (!tracker[projectUuid]) {
-      tracker[projectUuid] = {
-        name: projectNames.get(projectUuid) ?? "",
-        ideas: [],
-      };
-    }
-
-    tracker[projectUuid].ideas.push({
-      uuid: idea.uuid,
-      title: idea.title,
-      status: derivedStatus,
-      proposals: ideaProposalCount.get(idea.uuid) ?? 0,
-      tasks: taskStatuses.length,
-    });
-    count++;
-  }
-
-  return tracker;
+  return buildIdeaTrackerService(auth, { maxIdeas: 10 });
 }
 
 // ===== Notification summary (fetch 5 unread, mark read) =====

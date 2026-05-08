@@ -1142,7 +1142,7 @@ Time 1:00  - Cleanup runs, session deleted
 | `chorus_get_proposals` / `chorus_get_proposal` | List/get Proposals (including drafts) |
 | `chorus_list_tasks` / `chorus_get_task` | List/get Tasks |
 | `chorus_get_activity` | Project activity stream |
-| `chorus_get_my_assignments` | My claimed Ideas + Tasks |
+| `chorus_get_my_assignments` | Idea/task tracker grouped by project (same shape as `checkin.ideaTracker`) |
 | `chorus_get_available_ideas` | Claimable Ideas |
 | `chorus_get_available_tasks` | Claimable Tasks |
 | `chorus_get_unblocked_tasks` | Tasks with all dependencies completed (for scheduling) |

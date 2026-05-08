@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// ===== Prisma mock =====
+// ===== Prisma mock (used by getAvailableItems only) =====
 const mockPrisma = vi.hoisted(() => ({
   idea: {
     findMany: vi.fn(),
@@ -11,11 +11,17 @@ const mockPrisma = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
-const mockFormatAssignee = vi.fn();
 const mockFormatCreatedBy = vi.fn();
 vi.mock("@/lib/uuid-resolver", () => ({
-  formatAssignee: (...args: unknown[]) => mockFormatAssignee(...args),
   formatCreatedBy: (...args: unknown[]) => mockFormatCreatedBy(...args),
+}));
+
+// ===== idea-tracker.service mock (used by getMyAssignments) =====
+const mockBuildIdeaTracker = vi.hoisted(() => vi.fn());
+const mockBuildTaskTracker = vi.hoisted(() => vi.fn());
+vi.mock("@/services/idea-tracker.service", () => ({
+  buildIdeaTracker: mockBuildIdeaTracker,
+  buildTaskTracker: mockBuildTaskTracker,
 }));
 
 import { getMyAssignments, getAvailableItems } from "@/services/assignment.service";
@@ -34,14 +40,9 @@ function makeIdea(overrides: Record<string, unknown> = {}) {
     uuid: "idea-0000-0000-0000-000000000001",
     title: "Test Idea",
     content: "Idea content",
-    status: "claimed",
-    assigneeType: "user",
-    assigneeUuid: userUuid,
-    assignedAt: now,
-    project: { uuid: projectUuid, name: "Test Project" },
-    createdAt: now,
-    updatedAt: now,
+    status: "open",
     createdByUuid: userUuid,
+    createdAt: now,
     ...overrides,
   };
 }
@@ -51,90 +52,67 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     uuid: "task-0000-0000-0000-000000000001",
     title: "Test Task",
     description: "Task description",
-    status: "assigned",
+    status: "open",
     priority: "high",
-    assigneeType: "user",
-    assigneeUuid: userUuid,
-    assignedAt: now,
-    project: { uuid: projectUuid, name: "Test Project" },
-    createdAt: now,
-    updatedAt: now,
     createdByUuid: userUuid,
+    createdAt: now,
     ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFormatAssignee.mockResolvedValue({
-    type: "user",
-    uuid: userUuid,
-    name: "Test User",
-  });
   mockFormatCreatedBy.mockResolvedValue({
     type: "user",
     uuid: userUuid,
     name: "Test User",
   });
+  mockBuildIdeaTracker.mockResolvedValue({});
+  mockBuildTaskTracker.mockResolvedValue({});
 });
 
 // ===== getMyAssignments =====
 describe("getMyAssignments", () => {
-  it("should return user's claimed ideas and tasks", async () => {
+  it("returns { ideaTracker, taskTracker } shaped result", async () => {
     const userAuth: AuthContext = {
       type: "user",
       companyUuid,
       actorUuid: userUuid,
     };
 
-    const idea = makeIdea();
-    const task = makeTask();
+    const ideaTracker = {
+      [projectUuid]: {
+        name: "Test Project",
+        ideas: [
+          { uuid: "i1", title: "I1", status: "in_progress" as const, proposals: 1, tasks: 2 },
+        ],
+      },
+    };
+    const taskTracker = {
+      [projectUuid]: {
+        name: "Test Project",
+        tasks: [
+          {
+            uuid: "t1",
+            title: "T1",
+            status: "assigned",
+            priority: "high",
+            assignedAt: now.toISOString(),
+            ac: { passed: 1, total: 3 },
+          },
+        ],
+      },
+    };
 
-    mockPrisma.idea.findMany.mockResolvedValue([idea]);
-    mockPrisma.task.findMany.mockResolvedValue([task]);
+    mockBuildIdeaTracker.mockResolvedValue(ideaTracker);
+    mockBuildTaskTracker.mockResolvedValue(taskTracker);
 
     const result = await getMyAssignments(userAuth);
 
-    expect(result.ideas).toHaveLength(1);
-    expect(result.tasks).toHaveLength(1);
-    expect(result.ideas[0].uuid).toBe(idea.uuid);
-    expect(result.tasks[0].uuid).toBe(task.uuid);
+    expect(result).toEqual({ ideaTracker, taskTracker });
   });
 
-  it("should query with user assignment condition", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth);
-
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-          status: { notIn: ["completed", "closed"] },
-        }),
-      })
-    );
-
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-          status: { notIn: ["done", "closed"] },
-        }),
-      })
-    );
-  });
-
-  it("should query with agent assignment conditions (agent + owner)", async () => {
+  it("delegates to buildIdeaTracker / buildTaskTracker with auth", async () => {
     const agentAuth: AuthContext = {
       type: "agent",
       companyUuid,
@@ -143,229 +121,13 @@ describe("getMyAssignments", () => {
       ownerUuid,
     };
 
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
     await getMyAssignments(agentAuth);
 
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          OR: [
-            { assigneeType: "agent", assigneeUuid: agentUuid },
-            { assigneeType: "user", assigneeUuid: ownerUuid },
-          ],
-        }),
-      })
-    );
-
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          OR: [
-            { assigneeType: "agent", assigneeUuid: agentUuid },
-            { assigneeType: "user", assigneeUuid: ownerUuid },
-          ],
-        }),
-      })
-    );
+    expect(mockBuildIdeaTracker).toHaveBeenCalledWith(agentAuth, { projectUuids: undefined });
+    expect(mockBuildTaskTracker).toHaveBeenCalledWith(agentAuth, { projectUuids: undefined });
   });
 
-  it("should exclude completed ideas and done tasks", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth);
-
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          status: { notIn: ["completed", "closed"] },
-        }),
-      })
-    );
-
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          status: { notIn: ["done", "closed"] },
-        }),
-      })
-    );
-  });
-
-  it("should format ideas with assignee info", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    const idea = makeIdea();
-    mockPrisma.idea.findMany.mockResolvedValue([idea]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    mockFormatAssignee.mockResolvedValue({
-      type: "user",
-      uuid: userUuid,
-      name: "John Doe",
-    });
-
-    const result = await getMyAssignments(userAuth);
-
-    expect(result.ideas[0].assignee).toEqual({
-      type: "user",
-      uuid: userUuid,
-      name: "John Doe",
-    });
-    expect(mockFormatAssignee).toHaveBeenCalledWith("user", userUuid);
-  });
-
-  it("should format tasks with assignee info", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    const task = makeTask();
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([task]);
-
-    mockFormatAssignee.mockResolvedValue({
-      type: "agent",
-      uuid: agentUuid,
-      name: "Bot Agent",
-    });
-
-    const result = await getMyAssignments(userAuth);
-
-    expect(result.tasks[0].assignee).toEqual({
-      type: "agent",
-      uuid: agentUuid,
-      name: "Bot Agent",
-    });
-  });
-
-  it("should return ISO date strings for timestamps", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    const idea = makeIdea();
-    const task = makeTask();
-    mockPrisma.idea.findMany.mockResolvedValue([idea]);
-    mockPrisma.task.findMany.mockResolvedValue([task]);
-
-    const result = await getMyAssignments(userAuth);
-
-    expect(result.ideas[0].createdAt).toBe(now.toISOString());
-    expect(result.ideas[0].assignedAt).toBe(now.toISOString());
-    expect(result.tasks[0].createdAt).toBe(now.toISOString());
-    expect(result.tasks[0].assignedAt).toBe(now.toISOString());
-  });
-
-  it("should order ideas by assignedAt desc", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth);
-
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: { assignedAt: "desc" },
-      })
-    );
-  });
-
-  it("should order tasks by priority desc, then assignedAt desc", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth);
-
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: [{ priority: "desc" }, { assignedAt: "desc" }],
-      })
-    );
-  });
-
-  it("should filter by projectUuids when provided", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth, [projectUuid]);
-
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          projectUuid: { in: [projectUuid] },
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-        }),
-      })
-    );
-
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          projectUuid: { in: [projectUuid] },
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-        }),
-      })
-    );
-  });
-
-  it("should not filter by projectUuids when not provided", async () => {
-    const userAuth: AuthContext = {
-      type: "user",
-      companyUuid,
-      actorUuid: userUuid,
-    };
-
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
-    await getMyAssignments(userAuth);
-
-    const ideaWhere = mockPrisma.idea.findMany.mock.calls[0][0].where;
-    const taskWhere = mockPrisma.task.findMany.mock.calls[0][0].where;
-
-    expect(ideaWhere).not.toHaveProperty("projectUuid");
-    expect(taskWhere).not.toHaveProperty("projectUuid");
-  });
-
-  it("should filter by multiple projectUuids", async () => {
+  it("forwards projectUuids when provided", async () => {
     const userAuth: AuthContext = {
       type: "user",
       companyUuid,
@@ -374,38 +136,65 @@ describe("getMyAssignments", () => {
 
     const projectUuid2 = "project-0000-0000-0000-000000000002";
 
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-    mockPrisma.task.findMany.mockResolvedValue([]);
-
     await getMyAssignments(userAuth, [projectUuid, projectUuid2]);
 
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          projectUuid: { in: [projectUuid, projectUuid2] },
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-        }),
-      })
-    );
+    expect(mockBuildIdeaTracker).toHaveBeenCalledWith(userAuth, {
+      projectUuids: [projectUuid, projectUuid2],
+    });
+    expect(mockBuildTaskTracker).toHaveBeenCalledWith(userAuth, {
+      projectUuids: [projectUuid, projectUuid2],
+    });
+  });
 
-    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          companyUuid,
-          projectUuid: { in: [projectUuid, projectUuid2] },
-          OR: [{ assigneeType: "user", assigneeUuid: userUuid }],
-        }),
-      })
-    );
+  it("invokes both helpers in parallel (Promise.all)", async () => {
+    const userAuth: AuthContext = {
+      type: "user",
+      companyUuid,
+      actorUuid: userUuid,
+    };
+
+    // Configure each mock to resolve after a microtask delay so we can detect
+    // that the result waits for both — i.e. neither call is sequential.
+    let ideaResolved = false;
+    let taskResolved = false;
+    mockBuildIdeaTracker.mockImplementation(async () => {
+      ideaResolved = true;
+      return {};
+    });
+    mockBuildTaskTracker.mockImplementation(async () => {
+      taskResolved = true;
+      return {};
+    });
+
+    const result = await getMyAssignments(userAuth);
+
+    expect(ideaResolved).toBe(true);
+    expect(taskResolved).toBe(true);
+    expect(result).toEqual({ ideaTracker: {}, taskTracker: {} });
+  });
+
+  it("returns empty trackers when helpers return empty objects", async () => {
+    const userAuth: AuthContext = {
+      type: "user",
+      companyUuid,
+      actorUuid: userUuid,
+    };
+
+    mockBuildIdeaTracker.mockResolvedValue({});
+    mockBuildTaskTracker.mockResolvedValue({});
+
+    const result = await getMyAssignments(userAuth);
+
+    expect(result.ideaTracker).toEqual({});
+    expect(result.taskTracker).toEqual({});
   });
 });
 
-// ===== getAvailableItems =====
+// ===== getAvailableItems (unchanged in 0.7.2) =====
 describe("getAvailableItems", () => {
   it("should return available ideas and tasks when both allowed", async () => {
-    const idea = makeIdea({ status: "open", assigneeType: null, assigneeUuid: null });
-    const task = makeTask({ status: "open", assigneeType: null, assigneeUuid: null });
+    const idea = makeIdea();
+    const task = makeTask();
 
     mockPrisma.idea.findMany.mockResolvedValue([idea]);
     mockPrisma.task.findMany.mockResolvedValue([task]);

@@ -1078,7 +1078,7 @@ Header: Authorization: Bearer {api_key}
 | `chorus_get_proposals` / `chorus_get_proposal` | 列出/获取 Proposals（含草稿） |
 | `chorus_list_tasks` / `chorus_get_task` | 列出/获取 Tasks |
 | `chorus_get_activity` | 项目活动流 |
-| `chorus_get_my_assignments` | 我认领的 Ideas + Tasks |
+| `chorus_get_my_assignments` | 按 project 分组的 idea/task tracker（与 `checkin.ideaTracker` 同构） |
 | `chorus_get_available_ideas` | 可认领的 Ideas |
 | `chorus_get_available_tasks` | 可认领的 Tasks |
 | `chorus_get_unblocked_tasks` | 依赖已全部完成的 Tasks（调度用） |

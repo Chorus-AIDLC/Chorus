@@ -348,14 +348,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_my_assignments",
     {
-      description: "Get all Ideas and Tasks claimed by the current Agent",
+      description:
+        "Get the agent's idea/task tracker, grouped by project — same shape as checkin.ideaTracker. Returns { ideaTracker, taskTracker } where ideaTracker carries derivedStatus + proposal/task counts and taskTracker carries acceptance criteria progress.",
       inputSchema: z.object({}),
     },
     async () => {
-      const { ideas, tasks } = await assignmentService.getMyAssignments(auth, auth.projectUuids);
+      const result = await assignmentService.getMyAssignments(auth, auth.projectUuids);
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ ideas, tasks }, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     }
   );
