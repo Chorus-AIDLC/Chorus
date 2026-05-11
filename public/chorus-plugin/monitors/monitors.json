@@ -1,0 +1,7 @@
+[
+  {
+    "name": "chorus-sse",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/chorus-sse-monitor.sh",
+    "description": "Chorus AIDLC event notifications (task assignments, proposal approvals, @mentions, comments, elaboration events)"
+  }
+]
