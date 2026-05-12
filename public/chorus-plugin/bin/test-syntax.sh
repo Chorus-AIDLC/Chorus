@@ -72,6 +72,7 @@ run_test "on-task-completed.sh"  '{"task_id":"task-001"}'
 # --- PostToolUse hooks ---
 run_test "on-post-submit-proposal.sh"  '{"tool_input":{"proposalUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"pending","title":"Test proposal"}}'
 run_test "on-post-submit-for-verify.sh" '{"tool_input":{"taskUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"to_verify","title":"Test task"}}'
+run_test "on-post-verify-task.sh" '{"tool_input":{"taskUuid":"test-uuid"},"tool_response":{"uuid":"test-uuid","status":"done","title":"Test task"}}'
 
 # --- Session hooks ---
 run_test "on-session-start.sh"   '{}'

@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.0"
+  version: "0.8.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -83,6 +83,16 @@ chorus_pm_create_proposal({
 ```
 
 **Multiple Ideas:** You can combine multiple ideas into one proposal by passing multiple UUIDs in `inputUuids`.
+
+### Step 1.5: Detect OpenSpec mode
+
+Before authoring document drafts, **load the `openspec-aware` skill at `~/.codex/skills/openspec-aware/SKILL.md`** and run its §1 detection contract. Branch on the result:
+
+- **`CHORUS_OPENSPEC_ACTIVE=1`** → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
+
+  > **⛔ Mandatory in OpenSpec mode:** mirror calls go through the `chorus-mcp-call.sh` wrapper with `content` produced by `json_encode_file` — see `openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from Codex's MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the model burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the wrapper-based flow in `openspec-aware` §3.6 replaces it for documents.
+
+- **`CHORUS_OPENSPEC_ACTIVE=0`** (CLI absent or `CHORUS_OPENSPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 
 ### Step 2: Add Document Drafts
 

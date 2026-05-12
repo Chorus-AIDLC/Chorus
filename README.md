@@ -320,6 +320,20 @@ Create API Keys in the Web UI under **Settings → Agents → Create API Key**. 
 | **Plugin-embedded** | `public/chorus-plugin/skills/chorus/` | Claude Code + Plugin, automated Sessions |
 | **Standalone** | `public/skill/` (served at `/skill/`) | Any Agent, manual Session management |
 
+### OpenSpec mode (opt-in, 0.8.0+)
+
+PM agents that have the [OpenSpec](https://github.com/Fission-AI/OpenSpec)
+CLI installed can author proposals in a structured `proposal.md` +
+`design.md` + `specs/<capability>/spec.md` layout. Local files are the
+working copy and Chorus `documentDrafts` are the mirror; reviewers see a
+predictable shape (`## ADDED Requirements`, `### Requirement:`,
+`#### Scenario:`) instead of free-form Markdown. The mode is opt-in: when
+`openspec` is not installed, behavior is unchanged. To turn it off
+explicitly, set `CHORUS_OPENSPEC_MODE=off`. No new MCP tools or schema
+changes ship in 0.8.0; the canonical skill reuses the existing
+`chorus_pm_*` draft and document tools. See
+[OPENSPEC_MODE.md](docs/OPENSPEC_MODE.md) for the full guide.
+
 ---
 
 ## Documentation
@@ -330,6 +344,7 @@ Create API Keys in the Web UI under **Settings → Agents → Create API Key**. 
 | [Architecture](docs/ARCHITECTURE.md) | Technical Architecture Document |
 | [MCP Tools](docs/MCP_TOOLS.md) | MCP Tools Reference |
 | [Chorus Plugin](docs/chorus-plugin.md) | Plugin Design & Hook Documentation |
+| [OpenSpec Mode](docs/OPENSPEC_MODE.md) | Opt-in OpenSpec authoring mode for PM agents (0.8.0+) |
 | [Search](docs/SEARCH.md) | Global Search Technical Design |
 | [AI-DLC Gap Analysis](docs/AIDLC_GAP_ANALYSIS.md) | AI-DLC Methodology Gap Analysis |
 | [AIG Implementation Plan](docs/CHORUS_AIG_PLAN.md) | Agent transparency roadmap |

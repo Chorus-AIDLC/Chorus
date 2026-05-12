@@ -33,6 +33,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": ".*chorus_admin_verify_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/on-post-verify-task.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

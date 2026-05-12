@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.0"
+  version: "0.8.1"
   category: project-management
   mcp_server: chorus
 ---

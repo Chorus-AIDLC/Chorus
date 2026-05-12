@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.0"
+  version: "0.8.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -132,6 +132,14 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
    ```
    chorus_get_documents({ projectUuid: "<project-uuid>" })
    ```
+
+> **Document update flow (OpenSpec mode):** if the originating proposal `description` contains a line `OpenSpec change slug: <slug>`, the project's PRD / tech_design / spec Documents are **mirrors** of files under `openspec/changes/<slug>/`. To update such a Document (e.g. clarify an AC, fix a spec scenario before resubmitting), load the `openspec-aware` skill at `.claude/skills/openspec-aware/SKILL.md` and follow §3.8: edit the local `.md` file first, then mirror through the `chorus-api.sh` wrapper with `json_encode_file` and `chorus_check_response`.
+>
+> **⛔ Do not** call `chorus_pm_update_document` directly from the MCP harness with a hand-typed `content` field in OpenSpec mode. The local file is the source of truth; agent-typed content drifts and burns tokens (`openspec-aware` §2 Rule 1).
+>
+> When the LAST task of an OpenSpec idea is verified, the plugin's PostToolUse hook injects an archive reminder (`openspec-aware` §3.9) — run `openspec archive <slug> --yes`, then mirror each emitted `openspec/specs/<capability>/spec.md` back via §3.8.
+>
+> In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
 ### Step 5: Start Working
 

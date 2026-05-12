@@ -39,6 +39,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-submit-for-verify.sh"
           }
         ]
+      },
+      {
+        "matcher": ".*chorus_admin_verify_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/on-post-verify-task.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [

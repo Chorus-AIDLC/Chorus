@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.0"
+  version: "0.8.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -181,18 +181,40 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Create empty container:**
+1. **Detect OpenSpec mode.** Load the `openspec-aware` skill at `~/.codex/skills/openspec-aware/SKILL.md` and run its §1 detection contract. The result determines how the rest of this step authors documents:
+
+   - `CHORUS_OPENSPEC_ACTIVE=1` → spec-driven branch (sub-step 2a below).
+   - `CHORUS_OPENSPEC_ACTIVE=0` → free-form branch (sub-step 2b below).
+
+   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the detection contract exists to prevent.
+
+2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
+
    ```
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary of what the proposal covers>",
+     description: "<summary>\n\nOpenSpec change slug: <slug>",   // OpenSpec mode
+     // description: "<summary>",                                 // free-form mode
      inputType: "idea",
      inputUuids: ["<idea-uuid>"]
    })
    ```
 
-2. **Add tech design document draft:**
+   Then branch:
+
+   **2a. OpenSpec mode (`CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
+   - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
+   - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
+   - Define `$API`, `json_encode_file`, `chorus_check_response` helpers (§3.4, §6).
+   - Mirror each local file via `"$API" chorus_pm_add_document_draft "$PAYLOAD"` (§3.6) — one call per file, with the document type from `openspec-aware` §5. (Codex's `chorus-mcp-call.sh` takes `<TOOL_NAME> <JSON>` directly; no `mcp-tool` subcommand.)
+
+   > **⛔ Do not** invoke `chorus_pm_add_document_draft` / `chorus_pm_update_document_draft` / `chorus_pm_update_document` from Codex's MCP harness with a hand-typed `content` field in this branch. Re-typing the markdown body wastes 20k+ tokens per proposal and breaks byte-equality with the local files. See `openspec-aware` §2 Rule 1.
+
+   Then continue to step 3 (task drafts).
+
+   **2b. Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`).** Add a tech design document draft directly via MCP, content authored inline:
+
    ```
    chorus_pm_add_document_draft({
      proposalUuid: "<proposal-uuid>",
