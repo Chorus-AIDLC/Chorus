@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Claude Co
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.1"
+  version: "0.8.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -82,8 +82,10 @@ Both are enforced at review time. Both have caused incidents in past releases.
 Document/draft mirror calls (`chorus_pm_add_document_draft`, `chorus_pm_update_document_draft`, `chorus_pm_update_document`) **MUST** go through:
 
 ```
-"$CLAUDE_PROJECT_DIR/.claude/plugins/chorus/bin/chorus-api.sh" mcp-tool <tool_name> "$PAYLOAD"
+chorus-api.sh mcp-tool <tool_name> "$PAYLOAD"
 ```
+
+`chorus-api.sh` is on `PATH` — call it by name.
 
 with `$PAYLOAD` built using `json_encode_file` (defined in §3.4). Calling these tools directly from the agent's MCP harness with a hand-typed `content` field is a **protocol violation** for OpenSpec mode and will fail review. Reasons:
 
@@ -248,8 +250,7 @@ This line is machine-grep-able by future runs of this skill and by the §3.9 arc
 Define the halt-on-error helper from §6 once at the top, then run one call per file:
 
 ```bash
-API="$CLAUDE_PROJECT_DIR/.claude/plugins/chorus/bin/chorus-api.sh"
-
+# chorus-api.sh is on PATH — no absolute path needed.
 # PRD draft
 CONTENT=$(json_encode_file "openspec/changes/$SLUG/proposal.md")
 PAYLOAD=$(cat <<JSON
@@ -261,7 +262,7 @@ PAYLOAD=$(cat <<JSON
 }
 JSON
 )
-RESULT=$("$API" mcp-tool chorus_pm_add_document_draft "$PAYLOAD")
+RESULT=$(chorus-api.sh mcp-tool chorus_pm_add_document_draft "$PAYLOAD")
 RC=$?
 chorus_check_response "chorus_pm_add_document_draft (prd)" "$RC" "$RESULT"
 PRD_DRAFT_UUID=$(printf '%s' "$RESULT" | grep -o '"draftUuid"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
@@ -285,7 +286,7 @@ PAYLOAD=$(cat <<JSON
 }
 JSON
 )
-RESULT=$("$API" mcp-tool chorus_pm_update_document_draft "$PAYLOAD")
+RESULT=$(chorus-api.sh mcp-tool chorus_pm_update_document_draft "$PAYLOAD")
 RC=$?
 chorus_check_response "chorus_pm_update_document_draft" "$RC" "$RESULT"
 ```
@@ -303,7 +304,7 @@ PAYLOAD=$(cat <<JSON
 }
 JSON
 )
-RESULT=$("$API" mcp-tool chorus_pm_update_document "$PAYLOAD")
+RESULT=$(chorus-api.sh mcp-tool chorus_pm_update_document "$PAYLOAD")
 RC=$?
 chorus_check_response "chorus_pm_update_document" "$RC" "$RESULT"
 ```
@@ -406,7 +407,7 @@ chorus_check_response() {
 **Minimal call site shape:**
 
 ```bash
-RESULT=$("$API" mcp-tool <tool_name> "$PAYLOAD")
+RESULT=$(chorus-api.sh mcp-tool <tool_name> "$PAYLOAD")
 RC=$?
 chorus_check_response "<tool_name>" "$RC" "$RESULT"
 # ...if we reach here, the call succeeded; parse RESULT and continue.
@@ -428,8 +429,8 @@ When invoked from a stage skill (proposal / develop / yolo):
    c. Author `proposal.md`, `design.md`, `specs/<capability>/spec.md` (§3.2–§3.3). Mix `ADDED` / `MODIFIED` / `REMOVED` / `RENAMED` blocks as needed; remember `MODIFIED` overwrites the whole Requirement.
    d. Optional: `openspec validate "$SLUG"`.
    e. `chorus_pm_create_proposal` (direct MCP) with the `OpenSpec change slug: $SLUG` line in description (§3.5).
-   f. Define `$API`, `json_encode_file`, `chorus_check_response` helpers.
-   g. For each row in §5 with "yes" — mirror via `"$API" mcp-tool chorus_pm_add_document_draft` (§3.6). Record each `$DRAFT_UUID`.
+   f. Define `json_encode_file`, `chorus_check_response` helpers. (`chorus-api.sh` is on PATH — no `$API` variable needed.)
+   g. For each row in §5 with "yes" — mirror via `chorus-api.sh mcp-tool chorus_pm_add_document_draft` (§3.6). Record each `$DRAFT_UUID`.
    h. On any failed `chorus_check_response` — halt, surface the error, do NOT proceed.
 4. Edits before approval → §3.7. Edits after approval → §3.8.
 5. Last task verified → hook fires → run §3.9 archive flow.

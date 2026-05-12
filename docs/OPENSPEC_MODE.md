@@ -124,7 +124,7 @@ This is the rule most likely to bite you, so it gets its own section.
 
 When `CHORUS_OPENSPEC_ACTIVE=1`, **every** call to `chorus_pm_add_document_draft`, `chorus_pm_update_document_draft`, or `chorus_pm_update_document` MUST go through the plugin's wrapper script with `content` produced by `json_encode_file` (defined in the skill's §3.4):
 
-- Claude Code: `"$CLAUDE_PROJECT_DIR/.claude/plugins/chorus/bin/chorus-api.sh" mcp-tool <tool_name> "$PAYLOAD"`
+- Claude Code: `chorus-api.sh mcp-tool <tool_name> "$PAYLOAD"` (on `PATH`)
 - Codex: `"$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh" <tool_name> "$PAYLOAD"`
 
 Calling these tools directly from the agent's MCP harness with a hand-typed `content` field is a **protocol violation** in OpenSpec mode and will fail review. Three reasons (full version in skill §2 Rule 1):
