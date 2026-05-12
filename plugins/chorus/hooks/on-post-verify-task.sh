@@ -95,14 +95,13 @@ if [ -z "$PROPOSAL_UUID" ]; then
   exit 0
 fi
 
-# Step 7: chorus_get_proposal -> description (slug grep) + inputUuids[0] (idea)
+# Step 7: chorus_get_proposal -> description (for slug grep)
 PROPOSAL_JSON=$("$MCP" chorus_get_proposal "$(printf '{"proposalUuid":"%s"}' "$PROPOSAL_UUID")" 2>/dev/null) || exit 0
 if [ -z "$PROPOSAL_JSON" ]; then
   exit 0
 fi
 
 PROPOSAL_DESC=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.description // empty' 2>/dev/null) || true
-IDEA_UUID=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputUuids[0] // empty' 2>/dev/null) || true
 
 # Step 9: grep description for ^OpenSpec change slug: (.+)$ — first match wins
 SLUG=""
@@ -132,6 +131,13 @@ if [ -n "$TOTAL_TASKS" ] && [ -n "$RETURNED_TASKS" ] && [ "$TOTAL_TASKS" -gt "$R
   exit 0
 fi
 
+# Defensive: zero-task proposal would otherwise fall through with
+# NOT_DONE_COUNT=0. Proposal-submit validation prevents this in practice;
+# this guard makes the gate complete.
+if [ -z "$RETURNED_TASKS" ] || [ "$RETURNED_TASKS" -eq 0 ]; then
+  exit 0
+fi
+
 NOT_DONE_COUNT=$(printf '%s' "$TASKS_JSON" | jq -r '[.tasks[] | select(.status != "done")] | length' 2>/dev/null) || true
 
 if [ -z "$NOT_DONE_COUNT" ] || [ "$NOT_DONE_COUNT" != "0" ]; then
@@ -142,10 +148,9 @@ fi
 # <SLUG>` and mirror the resulting specs back to the matching Chorus
 # Documents. (chorus_get_documents only supports projectUuid + type as
 # server-side filters — title matching is client-side, canonical §3.8.)
-IDEA_REF="${IDEA_UUID:-<idea>}"
 
 CTX="[Chorus — OpenSpec Archive Trigger]
-The last task of OpenSpec-mode idea ${IDEA_REF} (proposal ${PROPOSAL_UUID}, slug \`${SLUG}\`) has been admin-verified.
+The last task of OpenSpec-mode proposal ${PROPOSAL_UUID} (slug \`${SLUG}\`) has been admin-verified.
 
 ACTION REQUIRED: archive the OpenSpec change locally and mirror updated specs back to the Chorus Documents. Run the steps below in order; HALT immediately on any error (canonical §6 — no silent errors).
 
@@ -156,7 +161,7 @@ ACTION REQUIRED: archive the OpenSpec change locally and mirror updated specs ba
    - Find the Document whose title matches the capability (canonical §3.8 mirror-back contract; typical title shape \`Spec: <capability>\`).
    - Call \`chorus_pm_update_document\` with the new content from the on-disk spec.md.
 
-3. On any error from \`openspec archive\` or \`chorus_pm_update_document\`: print stderr verbatim, post a comment on the idea recording the failure (\`chorus_add_comment({targetType: \"idea\", targetUuid: \"${IDEA_REF}\", content: \"...\"})\`), and HALT. No retry, no silent skip.
+3. On any error from \`openspec archive\` or \`chorus_pm_update_document\`: print stderr verbatim, post a comment on the proposal recording the failure (\`chorus_add_comment({targetType: \"proposal\", targetUuid: \"${PROPOSAL_UUID}\", content: \"...\"})\`), and HALT. No retry, no silent skip.
 
 4. Confirm success by listing \`openspec/specs/<capability>/spec.md\` files and verifying they round-trip byte-equal (modulo trailing newline) with their Chorus Document counterparts.
 

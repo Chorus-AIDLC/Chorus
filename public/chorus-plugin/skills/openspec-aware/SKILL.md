@@ -326,7 +326,7 @@ The hook is read-only; you (the agent) perform the archive:
 
 2. **Mirror each updated `openspec/specs/<capability>/spec.md` back** to the matching post-approval Chorus Document (§3.8 contract). `chorus_get_documents` only supports `projectUuid` + `type` server-side filters; filter by title client-side. One `chorus_pm_update_document` call per capability.
 
-3. **Halt on any error** from `openspec archive` or `chorus_pm_update_document`. Print stderr verbatim, post a comment on the idea recording the failure (`chorus_add_comment` with `targetType: "idea"`), then stop. No retry. Matches §6 "no silent errors."
+3. **Halt on any error** from `openspec archive` or `chorus_pm_update_document`. Print stderr verbatim, post a comment on the proposal recording the failure (`chorus_add_comment` with `targetType: "proposal"`, `targetUuid: <proposalUuid>`), then stop. No retry. Matches §6 "no silent errors." (Comment on the proposal, not the idea: the failure is in archiving proposal-derived specs, and proposals can be `inputType: "document"` with no idea attached.)
 
 4. **Confirm success.** List `openspec/specs/<capability>/spec.md` files and verify they round-trip byte-equal (modulo trailing newline) with their Chorus Document counterparts.
 

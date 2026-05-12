@@ -32,6 +32,12 @@
       "title": "Max Task Review Rounds",
       "description": "Maximum review rounds before escalating to human. Set to 0 for unlimited.",
       "default": 3
+    },
+    "enableOpenSpec": {
+      "type": "boolean",
+      "title": "Enable OpenSpec Mode",
+      "description": "Opt-in spec-driven authoring path. When enabled and the repo is OpenSpec-init'd (openspec/ folder + openspec CLI both present), proposal/develop/yolo skills author proposal.md / design.md / specs/<capability>/spec.md on disk and mirror them into Chorus drafts via the wrapper script (saves ~20k tokens per proposal vs. retyping through MCP). Also enables the post-verify archive hook that reminds the agent to run `openspec archive <slug>` after the last task is verified. Silent no-op when the repo is not OpenSpec-init'd.",
+      "default": true
     }
   },
   "keywords": [

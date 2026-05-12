@@ -65,14 +65,18 @@ fi
 # Both conditions are required for OpenSpec mode to be usable:
 #   (a) an openspec/ directory at the project root (this repo was inited via `openspec init`), AND
 #   (b) the `openspec` CLI on PATH (so we can `openspec new change`, `validate`, `archive`).
-# Override: CHORUS_OPENSPEC_MODE=off (explicit opt-out wins even if both
-# signals are present — same precedence as the original detection contract).
+# Overrides (precedence high -> low, first match wins):
+#   1. enableOpenSpec userConfig toggle (default true) — UI-level switch.
+#   2. CHORUS_OPENSPEC_MODE=off env var — env-level explicit opt-out.
 # When the folder is present but the CLI is missing, surface that as a
 # specific reason so the user-visible toast can hint at the install step
 # instead of silently falling back.
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
 OPENSPEC_HINT=""
-if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
+if [ "${CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC:-true}" != "true" ]; then
+  CHORUS_OPENSPEC_ACTIVE=0
+  OPENSPEC_REASON="enableOpenSpec userConfig=false (plugin-level opt-out)"
+elif [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
   OPENSPEC_REASON="CHORUS_OPENSPEC_MODE=off (explicit opt-out)"
 elif [ ! -d "${PROJECT_ROOT}/openspec" ]; then

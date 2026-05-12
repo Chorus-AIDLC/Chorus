@@ -81,17 +81,25 @@ openspec init
 
 ## Opt-out
 
+Two switches, in precedence order:
+
+**1. `enableOpenSpec` userConfig toggle** (Claude Code plugin only, default `true`). Configurable from the plugin install UI like the reviewer toggles. When set to `false`, SessionStart detection short-circuits with reason `enableOpenSpec userConfig=false (plugin-level opt-out)`, and the post-verify archive hook also exits 0 immediately. Equivalent to "OpenSpec is uninstalled" from the agent's perspective.
+
+**2. `CHORUS_OPENSPEC_MODE=off` env var** (both plugins). Per-shell / CI-friendly opt-out:
+
 ```bash
 export CHORUS_OPENSPEC_MODE=off
 ```
 
-This forces fallback mode even when both the `openspec/` directory and the `openspec` CLI are present. The SessionStart hook checks the env var first, before the folder/CLI signals — explicit opt-out always wins. The reason recorded in the `## OpenSpec Mode` context block in this case is exactly:
+This forces fallback mode even when both the `openspec/` directory and the `openspec` CLI are present. The SessionStart hook checks the userConfig toggle first, then this env var, before the folder/CLI signals. The reason recorded in the `## OpenSpec Mode` context block when env-off wins is exactly:
 
 ```
 CHORUS_OPENSPEC_ACTIVE=0 (CHORUS_OPENSPEC_MODE=off (explicit opt-out))
 ```
 
 After detection, no `openspec/` folder is created or referenced (existing folders on disk are untouched), and the proposal description gets no `OpenSpec change slug:` line. Behavior is identical to a host that doesn't have OpenSpec installed.
+
+The Codex plugin has no userConfig surface, so only the env var applies there.
 
 ---
 
