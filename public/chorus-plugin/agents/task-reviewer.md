@@ -2,7 +2,7 @@
 description: "Review submitted Chorus tasks — verify implementation against AC and proposal documents. Spawn after chorus_submit_for_verify."
 model: inherit
 color: red
-maxTurns: 25
+maxTurns: 50
 disallowedTools:
   - Agent
   - ExitPlanMode

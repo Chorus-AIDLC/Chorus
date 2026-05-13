@@ -2,7 +2,7 @@
 description: "Review submitted Chorus proposals for quality — check document completeness, task granularity, AC alignment, and cross-task dependencies. Spawn after chorus_pm_submit_proposal."
 model: inherit
 color: red
-maxTurns: 20
+maxTurns: 40
 disallowedTools:
   - Agent
   - ExitPlanMode
