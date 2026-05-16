@@ -12,7 +12,7 @@ import {
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -279,8 +279,11 @@ async function main() {
   }
 
   // 8. Start Next.js standalone server
+  // Use pathToFileURL — on Windows, dynamic import() rejects bare drive paths
+  // like "C:\…\server.js" with ERR_UNSUPPORTED_ESM_URL_SCHEME. file:// URLs
+  // work on every platform.
   process.chdir(standaloneDir);
-  await import(join(standaloneDir, "server.js"));
+  await import(pathToFileURL(join(standaloneDir, "server.js")).href);
 }
 
 // ---------------------------------------------------------------------------

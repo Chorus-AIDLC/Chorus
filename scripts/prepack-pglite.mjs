@@ -17,8 +17,10 @@ import {
   cpSync,
   lstatSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -106,5 +108,64 @@ const publicSrc = join(process.cwd(), "public");
 const publicDst = join(standaloneDir, "public");
 cpSync(publicSrc, publicDst, { recursive: true });
 console.log("  copied public/");
+
+// --- 4. Rewrite Prisma's hardcoded build-host __dirname in server chunks ---
+// Prisma 7's generated client.ts contains:
+//   globalThis['__dirname'] = path.dirname(fileURLToPath(import.meta.url))
+// webpack inlines `import.meta.url` at build time as the absolute file:// URL
+// of the source on the build host, e.g.
+//   file:///home/ubuntu/dev/ai-pm/src/generated/prisma/client.ts
+// On Windows, fileURLToPath() rejects this Unix-style URL with
+// ERR_INVALID_FILE_URL_PATH, breaking page rendering. Replace it with a
+// platform-portable runtime expression that uses the chunk's own __filename.
+//
+// The regex tolerates webpack's minified variable names (\w+ for d/e/f/etc.)
+// and any build-host path. Anchored on the unique client.ts suffix so it
+// cannot match unrelated code.
+
+console.log("Patching Prisma __dirname in standalone chunks...");
+const chunksDir = join(standaloneDir, ".next", "server", "chunks");
+const prismaDirnameRe =
+  /globalThis\.__dirname\s*=\s*\w+\.dirname\(\s*\(0,\s*\w+\.fileURLToPath\)\s*\(\s*"file:\/\/[^"]+\/src\/generated\/prisma\/client\.ts"\s*\)\s*\)/g;
+const prismaDirnameRep =
+  'globalThis.__dirname=require("path").dirname(__filename)';
+
+let chunkFiles;
+try {
+  chunkFiles = readdirSync(chunksDir);
+} catch {
+  chunkFiles = [];
+}
+
+let patchedCount = 0;
+for (const name of chunkFiles) {
+  if (!name.endsWith(".js")) continue;
+  const fullPath = join(chunksDir, name);
+  const original = readFileSync(fullPath, "utf8");
+  if (!prismaDirnameRe.test(original)) continue;
+  prismaDirnameRe.lastIndex = 0;
+  const patched = original.replace(prismaDirnameRe, prismaDirnameRep);
+  writeFileSync(fullPath, patched);
+  patchedCount++;
+  console.log(`  patched chunks/${name}`);
+}
+
+if (patchedCount === 0) {
+  // If we ship a tarball without this patch on Windows it breaks at runtime.
+  // Fail loudly so a Prisma upgrade that changes the generated shape can't
+  // silently slip through.
+  console.error(
+    "ERROR: prepack found 0 chunks containing the Prisma __dirname pattern."
+  );
+  console.error(
+    "       The hardcoded build-host path makes the tarball unusable on Windows."
+  );
+  console.error(
+    "       Inspect .next/standalone/.next/server/chunks/*.js and update the"
+  );
+  console.error("       regex in scripts/prepack-pglite.mjs.");
+  process.exit(1);
+}
+console.log(`  patched ${patchedCount} chunk(s)`);
 
 console.log("Prepack complete.");
