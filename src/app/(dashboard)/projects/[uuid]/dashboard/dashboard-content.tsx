@@ -15,7 +15,7 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
   const { project, trackerData, stats, activities, currentUserUuid } = await getDashboardData(projectUuid);
 
   return (
-    <div className="flex h-full flex-col gap-5 bg-[#F7F6F3] p-5 md:p-6">
+    <div className="flex h-full flex-col gap-5 p-5 md:p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-medium text-[#2C2C2A]">{t("ideaTracker.overview")}</h1>

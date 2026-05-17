@@ -48,11 +48,11 @@ export function IdeaStatusGroup({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-2 px-0 pb-1.5 pt-0">
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-2 px-0 pb-1.5 pt-0">
         {isOpen ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#888780] transition-colors group-hover:text-[#2C2C2A]" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#888780] transition-colors group-hover:text-[#2C2C2A]" />
         )}
         {/* Status dot */}
         <span
@@ -62,10 +62,10 @@ export function IdeaStatusGroup({
             border: dotStyle.stroke ? `1.5px solid ${dotStyle.stroke}` : undefined,
           }}
         />
-        <span className={`text-[13px] font-medium ${hasIdeas ? "text-[#5F5E5A]" : "text-[#B4B2A9]"}`}>
+        <span className={`text-[13px] font-medium transition-colors group-hover:text-[#2C2C2A] ${hasIdeas ? "text-[#5F5E5A]" : "text-[#B4B2A9]"}`}>
           {t(`status.${statusKey}`)}
         </span>
-        <span className="text-[12px] text-[#888780]">
+        <span className="text-[12px] text-[#888780] transition-colors group-hover:text-[#2C2C2A]">
           {ideas.length}
         </span>
       </CollapsibleTrigger>

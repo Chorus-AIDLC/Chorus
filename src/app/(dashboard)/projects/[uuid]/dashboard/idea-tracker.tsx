@@ -47,7 +47,7 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
       {/* Header: Tabs + New Idea button */}
       {!isEmpty && (
         <div className="mb-4 flex items-center justify-between">
-          <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] bg-[#F7F6F3] p-0.5">
+          <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] p-0.5">
             <Button
               variant="ghost"
               size="sm"
