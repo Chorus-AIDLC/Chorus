@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export CHORUS_USE_PGLITE=1
 PGLITE_DIR="${PGLITE_DIR:-.pglite}"
 # Resolve ~ to $HOME (tilde isn't expanded inside quotes)
 PGLITE_DIR="${PGLITE_DIR/#\~/$HOME}"

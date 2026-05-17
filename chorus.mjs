@@ -71,11 +71,13 @@ OPTIONS
   -d, --data-dir <path>    Data directory for PGlite    (default: ~/.chorus-data, env: CHORUS_DATA_DIR)
       --hostname <host>    Bind address                 (default: 0.0.0.0)
       --pglite-port <port> Embedded PGlite port         (default: 5433, env: CHORUS_PGLITE_PORT)
+      --use-pglite[=BOOL]  Use embedded PGlite           (default: true; pass =false for external Postgres)
   -h, --help               Show this help message
   -v, --version            Show version number
 
 ENVIRONMENT VARIABLES
-  DATABASE_URL             External PostgreSQL URL (skips embedded PGlite)
+  CHORUS_USE_PGLITE        Set to "0" to disable embedded PGlite (default: enabled)
+  DATABASE_URL             External PostgreSQL URL (required when --use-pglite=false)
   REDIS_URL                Redis URL for multi-instance pub/sub
   DEFAULT_USER             Auto-create login user email
   DEFAULT_PASSWORD         Auto-create login user password
@@ -83,10 +85,10 @@ ENVIRONMENT VARIABLES
   COOKIE_SECURE            Set to "true" for HTTPS deployments
 
 EXAMPLES
-  chorus                                     # Start with defaults
+  chorus                                     # Embedded PGlite (default)
   chorus --port 3000                         # Custom port
   chorus --data-dir /var/lib/chorus          # Custom data directory
-  DATABASE_URL=postgres://... chorus         # Use external PostgreSQL
+  DATABASE_URL=postgres://... chorus --use-pglite=false   # External PostgreSQL
 `);
   process.exit(0);
 }
@@ -158,13 +160,32 @@ function ensureSecret() {
 let pgliteProcess = null;
 
 async function main() {
-  // 1. Ensure data directory
-  mkdirSync(join(dataDir, "pglite"), { recursive: true });
+  // 1. Determine database mode
+  // PGlite is the default (single-machine zero-config). Pass --use-pglite=false
+  // (or CHORUS_USE_PGLITE=0) to opt out and connect to external Postgres via
+  // DATABASE_URL.
+  const usePgliteFlag = getArg("--use-pglite");
+  const envFlag = process.env.CHORUS_USE_PGLITE;
+  const usePglite =
+    usePgliteFlag === "false" || envFlag === "0" || envFlag === "false"
+      ? false
+      : true;
 
-  // 2. Determine database mode
-  const useExternalDb = !!process.env.DATABASE_URL;
+  if (!usePglite && !process.env.DATABASE_URL) {
+    console.error(
+      "ERROR: --use-pglite=false requires DATABASE_URL to be set."
+    );
+    process.exit(1);
+  }
 
-  if (!useExternalDb) {
+  // 2. Ensure data directory + signal child processes (PGlite path only)
+  if (usePglite) {
+    mkdirSync(join(dataDir, "pglite"), { recursive: true });
+    // Tell the Next.js standalone server / prisma client they're on PGlite
+    // so pg.Pool pins max=1 — avoids the cross-handler race in
+    // @electric-sql/pglite-socket.
+    process.env.CHORUS_USE_PGLITE = "1";
+
     // Start embedded PGlite
     console.log(`Starting embedded PostgreSQL (PGlite) on port ${PGLITE_PORT}...`);
 
@@ -253,7 +274,7 @@ async function main() {
   console.log("");
   console.log(`  URL:       http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${port}`);
   console.log(`  Data:      ${dataDir}`);
-  console.log(`  Database:  ${useExternalDb ? "external PostgreSQL" : "PGlite (embedded)"}`);
+  console.log(`  Database:  ${usePglite ? "PGlite (embedded)" : "external PostgreSQL"}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
   const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"
     ? "chorus"

@@ -17,11 +17,20 @@ const globalForPrisma = globalThis as unknown as {
   pool: pg.Pool | undefined;
 };
 
+// PGlite is single-threaded WASM. Multiple sockets sharing one PGlite instance
+// trigger a cross-handler response race in @electric-sql/pglite-socket's
+// QueryQueueManager — a query on socket A can return rows from socket B's
+// query, surfacing as "Missing data field" / P2023 errors. Pinning max=1
+// avoids the race entirely (and costs nothing, since PGlite executes serially
+// regardless). chorus.mjs sets CHORUS_USE_PGLITE=1 in PGlite mode.
+const usingPGlite = process.env.CHORUS_USE_PGLITE === "1";
+
 // Create connection pool (ssl required for Aurora PostgreSQL)
 const pool =
   globalForPrisma.pool ??
   new pg.Pool({
     connectionString,
+    ...(usingPGlite ? { max: 1 } : {}),
     ...(process.env.DB_HOST ? { ssl: { rejectUnauthorized: false } } : {}),
   });
 

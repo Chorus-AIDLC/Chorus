@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export CHORUS_USE_PGLITE=1
 PGLITE_DIR=".pglite"
 PGLITE_PORT=5433
 DATABASE_URL="postgresql://postgres:postgres@localhost:${PGLITE_PORT}/postgres?sslmode=disable"
