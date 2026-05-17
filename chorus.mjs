@@ -161,15 +161,22 @@ let pgliteProcess = null;
 
 async function main() {
   // 1. Determine database mode
-  // PGlite is the default (single-machine zero-config). Pass --use-pglite=false
-  // (or CHORUS_USE_PGLITE=0) to opt out and connect to external Postgres via
-  // DATABASE_URL.
+  // --use-pglite means "the database is PGlite-backed" (local or remote).
+  // It controls pg.Pool sizing (max=1 to avoid the @electric-sql/pglite-socket
+  // cross-handler race), independently of whether the PGlite process is
+  // local or remote.
+  //
+  // Whether to start a local embedded PGlite is decided by DATABASE_URL:
+  //   - If DATABASE_URL is set, treat it as a pre-existing DB (PGlite or
+  //     real Postgres) and connect to it.
+  //   - Otherwise, --use-pglite=true (default) starts an embedded PGlite.
   const usePgliteFlag = getArg("--use-pglite");
   const envFlag = process.env.CHORUS_USE_PGLITE;
   const usePglite =
     usePgliteFlag === "false" || envFlag === "0" || envFlag === "false"
       ? false
       : true;
+  const startEmbeddedPglite = usePglite && !process.env.DATABASE_URL;
 
   if (!usePglite && !process.env.DATABASE_URL) {
     console.error(
@@ -178,15 +185,15 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Ensure data directory + signal child processes (PGlite path only)
+  // 2. Signal child processes to pin pg.Pool max=1 when using any PGlite backend.
   if (usePglite) {
-    mkdirSync(join(dataDir, "pglite"), { recursive: true });
-    // Tell the Next.js standalone server / prisma client they're on PGlite
-    // so pg.Pool pins max=1 — avoids the cross-handler race in
-    // @electric-sql/pglite-socket.
     process.env.CHORUS_USE_PGLITE = "1";
+  }
 
-    // Start embedded PGlite
+  // 3. Start embedded PGlite if requested (no DATABASE_URL pointing at an
+  //    external instance).
+  if (startEmbeddedPglite) {
+    mkdirSync(join(dataDir, "pglite"), { recursive: true });
     console.log(`Starting embedded PostgreSQL (PGlite) on port ${PGLITE_PORT}...`);
 
     // @electric-sql/pglite-socket does not expose `./dist/scripts/server.js`
@@ -274,7 +281,12 @@ async function main() {
   console.log("");
   console.log(`  URL:       http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${port}`);
   console.log(`  Data:      ${dataDir}`);
-  console.log(`  Database:  ${usePglite ? "PGlite (embedded, single-user, pg.Pool max=1)" : "external PostgreSQL"}`);
+  const dbLabel = usePglite
+    ? (startEmbeddedPglite
+        ? "PGlite (embedded, pg.Pool max=1)"
+        : "PGlite (external, pg.Pool max=1)")
+    : "external PostgreSQL";
+  console.log(`  Database:  ${dbLabel}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
   const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"
     ? "chorus"
@@ -282,10 +294,11 @@ async function main() {
   console.log(`  Login:     ${process.env.DEFAULT_USER} / ${maskedPassword}`);
   console.log("");
   if (usePglite) {
-    console.log("  ⚠ PGlite mode is intended for local single-user use.");
-    console.log("    Concurrent DB traffic is serialized to avoid a cross-handler race");
-    console.log("    in @electric-sql/pglite-socket. For multi-user or production use,");
-    console.log("    pass --use-pglite=false and set DATABASE_URL to an external PostgreSQL.");
+    console.log("  ⚠ PGlite mode pins pg.Pool to max=1 to avoid a cross-handler");
+    console.log("    race in @electric-sql/pglite-socket. Concurrent DB traffic is");
+    console.log("    serialized — fine for local single-user use, but for multi-user");
+    console.log("    or production deployments use a real PostgreSQL: pass");
+    console.log("    --use-pglite=false and set DATABASE_URL.");
     console.log("");
   }
 
