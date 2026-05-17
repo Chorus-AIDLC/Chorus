@@ -274,13 +274,20 @@ async function main() {
   console.log("");
   console.log(`  URL:       http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${port}`);
   console.log(`  Data:      ${dataDir}`);
-  console.log(`  Database:  ${usePglite ? "PGlite (embedded)" : "external PostgreSQL"}`);
+  console.log(`  Database:  ${usePglite ? "PGlite (embedded, single-user, pg.Pool max=1)" : "external PostgreSQL"}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
   const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"
     ? "chorus"
     : "****";
   console.log(`  Login:     ${process.env.DEFAULT_USER} / ${maskedPassword}`);
   console.log("");
+  if (usePglite) {
+    console.log("  ⚠ PGlite mode is intended for local single-user use.");
+    console.log("    Concurrent DB traffic is serialized to avoid a cross-handler race");
+    console.log("    in @electric-sql/pglite-socket. For multi-user or production use,");
+    console.log("    pass --use-pglite=false and set DATABASE_URL to an external PostgreSQL.");
+    console.log("");
+  }
 
   // 7. Ensure static assets are accessible inside standalone directory
   // next build puts .next/static/ and public/ at the project root, but
