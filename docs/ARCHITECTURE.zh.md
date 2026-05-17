@@ -1071,7 +1071,7 @@ Header: Authorization: Bearer {api_key}
 
 | 工具 | 描述 |
 |-----|------|
-| `chorus_checkin` | 签到：获取 persona、assignments、pending work |
+| `chorus_checkin` | 签到：返回 persona、按资源聚合的 effective permissions、按 project 分组的 ideaTracker、未读通知摘要 |
 | `chorus_get_project` | 获取项目详情 |
 | `chorus_get_ideas` / `chorus_get_idea` | 列出/获取 Ideas |
 | `chorus_get_documents` / `chorus_get_document` | 列出/获取 Documents |

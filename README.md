@@ -26,10 +26,11 @@ Inspired by the **[AI-DLC (AI-Driven Development Lifecycle)](https://aws.amazon.
 ```
 Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Verify ──> Done
   ^          ^               ^                     ^          ^         ^
-Human     PM Agent       PM Agent              Dev Agent    Admin     Admin
-creates   analyzes       drafts PRD            codes &      reviews   closes
-          & plans        & tasks               reports      & verifies
+Human     idea:write     proposal:write         task:write   *:admin    *:admin
+creates   + elaborate    + drafts                + reports   + verifies + closes
 ```
+
+The labels under each stage are the **permissions** an actor needs at that stage — granted to a human, an Agent (preset or Custom), or both. There are no fixed roles; any combination of the 5 × 3 permission matrix is possible. See [`docs/PERMISSIONS.md`](docs/PERMISSIONS.md).
 
 ---
 
@@ -195,8 +196,9 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 └──────────────────────────────────────────────────────────────────┘
      ↑              ↑              ↑              ↑
   Agent w/      Agent w/       Agent w/         Human
-  PM perms   Developer perms  Admin perms     (Browser)
-   (LLM)         (LLM)          (LLM)
+  idea+proposal  task:write    *:admin perms   (Browser)
+   :write perms    perms      (proxy approval)
+   (LLM)          (LLM)         (LLM)
                      │
           ┌──────────▼──────────┐   ┌─────────────────────┐
           │  PostgreSQL + Prisma │   │  Redis (optional)   │
@@ -317,21 +319,28 @@ Create API Keys in the Web UI under **Settings → Agents → Create API Key**. 
 
 | Method | Location | Use Case |
 |--------|----------|----------|
-| **Plugin-embedded** | `public/chorus-plugin/skills/chorus/` | Claude Code + Plugin, automated Sessions |
-| **Standalone** | `public/skill/` (served at `/skill/`) | Any Agent, manual Session management |
+| **Plugin-embedded (Claude Code)** | `public/chorus-plugin/skills/` | Claude Code + Chorus plugin, automated Sessions and lifecycle hooks |
+| **Plugin-embedded (Codex CLI)** | `plugins/chorus/skills/` | Codex CLI + Chorus plugin, ported skills with `$`-prefixed slash commands |
+| **Standalone** | `public/skill/` (served at `/skill/`) | Any other MCP-capable Agent (Cursor, Continue, custom), manual Session management |
 
-### OpenSpec mode (opt-in, 0.8.0+)
+### OpenSpec mode (opt-in, plugin 0.8.1+)
 
 PM agents that have the [OpenSpec](https://github.com/Fission-AI/OpenSpec)
 CLI installed can author proposals in a structured `proposal.md` +
 `design.md` + `specs/<capability>/spec.md` layout. Local files are the
 working copy and Chorus `documentDrafts` are the mirror; reviewers see a
 predictable shape (`## ADDED Requirements`, `### Requirement:`,
-`#### Scenario:`) instead of free-form Markdown. The mode is opt-in: when
-`openspec` is not installed, behavior is unchanged. To turn it off
-explicitly, set `CHORUS_OPENSPEC_MODE=off`. No new MCP tools or schema
-changes ship in 0.8.0; the canonical skill reuses the existing
-`chorus_pm_*` draft and document tools. See
+`#### Scenario:`) instead of free-form Markdown. A PostToolUse hook on
+`chorus_admin_verify_task` injects an `openspec archive <slug>` reminder
+when the last task of an OpenSpec idea is verified, so finalized specs
+are merged into the long-term spec set right after sign-off. The mode is
+strictly opt-in: when `openspec` is not installed, behavior is unchanged.
+Master switch on Claude Code is `enableOpenSpec` (plugin userConfig,
+default `true`); both clients also honor `CHORUS_OPENSPEC_MODE=off`. No
+new MCP tools or schema changes ship in this mode; the canonical skill
+reuses the existing `chorus_pm_*` draft and document tools, with mirror
+calls routed through the `chorus-api.sh` wrapper to keep multi-thousand-
+line markdown out of LLM context. See
 [OPENSPEC_MODE.md](docs/OPENSPEC_MODE.md) for the full guide.
 
 ---
@@ -343,8 +352,9 @@ changes ship in 0.8.0; the canonical skill reuses the existing
 | [PRD](docs/PRD_Chorus.md) | Product Requirements Document |
 | [Architecture](docs/ARCHITECTURE.md) | Technical Architecture Document |
 | [MCP Tools](docs/MCP_TOOLS.md) | MCP Tools Reference |
+| [Permissions](docs/PERMISSIONS.md) | Agent permission model (5 × 3 matrix, presets, Custom mode) |
 | [Chorus Plugin](docs/chorus-plugin.md) | Plugin Design & Hook Documentation |
-| [OpenSpec Mode](docs/OPENSPEC_MODE.md) | Opt-in OpenSpec authoring mode for PM agents (0.8.0+) |
+| [OpenSpec Mode](docs/OPENSPEC_MODE.md) | Opt-in OpenSpec authoring mode for PM agents (Plugin 0.8.1+) |
 | [Search](docs/SEARCH.md) | Global Search Technical Design |
 | [AI-DLC Gap Analysis](docs/AIDLC_GAP_ANALYSIS.md) | AI-DLC Methodology Gap Analysis |
 | [AIG Implementation Plan](docs/CHORUS_AIG_PLAN.md) | Agent transparency roadmap |

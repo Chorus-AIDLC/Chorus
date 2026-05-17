@@ -152,47 +152,17 @@ The following tools respect project filtering:
 
 ---
 
-## Session Management
+## Transport (Stateless MCP)
 
-MCP sessions implement **sliding window expiration** with activity tracking to balance resource efficiency with user experience.
+The MCP endpoint at `POST /api/mcp` is **stateless**: each request authenticates via the `Authorization: Bearer cho_…` header and a fresh per-request server instance is built. There is no server-side session, no `Mcp-Session-Id` exchange, and no inactivity timeout — clients hit the endpoint with their API Key on every request and the server tears the instance down once the response is flushed.
 
-### Mechanism
+What this means for clients:
 
-- **Activity tracking**: Each session records `lastActivity` timestamp
-- **30-minute timeout**: Sessions expire after 30 minutes of **inactivity** (not from creation time)
-- **Auto-renewal**: Every MCP request automatically renews the session by updating `lastActivity`
-- **Periodic cleanup**: Server checks for expired sessions every 5 minutes and cleans them up
-- **Memory storage**: Sessions are stored in-memory and lost on server restart
+- **No session lifecycle to manage**: no `initialize` → keep-alive → expire flow; no HTTP 404 "session not found" recovery path.
+- **Permission set is recomputed per request**: rotating an Agent's permissions in the UI takes effect on the next MCP call without any reconnect.
+- **Horizontal scaling is free**: any container can serve any request, since nothing is pinned to an instance. (Cross-instance event propagation for SSE goes through Redis when `REDIS_URL` is set — see [ARCHITECTURE.md](./ARCHITECTURE.md) for the realtime side.)
 
-### Example Timeline
-
-```
-Time 0:00  - Session created (lastActivity = 0:00)
-Time 0:15  - API call made (lastActivity updated to 0:15)
-Time 0:30  - API call made (lastActivity updated to 0:30)
-Time 0:55  - No activity since 0:30 → Session expires (25 minutes inactive)
-Time 1:00  - Cleanup runs, session deleted from memory
-Time 1:05  - Client tries to use session → HTTP 404: "Session not found"
-```
-
-### Client Behavior
-
-When a session expires:
-1. Server returns HTTP 404: `{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found. Please reinitialize."},"id":null}`
-2. MCP client should automatically reinitialize by creating a new session
-3. This reconnection is transparent in clients that support auto-reconnect
-
-### Why Sliding Expiration?
-
-✅ **No mid-work expiration**: Active agents can work for hours without timeout
-✅ **Resource efficient**: Inactive sessions are cleaned up automatically
-⚠️ **Server restart impact**: All sessions lost on restart (mitigated by auto-reconnect)
-
-### Best Practices
-
-- **Implement auto-reconnect**: Handle HTTP 404 by reinitializing the session
-- **Keep sessions alive**: Regular tool calls automatically prevent timeout
-- **Clean shutdown**: Call DELETE `/api/mcp` when done to free resources
+The Agent-level **AgentSession** model (used for swarm-mode observability via `chorus_create_session` / `chorus_session_*`) is an entirely separate concept from MCP transport sessions and is documented under [Session Tools](#session-tools-all-agents) below.
 
 ---
 
@@ -202,7 +172,7 @@ Tools available to all Agents.
 
 ### chorus_checkin
 
-**Description**: Agent check-in. Returns agent identity (including owner/master info), roles, assigned work, and pending counts. Recommended at session start.
+**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an idea tracker grouped by project, and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -218,24 +188,33 @@ Tools available to all Agents.
   "agent": {
     "uuid": "Agent UUID",
     "name": "Agent name",
-    "roles": ["developer"],
+    "permissions": {
+      "idea": ["read", "write"],
+      "proposal": ["read", "write"],
+      "document": ["read", "write"],
+      "task": ["read", "write"],
+      "project": ["read"]
+    },
     "persona": "Persona description",
     "systemPrompt": "System prompt (optional)",
     "owner": { "uuid": "User UUID", "name": "Owner Name", "email": "owner@example.com" }
   },
-  "assignments": {
-    "ideas": [...],
-    "tasks": [...]
-  },
-  "pending": {
-    "ideasCount": 0,
-    "tasksCount": 0
+  "ideaTracker": {
+    "<project-uuid>": {
+      "name": "Project name",
+      "ideas": [
+        { "uuid": "...", "title": "...", "status": "in_progress", "proposals": 1, "tasks": 3 }
+      ]
+    }
   },
   "notifications": {
-    "unreadCount": 0
+    "unread": 0,
+    "recent": []
   }
 }
 ```
+
+> The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by the project-grouped `ideaTracker` and in 0.7.0 by the resource-aggregated `permissions` object. The old fields are no longer returned.
 
 ### chorus_list_projects
 
@@ -1179,7 +1158,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 **Validation rules**:
 - Task must be in open or assigned status
 - Target Agent must exist and belong to the same company
-- Target Agent must have the developer or developer_agent role
+- Target Agent must carry the `developer` / `developer_agent` role label (the handler still uses the role string here as an explicit "is this an executor agent?" check, distinct from the broader permission gating)
 
 ### chorus_pm_start_elaboration
 

@@ -1101,41 +1101,21 @@ Agents can filter results by project(s) using optional HTTP headers:
 }
 ```
 
-#### Session Management
+#### Transport (Stateless MCP)
 
-MCP sessions use **sliding window expiration** with activity tracking:
+`POST /api/mcp` is **stateless** since 0.6.2. Each request authenticates via the `Authorization: Bearer cho_…` header, the server builds a fresh per-request `McpServer` instance gated by the agent's effective permission set, and the instance is torn down once the response is flushed.
 
-**Mechanism**:
-- Each session tracks `lastActivity` timestamp
-- **30-minute timeout**: Sessions expire after 30 minutes of **inactivity**
-- **Auto-renewal**: Every request automatically renews the session (updates `lastActivity`)
-- **Periodic cleanup**: Expired sessions are cleaned up every 5 minutes
-- **Memory storage**: Sessions are stored in-memory (cleared on server restart)
-
-**Example**:
-```
-Time 0:00  - Session created (lastActivity = 0:00)
-Time 0:15  - Request made (lastActivity updated to 0:15)
-Time 0:30  - Request made (lastActivity updated to 0:30)
-Time 0:55  - No activity since 0:30 → Session expires (25 minutes inactive)
-Time 1:00  - Cleanup runs, session deleted
-```
-
-**Client handling**:
-- When a session expires, the client receives HTTP 404: `Session not found. Please reinitialize.`
-- The client should automatically reinitialize by creating a new session
-- This is transparent in MCP clients that support auto-reconnect
-
-**Why this approach?**
-- ✅ **No fixed timeout**: Active sessions don't expire mid-work
-- ✅ **Resource efficiency**: Inactive sessions are cleaned up automatically
-- ⚠️ **Server restart**: All sessions are lost on restart (mitigated by auto-reconnect)
+**Implications**:
+- No `initialize` → keep-alive → expire flow; no `Mcp-Session-Id` exchange; no inactivity timeout.
+- Permission changes in the UI take effect on the **next** MCP call, with no reconnect needed.
+- Any container can serve any request — the endpoint scales horizontally without sticky sessions. Cross-instance event propagation for SSE goes through Redis when `REDIS_URL` is set (otherwise the in-memory EventBus is used in single-instance mode).
+- The `chorus_create_session` / `chorus_session_*` tools operate on the **AgentSession** model (swarm-mode observability) — that is a database-backed Agent-level concept and is unrelated to MCP transport state.
 
 #### Public Tools (All Agents)
 
 | Tool | Description |
 |-----|------|
-| `chorus_checkin` | Check in: get persona, assignments, pending work |
+| `chorus_checkin` | Check in: returns persona, resource-aggregated effective permissions, project-grouped ideaTracker, and an unread-notification summary |
 | `chorus_get_project` | Get project details |
 | `chorus_get_ideas` / `chorus_get_idea` | List/get Ideas |
 | `chorus_get_documents` / `chorus_get_document` | List/get Documents |

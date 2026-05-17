@@ -410,58 +410,21 @@ The knowledge base is the **project-level unified information query entry point*
 - PM Agent has **its own Skill files and MCP tool set**
 - Agent role is specified when creating the API Key (PM / Personal)
 
-**Agent role differentiation**:
+**Agent permission model** (since v0.7.0):
 
-| Role | Skill File | Responsibility |
-|------|-----------|----------------|
-| **PM Agent** | `skill/pm/SKILL.md` | Requirements analysis, task breakdown, **creating proposals** |
-| **Developer Agent** | `skill/developer/SKILL.md` | **Executing tasks**, reporting work |
-| **Admin Agent** | `skill/admin/SKILL.md` | **Acting on behalf of humans**: approving Proposals, verifying Tasks, creating Projects |
+Authorization is driven by a **5 × 3 permission matrix** (5 resources × 3 actions = 15 bits) on the Agent record. The UI ships three named **role presets** that expand to a fixed bit pattern, plus a **Custom** mode that lets the user freely combine bits on top of (or instead of) a preset:
 
-**Warning: Admin Agent dangerous permissions**:
-Admin Agent has human-level permissions and can perform approval, verification, and other critical operations. Creating this type of Agent means:
-- The Agent can **approve or reject** Proposals
-- The Agent can **verify and close** Tasks
-- The Agent can **create and manage** Projects
-- Should only be used when automating human approval workflows
+| Preset | Effective Permissions | Typical Skill Surface |
+|--------|----------------------|------------------------|
+| **Developer** (`developer_agent`) | `*:read` + `task:write` (6 bits) | Execute tasks, report work, submit for verification |
+| **PM** (`pm_agent`) | `*:read` + `idea/proposal/document/task/project:write` (10 bits) | Requirements analysis, elaboration, proposal drafting, task breakdown |
+| **Admin** (`admin_agent`) | All 15 bits (`*:read` + `*:write` + `*:admin`) | Proxy human approvals: approve Proposals, verify Tasks, manage Projects |
 
-**Permission model** (everyone can read and comment, but specific operations require role permissions):
+**Warning: `*:admin` permissions are human-level**. They cover Proposal approval, Task verification, and Idea/Document deletion. Grant them only to Agents that are intentionally automating human approval workflows.
 
-| Operation | PM | Dev | Admin | Notes |
-|-----------|:--:|:---:|:-----:|-------|
-| Read all content | ✓ | ✓ | ✓ | Public |
-| Comment on anything | ✓ | ✓ | ✓ | Public |
-| **Create Proposal** | ✓ | ✗ | ✓ | PM/Admin only |
-| **Update Task Status** | ✗ | ✓ | ✓ | Developer/Admin only |
-| **Submit Task for Verification** | ✗ | ✓ | ✓ | Developer/Admin only |
-| **Report Work Completion** | ✗ | ✓ | ✓ | Developer/Admin only |
-| **Approve Proposal** | ✗ | ✗ | ✓ | Admin only (proxy for human) |
-| **Verify Task** | ✗ | ✗ | ✓ | Admin only (proxy for human) |
-| **Create Project** | ✗ | ✗ | ✓ | Admin only (proxy for human) |
-| **Reject Proposal** | ✗ | ✗ | ✓ | Admin only (proxy for human) |
+**Tool visibility is fully driven by the effective permission set**: gated MCP tools each declare a single required permission (e.g. `task:write`, `proposal:admin`); only tools whose required bit is in the agent's effective set get registered. Public tools (`chorus_get_*`, `chorus_checkin`, comments, sessions) carry no gate. The full tool → permission map lives at `src/mcp/tools/permission-map.ts`; for the conceptual reference see [`docs/PERMISSIONS.md`](./PERMISSIONS.md).
 
-**In one line**: PM only "proposes", Developer only "executes", Admin can "proxy human approvals" — all can "read" and "comment".
-
-**PM Agent exclusive tools**:
-- `chorus_pm_create_proposal` - Create proposal (PRD / task breakdown / technical plan)
-- `chorus_pm_create_document` - Create document
-- `chorus_pm_create_tasks` - Batch create tasks
-- `chorus_pm_update_document` - Update document
-
-**Admin Agent exclusive tools** (proxy human operations):
-- `chorus_admin_create_project` - Create project
-- `chorus_admin_create_idea` - Create Idea (proxy human requirement submission)
-- `chorus_admin_approve_proposal` - Approve Proposal
-- `chorus_pm_reject_proposal` - Reject Proposal (PM: own only, Admin: any)
-- `chorus_admin_verify_task` - Verify Task
-- `chorus_admin_reopen_task` - Reopen Task
-- `chorus_admin_close_task` - Close Task
-- `chorus_admin_delete_content` - Delete any content
-
-**Developer Agent exclusive tools**:
-- `chorus_update_task` - Update task status
-- `chorus_submit_for_verify` - Submit task for human verification
-- `chorus_report_work` - Report work completion
+Custom permissions are first-class: an agent can mix-and-match bits (e.g. Developer preset + `task:admin` for self-verifying agents, or read-only auditors with only `*:read`). Operational handler-level guards still enforce that, for example, only the assignee can call `chorus_submit_for_verify` even if `task:write` is present.
 
 **Workflow**:
 ```
@@ -506,15 +469,20 @@ Three-layer mechanism for Claude Code to connect with Chorus:
 {
   "agent": {
     "name": "PM-Agent-1",
-    "roles": ["pm"],
+    "permissions": {
+      "idea": ["read", "write"],
+      "proposal": ["read", "write"],
+      "document": ["read", "write"],
+      "task": ["read", "write"],
+      "project": ["read"]
+    },
     "persona": "You are a UX-focused product manager...",
     "systemPrompt": "..."  // Full system prompt (if any)
   },
-  "assignments": {
-    "ideas": [...],   // Pending Ideas
-    "tasks": [...]    // Pending Tasks
+  "ideaTracker": {
+    "<project-uuid>": { "name": "...", "ideas": [/* recent in-progress ideas */] }
   },
-  "notifications": [...] // Unread notifications
+  "notifications": { "unread": 0, "recent": [] }
 }
 ```
 
@@ -986,7 +954,7 @@ Work style: Cautious, responsible, guided by human judgment standards
 **Explicitly out of MVP scope (some implemented later)**:
 - ✅ ~~Complex task dependencies (DAG)~~ — Implemented: TaskDependency model + cycle detection + DAG visualization
 - ❌ Git integration
-- ✅ ~~Complex permissions (RBAC)~~ — Implemented: Three-role MCP tool permissions (PM/Developer/Admin)
+- ✅ ~~Complex permissions (RBAC)~~ — Implemented: Fine-grained agent permissions (5 resources × 3 actions = 15-bit matrix) with role presets + Custom mode (v0.7.0)
 - ❌ Multi-PM Agent collaboration
 
 ### 6.2 Milestones
