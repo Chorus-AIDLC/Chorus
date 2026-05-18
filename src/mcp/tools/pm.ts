@@ -749,10 +749,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to a specified Developer Agent (task must be in open or assigned status)",
+      description: "Assign a task to any agent in the company (task must be in open or assigned status)",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        agentUuid: z.string().describe("Target Developer Agent UUID"),
+        agentUuid: z.string().describe("Target Agent UUID"),
       }),
     },
     async ({ taskUuid, agentUuid }) => {
@@ -770,21 +770,13 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         };
       }
 
-      // Validate target agent exists and belongs to the same company
+      // Validate target agent exists and belongs to the same company.
+      // No role/permission gating on the assignee — anyone in the company
+      // can be assigned. Permission gates still apply when the assignee
+      // actually tries to act on the task.
       const targetAgent = await getAgentByUuid(auth.companyUuid, agentUuid);
       if (!targetAgent) {
         return { content: [{ type: "text", text: "Target Agent not found" }], isError: true };
-      }
-
-      // Validate target agent has the developer role
-      const hasDeveloperRole = targetAgent.roles.some(
-        (r: string) => r === "developer" || r === "developer_agent"
-      );
-      if (!hasDeveloperRole) {
-        return {
-          content: [{ type: "text", text: `Agent "${targetAgent.name}" does not have the developer role` }],
-          isError: true,
-        };
       }
 
       // Execute assignment

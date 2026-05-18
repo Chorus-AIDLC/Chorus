@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { assignIdea, releaseIdea, getIdeaByUuid } from "@/services/idea.service";
-import { getAgentsByRole, getCompanyUsers } from "@/services/agent.service";
+import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
 import logger from "@/lib/logger";
 
@@ -167,7 +167,9 @@ export async function releaseIdeaAction(ideaUuid: string) {
   }
 }
 
-// Get PM agents for assignment (Ideas can only be assigned to PM agents)
+// Get assignable agents and users for the assign-idea modal.
+// No role gating — any agent the caller owns is selectable. The agent's
+// permission set still gates what it can actually do once assigned.
 export async function getPmAgentsAction() {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
@@ -176,12 +178,12 @@ export async function getPmAgentsAction() {
 
   try {
     const [agents, users] = await Promise.all([
-      getAgentsByRole(auth.companyUuid, "pm", auth.actorUuid),
+      getAssignableAgents(auth.companyUuid, auth.actorUuid),
       getCompanyUsers(auth.companyUuid),
     ]);
     return { agents, users };
   } catch (error) {
-    logger.error({ err: error }, "Failed to get PM agents");
+    logger.error({ err: error }, "Failed to get assignable agents");
     return { agents: [], users: [] };
   }
 }

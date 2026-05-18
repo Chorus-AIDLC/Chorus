@@ -277,6 +277,30 @@ export async function getAgentsByRole(companyUuid: string, role: string, ownerUu
   });
 }
 
+// Get assignable agents (for assignment modals).
+// No role filtering — any agent in scope is selectable. Permission gates
+// still apply when the agent actually acts on the resource.
+// `ownerUuid` scopes to agents the caller created (matches prior behavior);
+// omit to return every agent in the company.
+export async function getAssignableAgents(
+  companyUuid: string,
+  ownerUuid?: string,
+) {
+  return prisma.agent.findMany({
+    where: {
+      companyUuid,
+      ...(ownerUuid && { ownerUuid }),
+    },
+    select: {
+      uuid: true,
+      name: true,
+      roles: true,
+      ownerUuid: true,
+    },
+    orderBy: { name: "asc" },
+  });
+}
+
 // Get all users in company (for assignment)
 export async function getCompanyUsers(companyUuid: string) {
   return prisma.user.findMany({

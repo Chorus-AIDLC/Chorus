@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate } from "@/services/task.service";
-import { getAgentsByRole, getCompanyUsers } from "@/services/agent.service";
+import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
 import logger from "@/lib/logger";
 
@@ -371,7 +371,9 @@ export async function deleteTaskAction(taskUuid: string, projectUuid: string) {
   }
 }
 
-// Get developer agents and users (for assign modal)
+// Get assignable agents and users (for assign modal).
+// Returns every agent in the company — no role gating. The agent's
+// permission set still gates what it can actually do once assigned.
 export async function getDeveloperAgentsAction() {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
@@ -379,15 +381,17 @@ export async function getDeveloperAgentsAction() {
   }
 
   try {
-    const agents = await getAgentsByRole(auth.companyUuid, "developer", auth.actorUuid);
-    const users = await getCompanyUsers(auth.companyUuid);
+    const [agents, users] = await Promise.all([
+      getAssignableAgents(auth.companyUuid, auth.actorUuid),
+      getCompanyUsers(auth.companyUuid),
+    ]);
     return {
       agents,
       users,
-      currentUserUuid: auth.actorUuid
+      currentUserUuid: auth.actorUuid,
     };
   } catch (error) {
-    logger.error({ err: error }, "Failed to get developer agents");
+    logger.error({ err: error }, "Failed to get assignable agents");
     return { agents: [], users: [] };
   }
 }

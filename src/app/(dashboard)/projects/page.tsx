@@ -600,7 +600,11 @@ export default function ProjectsPage() {
     }
   }, []);
 
-  // Fetch admin agent status once on mount (only needed for empty-state onboarding)
+  // Fetch admin agent status once on mount. The empty-state tip prompts
+  // the user to ask an agent to "create a project group + initial project",
+  // so the right gate is project:write — match by effective permissions
+  // rather than by legacy roles[] preset name, so custom-configured agents
+  // also count.
   useEffect(() => {
     fetchData();
     fetch("/api/agents?pageSize=100")
@@ -608,9 +612,11 @@ export default function ProjectsPage() {
       .then((json) => {
         if (json.success) {
           const agents = json.data.data || json.data || [];
-          setHasAdminAgent(agents.some((a: { roles: string[] }) =>
-            a.roles.some((r: string) => r === "admin_agent" || r === "admin")
-          ));
+          setHasAdminAgent(
+            agents.some((a: { effectivePermissions?: string[] }) =>
+              (a.effectivePermissions ?? []).includes("project:write"),
+            ),
+          );
         }
       })
       .catch(() => {});
