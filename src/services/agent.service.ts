@@ -4,6 +4,8 @@
 
 import { prisma } from "@/lib/prisma";
 import { generateApiKey } from "@/lib/api-key";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
+import type { Permission } from "@/lib/authz/types";
 
 export interface AgentListParams {
   companyUuid: string;
@@ -278,15 +280,16 @@ export async function getAgentsByRole(companyUuid: string, role: string, ownerUu
 }
 
 // Get assignable agents (for assignment modals).
-// No role filtering — any agent in scope is selectable. Permission gates
-// still apply when the agent actually acts on the resource.
-// `ownerUuid` scopes to agents the caller created (matches prior behavior);
-// omit to return every agent in the company.
+// Filters by *effective* permission (preset + custom), not by legacy
+// `roles[]` preset name — so e.g. a custom agent that was granted
+// `task:write` directly still shows up in the task picker.
+// `ownerUuid` scopes to agents the caller created.
 export async function getAssignableAgents(
   companyUuid: string,
+  permission: Permission,
   ownerUuid?: string,
 ) {
-  return prisma.agent.findMany({
+  const agents = await prisma.agent.findMany({
     where: {
       companyUuid,
       ...(ownerUuid && { ownerUuid }),
@@ -295,10 +298,22 @@ export async function getAssignableAgents(
       uuid: true,
       name: true,
       roles: true,
+      permissions: true,
       ownerUuid: true,
     },
     orderBy: { name: "asc" },
   });
+
+  return agents
+    .filter((a) =>
+      computeEffectivePermissions(a.roles, a.permissions).has(permission),
+    )
+    .map(({ uuid, name, roles, ownerUuid }) => ({
+      uuid,
+      name,
+      roles,
+      ownerUuid,
+    }));
 }
 
 // Get all users in company (for assignment)

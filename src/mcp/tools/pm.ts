@@ -18,6 +18,7 @@ import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { hasPermission } from "@/lib/auth";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_idea - Claim an Idea
@@ -749,10 +750,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to any agent in the company (task must be in open or assigned status)",
+      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status)",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        agentUuid: z.string().describe("Target Agent UUID"),
+        agentUuid: z.string().describe("Target Agent UUID (must have task:write permission)"),
       }),
     },
     async ({ taskUuid, agentUuid }) => {
@@ -771,12 +772,22 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }
 
       // Validate target agent exists and belongs to the same company.
-      // No role/permission gating on the assignee — anyone in the company
-      // can be assigned. Permission gates still apply when the assignee
-      // actually tries to act on the task.
       const targetAgent = await getAgentByUuid(auth.companyUuid, agentUuid);
       if (!targetAgent) {
         return { content: [{ type: "text", text: "Target Agent not found" }], isError: true };
+      }
+
+      // Gate by permission, not by legacy role preset name — custom-
+      // configured agents that hold task:write are eligible too.
+      const targetPerms = computeEffectivePermissions(
+        targetAgent.roles,
+        targetAgent.permissions,
+      );
+      if (!targetPerms.has("task:write")) {
+        return {
+          content: [{ type: "text", text: `Agent "${targetAgent.name}" does not have task:write permission` }],
+          isError: true,
+        };
       }
 
       // Execute assignment

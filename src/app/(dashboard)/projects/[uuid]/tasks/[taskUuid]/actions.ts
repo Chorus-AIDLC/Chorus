@@ -382,7 +382,7 @@ export async function getDeveloperAgentsAction() {
 
   try {
     const [agents, users] = await Promise.all([
-      getAssignableAgents(auth.companyUuid, auth.actorUuid),
+      getAssignableAgents(auth.companyUuid, "task:write", auth.actorUuid),
       getCompanyUsers(auth.companyUuid),
     ]);
     return {
