@@ -44,6 +44,7 @@ import {
   revokeApiKey,
   getAgentsByOwner,
   getAgentsByRole,
+  getAssignableAgents,
   getCompanyUsers,
 } from "@/services/agent.service";
 
@@ -549,6 +550,113 @@ describe("getAgentsByRole", () => {
         orderBy: { name: "asc" },
       })
     );
+  });
+});
+
+// ===== getAssignableAgents =====
+// Covers the permission-based filter that backs the Task/Idea assign modals.
+// Uses raw fixtures (not makeAgent) because we need to exercise both the
+// `roles[]` preset path and the `permissions[]` custom-bits path.
+describe("getAssignableAgents", () => {
+  function rawAgent(overrides: Record<string, unknown> = {}) {
+    return {
+      uuid: agentUuid,
+      name: "Test Agent",
+      roles: [],
+      permissions: [],
+      ownerUuid,
+      ...overrides,
+    };
+  }
+
+  it("includes agents whose preset implies the requested permission", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      rawAgent({ uuid: "agent-dev", name: "Dev", roles: ["developer_agent"] }),
+      rawAgent({ uuid: "agent-pm", name: "PM", roles: ["pm_agent"] }),
+    ]);
+
+    const result = await getAssignableAgents(companyUuid, "task:write");
+
+    // Both presets grant task:write
+    expect(result).toHaveLength(2);
+    expect(result.map((a) => a.uuid)).toEqual(
+      expect.arrayContaining(["agent-dev", "agent-pm"]),
+    );
+  });
+
+  it("excludes agents whose preset does not grant the permission", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      rawAgent({ uuid: "agent-dev", name: "Dev", roles: ["developer_agent"] }),
+      rawAgent({ uuid: "agent-pm", name: "PM", roles: ["pm_agent"] }),
+    ]);
+
+    // developer_agent preset has no idea:write, pm_agent does
+    const result = await getAssignableAgents(companyUuid, "idea:write");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].uuid).toBe("agent-pm");
+  });
+
+  it("includes custom-permission agents that hold the bit directly", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      rawAgent({
+        uuid: "agent-custom",
+        name: "Custom",
+        roles: [],
+        permissions: ["task:read", "task:write"],
+      }),
+    ]);
+
+    const result = await getAssignableAgents(companyUuid, "task:write");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].uuid).toBe("agent-custom");
+  });
+
+  it("scopes to ownerUuid when provided", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([]);
+
+    await getAssignableAgents(companyUuid, "task:write", ownerUuid);
+
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid, ownerUuid },
+        orderBy: { name: "asc" },
+      }),
+    );
+  });
+
+  it("omits ownerUuid filter when not provided", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([]);
+
+    await getAssignableAgents(companyUuid, "task:write");
+
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid },
+      }),
+    );
+  });
+
+  it("returns the trimmed shape (no permissions field leaking through)", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      rawAgent({
+        uuid: "agent-1",
+        name: "A",
+        roles: ["developer_agent"],
+        permissions: ["task:write"],
+      }),
+    ]);
+
+    const result = await getAssignableAgents(companyUuid, "task:write");
+
+    expect(result[0]).toEqual({
+      uuid: "agent-1",
+      name: "A",
+      roles: ["developer_agent"],
+      ownerUuid,
+    });
+    expect(result[0]).not.toHaveProperty("permissions");
   });
 });
 
