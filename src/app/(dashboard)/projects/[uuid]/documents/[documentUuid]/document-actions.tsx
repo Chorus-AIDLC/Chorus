@@ -1,21 +1,24 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
 import { ExportDropdown } from "@/components/export-dropdown";
+import { DeleteDocumentButton } from "@/components/documents/delete-document-button";
 import type { ExportableDocument } from "@/types/export";
 
 interface DocumentActionsProps {
   documentUuid: string;
   projectUuid: string;
+  documentTitle: string;
+  canDelete: boolean;
   exportDoc?: ExportableDocument;
 }
 
-export function DocumentActions({ documentUuid, exportDoc }: DocumentActionsProps) {
-  const t = useTranslations();
-  const router = useRouter();
-
+export function DocumentActions({
+  documentUuid,
+  projectUuid,
+  documentTitle,
+  canDelete,
+  exportDoc,
+}: DocumentActionsProps) {
   return (
     <div className="flex gap-2">
       {exportDoc ? (
@@ -23,13 +26,13 @@ export function DocumentActions({ documentUuid, exportDoc }: DocumentActionsProp
       ) : (
         <ExportDropdown documentUuid={documentUuid} />
       )}
-      <Button
-        variant="outline"
-        className="border-[#E5E0D8] text-[#6B6B6B]"
-        onClick={() => router.back()}
-      >
-        {t("common.back")}
-      </Button>
+      {canDelete && (
+        <DeleteDocumentButton
+          documentUuid={documentUuid}
+          documentTitle={documentTitle}
+          projectUuid={projectUuid}
+        />
+      )}
     </div>
   );
 }

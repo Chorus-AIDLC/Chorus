@@ -637,7 +637,12 @@
     "typeAdr": "ADR",
     "typeGuide": "Guide",
     "typeNote": "Note",
-    "typeOther": "Other"
+    "typeOther": "Other",
+    "deleteDocument": "Delete Document",
+    "deleteDocumentDescription": "This will permanently delete \"{title}\". This action cannot be undone.",
+    "deleteSuccess": "Document deleted.",
+    "deleteFailed": "Failed to delete document.",
+    "deleteFailedNotFound": "This document no longer exists."
   },
   "export": {
     "exportDocument": "Export",

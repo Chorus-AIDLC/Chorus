@@ -152,6 +152,15 @@ export async function getDocumentByUuid(companyUuid: string, uuid: string) {
   });
 }
 
+// Get raw Document by UUID without company scoping. Used by callers that need
+// to make their own tenant-isolation decision (e.g. Server Actions returning a
+// distinct error code for cross-company access vs. true 404).
+export async function getDocumentByUuidUnscoped(uuid: string) {
+  return prisma.document.findFirst({
+    where: { uuid },
+  });
+}
+
 // Create Document
 export async function createDocument(
   params: DocumentCreateParams

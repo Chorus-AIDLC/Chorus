@@ -638,7 +638,12 @@
     "typeAdr": "ADR",
     "typeGuide": "指南",
     "typeNote": "笔记",
-    "typeOther": "其他"
+    "typeOther": "其他",
+    "deleteDocument": "删除文档",
+    "deleteDocumentDescription": "此操作将永久删除文档「{title}」，无法恢复。",
+    "deleteSuccess": "文档已删除。",
+    "deleteFailed": "删除文档失败。",
+    "deleteFailedNotFound": "该文档已不存在。"
   },
   "export": {
     "exportDocument": "导出",

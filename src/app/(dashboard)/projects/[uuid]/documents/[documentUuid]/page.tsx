@@ -90,6 +90,8 @@ export default async function DocumentDetailPage({ params }: PageProps) {
         <DocumentActions
           documentUuid={documentUuid}
           projectUuid={projectUuid}
+          documentTitle={document.title}
+          canDelete={auth.type === "user" || auth.type === "super_admin"}
           exportDoc={{
             title: document.title,
             content: document.content ?? "",
