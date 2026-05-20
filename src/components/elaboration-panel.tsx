@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Pencil,
   Loader2,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -359,6 +360,28 @@ function PendingRoundContent({
 
   const selectedOptionId = getSelectedOptionId(question.questionId);
   const isOtherSelected = selectedOptionId === OTHER_OPTION_ID;
+  const isLastQuestion = currentIndex === questions.length - 1;
+  const hasOtherText = Boolean(
+    (answers[question.questionId]?.customText ?? "").trim()
+  );
+
+  const handleConfirmOther = () => {
+    if (isLastQuestion || !hasOtherText) return;
+    const nextIdx = currentIndexRef.current + 1;
+    setTimeout(() => goTo(nextIdx, "left"), SLIDE_ANIMATION_MS);
+  };
+
+  const handleOtherInputKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>
+  ) => {
+    if (e.key !== "Enter") return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    if (isLastQuestion) return;
+    if (!hasOtherText) return;
+    const nextIdx = currentIndexRef.current + 1;
+    setTimeout(() => goTo(nextIdx, "left"), SLIDE_ANIMATION_MS);
+  };
 
   return (
     <div className="overflow-hidden p-3.5">
@@ -409,31 +432,31 @@ function PendingRoundContent({
                 onClick={() =>
                   handleSelectOption(question.questionId, option.id)
                 }
-                className={`flex w-full items-center justify-between px-3.5 py-3 h-auto text-left transition-colors rounded-none ${
+                className={`flex w-full items-start justify-between gap-2.5 px-3.5 py-3 h-auto text-left transition-colors rounded-none ${
                   isSelected
                     ? "bg-[#F7F6F3]"
                     : "hover:bg-[#FAF8F4]"
                 }`}
               >
-                <span className="flex items-center gap-2.5">
+                <span className="flex flex-1 min-w-0 items-start gap-2.5">
                   <span
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#E5E0D8] text-xs font-medium text-[#5F5E5A]"
                   >
                     {idx + 1}
                   </span>
-                  <span className="flex flex-col items-start">
-                    <span className="text-[13px] text-[#2C2C2A]">
+                  <span className="flex min-w-0 flex-1 flex-col items-start">
+                    <span className="whitespace-normal [overflow-wrap:anywhere] text-[13px] text-[#2C2C2A]">
                       {option.label}
                     </span>
                     {option.description && (
-                      <span className="text-[11px] text-[#9A9A9A]">
+                      <span className="whitespace-normal [overflow-wrap:anywhere] text-[11px] text-[#9A9A9A]">
                         {option.description}
                       </span>
                     )}
                   </span>
                 </span>
                 {isSelected && (
-                  <ArrowRight className="h-4 w-4 text-[#888780]" />
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-[#888780]" />
                 )}
               </Button>
               {idx < question.options.length - 1 && (
@@ -461,16 +484,32 @@ function PendingRoundContent({
             <Pencil className="h-3.5 w-3.5 text-[#B4B2A9]" />
           </span>
           {isOtherSelected ? (
-            <Input
-              type="text"
-              value={answers[question.questionId]?.customText || ""}
-              onChange={(e) =>
-                handleCustomTextChange(question.questionId, e.target.value)
-              }
-              placeholder={t("somethingElse")}
-              className="flex-1 border-none bg-transparent text-[13px] text-[#2C2C2A] placeholder:italic placeholder:text-[#B4B2A9] shadow-none focus-visible:ring-0"
-              autoFocus
-            />
+            <>
+              <Input
+                type="text"
+                value={answers[question.questionId]?.customText || ""}
+                onChange={(e) =>
+                  handleCustomTextChange(question.questionId, e.target.value)
+                }
+                onKeyDown={handleOtherInputKeyDown}
+                placeholder={t("somethingElse")}
+                className="flex-1 border-none bg-transparent text-[13px] text-[#2C2C2A] placeholder:italic placeholder:text-[#B4B2A9] shadow-none focus-visible:ring-0"
+                autoFocus
+              />
+              {!isLastQuestion && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleConfirmOther}
+                  disabled={!hasOtherText}
+                  aria-label={t("confirmAnswerAria")}
+                  className="h-7 w-7 text-[#6B6B6B] disabled:opacity-30"
+                >
+                  <Check className="h-4 w-4" />
+                </Button>
+              )}
+            </>
           ) : (
             <Button
               variant="ghost"

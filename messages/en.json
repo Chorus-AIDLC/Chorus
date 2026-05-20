@@ -856,6 +856,7 @@
     "otherOption": "Other",
     "otherPlaceholder": "Please specify...",
     "submitAnswers": "Submit answers",
+    "confirmAnswerAria": "Confirm answer",
     "submitting": "Submitting...",
     "submitFailed": "Failed to submit answers",
     "navCounter": "{current} of {total}",

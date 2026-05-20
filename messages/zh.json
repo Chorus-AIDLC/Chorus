@@ -857,6 +857,7 @@
     "otherOption": "其他",
     "otherPlaceholder": "请说明...",
     "submitAnswers": "提交回答",
+    "confirmAnswerAria": "确认回答",
     "submitting": "提交中...",
     "submitFailed": "提交回答失败",
     "navCounter": "{current} / {total}",
