@@ -12,6 +12,8 @@
 
 @custom-variant dark (&:is(.dark *));
 @source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../../../node_modules/@streamdown/code/dist/*.js";
 
 @layer base {
   :root {

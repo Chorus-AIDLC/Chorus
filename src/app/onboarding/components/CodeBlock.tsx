@@ -1,7 +1,6 @@
 "use client";
 
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 
 interface CodeBlockProps {
   code: string;
@@ -11,5 +10,5 @@ interface CodeBlockProps {
 export function CodeBlock({ code: codeContent, language }: CodeBlockProps) {
   const markdown = `\`\`\`${language || ""}\n${codeContent}\n\`\`\``;
 
-  return <Streamdown plugins={{ code }}>{markdown}</Streamdown>;
+  return <MarkdownContent>{markdown}</MarkdownContent>;
 }

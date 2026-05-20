@@ -44,8 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import {
   addDocumentDraftAction,
   updateDocumentDraftAction,
@@ -588,7 +587,7 @@ export function ProposalEditor({
                     {isExpanded && doc.content && (
                       <div className="mt-3 border-t border-[#F5F2EC] pt-4">
                         <div className="prose prose-sm max-w-none text-foreground">
-                          <Streamdown plugins={{ code }}>{doc.content}</Streamdown>
+                          <MarkdownContent>{doc.content}</MarkdownContent>
                         </div>
                       </div>
                     )}

@@ -6,8 +6,7 @@ import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Streamdown } from "streamdown";
-import { code as codePlugin } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { normalizeNewlines, DOC_TYPE_I18N_KEYS } from "./utils";
 import { PANEL_WIDTH_PX } from "../utils";
 
@@ -103,9 +102,7 @@ export function DocumentPanel({ title, type, content, mode = "overlay", onClose,
         {/* Content */}
         <ScrollArea className="flex-1 min-h-0 [&_[data-slot=scroll-area-viewport]>div]:!block">
           <div className="px-6 py-5 text-[13px] leading-relaxed text-[#2C2C2A] prose prose-sm max-w-none [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:mt-4 [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h3]:text-sm [&_h3]:font-medium [&_h3]:mt-2 [&_h3]:mb-1 [&_p]:text-[13px] [&_p]:text-[#4A4A4A] [&_p]:my-1.5 [&_li]:text-[13px] [&_li]:text-[#4A4A4A] [&_ul]:my-1 [&_ol]:my-1 [&_strong]:text-[#2C2C2C] [&_code]:text-[12px] [&_code]:bg-[#F5F2EC] [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-[#FAF8F4] [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:my-2">
-            <Streamdown plugins={{ code: codePlugin }}>
-              {normalizeNewlines(content)}
-            </Streamdown>
+            <MarkdownContent>{normalizeNewlines(content)}</MarkdownContent>
           </div>
         </ScrollArea>
       </div>

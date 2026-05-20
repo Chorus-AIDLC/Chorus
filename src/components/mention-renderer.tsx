@@ -1,8 +1,8 @@
 "use client";
 
 import React from "react";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+
+import { MarkdownContent } from "@/components/markdown-content";
 
 /**
  * Regex to match @[DisplayName](type:uuid) patterns in text.
@@ -142,7 +142,7 @@ export function ContentWithMentions({ children }: ContentWithMentionsProps) {
   if (!hasMentionPatterns) {
     return (
       <div className="overflow-hidden [&_pre]:overflow-x-auto">
-        <Streamdown plugins={{ code }}>{children}</Streamdown>
+        <MarkdownContent>{children}</MarkdownContent>
       </div>
     );
   }
@@ -151,7 +151,7 @@ export function ContentWithMentions({ children }: ContentWithMentionsProps) {
 
   return (
     <MentionPostProcessor mentions={mentions}>
-      <Streamdown plugins={{ code }}>{processed}</Streamdown>
+      <MarkdownContent>{processed}</MarkdownContent>
     </MentionPostProcessor>
   );
 }

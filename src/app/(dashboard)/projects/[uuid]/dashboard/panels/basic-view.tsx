@@ -6,8 +6,7 @@ import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import { formatDateTime } from "@/lib/format-date";
@@ -42,7 +41,7 @@ export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: Bas
         <div className="mt-2">
           {idea.content ? (
             <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-              <Streamdown plugins={{ code }}>{idea.content}</Streamdown>
+              <MarkdownContent>{idea.content}</MarkdownContent>
             </div>
           ) : (
             <p className="text-sm italic text-[#9A9A9A]">

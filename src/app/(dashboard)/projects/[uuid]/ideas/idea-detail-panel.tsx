@@ -42,8 +42,7 @@ import { UnifiedComments } from "@/components/unified-comments";
 import { getIdeaActivitiesAction } from "./[ideaUuid]/activity-actions";
 import { updateIdeaAction, deleteIdeaAction } from "./actions";
 import type { ActivityResponse } from "@/services/activity.service";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
 import { AssignIdeaModal } from "./assign-idea-modal";
 import { ElaborationPanel } from "@/components/elaboration-panel";
@@ -555,7 +554,7 @@ export function IdeaDetailPanel({
                   <div className="mt-2">
                     {idea.content ? (
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                        <Streamdown plugins={{ code }}>{idea.content}</Streamdown>
+                        <MarkdownContent>{idea.content}</MarkdownContent>
                       </div>
                     ) : (
                       <p className="text-sm italic text-[#9A9A9A]">{t("common.noContent")}</p>

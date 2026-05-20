@@ -8,8 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import type { IdeaResponse } from "@/services/idea.service";
@@ -116,7 +115,7 @@ export function ElaborationView({ idea, onRefresh }: ElaborationViewProps) {
             </Label>
             <div className="mt-2">
               <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                <Streamdown plugins={{ code }}>{idea.content}</Streamdown>
+                <MarkdownContent>{idea.content}</MarkdownContent>
               </div>
             </div>
           </div>

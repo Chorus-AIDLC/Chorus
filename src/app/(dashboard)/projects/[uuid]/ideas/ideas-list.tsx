@@ -13,8 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { IdeaDetailPanel } from "./idea-detail-panel";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { usePanelUrl } from "@/hooks/use-panel-url";
@@ -198,7 +197,7 @@ export function IdeasList({
                 {/* Content */}
                 {idea.content && (
                   <div className="prose prose-sm max-w-none line-clamp-3 text-[13px] leading-relaxed text-[#2C2C2C]">
-                    <Streamdown plugins={{ code }}>{idea.content}</Streamdown>
+                    <MarkdownContent>{idea.content}</MarkdownContent>
                   </div>
                 )}
               </CardContent>

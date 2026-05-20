@@ -40,8 +40,7 @@ import {
   getTaskSourceAction,
   type ProposalSource,
 } from "./[taskUuid]/source-actions";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
 import { AssignTaskModal } from "./assign-task-modal";
 import {
@@ -816,7 +815,7 @@ export function TaskDetailPanel({
                   <div className="mt-2">
                     {task.description ? (
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                        <Streamdown plugins={{ code }}>{task.description}</Streamdown>
+                        <MarkdownContent>{task.description}</MarkdownContent>
                       </div>
                     ) : (
                       <p className="text-sm italic text-[#9A9A9A]">{t("common.noDescription")}</p>
@@ -832,7 +831,7 @@ export function TaskDetailPanel({
                     </label>
                     <div className="mt-2">
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                        <Streamdown plugins={{ code }}>{task.acceptanceCriteria}</Streamdown>
+                        <MarkdownContent>{task.acceptanceCriteria}</MarkdownContent>
                       </div>
                     </div>
                   </div>

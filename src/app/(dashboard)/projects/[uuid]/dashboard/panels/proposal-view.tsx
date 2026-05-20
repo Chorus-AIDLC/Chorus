@@ -16,8 +16,7 @@ import { Button } from "@/components/ui/button";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { usePresence, injectPresence } from "@/hooks/use-presence";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
-import { Streamdown } from "streamdown";
-import { code as codePlugin } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { TaskDag, type TaskDagTask, type TaskDagEdge } from "@/components/task-dag";
 import { normalizeNewlines, DOC_TYPE_I18N_KEYS } from "./utils";
 import { getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
@@ -280,9 +279,7 @@ function ProposalContent({
       {/* Description — plain text, markdown rendered */}
       {proposal.description && (
         <div className="max-h-[120px] overflow-y-auto text-[13px] leading-relaxed text-[#4A4A4A] prose prose-sm max-w-none [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs [&_p]:text-[13px] [&_p]:text-[#4A4A4A] [&_p]:my-1.5 [&_li]:text-[13px] [&_li]:text-[#4A4A4A] [&_ul]:my-1 [&_ol]:my-1 [&_strong]:text-[#2C2C2C]">
-          <Streamdown plugins={{ code: codePlugin }}>
-            {normalizeNewlines(proposal.description)}
-          </Streamdown>
+          <MarkdownContent>{normalizeNewlines(proposal.description)}</MarkdownContent>
         </div>
       )}
 

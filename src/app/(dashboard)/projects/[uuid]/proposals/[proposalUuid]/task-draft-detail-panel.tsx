@@ -29,8 +29,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import {
@@ -562,7 +561,7 @@ export function TaskDraftDetailPanel({
                   <div className="mt-2">
                     {taskDraft.description ? (
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                        <Streamdown plugins={{ code }}>{taskDraft.description}</Streamdown>
+                        <MarkdownContent>{taskDraft.description}</MarkdownContent>
                       </div>
                     ) : (
                       <p className="text-sm italic text-[#9A9A9A]">{t("common.noDescription")}</p>
@@ -578,7 +577,7 @@ export function TaskDraftDetailPanel({
                     </label>
                     <div className="mt-2">
                       <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
-                        <Streamdown plugins={{ code }}>{taskDraft.acceptanceCriteria}</Streamdown>
+                        <MarkdownContent>{taskDraft.acceptanceCriteria}</MarkdownContent>
                       </div>
                     </div>
                   </div>

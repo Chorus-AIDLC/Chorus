@@ -3,8 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
+import { MarkdownContent } from "@/components/markdown-content";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { updateDocumentAction } from "./actions";
@@ -91,7 +90,7 @@ export function DocumentContent({ documentUuid, projectUuid, initialContent }: D
       ) : (
         <div className="prose prose-sm max-w-none text-[#2C2C2C]">
           {initialContent ? (
-            <Streamdown plugins={{ code }}>{initialContent}</Streamdown>
+            <MarkdownContent>{initialContent}</MarkdownContent>
           ) : (
             <span className="text-[#9A9A9A] italic">{t("common.noContent")}</span>
           )}
