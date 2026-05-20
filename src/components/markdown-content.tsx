@@ -31,9 +31,11 @@ export function MarkdownContent({ children }: { children: string }) {
     [isDark],
   );
 
-  // Mermaid renders SVGs once and caches them; the plugin's singleton `getMermaid()` call
-  // doesn't re-paint existing diagrams when theme changes. Forcing a fresh subtree per
-  // theme is the cheapest correct fix — Streamdown is light enough to remount.
+  // Mermaid caches its singleton inside Streamdown; passing a new `mermaid` prop
+  // updates config but does not re-paint already-rendered SVGs. The `key` forces
+  // React to tear down and rebuild the subtree on theme change, which is what
+  // actually triggers the repaint. Don't drop the key while keeping the prop —
+  // the prop alone won't repaint cached diagrams and the bug returns silently.
   return (
     <Streamdown
       key={isDark ? "dark" : "light"}

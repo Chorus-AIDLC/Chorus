@@ -1,7 +1,15 @@
 # document-markdown-rendering Specification
 
 ## Purpose
-TBD - created by archiving change mermaid-document-rendering. Update Purpose after archive.
+
+Defines how Chorus renders user-authored Markdown content across the
+application — Documents, Proposals, Ideas, Tasks, and Comments. The
+canonical entry point is the `MarkdownContent` component, which is the
+sole consumer of Streamdown plugins and controls. This capability covers
+mermaid diagram rendering, syntax-highlighted code blocks, theme
+behavior, and the centralization rule that keeps every Markdown surface
+on the same rendering path.
+
 ## Requirements
 ### Requirement: Mermaid code blocks render as diagrams
 
