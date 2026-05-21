@@ -38,7 +38,7 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 | `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans) |
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
 | `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
-| `chorus_move_idea` | Move an idea to a different project (also moves linked draft/pending proposals) |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea, all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
 
 **Requirements Elaboration:**
 

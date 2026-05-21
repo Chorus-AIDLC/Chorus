@@ -1,7 +1,12 @@
 "use server";
 
 import { getServerAuthContext } from "@/lib/auth-server";
-import { moveIdea, getIdeaWithDerivedStatus } from "@/services/idea.service";
+import {
+  moveIdea,
+  moveIdeaPreview,
+  getIdeaWithDerivedStatus,
+  getIdeaByUuid,
+} from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { getTask, listTasks } from "@/services/task.service";
 import { listProjects } from "@/services/project.service";
@@ -45,10 +50,47 @@ export async function moveIdeaAction(ideaUuid: string, targetProjectUuid: string
   }
 
   try {
-    await moveIdea(auth.companyUuid, ideaUuid, targetProjectUuid, auth.actorUuid, auth.type);
-    return { success: true as const };
+    const result = await moveIdea(
+      auth.companyUuid,
+      ideaUuid,
+      targetProjectUuid,
+      auth.actorUuid,
+      auth.type,
+    );
+    // Surface the cascade counts so the dialog can render an accurate
+    // success toast ("moved 2 proposals, 3 tasks, ...") rather than a
+    // generic confirmation.
+    return { success: true as const, moved: result.moved };
   } catch (e) {
     return { success: false as const, error: e instanceof Error ? e.message : "Failed to move idea" };
+  }
+}
+
+// Preview the cascade for the move dialog — non-mutating count of what would
+// migrate. Mirrors GET /api/ideas/[uuid]/move/preview but as a server action so
+// the client doesn't have to deal with auth headers.
+export async function moveIdeaPreviewAction(ideaUuid: string, targetProjectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+
+  try {
+    // Same-project guard mirrors REST so the dialog can't render counts
+    // for a no-op move.
+    const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
+    if (!idea) {
+      return { success: false as const, error: "Idea not found" };
+    }
+    if (idea.projectUuid === targetProjectUuid) {
+      return { success: false as const, error: "Idea is already in the target project" };
+    }
+
+    const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
+    return { success: true as const, moved: result.moved };
+  } catch (e) {
+    logger.error({ err: e }, "Failed to preview idea move");
+    return { success: false as const, error: e instanceof Error ? e.message : "Failed to preview move" };
   }
 }
 

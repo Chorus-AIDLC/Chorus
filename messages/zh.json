@@ -392,7 +392,24 @@
     "noProjectsFound": "未找到项目",
     "moveFailed": "移动想法失败",
     "moving": "移动中...",
-    "ungrouped": "未分组"
+    "ungrouped": "未分组",
+    "actions": {
+      "move": "移动到项目..."
+    },
+    "moveDialog": {
+      "title": "将 Idea 移动到其他项目",
+      "description": "选择目标项目。关联的提案、文档、任务以及活动记录都会随这个 Idea 一起迁移。",
+      "targetProjectLabel": "目标项目",
+      "targetProjectPlaceholder": "选择一个项目...",
+      "previewLoading": "正在计算影响范围...",
+      "previewSummary": "将一并移动：{proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
+      "previewWarning": "此操作不可撤销。",
+      "confirm": "确认移动",
+      "cancel": "取消",
+      "error": "移动失败：{message}",
+      "successToast": "已移动 Idea — 更新 {proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
+      "viewMovedIdea": "查看"
+    }
   },
   "tasks": {
     "title": "任务",

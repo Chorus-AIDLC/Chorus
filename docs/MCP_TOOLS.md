@@ -1239,7 +1239,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_move_idea
 
-**Description**: Move an Idea to a different project within the same company. Also moves linked draft/pending Proposals.
+**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself, all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` permission only — no project-level checks.
 
 **Required Permission**: `idea:write`
 
@@ -1249,7 +1249,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | ideaUuid | string | Yes | Idea UUID |
 | targetProjectUuid | string | Yes | Target Project UUID |
 
-**Output**: Updated Idea JSON (`{ uuid, project: { uuid, name } }`)
+**Output**: Updated Idea JSON with cascade counts (`{ uuid, project: { uuid, name }, moved: { proposals, documents, tasks, activities } }`)
 
 ### chorus_pm_create_idea
 

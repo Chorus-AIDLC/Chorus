@@ -391,7 +391,24 @@
     "noProjectsFound": "No projects found",
     "moveFailed": "Failed to move idea",
     "moving": "Moving...",
-    "ungrouped": "Ungrouped"
+    "ungrouped": "Ungrouped",
+    "actions": {
+      "move": "Move to project..."
+    },
+    "moveDialog": {
+      "title": "Move idea to a different project",
+      "description": "Pick a target project. Linked proposals, documents, tasks, and activity history will be moved with this idea.",
+      "targetProjectLabel": "Target project",
+      "targetProjectPlaceholder": "Select a project...",
+      "previewLoading": "Calculating impact...",
+      "previewSummary": "Will also move: {proposals} proposals, {documents} documents, {tasks} tasks, {activities} activities.",
+      "previewWarning": "This action cannot be undone.",
+      "confirm": "Confirm move",
+      "cancel": "Cancel",
+      "error": "Move failed: {message}",
+      "successToast": "Moved idea — {proposals} proposals, {documents} documents, {tasks} tasks, {activities} activities updated.",
+      "viewMovedIdea": "View"
+    }
   },
   "tasks": {
     "title": "Tasks",

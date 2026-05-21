@@ -26,6 +26,9 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       return errors.badRequest("targetProjectUuid is required");
     }
 
+    // moveIdea returns { ...IdeaResponse, moved: { proposals, documents, tasks, activities } }
+    // — spread directly into success() so REST callers get the cascade counts
+    // alongside the updated idea fields.
     const updated = await moveIdea(
       auth.companyUuid,
       uuid,

@@ -67,6 +67,25 @@ export interface IdeaResponse {
   updatedAt: string;
 }
 
+// Cascade-move counts — emitted by moveIdea / moveIdeaPreview so REST/MCP/UI
+// callers can render a "moved N proposals, M documents, ..." preview/summary.
+// Numbers come straight from each Prisma updateMany().count (or .count() for
+// the preview path). See openspec change idea-cross-project-cascade-move §D4.
+export interface MoveIdeaCounts {
+  proposals: number;
+  documents: number;
+  tasks: number;
+  activities: number;
+}
+
+export interface MoveIdeaResponse extends IdeaResponse {
+  moved: MoveIdeaCounts;
+}
+
+export interface MoveIdeaPreviewResult {
+  moved: MoveIdeaCounts;
+}
+
 // Idea status transition rules — simplified 3-state model
 // open → elaborating → elaborated
 // Post-elaboration status is derived from Proposal + Task states (see computeDerivedStatus)
@@ -468,14 +487,32 @@ export async function deleteIdea(uuid: string) {
   return idea;
 }
 
-// Move Idea to a different project
+// Move Idea to a different project — performs the full AI-DLC cascade migration.
+//
+// One Prisma $transaction updates the entire pipeline tail in lock-step:
+//   - Idea row.
+//   - All Proposals where inputType="idea" AND inputUuids contains ideaUuid
+//     (no status filter — sweeps draft/pending/approved/rejected/revised, see D1).
+//   - All Documents where proposalUuid in {migrated proposals}.
+//   - All Tasks      where proposalUuid in {migrated proposals}.
+//   - All Activities targeting any of {idea, migrated proposals, migrated tasks,
+//     migrated documents}, OR-joined inside one updateMany (D3).
+//
+// Tables intentionally NOT touched (spec "Comments and task dependencies are
+// NOT independently rewritten" + "Notifications and AgentSession are NOT
+// modified"): Comment, TaskDependency, AcceptanceCriterion, SessionTaskCheckin,
+// AgentSession, Notification, Task.assignee*. Their FKs already follow the
+// migrated entity rows; rewriting them would be redundant or actively wrong.
+//
+// Every where clause carries `companyUuid` so a same-uuid row in another
+// company cannot be touched (cross-company isolation scenario).
 export async function moveIdea(
   companyUuid: string,
   ideaUuid: string,
   targetProjectUuid: string,
   actorUuid: string,
   actorType: string = "user"
-): Promise<IdeaResponse> {
+): Promise<MoveIdeaResponse> {
   // Validate idea exists and belongs to same company
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -496,27 +533,106 @@ export async function moveIdea(
 
   const fromProjectUuid = idea.projectUuid;
 
-  // Transaction: update idea + linked proposals
-  await prisma.$transaction(async (tx) => {
-    // Update Idea.projectUuid
+  // Transaction: cascade-update Idea + linked Proposals + their Documents/Tasks
+  // + the Activity stream that targets any of those rows. Counts are returned
+  // to the caller so REST/MCP/UI can render a "moved N proposals, ..." summary.
+  const moved = await prisma.$transaction(async (tx) => {
+    // Resolve the proposal set via JSON inputUuids match. No status filter
+    // (D1) — every status follows the idea. This is the only call that touches
+    // the JSON column; subsequent steps reuse the resulting uuid list to walk
+    // the primary-key index instead of rescanning the JSON predicate.
+    const proposals = await tx.proposal.findMany({
+      where: {
+        companyUuid,
+        inputType: "idea",
+        inputUuids: { array_contains: [ideaUuid] },
+      },
+      select: { uuid: true },
+    });
+    const proposalUuids = proposals.map((p) => p.uuid);
+
+    // Idea row — always updated.
     await tx.idea.update({
       where: { uuid: ideaUuid },
       data: { projectUuid: targetProjectUuid },
     });
 
-    // Update linked Proposal.projectUuid (draft or pending only)
-    await tx.proposal.updateMany({
+    // Short-circuit when no proposals are linked: skip the proposal/document/
+    // task lookups and updateMany calls that would all return count 0 anyway.
+    // Activity still runs because idea-targeting activity rows can exist
+    // independent of any proposal (e.g. created/assigned/released events).
+    let proposalCount = 0;
+    let documentCount = 0;
+    let taskCount = 0;
+    let documentUuids: string[] = [];
+    let taskUuids: string[] = [];
+
+    if (proposalUuids.length > 0) {
+      // Resolve Document/Task UUIDs via proposalUuid (D2).
+      const [documentRows, taskRows] = await Promise.all([
+        tx.document.findMany({
+          where: { companyUuid, proposalUuid: { in: proposalUuids } },
+          select: { uuid: true },
+        }),
+        tx.task.findMany({
+          where: { companyUuid, proposalUuid: { in: proposalUuids } },
+          select: { uuid: true },
+        }),
+      ]);
+      documentUuids = documentRows.map((d) => d.uuid);
+      taskUuids = taskRows.map((t) => t.uuid);
+
+      // Proposals — walk the uuid PK from step 1's result instead of rescanning
+      // the JSON inputUuids column. `array_contains` cannot use a btree index
+      // and forces a seq scan, while `uuid IN (...)` hits Proposal_uuid_key.
+      const proposalUpdate = await tx.proposal.updateMany({
+        where: { companyUuid, uuid: { in: proposalUuids } },
+        data: { projectUuid: targetProjectUuid },
+      });
+      proposalCount = proposalUpdate.count;
+
+      // Documents linked to migrated proposals.
+      const documentUpdate = await tx.document.updateMany({
+        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        data: { projectUuid: targetProjectUuid },
+      });
+      documentCount = documentUpdate.count;
+
+      // Tasks linked to migrated proposals (assignee fields untouched).
+      const taskUpdate = await tx.task.updateMany({
+        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        data: { projectUuid: targetProjectUuid },
+      });
+      taskCount = taskUpdate.count;
+    }
+
+    // Activity rows whose (targetType, targetUuid) hits any migrated entity.
+    // OR-clause (D3) keeps it in one updateMany call so partial failures can't
+    // leave the activity feed split across two projects. Empty IN clauses on
+    // proposal/task/document branches are harmless — Prisma compiles them to
+    // a no-match predicate.
+    const activityUpdate = await tx.activity.updateMany({
       where: {
         companyUuid,
-        inputType: "idea",
-        inputUuids: { array_contains: [ideaUuid] },
-        status: { in: ["draft", "pending"] },
+        OR: [
+          { targetType: "idea", targetUuid: ideaUuid },
+          { targetType: "proposal", targetUuid: { in: proposalUuids } },
+          { targetType: "task", targetUuid: { in: taskUuids } },
+          { targetType: "document", targetUuid: { in: documentUuids } },
+        ],
       },
       data: { projectUuid: targetProjectUuid },
     });
+
+    return {
+      proposals: proposalCount,
+      documents: documentCount,
+      tasks: taskCount,
+      activities: activityUpdate.count,
+    };
   });
 
-  // Log activity
+  // Log activity (the "moved" event itself lives on the new project's stream).
   await activityService.createActivity({
     companyUuid,
     projectUuid: targetProjectUuid,
@@ -530,19 +646,109 @@ export async function moveIdea(
       fromProjectName: idea.project!.name,
       toProjectUuid: targetProjectUuid,
       toProjectName: targetProject.name,
+      moved,
     },
   });
 
-  // Emit changes for both projects
+  // Emit changes for both projects (the source loses the idea; the target gains it).
   eventBus.emitChange({ companyUuid, projectUuid: fromProjectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
   eventBus.emitChange({ companyUuid, projectUuid: targetProjectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
-  // Return updated idea
+  // Return updated idea + cascade counts.
   const updated = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
     include: { project: { select: { uuid: true, name: true } } },
   });
-  return formatIdeaResponse(updated!);
+  const formatted = await formatIdeaResponse(updated!);
+  return { ...formatted, moved };
+}
+
+// Non-mutating preview that mirrors moveIdea's SELECT logic but only counts.
+// Used by REST GET /api/ideas/[uuid]/move/preview to drive the UI confirmation
+// dialog. The MCP surface does NOT expose a preview tool — agents call the
+// real move and inspect the returned `moved` counts (see spec §D4).
+//
+// No transaction: a small drift between preview-time and move-time counts is
+// acceptable; the move's own returned counts are authoritative for the toast.
+export async function moveIdeaPreview(
+  companyUuid: string,
+  ideaUuid: string,
+  targetProjectUuid: string
+): Promise<MoveIdeaPreviewResult> {
+  // Validate idea exists and belongs to same company
+  const idea = await prisma.idea.findFirst({
+    where: { uuid: ideaUuid, companyUuid },
+    select: { uuid: true, projectUuid: true },
+  });
+  if (!idea) throw new ApiError("NOT_FOUND", "Idea not found", 404);
+
+  // Validate target project exists and belongs to same company
+  const targetProject = await prisma.project.findFirst({
+    where: { uuid: targetProjectUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!targetProject) throw new ApiError("NOT_FOUND", "Target project not found", 404);
+
+  if (idea.projectUuid === targetProjectUuid) {
+    throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
+  }
+
+  // Same SELECT pipeline as moveIdea — proposals → documents/tasks → activity.
+  // The single JSON-column scan is the proposal.findMany; everything downstream
+  // walks primary-key indexes. proposalUuids.length doubles as the proposal
+  // count, removing the redundant prisma.proposal.count call.
+  const proposals = await prisma.proposal.findMany({
+    where: {
+      companyUuid,
+      inputType: "idea",
+      inputUuids: { array_contains: [ideaUuid] },
+    },
+    select: { uuid: true },
+  });
+  const proposalUuids = proposals.map((p) => p.uuid);
+
+  let documentCount = 0;
+  let taskCount = 0;
+  let documentUuids: string[] = [];
+  let taskUuids: string[] = [];
+
+  if (proposalUuids.length > 0) {
+    const [documentRows, taskRows] = await Promise.all([
+      prisma.document.findMany({
+        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        select: { uuid: true },
+      }),
+      prisma.task.findMany({
+        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        select: { uuid: true },
+      }),
+    ]);
+    documentUuids = documentRows.map((d) => d.uuid);
+    taskUuids = taskRows.map((t) => t.uuid);
+    documentCount = documentUuids.length;
+    taskCount = taskUuids.length;
+  }
+
+  const activityCount = await prisma.activity.count({
+    where: {
+      companyUuid,
+      OR: [
+        { targetType: "idea", targetUuid: ideaUuid },
+        { targetType: "proposal", targetUuid: { in: proposalUuids } },
+        { targetType: "task", targetUuid: { in: taskUuids } },
+        { targetType: "document", targetUuid: { in: documentUuids } },
+      ],
+    },
+  });
+
+  return {
+    moved: {
+      proposals: proposalUuids.length,
+      documents: documentCount,
+      tasks: taskCount,
+      activities: activityCount,
+    },
+  };
 }
 
 // ===== Derived Status =====

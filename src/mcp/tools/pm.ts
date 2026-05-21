@@ -1012,7 +1012,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_move_idea",
     {
-      description: "Move an Idea to a different project within the same company. Also moves linked draft/pending Proposals.",
+      description: "Move an Idea to another project. Cascades to all linked Proposals (any status), their Documents/Tasks, and Activities. Returns the updated Idea + `moved: { proposals, documents, tasks, activities }` counts.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         targetProjectUuid: z.string().describe("Target Project UUID"),
@@ -1028,8 +1028,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           auth.type
         );
 
+        // Surface both the updated idea identity and the cascade counts so
+        // calling agents can render a human-readable summary without a second
+        // round-trip. `moved` is the authoritative count from the transaction.
         return {
-          content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, project: updated.project }, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, project: updated.project, moved: updated.moved }, null, 2) }],
         };
       } catch (error) {
         return {

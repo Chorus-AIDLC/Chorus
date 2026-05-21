@@ -519,27 +519,28 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
+            {idea && !isEditing && (
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 border-[#E5E0D8]"
+                onClick={() => setShowMoveDialog(true)}
+                title={t("ideas.actions.move")}
+                aria-label={t("ideas.actions.move")}
+              >
+                <ArrowRightLeft className="h-4 w-4 text-[#6B6B6B]" />
+              </Button>
+            )}
             {idea && idea.status !== "elaborated" && !isEditing && (
-              <>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 border-[#E5E0D8]"
-                  onClick={() => setShowMoveDialog(true)}
-                  title={t("ideas.moveToProject")}
-                >
-                  <ArrowRightLeft className="h-4 w-4 text-[#6B6B6B]" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 border-[#E5E0D8]"
-                  onClick={handleStartEdit}
-                  title={t("ideas.editIdea")}
-                >
-                  <Pencil className="h-4 w-4 text-[#6B6B6B]" />
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 border-[#E5E0D8]"
+                onClick={handleStartEdit}
+                title={t("ideas.editIdea")}
+              >
+                <Pencil className="h-4 w-4 text-[#6B6B6B]" />
+              </Button>
             )}
             <Button
               variant="outline"
@@ -794,7 +795,7 @@ export function IdeaDetailPanel({
         onOpenChange={setShowMoveDialog}
         ideaUuid={ideaUuid}
         projectUuid={projectUuid}
-        onMoved={onClose}
+        onMoved={() => onClose()}
       />
 
       {/* Assign Idea Modal */}

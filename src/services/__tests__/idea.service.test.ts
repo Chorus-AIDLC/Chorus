@@ -15,7 +15,23 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
       findFirst: vi.fn(),
     },
     proposal: {
+      findMany: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
+    },
+    document: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+      count: vi.fn(),
+    },
+    task: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+      count: vi.fn(),
+    },
+    activity: {
+      updateMany: vi.fn(),
+      count: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -41,7 +57,7 @@ vi.mock("@/services/activity.service", () => ({
   createActivity: mockCreateActivity,
 }));
 
-import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, deleteIdea, updateIdea } from "@/services/idea.service";
+import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, moveIdeaPreview, deleteIdea, updateIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
 
 // ===== Test Data =====
@@ -414,8 +430,38 @@ describe("releaseIdea", () => {
 
 describe("moveIdea", () => {
   const TARGET_PROJECT_UUID = "target-5555-5555-5555-555555555555";
+  const PROPOSAL_A = "proposal-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const PROPOSAL_B = "proposal-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+  const DOC_UUID = "doc-1111-1111-1111-111111111111";
+  const TASK_UUID = "task-2222-2222-2222-222222222222";
 
-  it("should move idea to target project and log activity", async () => {
+  // Reusable scaffolding: `findMany` is consulted three times inside the
+  // transaction (proposals → documents → tasks). We seed defaults that the
+  // happy-path tests can override.
+  function setupCascadeMocks(opts: {
+    proposals?: Array<{ uuid: string }>;
+    documents?: Array<{ uuid: string }>;
+    tasks?: Array<{ uuid: string }>;
+    proposalCount?: number;
+    documentCount?: number;
+    taskCount?: number;
+    activityCount?: number;
+  }) {
+    const proposals = opts.proposals ?? [];
+    const documents = opts.documents ?? [];
+    const tasks = opts.tasks ?? [];
+
+    mockPrisma.proposal.findMany.mockResolvedValue(proposals);
+    mockPrisma.document.findMany.mockResolvedValue(documents);
+    mockPrisma.task.findMany.mockResolvedValue(tasks);
+
+    mockPrisma.proposal.updateMany.mockResolvedValue({ count: opts.proposalCount ?? proposals.length });
+    mockPrisma.document.updateMany.mockResolvedValue({ count: opts.documentCount ?? documents.length });
+    mockPrisma.task.updateMany.mockResolvedValue({ count: opts.taskCount ?? tasks.length });
+    mockPrisma.activity.updateMany.mockResolvedValue({ count: opts.activityCount ?? 0 });
+  }
+
+  it("cascades Idea + approved Proposal + Document + Task + Activity in one transaction", async () => {
     const idea = makeIdeaRecord();
     const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
     const movedIdea = makeIdeaRecord({
@@ -427,8 +473,16 @@ describe("moveIdea", () => {
       .mockResolvedValueOnce(idea)
       .mockResolvedValueOnce(movedIdea);
     mockPrisma.project.findFirst.mockResolvedValue(targetProject);
-    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<void>) => {
-      await fn(mockPrisma);
+
+    setupCascadeMocks({
+      proposals: [{ uuid: PROPOSAL_A }],
+      documents: [{ uuid: DOC_UUID }],
+      tasks: [{ uuid: TASK_UUID }],
+      activityCount: 5,
+    });
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
     });
 
     const result = await moveIdea(
@@ -439,33 +493,208 @@ describe("moveIdea", () => {
       "user"
     );
 
+    // Idea row updated.
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { uuid: IDEA_UUID },
         data: { projectUuid: TARGET_PROJECT_UUID },
       })
     );
-    expect(mockPrisma.proposal.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { projectUuid: TARGET_PROJECT_UUID },
-      })
-    );
 
+    // Proposal updateMany — uuid IN clause (PK index walk, not JSON rescan).
+    // companyUuid scoped, no status filter (D1 in design).
+    const proposalUpdate = mockPrisma.proposal.updateMany.mock.calls[0][0];
+    expect(proposalUpdate.where).toEqual({
+      companyUuid: COMPANY_UUID,
+      uuid: { in: [PROPOSAL_A] },
+    });
+    expect(proposalUpdate.where.status).toBeUndefined();
+    expect(proposalUpdate.where.inputUuids).toBeUndefined();
+    expect(proposalUpdate.data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
+
+    // Document updateMany via proposalUuid.
+    expect(mockPrisma.document.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, proposalUuid: { in: [PROPOSAL_A] } },
+      data: { projectUuid: TARGET_PROJECT_UUID },
+    });
+
+    // Task updateMany via proposalUuid (no assignee fields touched).
+    const taskUpdate = mockPrisma.task.updateMany.mock.calls[0][0];
+    expect(taskUpdate.where).toEqual({ companyUuid: COMPANY_UUID, proposalUuid: { in: [PROPOSAL_A] } });
+    expect(taskUpdate.data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
+    expect(taskUpdate.data).not.toHaveProperty("assigneeUuid");
+    expect(taskUpdate.data).not.toHaveProperty("assigneeType");
+
+    // Activity OR-clause across idea/proposal/task/document.
+    const activityUpdate = mockPrisma.activity.updateMany.mock.calls[0][0];
+    expect(activityUpdate.where.companyUuid).toBe(COMPANY_UUID);
+    expect(activityUpdate.where.OR).toEqual([
+      { targetType: "idea", targetUuid: IDEA_UUID },
+      { targetType: "proposal", targetUuid: { in: [PROPOSAL_A] } },
+      { targetType: "task", targetUuid: { in: [TASK_UUID] } },
+      { targetType: "document", targetUuid: { in: [DOC_UUID] } },
+    ]);
+    expect(activityUpdate.data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
+
+    // Activity record for the move event itself.
     expect(mockCreateActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "moved",
         value: expect.objectContaining({
           fromProjectUuid: PROJECT_UUID,
           toProjectUuid: TARGET_PROJECT_UUID,
+          moved: { proposals: 1, documents: 1, tasks: 1, activities: 5 },
         }),
       })
     );
 
+    // Both project streams are pinged.
     expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
+
+    // Return shape: existing IdeaResponse + the new `moved` field with the
+    // exact `count` returned from each updateMany.
     expect(result.uuid).toBe(IDEA_UUID);
+    expect(result.moved).toEqual({ proposals: 1, documents: 1, tasks: 1, activities: 5 });
   });
 
-  it("should throw if idea not found", async () => {
+  it("returns counts equal to each updateMany().count", async () => {
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+
+    // Multi-proposal scenario covering the spec's "any non-draft status follows
+    // the idea" scenario — we pass the full set through findMany and the
+    // updateMany count is whatever Prisma reports.
+    setupCascadeMocks({
+      proposals: [{ uuid: PROPOSAL_A }, { uuid: PROPOSAL_B }],
+      documents: [{ uuid: DOC_UUID }],
+      tasks: [{ uuid: "t1" }, { uuid: "t2" }, { uuid: "t3" }],
+      proposalCount: 2,
+      documentCount: 1,
+      taskCount: 3,
+      activityCount: 7,
+    });
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
+    });
+
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    expect(result.moved).toEqual({ proposals: 2, documents: 1, tasks: 3, activities: 7 });
+  });
+
+  it("scopes every updateMany by companyUuid (cross-company isolation)", async () => {
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    setupCascadeMocks({ proposals: [{ uuid: PROPOSAL_A }], documents: [], tasks: [] });
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
+    });
+
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+
+    // Every findMany / updateMany inside the transaction must carry companyUuid.
+    for (const call of mockPrisma.proposal.findMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.proposal.updateMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.document.findMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.document.updateMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.task.findMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.task.updateMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+    for (const call of mockPrisma.activity.updateMany.mock.calls) {
+      expect(call[0].where.companyUuid).toBe(COMPANY_UUID);
+    }
+  });
+
+  it("does NOT touch Comment / TaskDependency / AcceptanceCriterion / AgentSession / SessionTaskCheckin / Notification", async () => {
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    setupCascadeMocks({
+      proposals: [{ uuid: PROPOSAL_A }],
+      documents: [{ uuid: DOC_UUID }],
+      tasks: [{ uuid: TASK_UUID }],
+    });
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
+    });
+
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+
+    // The mockPrisma object only declares idea/project/proposal/document/task/activity.
+    // If moveIdea ever reached for a forbidden table, TypeScript would have
+    // failed at compile time (we'd see prisma.<table> is undefined at runtime
+    // anyway). Belt-and-suspenders: confirm none of those properties were
+    // accessed by inspecting the mock object directly.
+    expect("comment" in mockPrisma).toBe(false);
+    expect("taskDependency" in mockPrisma).toBe(false);
+    expect("acceptanceCriterion" in mockPrisma).toBe(false);
+    expect("agentSession" in mockPrisma).toBe(false);
+    expect("sessionTaskCheckin" in mockPrisma).toBe(false);
+    expect("notification" in mockPrisma).toBe(false);
+
+    // And the Task update payload must not include assignee fields.
+    for (const call of mockPrisma.task.updateMany.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("assigneeUuid");
+      expect(call[0].data).not.toHaveProperty("assigneeType");
+      expect(call[0].data).not.toHaveProperty("assignedAt");
+    }
+  });
+
+  it("short-circuits document/task work when no proposals are linked", async () => {
+    // An idea with no proposals (e.g. moved while still in elaborating). The
+    // transaction should update Idea + Activity only — document/task findMany
+    // and proposal/document/task updateMany must all be skipped, since they'd
+    // each return count 0 anyway and just burn round-trips.
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]); // no proposals
+    mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 2 });
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
+    });
+
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+
+    expect(result.moved).toEqual({ proposals: 0, documents: 0, tasks: 0, activities: 2 });
+    // Idea + activity ran; everything in between is short-circuited.
+    expect(mockPrisma.idea.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.activity.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.proposal.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.document.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("throws if idea not found", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(null);
 
     await expect(
@@ -473,7 +702,7 @@ describe("moveIdea", () => {
     ).rejects.toThrow("Idea not found");
   });
 
-  it("should throw if target project not found", async () => {
+  it("throws if target project not found", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
     mockPrisma.project.findFirst.mockResolvedValue(null);
 
@@ -482,7 +711,7 @@ describe("moveIdea", () => {
     ).rejects.toThrow("Target project not found");
   });
 
-  it("should throw if idea is already in target project", async () => {
+  it("throws if idea is already in target project", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
     mockPrisma.project.findFirst.mockResolvedValue({
       uuid: PROJECT_UUID,
@@ -491,6 +720,109 @@ describe("moveIdea", () => {
 
     await expect(
       moveIdea(COMPANY_UUID, IDEA_UUID, PROJECT_UUID, ACTOR_UUID)
+    ).rejects.toThrow("Idea is already in the target project");
+  });
+});
+
+describe("moveIdeaPreview", () => {
+  const TARGET_PROJECT_UUID = "target-5555-5555-5555-555555555555";
+  const PROPOSAL_A = "proposal-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const DOC_UUID = "doc-1111-1111-1111-111111111111";
+  const TASK_UUID = "task-2222-2222-2222-222222222222";
+
+  it("returns counts matching what a subsequent moveIdea would produce", async () => {
+    // Same fixture, run once through preview and once through the real move,
+    // assert identical `moved` shape.
+    const ideaForPreview = makeIdeaRecord();
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+
+    // ----- preview path -----
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(ideaForPreview);
+    mockPrisma.project.findFirst.mockResolvedValueOnce(targetProject);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
+    mockPrisma.document.findMany.mockResolvedValueOnce([{ uuid: DOC_UUID }]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([{ uuid: TASK_UUID }]);
+    mockPrisma.proposal.count.mockResolvedValueOnce(1);
+    mockPrisma.document.count.mockResolvedValueOnce(1);
+    mockPrisma.task.count.mockResolvedValueOnce(1);
+    mockPrisma.activity.count.mockResolvedValueOnce(4);
+
+    const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+    expect(preview.moved).toEqual({ proposals: 1, documents: 1, tasks: 1, activities: 4 });
+
+    // ----- real move (same fixture, no concurrent writes) -----
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValueOnce(targetProject);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
+    mockPrisma.document.findMany.mockResolvedValueOnce([{ uuid: DOC_UUID }]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([{ uuid: TASK_UUID }]);
+    mockPrisma.proposal.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.document.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.task.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 4 });
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      return await fn(mockPrisma);
+    });
+
+    const real = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+
+    expect(real.moved).toEqual(preview.moved);
+  });
+
+  it("does NOT write — only findMany + activity.count are called", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
+    mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    // No proposals → short-circuits document/task findMany; only proposal.findMany
+    // and activity.count run for an idea that hasn't been proposalized yet.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
+    mockPrisma.activity.count.mockResolvedValueOnce(0);
+
+    await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+
+    // No mutations on any cascaded table.
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+    expect(mockPrisma.proposal.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.document.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.activity.updateMany).not.toHaveBeenCalled();
+    // No transaction at all (the spec is explicit: preview is non-mutating).
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    // No move-activity record either.
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+    // Short-circuit: empty proposal set means document/task findMany must NOT
+    // run, and proposal.count is no longer called at all (count = uuids.length).
+    expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.proposal.count).not.toHaveBeenCalled();
+    expect(mockPrisma.document.count).not.toHaveBeenCalled();
+    expect(mockPrisma.task.count).not.toHaveBeenCalled();
+    // Multi-tenancy invariant: the calls that did run carry companyUuid.
+    expect(mockPrisma.proposal.findMany.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
+    expect(mockPrisma.activity.count.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
+  });
+
+  it("throws if idea not found", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID)
+    ).rejects.toThrow("Idea not found");
+  });
+
+  it("throws if target project not found", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
+    mockPrisma.project.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID)
+    ).rejects.toThrow("Target project not found");
+  });
+
+  it("throws if idea is already in target project", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
+    mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: PROJECT_UUID, name: "Same" });
+    await expect(
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, PROJECT_UUID)
     ).rejects.toThrow("Idea is already in the target project");
   });
 });

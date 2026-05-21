@@ -12,21 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Command,
-  CommandInput,
-  CommandList,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-} from "@/components/ui/command";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -45,6 +30,7 @@ import type { ActivityResponse } from "@/services/activity.service";
 import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
 import { AssignIdeaModal } from "./assign-idea-modal";
+import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction } from "./[ideaUuid]/elaboration-actions";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
@@ -190,13 +176,9 @@ export function IdeaDetailPanel({
   const [editError, setEditError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Move to project state
+  // Move-to-project dialog open state. The dialog itself owns project list +
+  // preview + execute logic — see MoveIdeaDialog under dashboard/panels/.
   const [showMoveDialog, setShowMoveDialog] = useState(false);
-  const [moveGroups, setMoveGroups] = useState<{ uuid: string; name: string; projects: { uuid: string; name: string }[] }[]>([]);
-  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
-  const [selectedMoveProject, setSelectedMoveProject] = useState<{ uuid: string; name: string } | null>(null);
-  const [isMoving, setIsMoving] = useState(false);
-  const [moveError, setMoveError] = useState<string | null>(null);
 
   // Track whether the initial slide-in animation has completed
   // so that server re-renders don't replay the entrance animation
@@ -309,85 +291,6 @@ export function IdeaDetailPanel({
     }
   };
 
-  const handleOpenMoveDialog = async () => {
-    setShowMoveDialog(true);
-    setSelectedMoveProject(null);
-    setMoveError(null);
-    setIsLoadingProjects(true);
-    try {
-      const [projRes, groupRes] = await Promise.all([
-        fetch("/api/projects?pageSize=100"),
-        fetch("/api/project-groups"),
-      ]);
-      const [projJson, groupJson] = await Promise.all([projRes.json(), groupRes.json()]);
-
-      if (projJson.success) {
-        const projects = projJson.data
-          .filter((p: { uuid: string }) => p.uuid !== projectUuid)
-          .map((p: { uuid: string; name: string; groupUuid: string | null }) => ({
-            uuid: p.uuid, name: p.name, groupUuid: p.groupUuid,
-          }));
-
-        const groupMap = new Map<string, string>();
-        if (groupJson.success) {
-          const groups = groupJson.data.groups || groupJson.data;
-          for (const g of groups) {
-            groupMap.set(g.uuid, g.name);
-          }
-        }
-
-        // Group projects by project group
-        const grouped = new Map<string, { uuid: string; name: string; projects: { uuid: string; name: string }[] }>();
-        const ungrouped: { uuid: string; name: string }[] = [];
-
-        for (const p of projects) {
-          if (p.groupUuid && groupMap.has(p.groupUuid)) {
-            if (!grouped.has(p.groupUuid)) {
-              grouped.set(p.groupUuid, { uuid: p.groupUuid, name: groupMap.get(p.groupUuid)!, projects: [] });
-            }
-            grouped.get(p.groupUuid)!.projects.push({ uuid: p.uuid, name: p.name });
-          } else {
-            ungrouped.push({ uuid: p.uuid, name: p.name });
-          }
-        }
-
-        const groups = [...grouped.values()];
-        if (ungrouped.length > 0) {
-          groups.push({ uuid: "ungrouped", name: t("ideas.ungrouped"), projects: ungrouped });
-        }
-        setMoveGroups(groups);
-      }
-    } catch {
-      setMoveGroups([]);
-    }
-    setIsLoadingProjects(false);
-  };
-
-  const handleMoveIdea = async () => {
-    if (!selectedMoveProject || isMoving) return;
-    setIsMoving(true);
-    setMoveError(null);
-
-    try {
-      const res = await fetch(`/api/ideas/${idea.uuid}/move`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetProjectUuid: selectedMoveProject.uuid }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        setShowMoveDialog(false);
-        onClose();
-        router.refresh();
-      } else {
-        setMoveError(typeof json.error === "string" ? json.error : json.error?.message || t("ideas.moveFailed"));
-      }
-    } catch {
-      setMoveError(t("ideas.moveFailed"));
-    }
-    setIsMoving(false);
-  };
-
   return (
     <>
       {/* Backdrop */}
@@ -423,13 +326,14 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
-            {canEdit && !isEditing && (
+            {!isEditing && (
               <Button
                 variant="outline"
                 size="icon"
                 className="h-8 w-8 border-[#E5E0D8]"
-                onClick={handleOpenMoveDialog}
-                title={t("ideas.moveToProject")}
+                onClick={() => setShowMoveDialog(true)}
+                title={t("ideas.actions.move")}
+                aria-label={t("ideas.actions.move")}
               >
                 <ArrowRightLeft className="h-4 w-4 text-[#6B6B6B]" />
               </Button>
@@ -775,81 +679,18 @@ export function IdeaDetailPanel({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Move to Project Dialog */}
-      <Dialog open={showMoveDialog} onOpenChange={setShowMoveDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("ideas.moveIdeaTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("ideas.moveIdeaDescription")}
-            </DialogDescription>
-          </DialogHeader>
-          {moveError && (
-            <p className="text-xs text-destructive">{moveError}</p>
-          )}
-          {isLoadingProjects ? (
-            <div className="flex items-center justify-center h-[320px] border border-[#E5E0D8] rounded-lg">
-              <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
-            </div>
-          ) : (
-            <Command className="border border-[#E5E0D8] rounded-lg" filter={(value, search, keywords) => {
-              const searchLower = search.toLowerCase();
-              if (value.toLowerCase().includes(searchLower)) return 1;
-              if (keywords?.some(k => k.toLowerCase().includes(searchLower))) return 1;
-              return 0;
-            }}>
-              <CommandInput placeholder={t("ideas.searchProjects")} />
-              <CommandList className="h-[280px]">
-                <CommandEmpty>{t("ideas.noProjectsFound")}</CommandEmpty>
-                {moveGroups.map((group) => (
-                  <CommandGroup key={group.uuid} heading={group.name}>
-                    {group.projects.map((p) => (
-                      <CommandItem
-                        key={p.uuid}
-                        value={p.name}
-                        keywords={[group.name]}
-                        onSelect={() => setSelectedMoveProject(p)}
-                        className={
-                          selectedMoveProject?.uuid === p.uuid
-                            ? "bg-[#C67A52] text-white data-[selected=true]:bg-[#B56A42] data-[selected=true]:text-white"
-                            : ""
-                        }
-                      >
-                        <Check className={`mr-2 h-4 w-4 ${selectedMoveProject?.uuid === p.uuid ? "opacity-100" : "opacity-0"}`} />
-                        {p.name}
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                ))}
-              </CommandList>
-            </Command>
-          )}
-          <div className="flex justify-end gap-3 pt-2">
-            <Button
-              variant="outline"
-              className="border-[#E5E0D8]"
-              onClick={() => setShowMoveDialog(false)}
-              disabled={isMoving}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
-              onClick={handleMoveIdea}
-              disabled={!selectedMoveProject || isMoving}
-            >
-              {isMoving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t("ideas.moving")}
-                </>
-              ) : (
-                t("ideas.moveToProject")
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Move to Project Dialog — shared component handles preview + execute. */}
+      <MoveIdeaDialog
+        open={showMoveDialog}
+        onOpenChange={setShowMoveDialog}
+        ideaUuid={idea.uuid}
+        projectUuid={projectUuid}
+        onMoved={() => {
+          // After a successful move the idea no longer belongs to this project,
+          // so collapse the panel and let the parent list re-render.
+          onClose();
+        }}
+      />
 
       {/* Assign Idea Modal */}
       {showAssignModal && (
