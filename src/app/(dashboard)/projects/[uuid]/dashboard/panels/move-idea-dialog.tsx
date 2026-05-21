@@ -97,6 +97,15 @@ export function MoveIdeaDialog({
   // a different project before the previous fetch resolves.
   const previewReqIdRef = useRef(0);
 
+  // Stable ref callback for the popover root — see PopoverContent below for
+  // why this matters. useCallback identity prevents repeated re-attachment.
+  const popoverRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const handler = (e: WheelEvent) => e.stopPropagation();
+    el.addEventListener("wheel", handler, { passive: true });
+    // Radix tears the node down on close, so the listener dies with it.
+  }, []);
+
   const loadProjects = useCallback(async () => {
     setSelectedProjectUuid(null);
     setPreview(null);
@@ -267,26 +276,23 @@ export function MoveIdeaDialog({
               </PopoverTrigger>
               <PopoverContent
                 // Radix Dialog uses react-remove-scroll which attaches a
-                // capture-phase native wheel listener on the document and
-                // calls preventDefault on every wheel event outside its
+                // non-passive wheel listener on the document with
+                // preventDefault on every wheel event outside its
                 // shouldPreventScroll allow-list. The portaled popover lives
-                // outside that list, so the wheel never reaches CommandList's
-                // overflow-y-auto. Fix: attach our own native non-passive
-                // wheel listener at the popover root and stopPropagation
-                // before remove-scroll's capture handler sees it. Also
-                // pointer-events-auto so clicks work despite the body lock.
-                ref={(el) => {
-                  if (!el) return;
-                  const handler = (e: WheelEvent) => e.stopPropagation();
-                  el.addEventListener("wheel", handler, { passive: true });
-                  // Cleanup: Radix removes the node on close, so the listener
-                  // dies with it. No teardown needed here.
-                }}
+                // outside that list, so wheel events never reach the inner
+                // CommandList's overflow-y-auto. Fix: attach our own passive
+                // wheel listener at the popover root and stopPropagation in
+                // bubble phase before remove-scroll's document handler sees
+                // it. Also pointer-events-auto so clicks work despite the
+                // body lock. ref must be stable (useCallback) — without it
+                // every keystroke in CommandInput rerenders the parent and
+                // attaches another listener on the same node.
+                ref={popoverRef}
                 className="w-[--radix-popover-trigger-width] p-0 pointer-events-auto"
                 align="start"
               >
                 <Command>
-                  <CommandInput placeholder={t("searchProjects")} />
+                  <CommandInput placeholder={t("moveDialog.searchProjects")} />
                   <CommandList>
                     <CommandEmpty>{t("noProjectsFound")}</CommandEmpty>
                     {moveGroups.map((group) => (
