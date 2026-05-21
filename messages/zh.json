@@ -385,6 +385,7 @@
     "deleteIdea": "删除想法",
     "deleteIdeaConfirm": "确定要删除「{title}」吗？此操作无法撤销。",
     "createFailed": "创建想法失败",
+    "searchProjects": "搜索项目...",
     "noProjectsFound": "未找到项目",
     "moveFailed": "移动想法失败",
     "moving": "移动中...",

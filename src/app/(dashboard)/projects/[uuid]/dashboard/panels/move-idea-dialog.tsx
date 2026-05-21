@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -15,14 +15,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import {
   moveIdeaAction,
   moveIdeaPreviewAction,
@@ -68,6 +73,17 @@ export function MoveIdeaDialog({
   const [moveGroups, setMoveGroups] = useState<MoveGroup[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [selectedProjectUuid, setSelectedProjectUuid] = useState<string | null>(null);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
+  // Look up the selected project's display name for the trigger label.
+  const selectedProjectName = (() => {
+    if (!selectedProjectUuid) return null;
+    for (const g of moveGroups) {
+      const hit = g.projects.find((p) => p.uuid === selectedProjectUuid);
+      if (hit) return hit.name;
+    }
+    return null;
+  })();
 
   // Preview state — drives the count summary block and gates the Confirm button.
   const [preview, setPreview] = useState<MoveCounts | null>(null);
@@ -229,35 +245,79 @@ export function MoveIdeaDialog({
               <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
             </div>
           ) : (
-            <Select
-              // Empty string keeps the Select in controlled mode from the
-              // start so React doesn't warn about uncontrolled→controlled
-              // when the first value is selected.
-              value={selectedProjectUuid ?? ""}
-              onValueChange={(v) => setSelectedProjectUuid(v)}
-            >
-              <SelectTrigger id="move-target-project" className="border-[#E5E0D8]">
-                <SelectValue placeholder={t("moveDialog.targetProjectPlaceholder")} />
-              </SelectTrigger>
-              <SelectContent>
-                {moveGroups.length === 0 ? (
-                  <div className="px-2 py-3 text-xs text-[#9A9A9A]">
-                    {t("noProjectsFound")}
-                  </div>
-                ) : (
-                  moveGroups.map((group) => (
-                    <SelectGroup key={group.uuid}>
-                      <SelectLabel>{group.name}</SelectLabel>
-                      {group.projects.map((p) => (
-                        <SelectItem key={p.uuid} value={p.uuid}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+            // Searchable picker — Popover trigger keeps the dialog focused on
+            // its own concerns (preview + confirm), while Command provides the
+            // type-to-filter behavior the previous (pre-cascade) move dialog
+            // had via CommandInput.
+            <Popover open={isPickerOpen} onOpenChange={setIsPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  id="move-target-project"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={isPickerOpen}
+                  className={cn(
+                    "w-full justify-between border-[#E5E0D8] font-normal",
+                    !selectedProjectName && "text-[#9A9A9A]",
+                  )}
+                >
+                  {selectedProjectName ?? t("moveDialog.targetProjectPlaceholder")}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                // Radix Dialog uses react-remove-scroll which attaches a
+                // capture-phase native wheel listener on the document and
+                // calls preventDefault on every wheel event outside its
+                // shouldPreventScroll allow-list. The portaled popover lives
+                // outside that list, so the wheel never reaches CommandList's
+                // overflow-y-auto. Fix: attach our own native non-passive
+                // wheel listener at the popover root and stopPropagation
+                // before remove-scroll's capture handler sees it. Also
+                // pointer-events-auto so clicks work despite the body lock.
+                ref={(el) => {
+                  if (!el) return;
+                  const handler = (e: WheelEvent) => e.stopPropagation();
+                  el.addEventListener("wheel", handler, { passive: true });
+                  // Cleanup: Radix removes the node on close, so the listener
+                  // dies with it. No teardown needed here.
+                }}
+                className="w-[--radix-popover-trigger-width] p-0 pointer-events-auto"
+                align="start"
+              >
+                <Command>
+                  <CommandInput placeholder={t("searchProjects")} />
+                  <CommandList>
+                    <CommandEmpty>{t("noProjectsFound")}</CommandEmpty>
+                    {moveGroups.map((group) => (
+                      <CommandGroup key={group.uuid} heading={group.name}>
+                        {group.projects.map((p) => (
+                          <CommandItem
+                            key={p.uuid}
+                            // `value` is what cmdk filters against — include
+                            // the project name + group name so users can find
+                            // a project by either.
+                            value={`${p.name} ${group.name}`}
+                            onSelect={() => {
+                              setSelectedProjectUuid(p.uuid);
+                              setIsPickerOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                selectedProjectUuid === p.uuid ? "opacity-100" : "opacity-0",
+                              )}
+                            />
+                            {p.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    ))}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           )}
 
           {/* Preview block — only rendered after a target is picked. */}

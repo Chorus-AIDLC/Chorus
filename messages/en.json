@@ -384,6 +384,7 @@
     "deleteIdea": "Delete Idea",
     "deleteIdeaConfirm": "Are you sure you want to delete \"{title}\"? This action cannot be undone.",
     "createFailed": "Failed to create idea",
+    "searchProjects": "Search projects...",
     "noProjectsFound": "No projects found",
     "moveFailed": "Failed to move idea",
     "moving": "Moving...",

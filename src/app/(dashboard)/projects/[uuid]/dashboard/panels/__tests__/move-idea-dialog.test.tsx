@@ -80,8 +80,8 @@ vi.mock("next-intl", async () => {
   };
 });
 
-// PointerEvent / hasPointerCapture are not implemented in jsdom but Radix UI's
-// Select trigger requires them.
+// PointerEvent / hasPointerCapture / ResizeObserver are not implemented in
+// jsdom but Radix Popover and cmdk need them.
 class MockPointerEvent extends Event {
   button: number;
   ctrlKey: boolean;
@@ -101,6 +101,12 @@ class MockPointerEvent extends Event {
 (window as any).HTMLElement.prototype.releasePointerCapture = vi.fn();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (window as any).HTMLElement.prototype.scrollIntoView = vi.fn();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(window as any).ResizeObserver = class {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+};
 
 import { MoveIdeaDialog } from "../move-idea-dialog";
 
