@@ -1,7 +1,9 @@
 # idea-cross-project-move Specification
 
 ## Purpose
-TBD - created by archiving change idea-cross-project-cascade-move. Update Purpose after archive.
+
+Defines the contract for moving an Idea from one Project to another within the same company. Specifies which downstream entities (Proposals, Documents, Tasks, Activity rows) cascade with the Idea and which (Comments, dependencies, sessions, Notifications, assignees) deliberately stay attached via existing foreign keys. Also fixes the migration counts, preview semantics, and authorization model that REST, MCP, and the UI all share.
+
 ## Requirements
 ### Requirement: Cross-project Idea move SHALL cascade-migrate the full AI-DLC pipeline tail in a single transaction
 
