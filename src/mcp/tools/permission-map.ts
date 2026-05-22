@@ -44,9 +44,6 @@ export const TOOL_PERMISSIONS = {
   // Task-editing tools historically on the PM surface.
   // Mapped to proposal:write to preserve 0.6.x dev boundaries (AC4): dev has
   // task:write but not proposal:write, so dev keeps exactly its 0.6.x tool set.
-  chorus_pm_create_tasks: "proposal:write",
-  chorus_add_task_dependency: "proposal:write",
-  chorus_remove_task_dependency: "proposal:write",
   chorus_pm_assign_task: "proposal:write",
 
   // ===== developer.ts =====

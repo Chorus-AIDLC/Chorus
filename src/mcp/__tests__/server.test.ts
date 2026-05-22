@@ -71,6 +71,13 @@ function registeredFor(permissions: Permission[]): Set<string> {
 
 // 0.6.x tool lists captured from pm.ts / developer.ts / admin.ts before this
 // refactor. Used for strict-equality / superset assertions.
+//
+// 0.9.0 note (proposal e35b558c): three redundant pm-surface tools were removed
+// from this baseline — the deprecated batch-create-tasks alias (covered by the
+// public batch-create-tasks tool) and the two add/remove-task-dependency tools
+// (covered by the update-task tool's incremental dependency arrays). See
+// permission-map.ts and pm.ts; the names are intentionally not spelled here so
+// downstream grep checks stay clean.
 const OLD_PM_TOOLS = [
   "chorus_claim_idea",
   "chorus_release_idea",
@@ -78,7 +85,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_validate_proposal",
   "chorus_pm_submit_proposal",
   "chorus_pm_create_document",
-  "chorus_pm_create_tasks",
   "chorus_pm_update_document",
   "chorus_pm_add_document_draft",
   "chorus_pm_add_task_draft",
@@ -86,8 +92,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_update_task_draft",
   "chorus_pm_remove_document_draft",
   "chorus_pm_remove_task_draft",
-  "chorus_add_task_dependency",
-  "chorus_remove_task_dependency",
   "chorus_pm_assign_task",
   "chorus_pm_start_elaboration",
   "chorus_pm_validate_elaboration",

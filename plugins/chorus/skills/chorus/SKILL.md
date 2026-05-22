@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.2"
+  version: "0.9.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -284,7 +284,7 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_update_task` (field edits + status) | (public; assignee required for status) | Yes | Yes | Yes |
 | `chorus_claim_task` / `chorus_release_task` / `chorus_submit_for_verify` / `chorus_report_work` / `chorus_report_criteria_self_check` | `task:write` | Yes | **Yes** (0.7.0+) | Yes |
 | `chorus_claim_idea` / `chorus_release_idea` / `chorus_move_idea` / `chorus_pm_create_idea` / `chorus_pm_*_elaboration` | `idea:write` | No | Yes | Yes |
-| `chorus_pm_create_proposal` / `chorus_pm_*_proposal` / `chorus_pm_*_draft` / `chorus_pm_create_tasks` / `chorus_pm_assign_task` / `chorus_*_task_dependency` | `proposal:write` | No | Yes | Yes |
+| `chorus_pm_create_proposal` / `chorus_pm_*_proposal` / `chorus_pm_*_draft` / `chorus_create_tasks` / `chorus_pm_assign_task` | `proposal:write` | No | Yes | Yes |
 | `chorus_pm_create_document` / `chorus_pm_update_document` | `document:write` | No | Yes | Yes |
 | `chorus_admin_create_project` / `chorus_admin_*_project_group` / `chorus_admin_move_project_to_group` | `project:write` | No | **Yes** (0.7.0+) | Yes |
 | `chorus_admin_approve_proposal` / `chorus_admin_close_proposal` | `proposal:admin` | No | No | Yes |

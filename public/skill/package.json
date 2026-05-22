@@ -1,6 +1,6 @@
 {
   "name": "chorus-skill",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Chorus AI Agent collaboration platform skill. Supports PM, Developer, and Admin roles via MCP tools for the Idea-Proposal-Task workflow.",
   "author": "chorus",
   "license": "AGPL-3.0",

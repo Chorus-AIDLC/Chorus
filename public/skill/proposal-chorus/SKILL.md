@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.2.1"
+  version: "0.3.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -55,12 +55,11 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_pm_create_tasks` | Batch create tasks (supports intra-batch dependencies via draftUuid) |
+| `chorus_create_tasks` | Batch create tasks (supports intra-batch dependencies via draftUuid) |
 | `chorus_pm_assign_task` | Assign a task to a Developer Agent |
 | `chorus_pm_create_document` | Create standalone document |
 | `chorus_pm_update_document` | Update document content (increments version) |
-| `chorus_add_task_dependency` | Add dependency between existing tasks (with cycle detection) |
-| `chorus_remove_task_dependency` | Remove a task dependency |
+| `chorus_update_task` (with `addDependsOn` / `removeDependsOn`) | Manage dependencies between existing tasks (with cycle detection) |
 
 **Shared tools** (checkin, query, comment, search, notifications): see `chorus` skill at `<BASE_URL>/skill/chorus/SKILL.md`
 
@@ -218,7 +217,7 @@ After tasks are created, you can manage dependencies:
 **Batch create tasks with intra-batch dependencies:**
 
 ```
-chorus_pm_create_tasks({
+chorus_create_tasks({
   projectUuid: "<project-uuid>",
   tasks: [
     { draftUuid: "draft-db", title: "Create database schema", priority: "high", storyPoints: 2 },
@@ -231,8 +230,8 @@ chorus_pm_create_tasks({
 **Add/remove dependencies on existing tasks:**
 
 ```
-chorus_add_task_dependency({ taskUuid: "<task-B-uuid>", dependsOnTaskUuid: "<task-A-uuid>" })
-chorus_remove_task_dependency({ taskUuid: "<task-B-uuid>", dependsOnTaskUuid: "<task-A-uuid>" })
+chorus_update_task({ taskUuid: "<task-B-uuid>", addDependsOn: ["<task-A-uuid>"] })
+chorus_update_task({ taskUuid: "<task-B-uuid>", removeDependsOn: ["<task-A-uuid>"] })
 ```
 
 Dependencies are validated: same project, no self-dependency, no cycles (DFS detection).

@@ -44,9 +44,6 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_pm_remove_task_draft` | `proposal:write` |
 | `chorus_pm_reject_proposal` | `proposal:write` |
 | `chorus_pm_revoke_proposal` | `proposal:write` |
-| `chorus_pm_create_tasks` | `proposal:write` |
-| `chorus_add_task_dependency` | `proposal:write` |
-| `chorus_remove_task_dependency` | `proposal:write` |
 | `chorus_pm_assign_task` | `proposal:write` |
 | `chorus_pm_create_document` | `document:write` |
 | `chorus_pm_update_document` | `document:write` |
@@ -691,6 +688,91 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Output**: Comment list JSON
 
+### chorus_create_tasks
+
+**Description**: Batch create tasks in a project. Public tool — available to any agent (no permission gate). Supports two modes:
+
+- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done.
+- **Proposal-linked** (traditional AI-DLC): pass `proposalUuid` to associate the new tasks with an approved proposal.
+
+Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and dependencies on existing tasks via `dependsOnTaskUuids`.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| projectUuid | string | Yes | Project UUID |
+| proposalUuid | string | No | Associated Proposal UUID (omit for Quick Task mode) |
+| tasks | array | Yes | Task list |
+
+**tasks array item fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| title | string | Yes | Task title |
+| description | string | No | Task description |
+| priority | enum | No | Priority: low, medium, high |
+| storyPoints | number | No | Effort estimate (Agent hours) |
+| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
+| draftUuid | string | No | Temporary UUID for intra-batch `dependsOnDraftUuids` references |
+| dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
+| dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
+
+**Quick Task example**:
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "tasks": [
+    {
+      "title": "Fix login button alignment",
+      "description": "On the /login page the submit button is misaligned on mobile breakpoints.",
+      "priority": "medium",
+      "storyPoints": 0.5
+    }
+  ]
+}
+```
+
+**Proposal-linked example with intra-batch dependencies**:
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "proposalUuid": "e35b558c-...",
+  "tasks": [
+    {
+      "draftUuid": "draft-1",
+      "title": "Add database migration",
+      "priority": "high",
+      "storyPoints": 1
+    },
+    {
+      "draftUuid": "draft-2",
+      "title": "Wire up service layer",
+      "dependsOnDraftUuids": ["draft-1"],
+      "storyPoints": 2
+    },
+    {
+      "title": "Add API route",
+      "dependsOnDraftUuids": ["draft-2"],
+      "dependsOnTaskUuids": ["existing-task-uuid"],
+      "storyPoints": 1
+    }
+  ]
+}
+```
+
+**Output**:
+```json
+{
+  "tasks": [...],
+  "count": 3,
+  "draftToTaskUuidMap": { "draft-1": "real-uuid-1", "draft-2": "real-uuid-2" },
+  "warnings": ["..."]
+}
+```
+- `draftToTaskUuidMap`: Only returned when any task provides a `draftUuid`.
+- `warnings`: Only returned when there are issues creating dependencies or acceptance criteria (the tasks themselves are created successfully).
+
+> Note: After `chorus_admin_approve_proposal` runs, taskDrafts are auto-materialized into Tasks. Calling `chorus_create_tasks` with the same `proposalUuid` would produce duplicates — only call this for proposal-linked tasks added outside the standard draft-and-approve flow.
+
 ---
 
 ## Session Tools
@@ -939,44 +1021,6 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Output**: Created Document JSON
 
-### chorus_pm_create_tasks
-
-**Description**: Batch create tasks (can be associated with a Proposal, supports intra-batch dependencies)
-
-**Required Permission**: `proposal:write`
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| projectUuid | string | Yes | Project UUID |
-| proposalUuid | string | No | Associated Proposal UUID |
-| tasks | array | Yes | Task list |
-
-**tasks array item fields**:
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| title | string | Yes | Task title |
-| description | string | No | Task description |
-| priority | enum | No | Priority: low, medium, high |
-| storyPoints | number | No | Effort estimate (Agent hours) |
-| acceptanceCriteria | string | No | Acceptance criteria (Markdown, legacy) |
-| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
-| draftUuid | string | No | Temporary UUID for intra-batch dependsOnDraftUuids references |
-| dependsOnDraftUuids | string[] | No | List of intra-batch draftUuids this task depends on |
-| dependsOnTaskUuids | string[] | No | List of existing Task UUIDs this task depends on |
-
-**Output**:
-```json
-{
-  "tasks": [...],
-  "count": 3,
-  "draftToTaskUuidMap": { "draft-1": "real-uuid-1", ... },
-  "warnings": ["..."]
-}
-```
-- `draftToTaskUuidMap`: Only returned when any task provides a draftUuid
-- `warnings`: Only returned when there are issues creating dependencies (tasks themselves are created successfully)
-
 ### chorus_pm_update_document
 
 **Description**: Update document content (increments version number)
@@ -1092,54 +1136,6 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | draftUuid | string | Yes | Task draft UUID |
 
 **Output**: Updated Proposal JSON
-
-### chorus_add_task_dependency
-
-**Description**: Add a task dependency (taskUuid depends on dependsOnTaskUuid). Includes same-project validation, self-dependency check, and DFS cycle detection.
-
-**Required Permission**: `proposal:write` (kept out of `task:write` to preserve 0.6.x developer boundaries — see `permission-map.ts`)
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| taskUuid | string | Yes | Task UUID (downstream task) |
-| dependsOnTaskUuid | string | Yes | Dependent Task UUID (upstream task) |
-
-**Output**: Created dependency JSON
-```json
-{
-  "taskUuid": "...",
-  "dependsOnUuid": "...",
-  "createdAt": "ISO timestamp"
-}
-```
-
-**Error scenarios**:
-- Self-dependency: `A task cannot depend on itself`
-- Task not found: `Task not found` / `Dependency task not found`
-- Cross-project: `Tasks must belong to the same project`
-- Cycle detected: `Adding this dependency would create a cycle`
-
-### chorus_remove_task_dependency
-
-**Description**: Remove a task dependency
-
-**Required Permission**: `proposal:write`
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| taskUuid | string | Yes | Task UUID |
-| dependsOnTaskUuid | string | Yes | Dependency Task UUID to remove |
-
-**Output**:
-```json
-{
-  "success": true,
-  "taskUuid": "...",
-  "dependsOnTaskUuid": "..."
-}
-```
 
 ### chorus_pm_assign_task
 
@@ -1334,22 +1330,71 @@ Tools gated by `task:write`. Available to any agent whose effective permissions 
 
 ### chorus_update_task
 
-**Description**: Update task status and fields (only the assignee can perform status transitions; any agent with read access can edit fields like title, description, priority, storyPoints).
+**Description**: Update a task — edit fields, manage dependencies, or change status.
 
-> **Public tool** — not permission-gated. Available to every agent. Handler-level guards enforce that only the assignee can transition `status`. Moved from developer tools to public in 0.7.0 as part of the permission refactor.
+> **Public tool** — not permission-gated. Available to every agent. Field edits and dependency edits require no special permission; status transitions are still gated at the handler level to the task's assignee.
+
+Two distinct edit modes can be combined in a single call:
+
+- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `addDependsOn`, `removeDependsOn`.
+- **Status update** (assignee only): `status` (`in_progress` requires all dependencies resolved; `to_verify` submits for human verification).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | taskUuid | string | Yes | Task UUID |
-| status | enum | Yes | New status: in_progress, to_verify |
-| sessionUuid | string | No | Associated Session UUID (used to attribute which worker performed the action) |
+| title | string | No | New task title |
+| description | string | No | New task description (supports @mentions) |
+| priority | enum | No | New priority: low, medium, high |
+| storyPoints | number | No | New effort estimate (agent hours) |
+| addDependsOn | string[] | No | Task UUIDs to add as dependencies (incremental) |
+| removeDependsOn | string[] | No | Task UUIDs to remove from dependencies (incremental) |
+| status | enum | No | New status: in_progress, to_verify (assignee only) |
+| sessionUuid | string | No | Associated Session UUID (attributes which worker performed the action) |
 
 **Behavior**:
 - When `sessionUuid` is provided, the Activity record includes session attribution, and a session heartbeat is automatically sent.
+- `addDependsOn` / `removeDependsOn` accept arrays — multiple dependency edits are applied in a single call. Each entry is validated independently (same-project check, self-dependency check, DFS cycle detection); per-entry failures surface in the `warnings` array of the response without rolling back successful edits.
 - **Dependency enforcement**: When transitioning to `in_progress`, the system checks that all `dependsOn` tasks are resolved (`done` or `closed`). If any dependency is unresolved, the request is rejected with a detailed error listing each blocker's title, status, assignee, and active session info. Use `chorus_get_unblocked_tasks` to find tasks that are ready to start.
 
-**Output**: Updated Task JSON (or error with blocker details if dependencies are unresolved)
+**Add a dependency**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "addDependsOn": ["upstream-task-uuid"]
+}
+```
+
+**Remove a dependency**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "removeDependsOn": ["upstream-task-uuid"]
+}
+```
+
+**Swap dependencies in one call (replace upstream A with upstream B)**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "addDependsOn": ["upstream-b-uuid"],
+  "removeDependsOn": ["upstream-a-uuid"]
+}
+```
+
+**Combine field edit, dependency edit, and status transition**:
+```json
+{
+  "taskUuid": "...",
+  "title": "Refined task title",
+  "priority": "high",
+  "addDependsOn": ["new-dep-uuid"],
+  "status": "in_progress",
+  "sessionUuid": "..."
+}
+```
+
+**Output**: Updated Task JSON. If dependency edits produced any per-entry failures, a `warnings: string[]` field is included. On a rejected `in_progress` transition, returns an error with blocker details instead.
 
 ### chorus_submit_for_verify
 
@@ -1413,7 +1458,7 @@ Tools gated by one of the `*:admin` permissions or `project:write`. Available to
 - `documentDrafts` → Automatically creates corresponding Documents (linked to this Proposal)
 - `taskDrafts` → Automatically creates corresponding Tasks (linked to this Proposal)
 
-Therefore, after approval there is **no need** to manually call `chorus_pm_create_tasks` or `chorus_pm_create_document` to create these resources, as doing so would produce duplicate data. `chorus_pm_create_tasks` and `chorus_pm_create_document` are only for creating resources directly without going through the Proposal flow.
+Therefore, after approval there is **no need** to manually call `chorus_create_tasks` or `chorus_pm_create_document` to create these resources, as doing so would produce duplicate data. `chorus_create_tasks` and `chorus_pm_create_document` are only for creating resources directly without going through the Proposal flow.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1644,7 +1689,7 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 | 21 | chorus_pm_submit_proposal | Submit Proposal for approval | ✅ Pass | draft → pending (**new tool**) |
 | 22 | chorus_admin_approve_proposal | Approve Proposal | ✅ Pass | pending → approved, ⚠️ auto-creates tasks and documents from drafts |
 | 23 | chorus_add_comment (proposal) | Comment on Proposal | ✅ Pass | |
-| 24 | chorus_pm_create_tasks | Batch create tasks | ✅ Pass | ⚠️ If approve already auto-created, manual call produces duplicates |
+| 24 | chorus_create_tasks | Batch create tasks | ✅ Pass | ⚠️ If approve already auto-created, manual call produces duplicates |
 | 25 | chorus_pm_create_document | Create document | ✅ Pass | version=1 |
 | 26 | chorus_pm_update_document | Update document | ✅ Pass | version auto-increments to 2 |
 | 27 | chorus_list_tasks | List tasks | ✅ Pass | |
@@ -1691,4 +1736,4 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 #### Note: `admin_approve_proposal` auto-materializes drafts (Documented ✅)
 - Approving a Proposal automatically materializes drafts into actual Tasks and Documents
-- After approval, there is no need to manually call `pm_create_tasks` or `pm_create_document`
+- After approval, there is no need to manually call `chorus_create_tasks` or `chorus_pm_create_document`

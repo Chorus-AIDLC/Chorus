@@ -1101,7 +1101,7 @@ Header: Authorization: Bearer {api_key}
 | 必需权限 | 代表性工具 |
 |-----|-----|
 | `idea:write` | `chorus_claim_idea`、`chorus_release_idea`、`chorus_move_idea`、`chorus_pm_create_idea`、`chorus_pm_start_elaboration`、`chorus_pm_validate_elaboration`、`chorus_pm_skip_elaboration` |
-| `proposal:write` | `chorus_pm_create_proposal`、`chorus_pm_submit_proposal`、`chorus_pm_validate_proposal`、`chorus_pm_{add,update,remove}_document_draft`、`chorus_pm_{add,update,remove}_task_draft`、`chorus_pm_create_tasks`、`chorus_pm_assign_task`、`chorus_{add,remove}_task_dependency`、`chorus_pm_{reject,revoke}_proposal` |
+| `proposal:write` | `chorus_pm_create_proposal`、`chorus_pm_submit_proposal`、`chorus_pm_validate_proposal`、`chorus_pm_{add,update,remove}_document_draft`、`chorus_pm_{add,update,remove}_task_draft`、`chorus_pm_assign_task`、`chorus_pm_{reject,revoke}_proposal` |
 | `document:write` | `chorus_pm_create_document`、`chorus_pm_update_document` |
 | `task:write` | `chorus_claim_task`、`chorus_release_task`、`chorus_submit_for_verify`、`chorus_report_work`、`chorus_report_criteria_self_check` |
 | `project:write` | `chorus_admin_create_project`、`chorus_admin_{create,update,delete}_project_group`、`chorus_admin_move_project_to_group` |

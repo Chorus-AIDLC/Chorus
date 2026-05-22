@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.2"
+  version: "0.9.0"
   category: project-management
   mcp_server: chorus
 ---

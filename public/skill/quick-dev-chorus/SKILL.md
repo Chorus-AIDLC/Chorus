@@ -1,6 +1,6 @@
 ---
 name: quick-dev-chorus
-version: 0.1.1
+version: 0.3.1
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
 ---
 

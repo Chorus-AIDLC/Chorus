@@ -5,7 +5,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
-import { prisma } from "@/lib/prisma";
 import { projectExists } from "@/services/project.service";
 import * as ideaService from "@/services/idea.service";
 import * as proposalService from "@/services/proposal.service";
@@ -293,133 +292,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_pm_create_tasks - Deprecated alias for chorus_create_tasks (now in public.ts)
-  // Kept for backward compatibility with existing agents that reference the old name.
-  registerPermissionedTool(
-    server,
-    auth,
-    "proposal:write",
-    "chorus_pm_create_tasks",
-    {
-      description: "[Deprecated — use chorus_create_tasks instead] Batch create tasks (can associate with a Proposal, supports intra-batch dependencies)",
-      inputSchema: z.object({
-        projectUuid: z.string().describe("Project UUID"),
-        proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional)"),
-        tasks: zArray(z.object({
-          title: z.string().describe("Task title"),
-          description: z.string().optional().describe("Task description"),
-          priority: z.enum(["low", "medium", "high"]).optional().describe("Priority"),
-          storyPoints: z.number().optional().describe("Effort estimate (agent hours)"),
-          acceptanceCriteriaItems: zArray(z.object({
-            description: z.string().describe("Criterion description"),
-            required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
-          })).optional().describe("Structured acceptance criteria items"),
-          draftUuid: z.string().optional().describe("Temporary UUID for intra-batch dependsOnDraftUuids references"),
-          dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
-          dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
-        })).describe("Task list"),
-      }),
-    },
-    async ({ projectUuid, proposalUuid, tasks }) => {
-      if (!(await projectExists(auth.companyUuid, projectUuid))) {
-        return { content: [{ type: "text", text: "Project not found" }], isError: true };
-      }
-
-      if (proposalUuid) {
-        const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
-        if (!proposal) {
-          return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
-        }
-      }
-
-      const createdTasks = await Promise.all(
-        tasks.map(task =>
-          taskService.createTask({
-            companyUuid: auth.companyUuid,
-            projectUuid,
-            title: task.title,
-            description: task.description || null,
-            priority: task.priority,
-            storyPoints: task.storyPoints ?? null,
-            proposalUuid: proposalUuid || null,
-            createdByUuid: auth.actorUuid,
-          })
-        )
-      );
-
-      const draftToTaskUuidMap: Record<string, string> = {};
-      for (let i = 0; i < tasks.length; i++) {
-        if (tasks[i].draftUuid) {
-          draftToTaskUuidMap[tasks[i].draftUuid!] = createdTasks[i].uuid;
-        }
-      }
-
-      const warnings: string[] = [];
-      for (let i = 0; i < tasks.length; i++) {
-        const task = tasks[i];
-        const realUuid = createdTasks[i].uuid;
-
-        if (task.dependsOnDraftUuids) {
-          for (const draftUuid of task.dependsOnDraftUuids) {
-            const depRealUuid = draftToTaskUuidMap[draftUuid];
-            if (!depRealUuid) {
-              warnings.push(`Task "${task.title}": draftUuid "${draftUuid}" not found in this batch`);
-              continue;
-            }
-            try {
-              await taskService.addTaskDependency(auth.companyUuid, realUuid, depRealUuid);
-            } catch (error) {
-              warnings.push(`Task "${task.title}" -> draftUuid "${draftUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
-            }
-          }
-        }
-
-        if (task.dependsOnTaskUuids) {
-          for (const depUuid of task.dependsOnTaskUuids) {
-            try {
-              await taskService.addTaskDependency(auth.companyUuid, realUuid, depUuid);
-            } catch (error) {
-              warnings.push(`Task "${task.title}" -> taskUuid "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
-            }
-          }
-        }
-
-        if (task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0) {
-          const validItems = task.acceptanceCriteriaItems.filter(
-            (item) => item.description && item.description.trim().length > 0
-          );
-          if (validItems.length > 0) {
-            try {
-              await prisma.acceptanceCriterion.createMany({
-                data: validItems.map((item, index) => ({
-                  taskUuid: realUuid,
-                  description: item.description.trim(),
-                  required: item.required ?? true,
-                  sortOrder: index,
-                })),
-              });
-            } catch (error) {
-              warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
-            }
-          }
-        }
-      }
-
-      const result: {
-        tasks: { uuid: string; title: string }[];
-        warnings?: string[];
-      } = { tasks: createdTasks.map(t => ({ uuid: t.uuid, title: t.title })) };
-
-      if (warnings.length > 0) {
-        result.warnings = warnings;
-      }
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
-    }
-  );
-
   // chorus_pm_update_document - Update document content
   registerPermissionedTool(
     server,
@@ -681,62 +553,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       } catch (error) {
         return {
           content: [{ type: "text", text: `Failed to remove task draft: ${error instanceof Error ? error.message : "Unknown error"}` }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // chorus_add_task_dependency - Add task dependency
-  registerPermissionedTool(
-    server,
-    auth,
-    "proposal:write",
-    "chorus_add_task_dependency",
-    {
-      description: "Add a task dependency (taskUuid depends on dependsOnTaskUuid). Includes same-project validation, self-dependency check, and cycle detection.",
-      inputSchema: z.object({
-        taskUuid: z.string().describe("Task UUID (downstream task)"),
-        dependsOnTaskUuid: z.string().describe("Dependent Task UUID (upstream task)"),
-      }),
-    },
-    async ({ taskUuid, dependsOnTaskUuid }) => {
-      try {
-        const dep = await taskService.addTaskDependency(auth.companyUuid, taskUuid, dependsOnTaskUuid);
-        return {
-          content: [{ type: "text", text: JSON.stringify(dep, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Failed to add dependency: ${error instanceof Error ? error.message : "Unknown error"}` }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // chorus_remove_task_dependency - Remove task dependency
-  registerPermissionedTool(
-    server,
-    auth,
-    "proposal:write",
-    "chorus_remove_task_dependency",
-    {
-      description: "Remove a task dependency",
-      inputSchema: z.object({
-        taskUuid: z.string().describe("Task UUID"),
-        dependsOnTaskUuid: z.string().describe("Dependent Task UUID to remove"),
-      }),
-    },
-    async ({ taskUuid, dependsOnTaskUuid }) => {
-      try {
-        await taskService.removeTaskDependency(auth.companyUuid, taskUuid, dependsOnTaskUuid);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ success: true, taskUuid, dependsOnTaskUuid }, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Failed to remove dependency: ${error instanceof Error ? error.message : "Unknown error"}` }],
           isError: true,
         };
       }

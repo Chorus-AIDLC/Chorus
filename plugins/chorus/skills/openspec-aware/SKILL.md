@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Codex. De
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.2"
+  version: "0.9.0"
   category: project-management
   mcp_server: chorus
 ---
