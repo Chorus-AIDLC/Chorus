@@ -431,24 +431,28 @@ describe("idea-completion-report end-to-end (AC #1)", () => {
     expect(action.data).toEqual([]);
   });
 
-  it("does NOT surface a report that is attached to a non-approved proposal", async () => {
+  it("rejects writes targeting a non-approved proposal (tool returns isError, no Document persists)", async () => {
     seedFinishedIdea();
 
     const server = makeServer();
     registerPublicTools(server as never, makeAgentAuth(["document:write"]));
 
-    // Caller misroutes the report to a draft proposal — server has no business
-    // rule against it (draft proposals are still real proposals), but the
-    // dashboard's overview-tab Reports list MUST exclude them since it only
-    // aggregates across approved proposals (spec: "aggregated across all
-    // approved Proposals of the Idea").
-    await tools["chorus_create_report"].handler({
+    // Server-side gate (added during PR review): only proposals whose
+    // status==='approved' can bear a completion report. A misrouted call
+    // against a draft proposal must be rejected — not silently persisted
+    // and then hidden by the dashboard filter. The tool short-circuits
+    // BEFORE the createDocument call.
+    const result = await tools["chorus_create_report"].handler({
       proposalUuid: DRAFT_PROPOSAL_UUID,
       title: "Misrouted to draft",
       content: REPORT_BODY,
     });
 
-    expect(store.documents.length).toBe(1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("'draft'");
+    // No Document was persisted.
+    expect(store.documents.length).toBe(0);
+    // Reports list (which already filters to approved proposals) stays empty.
     const action = await getReportsForIdeaAction(PROJECT_UUID, IDEA_UUID);
     expect(action.success).toBe(true);
     if (!action.success) return;

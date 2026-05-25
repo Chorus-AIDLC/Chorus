@@ -44,6 +44,19 @@
 #                        non-idea-rooted proposal); branch B must skip
 #                        regardless of task status
 #                        -> stdout MUST NOT contain `create idea-completion report`
+#   report-task-overflow — chorus_list_tasks returns total > tasks.length
+#                          (page-1 of a wider task set, all returned tasks
+#                          are done but more remain). Hook MUST refuse to
+#                          conclude "all done" — silent skip.
+#                          -> stdout MUST NOT contain `create idea-completion report`
+#   report-doc-overflow  — chorus_get_documents returns total > documents.length
+#                          (existing report sits on a later page). Hook MUST
+#                          refuse to conclude "no report" — silent skip.
+#                          -> stdout MUST NOT contain `create idea-completion report`
+#   report-opt-out       — same shape as report-positive, but the per-branch
+#                          opt-out env var is set. Hook MUST silent-skip even
+#                          though all conditions otherwise pass.
+#                          -> stdout MUST NOT contain `create idea-completion report`
 #
 # All fixtures must end with exit 0.
 #
@@ -204,6 +217,53 @@ case "$cmd" in
         echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
         ;;
 
+      # report-task-overflow: chorus_list_tasks returns 5 done tasks but
+      # total=25 — more tasks exist on later pages. Hook MUST refuse to
+      # conclude "all done" and silent-skip Branch B.
+      report-task-overflow:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-task-overflow:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-task-overflow:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":200}'
+        ;;
+      report-task-overflow:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
+      # report-doc-overflow: chorus_get_documents returns 1 unrelated
+      # report but total=25 — this proposal's existing report sits on a
+      # later page. Hook MUST refuse to conclude "no report" and silent-skip.
+      report-doc-overflow:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-doc-overflow:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-doc-overflow:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      report-doc-overflow:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
+        ;;
+
+      # report-opt-out: same shape as report-positive. Branch B MUST
+      # silent-skip because the per-branch toggle is off.
+      report-opt-out:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-opt-out:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-opt-out:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        ;;
+      report-opt-out:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
       *)
         # Unhandled (tool, fixture) — return empty, hook should silent-skip.
         echo ""
@@ -322,6 +382,48 @@ case "${fixture}:${tool}" in
     echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
     ;;
 
+  # report-task-overflow: tasks total > returned -> silent skip.
+  report-task-overflow:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-task-overflow:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-task-overflow:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":200}'
+    ;;
+  report-task-overflow:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
+  # report-doc-overflow: docs total > returned -> silent skip.
+  report-doc-overflow:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-doc-overflow:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-doc-overflow:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  report-doc-overflow:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
+    ;;
+
+  # report-opt-out: env opt-out set; Branch B MUST silent-skip.
+  report-opt-out:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-opt-out:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-opt-out:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    ;;
+  report-opt-out:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
   *)
     echo "" ;;
 esac
@@ -409,6 +511,16 @@ run_one() {
     MODE_VAR_FOR_RUN="off"
   fi
 
+  # Branch B per-branch opt-out. report-opt-out flips it; Claude variant
+  # uses CLAUDE_PLUGIN_OPTION_ENABLEREPORTREMINDER=false, Codex uses
+  # CHORUS_REPORT_REMINDER=off.
+  local REPORT_OPT_CLAUDE=""
+  local REPORT_OPT_CODEX=""
+  if [ "$fixture" = "report-opt-out" ]; then
+    REPORT_OPT_CLAUDE="false"
+    REPORT_OPT_CODEX="off"
+  fi
+
   local stdout_file
   stdout_file=$(mktemp)
   local stderr_file
@@ -422,6 +534,8 @@ run_one() {
         PATH="$PATH_FOR_RUN" \
         CLAUDE_PROJECT_DIR="$PROJECT_DIR_FOR_RUN" \
         CHORUS_OPENSPEC_MODE="$MODE_VAR_FOR_RUN" \
+        CLAUDE_PLUGIN_OPTION_ENABLEREPORTREMINDER="$REPORT_OPT_CLAUDE" \
+        CHORUS_REPORT_REMINDER="$REPORT_OPT_CODEX" \
         /bin/bash -c "cd \"$PROJECT_DIR_FOR_RUN\" && /bin/bash \"$hook_dir/on-post-verify-task.sh\"" \
         >"$stdout_file" 2>"$stderr_file" || rc=$?
 
@@ -525,6 +639,23 @@ run_one "report-not-last"   "report-not-last"   "codex"  "must-not-contain" "" "
 # manually-created proposal) -> reminder MUST be silent at first gate.
 run_one "report-quick-task" "report-quick-task" "claude" "must-not-contain" "" "create idea-completion report"
 run_one "report-quick-task" "report-quick-task" "codex"  "must-not-contain" "" "create idea-completion report"
+
+# B5: report-task-overflow — chorus_list_tasks total > returned (more
+# tasks remain on later pages). Hook must refuse to assume "all done"
+# and silent-skip Branch B.
+run_one "report-task-overflow" "report-task-overflow" "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-task-overflow" "report-task-overflow" "codex"  "must-not-contain" "" "create idea-completion report"
+
+# B6: report-doc-overflow — chorus_get_documents total > returned (the
+# proposal's existing report could be on a later page). Hook must refuse
+# to assume "no report" and silent-skip Branch B.
+run_one "report-doc-overflow" "report-doc-overflow" "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-doc-overflow" "report-doc-overflow" "codex"  "must-not-contain" "" "create idea-completion report"
+
+# B7: report-opt-out — per-branch opt-out env var set, otherwise valid
+# positive conditions. Hook must honor the toggle and silent-skip.
+run_one "report-opt-out"      "report-opt-out"      "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-opt-out"      "report-opt-out"      "codex"  "must-not-contain" "" "create idea-completion report"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

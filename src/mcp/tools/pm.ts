@@ -253,10 +253,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "document:write",
     "chorus_pm_create_document",
     {
-      description: "Create a document (type is one of: prd, tech_design, adr, spec, guide, report). Reports are normally authored via chorus_create_report at end-of-Idea — use this tool for non-report types.",
+      description: "Create a document (type is one of: prd, tech_design, adr, spec, guide). Idea-completion reports use a dedicated tool (`chorus_create_report`) and are not creatable here.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        type: z.enum(["prd", "tech_design", "adr", "spec", "guide", "report"]).describe("Document type"),
+        type: z.enum(["prd", "tech_design", "adr", "spec", "guide"]).describe("Document type"),
         title: z.string().describe("Document title"),
         content: z.string().optional().describe("Document content (Markdown)"),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional)"),

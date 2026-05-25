@@ -2,12 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Mocks (hoisted so vi.mock factories can reference them) =====
 
-const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedBy, mockCreateActivity, mockParseMentions, mockCreateMentions } = vi.hoisted(() => ({
+const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedBy, mockFormatReview, mockCreateActivity, mockParseMentions, mockCreateMentions } = vi.hoisted(() => ({
   mockPrisma: {
     idea: {
       create: vi.fn(),
       findFirst: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
@@ -23,6 +25,7 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
       findMany: vi.fn(),
       updateMany: vi.fn(),
       count: vi.fn(),
+      groupBy: vi.fn(),
     },
     task: {
       findMany: vi.fn(),
@@ -38,6 +41,7 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
   mockEventBus: { emitChange: vi.fn() },
   mockFormatAssigneeComplete: vi.fn().mockResolvedValue(null),
   mockFormatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "creator-uuid", name: "Creator" }),
+  mockFormatReview: vi.fn().mockResolvedValue(null),
   mockCreateActivity: vi.fn().mockResolvedValue(undefined),
   mockParseMentions: vi.fn().mockReturnValue([]),
   mockCreateMentions: vi.fn().mockResolvedValue(undefined),
@@ -48,6 +52,7 @@ vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/lib/uuid-resolver", () => ({
   formatAssigneeComplete: mockFormatAssigneeComplete,
   formatCreatedBy: mockFormatCreatedBy,
+  formatReview: mockFormatReview,
 }));
 vi.mock("@/services/mention.service", () => ({
   parseMentions: mockParseMentions,
@@ -57,7 +62,7 @@ vi.mock("@/services/activity.service", () => ({
   createActivity: mockCreateActivity,
 }));
 
-import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, moveIdeaPreview, deleteIdea, updateIdea } from "@/services/idea.service";
+import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, moveIdeaPreview, deleteIdea, updateIdea, listIdeas, getIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
 
 // ===== Test Data =====
@@ -1001,5 +1006,263 @@ describe("deleteIdea", () => {
       })
     );
     expect(result.uuid).toBe(IDEA_UUID);
+  });
+});
+
+// ===== listIdeas / getIdea — reportCount + reports[] aggregation =====
+
+describe("listIdeas — reportCount aggregation", () => {
+  it("returns reportCount=0 on every row when project has no proposals (early-return)", async () => {
+    const ideaA = makeIdeaRecord({ uuid: "idea-A" });
+    const ideaB = makeIdeaRecord({ uuid: "idea-B" });
+    mockPrisma.idea.findMany.mockResolvedValue([ideaA, ideaB]);
+    mockPrisma.idea.count.mockResolvedValue(2);
+    // Step 1 short-circuit: no proposals at all.
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result.ideas).toHaveLength(2);
+    expect(result.ideas[0].reportCount).toBe(0);
+    expect(result.ideas[1].reportCount).toBe(0);
+    // groupBy must NOT have been called when step 1 short-circuits.
+    expect(mockPrisma.document.groupBy).not.toHaveBeenCalled();
+  });
+
+  it("returns reportCount=0 when proposals exist but none point at this page's ideas (step-2 short-circuit)", async () => {
+    const ideaA = makeIdeaRecord({ uuid: "idea-A" });
+    mockPrisma.idea.findMany.mockResolvedValue([ideaA]);
+    mockPrisma.idea.count.mockResolvedValue(1);
+    // Proposal exists but its inputUuids reference a different idea.
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-other", inputUuids: ["idea-OTHER"] },
+    ]);
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result.ideas[0].reportCount).toBe(0);
+    expect(mockPrisma.document.groupBy).not.toHaveBeenCalled();
+  });
+
+  it("tolerates non-array inputUuids (defensive; legacy / drift)", async () => {
+    const ideaA = makeIdeaRecord({ uuid: "idea-A" });
+    mockPrisma.idea.findMany.mockResolvedValue([ideaA]);
+    mockPrisma.idea.count.mockResolvedValue(1);
+    // Mix of bad data + a good row pointing at idea-A.
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-bad-1", inputUuids: null },
+      { uuid: "prop-bad-2", inputUuids: {} },
+      { uuid: "prop-bad-3", inputUuids: "not-an-array" },
+      { uuid: "prop-good", inputUuids: ["idea-A"] },
+    ]);
+    mockPrisma.document.groupBy.mockResolvedValue([
+      { proposalUuid: "prop-good", _count: { _all: 2 } },
+    ]);
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    // Bad rows ignored; good row counted: 2 reports under idea-A.
+    expect(result.ideas[0].reportCount).toBe(2);
+  });
+
+  it("folds report counts back to ideas across multi-input proposals", async () => {
+    const ideaA = makeIdeaRecord({ uuid: "idea-A" });
+    const ideaB = makeIdeaRecord({ uuid: "idea-B" });
+    mockPrisma.idea.findMany.mockResolvedValue([ideaA, ideaB]);
+    mockPrisma.idea.count.mockResolvedValue(2);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-AB", inputUuids: ["idea-A", "idea-B"] }, // shared
+      { uuid: "prop-A", inputUuids: ["idea-A"] },
+    ]);
+    mockPrisma.document.groupBy.mockResolvedValue([
+      { proposalUuid: "prop-AB", _count: { _all: 1 } },
+      { proposalUuid: "prop-A", _count: { _all: 3 } },
+    ]);
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    const a = result.ideas.find((i) => i.uuid === "idea-A");
+    const b = result.ideas.find((i) => i.uuid === "idea-B");
+    expect(a?.reportCount).toBe(4); // 1 (shared) + 3 (own)
+    expect(b?.reportCount).toBe(1); // 1 (shared)
+  });
+
+  it("includes both approved and closed proposals when computing report-bearing set", async () => {
+    const ideaA = makeIdeaRecord({ uuid: "idea-A" });
+    mockPrisma.idea.findMany.mockResolvedValue([ideaA]);
+    mockPrisma.idea.count.mockResolvedValue(1);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-approved", inputUuids: ["idea-A"] },
+      { uuid: "prop-closed", inputUuids: ["idea-A"] },
+    ]);
+    mockPrisma.document.groupBy.mockResolvedValue([
+      { proposalUuid: "prop-approved", _count: { _all: 1 } },
+      { proposalUuid: "prop-closed", _count: { _all: 1 } },
+    ]);
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result.ideas[0].reportCount).toBe(2);
+    // Sanity check: the proposal status filter actually requested both.
+    expect(mockPrisma.proposal.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ["approved", "closed"] },
+        }),
+      }),
+    );
+  });
+});
+
+describe("getIdea — reports[] aggregation", () => {
+  it("returns reports=[] when no report-bearing proposals exist", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
+    // No proposals point at this idea.
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+
+    expect(result?.reports).toEqual([]);
+    // Skipped the document fetch entirely.
+    expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns full content of reports under approved AND closed proposals", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
+    // getProposalsByIdeaUuid does the wide findMany + JS filter; we mock
+    // the wide return.
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      {
+        uuid: "prop-approved",
+        title: "Approved",
+        description: "",
+        inputType: "idea",
+        inputUuids: [IDEA_UUID],
+        documentDrafts: [],
+        taskDrafts: [],
+        status: "approved",
+        createdByUuid: "creator-uuid",
+        createdByType: "agent",
+        reviewedByUuid: null,
+        reviewNote: null,
+        reviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        uuid: "prop-closed",
+        title: "Closed",
+        description: "",
+        inputType: "idea",
+        inputUuids: [IDEA_UUID],
+        documentDrafts: [],
+        taskDrafts: [],
+        status: "closed",
+        createdByUuid: "creator-uuid",
+        createdByType: "agent",
+        reviewedByUuid: null,
+        reviewNote: null,
+        reviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        uuid: "prop-pending",
+        title: "Pending — must be excluded",
+        description: "",
+        inputType: "idea",
+        inputUuids: [IDEA_UUID],
+        documentDrafts: [],
+        taskDrafts: [],
+        status: "pending",
+        createdByUuid: "creator-uuid",
+        createdByType: "agent",
+        reviewedByUuid: null,
+        reviewNote: null,
+        reviewedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    // Two reports total — one under approved, one under closed.
+    mockPrisma.document.findMany.mockResolvedValue([
+      {
+        uuid: "doc-approved",
+        type: "report",
+        title: "Approved report",
+        content: "## Summary\nA\n## Decisions\n## Follow-ups\n",
+        version: 1,
+        proposalUuid: "prop-approved",
+        createdByUuid: "creator-uuid",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        uuid: "doc-closed",
+        type: "report",
+        title: "Closed report",
+        content: "## Summary\nB\n## Decisions\n## Follow-ups\n",
+        version: 1,
+        proposalUuid: "prop-closed",
+        createdByUuid: "creator-uuid",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+
+    expect(result?.reports).toHaveLength(2);
+    expect(result?.reports?.map((r) => r.uuid).sort()).toEqual(
+      ["doc-approved", "doc-closed"].sort(),
+    );
+    // Content carried byte-faithfully.
+    expect(result?.reports?.find((r) => r.uuid === "doc-approved")?.content).toContain("## Summary\nA");
+    // Document fetch was scoped to the report-bearing proposals only —
+    // pending proposal was excluded from the proposalUuid filter.
+    expect(mockPrisma.document.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          proposalUuid: { in: expect.arrayContaining(["prop-approved", "prop-closed"]) },
+          type: "report",
+        }),
+      }),
+    );
+    const docFilter = mockPrisma.document.findMany.mock.calls[0][0].where.proposalUuid.in;
+    expect(docFilter).not.toContain("prop-pending");
+  });
+
+  it("returns null when the idea does not exist", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(null);
+
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+
+    expect(result).toBeNull();
+    expect(mockPrisma.proposal.findMany).not.toHaveBeenCalled();
   });
 });

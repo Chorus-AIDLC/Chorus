@@ -245,10 +245,17 @@ export async function listIdeas({
   return { ideas, total };
 }
 
-// Batch-resolve `type="report"` Document counts grouped by Idea, used by
+// Proposals carrying a completion report — i.e. those an Idea's reports
+// can live under. Approved is the live state; closed is post-cleanup. We
+// treat them symmetrically because reports are durable artifacts: closing
+// the proposal is housekeeping, not retraction. See proposal.service.ts
+// closeProposal — the report Document remains.
+const REPORT_BEARING_PROPOSAL_STATUSES = ["approved", "closed"] as const;
+
+// Batch-resolve completion-report Document counts grouped by Idea, used by
 // listIdeas. Fully short-circuited at every step so we don't pay the cost
-// when there are no idea-rooted approved proposals or no reports anywhere
-// in the project. Returns a Map for caller-side fold-back.
+// when there are no idea-rooted report-bearing proposals or no reports
+// anywhere in the project. Returns a Map for caller-side fold-back.
 async function getReportCountsForIdeas(
   companyUuid: string,
   projectUuid: string,
@@ -257,14 +264,14 @@ async function getReportCountsForIdeas(
   const out = new Map<string, number>();
   if (ideaUuids.length === 0) return out;
 
-  // Step 1: idea-rooted approved proposals in this project. JSON
-  // Proposal.inputUuids forces a project-scoped scan, but `status="approved"`
-  // + `inputType="idea"` + same companyUuid keeps the row count tight.
+  // Step 1: idea-rooted report-bearing proposals in this project. JSON
+  // Proposal.inputUuids forces a project-scoped scan; status filter +
+  // inputType + same companyUuid keep the row count tight.
   const proposals = await prisma.proposal.findMany({
     where: {
       projectUuid,
       companyUuid,
-      status: "approved",
+      status: { in: [...REPORT_BEARING_PROPOSAL_STATUSES] },
       inputType: "idea",
     },
     select: { uuid: true, inputUuids: true },
@@ -273,11 +280,13 @@ async function getReportCountsForIdeas(
 
   // Step 2: keep only proposals that point at one of THIS PAGE's ideas.
   // Build proposalUuid -> set of pageIdeaUuid associations along the way.
+  // Defensive: tolerate non-array inputUuids (legacy / drift) — a thrown
+  // TypeError here would 500 the entire idea list.
   const ideaSet = new Set(ideaUuids);
   const proposalUuidToIdeaUuids = new Map<string, string[]>();
   for (const p of proposals) {
-    const inputs = (p.inputUuids as string[]) || [];
-    const matched = inputs.filter((u) => ideaSet.has(u));
+    if (!Array.isArray(p.inputUuids)) continue;
+    const matched = (p.inputUuids as string[]).filter((u) => ideaSet.has(u));
     if (matched.length > 0) proposalUuidToIdeaUuids.set(p.uuid, matched);
   }
   if (proposalUuidToIdeaUuids.size === 0) return out;
@@ -324,14 +333,17 @@ export async function getIdea(
   if (!idea) return null;
   const response = await formatIdeaResponse(idea);
 
-  // Step 1: idea-rooted approved proposals.
+  // Step 1: idea-rooted report-bearing proposals (approved or closed —
+  // see REPORT_BEARING_PROPOSAL_STATUSES rationale).
   const proposals = await proposalService.getProposalsByIdeaUuid(
     companyUuid,
     idea.projectUuid,
     uuid,
   );
-  const approved = proposals.filter((p) => p.status === "approved");
-  if (approved.length === 0) {
+  const reportBearing = proposals.filter((p) =>
+    (REPORT_BEARING_PROPOSAL_STATUSES as readonly string[]).includes(p.status),
+  );
+  if (reportBearing.length === 0) {
     response.reports = [];
     return response;
   }
@@ -340,7 +352,7 @@ export async function getIdea(
   // includes content + sorts by createdAt desc.
   const reports = await documentService.listDocumentsByProposalUuids(
     companyUuid,
-    approved.map((p) => p.uuid),
+    reportBearing.map((p) => p.uuid),
     "report",
   );
   response.reports = reports;

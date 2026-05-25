@@ -200,6 +200,16 @@ CTX
 #   2. no Document with type="report" attached to this proposal
 # Read-only — the hook never calls chorus_create_report.
 branch_idea_report_reminder() {
+  # Per-branch opt-out. Default is enabled; users who don't want the
+  # report-creation reminder can set this to "false" in their plugin config.
+  # Pre-PR the broader CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC toggle silenced
+  # the entire hook; that toggle now scopes Branch A only, so a separate
+  # toggle is needed for users to silence Branch B without giving up the
+  # OpenSpec archive reminder.
+  if [ "${CLAUDE_PLUGIN_OPTION_ENABLEREPORTREMINDER:-true}" != "true" ]; then
+    return 0
+  fi
+
   # Only idea-rooted proposals get a completion report.
   local input_type
   input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true
@@ -208,17 +218,34 @@ branch_idea_report_reminder() {
   fi
 
   # Check 1: all tasks of this proposal are terminal.
-  local tasks_json non_terminal_count
-  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"]}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  # pageSize=200 + a total>returned guard so a wide proposal can't fool the
+  # check by happening to fit "done" tasks on page 1 while non-terminals
+  # remain on later pages. (Same belt-and-suspenders pattern as Branch A.)
+  local tasks_json non_terminal_count tasks_total tasks_returned
+  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   [ -n "$tasks_json" ] || return 0
-  non_terminal_count=$(printf '%s' "$tasks_json" | jq -r '[.tasks[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 0
+  tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
+  tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
+  if [ -n "$tasks_total" ] && [ -n "$tasks_returned" ] && [ "$tasks_total" -gt "$tasks_returned" ]; then
+    return 0
+  fi
+  non_terminal_count=$(printf '%s' "$tasks_json" | jq -r '[(.tasks // [])[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 0
   [ "$non_terminal_count" = "0" ] || return 0
 
   # Check 2: no report Document on this proposal yet.
-  local docs_json existing_report_count
-  docs_json=$("$API" mcp-tool chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report"}' "$PROJECT_UUID")" 2>/dev/null) || return 0
+  # chorus_get_documents only filters by type server-side; we do the
+  # proposalUuid filter client-side. pageSize=200 + total>returned guard
+  # avoids a false "no report" when the proposal's existing report is on
+  # a later page in a long-lived project.
+  local docs_json existing_report_count docs_total docs_returned
+  docs_json=$("$API" mcp-tool chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report","pageSize":200}' "$PROJECT_UUID")" 2>/dev/null) || return 0
   [ -n "$docs_json" ] || return 0
-  existing_report_count=$(printf '%s' "$docs_json" | jq -r --arg p "$PROPOSAL_UUID" '[.documents[] | select(.proposalUuid==$p)] | length' 2>/dev/null) || return 0
+  docs_total=$(printf '%s' "$docs_json" | jq -r '.total // 0' 2>/dev/null) || return 0
+  docs_returned=$(printf '%s' "$docs_json" | jq -r '(.documents // []) | length' 2>/dev/null) || return 0
+  if [ -n "$docs_total" ] && [ -n "$docs_returned" ] && [ "$docs_total" -gt "$docs_returned" ]; then
+    return 0
+  fi
+  existing_report_count=$(printf '%s' "$docs_json" | jq -r --arg p "$PROPOSAL_UUID" '[(.documents // [])[] | select(.proposalUuid==$p)] | length' 2>/dev/null) || return 0
   [ "$existing_report_count" = "0" ] || return 0
 
   # Emit the reminder. The literal substring `create idea-completion

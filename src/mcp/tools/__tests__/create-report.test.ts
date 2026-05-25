@@ -224,6 +224,7 @@ describe("chorus_create_report handler", () => {
       uuid: PROPOSAL_UUID,
       projectUuid: PROJECT_UUID,
       companyUuid: COMPANY_UUID,
+      status: "approved",
     });
     mockDocumentService.createDocument.mockResolvedValue({
       uuid: DOC_UUID,
@@ -321,6 +322,33 @@ describe("chorus_create_report handler", () => {
       COMPANY_UUID,
       PROPOSAL_UUID
     );
+    expect(mockDocumentService.createDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["draft"],
+    ["pending"],
+    ["rejected"],
+    ["closed"],
+  ])("rejects the call when proposal.status='%s' (only 'approved' may bear a completion report)", async (status) => {
+    mockProposalService.getProposalByUuid.mockResolvedValue({
+      uuid: PROPOSAL_UUID,
+      projectUuid: PROJECT_UUID,
+      companyUuid: COMPANY_UUID,
+      status,
+    });
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      proposalUuid: PROPOSAL_UUID,
+      title: "Should fail",
+      content: "## Summary\nbody\n",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(`'${status}'`);
     expect(mockDocumentService.createDocument).not.toHaveBeenCalled();
   });
 });

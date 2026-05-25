@@ -1096,6 +1096,19 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
 
+      // A completion report only makes sense once the proposal's drafts have
+      // materialized into real Tasks. Reject draft / pending / rejected /
+      // closed states explicitly so a misfiring agent can't write reports
+      // under unmaterialized or revoked proposals. Re-authoring a report on
+      // an approved proposal is allowed — multiple reports per proposal are
+      // by design (see proposal.md Q4).
+      if (proposal.status !== "approved") {
+        return {
+          content: [{ type: "text", text: `Proposal status must be 'approved' to author a completion report (got '${proposal.status}')` }],
+          isError: true,
+        };
+      }
+
       const document = await documentService.createDocument({
         companyUuid: auth.companyUuid,
         projectUuid: proposal.projectUuid,
