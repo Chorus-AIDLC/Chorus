@@ -1,7 +1,8 @@
 # idea-elaboration-brainstorm Specification
 
 ## Purpose
-TBD - created by archiving change add-brainstorm-skill. Update Purpose after archive.
+
+The `brainstorm` skill provides an opt-in divergent-then-convergent dialogue cadence for Idea-stage elaboration when the Idea is too fuzzy for the existing structured multi-choice Q&A flow. The skill runs one question at a time, proposes 2-3 directions with a recommendation, gets explicit user approval, and synthesizes the conversation into one `ElaborationRound` of decision-point Q&A. It is a producer of audit-trail data, not a scheduler — the calling idea skill owns the validate / follow-up decision. The skill ships in all four Chorus skill distribution packages (Claude Code plugin, Codex plugin, public/skill/, OpenClaw plugin).
 ## Requirements
 ### Requirement: Brainstorm skill SHALL be distributed to all four Chorus skill packages
 
@@ -12,7 +13,12 @@ The brainstorm skill MUST be present in each of the four skill distribution path
 - `public/skill/brainstorm-chorus/SKILL.md` (static skill distribution served at `/skill/`)
 - `packages/openclaw-plugin/skills/brainstorm/SKILL.md` (OpenClaw plugin)
 
-The body content of `brainstorm/SKILL.md` MUST be byte-identical across all four locations (modulo trailing newline). The brainstorm skill body does not reference any other skill — it is invoked by name from the `idea` skill — so true byte-identity is achievable without per-package syntax translation. Frontmatter MAY differ to match each platform's manifest conventions (e.g. license, version, mcp_server, emoji, distribution-specific naming).
+The body content of `brainstorm/SKILL.md` MUST be byte-identical across the three Chorus-native packages (Claude Code plugin, Codex plugin, public/skill/), modulo trailing newline. The OpenClaw distribution (`packages/openclaw-plugin/skills/brainstorm/SKILL.md`) MAY diverge in two narrow cases — and ONLY these two:
+
+1. **MCP tool name prefixes.** OpenClaw re-exports the Chorus elaboration tools without the `pm_` prefix (`chorus_start_elaboration` / `chorus_validate_elaboration` instead of `chorus_pm_start_elaboration` / `chorus_pm_validate_elaboration`). The OpenClaw copy MUST substitute the unprefixed names in step 6, step 7, hard rule 8, and the anti-patterns section. `chorus_answer_elaboration` keeps the same name across packages.
+2. **Host-specific prompt-tool examples.** The Claude Code / Codex / public-skill copies MAY reference `AskUserQuestion` (Claude Code's native interactive prompt tool) by name; the OpenClaw copy MUST use host-neutral language ("user-facing prompt", "interactive prompt mechanism your host provides") since OpenClaw exposes a different prompt surface.
+
+No other content divergence is permitted in any package. Frontmatter MAY differ to match each platform's manifest conventions (e.g. license, version, mcp_server, emoji, distribution-specific naming) and is NOT subject to byte-identity.
 
 The byte-identity requirement applies ONLY to `brainstorm/SKILL.md`. The `idea/SKILL.md` files in the four packages MAY still differ in cross-skill reference syntax (e.g. `/proposal` vs `proposal-chorus` skill at a URL), as they already do today for existing references. See the separate "Idea skill SHALL offer brainstorm as an opt-in prelude" requirement for what idea/SKILL.md must contain.
 
@@ -20,13 +26,20 @@ The byte-identity requirement applies ONLY to `brainstorm/SKILL.md`. The `idea/S
 
 - **WHEN** a release artifact is built from `develop`
 - **THEN** each of the four `brainstorm/SKILL.md` paths above MUST exist
-- **AND** the body content (everything after the frontmatter `---` close) of `brainstorm/SKILL.md` MUST be byte-identical across all four files
+- **AND** the body content of the three Chorus-native packages (Claude Code plugin, Codex plugin, public/skill/) MUST be byte-identical
+- **AND** the OpenClaw body MUST be byte-identical to the Chorus-native bodies EXCEPT for the two carve-outs above (MCP tool name prefixes; host-neutral prompt language)
 
 #### Scenario: Brainstorm skill body diverges across packages
 
 - **WHEN** a CI check or reviewer compares the four `brainstorm/SKILL.md` bodies
-- **AND** any two bodies differ in non-whitespace content (excluding trailing newlines)
+- **AND** any two bodies differ in non-whitespace content beyond the two carve-outs above (modulo trailing newlines)
 - **THEN** the divergence MUST be flagged as a blocker for merge
+
+#### Scenario: OpenClaw uses Chorus-native MCP tool names
+
+- **WHEN** a CI check or reviewer reads `packages/openclaw-plugin/skills/brainstorm/SKILL.md`
+- **AND** the body references `chorus_pm_start_elaboration` or `chorus_pm_validate_elaboration` (the prefixed Chorus-native names)
+- **THEN** the divergence MUST be flagged as a blocker for merge — OpenClaw exposes these tools as `chorus_start_elaboration` / `chorus_validate_elaboration` and the prefixed names will fail at the tool-call layer.
 
 ### Requirement: Idea skill SHALL offer brainstorm as an opt-in prelude
 
