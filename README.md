@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — Brainstorm skill for fuzzy ideas (open-ended chat before structured Q&A) and idea-completion reports (every shipped idea gets a Summary / Decisions / Follow-ups writeup, surfaced on the idea overview).
+
 **[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware mode (Claude Code): auto-activates when an `openspec/` directory and the `openspec` CLI are both present, adds `/opsx/{explore,propose,apply,archive}` and a post-verify archive-trigger hook.
 
 **[v0.7.0](https://chorus-ai.dev/blog/chorus-v0.7.0-release/)** — Fine-grained agent permissions: 5 resources × 3 actions grid replaces the PM/Developer/Admin three-way choice, with presets + a Custom option for free combination.
@@ -49,10 +51,6 @@ The labels under each stage are the **permissions** an actor needs at that stage
 **[v0.6.1](https://chorus-ai.dev/blog/chorus-v0.6.1-release/)** — `/yolo` skill: full-auto AI-DLC pipeline (Idea → Proposal → Execute → Verify) with Agent Team parallel execution.
 
 **[v0.6.0](https://chorus-ai.dev/blog/chorus-v0.6.0-release/)** — IdeaTracker dashboard, independent review agents (proposal-reviewer + task-reviewer), real-time agent presence indicators, cross-column Kanban animation.
-
-**v0.5.1** — New user onboarding wizard, UI animation system, quick-dev skill (skip-proposal workflow).
-
-**v0.5.0** — Universal search (Cmd+K across 6 entity types), rich claim/assign response.
 
 > Full changelog: [CHANGELOG.md](CHANGELOG.md)
 

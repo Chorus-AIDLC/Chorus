@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.9.0](https://chorus-ai.dev/zh/blog/chorus-v0.9.0-release/)** — 头脑风暴 skill 帮你把模糊的想法聊出形状（在结构化多选题前先开放式对话），想法落地后自动生成总结报告（Summary / Decisions / Follow-ups 三段式，挂在想法概览页）。
+
 **[v0.8.0](https://chorus-ai.dev/zh/blog/chorus-v0.8.0-release/)** — OpenSpec-aware 模式（仅 Claude Code）：当仓库下同时存在 `openspec/` 目录和 `openspec` CLI 时自动启用，新增 `/opsx/{explore,propose,apply,archive}` 与 task verify 后的 archive-trigger 钩子。
 
 **[v0.7.0](https://chorus-ai.dev/zh/blog/chorus-v0.7.0-release/)** — 细粒度 Agent 权限：5 类资源 × 3 个动作组成的网格，取代 PM / Developer / Admin 三选一。保留原有预设，新增 Custom 选项自由组合。
@@ -40,10 +42,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.6.1](https://chorus-ai.dev/zh/blog/chorus-v0.6.1-release/)** — `/yolo` 技能：全自动 AI-DLC 流水线（Idea → Proposal → Execute → Verify），支持 Agent Team 并行执行。
 
 **[v0.6.0](https://chorus-ai.dev/zh/blog/chorus-v0.6.0-release/)** — IdeaTracker 面板、独立审阅 Agent（proposal-reviewer + task-reviewer）、实时 Agent Presence 指示器、跨列 Kanban 动画。
-
-**v0.5.1** — 新用户引导向导、UI 动画系统、quick-dev 技能（跳过 Proposal 的快速工作流）。
-
-**v0.5.0** — 全局搜索（Cmd+K 跨 6 种实体类型）、丰富的任务认领/分配响应。
 
 > 完整更新日志：[CHANGELOG.md](CHANGELOG.md)
 
