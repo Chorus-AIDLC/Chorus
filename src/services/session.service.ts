@@ -126,7 +126,8 @@ export async function createSession(params: SessionCreateParams): Promise<Sessio
 }
 
 // Get Session details (including active checkins). Audit-trail read — does
-// NOT apply the staleness filter; refreshes lastActiveAt as a side effect.
+// NOT apply the staleness filter; refreshes lastActiveAt as a side effect on
+// non-closed rows so the returned timestamp reflects the touch.
 export async function getSession(
   companyUuid: string,
   sessionUuid: string
@@ -143,7 +144,16 @@ export async function getSession(
 
   if (!session) return null;
 
-  await touchLastActiveAt(sessionUuid);
+  // Reflect the heartbeat on the returned snapshot. Closed sessions skip the
+  // touch (preserves their final timestamp); active sessions take the new one.
+  if (session.status !== "closed") {
+    const fresh = new Date();
+    await prisma.agentSession.update({
+      where: { uuid: sessionUuid },
+      data: { lastActiveAt: fresh },
+    });
+    session.lastActiveAt = fresh;
+  }
 
   return formatSessionResponse(session);
 }
@@ -372,7 +382,10 @@ export async function heartbeatSession(
   await touchLastActiveAt(sessionUuid);
 }
 
-// Reopen a closed Session (closed -> active)
+// Reopen a closed Session (closed -> active). Atomic single-statement: flips
+// status and refreshes lastActiveAt in one update so a concurrent closeSession
+// can't observe a half-applied "active row with stale timestamp" or, worse,
+// flip us back to closed between our two writes.
 export async function reopenSession(
   companyUuid: string,
   sessionUuid: string
@@ -384,16 +397,9 @@ export async function reopenSession(
   if (!session) throw new Error("Session not found");
   if (session.status !== "closed") throw new Error("Only closed sessions can be reopened");
 
-  // Flip status to active first so touchLastActiveAt won't no-op.
-  await prisma.agentSession.update({
+  const updated = await prisma.agentSession.update({
     where: { uuid: sessionUuid },
-    data: { status: "active" },
-  });
-
-  await touchLastActiveAt(sessionUuid);
-
-  const updated = await prisma.agentSession.findUniqueOrThrow({
-    where: { uuid: sessionUuid },
+    data: { status: "active", lastActiveAt: new Date() },
     include: {
       taskCheckins: {
         where: { checkoutAt: null },

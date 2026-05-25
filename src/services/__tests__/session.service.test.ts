@@ -728,15 +728,36 @@ describe("heartbeat side-effect (lastActiveAt refresh on session-touching tools)
     expect(hasFreshTouch).toBe(true);
   };
 
-  it("getSession refreshes lastActiveAt on success", async () => {
+  it("getSession refreshes lastActiveAt on success and the returned snapshot reflects the touch", async () => {
     const old = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago
     mockPrisma.agentSession.findFirst.mockResolvedValue(
       makeSession({ lastActiveAt: old, taskCheckins: [] }),
     );
     mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
 
-    await getSession(companyUuid, sessionUuid);
+    const result = await getSession(companyUuid, sessionUuid);
     expectHeartbeatCall(old);
+    // The returned snapshot must carry the post-touch timestamp so a UI
+    // rendering result.lastActiveAt is not off-by-one heartbeat.
+    expect(result).not.toBeNull();
+    expect(new Date(result!.lastActiveAt).getTime()).toBeGreaterThan(old.getTime());
+  });
+
+  it("getSession does NOT touch lastActiveAt when the session is closed", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(
+      makeSession({ status: "closed", lastActiveAt: old, taskCheckins: [] }),
+    );
+
+    const result = await getSession(companyUuid, sessionUuid);
+
+    // No update call should carry a lastActiveAt write
+    const writes = mockPrisma.agentSession.update.mock.calls
+      .map((c) => c[0] as { data?: { lastActiveAt?: Date } })
+      .filter((c) => c.data?.lastActiveAt instanceof Date);
+    expect(writes.length).toBe(0);
+    // Returned snapshot keeps the closed row's original timestamp.
+    expect(result!.lastActiveAt).toBe(old.toISOString());
   });
 
   it("closeSession refreshes lastActiveAt as part of the close path", async () => {
@@ -755,7 +776,7 @@ describe("heartbeat side-effect (lastActiveAt refresh on session-touching tools)
     expectHeartbeatCall(old);
   });
 
-  it("reopenSession refreshes lastActiveAt as part of the reopen path", async () => {
+  it("reopenSession atomically flips status AND refreshes lastActiveAt in a single update", async () => {
     const old = new Date(Date.now() - 30 * 60 * 1000);
     mockPrisma.agentSession.findFirst.mockResolvedValue(
       makeSession({ status: "closed", lastActiveAt: old }),
@@ -763,10 +784,18 @@ describe("heartbeat side-effect (lastActiveAt refresh on session-touching tools)
     mockPrisma.agentSession.update.mockResolvedValue(
       makeSession({ status: "active", lastActiveAt: new Date(), taskCheckins: [] }),
     );
-    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
 
     await reopenSession(companyUuid, sessionUuid);
-    expectHeartbeatCall(old);
+
+    // Exactly one update call, carrying BOTH status and lastActiveAt — protects
+    // against concurrent closeSession seeing a half-applied state.
+    expect(mockPrisma.agentSession.update.mock.calls.length).toBe(1);
+    const updateData = mockPrisma.agentSession.update.mock.calls[0][0].data;
+    expect(updateData.status).toBe("active");
+    expect(updateData.lastActiveAt).toBeInstanceOf(Date);
+    expect((updateData.lastActiveAt as Date).getTime()).toBeGreaterThan(old.getTime());
+    // No separate touchLastActiveAt findUnique probe is performed in the atomic path.
+    expect(mockPrisma.agentSession.findUnique.mock.calls.length).toBe(0);
   });
 
   it("sessionCheckinToTask refreshes lastActiveAt on success", async () => {

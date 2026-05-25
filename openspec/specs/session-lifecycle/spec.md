@@ -1,7 +1,9 @@
 # session-lifecycle Specification
 
 ## Purpose
-TBD - created by archiving change session-lifecycle-active-only. Update Purpose after archive.
+
+Defines the persisted state machine and read-path semantics for `AgentSession` rows. The capability covers: (a) the two-state model `{active, closed}` with no `inactive` state, (b) the query-time staleness filter (`status='active' AND lastActiveAt > now - 1h`) applied on default UI listings only, (c) the unfiltered MCP / audit-trail reads that preserve plugin-reuse and history navigation, (d) the implicit-heartbeat contract whereby every session-touching MCP tool refreshes `lastActiveAt` on success (with a closed-session guard), and (e) the deliberate decoupling of session lifecycle from task status — closing a session checks out task checkins but does not mutate `Task.status`.
+
 ## Requirements
 ### Requirement: AgentSession persisted state space SHALL be exactly `{active, closed}`
 

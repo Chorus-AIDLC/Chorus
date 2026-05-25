@@ -360,7 +360,7 @@ Sub-agents need MCP configured at **project level** (`.mcp.json` or `.claude/set
 |---------|----------|
 | Sub-agent can't access Chorus MCP tools | Verify MCP is configured at project level, API key has developer role |
 | UI doesn't show active workers | Sub-agent forgot `chorus_session_checkin_task`. Check: `chorus_get_session` |
-| Session shows "inactive" (yellow) | No heartbeat in 1h. TeammateIdle hook should auto-send. Agent may have crashed |
+| Session disappears from Settings | No activity for 1h (default lists hide stale sessions). The session row still exists — it's reachable via MCP `chorus_list_sessions` / `chorus_get_session`. Send a heartbeat (or any session-touching tool) to make it visible again, or check whether the agent crashed |
 | Task stuck in wrong status | Spawn new sub-agent with same name (plugin auto-reopens session), or use `chorus_update_task` to reset |
 | Duplicate sessions | Never call `chorus_create_session` — plugin handles all session creation. Close extras via Settings page |
 | Sub-agent didn't receive session | Check plugin is loaded (`/plugin list`) and `CHORUS_URL` is set. Ensure `name` parameter is set |
