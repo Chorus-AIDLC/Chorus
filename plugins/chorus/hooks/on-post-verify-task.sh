@@ -194,13 +194,6 @@ CTX
 #   2. no Document with type="report" attached to this proposal
 # Read-only — the hook never calls chorus_create_report.
 branch_idea_report_reminder() {
-  # Per-branch opt-out. Default enabled; set CHORUS_REPORT_REMINDER=off to
-  # silence just this branch without affecting Branch A's OpenSpec archive
-  # reminder.
-  if [ "${CHORUS_REPORT_REMINDER:-}" = "off" ]; then
-    return 0
-  fi
-
   # Only idea-rooted proposals get a completion report.
   local input_type
   input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true

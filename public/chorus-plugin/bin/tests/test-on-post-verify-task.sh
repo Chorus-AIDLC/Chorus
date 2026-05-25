@@ -53,10 +53,6 @@
 #                          (existing report sits on a later page). Hook MUST
 #                          refuse to conclude "no report" — silent skip.
 #                          -> stdout MUST NOT contain `create idea-completion report`
-#   report-opt-out       — same shape as report-positive, but the per-branch
-#                          opt-out env var is set. Hook MUST silent-skip even
-#                          though all conditions otherwise pass.
-#                          -> stdout MUST NOT contain `create idea-completion report`
 #
 # All fixtures must end with exit 0.
 #
@@ -249,21 +245,6 @@ case "$cmd" in
         echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
         ;;
 
-      # report-opt-out: same shape as report-positive. Branch B MUST
-      # silent-skip because the per-branch toggle is off.
-      report-opt-out:chorus_get_task)
-        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
-        ;;
-      report-opt-out:chorus_get_proposal)
-        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
-        ;;
-      report-opt-out:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
-        ;;
-      report-opt-out:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
-        ;;
-
       *)
         # Unhandled (tool, fixture) — return empty, hook should silent-skip.
         echo ""
@@ -410,20 +391,6 @@ case "${fixture}:${tool}" in
     echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
     ;;
 
-  # report-opt-out: env opt-out set; Branch B MUST silent-skip.
-  report-opt-out:chorus_get_task)
-    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
-    ;;
-  report-opt-out:chorus_get_proposal)
-    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
-    ;;
-  report-opt-out:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
-    ;;
-  report-opt-out:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
-    ;;
-
   *)
     echo "" ;;
 esac
@@ -511,16 +478,6 @@ run_one() {
     MODE_VAR_FOR_RUN="off"
   fi
 
-  # Branch B per-branch opt-out. report-opt-out flips it; Claude variant
-  # uses CLAUDE_PLUGIN_OPTION_ENABLEREPORTREMINDER=false, Codex uses
-  # CHORUS_REPORT_REMINDER=off.
-  local REPORT_OPT_CLAUDE=""
-  local REPORT_OPT_CODEX=""
-  if [ "$fixture" = "report-opt-out" ]; then
-    REPORT_OPT_CLAUDE="false"
-    REPORT_OPT_CODEX="off"
-  fi
-
   local stdout_file
   stdout_file=$(mktemp)
   local stderr_file
@@ -534,8 +491,6 @@ run_one() {
         PATH="$PATH_FOR_RUN" \
         CLAUDE_PROJECT_DIR="$PROJECT_DIR_FOR_RUN" \
         CHORUS_OPENSPEC_MODE="$MODE_VAR_FOR_RUN" \
-        CLAUDE_PLUGIN_OPTION_ENABLEREPORTREMINDER="$REPORT_OPT_CLAUDE" \
-        CHORUS_REPORT_REMINDER="$REPORT_OPT_CODEX" \
         /bin/bash -c "cd \"$PROJECT_DIR_FOR_RUN\" && /bin/bash \"$hook_dir/on-post-verify-task.sh\"" \
         >"$stdout_file" 2>"$stderr_file" || rc=$?
 
@@ -651,11 +606,6 @@ run_one "report-task-overflow" "report-task-overflow" "codex"  "must-not-contain
 # to assume "no report" and silent-skip Branch B.
 run_one "report-doc-overflow" "report-doc-overflow" "claude" "must-not-contain" "" "create idea-completion report"
 run_one "report-doc-overflow" "report-doc-overflow" "codex"  "must-not-contain" "" "create idea-completion report"
-
-# B7: report-opt-out — per-branch opt-out env var set, otherwise valid
-# positive conditions. Hook must honor the toggle and silent-skip.
-run_one "report-opt-out"      "report-opt-out"      "claude" "must-not-contain" "" "create idea-completion report"
-run_one "report-opt-out"      "report-opt-out"      "codex"  "must-not-contain" "" "create idea-completion report"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
