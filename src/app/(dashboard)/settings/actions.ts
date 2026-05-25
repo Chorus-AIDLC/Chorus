@@ -12,7 +12,7 @@ import {
   syncApiKeyNames,
 } from "@/services/agent.service";
 import {
-  listAgentSessions,
+  listAgentSessionsForUI,
   closeSession,
   reopenSession,
   type SessionResponse,
@@ -163,7 +163,7 @@ export async function getAgentSessionsAction(agentUuid: string): Promise<{
   }
 
   try {
-    const sessions = await listAgentSessions(auth.companyUuid, agentUuid);
+    const sessions = await listAgentSessionsForUI(auth.companyUuid, agentUuid);
     return { success: true, data: sessions };
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch agent sessions");

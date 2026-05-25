@@ -14,7 +14,7 @@ export function registerSessionTools(server: McpServer, auth: AgentAuthContext) 
     {
       description: "List all Sessions for the current Agent",
       inputSchema: z.object({
-        status: z.enum(["active", "inactive", "closed"]).optional().describe("Filter by status"),
+        status: z.enum(["active", "closed"]).optional().describe("Filter by status"),
       }),
     },
     async ({ status }) => {
@@ -63,16 +63,14 @@ export function registerSessionTools(server: McpServer, auth: AgentAuthContext) 
       inputSchema: z.object({
         name: z.string().describe("Session name (e.g. 'frontend-worker')"),
         description: z.string().optional().describe("Session description"),
-        expiresAt: z.string().optional().describe("Expiration time (ISO 8601)"),
       }),
     },
-    async ({ name, description, expiresAt }) => {
+    async ({ name, description }) => {
       const session = await sessionService.createSession({
         companyUuid: auth.companyUuid,
         agentUuid: auth.actorUuid,
         name,
         description,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
       });
 
       return {

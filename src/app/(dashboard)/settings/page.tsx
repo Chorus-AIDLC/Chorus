@@ -409,7 +409,7 @@ export default function SettingsPage() {
                     <span>{t("sessions.title")}</span>
                     {agentSessions[key.agentUuid] && (
                       <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">
-                        {agentSessions[key.agentUuid].filter((s) => s.status === "active").length}
+                        {agentSessions[key.agentUuid].length}
                       </Badge>
                     )}
                   </button>
@@ -435,9 +435,7 @@ export default function SettingsPage() {
                                 className={`h-2 w-2 rounded-full flex-shrink-0 ${
                                   session.status === "active"
                                     ? "bg-green-500"
-                                    : session.status === "inactive"
-                                      ? "bg-yellow-500"
-                                      : "bg-gray-400"
+                                    : "bg-gray-400"
                                 }`}
                               />
                               <span className="font-medium truncate">{session.name}</span>
@@ -446,9 +444,7 @@ export default function SettingsPage() {
                                 className={`text-[10px] h-4 px-1 ${
                                   session.status === "active"
                                     ? "border-green-300 text-green-700"
-                                    : session.status === "inactive"
-                                      ? "border-yellow-300 text-yellow-700"
-                                      : "border-gray-300 text-gray-500"
+                                    : "border-gray-300 text-gray-500"
                                 }`}
                               >
                                 {t(`sessions.status${session.status.charAt(0).toUpperCase() + session.status.slice(1)}`)}

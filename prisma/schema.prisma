@@ -354,9 +354,8 @@ model AgentSession {
   agent           Agent     @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
   name            String
   description     String?
-  status          String    @default("active")  // active | inactive | closed
+  status          String    @default("active")  // active | closed
   lastActiveAt    DateTime  @default(now())
-  expiresAt       DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   taskCheckins    SessionTaskCheckin[]
@@ -364,6 +363,7 @@ model AgentSession {
   @@index([companyUuid])
   @@index([agentUuid])
   @@index([status])
+  @@index([lastActiveAt])
 }
 
 // Session-Task checkin relation (many-to-many)

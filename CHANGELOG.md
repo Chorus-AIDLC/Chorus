@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0] - Unreleased
+
+### Changed (Breaking)
+- **Session lifecycle simplified to `{active, closed}`**: dropped the `inactive` status and the unused `expiresAt` field on `AgentSession`. "Stale" is now a query-time predicate on `lastActiveAt` (cutoff: 1h). Default UI listings (Settings page per-agent sessions, project worker-avatar header) only show active+fresh sessions; MCP-facing reads (`chorus_list_sessions`, `chorus_get_session`) and Activity-stream lookups remain unfiltered so plugin reuse and audit-trail navigation continue to see everything. Every session-touching MCP tool now refreshes `lastActiveAt` as a side effect of success — plugins no longer need standalone heartbeats during normal operation. The standalone `chorus_session_heartbeat` is retained for explicit keep-alives. The `expiresAt` parameter on `chorus_create_session` is removed.
+
+---
+
 ## [0.8.2] - 2026-05-21
 
 ### Added

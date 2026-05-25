@@ -789,7 +789,7 @@
   "sessions": {
     "title": "会话",
     "activeSessions": "活跃会话",
-    "noSessions": "暂无会话",
+    "noSessions": "近 1 小时内无活跃会话",
     "close": "关闭",
     "reopen": "重新打开",
     "closeConfirm": "确定要关闭此会话吗？",

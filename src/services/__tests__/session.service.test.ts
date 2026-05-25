@@ -7,6 +7,7 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst: vi.fn(),
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
   },
@@ -42,9 +43,11 @@ import {
   sessionCheckinToTask,
   sessionCheckoutFromTask,
   heartbeatSession,
-  markInactiveSessions,
   batchGetWorkerCountsForTasks,
   getSessionName,
+  listAgentSessions,
+  listAgentSessionsForUI,
+  SESSION_STALE_THRESHOLD_MS,
 } from "@/services/session.service";
 import { eventBus } from "@/lib/event-bus";
 import { claimTask } from "@/services/task.service";
@@ -66,7 +69,6 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     description: null,
     status: "active",
     lastActiveAt: now,
-    expiresAt: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -75,6 +77,9 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default for touchLastActiveAt's status precheck — most tests operate on
+  // active sessions and expect the lastActiveAt write to fire.
+  mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
 });
 
 // ===== createSession =====
@@ -98,9 +103,8 @@ describe("createSession", () => {
     expect(mockPrisma.agentSession.create).toHaveBeenCalledOnce();
   });
 
-  it("should pass description and expiresAt when provided", async () => {
-    const expires = new Date("2026-04-01T00:00:00Z");
-    const session = makeSession({ description: "desc", expiresAt: expires });
+  it("should pass description when provided", async () => {
+    const session = makeSession({ description: "desc" });
     mockPrisma.agentSession.create.mockResolvedValue(session);
 
     await createSession({
@@ -108,14 +112,12 @@ describe("createSession", () => {
       agentUuid,
       name: "test-session",
       description: "desc",
-      expiresAt: expires,
     });
 
     expect(mockPrisma.agentSession.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           description: "desc",
-          expiresAt: expires,
         }),
       })
     );
@@ -185,6 +187,7 @@ describe("reopenSession", () => {
     mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ status: "closed" }));
     const reopened = makeSession({ status: "active", taskCheckins: [] });
     mockPrisma.agentSession.update.mockResolvedValue(reopened);
+    mockPrisma.agentSession.findUniqueOrThrow.mockResolvedValue(reopened);
 
     const result = await reopenSession(companyUuid, sessionUuid);
     expect(result.status).toBe("active");
@@ -324,39 +327,9 @@ describe("heartbeatSession", () => {
     );
   });
 
-  it("should restore inactive session to active", async () => {
-    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ status: "inactive" }));
-    mockPrisma.agentSession.update.mockResolvedValue(makeSession({ status: "active" }));
-
-    await heartbeatSession(companyUuid, sessionUuid);
-
-    expect(mockPrisma.agentSession.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: "active" }),
-      })
-    );
-  });
-
   it("should throw when session not found", async () => {
     mockPrisma.agentSession.findFirst.mockResolvedValue(null);
     await expect(heartbeatSession(companyUuid, "missing")).rejects.toThrow("Session not found");
-  });
-});
-
-// ===== markInactiveSessions =====
-describe("markInactiveSessions", () => {
-  it("should mark stale active sessions as inactive", async () => {
-    mockPrisma.agentSession.updateMany.mockResolvedValue({ count: 3 });
-
-    const count = await markInactiveSessions();
-
-    expect(count).toBe(3);
-    expect(mockPrisma.agentSession.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "active" }),
-        data: { status: "inactive" },
-      })
-    );
   });
 });
 
@@ -639,5 +612,270 @@ describe("getActiveSessionsForProject", () => {
     const result = await getActiveSessionsForProject(companyUuid, projectUuid);
 
     expect(result).toHaveLength(0); // skipped due to missing agent name
+  });
+});
+
+// ===== Staleness filter contract =====
+describe("staleness filter (1h cutoff)", () => {
+  it("SESSION_STALE_THRESHOLD_MS is exactly 1 hour", () => {
+    expect(SESSION_STALE_THRESHOLD_MS).toBe(60 * 60 * 1000);
+  });
+
+  it("listAgentSessionsForUI applies status='active' AND lastActiveAt > now - 1h filter", async () => {
+    mockPrisma.agentSession.findMany.mockResolvedValue([]);
+
+    await listAgentSessionsForUI(companyUuid, agentUuid);
+
+    const call = mockPrisma.agentSession.findMany.mock.calls[0]?.[0];
+    expect(call.where.companyUuid).toBe(companyUuid);
+    expect(call.where.agentUuid).toBe(agentUuid);
+    expect(call.where.status).toBe("active");
+    expect(call.where.lastActiveAt).toBeDefined();
+    expect(call.where.lastActiveAt.gt).toBeInstanceOf(Date);
+    // Lower-bound timestamp must be ~ now - 1h (within a small wall-clock margin)
+    const cutoff = (call.where.lastActiveAt.gt as Date).getTime();
+    const expected = Date.now() - SESSION_STALE_THRESHOLD_MS;
+    expect(Math.abs(cutoff - expected)).toBeLessThan(2_000);
+  });
+
+  it("listAgentSessions does NOT apply the staleness filter (MCP-facing audit-trail path)", async () => {
+    mockPrisma.agentSession.findMany.mockResolvedValue([]);
+
+    await listAgentSessions(companyUuid, agentUuid);
+
+    const call = mockPrisma.agentSession.findMany.mock.calls[0]?.[0];
+    // lastActiveAt is intentionally absent so the caller sees every row regardless of age.
+    expect(call.where.lastActiveAt).toBeUndefined();
+    // status filter is also absent unless explicitly passed.
+    expect(call.where.status).toBeUndefined();
+  });
+
+  it("getActiveSessionsForProject uses the freshSessionWhereClause shape on the session join", async () => {
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+    await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    const call = mockPrisma.sessionTaskCheckin.findMany.mock.calls[0]?.[0];
+    expect(call.where.session.status).toBe("active");
+    expect(call.where.session.lastActiveAt.gt).toBeInstanceOf(Date);
+  });
+
+  it("batchGetWorkerCountsForTasks uses the freshSessionWhereClause shape on the session join", async () => {
+    mockPrisma.sessionTaskCheckin.groupBy.mockResolvedValue([]);
+
+    await batchGetWorkerCountsForTasks(companyUuid, [taskUuid]);
+
+    const call = mockPrisma.sessionTaskCheckin.groupBy.mock.calls[0]?.[0];
+    expect(call.where.session.status).toBe("active");
+    expect(call.where.session.lastActiveAt.gt).toBeInstanceOf(Date);
+  });
+
+  it("getSession (MCP/audit-trail path) does NOT filter on lastActiveAt — a 4h-stale session is still returned", async () => {
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(
+      makeSession({ lastActiveAt: fourHoursAgo, taskCheckins: [] }),
+    );
+
+    const result = await getSession(companyUuid, sessionUuid);
+
+    expect(result).not.toBeNull();
+    // The where clause used must NOT carry lastActiveAt
+    const call = mockPrisma.agentSession.findFirst.mock.calls[0]?.[0];
+    expect(call.where.lastActiveAt).toBeUndefined();
+  });
+
+  it("getSessionName resolves a 24h-stale session name (Activity-stream contract)", async () => {
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    mockPrisma.agentSession.findUnique.mockResolvedValueOnce({ name: "old-session" });
+    // Note: getSessionName doesn't actually read lastActiveAt; we only assert
+    // that no filter is added that would drop a stale row.
+    void dayAgo;
+
+    const result = await getSessionName(sessionUuid);
+
+    expect(result).toBe("old-session");
+    const call = mockPrisma.agentSession.findUnique.mock.calls[0]?.[0];
+    expect(call.where.lastActiveAt).toBeUndefined();
+  });
+});
+
+// ===== Heartbeat side-effect contract =====
+//
+// Each session-touching service function must refresh `lastActiveAt = now()`
+// on its successful path via `touchLastActiveAt`. The helper checks the row
+// status first and skips the write when status='closed'. We exercise that
+// contract via the indirect signature: `prisma.agentSession.update` is called
+// with `data.lastActiveAt` set to a Date strictly after the original
+// `lastActiveAt`. Tests intentionally use the wall-clock side-effect rather
+// than spying on the helper because the helper is module-private.
+
+describe("heartbeat side-effect (lastActiveAt refresh on session-touching tools)", () => {
+  // Capture every prisma.agentSession.update call so we can scan all of them
+  // for the heartbeat write — services may issue multiple updates (e.g.
+  // closeSession also flips status), so we look for ANY update whose data
+  // contains a fresh `lastActiveAt`.
+  const expectHeartbeatCall = (priorActiveAt: Date) => {
+    const calls = mockPrisma.agentSession.update.mock.calls.map(
+      (c) => c[0] as { data?: { lastActiveAt?: Date } },
+    );
+    const hasFreshTouch = calls.some(
+      (c) =>
+        c.data?.lastActiveAt instanceof Date &&
+        c.data.lastActiveAt.getTime() > priorActiveAt.getTime(),
+    );
+    expect(hasFreshTouch).toBe(true);
+  };
+
+  it("getSession refreshes lastActiveAt on success", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago
+    mockPrisma.agentSession.findFirst.mockResolvedValue(
+      makeSession({ lastActiveAt: old, taskCheckins: [] }),
+    );
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await getSession(companyUuid, sessionUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("closeSession refreshes lastActiveAt as part of the close path", async () => {
+    // closeSession's heartbeat fires BEFORE the status flip; the helper
+    // sees status='active' at that moment and writes lastActiveAt.
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ lastActiveAt: old }));
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+    mockPrisma.sessionTaskCheckin.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.agentSession.update.mockResolvedValue(
+      makeSession({ status: "closed", lastActiveAt: old, taskCheckins: [] }),
+    );
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await closeSession(companyUuid, sessionUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("reopenSession refreshes lastActiveAt as part of the reopen path", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(
+      makeSession({ status: "closed", lastActiveAt: old }),
+    );
+    mockPrisma.agentSession.update.mockResolvedValue(
+      makeSession({ status: "active", lastActiveAt: new Date(), taskCheckins: [] }),
+    );
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await reopenSession(companyUuid, sessionUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("sessionCheckinToTask refreshes lastActiveAt on success", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ lastActiveAt: old }));
+    mockPrisma.task.findFirst.mockResolvedValue({
+      uuid: taskUuid,
+      companyUuid,
+      projectUuid,
+      assigneeUuid: agentUuid,
+    });
+    mockPrisma.sessionTaskCheckin.upsert.mockResolvedValue({
+      taskUuid,
+      checkinAt: now,
+      checkoutAt: null,
+    });
+    mockPrisma.agentSession.update.mockResolvedValue(makeSession());
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await sessionCheckinToTask(companyUuid, sessionUuid, taskUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("sessionCheckoutFromTask refreshes lastActiveAt on success", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ lastActiveAt: old }));
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+    mockPrisma.sessionTaskCheckin.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.agentSession.update.mockResolvedValue(makeSession());
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await sessionCheckoutFromTask(companyUuid, sessionUuid, taskUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("heartbeatSession refreshes lastActiveAt on success", async () => {
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession({ lastActiveAt: old }));
+    mockPrisma.agentSession.update.mockResolvedValue(makeSession());
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    await heartbeatSession(companyUuid, sessionUuid);
+    expectHeartbeatCall(old);
+  });
+
+  it("touchLastActiveAt skips refresh when status='closed' (closed-session guard)", async () => {
+    // Calling getSession on a closed row should NOT trigger an update.
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    mockPrisma.agentSession.findFirst.mockResolvedValue(
+      makeSession({ status: "closed", lastActiveAt: old, taskCheckins: [] }),
+    );
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "closed" });
+
+    await getSession(companyUuid, sessionUuid);
+
+    // No update call should carry a lastActiveAt write
+    const writes = mockPrisma.agentSession.update.mock.calls
+      .map((c) => c[0] as { data?: { lastActiveAt?: Date } })
+      .filter((c) => c.data?.lastActiveAt instanceof Date);
+    expect(writes.length).toBe(0);
+  });
+});
+
+// ===== closeSession does NOT mutate task status =====
+describe("closeSession task-status preservation", () => {
+  it("closes the session, sets checkoutAt on checkins, but does not write to Task.status", async () => {
+    mockPrisma.agentSession.findFirst.mockResolvedValue(makeSession());
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([
+      { task: { uuid: taskUuid, projectUuid } },
+    ]);
+    mockPrisma.sessionTaskCheckin.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.agentSession.update.mockResolvedValue(
+      makeSession({
+        status: "closed",
+        taskCheckins: [{ taskUuid, checkinAt: now, checkoutAt: now }],
+      }),
+    );
+    mockPrisma.agentSession.findUnique.mockResolvedValue({ status: "active" });
+
+    const result = await closeSession(companyUuid, sessionUuid);
+
+    expect(result.status).toBe("closed");
+    // Checkin is checked out:
+    expect(mockPrisma.sessionTaskCheckin.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { sessionUuid, checkoutAt: null },
+        data: expect.objectContaining({ checkoutAt: expect.any(Date) }),
+      }),
+    );
+    // Service deliberately does not touch Task.status — we have NOT mocked
+    // any prisma.task.* writer in this test, and the result is still "closed".
+    // The asserted contract: no `data.status` on any prisma.task.update call.
+    // (We don't even mock prisma.task.update — so any unexpected call would
+    // throw `mockReturnValue is undefined`-style errors and fail the test.)
+    void claimTask;
+    void eventBus;
+  });
+});
+
+// ===== Regression guard: `inactive` literal must not reappear in session.service.ts =====
+describe("regression guard", () => {
+  it("does not contain the literal string 'inactive' in src/services/session.service.ts", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const path = (await import("node:path")).resolve(
+      __dirname,
+      "../session.service.ts",
+    );
+    const src = await readFile(path, "utf8");
+    expect(src.includes('"inactive"')).toBe(false);
+    expect(src.includes("'inactive'")).toBe(false);
   });
 });

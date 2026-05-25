@@ -779,6 +779,14 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 
 Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent workers in swarm mode).
 
+### Lifecycle and staleness
+
+The persisted state space is exactly `{active, closed}`. There is no `inactive` status — staleness is a derived predicate on `lastActiveAt`, not a stored value. Default UI listings (Settings page per-agent sessions, project worker-avatar header) only show sessions matching `status='active' AND lastActiveAt > now - 1h`. MCP-facing reads (`chorus_list_sessions`, `chorus_get_session`) and the audit-trail dereferences (Activity stream) are NOT filtered — plugins and history navigation see every session regardless of age or status.
+
+### Implicit-heartbeat contract
+
+Every Session tool that takes a `sessionUuid` parameter and successfully resolves the session refreshes `lastActiveAt = now()` as a side effect of success — except when the session's `status='closed'`, in which case the refresh is skipped to preserve the historical timestamp. Tools covered: `chorus_get_session`, `chorus_close_session`, `chorus_reopen_session`, `chorus_session_checkin_task`, `chorus_session_checkout_task`, `chorus_session_heartbeat`. As a result, plugins do not need to send standalone heartbeats during normal operation — any other session tool call already counts as one. The `chorus_session_heartbeat` tool remains as an explicit keep-alive for idle sub-agents.
+
 ### chorus_create_session
 
 **Description**: Create a new Agent Session (e.g., representing a sub-agent worker)
@@ -788,7 +796,6 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 |-----------|------|----------|-------------|
 | name | string | Yes | Session name (e.g., "frontend-worker") |
 | description | string | No | Session description |
-| expiresAt | string | No | Expiration time (ISO timestamp) |
 
 **Output**:
 ```json
@@ -799,7 +806,6 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
   "description": "...",
   "status": "active",
   "lastActiveAt": "ISO timestamp",
-  "expiresAt": null,
   "createdAt": "ISO timestamp",
   "activeCheckins": []
 }
@@ -807,12 +813,12 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_list_sessions
 
-**Description**: List all Sessions for the current Agent
+**Description**: List all Sessions for the current Agent. **Unfiltered** — returns sessions regardless of staleness or closed status (use this for plugin reuse logic and audit-trail navigation).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| status | string | No | Filter by status: active, inactive, closed |
+| status | string | No | Filter by status: `active` or `closed` |
 
 **Output**:
 ```json
@@ -824,7 +830,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_get_session
 
-**Description**: Get Session details and its active Task checkins
+**Description**: Get Session details and its active Task checkins. Refreshes the session's `lastActiveAt` as a side effect of success unless the session is `closed`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -835,7 +841,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_close_session
 
-**Description**: Close a Session (active/inactive → closed). Automatically checks out all active Task checkins.
+**Description**: Close a Session (any status → closed). Automatically checks out all active Task checkins. Does not alter the underlying Tasks' `status`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -846,7 +852,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_reopen_session
 
-**Description**: Reopen a closed Session (closed → active). Used to reuse a previous session without creating a new one.
+**Description**: Reopen a closed Session (closed → active). Used to reuse a previous session without creating a new one. `lastActiveAt` is refreshed as part of the reopen.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -857,7 +863,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_checkin_task
 
-**Description**: Check in a Session to a Task, indicating work has started
+**Description**: Check in a Session to a Task, indicating work has started. Refreshes `lastActiveAt`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -869,7 +875,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_checkout_task
 
-**Description**: Check out a Session from a Task, indicating work has ended
+**Description**: Check out a Session from a Task, indicating work has ended. Refreshes `lastActiveAt`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -881,7 +887,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_heartbeat
 
-**Description**: Session heartbeat, updates lastActiveAt. Active sessions with no heartbeat for 1 hour are automatically marked as inactive.
+**Description**: Explicit Session heartbeat — refreshes `lastActiveAt`. Most callers don't need this since every other session tool also refreshes; it exists for idle sub-agents that want to stay visible in the Settings UI without otherwise touching the session.
 
 **Input**:
 | Parameter | Type | Required | Description |

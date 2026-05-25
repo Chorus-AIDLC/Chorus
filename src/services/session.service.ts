@@ -13,7 +13,6 @@ export interface SessionCreateParams {
   agentUuid: string;
   name: string;
   description?: string | null;
-  expiresAt?: Date | null;
 }
 
 export interface SessionCheckinInfo {
@@ -29,7 +28,6 @@ export interface SessionResponse {
   description: string | null;
   status: string;
   lastActiveAt: string;
-  expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
   checkins: SessionCheckinInfo[];
@@ -43,6 +41,37 @@ export interface TaskSessionInfo {
   checkinAt: string;
 }
 
+// ===== Staleness Primitives =====
+
+// A session is "fresh" if its lastActiveAt is within this window.
+// Default-list reads (UI) hide stale active sessions; audit-trail reads
+// (MCP listAgentSessions, getSession) ignore this filter.
+export const SESSION_STALE_THRESHOLD_MS = 60 * 60 * 1000;
+
+// Where-clause fragment matching active+fresh sessions.
+function freshSessionWhereClause() {
+  return {
+    status: "active",
+    lastActiveAt: { gt: new Date(Date.now() - SESSION_STALE_THRESHOLD_MS) },
+  };
+}
+
+// Single source of truth for refreshing lastActiveAt as a side-effect of
+// any session-touching operation. Skips the write when the session row is
+// already closed so closed sessions retain their final lastActiveAt.
+async function touchLastActiveAt(sessionUuid: string): Promise<void> {
+  const session = await prisma.agentSession.findUnique({
+    where: { uuid: sessionUuid },
+    select: { status: true },
+  });
+  if (!session || session.status === "closed") return;
+
+  await prisma.agentSession.update({
+    where: { uuid: sessionUuid },
+    data: { lastActiveAt: new Date() },
+  });
+}
+
 // ===== Internal Helper Functions =====
 
 function formatSessionResponse(
@@ -53,7 +82,6 @@ function formatSessionResponse(
     description: string | null;
     status: string;
     lastActiveAt: Date;
-    expiresAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
     taskCheckins?: Array<{
@@ -70,7 +98,6 @@ function formatSessionResponse(
     description: session.description,
     status: session.status,
     lastActiveAt: session.lastActiveAt.toISOString(),
-    expiresAt: session.expiresAt?.toISOString() ?? null,
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
     checkins: (session.taskCheckins || []).map((c) => ({
@@ -92,14 +119,14 @@ export async function createSession(params: SessionCreateParams): Promise<Sessio
       name: params.name,
       description: params.description ?? null,
       status: "active",
-      expiresAt: params.expiresAt ?? null,
     },
   });
 
   return formatSessionResponse(session);
 }
 
-// Get Session details (including active checkins)
+// Get Session details (including active checkins). Audit-trail read — does
+// NOT apply the staleness filter; refreshes lastActiveAt as a side effect.
 export async function getSession(
   companyUuid: string,
   sessionUuid: string
@@ -115,10 +142,15 @@ export async function getSession(
   });
 
   if (!session) return null;
+
+  await touchLastActiveAt(sessionUuid);
+
   return formatSessionResponse(session);
 }
 
-// List Agent's Sessions
+// List Agent's Sessions — unfiltered MCP/audit-trail entry point. Returns
+// every session for the agent regardless of staleness; status filter is
+// optional and exact-match.
 export async function listAgentSessions(
   companyUuid: string,
   agentUuid: string,
@@ -142,7 +174,32 @@ export async function listAgentSessions(
   return sessions.map(formatSessionResponse);
 }
 
-// Close Session (status->closed, batch checkout all checkins)
+// List Agent's Sessions for the Settings UI — filtered to active+fresh only.
+export async function listAgentSessionsForUI(
+  companyUuid: string,
+  agentUuid: string
+): Promise<SessionResponse[]> {
+  const sessions = await prisma.agentSession.findMany({
+    where: {
+      companyUuid,
+      agentUuid,
+      ...freshSessionWhereClause(),
+    },
+    include: {
+      taskCheckins: {
+        where: { checkoutAt: null },
+        select: { taskUuid: true, checkinAt: true, checkoutAt: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return sessions.map(formatSessionResponse);
+}
+
+// Close Session (status->closed, batch checkout all checkins).
+// Refreshes lastActiveAt before flipping to closed so the row's last
+// activity timestamp reflects the close itself.
 export async function closeSession(
   companyUuid: string,
   sessionUuid: string
@@ -164,6 +221,11 @@ export async function closeSession(
     where: { sessionUuid, checkoutAt: null },
     data: { checkoutAt: new Date() },
   });
+
+  // Refresh lastActiveAt while the row is still open, then flip to closed.
+  // touchLastActiveAt itself will no-op once status='closed', so this
+  // ordering is the correct way to capture the close timestamp.
+  await touchLastActiveAt(sessionUuid);
 
   const updated = await prisma.agentSession.update({
     where: { uuid: sessionUuid },
@@ -223,11 +285,7 @@ export async function sessionCheckinToTask(
     update: { checkoutAt: null, checkinAt: new Date() },
   });
 
-  // Update lastActiveAt
-  await prisma.agentSession.update({
-    where: { uuid: sessionUuid },
-    data: { lastActiveAt: new Date() },
-  });
+  await touchLastActiveAt(sessionUuid);
 
   eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
 
@@ -260,12 +318,14 @@ export async function sessionCheckoutFromTask(
     data: { checkoutAt: new Date() },
   });
 
+  await touchLastActiveAt(sessionUuid);
+
   if (task) {
     eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
   }
 }
 
-// Get all active Sessions for a Task
+// Get all active+fresh Sessions for a Task
 export async function getSessionsForTask(
   companyUuid: string,
   taskUuid: string
@@ -274,7 +334,7 @@ export async function getSessionsForTask(
     where: {
       taskUuid,
       checkoutAt: null,
-      session: { companyUuid, status: { in: ["active", "inactive"] } },
+      session: { companyUuid, ...freshSessionWhereClause() },
     },
     include: {
       session: {
@@ -297,24 +357,19 @@ export async function getSessionsForTask(
   }));
 }
 
-// Heartbeat update lastActiveAt
+// Heartbeat — refresh lastActiveAt unconditionally on the resolved session.
+// No status mutation; staleness is computed at read time, not stored.
 export async function heartbeatSession(
   companyUuid: string,
   sessionUuid: string
 ): Promise<void> {
   const session = await prisma.agentSession.findFirst({
     where: { uuid: sessionUuid, companyUuid },
+    select: { uuid: true },
   });
   if (!session) throw new Error("Session not found");
 
-  await prisma.agentSession.update({
-    where: { uuid: sessionUuid },
-    data: {
-      lastActiveAt: new Date(),
-      // If status is inactive, restore to active after heartbeat
-      ...(session.status === "inactive" && { status: "active" }),
-    },
-  });
+  await touchLastActiveAt(sessionUuid);
 }
 
 // Reopen a closed Session (closed -> active)
@@ -329,12 +384,16 @@ export async function reopenSession(
   if (!session) throw new Error("Session not found");
   if (session.status !== "closed") throw new Error("Only closed sessions can be reopened");
 
-  const updated = await prisma.agentSession.update({
+  // Flip status to active first so touchLastActiveAt won't no-op.
+  await prisma.agentSession.update({
     where: { uuid: sessionUuid },
-    data: {
-      status: "active",
-      lastActiveAt: new Date(),
-    },
+    data: { status: "active" },
+  });
+
+  await touchLastActiveAt(sessionUuid);
+
+  const updated = await prisma.agentSession.findUniqueOrThrow({
+    where: { uuid: sessionUuid },
     include: {
       taskCheckins: {
         where: { checkoutAt: null },
@@ -346,7 +405,8 @@ export async function reopenSession(
   return formatSessionResponse(updated);
 }
 
-// Batch get active worker counts for multiple tasks (1 groupBy query instead of N individual queries)
+// Batch get active+fresh worker counts for multiple tasks (1 groupBy query
+// instead of N individual queries).
 export async function batchGetWorkerCountsForTasks(
   companyUuid: string,
   taskUuids: string[]
@@ -358,7 +418,7 @@ export async function batchGetWorkerCountsForTasks(
     where: {
       taskUuid: { in: taskUuids },
       checkoutAt: null,
-      session: { companyUuid, status: { in: ["active", "inactive"] } },
+      session: { companyUuid, ...freshSessionWhereClause() },
     },
     _count: { taskUuid: true },
   });
@@ -368,21 +428,6 @@ export async function batchGetWorkerCountsForTasks(
     result[checkin.taskUuid] = checkin._count.taskUuid;
   }
   return result;
-}
-
-// Batch mark inactive sessions (no heartbeat for 1 hour)
-export async function markInactiveSessions(): Promise<number> {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
-  const result = await prisma.agentSession.updateMany({
-    where: {
-      status: "active",
-      lastActiveAt: { lt: oneHourAgo },
-    },
-    data: { status: "inactive" },
-  });
-
-  return result.count;
 }
 
 // Get Session name (for Activity display)
@@ -399,7 +444,7 @@ export async function getSessionName(sessionUuid: string): Promise<string | null
  * Returns up to 5 unique workers (for PixelCanvas slots).
  *
  * Sources (merged, session-based workers listed first):
- * 1. Session-based: each unique session with active checkins = one sub-agent worker
+ * 1. Session-based: each unique active+fresh session with active checkins = one sub-agent worker
  * 2. Sessionless: agents with in_progress tasks that have NO active session checkin
  *    on those tasks = the main agent working directly (e.g. OpenClaw single-agent mode).
  *    Even if the same agent has sessions on other tasks, the main agent still counts
@@ -409,12 +454,12 @@ export async function getActiveSessionsForProject(
   companyUuid: string,
   projectUuid: string
 ): Promise<TaskSessionInfo[]> {
-  // 1. Session-based workers: each unique session = one sub-agent worker
+  // 1. Session-based workers: each unique active+fresh session = one sub-agent worker
   const checkins = await prisma.sessionTaskCheckin.findMany({
     where: {
       checkoutAt: null,
       task: { projectUuid },
-      session: { companyUuid, status: { in: ["active", "inactive"] } },
+      session: { companyUuid, ...freshSessionWhereClause() },
     },
     include: {
       session: {
