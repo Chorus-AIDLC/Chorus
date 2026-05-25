@@ -652,6 +652,7 @@
     "typeAdr": "ADR",
     "typeGuide": "指南",
     "typeNote": "笔记",
+    "typeReport": "总结报告",
     "typeOther": "其他",
     "deleteDocument": "删除文档",
     "deleteDocumentDescription": "此操作将永久删除文档「{title}」，无法恢复。",
@@ -1305,5 +1306,9 @@
         "custom": "自由勾选权限位。只有在自定义模式下，才能开启「管理」列的审批 / 验收 / 关闭动作。"
       }
     }
+  },
+  "idea": {
+    "reportsList": "总结报告",
+    "reportsAcrossProposals": "覆盖所有已审批提案"
   }
 }

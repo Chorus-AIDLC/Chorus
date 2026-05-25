@@ -254,6 +254,10 @@ If the reviewer returns **FAIL**, or the task is reopened after verification:
 
 Once Admin verifies (status: `done`), move to the next available task (back to Step 2).
 
+### Step 11: Idea Completion Report (advisory)
+
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The tool description carries the section template. Skip on decline — the PostToolUse hook will remind on the next run.
+
 ---
 
 ## Session (Sub-Agents Only)

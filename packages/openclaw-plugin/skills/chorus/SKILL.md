@@ -84,16 +84,20 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_get_ideas` | List project Ideas (filterable by status, paginated) |
-| `chorus_get_idea` | Get a single Idea's details |
+| `chorus_get_ideas` | List project Ideas (filterable by status, paginated; rows include `reportCount`) |
+| `chorus_get_idea` | Get a single Idea's details (includes `reports[]` with full content) |
 | `chorus_get_available_ideas` | Get claimable Ideas (status=open) |
 
 ### Documents
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_get_documents` | List project documents (filterable by type: prd, tech_design, adr, spec, guide) |
+| `chorus_get_documents` | List project documents (filterable by type: prd, tech_design, adr, spec, guide, report) |
 | `chorus_get_document` | Get a single document's content |
+
+### Reports
+
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. The `yolo` skill writes one mandatorily; the `develop` skill offers it advisorily on last-task verify.
 
 ### Proposals
 

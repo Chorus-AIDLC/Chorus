@@ -651,6 +651,7 @@
     "typeAdr": "ADR",
     "typeGuide": "Guide",
     "typeNote": "Note",
+    "typeReport": "Report",
     "typeOther": "Other",
     "deleteDocument": "Delete Document",
     "deleteDocumentDescription": "This will permanently delete \"{title}\". This action cannot be undone.",
@@ -1304,5 +1305,9 @@
         "custom": "Pick individual permissions. Admin-column actions (approve / verify / close) are only reachable in Custom mode."
       }
     }
+  },
+  "idea": {
+    "reportsList": "REPORTS",
+    "reportsAcrossProposals": "across all approved proposals"
   }
 }

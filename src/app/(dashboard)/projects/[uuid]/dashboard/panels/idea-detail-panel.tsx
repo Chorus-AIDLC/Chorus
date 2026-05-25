@@ -26,6 +26,7 @@ import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView, type ProposalData } from "./proposal-view";
 import { OverviewTimeline } from "./overview-timeline";
+import { ReportsList } from "./reports-list";
 import { TaskListView } from "./task-list-view";
 import { ActivityCommentsView } from "./activity-comments-view";
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
@@ -644,6 +645,12 @@ export function IdeaDetailPanel({
                         proposals={proposals}
                         tasks={tasks}
                         onSelectTask={openTask}
+                      />
+                      <ReportsList
+                        projectUuid={projectUuid}
+                        ideaUuid={idea.uuid}
+                        proposals={proposals}
+                        onDocClick={openDoc}
                       />
                     </div>
                   )}

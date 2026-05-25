@@ -12,7 +12,11 @@
 # hook into a sandbox dir alongside our shim wrapper — the hook's
 # `dirname "$0"` lookup then picks up our shim, not the real wrapper.
 #
-# Fixtures cover all gating branches:
+# Two independent reminder branches share the post-verify trigger:
+#   - Branch A (OpenSpec archive trigger) — emits `openspec archive`
+#   - Branch B (Idea-completion report)   — emits `create idea-completion report`
+#
+# Fixtures for Branch A (legacy):
 #   positive       — last task verified, slug present, openspec/ folder + CLI both present
 #                    -> stdout MUST contain `openspec archive my-feature`
 #   not-last-task  — slug present, both signals present, but one task still in_progress
@@ -25,6 +29,21 @@
 #                    -> stdout MUST NOT contain `openspec archive`
 #   mode-off       — CHORUS_OPENSPEC_MODE=off (explicit opt-out), even with both signals present
 #                    -> stdout MUST NOT contain `openspec archive`
+#
+# Fixtures for Branch B (idea-completion report — see spec
+# idea-completion-report scenarios "Hook injects a reminder ..."):
+#   report-positive    — idea-rooted proposal, all its tasks are
+#                        done|closed, no report Document on this proposal
+#                        -> stdout MUST contain `create idea-completion report`
+#   report-existing    — same as report-positive but a `type=report`
+#                        Document already exists on this proposal
+#                        -> stdout MUST NOT contain `create idea-completion report`
+#   report-not-last    — idea-rooted, but one task is still in_progress
+#                        -> stdout MUST NOT contain `create idea-completion report`
+#   report-quick-task  — proposal's inputType is not "idea" (e.g. a
+#                        non-idea-rooted proposal); branch B must skip
+#                        regardless of task status
+#                        -> stdout MUST NOT contain `create idea-completion report`
 #
 # All fixtures must end with exit 0.
 #
@@ -90,11 +109,18 @@ case "$cmd" in
       mode-off|no-folder|no-cli) fixture=positive ;;
     esac
     case "${fixture}:${tool}" in
+      # ----- Branch A fixtures (existing) -----
+      # NOTE: Branch B's idea-rooted check requires `inputType:"idea"`. We
+      # set it on the OpenSpec fixtures too because real proposals always
+      # carry inputType. To keep Branch A fixtures independent of Branch B,
+      # we deliberately DO NOT register chorus_get_proposals /
+      # chorus_get_documents responses for them — Branch B hits the default
+      # "unhandled" case (empty body) and silent-skips.
       positive:chorus_get_task)
         echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
         ;;
       positive:chorus_get_proposal)
-        printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputUuids":["idea-1"]}'
+        printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputType":"idea","inputUuids":["idea-1"]}'
         ;;
       positive:chorus_list_tasks)
         echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
@@ -103,7 +129,7 @@ case "$cmd" in
         echo '{"uuid":"task-2","title":"Task 2","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
         ;;
       not-last-task:chorus_get_proposal)
-        printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputUuids":["idea-1"]}'
+        printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputType":"idea","inputUuids":["idea-1"]}'
         ;;
       not-last-task:chorus_list_tasks)
         echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":200}'
@@ -112,11 +138,72 @@ case "$cmd" in
         echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-2","project":{"uuid":"proj-1","name":"P"}}'
         ;;
       no-slug:chorus_get_proposal)
-        printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputUuids":["idea-2"]}'
+        printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputType":"idea","inputUuids":["idea-2"]}'
         ;;
       no-slug:chorus_list_tasks)
         echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
         ;;
+
+      # ----- Branch B fixtures (idea-completion report reminder) -----
+      # report-positive: idea-rooted proposal whose tasks are all
+      # done|closed, no report Document on it -> emit.
+      report-positive:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-positive:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug here.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-positive:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      report-positive:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
+      # report-existing: same as positive but a report Document already
+      # exists on this proposal -> silent skip.
+      report-existing:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-existing:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-existing:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      report-existing:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        ;;
+
+      # report-not-last: a task is still in_progress -> silent skip.
+      report-not-last:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-not-last:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      report-not-last:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      report-not-last:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
+      # report-quick-task: proposal.inputType != "idea" -> Branch B must
+      # skip at the first gate, before any further calls.
+      report-quick-task:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      report-quick-task:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"manual","inputUuids":[]}'
+        ;;
+      report-quick-task:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        ;;
+      report-quick-task:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
       *)
         # Unhandled (tool, fixture) — return empty, hook should silent-skip.
         echo ""
@@ -153,11 +240,12 @@ case "$fixture" in
   mode-off|no-folder|no-cli) fixture=positive ;;
 esac
 case "${fixture}:${tool}" in
+  # ----- Branch A fixtures (existing) -----
   positive:chorus_get_task)
     echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
     ;;
   positive:chorus_get_proposal)
-    printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputUuids":["idea-1"]}'
+    printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputType":"idea","inputUuids":["idea-1"]}'
     ;;
   positive:chorus_list_tasks)
     echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
@@ -166,7 +254,7 @@ case "${fixture}:${tool}" in
     echo '{"uuid":"task-2","title":"Task 2","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
     ;;
   not-last-task:chorus_get_proposal)
-    printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputUuids":["idea-1"]}'
+    printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputType":"idea","inputUuids":["idea-1"]}'
     ;;
   not-last-task:chorus_list_tasks)
     echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":200}'
@@ -175,11 +263,65 @@ case "${fixture}:${tool}" in
     echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-2","project":{"uuid":"proj-1","name":"P"}}'
     ;;
   no-slug:chorus_get_proposal)
-    printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputUuids":["idea-2"]}'
+    printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputType":"idea","inputUuids":["idea-2"]}'
     ;;
   no-slug:chorus_list_tasks)
     echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
     ;;
+
+  # ----- Branch B fixtures (idea-completion report reminder) -----
+  report-positive:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-positive:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug here.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-positive:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  report-positive:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
+  report-existing:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-existing:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-existing:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  report-existing:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    ;;
+
+  report-not-last:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-not-last:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  report-not-last:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  report-not-last:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
+  report-quick-task:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  report-quick-task:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"manual","inputUuids":[]}'
+    ;;
+  report-quick-task:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    ;;
+  report-quick-task:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
   *)
     echo "" ;;
 esac
@@ -203,16 +345,20 @@ EVENT_JSON='{"tool_name":"chorus_admin_verify_task","tool_input":{"taskUuid":"ta
 
 # ----- Test runner -----
 
-# Args: name fixture variant expected_substring should_contain
+# Args: name fixture variant assertion_mode expected_substring forbidden_substring
 # variant in {claude, codex}
-# should_contain: "yes" -> stdout MUST contain expected_substring
-# should_contain: "no"  -> stdout MUST NOT contain "openspec archive"
+# assertion_mode:
+#   "must-contain"  -> stdout MUST contain $expected_substring
+#   "must-not-contain" -> stdout MUST NOT contain $forbidden_substring
+# (For Branch B fixtures, $forbidden_substring is `create idea-completion report`.
+#  For Branch A "no" fixtures, $forbidden_substring is `openspec archive`.)
 run_one() {
   local name="$1"
   local fixture="$2"
   local variant="$3"
-  local should_contain="$4"
+  local assertion_mode="$4"
   local expected="$5"
+  local forbidden="${6:-openspec archive}"
 
   local hook_dir
   if [ "$variant" = "claude" ]; then
@@ -292,7 +438,7 @@ run_one() {
   stdout=$(cat "$stdout_file")
   rm -f "$stdout_file" "$stderr_file"
 
-  if [ "$should_contain" = "yes" ]; then
+  if [ "$assertion_mode" = "must-contain" ]; then
     if printf '%s' "$stdout" | grep -q "$expected"; then
       echo "  PASS  $name [$variant]"
       PASS=$((PASS + 1))
@@ -303,9 +449,9 @@ run_one() {
       FAILED="$FAILED $name[$variant]"
     fi
   else
-    # should_contain == "no": archive reminder MUST be absent.
-    if printf '%s' "$stdout" | grep -q "openspec archive"; then
-      echo "  FAIL  $name [$variant]: stdout unexpectedly contains 'openspec archive'"
+    # must-not-contain: $forbidden MUST be absent.
+    if printf '%s' "$stdout" | grep -q "$forbidden"; then
+      echo "  FAIL  $name [$variant]: stdout unexpectedly contains '$forbidden'"
       printf '%s\n' "$stdout" | sed 's/^/         /'
       FAIL=$((FAIL + 1))
       FAILED="$FAILED $name[$variant]"
@@ -319,41 +465,66 @@ run_one() {
 echo "Sandbox: $SANDBOX"
 echo ""
 
-# ----- Branch 1: positive (slug + last task + CLI) -----
-run_one "positive"      "positive"      "claude" "yes" "openspec archive my-feature"
-run_one "positive"      "positive"      "codex"  "yes" "openspec archive my-feature"
+# ===== Branch A: OpenSpec archive trigger fixtures =====
+# (assertion: must-contain `openspec archive my-feature` / must-not-contain `openspec archive`)
 
-# ----- Branch 2: not-last-task -----
-run_one "not-last-task" "not-last-task" "claude" "no"  ""
-run_one "not-last-task" "not-last-task" "codex"  "no"  ""
+# A1: positive (slug + last task + CLI)
+run_one "positive"      "positive"      "claude" "must-contain" "openspec archive my-feature"
+run_one "positive"      "positive"      "codex"  "must-contain" "openspec archive my-feature"
 
-# ----- Branch 3: no-slug (free-form proposal) -----
-run_one "no-slug"       "no-slug"       "claude" "no"  ""
-run_one "no-slug"       "no-slug"       "codex"  "no"  ""
+# A2: not-last-task
+run_one "not-last-task" "not-last-task" "claude" "must-not-contain" "" "openspec archive"
+run_one "not-last-task" "not-last-task" "codex"  "must-not-contain" "" "openspec archive"
 
-# ----- Branch 4: no-cli (folder present, CLI absent) -----
-# Strip $SANDBOX/bin from PATH so `command -v openspec` fails. Folder is
-# still there in $SANDBOX/project/openspec. Hook must short-circuit at
-# step 4 (CLI gate) and emit no archive reminder.
-run_one "no-cli"        "no-cli"        "claude" "no"  ""
-run_one "no-cli"        "no-cli"        "codex"  "no"  ""
+# A3: no-slug (free-form proposal)
+run_one "no-slug"       "no-slug"       "claude" "must-not-contain" "" "openspec archive"
+run_one "no-slug"       "no-slug"       "codex"  "must-not-contain" "" "openspec archive"
 
-# ----- Branch 5: no-folder (CLI present, folder absent) -----
-# CLAUDE_PROJECT_DIR points at $SANDBOX (no openspec/ dir there). Hook
-# must short-circuit at step 4 (folder gate) before trying any MCP calls.
-# We don't actually exercise any MCP fixture here — the hook should bail
-# before reaching the wrappers. We pass "positive" only because the
-# unhandled-fixture branch in the shim returns an empty body and the hook
-# would then silent-skip on get_task. Either way the assertion ("no
-# archive reminder") holds.
-run_one "no-folder"     "no-folder"     "claude" "no"  ""
-run_one "no-folder"     "no-folder"     "codex"  "no"  ""
+# A4: no-cli (folder present, CLI absent). Strip $SANDBOX/bin from PATH
+# so `command -v openspec` fails. Folder is still there in
+# $SANDBOX/project/openspec. Hook must short-circuit at the CLI gate.
+run_one "no-cli"        "no-cli"        "claude" "must-not-contain" "" "openspec archive"
+run_one "no-cli"        "no-cli"        "codex"  "must-not-contain" "" "openspec archive"
 
-# ----- Branch 6: mode-off (explicit opt-out via env) -----
-# Both folder and CLI are present, but CHORUS_OPENSPEC_MODE=off. Hook
-# must honor the opt-out and exit silently.
-run_one "mode-off"      "mode-off"      "claude" "no"  ""
-run_one "mode-off"      "mode-off"      "codex"  "no"  ""
+# A5: no-folder (CLI present, folder absent). CLAUDE_PROJECT_DIR points
+# at $SANDBOX (no openspec/ dir there). Hook must short-circuit at the
+# folder gate before reaching any MCP call.
+run_one "no-folder"     "no-folder"     "claude" "must-not-contain" "" "openspec archive"
+run_one "no-folder"     "no-folder"     "codex"  "must-not-contain" "" "openspec archive"
+
+# A6: mode-off (explicit opt-out via env). Both folder and CLI are
+# present, but CHORUS_OPENSPEC_MODE=off. Hook must honor the opt-out.
+run_one "mode-off"      "mode-off"      "claude" "must-not-contain" "" "openspec archive"
+run_one "mode-off"      "mode-off"      "codex"  "must-not-contain" "" "openspec archive"
+
+# ===== Branch B: Idea-completion report reminder fixtures =====
+# (assertion: must-contain `create idea-completion report` /
+#  must-not-contain `create idea-completion report`)
+# These fixtures all use a non-OpenSpec proposal description (no slug
+# line), so Branch A silent-skips. The PATH still has the fake openspec
+# CLI and the synthetic project dir still has openspec/ so Branch A's
+# folder/CLI gates pass — the slug gate is what blocks Branch A here,
+# isolating the assertion to Branch B's behavior.
+
+# B1: report-positive — last task of an Idea verified, no report
+# Document yet -> reminder MUST fire.
+run_one "report-positive"   "report-positive"   "claude" "must-contain" "create idea-completion report"
+run_one "report-positive"   "report-positive"   "codex"  "must-contain" "create idea-completion report"
+
+# B2: report-existing — same conditions but a report Document already
+# exists for the Idea -> reminder MUST be silent.
+run_one "report-existing"   "report-existing"   "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-existing"   "report-existing"   "codex"  "must-not-contain" "" "create idea-completion report"
+
+# B3: report-not-last — at least one task is still in_progress
+# (non-terminal) -> reminder MUST be silent.
+run_one "report-not-last"   "report-not-last"   "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-not-last"   "report-not-last"   "codex"  "must-not-contain" "" "create idea-completion report"
+
+# B4: report-quick-task — proposal.inputType != "idea" (e.g. a
+# manually-created proposal) -> reminder MUST be silent at first gate.
+run_one "report-quick-task" "report-quick-task" "claude" "must-not-contain" "" "create idea-completion report"
+run_one "report-quick-task" "report-quick-task" "codex"  "must-not-contain" "" "create idea-completion report"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -245,7 +245,7 @@ export function registerCommonTools(api: any, mcpClient: ChorusMcpClient) {
       type: "object",
       properties: {
         projectUuid: { type: "string", description: "Project UUID" },
-        type: { type: "string", description: "Filter by type: prd | tech_design | adr | spec | guide" },
+        type: { type: "string", description: "Filter by type: prd | tech_design | adr | spec | guide | report" },
         page: { type: "number", description: "Page number (default: 1)" },
         pageSize: { type: "number", description: "Items per page (default: 20)" },
       },

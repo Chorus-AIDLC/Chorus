@@ -467,6 +467,12 @@ After all waves complete, output a markdown summary:
 
 ---
 
+### Phase 5b: Idea Completion Report (mandatory)
+
+A successful `/yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The tool's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
+
+---
+
 ## Error Handling
 
 | Scenario | Action |

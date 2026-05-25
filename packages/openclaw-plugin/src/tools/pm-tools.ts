@@ -139,7 +139,7 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
       type: "object",
       properties: {
         proposalUuid: { type: "string", description: "Proposal UUID" },
-        type: { type: "string", description: "Document type (prd, tech_design, adr, spec, guide)" },
+        type: { type: "string", description: "Document type (prd, tech_design, adr, spec, guide, report)" },
         title: { type: "string", description: "Document title" },
         content: { type: "string", description: "Document content (Markdown)" },
       },
@@ -215,7 +215,7 @@ export function registerPmTools(api: any, mcpClient: ChorusMcpClient) {
         proposalUuid: { type: "string", description: "Proposal UUID" },
         draftUuid: { type: "string", description: "Document draft UUID to update" },
         title: { type: "string", description: "New document title" },
-        type: { type: "string", description: "New document type (prd, tech_design, adr, spec, guide)" },
+        type: { type: "string", description: "New document type (prd, tech_design, adr, spec, guide, report)" },
         content: { type: "string", description: "New document content (Markdown)" },
       },
       required: ["proposalUuid", "draftUuid"],

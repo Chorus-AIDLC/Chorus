@@ -3,15 +3,20 @@
 // Coverage contract for permission-gated MCP tools.
 //
 // This map is the *source of truth for tests* (src/mcp/__tests__/server.test.ts):
-// it lets the suite assert that every tool in pm.ts / developer.ts / admin.ts
+// it lets the suite assert that every tool gated via `registerPermissionedTool`
 // is registered under the expected Permission, and catches drift when someone
-// adds a new tool without a gate. Production tool registration in pm.ts /
-// developer.ts / admin.ts uses `registerPermissionedTool` with its Permission
-// inlined at the call site — the map is intentionally not consulted at runtime
-// so the permission for each tool stays visible next to the handler.
+// adds a new tool without a gate. Production tool registration uses
+// `registerPermissionedTool` with its Permission inlined at the call site — the
+// map is intentionally not consulted at runtime so the permission for each tool
+// stays visible next to the handler.
 //
-// Public tools (public.ts) and session tools (session.ts) are NOT gated and
-// are intentionally absent from this map. See Tech Design §5.3.
+// Most public-namespaced tools in public.ts (read-only discovery, comments,
+// session, notifications) are NOT gated and are intentionally absent from this
+// map. The exception is `chorus_create_report`, which is public-namespaced
+// (no `pm_` prefix per add-idea-completion-report Tech Design §"MCP tool
+// contract") but IS gated on `document:write` — it appears here because it
+// goes through `registerPermissionedTool`. Session tools (session.ts) remain
+// ungated. See Tech Design §5.3.
 
 import type { Permission } from "@/lib/authz/types";
 
@@ -41,6 +46,9 @@ export const TOOL_PERMISSIONS = {
   // Document writes
   chorus_pm_create_document: "document:write",
   chorus_pm_update_document: "document:write",
+  // Idea-completion report (public-namespaced, gated on document:write).
+  // See add-idea-completion-report spec delta `mcp-tool-surface`.
+  chorus_create_report: "document:write",
   // Task-editing tools historically on the PM surface.
   // Mapped to proposal:write to preserve 0.6.x dev boundaries (AC4): dev has
   // task:write but not proposal:write, so dev keeps exactly its 0.6.x tool set.

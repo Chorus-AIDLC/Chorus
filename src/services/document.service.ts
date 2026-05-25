@@ -129,6 +129,41 @@ export async function listDocuments({
   return { documents, total };
 }
 
+// List Documents tied to one or more Proposals (e.g. all reports across an
+// Idea's approved Proposals). Returned with content so callers can render
+// Markdown without a follow-up `getDocument` per row.
+export async function listDocumentsByProposalUuids(
+  companyUuid: string,
+  proposalUuids: string[],
+  type?: string,
+): Promise<DocumentResponse[]> {
+  if (proposalUuids.length === 0) return [];
+
+  const where = {
+    companyUuid,
+    proposalUuid: { in: proposalUuids },
+    ...(type && { type }),
+  };
+
+  const rawDocuments = await prisma.document.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    select: {
+      uuid: true,
+      type: true,
+      title: true,
+      content: true,
+      version: true,
+      proposalUuid: true,
+      createdByUuid: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return Promise.all(rawDocuments.map((doc) => formatDocumentResponse(doc, true)));
+}
+
 // Get Document details
 export async function getDocument(
   companyUuid: string,

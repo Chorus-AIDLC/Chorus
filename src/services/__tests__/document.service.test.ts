@@ -98,6 +98,108 @@ describe("createDocument", () => {
 
     expect(result.proposalUuid).toBe(proposalUuid);
   });
+
+  // Coverage for add-idea-completion-report spec idea-completion-report:
+  // "A report is created with the correct type label" + "Server preserves
+  // report content byte-faithfully". `Document.type` is a free-form string,
+  // so the report subtype rides the existing createDocument code path.
+  it("should round-trip type='report' byte-faithfully (add-idea-completion-report)", async () => {
+    const proposalUuid = "proposal-0000-0000-0000-000000000099";
+    const reportTitle = "Idea X — completion report";
+    const reportContent =
+      "## Summary\nShipped feature X — T1+T2.\n\n" +
+      "## Decisions\n- Chose A over B because reasons.\n\n" +
+      "## Follow-ups\nNone.\n";
+
+    mockPrisma.document.create.mockResolvedValue(
+      makeDocRecord({
+        type: "report",
+        title: reportTitle,
+        content: reportContent,
+        proposalUuid,
+      })
+    );
+
+    const result = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    // Output preserves type, title, content, proposalUuid, version=1.
+    expect(result.type).toBe("report");
+    expect(result.title).toBe(reportTitle);
+    expect(result.content).toBe(reportContent);
+    expect(result.proposalUuid).toBe(proposalUuid);
+    expect(result.version).toBe(1);
+
+    // Prisma was asked to persist exactly what we sent — no synthesis,
+    // augmentation, or mutation by the service layer.
+    expect(mockPrisma.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: "report",
+          title: reportTitle,
+          content: reportContent,
+          proposalUuid,
+          version: 1,
+        }),
+      })
+    );
+  });
+
+  it("should accept multiple report Documents per Proposal (no service-side dedupe)", async () => {
+    const proposalUuid = "proposal-0000-0000-0000-000000000100";
+
+    // First write.
+    mockPrisma.document.create.mockResolvedValueOnce(
+      makeDocRecord({
+        uuid: "doc-report-1",
+        type: "report",
+        title: "First report",
+        content: "## Summary\nA",
+        proposalUuid,
+      })
+    );
+    const first = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: "First report",
+      content: "## Summary\nA",
+      proposalUuid,
+      createdByUuid,
+    });
+    expect(first.type).toBe("report");
+
+    // Second write to the same Proposal — service must not error.
+    mockPrisma.document.create.mockResolvedValueOnce(
+      makeDocRecord({
+        uuid: "doc-report-2",
+        type: "report",
+        title: "Second report",
+        content: "## Summary\nB",
+        proposalUuid,
+      })
+    );
+    const second = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: "Second report",
+      content: "## Summary\nB",
+      proposalUuid,
+      createdByUuid,
+    });
+    expect(second.type).toBe("report");
+    expect(second.uuid).toBe("doc-report-2");
+
+    expect(mockPrisma.document.create).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ===== getDocument =====

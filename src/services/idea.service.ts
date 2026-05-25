@@ -9,6 +9,8 @@ import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/er
 import { ApiError } from "@/lib/api-handler";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
+import * as documentService from "@/services/document.service";
+import * as proposalService from "@/services/proposal.service";
 import logger from "@/lib/logger";
 
 // ===== Derived Status =====
@@ -65,6 +67,13 @@ export interface IdeaResponse {
   createdBy: { type: string; uuid: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
+  // Number of completion-report Documents (type="report") under this idea's
+  // approved proposals. Always present on list rows; 0 when none exist.
+  reportCount?: number;
+  // Full content of completion-report Documents under this idea's approved
+  // proposals, sorted by createdAt descending. Only emitted by getIdea
+  // (single-entity reads), not by listIdeas — list rows carry the count only.
+  reports?: import("./document.service").DocumentResponse[];
 }
 
 // Cascade-move counts — emitted by moveIdea / moveIdeaPreview so REST/MCP/UI
@@ -219,10 +228,88 @@ export async function listIdeas({
   ]);
 
   const ideas = await Promise.all(rawIdeas.map(formatIdeaResponse));
+
+  // Attach reportCount to every row. Two extra queries per page (independent
+  // of page size) with early returns when there's nothing to count.
+  if (ideas.length > 0) {
+    const counts = await getReportCountsForIdeas(
+      companyUuid,
+      projectUuid,
+      ideas.map((i) => i.uuid),
+    );
+    for (const idea of ideas) {
+      idea.reportCount = counts.get(idea.uuid) ?? 0;
+    }
+  }
+
   return { ideas, total };
 }
 
-// Get Idea details
+// Batch-resolve `type="report"` Document counts grouped by Idea, used by
+// listIdeas. Fully short-circuited at every step so we don't pay the cost
+// when there are no idea-rooted approved proposals or no reports anywhere
+// in the project. Returns a Map for caller-side fold-back.
+async function getReportCountsForIdeas(
+  companyUuid: string,
+  projectUuid: string,
+  ideaUuids: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (ideaUuids.length === 0) return out;
+
+  // Step 1: idea-rooted approved proposals in this project. JSON
+  // Proposal.inputUuids forces a project-scoped scan, but `status="approved"`
+  // + `inputType="idea"` + same companyUuid keeps the row count tight.
+  const proposals = await prisma.proposal.findMany({
+    where: {
+      projectUuid,
+      companyUuid,
+      status: "approved",
+      inputType: "idea",
+    },
+    select: { uuid: true, inputUuids: true },
+  });
+  if (proposals.length === 0) return out;
+
+  // Step 2: keep only proposals that point at one of THIS PAGE's ideas.
+  // Build proposalUuid -> set of pageIdeaUuid associations along the way.
+  const ideaSet = new Set(ideaUuids);
+  const proposalUuidToIdeaUuids = new Map<string, string[]>();
+  for (const p of proposals) {
+    const inputs = (p.inputUuids as string[]) || [];
+    const matched = inputs.filter((u) => ideaSet.has(u));
+    if (matched.length > 0) proposalUuidToIdeaUuids.set(p.uuid, matched);
+  }
+  if (proposalUuidToIdeaUuids.size === 0) return out;
+
+  // Step 3: count reports grouped by proposalUuid, then fold to ideaUuid.
+  const grouped = await prisma.document.groupBy({
+    by: ["proposalUuid"],
+    where: {
+      companyUuid,
+      type: "report",
+      proposalUuid: { in: Array.from(proposalUuidToIdeaUuids.keys()) },
+    },
+    _count: { _all: true },
+  });
+
+  for (const g of grouped) {
+    if (!g.proposalUuid) continue;
+    const ideas = proposalUuidToIdeaUuids.get(g.proposalUuid);
+    if (!ideas) continue;
+    for (const ideaUuid of ideas) {
+      out.set(ideaUuid, (out.get(ideaUuid) ?? 0) + g._count._all);
+    }
+  }
+
+  return out;
+}
+
+// Get Idea details, including full content of any completion-report
+// Documents (type="report") attached to this idea's approved proposals.
+// Reports are sorted by createdAt descending. Each step short-circuits when
+// there's nothing to do, so the worst case for an idea with no proposals or
+// no reports is one extra cheap proposal lookup.
 export async function getIdea(
   companyUuid: string,
   uuid: string
@@ -235,7 +322,29 @@ export async function getIdea(
   });
 
   if (!idea) return null;
-  return formatIdeaResponse(idea);
+  const response = await formatIdeaResponse(idea);
+
+  // Step 1: idea-rooted approved proposals.
+  const proposals = await proposalService.getProposalsByIdeaUuid(
+    companyUuid,
+    idea.projectUuid,
+    uuid,
+  );
+  const approved = proposals.filter((p) => p.status === "approved");
+  if (approved.length === 0) {
+    response.reports = [];
+    return response;
+  }
+
+  // Step 2: pull report Documents across those proposals; helper already
+  // includes content + sorts by createdAt desc.
+  const reports = await documentService.listDocumentsByProposalUuids(
+    companyUuid,
+    approved.map((p) => p.uuid),
+    "report",
+  );
+  response.reports = reports;
+  return response;
 }
 
 // Get raw Idea data by UUID (internal use, for permission checks etc.)

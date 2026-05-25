@@ -136,16 +136,20 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_get_ideas` | List project Ideas (filterable by status, paginated) |
-| `chorus_get_idea` | Get a single Idea's details |
+| `chorus_get_ideas` | List project Ideas (filterable by status, paginated; rows include `reportCount`) |
+| `chorus_get_idea` | Get a single Idea's details (includes `reports[]` with full content) |
 | `chorus_get_available_ideas` | Get claimable Ideas (status=open) |
 
 ### Documents
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_get_documents` | List project documents (filterable by type: prd, tech_design, adr, spec, guide) |
+| `chorus_get_documents` | List project documents (filterable by type: prd, tech_design, adr, spec, guide, report) |
 | `chorus_get_document` | Get a single document's content |
+
+### Reports
+
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. `/yolo` writes one mandatorily; `/develop` offers it advisorily on last-task verify; a PostToolUse hook reminds if neither fired.
 
 ### Proposals
 
@@ -295,7 +299,7 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_claim_task` / `chorus_release_task` / `chorus_submit_for_verify` / `chorus_report_work` / `chorus_report_criteria_self_check` | `task:write` | Yes | **Yes** (0.7.0+) | Yes |
 | `chorus_claim_idea` / `chorus_release_idea` / `chorus_move_idea` / `chorus_pm_create_idea` / `chorus_pm_*_elaboration` | `idea:write` | No | Yes | Yes |
 | `chorus_pm_create_proposal` / `chorus_pm_*_proposal` / `chorus_pm_*_draft` / `chorus_create_tasks` / `chorus_pm_assign_task` / `chorus_update_task` (dependency edits via `addDependsOn`/`removeDependsOn`) | `proposal:write` | No | Yes | Yes |
-| `chorus_pm_create_document` / `chorus_pm_update_document` | `document:write` | No | Yes | Yes |
+| `chorus_pm_create_document` / `chorus_pm_update_document` / `chorus_create_report` | `document:write` | No | Yes | Yes |
 | `chorus_admin_create_project` / `chorus_admin_*_project_group` / `chorus_admin_move_project_to_group` | `project:write` | No | **Yes** (0.7.0+) | Yes |
 | `chorus_admin_approve_proposal` / `chorus_admin_close_proposal` | `proposal:admin` | No | No | Yes |
 | `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` / `chorus_mark_acceptance_criteria` / `chorus_admin_delete_task` | `task:admin` | No | No | Yes |

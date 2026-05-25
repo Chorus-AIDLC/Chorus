@@ -113,6 +113,7 @@ vi.mock("@/services/task.service", () => ({
 // Remaining services imported transitively by the MCP tool modules — stubbed empty
 // because registration never reaches any handler body.
 vi.mock("@/services/session.service", () => ({}));
+vi.mock("@/services/checkin.service", () => ({}));
 vi.mock("@/services/document.service", () => ({}));
 vi.mock("@/services/comment.service", () => ({}));
 vi.mock("@/services/assignment.service", () => ({}));
@@ -130,6 +131,8 @@ import { POST as approveProposalHandler } from "@/app/api/proposals/[uuid]/appro
 import { registerPmTools } from "@/mcp/tools/pm";
 import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
+import { registerPublicTools } from "@/mcp/tools/public";
+import { TOOL_PERMISSIONS } from "@/mcp/tools/permission-map";
 import { ROLE_PRESETS } from "@/lib/authz/presets";
 import type { AgentAuthContext } from "@/types/auth";
 import type { Permission } from "@/lib/authz/types";
@@ -180,8 +183,11 @@ function makeAgentAuth(permissions: Permission[], roles: string[] = []): AgentAu
 }
 
 // Run every permission-gated MCP registration module with the supplied auth
-// and return the set of registered tool names. This is the same enumeration
-// path /api/mcp takes when it constructs a server for a live session.
+// and return the set of gated tool names. This is the same enumeration path
+// /api/mcp takes when it constructs a server for a live session, then we keep
+// only names that go through `registerPermissionedTool` (TOOL_PERMISSIONS) so
+// non-gated public tools (chorus_get_project, chorus_add_comment, etc.) don't
+// pollute the assertions below.
 function enumerateGatedMcpTools(auth: AgentAuthContext): Set<string> {
   const { server, names } = makeCapturingServer();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -190,7 +196,10 @@ function enumerateGatedMcpTools(auth: AgentAuthContext): Set<string> {
   registerDeveloperTools(server as any, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerAdminTools(server as any, auth);
-  return new Set(names);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerPublicTools(server as any, auth);
+  const gated = new Set(Object.keys(TOOL_PERMISSIONS));
+  return new Set(names.filter((n) => gated.has(n)));
 }
 
 // Frozen 0.6.x tool-name baselines — the source of truth for preset parity assertions.
@@ -267,6 +276,13 @@ const PM_AGENT_ADDED_IN_0_7_0 = [
   "chorus_submit_for_verify",
   "chorus_report_criteria_self_check",
   "chorus_report_work",
+];
+
+// The +1 diff from add-idea-completion-report (0.9.0): public-namespaced
+// chorus_create_report tool gated on document:write — pm_agent preset
+// carries document:write so it appears in the pm visibility set.
+const PM_AGENT_ADDED_IN_0_9_0 = [
+  "chorus_create_report",
 ];
 
 // ===== Shared beforeEach =====
@@ -428,13 +444,15 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     expect(tools).toEqual(new Set(OLD_DEVELOPER_TOOLS));
   });
 
-  it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set", () => {
+  it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set plus 0.9.0 chorus_create_report", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.admin_agent], ["admin_agent"]);
     const tools = enumerateGatedMcpTools(auth);
     const expected = new Set([
       ...OLD_ADMIN_TOOLS,
       ...OLD_PM_TOOLS,
       ...OLD_DEVELOPER_TOOLS,
+      // 0.9.0 addition (document:write-gated, public-namespaced).
+      "chorus_create_report",
     ]);
     expect(tools).toEqual(expected);
   });
@@ -453,12 +471,12 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     }
   });
 
-  it("pm_agent diff vs 0.6.x pm baseline is exactly the 10 expected tools (5 project + 5 developer)", () => {
+  it("pm_agent diff vs 0.6.x pm baseline is exactly the 10 expected 0.7.0 tools plus the 0.9.0 chorus_create_report", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.pm_agent], ["pm_agent"]);
     const tools = enumerateGatedMcpTools(auth);
     const baseline = new Set(OLD_PM_TOOLS);
     const diff = Array.from(tools).filter((t) => !baseline.has(t)).sort();
-    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0].sort());
+    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0].sort());
   });
 
   it("pm_agent preset does not leak any *:admin-gated tool", () => {

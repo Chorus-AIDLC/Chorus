@@ -47,6 +47,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_pm_assign_task` | `proposal:write` |
 | `chorus_pm_create_document` | `document:write` |
 | `chorus_pm_update_document` | `document:write` |
+| `chorus_create_report` | `document:write` |
 | `chorus_claim_task` | `task:write` |
 | `chorus_release_task` | `task:write` |
 | `chorus_submit_for_verify` | `task:write` |
@@ -238,7 +239,7 @@ Tools available to all Agents.
 
 ### chorus_get_ideas
 
-**Description**: Get the list of Ideas for a project
+**Description**: Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -251,7 +252,7 @@ Tools available to all Agents.
 **Output**:
 ```json
 {
-  "ideas": [...],
+  "ideas": [{ ..., "reportCount": 0 }],
   "total": 10,
   "page": 1,
   "pageSize": 20
@@ -260,14 +261,14 @@ Tools available to all Agents.
 
 ### chorus_get_idea
 
-**Description**: Get detailed information for a single Idea
+**Description**: Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none).
 
 ### chorus_get_documents
 
@@ -277,7 +278,7 @@ Tools available to all Agents.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| type | string | No | Filter by type: prd, tech_design, adr, etc. |
+| type | string | No | Filter by type: prd, tech_design, adr, spec, guide, report |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
 
@@ -773,6 +774,45 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 
 > Note: After `chorus_admin_approve_proposal` runs, taskDrafts are auto-materialized into Tasks. Calling `chorus_create_tasks` with the same `proposalUuid` would produce duplicates — only call this for proposal-linked tasks added outside the standard draft-and-approve flow.
 
+### chorus_create_report
+
+**Description**: Persist an idea-completion summary as a Document with `type="report"` linked to the given Proposal. Call once, at end-of-Idea, after the last task verifies. This is a summary, not a detailed write-up — keep it short.
+
+The Markdown `content` MUST use these three sections in this order (the server stores bytes verbatim — these headers are a constraint, not a schema):
+
+```markdown
+## Summary
+1-3 sentences on what shipped. Plain prose. No bullet lists here.
+
+## Decisions
+Terse bullets — the key calls made during elaboration / proposal review and why this option not the alternative.
+
+## Follow-ups
+What's still open — link to a new Idea / blog / doc-update if tracked elsewhere; write "None" if there are no follow-ups.
+```
+
+**Required Permission**: `document:write` (the tool lives in the public-namespaced module — no `pm_` prefix — but is permission-gated; granted via the `pm_agent` / `admin_agent` presets, or via a custom permission added to a developer agent).
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| proposalUuid | string (UUID) | Yes | Proposal UUID whose tasks have all reached a terminal state (`done`/`closed`) |
+| title | string (1-200 chars) | Yes | Report title (e.g. `"Idea X — completion report"`) |
+| content | string (non-empty Markdown) | Yes | Markdown body — Summary / Decisions / Follow-ups |
+
+**Output**:
+```json
+{
+  "documentUuid": "...",
+  "projectUuid": "...",
+  "version": 1
+}
+```
+
+The created Document has `type="report"` (the tool name encodes the type — agents cannot mislabel reports), `proposalUuid` set to the provided value, and `projectUuid` resolved from the Proposal. Multiple reports per Proposal are allowed by design; the body is preserved byte-faithfully (modulo the Document content path's existing trailing-newline normalization). To revise a report, use `chorus_pm_update_document` (which increments `version`).
+
+**When to author**: at the end of an Idea pipeline — once every Task linked to the Idea (across all approved Proposals) has been admin-verified to `done`. The `/yolo` skill authors a report as a mandatory end-step; the `/develop` skill prompts for one as an advisory end-step; and the Chorus plugin's PostToolUse hook injects a reminder substring after the last `chorus_admin_verify_task` of an Idea when no `report` Document yet exists.
+
 ---
 
 ## Session Tools
@@ -1020,7 +1060,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| type | enum | Yes | Document type: prd, tech_design, adr, spec, guide |
+| type | enum | Yes | Document type: prd, tech_design, adr, spec, guide, report |
 | title | string | Yes | Document title |
 | content | string | No | Document content (Markdown) |
 | proposalUuid | string | No | Associated Proposal UUID |

@@ -23,6 +23,7 @@ import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
 import { prisma } from "@/lib/prisma";
+import { registerPermissionedTool } from "./register-helpers";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_project - Get project details and context
@@ -72,7 +73,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_ideas",
     {
-      description: "Get the list of Ideas for a project",
+      description: "Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         status: z.string().optional().describe("Filter by status: open, elaborating, proposal_created, completed, closed"),
@@ -109,7 +110,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get the list of Documents for a project",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        type: z.string().optional().describe("Filter by type: prd, tech_design, adr, etc."),
+        type: z.string().optional().describe("Filter by type: prd, tech_design, adr, spec, guide, report"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
       }),
@@ -425,7 +426,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_idea",
     {
-      description: "Get detailed information for a single Idea",
+      description: "Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
       }),
@@ -1055,6 +1056,71 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
 
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // chorus_create_report - Author an idea-completion summary Document.
+  //
+  // Public-namespaced (no pm_ prefix) but gated on document:write — see
+  // add-idea-completion-report Tech Design §"MCP tool contract" and
+  // spec delta `mcp-tool-surface`. The tool name encodes type="report"; the
+  // service writes that label unconditionally so agents cannot mislabel reports.
+  // The body is preserved byte-faithfully (modulo the Document.content write
+  // path's existing trailing-newline normalization).
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
+    "chorus_create_report",
+    {
+      description:
+        "Persist an idea-completion summary as a Document (type=\"report\") under the given Proposal. Call once, at end-of-Idea, after the last task verifies. This is a summary, not a detailed write-up — keep it short.\n\n" +
+        "Markdown `content` MUST use these three sections in this order:\n\n" +
+        "## Summary\n" +
+        "1-3 sentences on what shipped. Plain prose. No bullet lists here.\n\n" +
+        "## Decisions\n" +
+        "Terse bullets — the key calls made during elaboration / proposal review and why this option not the alternative. Skip obvious / trivial decisions; capture the ones a future reader would want context on.\n\n" +
+        "## Follow-ups\n" +
+        "What's still open — link to a new Idea / blog / doc-update if tracked elsewhere; write \"None\" if there are no follow-ups.\n\n" +
+        "Section bodies are free-form Markdown (links and inline code are fine). The three headers are the contract — keep them verbatim, top-level (`##`), in this order.",
+      inputSchema: z.object({
+        proposalUuid: z.string().uuid().describe("Proposal UUID whose tasks have all reached a terminal state"),
+        title: z.string().min(1).max(200).describe("Report title (e.g. 'Idea X — completion report')"),
+        content: z.string().min(1).describe("Markdown body — Summary / Decisions / Follow-ups"),
+      }),
+    },
+    async ({ proposalUuid, title, content }) => {
+      const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
+      if (!proposal) {
+        return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
+      }
+
+      const document = await documentService.createDocument({
+        companyUuid: auth.companyUuid,
+        projectUuid: proposal.projectUuid,
+        type: "report",
+        title,
+        content,
+        proposalUuid,
+        createdByUuid: auth.actorUuid,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                documentUuid: document.uuid,
+                projectUuid: proposal.projectUuid,
+                version: document.version,
+              },
+              null,
+              2
+            ),
+          },
+        ],
       };
     }
   );

@@ -8,6 +8,7 @@ import {
   getIdeaByUuid,
 } from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
+import { listDocumentsByProposalUuids } from "@/services/document.service";
 import { getTask, listTasks } from "@/services/task.service";
 import { listProjects } from "@/services/project.service";
 import { listProjectGroups } from "@/services/project-group.service";
@@ -130,6 +131,43 @@ export async function getTasksForProposalAction(
   });
 
   return { success: true as const, data: tasks };
+}
+
+// Aggregate `type="report"` Documents across an Idea's approved Proposals.
+// Server-side aggregation avoids the client doing N round-trips, and keeps
+// the Idea-level "reports" surface consistent regardless of how many
+// approved Proposals an Idea has.
+export async function getReportsForIdeaAction(
+  projectUuid: string,
+  ideaUuid: string,
+) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+
+  const proposals = await getProposalsByIdeaUuid(
+    auth.companyUuid,
+    projectUuid,
+    ideaUuid,
+  );
+  const approvedUuids = proposals
+    .filter((p) => p.status === "approved")
+    .map((p) => p.uuid);
+
+  const reports = await listDocumentsByProposalUuids(
+    auth.companyUuid,
+    approvedUuids,
+    "report",
+  );
+
+  // Sort newest-first — service already returns desc, but resort defensively
+  // so callers don't depend on implementation order.
+  reports.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  return { success: true as const, data: reports };
 }
 
 export async function getProjectsAndGroupsAction() {
