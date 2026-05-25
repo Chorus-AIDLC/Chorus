@@ -114,6 +114,20 @@ Before elaborating, understand the full picture:
    chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
    ```
 
+### Step 4.5: Brainstorm Mode (Optional Prelude)
+
+If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer the user a brainstorm prelude before structured elaboration. Ask once via `AskUserQuestion` (header `"Brainstorm"`, two options: `"Already clear, run structured elaboration"` and `"Brainstorm first to explore directions"`).
+
+- **"Already clear":** Skip to Step 5.
+- **"Brainstorm first":** Invoke the `/brainstorm` skill. See `/brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
+
+When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
+
+- If the synthesized round answers cover everything → call `chorus_pm_validate_elaboration` with `issues: []` to resolve elaboration.
+- If gaps remain → call `chorus_pm_validate_elaboration` with `issues + followUpQuestions` to start a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
+
+Either outcome ends Step 4.5; skip Step 5.
+
 ### Step 5: Elaborate on the Idea
 
 **Every Idea should go through elaboration.** Skip only when requirements are completely unambiguous (e.g., bug fix with clear steps). Elaboration improves Proposal quality and reduces rejection cycles.
@@ -222,6 +236,8 @@ chorus_pm_skip_elaboration({
       - **Unclear** — Ask clarifying questions via another comment
 
 6. **Validate the elaboration:**
+
+   `chorus_pm_validate_elaboration` is the **single commit gate for the entire elaboration phase**, NOT a per-round close. Calling it with `issues: []` resolves the whole elaboration (sets `idea.elaborationStatus = "resolved"`); calling it with `issues + followUpQuestions` opens a new round while keeping elaboration in progress. Do not call validate after every round — call it once when you believe elaboration is done, or when you want to start a follow-up round.
 
    ```
    chorus_pm_validate_elaboration({

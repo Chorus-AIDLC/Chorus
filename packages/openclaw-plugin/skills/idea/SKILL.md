@@ -135,6 +135,20 @@ Before elaborating, understand the full picture:
    chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
    ```
 
+### Step 4.5: Brainstorm Mode (Optional Prelude)
+
+If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer a brainstorm prelude before structured elaboration. Surface the choice to the user using whatever interactive prompt mechanism your host provides — same idiom OpenClaw uses elsewhere in this skill. Two choices: `"Already clear, run structured elaboration"` and `"Brainstorm first to explore directions"`.
+
+- **"Already clear":** Skip to Step 5.
+- **"Brainstorm first":** Invoke the `/brainstorm` skill. See `/brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
+
+When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
+
+- If the synthesized round answers cover everything → call `chorus_validate_elaboration` with `issues: []` to resolve elaboration.
+- If gaps remain → call `chorus_validate_elaboration` with `issues + followUpQuestions` to start a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
+
+Either outcome ends Step 4.5; skip Step 5.
+
 ### Step 5: Elaborate on the Idea
 
 **Every Idea should go through elaboration.** Elaboration improves Proposal quality and reduces rejection cycles.
@@ -232,6 +246,8 @@ After answers are submitted, **@mention the answerer** with a summary of your un
    - **Unclear** — Ask clarifying questions via another comment
 
 #### Validating the Elaboration
+
+`chorus_validate_elaboration` is the **single commit gate for the entire elaboration phase**, NOT a per-round close. Calling it with `issues: []` resolves the whole elaboration (sets `idea.elaborationStatus = "resolved"`); calling it with `issues + followUpQuestions` opens a new round while keeping elaboration in progress. Do not call validate after every round — call it once when you believe elaboration is done, or when you want to start a follow-up round.
 
 When answers are satisfactory:
 
