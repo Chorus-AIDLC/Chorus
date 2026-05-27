@@ -12,6 +12,7 @@ import {
   Send,
   RefreshCw,
   AtSign,
+  FileText,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/animation";
@@ -82,6 +83,8 @@ function getTypeIcon(action: string) {
       return { Icon: Send, color: "text-blue-500" };
     case "task_status_changed":
       return { Icon: RefreshCw, color: "text-blue-500" };
+    case "report_created":
+      return { Icon: FileText, color: "text-violet-600" };
     default:
       return { Icon: Send, color: "text-muted-foreground" };
   }

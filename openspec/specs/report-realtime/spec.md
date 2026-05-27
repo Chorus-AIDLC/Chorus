@@ -1,7 +1,9 @@
 # report-realtime Specification
 
 ## Purpose
-TBD - created by archiving change add-report-realtime-notification. Update Purpose after archive.
+
+Hook idea-completion report creation into Chorus's existing real-time SSE + notification pipeline. When an agent calls `chorus_create_report`, the system emits two `RealtimeEvent`s (document/created + idea/updated) and produces bell-popup notifications for the people invested in the Idea — so the bell, the Idea overview's Reports list, and the Idea Tracker's `reportCount` badge all update without a manual refresh.
+
 ## Requirements
 ### Requirement: Creating a report-typed Document SHALL fan out a `document/created` `RealtimeEvent`
 
@@ -46,17 +48,23 @@ When the report-typed Document being created is linked to a Proposal whose `inpu
 - **THEN** the server MUST NOT publish any `entityType = "idea"` event from the report-realtime code path
 - **AND** the `document/created` event from the previous Requirement MUST still be published
 
-### Requirement: Creating an idea-rooted report SHALL produce a `report_created` `Notification` for the Idea creator and assignee
+### Requirement: Creating an idea-rooted report SHALL produce a `report_created` `Notification` for the Idea creator, assignee, and their human owners
 
-When a report is created under an idea-rooted Proposal, `documentService.createDocument` MUST emit an Activity event with `targetType: "idea"`, `targetUuid` equal to the resolved Idea UUID, and `action: "report_created"`. The `notification-listener` SHALL recognize `action: "report_created"` and produce one `Notification` row per (Idea creator, Idea assignee) recipient pair, deduplicated, excluding the actor themselves. The persisted `Notification.action` MUST equal the literal string `"report_created"`. Reports under non-idea-rooted Proposals MUST NOT produce notifications. No new `NotificationPreference` field is introduced; recipients always receive the notification subject only to the existing dedup + actor-exclusion logic.
+When a report is created under an idea-rooted Proposal, `documentService.createDocument` MUST emit an Activity event with `targetType: "idea"`, `targetUuid` equal to the resolved Idea UUID, and `action: "report_created"`. The `notification-listener` SHALL recognize `action: "report_created"` and produce one `Notification` row per recipient in the set: (Idea creator, Idea assignee, creator's human owner if creator is an agent, assignee's human owner if assignee is an agent), deduplicated, excluding the actor themselves. The creator's `recipientType` MUST be resolved dynamically (`"user"` or `"agent"`) — `Idea.createdByUuid` can refer to either. The persisted `Notification.action` MUST equal the literal string `"report_created"`. Reports under non-idea-rooted Proposals MUST NOT produce notifications. No new `NotificationPreference` field is introduced; recipients always receive the notification subject only to the existing dedup + actor-exclusion logic.
 
-#### Scenario: Notifications are sent to creator and assignee, dedup-aware
+#### Scenario: Notifications are sent to creator, assignee, and assignee's owner; dedup-aware
 
-- **GIVEN** an Idea `I` whose `createdByUuid = U_creator` and whose `assigneeType = "agent"`, `assigneeUuid = A`
+- **GIVEN** an Idea `I` whose `createdByUuid = U_creator` (a user) and whose `assigneeType = "agent"`, `assigneeUuid = A`, where agent `A` has human owner `U_owner`
 - **AND** an approved idea-rooted Proposal `P` referencing `I`
-- **WHEN** an agent `A_actor` (where `A_actor != A`) calls `chorus_create_report` for `P`
-- **THEN** exactly two `Notification` rows MUST be created — one with `recipientType = "user"`, `recipientUuid = U_creator`; the other with `recipientType = "agent"`, `recipientUuid = A`
-- **AND** both rows MUST have `action = "report_created"`, `entityType = "idea"`, `entityUuid = I.uuid`, `actorUuid = A_actor.uuid`
+- **WHEN** an agent `A_actor` (where `A_actor != A` and `A_actor != U_owner`) calls `chorus_create_report` for `P`
+- **THEN** exactly three `Notification` rows MUST be created — `recipientType = "user"` for `U_creator`; `recipientType = "agent"` for `A`; `recipientType = "user"` for `U_owner`
+- **AND** all three rows MUST have `action = "report_created"`, `entityType = "idea"`, `entityUuid = I.uuid`, `actorUuid = A_actor.uuid`
+
+#### Scenario: An agent Idea creator surfaces both the agent and its human owner
+
+- **GIVEN** an Idea `I` whose `createdByUuid = A_creator` is an agent with human owner `U_creator_owner`, and whose `assigneeType = null`
+- **WHEN** an agent `A_actor` (where `A_actor != A_creator` and `A_actor != U_creator_owner`) calls `chorus_create_report` for an approved Proposal under `I`
+- **THEN** exactly two `Notification` rows MUST be created — `recipientType = "agent"` for `A_creator`; `recipientType = "user"` for `U_creator_owner`
 
 #### Scenario: The actor is excluded from their own notification
 
