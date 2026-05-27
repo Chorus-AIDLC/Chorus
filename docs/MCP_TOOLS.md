@@ -799,6 +799,7 @@ What's still open — link to a new Idea / blog / doc-update if tracked elsewher
 | proposalUuid | string (UUID) | Yes | Proposal UUID whose tasks have all reached a terminal state (`done`/`closed`) |
 | title | string (1-200 chars) | Yes | Report title (e.g. `"Idea X — completion report"`) |
 | content | string (non-empty Markdown) | Yes | Markdown body — Summary / Decisions / Follow-ups |
+| force | boolean | No (default `false`) | When `false`, calls against a proposal that already has a report return an error and create nothing. Set `true` only to deliberately add another report to the same proposal. |
 
 **Output**:
 ```json
@@ -809,7 +810,9 @@ What's still open — link to a new Idea / blog / doc-update if tracked elsewher
 }
 ```
 
-The created Document has `type="report"` (the tool name encodes the type — agents cannot mislabel reports), `proposalUuid` set to the provided value, and `projectUuid` resolved from the Proposal. Multiple reports per Proposal are allowed by design; the body is preserved byte-faithfully (modulo the Document content path's existing trailing-newline normalization). To revise a report, use `chorus_pm_update_document` (which increments `version`).
+The created Document has `type="report"` (the tool name encodes the type — agents cannot mislabel reports), `proposalUuid` set to the provided value, and `projectUuid` resolved from the Proposal. The body is preserved byte-faithfully (modulo the Document content path's existing trailing-newline normalization). To revise a report, use `chorus_pm_update_document` (which increments `version`).
+
+By default the tool refuses to create a second report on a proposal that already has one — the call returns an MCP error result (`isError: true`) with a message indicating that a report already exists and that `force=true` is the way to bypass. This guard fires even when the call comes from the `/yolo` Phase 5b end-step or the PostToolUse hook reminder, so duplicate completion reports per Idea become impossible regardless of caller. To intentionally author an additional report (e.g. after a major rework, separate-audience cut), pass `force: true`.
 
 **When to author**: at the end of an Idea pipeline — once every Task linked to the Idea (across all approved Proposals) has been admin-verified to `done`. The `/yolo` skill authors a report as a mandatory end-step; the `/develop` skill prompts for one as an advisory end-step; and the Chorus plugin's PostToolUse hook injects a reminder substring after the last `chorus_admin_verify_task` of an Idea when no `report` Document yet exists.
 

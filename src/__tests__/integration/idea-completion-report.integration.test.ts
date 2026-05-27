@@ -477,3 +477,158 @@ describe("idea-completion-report end-to-end (AC #1)", () => {
     expect(store.documents.length).toBe(0);
   });
 });
+
+// End-to-end coverage of the duplicate-rejection gate (spec
+// `create-report-force`). Walks the same code path as the AC#1 happy-path
+// suite above but exercises the second-call-rejected and force-bypass
+// branches against the same in-memory Prisma store.
+describe("chorus_create_report duplicate-rejection gate (force flag)", () => {
+  it("first call with force omitted succeeds; exactly one report Document persists", async () => {
+    seedFinishedIdea();
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAgentAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "First report",
+      content: REPORT_BODY,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const payload = JSON.parse(result.content[0].text) as { documentUuid: string };
+    expect(payload.documentUuid).toBeTypeOf("string");
+
+    const reportRows = store.documents.filter(
+      (d) => d.type === "report" && d.proposalUuid === APPROVED_PROPOSAL_UUID,
+    );
+    expect(reportRows.length).toBe(1);
+    expect(reportRows[0].uuid).toBe(payload.documentUuid);
+  });
+
+  it("second call with force omitted is rejected (semantic substring match, not verbatim)", async () => {
+    seedFinishedIdea();
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAgentAuth(["document:write"]));
+
+    // First call seeds the prior report.
+    const firstResult = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "First report",
+      content: REPORT_BODY,
+    });
+    expect(firstResult.isError).toBeUndefined();
+
+    // Second call default-rejects.
+    const secondResult = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "Second report",
+      content: REPORT_BODY,
+    });
+
+    expect(secondResult.isError).toBe(true);
+    const text = secondResult.content[0].text.toLowerCase();
+    // Implementer's choice of wording — assert on two semantic substrings.
+    expect(text).toContain("force");
+    expect(text).toMatch(/report|already|exist/);
+
+    // No second row written.
+    const reportRows = store.documents.filter(
+      (d) => d.type === "report" && d.proposalUuid === APPROVED_PROPOSAL_UUID,
+    );
+    expect(reportRows.length).toBe(1);
+  });
+
+  it("explicit force=false matches the omitted-force behavior (rejected with semantic substrings)", async () => {
+    seedFinishedIdea();
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAgentAuth(["document:write"]));
+
+    await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "First report",
+      content: REPORT_BODY,
+    });
+
+    const secondResult = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "Second report",
+      content: REPORT_BODY,
+      force: false,
+    });
+
+    expect(secondResult.isError).toBe(true);
+    const text = secondResult.content[0].text.toLowerCase();
+    expect(text).toContain("force");
+    expect(text).toMatch(/report|already|exist/);
+
+    const reportRows = store.documents.filter(
+      (d) => d.type === "report" && d.proposalUuid === APPROVED_PROPOSAL_UUID,
+    );
+    expect(reportRows.length).toBe(1);
+  });
+
+  it("force=true succeeds when a prior report exists; a second row is persisted with a different documentUuid", async () => {
+    seedFinishedIdea();
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAgentAuth(["document:write"]));
+
+    const firstResult = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "First report",
+      content: REPORT_BODY,
+    });
+    const firstUuid = JSON.parse(firstResult.content[0].text).documentUuid;
+
+    const secondResult = await tools["chorus_create_report"].handler({
+      proposalUuid: APPROVED_PROPOSAL_UUID,
+      title: "Second report (forced)",
+      content: REPORT_BODY,
+      force: true,
+    });
+
+    expect(secondResult.isError).toBeUndefined();
+    const secondUuid = JSON.parse(secondResult.content[0].text).documentUuid;
+    expect(secondUuid).not.toBe(firstUuid);
+
+    // Two report rows now under the proposal — both persisted, second is a
+    // new row, not an update of the first.
+    const reportRows = store.documents.filter(
+      (d) => d.type === "report" && d.proposalUuid === APPROVED_PROPOSAL_UUID,
+    );
+    expect(reportRows.length).toBe(2);
+    expect(new Set(reportRows.map((r) => r.uuid))).toEqual(
+      new Set([firstUuid, secondUuid]),
+    );
+
+    // The dashboard surfaces both reports under the same Idea (newest first
+    // — same ordering contract as the AC#1 multi-proposal aggregation test).
+    const action = await getReportsForIdeaAction(PROJECT_UUID, IDEA_UUID);
+    expect(action.success).toBe(true);
+    if (!action.success) return;
+    expect(action.data.length).toBe(2);
+  });
+
+  it("force=true on a fresh proposal still works (no regression for callers that always pass force=true)", async () => {
+    seedFinishedIdea();
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAgentAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      proposalUuid: SECOND_APPROVED_PROPOSAL_UUID,
+      title: "Solo forced report",
+      content: REPORT_BODY,
+      force: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const reportRows = store.documents.filter(
+      (d) => d.type === "report" && d.proposalUuid === SECOND_APPROVED_PROPOSAL_UUID,
+    );
+    expect(reportRows.length).toBe(1);
+  });
+});

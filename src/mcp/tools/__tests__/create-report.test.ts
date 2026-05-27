@@ -14,6 +14,7 @@ const mockProposalService = vi.hoisted(() => ({
 
 const mockDocumentService = vi.hoisted(() => ({
   createDocument: vi.fn(),
+  listDocumentsByProposalUuids: vi.fn(),
 }));
 
 const mockPrisma = vi.hoisted(() => ({
@@ -87,6 +88,10 @@ function makeAuth(permissions: string[]): AgentAuthContext {
 beforeEach(() => {
   vi.clearAllMocks();
   Object.keys(tools).forEach((k) => delete tools[k]);
+  // Default: no prior reports — keeps every happy-path test green under the
+  // new force-flag duplicate gate. Tests that exercise the duplicate branch
+  // override this with a non-empty mockResolvedValue.
+  mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([]);
 });
 
 // ============================================================
@@ -144,6 +149,9 @@ describe("chorus_create_report description (template constraint)", () => {
     expect(desc).toContain("Summary");
     expect(desc).toContain("Decisions");
     expect(desc).toContain("Follow-ups");
+    // Description must teach the agent about the default-reject duplicate
+    // behavior — pointing at `force: true` as the explicit opt-in.
+    expect(desc.toLowerCase()).toContain("force");
   });
 });
 
@@ -211,6 +219,68 @@ describe("chorus_create_report input schema (spec delta mcp-tool-surface)", () =
       // so we assert the parsed result has no `type` key surfaced to the handler.
     });
     expect((parsed as Record<string, unknown>).type).toBeUndefined();
+  });
+
+  it("accepts an optional force boolean (default false) and rejects non-boolean force values", () => {
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+    const schema = tools["chorus_create_report"].config.inputSchema as {
+      parse: (input: unknown) => { force?: unknown };
+    };
+
+    // Default: force omitted -> resolves to false after default-merge.
+    const parsedDefault = schema.parse({
+      proposalUuid: PROPOSAL_UUID,
+      title: "t",
+      content: "c",
+    });
+    expect((parsedDefault as Record<string, unknown>).force).toBe(false);
+
+    // Explicit force: true -> survives parse.
+    const parsedTrue = schema.parse({
+      proposalUuid: PROPOSAL_UUID,
+      title: "t",
+      content: "c",
+      force: true,
+    });
+    expect((parsedTrue as Record<string, unknown>).force).toBe(true);
+
+    // Explicit force: false -> survives parse.
+    const parsedFalse = schema.parse({
+      proposalUuid: PROPOSAL_UUID,
+      title: "t",
+      content: "c",
+      force: false,
+    });
+    expect((parsedFalse as Record<string, unknown>).force).toBe(false);
+
+    // String "yes" is not a boolean — Zod rejects it.
+    expect(() =>
+      schema.parse({
+        proposalUuid: PROPOSAL_UUID,
+        title: "t",
+        content: "c",
+        force: "yes",
+      })
+    ).toThrow();
+  });
+
+  it("force field carries a non-empty .describe text mentioning the duplicate-rejection contract", () => {
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+    // Zod v4 surfaces `.describe(...)` text via the top-level `.description`
+    // accessor on the schema itself (no _def lookup needed for v4).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const schema = tools["chorus_create_report"].config.inputSchema as any;
+    const forceField = schema.shape.force;
+    const description: string | undefined = forceField?.description;
+
+    expect(description).toBeTruthy();
+    expect((description ?? "").length).toBeGreaterThan(0);
+    // Field-level .describe explains the duplicate-rejection contract — the
+    // exact wording belongs to the implementer, but it must mention "report"
+    // (what's being rejected) so the contract is visible at the schema level.
+    expect((description ?? "").toLowerCase()).toContain("report");
   });
 });
 
@@ -350,5 +420,166 @@ describe("chorus_create_report handler", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain(`'${status}'`);
     expect(mockDocumentService.createDocument).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// Duplicate-report gate (force flag, spec `create-report-force`)
+// ============================================================
+
+describe("chorus_create_report duplicate-report gate (force flag)", () => {
+  const approvedProposal = {
+    uuid: PROPOSAL_UUID,
+    projectUuid: PROJECT_UUID,
+    companyUuid: COMPANY_UUID,
+    status: "approved",
+  };
+
+  const successfulCreate = {
+    uuid: DOC_UUID,
+    type: "report",
+    title: "Idea X — completion report",
+    content: "## Summary\nbody\n",
+    version: 1,
+    proposalUuid: PROPOSAL_UUID,
+    createdBy: { type: "agent", uuid: ACTOR_UUID, name: "Test Agent" },
+    createdAt: new Date("2026-05-25T00:00:00Z").toISOString(),
+    updatedAt: new Date("2026-05-25T00:00:00Z").toISOString(),
+  };
+
+  const validInput = {
+    proposalUuid: PROPOSAL_UUID,
+    title: "Idea X — completion report",
+    content:
+      "## Summary\nbody\n\n## Decisions\n- A.\n\n## Follow-ups\nNone.\n",
+  };
+
+  it("force omitted, no prior report -> success; listDocumentsByProposalUuids checked once with (companyUuid, [proposalUuid], 'report')", async () => {
+    mockProposalService.getProposalByUuid.mockResolvedValue(approvedProposal);
+    mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([]);
+    mockDocumentService.createDocument.mockResolvedValue(successfulCreate);
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler(validInput);
+
+    expect(result.isError).toBeUndefined();
+    expect(mockDocumentService.listDocumentsByProposalUuids).toHaveBeenCalledTimes(1);
+    expect(mockDocumentService.listDocumentsByProposalUuids).toHaveBeenCalledWith(
+      COMPANY_UUID,
+      [PROPOSAL_UUID],
+      "report"
+    );
+    expect(mockDocumentService.createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("force omitted, prior report exists -> isError, message conveys 'report' + 'force'; createDocument NOT called", async () => {
+    mockProposalService.getProposalByUuid.mockResolvedValue(approvedProposal);
+    mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([
+      {
+        uuid: "prior-report-uuid",
+        type: "report",
+        title: "Earlier report",
+        proposalUuid: PROPOSAL_UUID,
+        version: 1,
+        createdBy: null,
+        createdAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+        updatedAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+      },
+    ]);
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler(validInput);
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text.toLowerCase();
+    // Implementer's choice of wording — assert on two semantic substrings.
+    expect(text).toContain("force");
+    expect(text).toMatch(/report|already|exist/);
+    expect(mockDocumentService.createDocument).not.toHaveBeenCalled();
+  });
+
+  it("force=false explicit, prior report exists -> behaves identically to omitted force", async () => {
+    mockProposalService.getProposalByUuid.mockResolvedValue(approvedProposal);
+    mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([
+      {
+        uuid: "prior-report-uuid",
+        type: "report",
+        title: "Earlier report",
+        proposalUuid: PROPOSAL_UUID,
+        version: 1,
+        createdBy: null,
+        createdAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+        updatedAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+      },
+    ]);
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      ...validInput,
+      force: false,
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text.toLowerCase();
+    expect(text).toContain("force");
+    expect(text).toMatch(/report|already|exist/);
+    expect(mockDocumentService.createDocument).not.toHaveBeenCalled();
+  });
+
+  it("force=true, prior report exists -> createDocument called once, success", async () => {
+    mockProposalService.getProposalByUuid.mockResolvedValue(approvedProposal);
+    mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([
+      {
+        uuid: "prior-report-uuid",
+        type: "report",
+        title: "Earlier report",
+        proposalUuid: PROPOSAL_UUID,
+        version: 1,
+        createdBy: null,
+        createdAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+        updatedAt: new Date("2026-05-20T00:00:00Z").toISOString(),
+      },
+    ]);
+    mockDocumentService.createDocument.mockResolvedValue(successfulCreate);
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      ...validInput,
+      force: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockDocumentService.createDocument).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toEqual({
+      documentUuid: DOC_UUID,
+      projectUuid: PROJECT_UUID,
+      version: 1,
+    });
+  });
+
+  it("force=true, no prior report -> createDocument called once, success (no regression for always-force callers)", async () => {
+    mockProposalService.getProposalByUuid.mockResolvedValue(approvedProposal);
+    mockDocumentService.listDocumentsByProposalUuids.mockResolvedValue([]);
+    mockDocumentService.createDocument.mockResolvedValue(successfulCreate);
+
+    const server = makeServer();
+    registerPublicTools(server as never, makeAuth(["document:write"]));
+
+    const result = await tools["chorus_create_report"].handler({
+      ...validInput,
+      force: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockDocumentService.createDocument).toHaveBeenCalledTimes(1);
   });
 });

@@ -1075,7 +1075,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_create_report",
     {
       description:
-        "Persist an idea-completion summary as a Document (type=\"report\") under the given Proposal. Call once, at end-of-Idea, after the last task verifies. This is a summary, not a detailed write-up — keep it short.\n\n" +
+        "Persist an idea-completion summary as a Document (type=\"report\") under the given Proposal. Only write a report once every Task in the Proposal is complete. By default a proposal already carrying a report rejects further calls — pass `force: true` to add another deliberately. Keep it short — this is a summary, not a write-up.\n\n" +
         "Markdown `content` MUST use these three sections in this order:\n\n" +
         "## Summary\n" +
         "1-3 sentences on what shipped. Plain prose. No bullet lists here.\n\n" +
@@ -1088,25 +1088,49 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         proposalUuid: z.string().uuid().describe("Proposal UUID whose tasks have all reached a terminal state"),
         title: z.string().min(1).max(200).describe("Report title (e.g. 'Idea X — completion report')"),
         content: z.string().min(1).describe("Markdown body — Summary / Decisions / Follow-ups"),
+        force: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Default false. When false, calls against a proposal that already has a report return an error and create nothing. Set true only to deliberately add another report to the same proposal."
+          ),
       }),
     },
-    async ({ proposalUuid, title, content }) => {
+    async ({ proposalUuid, title, content, force }) => {
       const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
       if (!proposal) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
 
-      // A completion report only makes sense once the proposal's drafts have
-      // materialized into real Tasks. Reject draft / pending / rejected /
-      // closed states explicitly so a misfiring agent can't write reports
-      // under unmaterialized or revoked proposals. Re-authoring a report on
-      // an approved proposal is allowed — multiple reports per proposal are
-      // by design (see proposal.md Q4).
       if (proposal.status !== "approved") {
         return {
           content: [{ type: "text", text: `Proposal status must be 'approved' to author a completion report (got '${proposal.status}')` }],
           isError: true,
         };
+      }
+
+      // Duplicate-report gate. By default a proposal carries at most one
+      // type="report" Document — see spec `create-report-force`. Callers that
+      // genuinely want a second report (re-author after a redo, separate-audience
+      // cut) opt in via force=true.
+      if (force !== true) {
+        const existingReports = await documentService.listDocumentsByProposalUuids(
+          auth.companyUuid,
+          [proposalUuid],
+          "report"
+        );
+        if (existingReports.length > 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "A report already exists for this proposal. Pass force=true to add another report to the same proposal.",
+              },
+            ],
+            isError: true,
+          };
+        }
       }
 
       const document = await documentService.createDocument({
