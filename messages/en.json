@@ -835,7 +835,8 @@
       "elaboration_requested": "Elaboration requested",
       "elaboration_answered": "Elaboration answered",
       "mentioned": "You were mentioned",
-      "agent_checkin": "Agent connected successfully"
+      "agent_checkin": "Agent connected successfully",
+      "report_created": "New report"
     },
     "preferences": {
       "title": "Notification Preferences",

@@ -111,8 +111,15 @@ function useRelativeTime(t: ReturnType<typeof useTranslations>) {
 // ===== Entity navigation =====
 
 function getEntityPath(notification: Notification): string {
-  const { entityType, entityUuid, projectUuid } = notification;
+  const { action, entityType, entityUuid, projectUuid } = notification;
   const base = `/projects/${projectUuid}`;
+  // Reports notify on the parent Idea (entityType: "idea"). Deep-link to the
+  // dashboard's Idea panel — `panel=<ideaUuid>` selects which Idea to open and
+  // `tab=overview` opens the overview tab where ReportsList renders inline
+  // (matching `move-idea-dialog.tsx` and `[ideaUuid]/page.tsx`).
+  if (action === "report_created") {
+    return `${base}/dashboard?panel=${entityUuid}&tab=overview`;
+  }
   switch (entityType) {
     case "task":
       return `${base}/tasks/${entityUuid}`;

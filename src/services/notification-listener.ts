@@ -35,6 +35,7 @@ function resolveNotificationType(action: string, targetType: string): string | n
     "idea:elaboration_followup": "elaboration_requested",
     "idea:elaboration_resolved": "elaboration_answered",
     "idea:elaboration_skipped": "elaboration_answered",
+    "idea:report_created": "report_created",
   };
   return mapping[key] ?? null;
 }
@@ -301,6 +302,45 @@ async function resolveRecipients(
       return reqRecipients;
     }
 
+    case "report_created": {
+      const reportIdea = await prisma.idea.findUnique({
+        where: { uuid: targetUuid },
+        select: {
+          createdByUuid: true,
+          assigneeType: true,
+          assigneeUuid: true,
+        },
+      });
+      if (!reportIdea) return [];
+      const reportRecipients: Recipient[] = [];
+
+      // Creator: resolve type — Idea.createdByUuid can refer to either a user or an agent.
+      const creatorType = await resolveActorType(reportIdea.createdByUuid);
+      if (creatorType) {
+        reportRecipients.push({ type: creatorType, uuid: reportIdea.createdByUuid });
+        // If creator is an agent, also notify their human owner (if any).
+        if (creatorType === "agent") {
+          const creatorOwner = await resolveAgentOwner("agent", reportIdea.createdByUuid);
+          if (creatorOwner) reportRecipients.push(creatorOwner);
+        }
+      }
+
+      // Assignee + (if agent) their owner.
+      if (reportIdea.assigneeType && reportIdea.assigneeUuid) {
+        reportRecipients.push({
+          type: reportIdea.assigneeType,
+          uuid: reportIdea.assigneeUuid,
+        });
+        if (reportIdea.assigneeType === "agent") {
+          const assigneeOwner = await resolveAgentOwner("agent", reportIdea.assigneeUuid);
+          if (assigneeOwner) reportRecipients.push(assigneeOwner);
+        }
+      }
+
+      return reportRecipients;
+      // Dedup + actor-exclusion happen upstream in handleActivity.
+    }
+
     case "elaboration_answered": {
       // Notify Idea assignee (the PM agent)
       const ansIdea = await prisma.idea.findUnique({
@@ -451,6 +491,8 @@ function buildMessage(
       return `${actorName} requested elaboration on idea "${entityTitle}"`;
     case "elaboration_answered":
       return `${actorName} answered elaboration questions for idea "${entityTitle}"`;
+    case "report_created":
+      return `${actorName} generated a new report on idea "${entityTitle}"`;
     default:
       return `${actorName} performed an action on "${entityTitle}"`;
   }

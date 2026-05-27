@@ -836,7 +836,8 @@
       "elaboration_requested": "需求澄清已请求",
       "elaboration_answered": "需求澄清已回答",
       "mentioned": "你被提及了",
-      "agent_checkin": "Agent 已成功连接"
+      "agent_checkin": "Agent 已成功连接",
+      "report_created": "新报告"
     },
     "preferences": {
       "title": "通知偏好",

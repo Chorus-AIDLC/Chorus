@@ -4,6 +4,11 @@
 
 import { prisma, TransactionClient } from "@/lib/prisma";
 import { formatCreatedBy } from "@/lib/uuid-resolver";
+import { eventBus } from "@/lib/event-bus";
+import * as activityService from "@/services/activity.service";
+import logger from "@/lib/logger";
+
+const docLogger = logger.child({ module: "document.service" });
 
 // ===== Type Definitions =====
 
@@ -224,7 +229,113 @@ export async function createDocument(
     },
   });
 
+  // Report-only side effects: SSE fan-out (document + idea) and Activity-driven
+  // notification. All three are best-effort — the Document insert above is the
+  // source of truth, so any failure here is logged and swallowed. See spec
+  // `report-realtime` Requirement 1 (failure semantics).
+  if (params.type === "report") {
+    await emitReportSideEffects(params, doc.uuid);
+  }
+
   return formatDocumentResponse(doc, true);
+}
+
+// Encapsulates the report-only fan-out: document/created event, idea/updated
+// event, and the report_created Activity. Each step has its own try/catch so a
+// later failure cannot suppress an earlier success (and vice versa). Resolving
+// the parent Idea is gated on (a) the proposal being idea-rooted and (b) a
+// non-empty inputUuids array — anything else skips the idea-scoped events
+// without being treated as an error.
+async function emitReportSideEffects(
+  params: DocumentCreateParams,
+  reportUuid: string,
+): Promise<void> {
+  // Step 1 — document/created. Always fires for report-typed docs, regardless
+  // of whether the parent proposal is idea-rooted.
+  try {
+    eventBus.emitChange({
+      companyUuid: params.companyUuid,
+      projectUuid: params.projectUuid,
+      entityType: "document",
+      entityUuid: reportUuid,
+      action: "created",
+      actorUuid: params.createdByUuid,
+    });
+  } catch (err) {
+    docLogger.warn(
+      { err, reportUuid, proposalUuid: params.proposalUuid },
+      "Failed to emit document/created event for report",
+    );
+  }
+
+  if (!params.proposalUuid) return;
+
+  // Step 2 — resolve idea. Direct Prisma read instead of going through
+  // proposal.service to avoid a service-layer circular import (proposal.service
+  // already imports from document.service for createDocumentFromProposal).
+  let ideaUuid: string | null = null;
+  try {
+    const proposal = await prisma.proposal.findFirst({
+      where: { uuid: params.proposalUuid, companyUuid: params.companyUuid },
+      select: { inputType: true, inputUuids: true },
+    });
+    if (proposal && proposal.inputType === "idea" && Array.isArray(proposal.inputUuids)) {
+      const first = (proposal.inputUuids as string[])[0];
+      if (typeof first === "string" && first.length > 0) ideaUuid = first;
+    }
+  } catch (err) {
+    docLogger.warn(
+      { err, reportUuid, proposalUuid: params.proposalUuid },
+      "Failed to resolve parent Idea for report side effects",
+    );
+    return;
+  }
+
+  if (!ideaUuid) return;
+
+  // Step 3 — idea/updated event. Drives IdeaTrackerList reportCount refresh.
+  try {
+    eventBus.emitChange({
+      companyUuid: params.companyUuid,
+      projectUuid: params.projectUuid,
+      entityType: "idea",
+      entityUuid: ideaUuid,
+      action: "updated",
+      actorUuid: params.createdByUuid,
+    });
+  } catch (err) {
+    docLogger.warn(
+      { err, reportUuid, ideaUuid, proposalUuid: params.proposalUuid },
+      "Failed to emit idea/updated event for report",
+    );
+  }
+
+  // Step 4 — Activity event. Routed through activity.service so the existing
+  // notification-listener picks it up; the new "report_created" action mapping
+  // lives in notification-listener.ts (separate task in this proposal).
+  try {
+    const actor = await formatCreatedBy(params.createdByUuid);
+    const actorType = actor?.type ?? "agent";
+    await activityService.createActivity({
+      companyUuid: params.companyUuid,
+      projectUuid: params.projectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType,
+      actorUuid: params.createdByUuid,
+      action: "report_created",
+      value: {
+        reportUuid,
+        proposalUuid: params.proposalUuid,
+        reportTitle: params.title,
+      },
+    });
+  } catch (err) {
+    docLogger.warn(
+      { err, reportUuid, ideaUuid, proposalUuid: params.proposalUuid },
+      "Failed to record report_created Activity",
+    );
+  }
 }
 
 // Update Document

@@ -10,6 +10,9 @@ const mockPrisma = vi.hoisted(() => ({
     update: vi.fn(),
     delete: vi.fn(),
   },
+  proposal: {
+    findFirst: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -17,6 +20,28 @@ const mockFormatCreatedBy = vi.fn();
 vi.mock("@/lib/uuid-resolver", () => ({
   formatCreatedBy: (...args: unknown[]) => mockFormatCreatedBy(...args),
 }));
+
+// ===== Event bus mock =====
+const mockEventBus = vi.hoisted(() => ({
+  emitChange: vi.fn(),
+}));
+vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
+
+// ===== Activity service mock =====
+const mockActivityService = vi.hoisted(() => ({
+  createActivity: vi.fn(),
+}));
+vi.mock("@/services/activity.service", () => mockActivityService);
+
+// ===== Logger mock — capture warn calls so error-path tests can assert =====
+const mockLogger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  child: vi.fn(),
+}));
+vi.mock("@/lib/logger", () => {
+  mockLogger.child.mockReturnValue(mockLogger);
+  return { default: mockLogger };
+});
 
 import {
   createDocument,
@@ -54,6 +79,11 @@ const createdByInfo = { type: "agent", uuid: createdByUuid, name: "PM Agent" };
 beforeEach(() => {
   vi.clearAllMocks();
   mockFormatCreatedBy.mockResolvedValue(createdByInfo);
+  // Default: proposal not found — non-report tests don't care, report tests
+  // override per-case.
+  mockPrisma.proposal.findFirst.mockResolvedValue(null);
+  mockActivityService.createActivity.mockResolvedValue(undefined);
+  mockLogger.child.mockReturnValue(mockLogger);
 });
 
 // ===== createDocument =====
@@ -199,6 +229,244 @@ describe("createDocument", () => {
     expect(second.uuid).toBe("doc-report-2");
 
     expect(mockPrisma.document.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ===== createDocument: report-realtime side effects =====
+// Covers spec `report-realtime` Requirements 1–3:
+//   (1) document/created event always fires for type=report
+//   (2) idea/updated event fires only when proposal.inputType === "idea"
+//   (3) report_created Activity fires only when an idea is resolved
+// All three are best-effort; errors must NOT roll back the document insert.
+describe("createDocument — report-realtime side effects", () => {
+  const proposalUuid = "proposal-0000-0000-0000-000000000200";
+  const ideaUuid = "idea-0000-0000-0000-000000000001";
+  const reportTitle = "Idea X — completion report";
+  const reportContent = "## Summary\nShipped.\n\n## Decisions\n-\n\n## Follow-ups\nNone.\n";
+
+  function arrangeReportCreate(overrides: Record<string, unknown> = {}) {
+    mockPrisma.document.create.mockResolvedValue(
+      makeDocRecord({
+        type: "report",
+        title: reportTitle,
+        content: reportContent,
+        proposalUuid,
+        ...overrides,
+      }),
+    );
+  }
+
+  it("emits document/created and idea/updated events + records report_created Activity for an idea-rooted proposal", async () => {
+    arrangeReportCreate();
+    mockPrisma.proposal.findFirst.mockResolvedValue({
+      inputType: "idea",
+      inputUuids: [ideaUuid],
+    });
+
+    const result = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    expect(result.uuid).toBe(docUuid);
+
+    // Document-level event — Requirement 1.
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith({
+      companyUuid,
+      projectUuid,
+      entityType: "document",
+      entityUuid: docUuid,
+      action: "created",
+      actorUuid: createdByUuid,
+    });
+
+    // Idea-level event — Requirement 2.
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith({
+      companyUuid,
+      projectUuid,
+      entityType: "idea",
+      entityUuid: ideaUuid,
+      action: "updated",
+      actorUuid: createdByUuid,
+    });
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
+
+    // Activity — Requirement 3.
+    expect(mockActivityService.createActivity).toHaveBeenCalledWith({
+      companyUuid,
+      projectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType: createdByInfo.type, // resolved via formatCreatedBy
+      actorUuid: createdByUuid,
+      action: "report_created",
+      value: {
+        reportUuid: docUuid,
+        proposalUuid,
+        reportTitle,
+      },
+    });
+  });
+
+  it("does not emit any side-effect events for non-report Documents", async () => {
+    mockPrisma.document.create.mockResolvedValue(makeDocRecord({ type: "tech_design" }));
+
+    await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "tech_design",
+      title: "Tech Design",
+      content: "...",
+      proposalUuid,
+      createdByUuid,
+    });
+
+    expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+    // Proposal lookup is gated on type === "report", so we shouldn't even hit
+    // the DB for non-report documents.
+    expect(mockPrisma.proposal.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("emits only document/created when the parent Proposal is not idea-rooted", async () => {
+    arrangeReportCreate();
+    mockPrisma.proposal.findFirst.mockResolvedValue({
+      inputType: "document",
+      inputUuids: ["doc-0000-0000-0000-000000000999"],
+    });
+
+    await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    // document/created fires — Requirement 1 still holds.
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "document", action: "created" }),
+    );
+    // No idea event, no Activity.
+    expect(mockEventBus.emitChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "idea" }),
+    );
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("skips idea-scoped side effects when proposalUuid is missing on a report-typed Document", async () => {
+    // Edge case: a report-typed Document without a proposalUuid (not produced
+    // by chorus_create_report — that tool requires a proposal — but createDocument
+    // accepts proposalUuid as optional, so the branch must be safe).
+    mockPrisma.document.create.mockResolvedValue(
+      makeDocRecord({ type: "report", proposalUuid: null }),
+    );
+
+    await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      createdByUuid,
+    });
+
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "document", action: "created" }),
+    );
+    expect(mockPrisma.proposal.findFirst).not.toHaveBeenCalled();
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("does not throw and still returns the new document when eventBus.emitChange throws", async () => {
+    arrangeReportCreate();
+    mockPrisma.proposal.findFirst.mockResolvedValue({
+      inputType: "idea",
+      inputUuids: [ideaUuid],
+    });
+    mockEventBus.emitChange.mockImplementationOnce(() => {
+      throw new Error("redis exploded");
+    });
+
+    const result = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    // Document insert is the source of truth — it MUST succeed end-to-end.
+    expect(result.uuid).toBe(docUuid);
+    expect(result.type).toBe("report");
+
+    // Failure was logged at warn level (Requirement 1 failure semantics).
+    expect(mockLogger.warn).toHaveBeenCalled();
+
+    // The second emitChange (idea/updated) and the Activity still fire — a
+    // failure in step 1 must not poison subsequent best-effort steps.
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
+    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "report_created" }),
+    );
+  });
+
+  it("does not throw when activityService.createActivity rejects, and still emits SSE events", async () => {
+    arrangeReportCreate();
+    mockPrisma.proposal.findFirst.mockResolvedValue({
+      inputType: "idea",
+      inputUuids: [ideaUuid],
+    });
+    mockActivityService.createActivity.mockRejectedValueOnce(new Error("activity write failed"));
+
+    const result = await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    expect(result.uuid).toBe(docUuid);
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn).toHaveBeenCalled();
+  });
+
+  it("tolerates a malformed proposal.inputUuids (non-array) and emits only document/created", async () => {
+    arrangeReportCreate();
+    mockPrisma.proposal.findFirst.mockResolvedValue({
+      inputType: "idea",
+      inputUuids: null, // legacy / drift — must not throw
+    });
+
+    await createDocument({
+      companyUuid,
+      projectUuid,
+      type: "report",
+      title: reportTitle,
+      content: reportContent,
+      proposalUuid,
+      createdByUuid,
+    });
+
+    expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "document" }),
+    );
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
   });
 });
 

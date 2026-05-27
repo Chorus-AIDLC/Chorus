@@ -705,6 +705,262 @@ describe("notification-listener", () => {
     });
   });
 
+  describe("report_created", () => {
+    it("should map idea:report_created to report_created", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "agent-assignee",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call[0].action).toBe("report_created");
+    });
+
+    it("should produce notifications for creator + assignee + assignee's owner when actor is neither", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) {
+          return Promise.resolve({ title: "Idea Title" });
+        }
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent",
+          assigneeUuid: "agent-assignee",
+        });
+      });
+      // Default agent.findUnique returns ownerUuid: "owner-uuid", so the assignee
+      // agent contributes its human owner as a third recipient. Creator is a user
+      // (default user.findUnique returns truthy), so no additional owner there.
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).toHaveBeenCalledTimes(1);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(3);
+      const creator = call.find((n: any) => n.recipientUuid === "user-creator");
+      const assignee = call.find((n: any) => n.recipientUuid === "agent-assignee");
+      const assigneeOwner = call.find((n: any) => n.recipientUuid === "owner-uuid");
+      expect(creator).toBeDefined();
+      expect(creator.recipientType).toBe("user");
+      expect(creator.action).toBe("report_created");
+      expect(assignee).toBeDefined();
+      expect(assignee.recipientType).toBe("agent");
+      expect(assignee.action).toBe("report_created");
+      expect(assigneeOwner).toBeDefined();
+      expect(assigneeOwner.recipientType).toBe("user");
+      // Actor should be excluded
+      expect(call.every((n: any) => n.recipientUuid !== "agent-actor")).toBe(true);
+    });
+
+    it("should produce 0 notifications when actor is same UUID as both creator and assignee", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "same-uuid",
+        assigneeType: "user",
+        assigneeUuid: "same-uuid",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "user",
+        actorUuid: "same-uuid",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("should skip the assignee tuple when assigneeType or assigneeUuid is null", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) {
+          return Promise.resolve({ title: "Idea Title" });
+        }
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: null,
+          assigneeUuid: null,
+        });
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(1);
+      expect(call[0].recipientUuid).toBe("user-creator");
+    });
+
+    it("should build a non-empty English message containing actorName and entityTitle", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) {
+          return Promise.resolve({ title: "Q4 Roadmap" });
+        }
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent",
+          assigneeUuid: "agent-assignee",
+        });
+      });
+      mockPrisma.agent.findUnique.mockResolvedValue({
+        uuid: "agent-actor",
+        name: "Reporter Bot",
+        ownerUuid: null,
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call[0].message).toContain("Reporter Bot");
+      expect(call[0].message).toContain("Q4 Roadmap");
+      expect(call[0].message.length).toBeGreaterThan(0);
+    });
+
+    it("should bypass PREF_FIELD_MAP — getPreferences is never consulted for report_created", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "agent-assignee",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      // The listener short-circuits the preference filter when there is no
+      // PREF_FIELD_MAP entry, so getPreferences must never be called for
+      // a report_created notification.
+      expect(mockNotificationService.getPreferences).not.toHaveBeenCalled();
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      // creator + assignee + assignee's owner (default ownerUuid: "owner-uuid")
+      expect(call).toHaveLength(3);
+    });
+
+    it("should resolve agent creator as type 'agent' and pull in creator's human owner", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "Idea Title" });
+        return Promise.resolve({
+          createdByUuid: "agent-creator",
+          assigneeType: null,
+          assigneeUuid: null,
+        });
+      });
+      // Creator UUID resolves as agent (not user) — first user lookup must return null,
+      // then agent lookup returns the agent. Subsequent agent lookup returns owner info.
+      mockPrisma.user.findUnique.mockImplementation((opts: any) => {
+        if (opts.where?.uuid === "agent-creator") return Promise.resolve(null);
+        return Promise.resolve({ uuid: "user-1" });
+      });
+      mockPrisma.agent.findUnique.mockImplementation((opts: any) => {
+        if (opts.where?.uuid === "agent-creator") {
+          // resolveActorType selects { uuid: true }, resolveAgentOwner selects { ownerUuid: true }.
+          return Promise.resolve({ uuid: "agent-creator", ownerUuid: "user-creator-owner" });
+        }
+        return Promise.resolve(null);
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const creator = call.find((n: any) => n.recipientUuid === "agent-creator");
+      const owner = call.find((n: any) => n.recipientUuid === "user-creator-owner");
+      expect(creator).toBeDefined();
+      expect(creator.recipientType).toBe("agent");
+      expect(owner).toBeDefined();
+      expect(owner.recipientType).toBe("user");
+      // Agent's creator + creator's owner — exactly 2 entries, no assignee.
+      expect(call).toHaveLength(2);
+    });
+
+    it("should pull in assignee's human owner when assignee is an agent", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "Idea Title" });
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent",
+          assigneeUuid: "agent-assignee",
+        });
+      });
+      // user-creator resolves as user (default). agent-assignee owner = user-assignee-owner.
+      mockPrisma.agent.findUnique.mockImplementation((opts: any) => {
+        if (opts.where?.uuid === "agent-assignee") {
+          return Promise.resolve({ uuid: "agent-assignee", ownerUuid: "user-assignee-owner" });
+        }
+        return Promise.resolve(null);
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(3);
+      const owner = call.find((n: any) => n.recipientUuid === "user-assignee-owner");
+      expect(owner).toBeDefined();
+      expect(owner.recipientType).toBe("user");
+    });
+
+    it("should dedup the owner when creator and assignee are agents sharing the same human owner", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "Idea Title" });
+        return Promise.resolve({
+          createdByUuid: "agent-creator",
+          assigneeType: "agent",
+          assigneeUuid: "agent-assignee",
+        });
+      });
+      mockPrisma.user.findUnique.mockImplementation((opts: any) => {
+        if (opts.where?.uuid === "agent-creator" || opts.where?.uuid === "agent-assignee") {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve({ uuid: "user-1" });
+      });
+      // Both agents share the same owner UUID.
+      mockPrisma.agent.findUnique.mockImplementation((opts: any) => {
+        if (opts.where?.uuid === "agent-creator" || opts.where?.uuid === "agent-assignee") {
+          return Promise.resolve({ uuid: opts.where.uuid, ownerUuid: "shared-owner" });
+        }
+        return Promise.resolve(null);
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const ownerEntries = call.filter((n: any) => n.recipientUuid === "shared-owner");
+      expect(ownerEntries).toHaveLength(1);
+      // 2 agents + 1 dedupped shared owner = 3 entries total.
+      expect(call).toHaveLength(3);
+    });
+  });
+
   describe("recipient resolution edge cases", () => {
     it("should handle comment_added excluding comment author", async () => {
       mockPrisma.task.findUnique.mockResolvedValue({
