@@ -12,6 +12,7 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { cn } from "@/lib/utils";
+import { isImeComposing } from "@/lib/ime";
 
 // Extend Mention to support custom `mentionType` attribute (user | agent)
 const CustomMention = Mention.extend({
@@ -275,6 +276,7 @@ function createSuggestionPopupRenderer(
 
   keyDownRef.current = {
     onKeyDown: ({ event }: KeyDownHandlerProps) => {
+      if (isImeComposing(event)) return false;
       if (event.key === "ArrowUp") {
         selectedIdx = selectedIdx <= 0 ? items.length - 1 : selectedIdx - 1;
         renderList();
@@ -475,6 +477,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           "data-placeholder": placeholder || "",
         },
         handleKeyDown: (_view, event) => {
+          if (isImeComposing(event)) return false;
           if (
             event.key === "Enter" &&
             !event.shiftKey &&

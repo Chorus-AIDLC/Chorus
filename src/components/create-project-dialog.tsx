@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { isImeComposing } from "@/lib/ime";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -115,6 +116,7 @@ export function CreateProjectDialog({
               placeholder={t("projectGroups.projectTitlePlaceholder")}
               className="h-10 rounded-lg border-[#E5E2DC]"
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && title.trim()) handleSubmit();
               }}
             />

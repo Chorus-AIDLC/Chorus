@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { isImeComposing } from "@/lib/ime";
 
 interface CreateProjectGroupDialogProps {
   open: boolean;
@@ -100,6 +101,7 @@ export function CreateProjectGroupDialog({
               placeholder={t("projectGroups.groupNamePlaceholder")}
               className="h-10 rounded-lg border-[#E5E2DC]"
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && name.trim()) handleSubmit();
               }}
             />

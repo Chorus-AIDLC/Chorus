@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { isImeComposing } from "@/lib/ime";
 
 interface NewIdeaDialogProps {
   open: boolean;
@@ -84,6 +85,7 @@ export function NewIdeaDialog({
               placeholder={t("newIdea.titlePlaceholder")}
               autoFocus
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && !e.shiftKey && title.trim()) {
                   e.preventDefault();
                   handleSubmit();

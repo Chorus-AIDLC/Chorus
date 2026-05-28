@@ -177,6 +177,7 @@ Rules:
 - For layout and spacing, use Tailwind CSS utility classes
 - If a needed component doesn't exist yet, add it via `npx shadcn@latest add <component>` — do not create custom implementations
 - Follow existing component usage patterns in the codebase for consistency
+- **IME composition guard for Enter handlers**: Any `onKeyDown` (or framework-equivalent like Tiptap's `editorProps.handleKeyDown`) that treats `Enter` as a submit / navigate / advance action MUST first call `isImeComposing(e)` from `@/lib/ime` and early-return if true. This prevents CJK / Japanese / Korean IME users from losing in-progress text when pressing Enter to confirm a candidate word. Do NOT inline `e.nativeEvent.isComposing` checks — route through the helper for consistency and testability.
 
 ## Skill & Plugin Documentation
 

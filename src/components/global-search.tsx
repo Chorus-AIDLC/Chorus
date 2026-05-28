@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { clientLogger } from "@/lib/logger-client";
+import { isImeComposing } from "@/lib/ime";
 
 interface SearchResult {
   entityType: "task" | "idea" | "proposal" | "document" | "project" | "project_group";
@@ -217,6 +218,7 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
   }, [router]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent) => {
+    if (isImeComposing(e)) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIndex((prev) => {

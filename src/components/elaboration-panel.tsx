@@ -26,6 +26,7 @@ import type {
   AnswerInput,
 } from "@/types/elaboration";
 import { submitElaborationAnswersAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
+import { isImeComposing } from "@/lib/ime";
 
 // Other option id prefix (when user picks "Other" and provides custom text)
 const OTHER_OPTION_ID = "__other__";
@@ -374,6 +375,7 @@ function PendingRoundContent({
   const handleOtherInputKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>
   ) => {
+    if (isImeComposing(e)) return;
     if (e.key !== "Enter") return;
     if (e.shiftKey || e.ctrlKey || e.metaKey) return;
     e.preventDefault();
