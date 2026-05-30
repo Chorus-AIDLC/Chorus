@@ -368,3 +368,100 @@ line markdown out of LLM context. See
 ## License
 
 AGPL-3.0 — see [LICENSE.txt](LICENSE.txt)
+
+## FAQ
+
+### What is Chorus?
+
+Chorus is an **agent harness** — the infrastructure that wraps around LLM agents to manage session lifecycle, task state, sub-agent orchestration, observability, and failure recovery. It enables multiple AI Agents (with fine-grained, configurable permissions) and humans to collaborate through the full workflow from requirements to delivery.
+
+### How does Chorus differ from other agent frameworks?
+
+| Feature | Chorus | Others |
+|---------|--------|--------|
+| **Permission System** | 5×3 matrix (idea/proposal/task/document × write/admin) | Fixed roles (PM/Dev/Admin) |
+| **Workflow** | AI-DLC (Idea → Proposal → Execute → Verify) | Single agent execution |
+| **Collaboration** | Multi-agent + Human collaboration | Agent-only |
+| **Reversed Conversation** | AI proposes, humans verify | Human instructs, AI executes |
+
+### What is the AI-DLC methodology?
+
+**AI-DLC (AI-Driven Development Lifecycle)** is the core philosophy: **Reversed Conversation** — AI proposes, humans verify.
+
+```
+Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Verify ──> Done
+  ^          ^               ^                     ^          ^         ^
+Human     idea:write     proposal:write         task:write   *:admin    *:admin
+creates   + elaborate    + drafts                + reports   + verifies + closes
+```
+
+### How to install Chorus?
+
+**npm (simplest):**
+```bash
+npm install -g @chorus-aidlc/chorus
+chorus
+```
+
+**Docker (standalone):**
+```bash
+docker compose -f docker-compose.local.yml up
+```
+
+**Docker (full stack):**
+```bash
+docker compose up
+```
+
+### What are the default credentials?
+
+Default login: `admin@chorus.local` / `chorus`
+
+### What deployment options are available?
+
+| Method | Command |
+|--------|---------|
+| npm (simplest) | `npm i -g @chorus-aidlc/chorus && chorus` |
+| Docker (standalone) | `docker compose -f docker-compose.local.yml up` |
+| Docker (full stack) | `docker compose up` |
+| AWS CDK | Deploy to AWS |
+
+### What is PGlite mode?
+
+PGlite is an embedded, single-process PostgreSQL — great for local single-user usage. If you plan to run multiple agents or users simultaneously, use an external PostgreSQL via `DATABASE_URL=postgresql://...`.
+
+### What permissions are available?
+
+The permission system is a **5 × 3 matrix**:
+
+| Resource | Write | Admin |
+|----------|-------|-------|
+| Idea | Create + Elaborate | Verify + Close |
+| Proposal | Draft | Approve/Reject |
+| Task | Report | Verify |
+| Document | Write | Manage |
+| Project | Create | Admin |
+
+### What are the key features?
+
+- **IdeaTracker Dashboard** — Track ideas through elaboration
+- **Proposal Review** — AI-generated plans with PRD + Task DAG
+- **Kanban Board** — Real-time task flow with presence indicators
+- **Pixel Workspace** — Visual agent status representation
+- **Agent Team** — Parallel execution with multiple agents
+- **OpenSpec Integration** — Claude Code OpenSpec-aware mode
+
+### What is the `/yolo` skill?
+
+`/yolo` skill enables full-auto AI-DLC pipeline: **Idea → Proposal → Execute → Verify** with Agent Team parallel execution.
+
+### Where can I find help?
+
+- **Documentation**: [chorus-ai.dev](https://chorus-ai.dev)
+- **Discord**: [Join us](https://discord.gg/SwcCMaMmR)
+- **GitHub Issues**: [Issues](https://github.com/Chorus-AIDLC/Chorus/issues)
+- **Blog**: [Changelog](https://chorus-ai.dev/blog/)
+
+### License
+
+MIT License — Open source with full code reuse.
