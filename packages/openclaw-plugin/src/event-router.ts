@@ -1,11 +1,21 @@
 import type { ChorusMcpClient } from "./mcp-client.js";
-import type { ChorusPluginConfig } from "./config.js";
 import type { SseNotificationEvent } from "./sse-listener.js";
+
+/**
+ * Wake callback injected by the entry. Runs an embedded agent turn on the main
+ * agent's session with `message` as the prompt (see `wake.ts` → createWake,
+ * which calls `api.runtime.agent.runEmbeddedAgent`).
+ *
+ * `contextKey` identifies the originating Chorus action+entity (e.g.
+ * `chorus:mentioned:<uuid>`); it is used for the run id / logging. The wake
+ * resolves the main agent session + model and DROPS (logs + returns) when it
+ * cannot run — it never throws, so the SSE service stays alive.
+ */
+export type ChorusWakeFn = (message: string, contextKey: string) => void;
 
 export interface ChorusEventRouterOptions {
   mcpClient: ChorusMcpClient;
-  config: ChorusPluginConfig;
-  triggerAgent: (message: string, metadata?: Record<string, unknown>) => void;
+  wake: ChorusWakeFn;
   logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
 
@@ -28,17 +38,13 @@ interface NotificationDetail {
 
 export class ChorusEventRouter {
   private readonly mcpClient: ChorusMcpClient;
-  private readonly config: ChorusPluginConfig;
-  private readonly triggerAgent: ChorusEventRouterOptions["triggerAgent"];
+  private readonly wake: ChorusWakeFn;
   private readonly logger: ChorusEventRouterOptions["logger"];
-  private readonly projectFilter: Set<string>;
 
   constructor(opts: ChorusEventRouterOptions) {
     this.mcpClient = opts.mcpClient;
-    this.config = opts.config;
-    this.triggerAgent = opts.triggerAgent;
+    this.wake = opts.wake;
     this.logger = opts.logger;
-    this.projectFilter = new Set(opts.config.projectUuids ?? []);
   }
 
   /**
@@ -67,6 +73,15 @@ export class ChorusEventRouter {
   // Internal
   // ---------------------------------------------------------------------------
 
+  /**
+   * Build the dedupe contextKey for a notification. Identical action+entity
+   * bursts collapse to the same key so OpenClaw's queue suppresses the
+   * duplicate wake.
+   */
+  private contextKeyFor(action: string, entityUuid: string): string {
+    return `chorus:${action}:${entityUuid}`;
+  }
+
   private async fetchAndRoute(notificationUuid: string): Promise<void> {
     // Fetch notification details via MCP — use autoMarkRead=false so we don't
     // consume all unread notifications, and status=unread since we just received it
@@ -88,19 +103,11 @@ export class ChorusEventRouter {
       return;
     }
 
-    // Project filter: if projectUuids is configured, ignore events from other projects
-    if (this.projectFilter.size > 0 && !this.projectFilter.has(notification.projectUuid)) {
-      this.logger.info(
-        `Notification for project ${notification.projectUuid} filtered out`
-      );
-      return;
-    }
-
     // Route based on action (which corresponds to notificationType)
     try {
       switch (notification.action) {
         case "task_assigned":
-          await this.handleTaskAssigned(notification);
+          this.handleTaskAssigned(notification);
           break;
         case "mentioned":
           this.handleMentioned(notification);
@@ -146,57 +153,42 @@ export class ChorusEventRouter {
     );
   }
 
-  private async handleTaskAssigned(n: NotificationDetail): Promise<void> {
+  private handleTaskAssigned(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, "task");
 
-    if (this.config.autoStart) {
-      try {
-        await this.mcpClient.callTool("chorus_claim_task", { taskUuid: n.entityUuid });
-        this.logger.info(`Auto-claimed task ${n.entityUuid}`);
-      } catch (err) {
-        this.logger.warn(`Failed to auto-claim task ${n.entityUuid}: ${err}`);
-        // Still trigger agent even if claim fails — let the agent handle it
-      }
-
-      this.triggerAgent(
-        `[Chorus] Task assigned: ${n.entityTitle}. Task UUID: ${n.entityUuid}, Project UUID: ${n.projectUuid}. Use chorus_get_task to see details and begin work.\n${mentionGuidance}`,
-        { notificationUuid: n.uuid, action: "task_assigned", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
-      );
-    } else {
-      this.triggerAgent(
-        `[Chorus] Task assigned: ${n.entityTitle}. Task UUID: ${n.entityUuid}, Project UUID: ${n.projectUuid}. Use chorus_get_task to review when ready.\n${mentionGuidance}`,
-        { notificationUuid: n.uuid, action: "task_assigned", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
-      );
-    }
+    this.wake(
+      `[Chorus] Task assigned: ${n.entityTitle}. Task UUID: ${n.entityUuid}, Project UUID: ${n.projectUuid}. Use chorus_get_task to review the task, then chorus_claim_task to start work.\n${mentionGuidance}`,
+      this.contextKeyFor("task_assigned", n.entityUuid)
+    );
   }
 
   private handleMentioned(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, n.entityType);
 
-    this.triggerAgent(
+    this.wake(
       `[Chorus] You were @mentioned in ${n.entityType} '${n.entityTitle}' (entityType: ${n.entityType}, entityUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}): ${n.message}\n` +
       `Review the ${n.entityType} content and use chorus_get_comments (targetType: "${n.entityType}", targetUuid: "${n.entityUuid}") to see the full conversation, then respond.\n` +
       mentionGuidance,
-      { notificationUuid: n.uuid, action: "mentioned", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("mentioned", n.entityUuid)
     );
   }
 
   private handleElaborationRequested(n: NotificationDetail): void {
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Elaboration requested for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Use chorus_get_elaboration to review questions.`,
-      { notificationUuid: n.uuid, action: "elaboration_requested", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("elaboration_requested", n.entityUuid)
     );
   }
 
   private handleProposalRejected(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, "proposal");
 
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Review note: "${n.message}". ` +
       `Use chorus_get_proposal to review the proposal, then fix issues with chorus_update_task_draft / chorus_update_document_draft. ` +
       `After fixing, call chorus_validate_proposal then chorus_submit_proposal to resubmit.\n` +
       mentionGuidance,
-      { notificationUuid: n.uuid, action: "proposal_rejected", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("proposal_rejected", n.entityUuid)
     );
   }
 
@@ -204,54 +196,54 @@ export class ChorusEventRouter {
     const mentionGuidance = this.buildMentionGuidance(n, "proposal");
 
     const reviewInfo = n.message.includes("Note: ") ? ` Review note: "${n.message.split("Note: ").pop()}"` : "";
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Proposal '${n.entityTitle}' was APPROVED (proposalUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid})!${reviewInfo} Documents and tasks have been created. ` +
       `Use chorus_get_available_tasks with projectUuid: "${n.projectUuid}" to see the new tasks ready for work.\n` +
       mentionGuidance,
-      { notificationUuid: n.uuid, action: "proposal_approved", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("proposal_approved", n.entityUuid)
     );
   }
 
   private handleIdeaClaimed(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Idea '${n.entityTitle}' has been assigned to you (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Use chorus_get_idea to review the idea, then chorus_claim_idea to start elaboration.\n` +
       mentionGuidance,
-      { notificationUuid: n.uuid, action: "idea_claimed", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("idea_claimed", n.entityUuid)
     );
   }
 
   private handleTaskVerified(n: NotificationDetail): void {
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Task '${n.entityTitle}' has been verified and is now done (taskUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Check if this unblocks other tasks: use chorus_get_unblocked_tasks with projectUuid "${n.projectUuid}" to find tasks that are now ready to start.`,
-      { notificationUuid: n.uuid, action: "task_verified", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("task_verified", n.entityUuid)
     );
   }
 
   private handleTaskReopened(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, "task");
 
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Task '${n.entityTitle}' has been reopened and needs rework (taskUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Use chorus_get_task to review the task and chorus_get_comments to see verification feedback, then fix the issues.\n${mentionGuidance}`,
-      { notificationUuid: n.uuid, action: "task_reopened", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("task_reopened", n.entityUuid)
     );
   }
 
   private handleElaborationAnswered(n: NotificationDetail): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.triggerAgent(
+    this.wake(
       `[Chorus] Elaboration answers submitted for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Review the answers with chorus_get_elaboration, then either:\n` +
       `- Call chorus_validate_elaboration with empty issues [] to resolve and proceed to proposal creation\n` +
       `- Call chorus_validate_elaboration with issues + followUpQuestions for another round\n\n` +
       `After reviewing, @mention the answerer to ask if they have any further questions before you proceed.\n` +
       mentionGuidance,
-      { notificationUuid: n.uuid, action: "elaboration_answered", entityUuid: n.entityUuid, projectUuid: n.projectUuid }
+      this.contextKeyFor("elaboration_answered", n.entityUuid)
     );
   }
 }

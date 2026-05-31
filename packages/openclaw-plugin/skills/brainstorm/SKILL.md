@@ -1,9 +1,12 @@
 ---
 name: brainstorm
 description: Optional divergent-then-convergent dialogue for fuzzy ideas. Invoked from the idea skill as a prelude to structured elaboration; produces one ElaborationRound of decision-point Q&A and returns control. Never writes files, never posts comments, never validates elaboration.
+license: AGPL-3.0
 metadata:
-  openclaw:
-    emoji: "💭"
+  author: chorus
+  version: "0.9.0"
+  category: project-management
+  mcp_server: chorus
 ---
 
 # Brainstorm Skill
@@ -12,24 +15,28 @@ A divergent-then-convergent dialogue cadence for ideas whose direction is still 
 
 This skill is a **producer** of one elaboration round; the **scheduler** decision (validate vs. follow-up) belongs to the calling idea skill.
 
+> **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_get_idea`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
+
+> **OpenClaw interaction model:** OpenClaw has no `AskUserQuestion` primitive. Every "ask the user" step below is a **plain-text prompt** — write the question (and options) in your message and wait for the user's free-text reply before continuing. The one-question-at-a-time cadence still holds: send one question, read the answer, then send the next.
+
 ---
 
 ## When invoked
 
-Only as a sub-step of the idea skill, only after the user has explicitly opted in. Never run standalone, never run without user opt-in. The expected entry point is the idea skill's "Step 4.5: Brainstorm Mode (Optional Prelude)" — see the idea skill for the surrounding flow.
+Only as a sub-step of the idea skill, only after the user has explicitly opted in (via the idea skill's plain-text Brainstorm prompt). Never run standalone, never run without user opt-in. The expected entry point is the idea skill's "Step 4.5: Brainstorm Mode (Optional Prelude)" — see the idea skill for the surrounding flow.
 
 ---
 
 ## Hard rules
 
-1. **One question at a time.** Each user-facing prompt MUST contain exactly one question. Wait for the answer before asking the next.
-2. **Multi-choice preferred.** Frame each question as 2-4 options where possible. Open-ended is acceptable when options would be premature, but lean toward concrete choices.
-3. **Propose 2-3 directions before stopping divergence.** Once the requirement direction is clear enough to enumerate, present 2-3 distinct approaches in a single prompt. Mark exactly one as the recommended option per the host's prompt convention (the spec does not dictate a specific marking format — follow the host's documentation).
-4. **Explicit user approval required to exit divergence.** Do NOT proceed to synthesis until the user has selected one of the proposed directions.
+1. **One question at a time.** Each prompt MUST contain exactly one question. Wait for the user's reply before asking the next.
+2. **Multi-choice preferred.** Frame each question as 2-4 options where possible (offer them as a lettered list in your plain-text prompt). Open-ended is acceptable when options would be premature, but lean toward concrete choices.
+3. **Propose 2-3 directions before stopping divergence.** Once the requirement direction is clear enough to enumerate, present 2-3 distinct approaches in a single prompt. Mark exactly one as the recommended option and say why (the dominant tradeoff).
+4. **Explicit user approval required to exit divergence.** Do NOT proceed to synthesis until the user has selected one of the proposed directions in their reply.
 5. **No files written.** Do NOT write any markdown, design doc, scratch file, or any other file to disk. The conversation produces an `ElaborationRound` and nothing else on disk.
 6. **No comments posted.** Do NOT call `chorus_add_comment` from this skill. Comments belong to the idea skill or the user, not to the brainstorm step.
 7. **No design-doc handoff.** Do NOT invoke `writing-plans`, `writing-skills`, or any skill whose purpose is to produce a design document. The brainstorm output is the synthesized round — there is no separate doc.
-8. **No `validate_elaboration` call.** Do NOT call `chorus_validate_elaboration` from this skill. Whether to validate (resolve elaboration) or follow up (issues + followUpQuestions) is the calling idea skill's decision, not this skill's.
+8. **No `validate_elaboration` call.** Do NOT call `chorus_pm_validate_elaboration` from this skill. Whether to validate (resolve elaboration) or follow up (issues + followUpQuestions) is the calling idea skill's decision, not this skill's.
 
 ---
 
@@ -52,23 +59,33 @@ Skim each result for: stated background, stated requirements, stated constraints
 
 ### 2. Divergent Q&A
 
-Ask one question at a time via your host's interactive prompt mechanism. Aim to surface:
+Ask one question at a time as a plain-text prompt. Aim to surface:
 
 - The **goal** the idea is trying to serve (often more abstract than the idea statement).
 - The **constraints** that exclude entire branches of solution space (deadlines, compatibility, scope).
 - The **success criteria** — how will the user know this is done.
 
-Keep each question single-purpose. If you need to ask three things, that is three rounds, not one combined prompt.
+Keep each question single-purpose. If you need to ask three things, that is three prompts, not one combined message.
 
 ### 3. Propose 2-3 directions
 
-When the goal, constraints, and success criteria are clear enough that you can name distinct approaches, present them as a single multi-choice prompt to the user — exactly one convergence question with 2-3 distinct options. Use whatever interactive prompt mechanism your host provides; if none is available, render the question + options as text and wait for the user's reply.
+When the goal, constraints, and success criteria are clear enough that you can name distinct approaches, present them in a single plain-text prompt:
 
-The recommendation must be visibly marked to the user using the host's prompt convention (e.g. ordering, label suffix). State **why** you recommend it — usually a sentence about the dominant tradeoff.
+```
+Based on what you've told me, here are three directions. Which do you want? (reply A / B / C, or describe your own)
+
+A) <Option A — RECOMMENDED> — <what + tradeoff>
+B) <Option B> — <what + tradeoff>
+C) <Option C> — <what + tradeoff>
+
+I recommend A because <one sentence about the dominant tradeoff>.
+```
+
+State **why** you recommend one option — usually a sentence about the dominant tradeoff.
 
 ### 4. Wait for explicit approval
 
-Do not proceed to synthesis if the user has not selected one of the options. If the user picks "Other" with free text, treat that as a new constraint — go back to step 2 or step 3 with the refined direction.
+Do not proceed to synthesis if the user has not selected one of the options in their reply. If the user picks "Other" with free text, treat that as a new constraint — go back to step 2 or step 3 with the refined direction.
 
 ### 5. Synthesize decision-point Q&A
 
@@ -76,10 +93,10 @@ For each material decision the user made during the conversation, build one `Ela
 
 ### 6. Persist the round
 
-Call `chorus_start_elaboration` with the synthesized questions:
+Call `chorus_pm_start_elaboration` with the synthesized questions:
 
 ```
-chorus_start_elaboration({
+chorus_pm_start_elaboration({
   ideaUuid,
   depth: "standard",
   questions: [
@@ -104,7 +121,7 @@ chorus_answer_elaboration({
 
 ### 7. Return control
 
-Stop here. Do **NOT** call `chorus_validate_elaboration`. The idea skill's caller now decides:
+Stop here. Do **NOT** call `chorus_pm_validate_elaboration`. The idea skill's caller now decides:
 
 - If the synthesized round answers cover everything → caller validates with `issues: []`.
 - If gaps remain → caller validates with `issues + followUpQuestions` to start a structured Round 2.
@@ -139,7 +156,7 @@ Do not do any of the following. Each has a specific failure mode that this skill
 
 - **Single-summary `customText` blob.** Compressing the entire conversation into one ElaborationQuestion with a long markdown summary in `customText`. The schema is multi-question for a reason — preserve the decision granularity.
 - **Transcript-as-comment.** Posting the raw conversation log as a comment on the idea (or anywhere). The synthesized round IS the artifact. Raw transcripts pollute the audit trail with noise.
-- **File writes.** Writing any markdown, design doc, plan, or scratch file to disk. There is no design doc in this flow. This is a deliberate divergence from the upstream `superpowers/brainstorming` cadence — read the design.md if confused.
+- **File writes.** Writing any markdown, design doc, plan, or scratch file to disk. There is no design doc in this flow. This is a deliberate divergence from the upstream `superpowers/brainstorming` cadence.
 - **`validate_elaboration` calls.** Closing the elaboration phase from this skill. The lifecycle decision belongs to the idea skill. Calling validate here strips the caller of its scheduler role.
 - **`writing-plans` / design-doc handoff.** Invoking any skill that produces an implementation plan or design document. The Chorus pipeline already has Proposal → Document Drafts → Task Drafts for that — the brainstorm output feeds them through ElaborationRound, not through external doc skills.
 - **Length-2 binary "yes / no" framings.** Reducing every decision to "do this thing — yes / no". Almost always the genuine alternatives are 3+ approaches with meaningfully different tradeoffs. Length-2 framings often mean the divergent phase ended too early.

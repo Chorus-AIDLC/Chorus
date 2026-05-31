@@ -1,14 +1,19 @@
 ---
 name: idea
-description: Chorus Idea workflow — claim ideas, run elaboration, and prepare for proposal.
+description: Chorus Idea workflow — claim ideas, run elaboration rounds, and prepare for proposal creation.
+license: AGPL-3.0
 metadata:
-  openclaw:
-    emoji: "💡"
+  author: chorus
+  version: "0.9.0"
+  category: project-management
+  mcp_server: chorus
 ---
 
 # Idea Skill
 
 This skill covers the **Ideation** stage of the AI-DLC workflow: claiming Ideas, running structured elaboration rounds to clarify requirements, and preparing for Proposal creation.
+
+> **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_get_idea`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
 ---
 
@@ -16,22 +21,13 @@ This skill covers the **Ideation** stage of the AI-DLC workflow: claiming Ideas,
 
 Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) create Ideas describing what they need. The PM Agent claims an Idea, runs elaboration to clarify requirements, and then moves on to `/proposal` to create a Proposal with document and task drafts.
 
-### Idea Lifecycle
+**Idea status lifecycle (3 stored states):**
 
 ```
-open --> elaborating --> proposal_created --> completed
-                   \--> closed
+open --> elaborating --> elaborated
 ```
 
-| Status | Meaning |
-|--------|---------|
-| `open` | Idea is available for an agent to claim |
-| `elaborating` | An agent has claimed the idea and is gathering requirements |
-| `proposal_created` | A Proposal has been created from this idea |
-| `completed` | The resulting Proposal was approved and work is done |
-| `closed` | Idea was closed without implementation |
-
-Claiming an idea automatically transitions it from `open` to `elaborating`.
+All post-elaboration progress (planning, building, verifying, done) is **derived** from the state of linked Proposals and Tasks. No agent should set Idea status directly beyond elaboration -- all transitions are side-effects of claiming, releasing, or completing elaboration.
 
 ---
 
@@ -41,37 +37,22 @@ Claiming an idea automatically transitions it from `open` to `elaborating`.
 
 | Tool | Purpose |
 |------|---------|
+| `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans) |
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
-| `chorus_get_available_ideas` | List open ideas in a project available to claim |
-| `chorus_get_idea` | Get detailed information for a single idea |
-| `chorus_get_ideas` | List ideas in a project with optional status filter |
-| `chorus_pm_create_idea` | Create a new idea in a project |
-| `chorus_move_idea` | Move an idea to a different project (also moves linked draft/pending proposals) |
+| `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea, all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
 
 **Requirements Elaboration:**
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_start_elaboration` | Start an elaboration round with structured questions |
-| `chorus_validate_elaboration` | Validate answers — empty issues = resolved, with issues = follow-up round |
+| `chorus_pm_start_elaboration` | Start an elaboration round with structured questions |
+| `chorus_pm_validate_elaboration` | Validate answers (resolve or create follow-up round) |
+| `chorus_pm_skip_elaboration` | Skip elaboration for trivially clear Ideas |
 | `chorus_answer_elaboration` | Submit answers for an elaboration round |
-| `chorus_get_elaboration` | Get full elaboration state (all rounds, questions, answers) |
+| `chorus_get_elaboration` | Get full elaboration state (rounds, questions, answers) |
 
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
-
----
-
-## SSE Wake Events (OpenClaw-Specific)
-
-OpenClaw is a single-agent model with SSE-driven wake. The following notification events trigger the agent to wake and act:
-
-| SSE Event | Trigger | Agent Action |
-|-----------|---------|--------------|
-| `idea_claimed` | An idea is assigned to you | Wake, review the idea with `chorus_get_idea`, claim it if not auto-claimed |
-| `elaboration_requested` | Elaboration round started on an idea you own | Wake, review questions with `chorus_get_elaboration` |
-| `elaboration_answered` | Answers submitted for your elaboration round | Wake, review answers, validate or create follow-up round |
-
-When an SSE event fires, the plugin's event router fetches the notification details and triggers the agent with context (ideaUuid, projectUuid, action). You do not need to poll — work arrives via these events.
 
 ---
 
@@ -137,182 +118,172 @@ Before elaborating, understand the full picture:
 
 ### Step 4.5: Brainstorm Mode (Optional Prelude)
 
-If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer a brainstorm prelude before structured elaboration. Surface the choice to the user using whatever interactive prompt mechanism your host provides — same idiom OpenClaw uses elsewhere in this skill. Two choices: `"Already clear, run structured elaboration"` and `"Brainstorm first to explore directions"`.
+If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer the user a brainstorm prelude before structured elaboration.
 
-- **"Already clear":** Skip to Step 5.
-- **"Brainstorm first":** Invoke the `/brainstorm` skill. See `/brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
+> **OpenClaw note:** there is no `AskUserQuestion` primitive. Ask the user once **as a plain-text prompt** whether they want to brainstorm first or jump straight to structured elaboration, e.g.:
+>
+> > "This idea is still fuzzy. Do you want to (A) brainstorm directions together first, or (B) go straight to structured elaboration? Reply A or B."
+
+- **"Already clear" (B):** Skip to Step 5.
+- **"Brainstorm first" (A):** Invoke the `/brainstorm` skill. See `/brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
 
 When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
 
-- If the synthesized round answers cover everything → call `chorus_validate_elaboration` with `issues: []` to resolve elaboration.
-- If gaps remain → call `chorus_validate_elaboration` with `issues + followUpQuestions` to start a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
+- If the synthesized round answers cover everything → call `chorus_pm_validate_elaboration` with `issues: []` to resolve elaboration.
+- If gaps remain → call `chorus_pm_validate_elaboration` with `issues + followUpQuestions` to start a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
 
 Either outcome ends Step 4.5; skip Step 5.
 
 ### Step 5: Elaborate on the Idea
 
-**Every Idea should go through elaboration.** Elaboration improves Proposal quality and reduces rejection cycles.
+**Every Idea should go through elaboration.** Skip only when requirements are completely unambiguous (e.g., bug fix with clear steps). Elaboration improves Proposal quality and reduces rejection cycles.
 
-#### Elaboration Depth
+#### Simple Ideas (skip elaboration)
 
-Determine depth based on idea complexity:
-
-- `"minimal"` — 2-4 questions (small features, minor enhancements)
-- `"standard"` — 5-10 questions (typical new features)
-- `"comprehensive"` — 10-15 questions (large features, architectural changes)
-
-#### Question Categories
-
-`functional`, `non_functional`, `business_context`, `technical_context`, `user_scenario`, `scope`
-
-#### Starting an Elaboration Round
-
-> **Note:** Do NOT include an "Other" option in your questions. The UI automatically adds a free-text "Other" option to every question.
+You may skip elaboration, but **you MUST ask the user for permission first** before calling `chorus_pm_skip_elaboration`. On OpenClaw, ask as a plain-text prompt (e.g. "This idea has clear reproduction steps. OK to skip elaboration? Reply yes/no."). Never skip on your own judgment alone.
 
 ```
-chorus_start_elaboration({
+chorus_pm_skip_elaboration({
   ideaUuid: "<idea-uuid>",
-  depth: "standard",
-  questions: [
-    {
-      id: "q1",
-      text: "What user roles should have access to this feature?",
-      category: "functional",
-      options: [
-        { id: "a", label: "All users" },
-        { id: "b", label: "Admin only" },
-        { id: "c", label: "Role-based (configurable)" }
-      ]
-    },
-    {
-      id: "q2",
-      text: "What is the expected data volume?",
-      category: "non_functional",
-      options: [
-        { id: "a", label: "Low (<1000 records)" },
-        { id: "b", label: "Medium (1K-100K records)" },
-        { id: "c", label: "High (>100K records)" }
-      ]
-    }
-  ]
+  reason: "Bug fix with clear reproduction steps"
 })
 ```
 
-This triggers an `elaboration_requested` SSE event to stakeholders.
+#### Standard/Complex Ideas (run elaboration)
 
-#### Submitting Answers
+1. **Determine depth** based on idea complexity:
+   - `"minimal"` — 2-4 questions (small features, minor enhancements)
+   - `"standard"` — 5-10 questions (typical new features)
+   - `"comprehensive"` — 10-15 questions (large features, architectural changes)
 
-When answers arrive (via `elaboration_answered` SSE wake event or manual flow):
+2. **Create elaboration questions:**
 
-```
-chorus_answer_elaboration({
-  ideaUuid: "<idea-uuid>",
-  roundUuid: "<round-uuid>",
-  answers: [
-    { questionId: "q1", selectedOptionId: "c", customText: null },
-    { questionId: "q2", selectedOptionId: null, customText: "Custom hybrid approach" }
-  ]
-})
-```
+   > **Note:** Do NOT include an "Other" option in your questions. Treat the free-text path as always available — a user may answer any question with free text instead of picking an option.
 
-Answer format:
-- **Select an option**: `selectedOptionId: "a", customText: null`
-- **Select an option + add a note**: `selectedOptionId: "a", customText: "additional context"`
-- **Choose "Other" (free text)**: `selectedOptionId: null, customText: "your answer"` — customText is required when no option is selected
-
-#### @Mention Workflow After Answers
-
-After answers are submitted, **@mention the answerer** with a summary of your understanding. This prevents misinterpretation before you validate.
-
-1. **Get mentionable info:**
    ```
-   chorus_search_mentionables({ query: "owner-name" })
-   ```
-
-2. **Post a summary comment** on the idea:
-   ```
-   chorus_add_comment({
-     targetType: "idea",
-     targetUuid: "<idea-uuid>",
-     content: "@[Owner Name](user:owner-uuid) I've reviewed the elaboration answers. Here's my understanding:\n\n- Key requirement 1: ...\n- Key requirement 2: ...\n\nDoes this match your intent?"
+   chorus_pm_start_elaboration({
+     ideaUuid: "<idea-uuid>",
+     depth: "standard",
+     questions: [
+       {
+         id: "q1",
+         text: "What user roles should have access to this feature?",
+         category: "functional",
+         options: [
+           { id: "a", label: "All users" },
+           { id: "b", label: "Admin only" },
+           { id: "c", label: "Role-based (configurable)" }
+         ]
+       }
+     ]
    })
    ```
 
-3. **Wait for confirmation** via comments or a `mentioned` SSE event.
+3. **Present questions to the user as plain text (OpenClaw has no `AskUserQuestion`).** Render each elaboration question and its options as a readable numbered/lettered prompt and ask the user to reply with their selections (and any free-text notes). Example:
 
-4. **Based on the response:**
-   - **Confirmed** — Proceed to validate with empty issues
-   - **Additions/corrections** — Incorporate feedback, optionally start a follow-up round
-   - **Unclear** — Ask clarifying questions via another comment
+   ```
+   I have a few questions to clarify this idea. Please reply with your choice for each (you can also write a free-text answer):
 
-#### Validating the Elaboration
+   1. Which new locales should be prioritized for V1?
+      a) Japanese only — single locale for initial release
+      b) Japanese + Korean — two East Asian locales
+      (or describe your own)
 
-`chorus_validate_elaboration` is the **single commit gate for the entire elaboration phase**, NOT a per-round close. Calling it with `issues: []` resolves the whole elaboration (sets `idea.elaborationStatus = "resolved"`); calling it with `issues + followUpQuestions` opens a new round while keeping elaboration in progress. Do not call validate after every round — call it once when you believe elaboration is done, or when you want to start a follow-up round.
+   2. ...
+   ```
 
-When answers are satisfactory:
+   After the user replies, map their answers back to option IDs and call `chorus_answer_elaboration`. If the user gave a free-text answer that doesn't match an option, set `selectedOptionId: null` and put their text in `customText`.
 
-```
-chorus_validate_elaboration({
-  ideaUuid: "<idea-uuid>",
-  roundUuid: "<round-uuid>",
-  issues: []
-})
-```
+4. **Submit answers:**
+   ```
+   chorus_answer_elaboration({
+     ideaUuid: "<idea-uuid>",
+     roundUuid: "<round-uuid>",
+     answers: [
+       { questionId: "q1", selectedOptionId: "c", customText: null },
+       { questionId: "q2", selectedOptionId: null, customText: "Custom hybrid approach" }
+     ]
+   })
+   ```
 
-If issues are found (contradictions, ambiguities, incomplete answers), include them and provide follow-up questions for a new round:
+   Answer format:
+   - **Select an option**: `selectedOptionId: "a", customText: null`
+   - **Select an option + add a note**: `selectedOptionId: "a", customText: "additional context"`
+   - **Free text (no option matched)**: `selectedOptionId: null, customText: "your answer"` — customText is required when no option is selected
 
-```
-chorus_validate_elaboration({
-  ideaUuid: "<idea-uuid>",
-  roundUuid: "<round-uuid>",
-  issues: [
-    { questionId: "q1", type: "ambiguity", description: "Role-based access selected but no roles defined" }
-  ],
-  followUpQuestions: [
-    {
-      id: "fq1",
-      text: "Which specific roles should have access?",
-      category: "functional",
-      options: [
-        { id: "a", label: "Admin + Editor" },
-        { id: "b", label: "All authenticated users" }
-      ]
-    }
-  ]
-})
-```
+5. **Review answers and confirm with the owner (@mention flow):**
 
-This starts a new elaboration round, triggering another `elaboration_requested` event. The cycle repeats until all issues are resolved.
+   After answers are submitted, **@mention the answerer** (typically the agent's owner) with a summary of your understanding. This prevents misinterpretation before you validate.
+
+   a. **Get owner info** from checkin response (`agent.owner`) or search:
+      ```
+      chorus_search_mentionables({ query: "owner-name" })
+      ```
+
+   b. **Post a summary comment** on the idea:
+      ```
+      chorus_add_comment({
+        targetType: "idea",
+        targetUuid: "<idea-uuid>",
+        content: "@[Owner Name](user:owner-uuid) I've reviewed the elaboration answers. Here's my understanding:\n\n- Key requirement 1: ...\n- Key requirement 2: ...\n\nDoes this match your intent?"
+      })
+      ```
+
+   c. **Wait for confirmation** via comments.
+
+   d. **Based on the response:**
+      - **Confirmed** — Proceed to validate with empty issues
+      - **Additions/corrections** — Incorporate feedback, optionally start a follow-up round
+      - **Unclear** — Ask clarifying questions via another comment
+
+6. **Validate the elaboration:**
+
+   `chorus_pm_validate_elaboration` is the **single commit gate for the entire elaboration phase**, NOT a per-round close. Calling it with `issues: []` resolves the whole elaboration (sets `idea.elaborationStatus = "resolved"`); calling it with `issues + followUpQuestions` opens a new round while keeping elaboration in progress. Do not call validate after every round — call it once when you believe elaboration is done, or when you want to start a follow-up round.
+
+   ```
+   chorus_pm_validate_elaboration({
+     ideaUuid: "<idea-uuid>",
+     roundUuid: "<round-uuid>",
+     issues: [],
+     followUpQuestions: []
+   })
+   ```
+
+   If issues are found (contradictions, ambiguities, incomplete answers), include them in `issues` and provide `followUpQuestions` for a new round:
+
+   ```
+   chorus_pm_validate_elaboration({
+     ideaUuid: "<idea-uuid>",
+     roundUuid: "<round-uuid>",
+     issues: [
+       { questionId: "q1", type: "ambiguity", description: "Role-based access selected but no roles defined" }
+     ],
+     followUpQuestions: [
+       { id: "fq1", text: "Which specific roles should have access?", category: "functional", options: [...] }
+     ]
+   })
+   ```
+
+7. **Check elaboration status** at any time:
+   ```
+   chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
+   ```
+
+**Elaboration as audit trail:** Even if the user discusses requirements with you outside the formal elaboration flow, record key decisions as elaboration rounds so they are persisted and visible to the team.
+
+**Question categories:** `functional`, `non_functional`, `business_context`, `technical_context`, `user_scenario`, `scope`
 
 **Validation issue types:** `contradiction`, `ambiguity`, `incomplete`
-
-#### Multi-Round Elaboration
-
-Complex ideas may require multiple rounds:
-
-1. Round 1: Broad scoping questions (functional, scope)
-2. Round 2: Follow-up on ambiguous answers (technical_context)
-3. Round 3: Final confirmation of edge cases (user_scenario)
-
-Each round preserves the full history. Use `chorus_get_elaboration` at any time to see all rounds and their status.
-
-#### Checking Elaboration Status
-
-```
-chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
-```
-
-Returns all rounds, questions, answers, and a progress summary.
 
 ---
 
 ## Tips
 
 - When combining multiple ideas, explain how they relate in the proposal description
-- Elaboration improves Proposal quality — run it for all non-trivial ideas
+- Elaboration improves Proposal quality — don't skip it unless the requirements are trivially clear
+- Present interactive questions as plain text and collect free-text replies — OpenClaw has no `AskUserQuestion` primitive
 - Record decisions made in conversation as elaboration rounds for auditability
 - Always @mention the owner to confirm understanding before validating
-- SSE events mean you do not need to poll — the plugin wakes you when action is needed
 
 ---
 

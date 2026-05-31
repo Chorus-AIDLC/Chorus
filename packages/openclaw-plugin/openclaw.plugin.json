@@ -1,28 +1,29 @@
 {
   "id": "chorus-openclaw-plugin",
+  "name": "Chorus",
+  "description": "Chorus AI-DLC collaboration platform — native MCP + SSE real-time events",
   "skills": ["./skills"],
+  "activation": {
+    "onStartup": true
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "Chorus API Key",
+      "placeholder": "cho_...",
+      "sensitive": true
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "chorusUrl": {
         "type": "string",
-        "description": "Chorus server URL"
+        "description": "Chorus server URL (e.g. https://chorus.example.com)"
       },
       "apiKey": {
         "type": "string",
         "description": "Chorus API Key (cho_ prefix)"
-      },
-      "projectUuids": {
-        "type": "array",
-        "items": { "type": "string" },
-        "default": [],
-        "description": "Project UUIDs to monitor (empty = all)"
-      },
-      "autoStart": {
-        "type": "boolean",
-        "default": true,
-        "description": "Auto-claim tasks on assignment"
       }
     }
   }

@@ -3,6 +3,15 @@ import { z } from "zod";
 export const CONFIG_FILE_PATH = "~/.openclaw/openclaw.json";
 export const CONFIG_KEY_PATH = "plugins.entries.chorus-openclaw-plugin.config";
 
+/**
+ * In-code zod schema for typing `api.pluginConfig`.
+ *
+ * The canonical config contract is the JSON-Schema `configSchema` in
+ * `openclaw.plugin.json`, which OpenClaw validates BEFORE plugin code runs.
+ * This zod schema exists only for in-code typing and friendly missing-field
+ * messages — its accepted property set (chorusUrl, apiKey) MUST stay identical
+ * to the manifest `configSchema.properties`.
+ */
 export const chorusConfigSchema = z.object({
   chorusUrl: z
     .string()
@@ -14,19 +23,23 @@ export const chorusConfigSchema = z.object({
     .startsWith("cho_")
     .optional()
     .describe("Chorus API Key (cho_ prefix)"),
-  projectUuids: z
-    .array(z.string().uuid())
-    .optional()
-    .default([])
-    .describe("Project UUIDs to monitor. Empty = all projects"),
-  autoStart: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Auto-claim and start work on task_assigned events"),
 });
 
 export type ChorusPluginConfig = z.infer<typeof chorusConfigSchema>;
+
+/**
+ * Normalize a raw `api.pluginConfig` bag into a typed `ChorusPluginConfig`.
+ *
+ * The host has already validated the bag against the manifest JSON Schema, so
+ * this only fills defaults and narrows types; it does not re-validate shape.
+ */
+export function resolveConfig(pluginConfig: Record<string, unknown> | undefined): ChorusPluginConfig {
+  const raw = pluginConfig ?? {};
+  return {
+    chorusUrl: (raw.chorusUrl as string | undefined) || undefined,
+    apiKey: (raw.apiKey as string | undefined) || undefined,
+  };
+}
 
 /**
  * Check required config fields and warn about missing ones.

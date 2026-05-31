@@ -1,107 +1,89 @@
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenClawPluginApi = any;
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
-import { chorusConfigSchema, type ChorusPluginConfig, validateConfigWithWarnings } from "./config.js";
+import { resolveConfig, validateConfigWithWarnings } from "./config.js";
+import { ensureChorusMcpServer } from "./mcp-registration.js";
 import { ChorusMcpClient } from "./mcp-client.js";
 import { ChorusSseListener } from "./sse-listener.js";
 import { ChorusEventRouter } from "./event-router.js";
-import { registerPmTools } from "./tools/pm-tools.js";
-import { registerDevTools } from "./tools/dev-tools.js";
-import { registerCommonTools } from "./tools/common-tools.js";
-import { registerAdminTools } from "./tools/admin-tools.js";
+import { createWake } from "./wake.js";
 import { registerChorusCommands } from "./commands.js";
 
 /**
- * Trigger the OpenClaw agent by posting a system event to the gateway's
- * /hooks/wake endpoint. This enqueues the text into the agent's prompt
- * and triggers an immediate heartbeat so the agent processes it right away.
+ * JSON-Schema config contract for the Chorus plugin.
+ *
+ * This mirrors the canonical `configSchema` in `openclaw.plugin.json`
+ * (the manifest is validated by the host BEFORE this code loads). Keep the two
+ * in sync: same property set, same `additionalProperties: false`.
  */
-async function wakeAgent(
-  gatewayUrl: string,
-  hooksToken: string,
-  text: string,
-  logger: { info: (msg: string) => void; warn: (msg: string) => void },
-) {
-  try {
-    const res = await fetch(`${gatewayUrl}/hooks/wake`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${hooksToken}`,
-      },
-      body: JSON.stringify({ text, mode: "now" }),
-    });
-    if (!res.ok) {
-      logger.warn(`Wake agent failed: HTTP ${res.status}`);
-    } else {
-      logger.info(`Agent woken: ${text.slice(0, 80)}...`);
-    }
-  } catch (err) {
-    logger.warn(`Wake agent error: ${err}`);
-  }
-}
+const CHORUS_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    chorusUrl: {
+      type: "string",
+      description: "Chorus server URL (e.g. https://chorus.example.com)",
+    },
+    apiKey: {
+      type: "string",
+      description: "Chorus API Key (cho_ prefix)",
+    },
+  },
+} as const;
 
-const plugin = {
+export default definePluginEntry({
   id: "chorus-openclaw-plugin",
   name: "Chorus",
   description:
-    "Chorus AI-DLC collaboration platform — SSE real-time events + MCP tool integration",
-  configSchema: chorusConfigSchema,
+    "Chorus AI-DLC collaboration platform — native MCP + SSE real-time events",
+  configSchema: {
+    jsonSchema: CHORUS_JSON_SCHEMA,
+    uiHints: { apiKey: { sensitive: true } },
+  },
 
   register(api: OpenClawPluginApi) {
-    const rawConfig = api.pluginConfig ?? {};
-    const config: ChorusPluginConfig = {
-      chorusUrl: rawConfig.chorusUrl || undefined,
-      apiKey: rawConfig.apiKey || undefined,
-      projectUuids: rawConfig.projectUuids ?? [],
-      autoStart: rawConfig.autoStart ?? true,
-    };
-    const logger = api.logger;
+    // 1. Discovery-mode guard: heavy runtime wiring (MCP connect, SSE socket,
+    //    config mutation) must run ONLY in "full" registration mode. In
+    //    discovery / cli-metadata / setup-* modes we declare nothing heavy.
+    if (api.registrationMode !== "full") return;
 
+    // 2. Resolve + validate config from the host-validated pluginConfig bag.
+    const config = resolveConfig(api.pluginConfig);
+    const logger = api.logger;
     if (!validateConfigWithWarnings(config, logger)) {
       return;
     }
 
-    // After validateConfigWithWarnings, chorusUrl and apiKey are guaranteed present
+    // After validateConfigWithWarnings, chorusUrl and apiKey are present.
     const chorusUrl = config.chorusUrl!;
     const apiKey = config.apiKey!;
 
-    // Resolve gateway URL and hooks token from OpenClaw config
-    const gatewayPort = api.config?.gateway?.port ?? 18789;
-    const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
-    const hooksToken = api.config?.hooks?.token ?? "";
+    logger.info(`Chorus plugin initializing — ${chorusUrl}`);
 
-    logger.info(
-      `Chorus plugin initializing — ${chorusUrl} (${config.projectUuids?.length || "all"} projects)`
+    // 3. Ensure the Chorus MCP server is registered with OpenClaw so the agent
+    //    gains native chorus__* tools (fire-and-log; real impl in sibling task).
+    void ensureChorusMcpServer(api, config).catch((err) =>
+      logger.error(`MCP registration failed: ${err}`),
     );
 
-    // --- MCP Client ---
-    const mcpClient = new ChorusMcpClient({
-      chorusUrl,
-      apiKey,
-      logger,
-    });
+    // 4. Slim MCP client for the plugin's own synchronous calls (checkin,
+    //    assignments, notifications back-fill).
+    const mcpClient = new ChorusMcpClient({ chorusUrl, apiKey, logger });
 
-    // --- Event Router ---
+    // 5. Event router. Wakes the agent in-process by running an embedded agent
+    //    turn via `api.runtime.agent.runEmbeddedAgent` (see wake.ts). `createWake`
+    //    resolves the main agent session + configured model on each wake and
+    //    gracefully DROPS (logs + returns) when it cannot run — it never throws,
+    //    so the SSE service stays alive even on a host that exposes no session.
     const eventRouter = new ChorusEventRouter({
       mcpClient,
-      config,
       logger,
-      triggerAgent: (message: string, _metadata?: Record<string, unknown>) => {
-        // Use /hooks/wake to enqueue a system event + trigger immediate heartbeat
-        if (hooksToken) {
-          wakeAgent(gatewayUrl, hooksToken, message, logger);
-        } else {
-          logger.warn(
-            `[Chorus] Cannot wake agent — gateway.auth.token not configured. Event: ${message.slice(0, 100)}`
-          );
-        }
-      },
+      wake: createWake(api, logger),
     });
 
-    // --- SSE Listener (background service) ---
+    // 6. Background SSE service. The SSE socket opens only inside start(), which
+    //    the host calls in full mode — keeping the heavy socket gated.
     let sseListener: ChorusSseListener | null = null;
-
     api.registerService({
       id: "chorus-sse",
       async start() {
@@ -111,7 +93,6 @@ const plugin = {
           logger,
           onEvent: (event) => eventRouter.dispatch(event),
           onReconnect: async () => {
-            // Back-fill missed notifications after reconnect
             try {
               const result = (await mcpClient.callTool("chorus_get_notifications", {
                 status: "unread",
@@ -134,15 +115,7 @@ const plugin = {
       },
     });
 
-    // --- Tools ---
-    registerPmTools(api, mcpClient);
-    registerDevTools(api, mcpClient);
-    registerCommonTools(api, mcpClient);
-    registerAdminTools(api, mcpClient);
-
-    // --- Commands ---
+    // 7. /chorus command (status | tasks | ideas | skills).
     registerChorusCommands(api, mcpClient, () => sseListener?.status ?? "disconnected");
   },
-};
-
-export default plugin;
+});

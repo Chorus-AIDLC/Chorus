@@ -1,3 +1,20 @@
+/**
+ * Plugin-INTERNAL MCP client.
+ *
+ * This is NOT how the agent gets Chorus tools — those are exposed natively by
+ * OpenClaw connecting to the `mcp.servers.chorus` entry written by
+ * `ensureChorusMcpServer` (see mcp-registration.ts). The plugin no longer
+ * hand-wraps any Chorus tool with `api.registerTool`.
+ *
+ * This client exists only for the plugin's OWN synchronous calls into Chorus:
+ *   - `/chorus` command: chorus_checkin, chorus_get_my_assignments,
+ *     chorus_get_available_ideas (see commands.ts)
+ *   - SSE reconnect back-fill: chorus_get_notifications (see index.ts)
+ *
+ * No agent-facing tool depends on it. Keep it a generic StreamableHTTP
+ * `callTool` client (lazy connect + 404 reconnect); do not grow it into a tool
+ * surface.
+ */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 

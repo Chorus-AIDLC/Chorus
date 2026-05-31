@@ -12,90 +12,74 @@
 
 OpenClaw plugin for [Chorus](https://github.com/Chorus-AIDLC/Chorus) — the AI-DLC (AI-Driven Development Lifecycle) collaboration platform.
 
-This plugin connects OpenClaw to Chorus via a persistent SSE connection and MCP tool bridge, enabling your OpenClaw agent to participate in the full Idea → Proposal → Task → Execute → Verify workflow autonomously.
+This plugin lets an OpenClaw agent participate in the full Chorus Idea → Proposal → Task → Execute → Verify workflow. It does two things at activation:
 
-## How It Works
+1. **Auto-registers the Chorus MCP server** in your OpenClaw config so the agent gains native `chorus__*` tools (no hand-wrapped tools — OpenClaw connects to Chorus over MCP directly).
+2. **Opens a persistent SSE connection** to Chorus and wakes the agent in-process (runs an embedded agent turn via `runEmbeddedAgent`) the moment a task is assigned, you are @mentioned, a proposal is approved/rejected, and more.
 
-```
-Chorus Server
-  │
-  ├── SSE (GET /api/events/notifications)
-  │     Push real-time events: task_assigned, mentioned,
-  │     proposal_rejected, elaboration_answered, etc.
-  │           │
-  │           ▼
-  │     ┌──────────────────────┐
-  │     │  SSE Listener        │ ── auto-reconnect with
-  │     │  (background service)│    exponential backoff
-  │     └──────────┬───────────┘
-  │                │
-  │     ┌──────────▼───────────┐
-  │     │  Event Router        │ ── filters by project,
-  │     │                      │    maps event → action
-  │     └──────────┬───────────┘
-  │                │
-  │     ┌──────────▼───────────┐      POST /hooks/wake
-  │     │  Agent Trigger       │ ──────────────────────►  OpenClaw Agent
-  │     └──────────────────────┘      (immediate heartbeat)
-  │
-  ├── MCP (POST /api/mcp)
-  │     47 Chorus MCP tools available as native
-  │     OpenClaw agent tools via @modelcontextprotocol/sdk
-  │
-  └─────────────────────────────────────────────────────
-```
+It also ships **11 skills** — 9 workflow skills plus 2 read-only reviewer skills (`/proposal-reviewer`, `/task-reviewer`) that run inside spawned sub-agents.
 
-**Key design decisions:**
+> **Requires OpenClaw `>=2026.4.27`.** This package uses the OpenClaw Plugin SDK (`definePluginEntry` + native MCP auto-registration + `runEmbeddedAgent` wake + `activation.onStartup`). The binding floor is the newest API it depends on: `activation.onStartup` shipped in **2026.4.27** (`definePluginEntry` ~2026.3.28, `runEmbeddedAgent` 2026.4.10, `mutateConfigFile` 2026.4.26). The floor is enforced by `package.json` → `openclaw.compat.pluginApi` and `openclaw.install.minHostVersion` (both `>=2026.4.27`). On older hosts the SDK entry subpath / `activation.onStartup` are unavailable and the plugin will not load (or won't start its SSE service).
+>
+> **`activation.onStartup` is required.** This plugin has no channel or provider, so it would NOT be activated at gateway cold-boot without `activation: { onStartup: true }` in `openclaw.plugin.json`. That flag is what tells OpenClaw to import the plugin (and start its SSE service) on startup — without it the plugin shows as "enabled" but its background service never runs.
 
-- **MCP Client, not REST** — Uses `@modelcontextprotocol/sdk` to call Chorus MCP tools directly. Zero Chorus-side code changes needed. 47 tools registered out of the box. When Chorus adds new MCP tools, adding them to the plugin is a one-liner.
-- **SSE for push, MCP for pull** — SSE delivers real-time notifications; MCP handles all tool operations (claim, report, submit, etc.).
-- **Hooks-based agent wake** — Uses OpenClaw's `/hooks/wake` API to inject system events and trigger immediate heartbeats when Chorus events arrive.
-
-## Prerequisites
-
-- [OpenClaw](https://openclaw.ai) gateway running
-- [Chorus](https://github.com/Chorus-AIDLC/Chorus) server accessible
-- A Chorus API Key (`cho_` prefix) for the agent
-- OpenClaw hooks enabled (`hooks.enabled: true` in `openclaw.json`)
+---
 
 ## Installation
 
-### 1. Install the plugin
+### From npm
 
 ```bash
-openclaw plugins install @chorus-aidlc/chorus-openclaw-plugin
+openclaw plugins install npm:@chorus-aidlc/chorus-openclaw-plugin
+openclaw plugins enable chorus-openclaw-plugin
 ```
 
-### 2. Enable hooks
+Restart the OpenClaw gateway if it was already running so it picks up the new plugin and the MCP server entry the plugin writes on first activation.
 
-Hooks are required for the agent wake mechanism. Add to your `~/.openclaw/openclaw.json`:
+### Local development (link the repo checkout)
 
-```json
-{
-  "hooks": {
-    "enabled": true,
-    "token": "your-hooks-token"
-  }
-}
+```bash
+# from the repo: packages/openclaw-plugin
+openclaw plugins install --link .              # link this directory instead of copying
+openclaw plugins enable chorus-openclaw-plugin
 ```
 
-> The `hooks.token` must be different from `gateway.auth.token`.
+A **linked** install does **not** need a build step. OpenClaw treats a linked
+local plugin as a source checkout (`requireBuiltRuntimeEntry: false` — see
+`src/plugins/discovery.ts`) and loads the TypeScript `extensions` entry
+(`src/index.ts`) directly through its bundled `jiti` transpiler. `--link` keeps
+OpenClaw pointed at your working tree, so editing `src/**` and restarting the
+gateway picks up your changes without re-installing or recompiling.
 
-### 3. Configure the plugin
+> The compiled `dist/` is only required for the **npm-published** install path
+> below — a copied/npm install sets `requireBuiltRuntimeEntry: true`, so OpenClaw
+> demands the compiled runtime entry declared in `openclaw.runtimeExtensions`.
+> Run `npm run build` before publishing (it also runs automatically via
+> `prepublishOnly`). You do not need it for local `--link` development.
 
-Add the plugin entry to `~/.openclaw/openclaw.json`:
+> The plugin id is **`chorus-openclaw-plugin`** — that is the argument to `enable` / `disable` / `uninstall`, and the key under `plugins.entries` in your config.
+
+---
+
+## Configuration
+
+### Where config lives
+
+Plugin config lives in **`~/.openclaw/openclaw.json`** under:
+
+```
+plugins.entries.chorus-openclaw-plugin.config
+```
 
 ```json
 {
   "plugins": {
-    "enabled": true,
     "entries": {
       "chorus-openclaw-plugin": {
         "enabled": true,
         "config": {
           "chorusUrl": "https://chorus.example.com",
-          "apiKey": "cho_your_api_key_here",
-          "autoStart": true
+          "apiKey": "cho_your_api_key_here"
         }
       }
     }
@@ -103,277 +87,223 @@ Add the plugin entry to `~/.openclaw/openclaw.json`:
 }
 ```
 
-## Configuration
+### Config keys
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `chorusUrl` | `string` | Yes | — | Chorus server URL (e.g., `https://chorus.example.com`) |
-| `apiKey` | `string` | Yes | — | Chorus API Key with `cho_` prefix |
-| `projectUuids` | `string[]` | No | `[]` | Project UUIDs to monitor. Empty = all projects. |
-| `autoStart` | `boolean` | No | `true` | Auto-claim tasks when `task_assigned` events arrive |
+| Key | Type | Required | Default | What it does |
+|-----|------|----------|---------|--------------|
+| `chorusUrl` | `string` | **Yes** | — | Base URL of your Chorus server. The plugin derives the MCP endpoint (`<chorusUrl>/api/mcp`) and the SSE endpoint from it. |
+| `apiKey` | `string` | **Yes** | — | Chorus API Key (`cho_` prefix). Used as the `Bearer` token for both the MCP server entry and the SSE connection. Marked `sensitive` in the UI hints. |
 
-### OpenClaw requirements
+If `chorusUrl` or `apiKey` is missing, the plugin logs a warning naming the missing field, skips MCP registration, and disables its features — it does not crash the gateway.
 
-The plugin reads these from the main OpenClaw config:
+---
 
-- **`hooks.enabled`** must be `true` — required for agent wake via `/hooks/wake`
-- **`hooks.token`** — shared secret for hook authentication (must differ from `gateway.auth.token`)
-- **`gateway.port`** — defaults to `18789`
+## How tools work now (native MCP)
 
-## Features
+On activation (full registration mode), the plugin **writes an `mcp.servers.chorus` entry** into your OpenClaw config via the host's `runtime.config.mutateConfigFile` API:
 
-### Real-time SSE Events
-
-The plugin maintains a persistent SSE connection to Chorus and reacts to these events:
-
-| Event | Behavior |
-|-------|----------|
-| `task_assigned` | Auto-claim task (if `autoStart: true`) + wake agent to start work |
-| `mentioned` | Wake agent with @mention context |
-| `elaboration_requested` | Wake agent to review elaboration questions |
-| `elaboration_answered` | Wake agent to review answers, @mention answerer, then validate or start new round |
-| `proposal_rejected` | Wake agent with rejection reason to fix and resubmit, @mention reviewer |
-| `proposal_approved` | Wake agent to check newly created tasks, @mention approver |
-| `idea_claimed` | Wake agent when an idea is assigned to it, @mention assigner |
-
-**Resilience:** Exponential backoff reconnect (1s → 2s → 4s → ... → 30s max). After reconnect, unread notifications are back-filled via MCP to ensure no events are lost.
-
-### Built-in Skills (6)
-
-The plugin ships with 6 SKILL.md files that OpenClaw auto-discovers and loads. These provide workflow guidance to the agent without consuming tool calls.
-
-| Skill | Description |
-|-------|-------------|
-| `chorus` | Platform overview, common tools, setup, and workflow routing |
-| `idea` | Claim ideas, run elaboration rounds, prepare for proposal |
-| `proposal` | Create proposals with document & task drafts, manage dependency DAG |
-| `develop` | Claim tasks, report work, submit for verification |
-| `quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
-| `review` | Approve/reject proposals, verify tasks, project governance |
-
-Skills are automatically available when the plugin is enabled — no extra configuration needed.
-
-### Registered Tools (47 total)
-
-#### PM Workflow (17 tools)
-
-| Tool | Description |
-|------|-------------|
-| `chorus_claim_idea` | Claim an open idea for elaboration |
-| `chorus_start_elaboration` | Start elaboration round with structured questions |
-| `chorus_answer_elaboration` | Submit answers for elaboration round |
-| `chorus_validate_elaboration` | Validate answers, resolve or request follow-up |
-| `chorus_create_proposal` | Create proposal with document + task drafts |
-| `chorus_add_document_draft` | Add document draft to proposal |
-| `chorus_add_task_draft` | Add task draft to proposal |
-| `chorus_get_proposal` | View full proposal with all draft UUIDs |
-| `chorus_update_document_draft` | Modify document draft |
-| `chorus_update_task_draft` | Modify task draft (including dependencies) |
-| `chorus_remove_document_draft` | Remove document draft |
-| `chorus_remove_task_draft` | Remove task draft |
-| `chorus_validate_proposal` | Check proposal completeness before submit |
-| `chorus_submit_proposal` | Submit proposal for approval |
-| `chorus_pm_create_idea` | Create a new idea in a project |
-| `chorus_pm_assign_task` | Assign a task to a specific Developer Agent |
-| `chorus_move_idea` | Move an idea to a different project |
-
-#### Developer Workflow (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `chorus_claim_task` | Claim an open task |
-| `chorus_update_task` | Update task status or fields (title, description, priority, dependencies) |
-| `chorus_report_work` | Report work progress (writes comment + records activity) |
-| `chorus_submit_for_verify` | Submit completed task for verification |
-| `chorus_report_criteria_self_check` | Self-check acceptance criteria before submitting |
-
-#### Common & Exploration (21 tools)
-
-| Tool | Description |
-|------|-------------|
-| `chorus_checkin` | Agent check-in (identity, owner info, roles, assignments) |
-| `chorus_get_notifications` | Fetch notifications (default: unread) |
-| `chorus_get_project` | Get project details |
-| `chorus_get_task` | Get task details |
-| `chorus_get_idea` | Get idea details |
-| `chorus_get_available_tasks` | List open tasks in a project |
-| `chorus_get_available_ideas` | List open ideas in a project |
-| `chorus_add_comment` | Comment on idea/proposal/task/document |
-| `chorus_search_mentionables` | Search for @mentionable users and agents |
-| `chorus_list_projects` | List all projects |
-| `chorus_list_tasks` | List tasks in a project (filterable by status/priority) |
-| `chorus_get_ideas` | List ideas in a project (filterable by status) |
-| `chorus_get_proposals` | List proposals in a project |
-| `chorus_get_documents` | List documents in a project |
-| `chorus_get_document` | Get full document content |
-| `chorus_get_unblocked_tasks` | List tasks ready to start (dependencies resolved) |
-| `chorus_get_activity` | Get project activity stream |
-| `chorus_get_comments` | Get comments on an entity |
-| `chorus_get_elaboration` | Get full elaboration state for an idea |
-| `chorus_get_my_assignments` | Get all claimed ideas and tasks |
-| `chorus_get_project_groups` | List all project groups |
-| `chorus_get_project_group` | Get a project group with its projects |
-| `chorus_create_tasks` | Batch create tasks (Quick Task or Proposal-linked) |
-| `chorus_search` | Search across tasks, ideas, proposals, documents, projects |
-
-#### Admin (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `chorus_admin_create_project` | Create a new project |
-| `chorus_admin_create_project_group` | Create a new project group |
-| `chorus_admin_approve_proposal` | Approve a proposal (materializes drafts into Documents + Tasks) |
-| `chorus_admin_verify_task` | Verify a task (to_verify → done, unblocks downstream) |
-| `chorus_mark_acceptance_criteria` | Mark acceptance criteria as passed/failed |
-
-### Commands
-
-Bypass LLM for fast status queries:
-
-| Command | Description |
-|---------|-------------|
-| `/chorus` or `/chorus status` | Connection status, assignments, unread count |
-| `/chorus tasks` | List your assigned tasks |
-| `/chorus ideas` | List your assigned ideas |
-| `/chorus skills` | List available Chorus skills |
-
-## Architecture
-
-```
-packages/openclaw-plugin/
-├── package.json              # npm package config
-├── openclaw.plugin.json      # OpenClaw plugin manifest (declares skills)
-├── tsconfig.json
-├── skills/                   # 6 SKILL.md files (auto-discovered by OpenClaw)
-│   ├── chorus/SKILL.md       # Core overview & routing
-│   ├── idea/SKILL.md         # Idea → Elaboration workflow
-│   ├── proposal/SKILL.md     # Proposal → DAG → Submit workflow
-│   ├── develop/SKILL.md      # Task → Report → Verify workflow
-│   ├── quick-dev/SKILL.md    # Quick task creation & execution
-│   └── review/SKILL.md       # Admin review & governance
-└── src/
-    ├── index.ts              # Plugin entry — wires all modules together
-    ├── config.ts             # Zod config schema
-    ├── mcp-client.ts         # MCP Client (lazy connect + 404 auto-reconnect)
-    ├── sse-listener.ts       # SSE long-lived connection + reconnect
-    ├── event-router.ts       # Event → agent action mapping
-    ├── commands.ts           # /chorus commands
-    └── tools/
-        ├── pm-tools.ts       # 17 PM workflow tools
-        ├── dev-tools.ts      # 4 Developer tools
-        ├── common-tools.ts   # 21 common/exploration tools
-        └── admin-tools.ts    # 5 Admin tools
+```json
+{
+  "mcp": {
+    "servers": {
+      "chorus": {
+        "url": "https://chorus.example.com/api/mcp",
+        "transport": "streamable-http",
+        "headers": { "Authorization": "Bearer cho_your_api_key_here" }
+      }
+    }
+  }
+}
 ```
 
-### MCP Client (`mcp-client.ts`)
+OpenClaw then connects to the remote Chorus MCP server and **exposes every Chorus tool to the agent under the `chorus__` prefix** — for example `chorus__chorus_get_task`, `chorus__chorus_claim_task`, `chorus__chorus_submit_for_verify`. The plugin never re-declares those tools itself; they come straight from the MCP server.
 
-Wraps `@modelcontextprotocol/sdk` with:
-- **Lazy connection** — connects on first `callTool()`, not at startup
-- **Auto-reconnect** — detects 404 (session expired), reconnects, retries the call
-- **Status tracking** — `connected | disconnected | connecting | reconnecting`
+The write is **idempotent**: if the existing entry already matches (same url + transport + Authorization), the plugin skips the write so it does not trigger a config reload on every activation. If `runtime.config.mutateConfigFile` is unavailable on the host, the failure is logged and swallowed — the SSE service and `/chorus` command still register.
 
-### SSE Listener (`sse-listener.ts`)
+### Migration note: bare `chorus_*` tool names are gone
 
-- Native `fetch()` + `ReadableStream` (not browser EventSource — allows `Authorization` header)
-- `Authorization: Bearer cho_xxx` authentication
-- SSE protocol parsing (`data:` lines → JSON, `:` heartbeat lines ignored)
-- Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s (max)
-- Calls `onReconnect()` after successful reconnect for notification back-fill
+Earlier versions of this plugin **hand-wrapped** Chorus tools and exposed them to the agent under their bare names (`chorus_get_task`, `chorus_claim_task`, …). **Those registrations have been removed.** Tools now come from the auto-registered MCP server and are namespaced with the server id, so they appear as **`chorus__<tool>`** (double underscore).
 
-### Event Router (`event-router.ts`)
+If you have macros, prompts, or agent instructions that reference the bare names, update them:
 
-- Fetches full notification details via MCP (SSE only sends minimal envelope)
-- Filters by `projectUuids` config
-- Routes by notification `action` type
-- All handlers catch errors internally — never crashes the gateway
-
-## Troubleshooting
-
-### chorus_* tools not available in agent (sandbox mode)
-
-**Symptom:** Agent cannot call `chorus_checkin` or any `chorus_*` tool. Tools are missing from the tool list.
-
-**Cause:** When OpenClaw sandbox mode is enabled (`agents.defaults.sandbox.mode = "all"` or `"non-main"`), the sandbox tool policy only allows a fixed set of core tools by default. Plugin-registered tools are excluded unless explicitly allowed.
-
-**Verify:**
-```bash
-openclaw sandbox explain
-# Look for: Sandbox tool policy → allow (default)
-# chorus_* tools will NOT appear unless configured
+```
+chorus_get_task        →  chorus__chorus_get_task
+chorus_submit_for_verify  →  chorus__chorus_submit_for_verify
 ```
 
-**Fix:** Add the plugin to the sandbox tool allow list:
-```bash
-openclaw config set tools.sandbox.tools.alsoAllow '["chorus-openclaw-plugin"]'
-# Then restart gateway
-openclaw gateway restart
-```
+(Inside the bundled skills and reviewer-agent prompts the tools are referred to by their logical Chorus names; OpenClaw resolves them through the MCP server.)
 
-Or add directly to `~/.openclaw/openclaw.json`:
+### bundle-mcp sandbox caveat
+
+When OpenClaw runs agents in a sandbox (`tools.sandbox.mode` = `"all"` or `"non-main"`), **MCP tools are owned by the built-in `bundle-mcp` plugin** and are filtered out of the agent's tool list by default. The `chorus__*` tools will be missing until you add either the `bundle-mcp` plugin or the `chorus__` glob to the sandbox allow list:
+
 ```json
 {
   "tools": {
     "sandbox": {
       "tools": {
-        "alsoAllow": ["chorus-openclaw-plugin"]
+        "alsoAllow": ["chorus__*"]
       }
     }
   }
 }
 ```
+
+You can broaden this to `["bundle-mcp"]` to allow all MCP tools, or keep it scoped to `["chorus__*"]` to allow only Chorus tools. Restart the gateway after editing the sandbox policy. If you are **not** using sandbox mode, no allow-list change is needed.
 
 ---
 
-### "plugin id mismatch" warning
-Ensure `openclaw.plugin.json` `id` and `index.ts` `id` both equal `chorus-openclaw-plugin`.
+## Real-time events (SSE → agent wake)
 
-### "Wake agent failed: HTTP 405"
-Hooks are not enabled. Add to `openclaw.json`:
-```json
-{ "hooks": { "enabled": true, "token": "your-distinct-token" } }
+The plugin runs a background service (`chorus-sse`) that holds an SSE connection to Chorus. When an event arrives it fetches the full notification over MCP and **wakes the main agent in-process** by running an embedded agent turn via the host's `runtime.agent.runEmbeddedAgent(...)`, with the event text as the turn's prompt. The turn runs on the main agent's existing session (so it has conversation context and the full `chorus__*` MCP tool set) and is headless (`disableMessageTool: true`) — the agent acts by calling Chorus MCP tools (e.g. `chorus_get_comments`, `chorus_add_comment`) rather than replying to a chat channel.
+
+> **Why not `enqueueSystemEvent`?** An earlier version pushed the wake text onto the session's system-event queue and triggered a heartbeat. That does **not** work for delivering content: the heartbeat prompt builder only renders exec-completion / cron events into a prompt, so a plain notification's queued text is never injected — the agent just runs the generic `[OpenClaw heartbeat poll]`. `runEmbeddedAgent` delivers the prompt directly.
+
+> **The configured model is passed explicitly.** `runEmbeddedAgent` does not auto-resolve the model from config; with no `provider`/`model` it falls back to the built-in default (`gpt-5.5`) and errors with "Unknown model". The plugin reads `agents.defaults.model` (`"provider/model"` or `{ primary: "provider/model" }`) and passes `provider` + `model` to each wake turn.
+
+| Event | Behavior |
+|-------|----------|
+| `task_assigned` | Wake the agent to review the task and claim it (`chorus_claim_task`) when ready |
+| `mentioned` | Wake the agent with the @mention context and a pointer to the conversation |
+| `elaboration_requested` | Wake the agent to review elaboration questions |
+| `elaboration_answered` | Wake the agent to review answers, then validate or open another round |
+| `proposal_rejected` | Wake the agent with the rejection note to fix and resubmit |
+| `proposal_approved` | Wake the agent to pick up the newly created tasks |
+| `idea_claimed` | Wake the agent when an idea is assigned to it |
+| `task_verified` | Wake the agent to check for newly unblocked tasks |
+| `task_reopened` | Wake the agent with verification feedback to rework |
+
+**Resilience.** The SSE listener auto-reconnects with exponential backoff (1s → 2s → … → 30s max). After a reconnect it back-fills unread notifications over MCP so nothing is lost while disconnected. If no main agent session key can be resolved, `runEmbeddedAgent` is unavailable on the host, or a wake turn rejects (e.g. a turn is already in flight), the individual wake is **dropped with a warning** — it never throws and never crashes the SSE service. The next SSE event re-triggers.
+
+---
+
+## Skills (11)
+
+Skills are bundled under `skills/` and auto-discovered by OpenClaw. On OpenClaw a skill is invoked as a **bare slash command of its name** — e.g. `/develop`, `/idea` (OpenClaw does **not** use a `chorus:` namespace prefix).
+
+| Skill | Invoke | Description |
+|-------|--------|-------------|
+| `chorus` | `/chorus` | Platform overview, common tools, setup, and routing to the stage-specific skills |
+| `idea` | `/idea` | Claim ideas, run elaboration rounds, and prepare for proposal creation |
+| `brainstorm` | `/brainstorm` | Optional divergent-then-convergent dialogue for fuzzy ideas (prelude to elaboration) |
+| `proposal` | `/proposal` | Create proposals with document + task drafts, manage the dependency DAG, validate and submit |
+| `develop` | `/develop` | Claim tasks, report work, manage sessions, and run wave-based execution |
+| `quick-dev` | `/quick-dev` | Skip Idea→Proposal — create tasks directly, execute, and verify |
+| `review` | `/review` | Approve/reject proposals, verify tasks, and manage project governance |
+| `yolo` | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done |
+| `openspec-aware` | `/openspec-aware` | Opt-in OpenSpec authoring for PM workflows when the local `openspec` CLI is present |
+| `proposal-reviewer` | `/proposal-reviewer` | Read-only adversarial proposal review; ends with a `VERDICT:` comment |
+| `task-reviewer` | `/task-reviewer` | Read-only adversarial task verification (read-only bash for tests); ends with a `VERDICT:` comment |
+
+> Note: `/chorus` (the bare skill) and the `/chorus <subcommand>` command share the same `chorus` prefix. `/chorus status|tasks|ideas|skills` are fast, LLM-free status queries handled by the plugin command (see below); `/chorus` with no recognized subcommand falls through to the command's help/status.
+
+## Reviewer skills (2)
+
+`proposal-reviewer` and `task-reviewer` are bundled **as skills** (not agent definitions — OpenClaw has no Claude-Code-style typed agents). Both are **read-only** and end by posting a structured `VERDICT:` comment.
+
+They are meant to run inside a **spawned sub-agent**: the orchestrating skill (`/proposal`, `/develop`, `/yolo`, `/review`) uses the OpenClaw `sessions_spawn` tool to spawn a sub-agent and instructs it (in the spawn `task`) to invoke `/proposal-reviewer` or `/task-reviewer` against the entity, then waits for the VERDICT. Spawned sub-agents inherit the plugin's skill snapshot, so the slash-commands are available to them. If `sessions_spawn` is unavailable, the orchestrator runs the same review itself as a read-only pass (the reviewer skills are the authoritative checklists).
+
+| Skill | Description |
+|-------|-------------|
+| `/proposal-reviewer` | Reviews submitted proposals — document completeness, task granularity, AC alignment, cross-task dependencies. No Bash. |
+| `/task-reviewer` | Verifies submitted tasks against the AC and proposal documents. Read-only Bash allowed for verification only (tests/build, `cat`/`grep`/`ls`, `git diff`/`log`/`show`). |
+
+---
+
+## Commands
+
+`/chorus` runs fast, LLM-free status queries through the plugin's own slim MCP client:
+
+| Command | Description |
+|---------|-------------|
+| `/chorus` or `/chorus status` | Connection status, agent identity, assigned-idea count, unread notifications, skill list |
+| `/chorus tasks` | List your assigned tasks |
+| `/chorus ideas` | List your assigned ideas |
+| `/chorus skills` | List the 9 bundled Chorus skills |
+
+---
+
+## Architecture
+
 ```
-The `hooks.token` must be different from `gateway.auth.token`.
+packages/openclaw-plugin/
+├── package.json              # npm + openclaw block (extensions / runtimeExtensions, install, compat)
+├── openclaw.plugin.json      # plugin manifest (id, activation.onStartup, configSchema, skills dir, uiHints)
+├── tsconfig.json             # build config; excludes __tests__ from dist
+├── vitest.config.ts          # standalone test runner config (package is outside the root workspace)
+├── skills/                   # 11 SKILL.md skills (9 workflow + proposal-reviewer + task-reviewer), auto-discovered
+└── src/
+    ├── index.ts              # definePluginEntry — wires everything; gated to "full" registration mode
+    ├── config.ts             # config contract (chorusUrl, apiKey) + location constants
+    ├── mcp-registration.ts   # writes mcp.servers.chorus (idempotent, streamable-http + Bearer)
+    ├── mcp-client.ts         # slim MCP client for the plugin's own calls (checkin, assignments, claim)
+    ├── sse-listener.ts       # SSE connection + exponential-backoff reconnect
+    ├── event-router.ts       # SSE event → wake-message mapping (project-filtered)
+    ├── wake.ts               # resolves main session + model, runs an embedded agent turn (runEmbeddedAgent)
+    ├── commands.ts           # /chorus status|tasks|ideas|skills
+    ├── openclaw-sdk.d.ts     # ambient SDK shim (compile-time only; see below)
+    └── __tests__/            # vitest unit tests (config, mcp-registration, wake, event-router, commands, sse-listener)
+```
 
-### "Cannot wake agent — gateway.auth.token not configured"
-The plugin couldn't read `hooks.token` from OpenClaw config. Verify your `openclaw.json` has the `hooks` section.
+### Note on `openclaw-sdk.d.ts`
 
-### Tools return "undefined" parameters
-OpenClaw tool `execute` signature is `execute(toolCallId, params)` — the first argument is the call ID, not the params object. If you see this, check that all tools use `execute(_id, { param1, param2 })`.
+The entry imports `definePluginEntry` from `openclaw/plugin-sdk/plugin-entry`, a subpath available in OpenClaw `>=2026.4.27` (the plugin's host floor). When the locally resolvable `openclaw` package is an older build, `tsc` cannot resolve that subpath, so `src/openclaw-sdk.d.ts` declares a minimal ambient module to satisfy the type-checker. It is **compile-time only** — at install/runtime the real host (`>=2026.4.27`) provides the actual SDK. The floor is enforced at install time by `openclaw.compat.pluginApi >=2026.4.27` (and `openclaw.install.minHostVersion`); `peerDependencies.openclaw >=2026.0.0` is npm metadata only and is intentionally looser. Once the workspace resolves a `>=2026.4.27` `openclaw` build, delete the shim and rely on the real types.
 
-### Bedrock "inputSchema.json.type must be object"
-All tool `parameters` must be full JSON Schema with `type: "object"` at the top level, not shorthand `{ key: { type: "string" } }`.
+---
 
-## Appendix: Local Development Install
+## Validation / Release checklist
 
-If you're developing the plugin from the Chorus repo source:
+The maintainer release gate has four parts. The first (type check + test + build) runs anywhere with Node + the dev dependencies. The last two (SDK validators + smoke) require an installed `openclaw` >=2026.4.27 CLI and a running host.
+
+### 1. Type check, test & build (no OpenClaw CLI required)
 
 ```bash
-# No build needed — OpenClaw loads .ts files directly via jiti
-cd /path/to/Chorus/packages/openclaw-plugin
+npm run typecheck        # tsc --noEmit  → exit 0, no diagnostics
+npm run test             # vitest run    → exit 0, all unit tests pass
+npm run build            # tsc           → exit 0, writes dist/index.js
 ```
 
-Add to `~/.openclaw/openclaw.json`:
+These three also run automatically before publish via the `prepublishOnly`
+script (`clean → typecheck → test → build`), so `npm publish` cannot ship a
+package that fails to type-check, fails its tests, or is missing the compiled
+`dist/`. Publishing the compiled runtime is **mandatory** for the npm install
+path — a copied/npm install rejects a TypeScript-only entry with *"requires
+compiled runtime output"* (see the local-development note above).
 
-```json
-{
-  "plugins": {
-    "enabled": true,
-    "load": {
-      "paths": ["/path/to/Chorus/packages/openclaw-plugin"]
-    },
-    "entries": {
-      "chorus-openclaw-plugin": {
-        "enabled": true,
-        "config": {
-          "chorusUrl": "http://localhost:8637",
-          "apiKey": "cho_your_dev_key",
-          "autoStart": true
-        }
-      }
-    }
-  }
-}
+`dist/index.js` must exist and its **default export** must be the `definePluginEntry(...)` result — an object with `id: "chorus-openclaw-plugin"` and a `register` function. A direct `import('./dist/index.js')` resolves the `openclaw/plugin-sdk/plugin-entry` peer subpath, so run this on a host where a >=2026.4.27 `openclaw` package is resolvable.
+
+### 2. OpenClaw SDK validators (require `openclaw` >=2026.4.27 CLI)
+
+Run from the package root after `npm run build`:
+
+```bash
+openclaw plugins build --entry ./dist/index.js --check    # expect exit 0: "Plugin metadata is up to date."
+openclaw plugins validate --entry ./dist/index.js         # expect exit 0: "Plugin chorus-openclaw-plugin is valid."
 ```
+
+- `plugins build --check` fails (exit 1, "Generated plugin metadata is out of date. Run openclaw plugins build.") if the committed `openclaw.plugin.json` / `package.json` metadata is stale relative to the entry. If it fails, run `openclaw plugins build` (no `--check`) to regenerate, review the diff, and commit.
+- `plugins validate` loads the manifest, checks the entry id matches the manifest id, confirms the `configSchema` is present, and verifies `package.json` `openclaw.extensions` includes the entry. Expected success: `Plugin chorus-openclaw-plugin is valid.`
+
+### 3. Manual smoke test (require `openclaw` >=2026.4.27 host)
+
+```bash
+openclaw plugins install --link .
+openclaw plugins enable chorus-openclaw-plugin
+# configure plugins.entries.chorus-openclaw-plugin.config (chorusUrl + apiKey), then restart the gateway
+```
+
+Confirm:
+
+1. **`mcp.servers.chorus` is written** — inspect `~/.openclaw/openclaw.json`; the `mcp.servers.chorus` entry should have `url: <chorusUrl>/api/mcp`, `transport: "streamable-http"`, and a `Bearer` Authorization header.
+2. **`chorus__*` tools appear** — the agent's tool list includes `chorus__chorus_get_task`, `chorus__chorus_checkin`, etc. (in sandbox mode, after adding `chorus__*` to `tools.sandbox.tools.alsoAllow`).
+3. **SSE wake fires** — assign a Chorus task to this agent; the SSE event should wake the agent in-process. Check the gateway log for `[Chorus] Wake enqueued`.
+4. **`/chorus status` works** — running `/chorus` returns connection status + checkin data (agent name, assigned-idea count, unread notifications, skill list).
+
+### Status in this repo's CI environment
+
+In the repository CI/dev environment the `openclaw` CLI is **not installed** (and the resolvable `openclaw` peer is an older `2026.3.x` build, which is exactly why the `openclaw-sdk.d.ts` shim is still required), so steps 2–3 above cannot be executed here. Section 1 (`tsc --noEmit`, `vitest run`, and `tsc` build → `dist/index.js` with a valid default export) **is** run and must pass. A maintainer on a >=2026.4.27 host must run sections 2 and 3 before publishing and confirm the expected exit codes / messages above.
+
+---
 
 ## License
 

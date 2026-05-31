@@ -1,14 +1,19 @@
 ---
 name: quick-dev
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
+license: AGPL-3.0
 metadata:
-  openclaw:
-    emoji: "⚡"
+  author: chorus
+  version: "0.9.0"
+  category: project-management
+  mcp_server: chorus
 ---
 
 # Quick Dev Skill
 
 Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) and create tasks directly. Ideal for small, well-understood work. The goal is for agents to **autonomously record their development work and verify task completion** through structured acceptance criteria.
+
+> **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_create_tasks`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
 ---
 
@@ -39,9 +44,9 @@ For complex work, use `/idea` + `/proposal` instead.
 
 ## Pre-Flight: Admin Self-Verify Check
 
-**Before creating tasks**, if you have the `admin_agent` role, ask the user:
+**Before creating tasks**, if `chorus_checkin().agent.permissions.task` includes `"admin"`, ask the user (as a **plain-text prompt** — OpenClaw has no `AskUserQuestion`):
 
-> "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify?"
+> "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify? Reply 'self' or 'other'."
 
 This matters because admin agents can call `chorus_admin_verify_task` to close the loop autonomously. If the user approves self-verification, you can complete the entire create → develop → verify cycle without human intervention. Record the decision and apply it in Step 7.
 
@@ -115,12 +120,18 @@ chorus_update_task({
 chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })
 ```
 
+**Sub-agents:** create your own session first (manual on OpenClaw — see `/develop`), then pass `sessionUuid` for attribution:
+```
+chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress", sessionUuid: "<session-uuid>" })
+```
+
 ### Step 5: Report Progress
 
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
-  report: "Fixed Safari cookie issue:\n- Root cause: SameSite=Strict incompatible with redirect\n- Changed to SameSite=Lax\n- Commit: abc1234"
+  report: "Fixed Safari cookie issue:\n- Root cause: SameSite=Strict incompatible with redirect\n- Changed to SameSite=Lax\n- Commit: abc1234",
+  sessionUuid: "<session-uuid>"
 })
 ```
 
@@ -145,13 +156,26 @@ chorus_submit_for_verify({
 })
 ```
 
-**Admin self-verification:** If you have the `admin_agent` role and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
+**Admin self-verification:** If you have `task: ["admin"]` in `permissions` and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
 
 ```
 chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
 ```
 
 This completes the full autonomous cycle: create → develop → verify → done.
+
+> **Optional independent review:** for non-trivial quick tasks you may still run the `/task-reviewer` skill in a spawned sub-agent (`sessions_spawn` with a task telling it to run `/task-reviewer` against the taskUuid, then wait for the VERDICT) or do a focused read-only self-review before verifying — same pattern as `/develop` Step 8.5. There is no PostToolUse hook on OpenClaw, so do this inline if you want it.
+
+---
+
+## Session Integration
+
+Quick Tasks support sub-agent execution just like proposal-based tasks. **Session lifecycle is manual on OpenClaw** (no SubagentStart/heartbeat/cleanup hooks):
+
+- **Main agent**: create quick tasks, work them yourself, or hand task UUIDs to sub-agents
+- **Sub-agents**: create your own session (`chorus_create_session`), checkin/checkout per task, pass `sessionUuid` to `chorus_update_task` / `chorus_report_work`, and close the session on exit — see `/develop` for the full manual protocol
+
+> OpenClaw has no Agent Teams / `TeamCreate` primitive; if you need to run several quick tasks, work them sequentially as the main agent (or dispatch generic sub-agents one at a time).
 
 ---
 
@@ -162,7 +186,7 @@ This completes the full autonomous cycle: create → develop → verify → done
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
 - Quick Tasks show up in the same project task list and DAG as proposal-based tasks
-- Admin agents can run the full lifecycle autonomously (create → develop → self-verify) — but always confirm with the user first
+- Admin agents can run the full lifecycle autonomously (create → develop → self-verify) — but always confirm with the user first (plain-text prompt)
 
 ---
 
