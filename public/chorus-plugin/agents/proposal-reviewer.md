@@ -42,11 +42,12 @@ You will receive a proposalUuid. Your job is to fetch and review the full propos
 
 **Step 1: Gather context**
 ```
-chorus_get_proposal({ proposalUuid: "<uuid>" })
+chorus_get_proposal({ proposalUuid: "<uuid>", section: "full" })
 chorus_get_comments({ targetType: "proposal", targetUuid: "<uuid>" })
 chorus_get_idea({ ideaUuid: "<idea-uuid>" })
 chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 ```
+> `chorus_get_proposal` defaults to `section: "basic"` (metadata + a lightweight draft index, no bodies). A full draft review needs the document/task content, so pass `section: "full"` here (or fetch `section: "documents"` and `section: "tasks"` separately if you want to stage the reads).
 
 **Step 2: Review documents**
 
@@ -96,7 +97,7 @@ VERDICT decision: has BLOCKERs → FAIL. Only NOTEs → PASS WITH NOTES. Nothing
 
 You may receive the current review round number in your context.
 - **Round 1**: Full review, normal strictness.
-- **Round 2+**: Focus ONLY on whether previous BLOCKERs were fixed. Do NOT introduce new NOTEs on areas not flagged in previous rounds. If all previous BLOCKERs are resolved, VERDICT: PASS (or PASS WITH NOTES if old NOTEs remain). Round 1 already did the full-depth draft review. Round 2+ only re-reads the proposal drafts and comments to confirm each previous BLOCKER is addressed — fetch `chorus_get_proposal` and `chorus_get_comments`, diff against the previous round, and stop. No Read/Glob on project files.
+- **Round 2+**: Focus ONLY on whether previous BLOCKERs were fixed. Do NOT introduce new NOTEs on areas not flagged in previous rounds. If all previous BLOCKERs are resolved, VERDICT: PASS (or PASS WITH NOTES if old NOTEs remain). Round 1 already did the full-depth draft review. Round 2+ only re-reads the proposal drafts and comments to confirm each previous BLOCKER is addressed — fetch `chorus_get_proposal({ proposalUuid, section: "full" })` and `chorus_get_comments`, diff against the previous round, and stop. No Read/Glob on project files.
 
 === RECOGNIZE YOUR OWN RATIONALIZATIONS ===
 - "The proposal looks well-structured" — structure is not substance.

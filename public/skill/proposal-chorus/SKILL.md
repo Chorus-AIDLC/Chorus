@@ -139,8 +139,10 @@ chorus_pm_add_task_draft({
 ### Step 4: Review and Refine Drafts
 
 ```
-# Review current state
-chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+# Review current state. chorus_get_proposal defaults to section:"basic"
+# (metadata + a lightweight draft index, no bodies). Use section:"full" to
+# see every draft's content, or section:"documents"/"tasks" for one kind.
+chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "full" })
 
 # Update a document draft
 chorus_pm_update_document_draft({
@@ -197,7 +199,7 @@ chorus_add_comment({
 If the proposal is rejected, check the review note:
 
 ```
-chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "full" })
 chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 ```
 

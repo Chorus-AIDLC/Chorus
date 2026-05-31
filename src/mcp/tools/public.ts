@@ -442,18 +442,35 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_get_proposal - Get single Proposal details (including drafts)
+  // chorus_get_proposal - Get a single Proposal as a section-scoped view
   server.registerTool(
     "chorus_get_proposal",
     {
-      description: "Get detailed information for a single Proposal, including document drafts and task drafts",
+      description:
+        "Get a single Proposal, sliced into one section to avoid oversized payloads. " +
+        "The `section` parameter selects the view (default `basic`):\n" +
+        "- `basic` (default): proposal metadata + a lightweight index of document drafts " +
+        "(uuid, type, title, contentLength) and task drafts (uuid, title, priority, storyPoints, " +
+        "acceptanceCriteriaCount, dependsOnDraftUuids). No document content or full task descriptions.\n" +
+        "- `documents`: proposal metadata + the FULL document drafts (with content).\n" +
+        "- `tasks`: proposal metadata + the FULL task drafts (with descriptions and acceptance criteria).\n" +
+        "- `full`: the entire proposal (all document and task drafts) in one payload.\n" +
+        "Start with `basic` to see what exists, then drill into `documents` or `tasks` " +
+        "using the same `proposalUuid`. Every response includes a `section` field echoing the view returned.",
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
+        section: z
+          .enum(["basic", "documents", "tasks", "full"])
+          .optional()
+          .describe(
+            "Which slice to return. Default `basic` (metadata + lightweight draft index). " +
+              "Use `documents`/`tasks` for full drafts of one kind, or `full` for everything."
+          ),
       }),
     },
-    async ({ proposalUuid }) => {
-      // Use getProposal to return the full formatted response, including drafts
-      const proposal = await proposalService.getProposal(auth.companyUuid, proposalUuid);
+    async ({ proposalUuid, section }) => {
+      const view = section ?? "basic";
+      const proposal = await proposalService.getProposalSection(auth.companyUuid, proposalUuid, view);
       if (!proposal) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }

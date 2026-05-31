@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -127,8 +127,9 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 
 4. **Read the originating proposal** for design intent:
    ```
-   chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+   chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "documents" })
    ```
+   (`chorus_get_proposal` defaults to `section: "basic"` — just metadata + a draft index. Pass `section: "documents"` for the design docs, or `section: "full"` for docs + task drafts.)
 
 5. **Read project documents** (PRD, tech design, ADR):
    ```

@@ -1,6 +1,6 @@
 {
   "name": "chorus",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Chorus AI-DLC collaboration platform plugin for Codex CLI. Provides skills for every stage of the AI-DLC lifecycle, read-only reviewer subagents, and session-aware hooks. MCP server is configured separately via the install script.",
   "author": {
     "name": "Chorus-AIDLC"

@@ -185,7 +185,7 @@ A **report** is a short idea-completion summary persisted as a `type="report"` D
 | Tool | Purpose |
 |------|---------|
 | `chorus_get_proposals` | List project Proposals (filterable by status: pending, approved, rejected) |
-| `chorus_get_proposal` | Get a single Proposal's details, including documentDrafts and taskDrafts |
+| `chorus_get_proposal` | Get a single Proposal, sliced by `section` (default `basic`: metadata + lightweight draft index; `documents`/`tasks`/`full` for the draft bodies) |
 
 ### Tasks
 

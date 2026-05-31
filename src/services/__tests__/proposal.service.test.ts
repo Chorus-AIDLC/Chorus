@@ -100,6 +100,9 @@ import {
   revokeProposal,
   deleteProposal,
   getProjectProposals,
+  getProposalSection,
+  toDocumentDraftIndex,
+  toTaskDraftIndex,
 } from "@/services/proposal.service";
 import { makeProposal } from "@/__test-utils__/fixtures";
 
@@ -2019,5 +2022,193 @@ describe("Idea reuse - approveProposal with completed Idea", () => {
 
     // Ideas should NOT be auto-completed — derived status computed from task progress
     expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ====================================================================
+// Section-scoped views: index mappers + getProposalSection
+// ====================================================================
+
+describe("toDocumentDraftIndex", () => {
+  it("projects a draft to its lightweight index entry with contentLength", () => {
+    const entry = toDocumentDraftIndex({
+      uuid: "d1",
+      type: "prd",
+      title: "PRD",
+      content: "x".repeat(42),
+    });
+    expect(entry).toEqual({ uuid: "d1", type: "prd", title: "PRD", contentLength: 42 });
+    // No `content` body should leak into the index entry
+    expect("content" in entry).toBe(false);
+  });
+
+  it("treats missing content as length 0", () => {
+    const entry = toDocumentDraftIndex({
+      uuid: "d2",
+      type: "spec",
+      title: "Spec",
+      content: undefined as unknown as string,
+    });
+    expect(entry.contentLength).toBe(0);
+  });
+});
+
+describe("toTaskDraftIndex", () => {
+  it("projects a draft, counting acceptance criteria and preserving the DAG", () => {
+    const entry = toTaskDraftIndex({
+      uuid: "t1",
+      title: "Task 1",
+      description: "a long description that must not leak",
+      priority: "high",
+      storyPoints: 5,
+      acceptanceCriteriaItems: [
+        { description: "AC1", required: true },
+        { description: "AC2", required: false },
+      ],
+      dependsOnDraftUuids: ["t0"],
+    });
+    expect(entry).toEqual({
+      uuid: "t1",
+      title: "Task 1",
+      priority: "high",
+      storyPoints: 5,
+      acceptanceCriteriaCount: 2,
+      dependsOnDraftUuids: ["t0"],
+    });
+    // Heavy description must not be present in the index entry
+    expect("description" in entry).toBe(false);
+  });
+
+  it("defaults acceptanceCriteriaCount to 0 and omits absent optional fields", () => {
+    const entry = toTaskDraftIndex({ uuid: "t2", title: "Bare task" });
+    expect(entry).toEqual({ uuid: "t2", title: "Bare task", acceptanceCriteriaCount: 0 });
+    expect("priority" in entry).toBe(false);
+    expect("storyPoints" in entry).toBe(false);
+    expect("dependsOnDraftUuids" in entry).toBe(false);
+  });
+});
+
+describe("getProposalSection", () => {
+  const DOC_DRAFTS = [
+    { uuid: "doc-1", type: "prd", title: "PRD", content: "P".repeat(300) },
+    { uuid: "doc-2", type: "tech_design", title: "Design", content: "D".repeat(500) },
+  ];
+  const TASK_DRAFTS = [
+    {
+      uuid: "td-1",
+      title: "Service",
+      description: "Implement service".repeat(20),
+      priority: "high",
+      storyPoints: 3,
+      acceptanceCriteriaItems: [{ description: "AC", required: true }],
+    },
+    {
+      uuid: "td-2",
+      title: "Wiring",
+      description: "Wire it up".repeat(20),
+      priority: "medium",
+      storyPoints: 2,
+      acceptanceCriteriaItems: [{ description: "AC1" }, { description: "AC2" }],
+      dependsOnDraftUuids: ["td-1"],
+    },
+  ];
+
+  function richProposalRow() {
+    return dbProposal({
+      uuid: "prop-section",
+      documentDrafts: DOC_DRAFTS,
+      taskDrafts: TASK_DRAFTS,
+    });
+  }
+
+  it("returns null when the proposal does not exist", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+    const result = await getProposalSection(COMPANY_UUID, "missing", "basic");
+    expect(result).toBeNull();
+  });
+
+  it("issues a single DB read (reuses getProposal, no second query)", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    expect(mockPrisma.proposal.findFirst).toHaveBeenCalledOnce();
+  });
+
+  it("section='basic' returns metadata + lightweight indexes, no heavy bodies", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    expect(result).not.toBeNull();
+    if (result?.section !== "basic") throw new Error("expected basic section");
+
+    expect(result.uuid).toBe("prop-section");
+    expect(result.documentDraftCount).toBe(2);
+    expect(result.taskDraftCount).toBe(2);
+    expect(result.documentDraftIndex).toEqual([
+      { uuid: "doc-1", type: "prd", title: "PRD", contentLength: 300 },
+      { uuid: "doc-2", type: "tech_design", title: "Design", contentLength: 500 },
+    ]);
+    expect(result.taskDraftIndex[1]).toEqual({
+      uuid: "td-2",
+      title: "Wiring",
+      priority: "medium",
+      storyPoints: 2,
+      acceptanceCriteriaCount: 2,
+      dependsOnDraftUuids: ["td-1"],
+    });
+    // Heavy arrays must NOT be present on the basic view
+    expect("documentDrafts" in result).toBe(false);
+    expect("taskDrafts" in result).toBe(false);
+  });
+
+  it("defaults to the basic view when called with 'basic' (the omitted-param default)", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    expect(result?.section).toBe("basic");
+  });
+
+  it("section='documents' returns full document drafts and omits full task drafts", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "documents");
+    if (result?.section !== "documents") throw new Error("expected documents section");
+    expect(result.documentDrafts).toHaveLength(2);
+    expect(result.documentDrafts?.[0].content).toBe("P".repeat(300));
+    expect("taskDrafts" in result).toBe(false);
+  });
+
+  it("section='tasks' returns full task drafts and omits full document drafts", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "tasks");
+    if (result?.section !== "tasks") throw new Error("expected tasks section");
+    expect(result.taskDrafts).toHaveLength(2);
+    expect(result.taskDrafts?.[0].description).toContain("Implement service");
+    expect("documentDrafts" in result).toBe(false);
+  });
+
+  it("section='full' returns the complete payload with both draft arrays", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "full");
+    if (result?.section !== "full") throw new Error("expected full section");
+    expect(result.documentDrafts).toHaveLength(2);
+    expect(result.taskDrafts).toHaveLength(2);
+    expect(result.documentDrafts?.[0].content).toBe("P".repeat(300));
+  });
+
+  it("the basic view serializes smaller than the full view for the same proposal", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const basic = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
+    const full = await getProposalSection(COMPANY_UUID, "prop-section", "full");
+    expect(JSON.stringify(basic).length).toBeLessThan(JSON.stringify(full).length);
+  });
+
+  it("handles a proposal with null draft arrays (basic view yields empty indexes)", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(
+      dbProposal({ uuid: "prop-empty", documentDrafts: null, taskDrafts: null })
+    );
+    const result = await getProposalSection(COMPANY_UUID, "prop-empty", "basic");
+    if (result?.section !== "basic") throw new Error("expected basic section");
+    expect(result.documentDraftCount).toBe(0);
+    expect(result.taskDraftCount).toBe(0);
+    expect(result.documentDraftIndex).toEqual([]);
+    expect(result.taskDraftIndex).toEqual([]);
   });
 });

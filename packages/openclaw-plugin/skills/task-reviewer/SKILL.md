@@ -4,7 +4,7 @@ description: Adversarial verification of a submitted Chorus task against its AC 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -42,7 +42,7 @@ A `taskUuid` (in your task prompt). Fetch the task, its AC, and the proposal doc
 ```
 chorus_get_task({ taskUuid: "<uuid>" })
 chorus_get_comments({ targetType: "task", targetUuid: "<uuid>" })
-chorus_get_proposal({ proposalUuid: "<from-task>" })
+chorus_get_proposal({ proposalUuid: "<from-task>", section: "documents" })
 chorus_get_document({ documentUuid: "<doc-uuid>" })
 ```
 

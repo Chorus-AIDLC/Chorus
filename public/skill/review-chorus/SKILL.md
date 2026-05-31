@@ -95,10 +95,12 @@ Prioritize: **Proposals first** (they unblock PM and Developer work), then task 
 #### A1: Read the Proposal
 
 ```
-chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "full" })
 ```
 
-This returns: title, description, input ideas, **document drafts** (PRD, tech design), **task drafts** (with descriptions and acceptance criteria).
+`chorus_get_proposal` defaults to `section: "basic"` — proposal metadata plus a lightweight index of the drafts (uuid, type/title, contentLength, AC count, dependency edges) with **no** document content or full task descriptions. For a review you need the bodies, so pass `section: "full"` to get everything at once (or `section: "documents"` / `section: "tasks"` to read one kind at a time).
+
+The `full` view returns: title, description, input ideas, **document drafts** (PRD, tech design), **task drafts** (with descriptions and acceptance criteria).
 
 #### A2: Quality Checklist
 

@@ -57,7 +57,7 @@ You will receive a taskUuid. Your job is to fetch the task, its AC, and the prop
 ```
 chorus_get_task({ taskUuid: "<uuid>" })
 chorus_get_comments({ targetType: "task", targetUuid: "<uuid>" })
-chorus_get_proposal({ proposalUuid: "<from-task>" })
+chorus_get_proposal({ proposalUuid: "<from-task>", section: "documents" })
 chorus_get_document({ documentUuid: "<doc-uuid>" })
 ```
 

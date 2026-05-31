@@ -104,6 +104,61 @@ export interface ProposalResponse {
   updatedAt: string;
 }
 
+// ===== Section-scoped views (MCP chorus_get_proposal) =====
+// The MCP tool slices a proposal into one of these views to avoid returning the
+// full document/task draft bodies on every call. See docs: getProposalSection.
+
+export type ProposalSection = "basic" | "documents" | "tasks" | "full";
+
+// Lightweight document-draft index entry — no `content` body.
+export interface DocumentDraftIndexEntry {
+  uuid: string;
+  type: string;
+  title: string;
+  contentLength: number; // content.length, so callers can gauge cost before drilling in
+}
+
+// Lightweight task-draft index entry — no full description / criteria text.
+export interface TaskDraftIndexEntry {
+  uuid: string;
+  title: string;
+  priority?: string;
+  storyPoints?: number;
+  acceptanceCriteriaCount: number; // count of acceptanceCriteriaItems (0 if none)
+  dependsOnDraftUuids?: string[]; // preserve the dependency DAG
+}
+
+// Proposal metadata shared by every section view (everything except the heavy draft arrays).
+export type ProposalMeta = Omit<ProposalResponse, "documentDrafts" | "taskDrafts">;
+
+export interface ProposalBasicResponse extends ProposalMeta {
+  section: "basic";
+  documentDraftCount: number;
+  taskDraftCount: number;
+  documentDraftIndex: DocumentDraftIndexEntry[];
+  taskDraftIndex: TaskDraftIndexEntry[];
+}
+
+export interface ProposalDocumentsResponse extends ProposalMeta {
+  section: "documents";
+  documentDrafts: DocumentDraft[] | null;
+}
+
+export interface ProposalTasksResponse extends ProposalMeta {
+  section: "tasks";
+  taskDrafts: TaskDraft[] | null;
+}
+
+export interface ProposalFullResponse extends ProposalResponse {
+  section: "full";
+}
+
+export type ProposalSectionResponse =
+  | ProposalBasicResponse
+  | ProposalDocumentsResponse
+  | ProposalTasksResponse
+  | ProposalFullResponse;
+
 // ===== Internal Helper Functions =====
 
 // Format a single Proposal into API response format
@@ -513,6 +568,66 @@ export async function getProposal(
 
   if (!proposal) return null;
   return formatProposalResponse(proposal);
+}
+
+// ===== Section-scoped projection (MCP chorus_get_proposal) =====
+
+// Project a full document draft into its lightweight index entry.
+export function toDocumentDraftIndex(draft: DocumentDraft): DocumentDraftIndexEntry {
+  return {
+    uuid: draft.uuid,
+    type: draft.type,
+    title: draft.title,
+    contentLength: (draft.content ?? "").length,
+  };
+}
+
+// Project a full task draft into its lightweight index entry.
+export function toTaskDraftIndex(draft: TaskDraft): TaskDraftIndexEntry {
+  const entry: TaskDraftIndexEntry = {
+    uuid: draft.uuid,
+    title: draft.title,
+    acceptanceCriteriaCount: draft.acceptanceCriteriaItems?.length ?? 0,
+  };
+  if (draft.priority !== undefined) entry.priority = draft.priority;
+  if (draft.storyPoints !== undefined) entry.storyPoints = draft.storyPoints;
+  if (draft.dependsOnDraftUuids !== undefined) entry.dependsOnDraftUuids = draft.dependsOnDraftUuids;
+  return entry;
+}
+
+// Get a single section ("view") of a Proposal. Used only by the MCP tool to avoid
+// returning the full document/task draft bodies on every call. Reuses getProposal()
+// (single DB read) and derives the requested slice purely in memory — getProposal()
+// and the REST contract are left untouched.
+export async function getProposalSection(
+  companyUuid: string,
+  uuid: string,
+  section: ProposalSection
+): Promise<ProposalSectionResponse | null> {
+  const proposal = await getProposal(companyUuid, uuid);
+  if (!proposal) return null;
+
+  // Split metadata from the heavy draft arrays.
+  const { documentDrafts, taskDrafts, ...meta } = proposal;
+
+  switch (section) {
+    case "documents":
+      return { ...meta, section: "documents", documentDrafts };
+    case "tasks":
+      return { ...meta, section: "tasks", taskDrafts };
+    case "full":
+      return { ...proposal, section: "full" };
+    case "basic":
+    default:
+      return {
+        ...meta,
+        section: "basic",
+        documentDraftCount: documentDrafts?.length ?? 0,
+        taskDraftCount: taskDrafts?.length ?? 0,
+        documentDraftIndex: (documentDrafts ?? []).map(toDocumentDraftIndex),
+        taskDraftIndex: (taskDrafts ?? []).map(toTaskDraftIndex),
+      };
+  }
 }
 
 // Get raw Proposal data by UUID (internal use)

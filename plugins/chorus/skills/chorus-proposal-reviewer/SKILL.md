@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, au
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus proposal reviewer
@@ -58,11 +58,12 @@ A proposalUuid. Your job is to fetch and review the full proposal.
 **Step 1: Gather context**
 
 ```
-chorus_get_proposal({ proposalUuid: "<uuid>" })
+chorus_get_proposal({ proposalUuid: "<uuid>", section: "full" })
 chorus_get_comments({ targetType: "proposal", targetUuid: "<uuid>" })
 chorus_get_idea({ ideaUuid: "<idea-uuid>" })
 chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 ```
+> `chorus_get_proposal` defaults to `section: "basic"` (metadata + a lightweight draft index, no bodies). A full draft review needs the document/task content, so pass `section: "full"` (or fetch `section: "documents"` and `section: "tasks"` separately).
 
 **Step 2: Review documents**
 

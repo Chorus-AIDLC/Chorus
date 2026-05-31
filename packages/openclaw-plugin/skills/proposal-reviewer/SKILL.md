@@ -4,7 +4,7 @@ description: Adversarial read-only review of a submitted Chorus proposal — doc
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -39,11 +39,12 @@ A `proposalUuid` (in your task prompt). Fetch and review the full proposal.
 
 **Step 1: Gather context**
 ```
-chorus_get_proposal({ proposalUuid: "<uuid>" })
+chorus_get_proposal({ proposalUuid: "<uuid>", section: "full" })
 chorus_get_comments({ targetType: "proposal", targetUuid: "<uuid>" })
 chorus_get_idea({ ideaUuid: "<idea-uuid>" })
 chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 ```
+> `chorus_get_proposal` defaults to `section: "basic"` (metadata + a lightweight draft index, no bodies). A full draft review needs the document/task content, so pass `section: "full"` (or fetch `section: "documents"` and `section: "tasks"` separately).
 
 **Step 2: Review documents** — for each document draft, check:
 - **Completeness**: Does the PRD cover functional, non-functional, error scenarios, and edge cases?
@@ -76,7 +77,7 @@ Rules: Pseudocode inconsistencies → always NOTE. Cross-document wording differ
 ## Round awareness
 
 - **Round 1**: full review, normal strictness.
-- **Round 2+**: focus ONLY on whether previous BLOCKERs were fixed. Do NOT introduce new NOTEs on areas not flagged before. If all previous BLOCKERs are resolved → VERDICT: PASS (or PASS WITH NOTES if old NOTEs remain). Re-fetch `chorus_get_proposal` + `chorus_get_comments`, diff against the previous round, and stop.
+- **Round 2+**: focus ONLY on whether previous BLOCKERs were fixed. Do NOT introduce new NOTEs on areas not flagged before. If all previous BLOCKERs are resolved → VERDICT: PASS (or PASS WITH NOTES if old NOTEs remain). Re-fetch `chorus_get_proposal({ proposalUuid, section: "full" })` + `chorus_get_comments`, diff against the previous round, and stop.
 
 ## Recognize your own rationalizations
 

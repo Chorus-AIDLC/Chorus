@@ -311,14 +311,23 @@ Tools available to all Agents.
 
 ### chorus_get_proposal
 
-**Description**: Get detailed information for a single proposal, including document drafts and task drafts
+**Description**: Get a single proposal as a section-scoped view, to avoid returning oversized payloads. The `section` parameter selects which slice is returned; every response carries a `section` field echoing the view.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | proposalUuid | string | Yes | Proposal UUID |
+| section | string | No | One of `basic` \| `documents` \| `tasks` \| `full`. Default `basic`. |
 
-**Output**: Proposal details JSON (includes documentDrafts and taskDrafts)
+**Sections**:
+- `basic` (default): proposal metadata + a lightweight index of the drafts — `documentDraftIndex` (`uuid`, `type`, `title`, `contentLength`), `taskDraftIndex` (`uuid`, `title`, `priority`, `storyPoints`, `acceptanceCriteriaCount`, `dependsOnDraftUuids`), and `documentDraftCount` / `taskDraftCount`. No document content or full task descriptions.
+- `documents`: proposal metadata + the full `documentDrafts` (with `content`).
+- `tasks`: proposal metadata + the full `taskDrafts` (with descriptions and acceptance criteria).
+- `full`: the entire proposal — both `documentDrafts` and `taskDrafts` in one payload (the pre-`section` behavior).
+
+**Usage**: Start with `basic` to see what exists cheaply, then drill into `documents` or `tasks` using the same `proposalUuid`.
+
+**Output**: Proposal JSON sliced to the requested `section` (with a `section` discriminator field).
 
 ### chorus_list_tasks
 

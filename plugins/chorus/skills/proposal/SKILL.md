@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -149,8 +149,10 @@ chorus_pm_add_task_draft({
 ### Step 4: Review and Refine Drafts
 
 ```
-# Review current state
-chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+# Review current state. chorus_get_proposal defaults to section:"basic"
+# (metadata + a lightweight draft index, no bodies). Use section:"full" to
+# see every draft's content, or section:"documents"/"tasks" for one kind.
+chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "full" })
 
 # Update a document draft
 chorus_pm_update_document_draft({
@@ -210,7 +212,7 @@ After submission, a `chorus-proposal-reviewer` may run and post a VERDICT commen
 
 1. **Read feedback:**
    ```
-   chorus_get_proposal({ proposalUuid: "<proposal-uuid>" })
+   chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "full" })
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
    Identify BLOCKERs from the reviewer VERDICT or rejection note.

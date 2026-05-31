@@ -4,7 +4,7 @@ description: 'Read-only Chorus task reviewer. Fetches a task plus its acceptance
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.0"
+  version: "0.9.1"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus task reviewer
@@ -76,7 +76,7 @@ A taskUuid. Your job: fetch the task, its AC, and the proposal documents, then i
 ```
 chorus_get_task({ taskUuid: "<uuid>" })
 chorus_get_comments({ targetType: "task", targetUuid: "<uuid>" })
-chorus_get_proposal({ proposalUuid: "<task.proposalUuid>" })
+chorus_get_proposal({ proposalUuid: "<task.proposalUuid>", section: "documents" })
 ```
 
 **Step 2: Run tests/builds**
