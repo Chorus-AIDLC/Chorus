@@ -267,24 +267,29 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
 
         {/* Content */}
         <div className="min-w-0 flex-1">
-          {/* Project badge */}
+          {/* Project badge — block + max-w-full + wrapping so a long project
+              name folds onto multiple lines within the dropdown instead of
+              forcing the badge past the max-w-[360px] boundary. Override the
+              badge base `whitespace-nowrap` with `whitespace-normal`. */}
           <Badge
             variant="secondary"
-            className={`mb-1 px-1.5 py-0 text-[10px] font-medium ${projectColor.bg} ${projectColor.text} border-0`}
+            className={`mb-1 block h-auto max-w-full whitespace-normal break-words px-1.5 py-0 text-[10px] font-medium ${projectColor.bg} ${projectColor.text} border-0`}
           >
             {notification.projectName}
           </Badge>
 
-          {/* Title + action */}
-          <div className="text-[13px] font-medium text-foreground truncate">
+          {/* Title + action — wrap long content onto multiple lines instead
+              of overflowing the dropdown horizontally */}
+          <div className="text-[13px] font-medium text-foreground break-words">
             {notification.entityTitle}
           </div>
-          <div className="text-[12px] text-muted-foreground truncate">
+          <div className="text-[12px] text-muted-foreground break-words">
             {t(`types.${notification.action}` as Parameters<typeof t>[0])}
           </div>
 
-          {/* Actor + time */}
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
+          {/* Actor + time — wrap so a long actor name does not overflow
+              the dropdown horizontally */}
+          <div className="mt-0.5 text-[11px] text-muted-foreground break-words">
             {notification.actorName} &middot; {relativeTime(notification.createdAt)}
           </div>
         </div>
@@ -365,7 +370,7 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.15 }}
           >
-            <ScrollArea className="max-h-[400px] overflow-y-auto">
+            <ScrollArea className="max-h-[400px] overflow-y-auto [&_[data-slot=scroll-area-viewport]>div]:!block">
               {renderList(allNotifications, false, allTotal)}
             </ScrollArea>
           </motion.div>
@@ -378,7 +383,7 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.15 }}
           >
-            <ScrollArea className="max-h-[400px] overflow-y-auto">
+            <ScrollArea className="max-h-[400px] overflow-y-auto [&_[data-slot=scroll-area-viewport]>div]:!block">
               {renderList(unreadNotifications, true, unreadTotal)}
             </ScrollArea>
           </motion.div>
