@@ -4,6 +4,8 @@ import rehypeExternalLinks from 'rehype-external-links';
 
 import sitemap from '@astrojs/sitemap';
 
+import cloudflare from '@astrojs/cloudflare';
+
 // https://astro.build/config
 export default defineConfig({
   site: 'https://chorus-ai.dev',
@@ -24,4 +26,5 @@ export default defineConfig({
   },
 
   integrations: [sitemap()],
+  adapter: cloudflare(),
 });
