@@ -308,6 +308,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     const suggestionItemsRef = useRef<Mentionable[]>([]);
     const suggestionLoadingRef = useRef(false);
     const keyDownRef = useRef<KeyDownHandler | null>(null);
+    const wrapperRef = useRef<HTMLDivElement | null>(null);
     const popupRef = useRef<HTMLDivElement | null>(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const currentCommandRef = useRef<((attrs: any) => void) | null>(null);
@@ -406,7 +407,18 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                     }
                   }
 
-                  document.body.appendChild(popup);
+                  // Mount inside the editor wrapper (not document.body) so the
+                  // popup lives within the same DOM subtree as the editor. When
+                  // the editor is hosted inside a modal Radix Dialog (e.g. the
+                  // proposal comments Sheet), the dialog sets
+                  // `pointer-events: none` on <body> and treats clicks outside
+                  // its subtree as "interact outside" dismissals. A body-level
+                  // popup would inherit the disabled pointer-events (clicks dead)
+                  // and would dismiss the dialog on click. Keeping it inside the
+                  // wrapper inherits `pointer-events: auto` and is recognized as
+                  // inside the dialog. `position: fixed` still positions it
+                  // against the viewport so it escapes any overflow clipping.
+                  (wrapperRef.current ?? document.body).appendChild(popup);
 
                   createSuggestionPopupRenderer(
                     suggestionItemsRef.current,
@@ -528,6 +540,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
 
     return (
       <div
+        ref={wrapperRef}
         className={cn(
           "relative rounded-md border border-input bg-transparent shadow-xs transition-[color,box-shadow]",
           "focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-[3px]",
