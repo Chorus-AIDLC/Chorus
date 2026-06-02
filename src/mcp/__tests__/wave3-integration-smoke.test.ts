@@ -49,6 +49,8 @@ const mockTaskService = vi.hoisted(() => ({
   checkDependenciesResolved: vi.fn(),
   addTaskDependency: vi.fn(),
   removeTaskDependency: vi.fn(),
+  createAcceptanceCriteria: vi.fn(),
+  replaceAcceptanceCriteria: vi.fn(),
   TaskUpdateParams: {},
 }));
 

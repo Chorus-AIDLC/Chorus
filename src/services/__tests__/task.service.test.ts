@@ -37,8 +37,10 @@ const mockPrisma = vi.hoisted(() => {
       findMany: vi.fn(),
       findFirst: vi.fn(),
       create: vi.fn(),
+      createMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
     taskDependency: {
       findMany: vi.fn(),
@@ -97,6 +99,7 @@ import {
   reportCriteriaSelfCheck,
   checkAcceptanceCriteriaGate,
   createAcceptanceCriteria,
+  replaceAcceptanceCriteria,
 } from "@/services/task.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 
@@ -766,6 +769,56 @@ describe("markAcceptanceCriteria", () => {
         action: "updated",
       }),
     );
+  });
+});
+
+// ---------- replaceAcceptanceCriteria ----------
+
+describe("replaceAcceptanceCriteria", () => {
+  it("deletes existing rows and recreates the normalized set inside a transaction", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(rawTask());
+    mockPrisma.acceptanceCriterion.findMany.mockResolvedValue([
+      makeAcceptanceCriterion({ uuid: "new-1", description: "new crit", taskUuid: TASK_UUID }),
+    ]);
+
+    await replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [
+      { description: "  new crit  ", required: false },
+      { description: "   " }, // blank dropped by normalization
+    ]);
+
+    // Ran inside a transaction (single atomic unit).
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // Old rows deleted before new rows created.
+    expect(mockPrisma.acceptanceCriterion.deleteMany).toHaveBeenCalledWith({ where: { taskUuid: TASK_UUID } });
+    expect(mockPrisma.acceptanceCriterion.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ taskUuid: TASK_UUID, description: "new crit", required: false, sortOrder: 0 }),
+      ],
+    });
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "task", entityUuid: TASK_UUID, action: "updated" }),
+    );
+  });
+
+  it("throws and writes nothing when the task is not found", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(null);
+
+    await expect(
+      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "x" }]),
+    ).rejects.toThrow("Task not found");
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("throws on an empty / all-blank set without deleting existing rows", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(rawTask());
+
+    await expect(
+      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "   " }]),
+    ).rejects.toThrow("acceptance criterion");
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
   });
 });
 

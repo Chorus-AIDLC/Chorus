@@ -10,6 +10,12 @@ import { batchCommentCounts } from "@/services/comment.service";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 import logger from "@/lib/logger";
+import {
+  ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
+  hasNonEmptyAcceptanceCriteria,
+  normalizeAcceptanceCriteria,
+  type AcceptanceCriteriaItemInput,
+} from "@/lib/acceptance-criteria";
 
 // ===== Type Definitions =====
 
@@ -737,6 +743,44 @@ export async function createAcceptanceCriteria(
   );
 
   const created = await Promise.all(createPromises);
+  return created.map(formatCriterionResponse);
+}
+
+// Replace a task's acceptance criteria with a new non-empty set, atomically.
+// Used by chorus_update_task's AC-edit branch. The delete + recreate run in a
+// single transaction so a partial failure can never leave the task with zero
+// criteria — which would violate the "every task always has >=1 AC" invariant.
+// Replacing discards any prior dev/admin verification marks (the definition of
+// done changed, so prior checks no longer apply).
+export async function replaceAcceptanceCriteria(
+  companyUuid: string,
+  taskUuid: string,
+  items: AcceptanceCriteriaItemInput[],
+): Promise<AcceptanceCriterionResponse[]> {
+  const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
+  if (!task) throw new Error("Task not found");
+
+  if (!hasNonEmptyAcceptanceCriteria(items)) {
+    throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+  }
+  const normalized = normalizeAcceptanceCriteria(items);
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.acceptanceCriterion.deleteMany({ where: { taskUuid } });
+    if (normalized.length > 0) {
+      await tx.acceptanceCriterion.createMany({
+        data: normalized.map((item, index) => ({
+          taskUuid,
+          description: item.description,
+          required: item.required,
+          sortOrder: index,
+        })),
+      });
+    }
+    return tx.acceptanceCriterion.findMany({ where: { taskUuid }, orderBy: { sortOrder: "asc" } });
+  });
+
+  eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
   return created.map(formatCriterionResponse);
 }
 

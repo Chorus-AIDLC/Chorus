@@ -800,17 +800,14 @@ export async function approveProposal(
 
     // 3. Batch create tasks (1 SQL)
     if (taskDrafts && taskDrafts.length > 0) {
-      // Validate AC items before materializing
+      // Validate AC items before materializing — every draft with AC must have
+      // at least one non-blank criterion (shared helper = single source of truth).
       for (const draft of taskDrafts) {
-        if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
-          for (let i = 0; i < draft.acceptanceCriteriaItems.length; i++) {
-            const item = draft.acceptanceCriteriaItems[i];
-            if (!item.description || typeof item.description !== "string" || item.description.trim().length === 0) {
-              throw new Error(
-                `Task draft "${draft.title}": acceptanceCriteriaItems[${i}] has an empty or invalid description`
-              );
-            }
-          }
+        if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0
+          && !hasNonEmptyAcceptanceCriteria(draft.acceptanceCriteriaItems)) {
+          throw new Error(
+            `Task draft "${draft.title}": acceptanceCriteriaItems has no non-empty description`
+          );
         }
       }
 
@@ -857,19 +854,12 @@ export async function approveProposal(
       // 5. Batch create ALL acceptance criteria (1 SQL)
       const allAC: Array<{ taskUuid: string; description: string; required: boolean; sortOrder: number }> = [];
       for (const draft of taskDrafts) {
-        if (draft.acceptanceCriteriaItems && draft.acceptanceCriteriaItems.length > 0) {
-          const taskUuid = draftToTaskUuidMap.get(draft.uuid);
-          if (!taskUuid) continue;
-          for (let i = 0; i < draft.acceptanceCriteriaItems.length; i++) {
-            const item = draft.acceptanceCriteriaItems[i];
-            allAC.push({
-              taskUuid,
-              description: item.description.trim(),
-              required: item.required ?? true,
-              sortOrder: i,
-            });
-          }
-        }
+        const taskUuid = draftToTaskUuidMap.get(draft.uuid);
+        if (!taskUuid) continue;
+        const normalized = normalizeAcceptanceCriteria(draft.acceptanceCriteriaItems);
+        normalized.forEach((item, i) => {
+          allAC.push({ taskUuid, description: item.description, required: item.required, sortOrder: i });
+        });
       }
       if (allAC.length > 0) {
         await tx.acceptanceCriterion.createMany({ data: allAC });

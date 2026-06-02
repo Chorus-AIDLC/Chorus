@@ -1274,7 +1274,7 @@ describe("approveProposal", () => {
 
     await expect(
       approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid")
-    ).rejects.toThrow("empty or invalid description");
+    ).rejects.toThrow("no non-empty description");
   });
 
   it("should NOT auto-complete input ideas when approved (derived status handles lifecycle)", async () => {

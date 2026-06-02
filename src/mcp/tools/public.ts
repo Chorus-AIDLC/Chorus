@@ -22,7 +22,6 @@ import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
-import { prisma } from "@/lib/prisma";
 import { registerPermissionedTool } from "./register-helpers";
 import {
   ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
@@ -887,17 +886,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           }
         }
 
-        // AC presence was pre-validated above; normalize and persist.
+        // AC presence was pre-validated above; normalize and persist via the service layer.
         const acItems = normalizeAcceptanceCriteria(task.acceptanceCriteriaItems);
         try {
-          await prisma.acceptanceCriterion.createMany({
-            data: acItems.map((item, index) => ({
-              taskUuid: realUuid,
-              description: item.description,
-              required: item.required,
-              sortOrder: index,
-            })),
-          });
+          await taskService.createAcceptanceCriteria(realUuid, acItems);
         } catch (error) {
           warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
         }
@@ -1069,21 +1061,13 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      // Replace acceptance criteria (validated non-empty above). Delete the old
-      // rows then recreate from the normalized set — this discards any prior
-      // dev/admin verification marks, which is correct since the AC changed.
+      // Replace acceptance criteria (validated non-empty above). The service
+      // performs the delete + recreate atomically so a partial failure can't
+      // leave the task with zero criteria; replacing discards prior dev/admin
+      // verification marks, which is correct since the AC changed.
       let acReplaced = false;
       if (acceptanceCriteriaItems !== undefined) {
-        const acItems = normalizeAcceptanceCriteria(acceptanceCriteriaItems);
-        await prisma.acceptanceCriterion.deleteMany({ where: { taskUuid: task.uuid } });
-        await prisma.acceptanceCriterion.createMany({
-          data: acItems.map((item, index) => ({
-            taskUuid: task.uuid,
-            description: item.description,
-            required: item.required,
-            sortOrder: index,
-          })),
-        });
+        await taskService.replaceAcceptanceCriteria(auth.companyUuid, task.uuid, acceptanceCriteriaItems);
         acReplaced = true;
       }
 

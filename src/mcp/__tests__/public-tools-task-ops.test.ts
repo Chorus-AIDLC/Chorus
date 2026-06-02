@@ -17,6 +17,8 @@ const mockTaskService = vi.hoisted(() => ({
   checkDependenciesResolved: vi.fn(),
   addTaskDependency: vi.fn(),
   removeTaskDependency: vi.fn(),
+  createAcceptanceCriteria: vi.fn(),
+  replaceAcceptanceCriteria: vi.fn(),
   TaskUpdateParams: {},
 }));
 
@@ -119,11 +121,10 @@ describe("chorus_create_tasks", () => {
       }),
     );
 
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).toHaveBeenCalledWith({
-      data: [
-        expect.objectContaining({ taskUuid: "task-1", description: "It works", required: true, sortOrder: 0 }),
-      ],
-    });
+    expect(mockTaskService.createAcceptanceCriteria).toHaveBeenCalledWith(
+      "task-1",
+      [expect.objectContaining({ description: "It works", required: true })],
+    );
 
     const parsed = JSON.parse((result as { content: { text: string }[] }).content[0].text);
     expect(parsed.tasks).toHaveLength(1);
@@ -181,7 +182,7 @@ describe("chorus_create_tasks", () => {
     const text = (result as { content: { text: string }[] }).content[0].text;
     expect(text).toContain("No AC");
     expect(mockTaskService.createTask).not.toHaveBeenCalled();
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(mockTaskService.createAcceptanceCriteria).not.toHaveBeenCalled();
   });
 
   it("rejects a task whose acceptance criteria are all blank", async () => {
@@ -311,14 +312,14 @@ describe("chorus_update_task", () => {
       ],
     });
 
-    expect(mockPrisma.prisma.acceptanceCriterion.deleteMany).toHaveBeenCalledWith({
-      where: { taskUuid: "task-1" },
-    });
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).toHaveBeenCalledWith({
-      data: [
-        expect.objectContaining({ taskUuid: "task-1", description: "new crit", required: false, sortOrder: 0 }),
+    expect(mockTaskService.replaceAcceptanceCriteria).toHaveBeenCalledWith(
+      "company-1",
+      "task-1",
+      [
+        expect.objectContaining({ description: "  new crit  ", required: false }),
+        expect.objectContaining({ description: "   " }),
       ],
-    });
+    );
     expect(mockActivityService.createActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "updated",
@@ -336,8 +337,7 @@ describe("chorus_update_task", () => {
     });
 
     expect(result).toEqual(expect.objectContaining({ isError: true }));
-    expect(mockPrisma.prisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
     expect(mockTaskService.updateTask).not.toHaveBeenCalled();
   });
 
@@ -352,8 +352,7 @@ describe("chorus_update_task", () => {
       status: "in_progress",
     });
 
-    expect(mockPrisma.prisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
   });
 
   it("does not touch acceptance criteria during dependency-only edits", async () => {
@@ -365,7 +364,6 @@ describe("chorus_update_task", () => {
     });
 
     expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1");
-    expect(mockPrisma.prisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.prisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
   });
 });

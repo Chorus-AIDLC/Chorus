@@ -56,6 +56,8 @@ const mockTaskService = vi.hoisted(() => ({
   addTaskDependency: vi.fn(),
   removeTaskDependency: vi.fn(),
   createTasksFromProposal: vi.fn(),
+  createAcceptanceCriteria: vi.fn(),
+  replaceAcceptanceCriteria: vi.fn(),
 }));
 
 const mockProjectService = vi.hoisted(() => ({
@@ -89,6 +91,7 @@ vi.mock("@/services/checkin.service", () => ({}));
 // Real modules under test — NOT mocked.
 import { addTaskDraft, updateTaskDraft } from "@/services/proposal.service";
 import { registerPublicTools } from "@/mcp/tools/public";
+import { normalizeAcceptanceCriteria } from "@/lib/acceptance-criteria";
 import type { AgentAuthContext } from "@/types/auth";
 
 // ===== Capture public tool handlers =====
@@ -131,7 +134,7 @@ beforeEach(() => {
     return { ...(proposalStore.current as object), project: { uuid: "project-1", name: "P" } };
   });
 
-  // prisma.acceptanceCriterion: real-ish in-memory behavior.
+  // prisma.acceptanceCriterion: real-ish in-memory behavior (proposal.service path).
   mockPrisma.acceptanceCriterion.createMany.mockImplementation(async ({ data }: { data: AcRow[] }) => {
     acStore.push(...data);
     return { count: data.length };
@@ -141,6 +144,22 @@ beforeEach(() => {
       if (acStore[i].taskUuid === where.taskUuid) acStore.splice(i, 1);
     }
     return { count: 0 };
+  });
+
+  // task.service AC fns are mocked here (real-task layer) — wire them to acStore
+  // so cross-layer assertions stay meaningful. The real transactional behavior of
+  // replaceAcceptanceCriteria is covered by its own unit test in task.service.test.ts.
+  mockTaskService.createAcceptanceCriteria.mockImplementation(async (taskUuid: string, items: { description: string; required: boolean }[]) => {
+    items.forEach((item, index) => acStore.push({ taskUuid, description: item.description, required: item.required, sortOrder: index }));
+    return [];
+  });
+  mockTaskService.replaceAcceptanceCriteria.mockImplementation(async (_companyUuid: string, taskUuid: string, items: { description: string; required?: boolean }[]) => {
+    const normalized = normalizeAcceptanceCriteria(items);
+    for (let i = acStore.length - 1; i >= 0; i--) {
+      if (acStore[i].taskUuid === taskUuid) acStore.splice(i, 1);
+    }
+    normalized.forEach((item, index) => acStore.push({ taskUuid, description: item.description, required: item.required, sortOrder: index }));
+    return [];
   });
 
   mockProjectService.projectExists.mockResolvedValue(true);
@@ -231,8 +250,7 @@ describe("AC enforcement — cross-layer integration", () => {
 
     expect(isError(result)).toBe(false);
     expect(mockTaskService.updateTask).toHaveBeenCalled();
-    expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.acceptanceCriterion.createMany).not.toHaveBeenCalled();
+    expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
     expect(acStore).toEqual([expect.objectContaining({ description: "keep" })]);
   });
 
@@ -246,7 +264,7 @@ describe("AC enforcement — cross-layer integration", () => {
 
     expect(isError(result)).toBe(false);
     expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith(COMPANY, "task-1", "dep-1");
-    expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
+    expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
     expect(acStore).toEqual([expect.objectContaining({ description: "keep" })]);
   });
 
