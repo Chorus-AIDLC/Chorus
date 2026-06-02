@@ -4,7 +4,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.1"
+  version: "0.9.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -70,7 +70,7 @@ This matters because admin agents can call `chorus_admin_verify_task` to close t
 
 ### Step 1: Create a Quick Task
 
-**Always include `acceptanceCriteriaItems`** — these are the foundation for self-checking in Step 6. Write specific, testable criteria that you can objectively verify after development. Vague AC like "works correctly" defeats the purpose; prefer "returns 200 on GET /api/foo with valid token".
+**`acceptanceCriteriaItems` is required** — `chorus_create_tasks` rejects any task without at least one non-blank criterion (and rejects the whole batch if any task is missing them). These are also the foundation for self-checking in Step 6. Write specific, testable criteria that you can objectively verify after development. Vague AC like "works correctly" defeats the purpose; prefer "returns 200 on GET /api/foo with valid token".
 
 ```
 chorus_create_tasks({
@@ -100,7 +100,7 @@ chorus_claim_task({ taskUuid: "<task-uuid>" })
 
 ### Step 3: Edit Details (if needed)
 
-Use `chorus_update_task` to refine the task after creation. **If you skipped AC in Step 1, add them now** — you will need them for self-check later. Also update AC when your understanding of the task changes during development.
+Use `chorus_update_task` to refine the task after creation. Tasks always have AC (creation requires them), but **update them when your understanding changes during development**. Passing `acceptanceCriteriaItems` **replaces** the task's criteria with the provided non-empty set; omit the field to leave them unchanged (it cannot be used to clear AC).
 
 ```
 chorus_update_task({
@@ -182,7 +182,7 @@ Quick Tasks support sub-agent execution just like proposal-based tasks. **Sessio
 ## Tips
 
 - Keep Quick Tasks small — if you need more than 2-3 tasks, consider using `/proposal`
-- **Always write acceptance criteria at creation time** — they are your self-check contract. Specific, testable AC enables autonomous verification and makes the entire workflow self-contained
+- **Acceptance criteria are required at creation time** — `chorus_create_tasks` rejects tasks without them. They are your self-check contract; specific, testable AC enables autonomous verification and makes the entire workflow self-contained
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
 - Quick Tasks show up in the same project task list and DAG as proposal-based tasks
