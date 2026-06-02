@@ -10,6 +10,11 @@ import { formatCreatedBy, formatReview } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { createDocumentFromProposal } from "./document.service";
 import { createTasksFromProposal } from "./task.service";
+import {
+  ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
+  hasNonEmptyAcceptanceCriteria,
+  normalizeAcceptanceCriteria,
+} from "@/lib/acceptance-criteria";
 
 // ===== UUID Helper Functions =====
 
@@ -1149,8 +1154,17 @@ export async function addTaskDraft(
     throw new Error("Proposal not found or not in draft status");
   }
 
+  // Acceptance criteria are mandatory on creation: a task draft must carry at
+  // least one criterion with a non-blank description.
+  if (!hasNonEmptyAcceptanceCriteria(draft.acceptanceCriteriaItems)) {
+    throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+  }
+
   const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
-  const newDraft = ensureTaskDraftUuid(draft);
+  const newDraft = ensureTaskDraftUuid({
+    ...draft,
+    acceptanceCriteriaItems: normalizeAcceptanceCriteria(draft.acceptanceCriteriaItems),
+  });
   const updatedDrafts = [...existingDrafts, newDraft];
 
   const updated = await prisma.proposal.update({
@@ -1227,7 +1241,18 @@ export async function updateTaskDraft(
     throw new Error("Task draft not found");
   }
 
-  existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...updates };
+  // Partial-update semantics for acceptance criteria: if the caller supplied the
+  // field (including an explicit empty array), it must be non-empty — the field
+  // cannot be used to clear AC. If the caller omitted it, existing AC are kept.
+  const appliedUpdates = { ...updates };
+  if ("acceptanceCriteriaItems" in updates) {
+    if (!hasNonEmptyAcceptanceCriteria(updates.acceptanceCriteriaItems)) {
+      throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+    }
+    appliedUpdates.acceptanceCriteriaItems = normalizeAcceptanceCriteria(updates.acceptanceCriteriaItems);
+  }
+
+  existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...appliedUpdates };
 
   const updated = await prisma.proposal.update({
     where: { uuid: proposalUuid },

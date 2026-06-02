@@ -369,7 +369,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_add_task_draft",
     {
-      description: "Add a task draft to a pending Proposal container",
+      description: "Add a task draft to a pending Proposal container. Acceptance criteria are required: acceptanceCriteriaItems must contain at least one item with a non-blank description.",
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
         title: z.string().describe("Task title"),
@@ -379,7 +379,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         acceptanceCriteriaItems: zArray(z.object({
           description: z.string().describe("Criterion description"),
           required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
-        })).optional().describe("Structured acceptance criteria items (materialized on approval)"),
+        })).optional().describe("Structured acceptance criteria items (materialized on approval) — REQUIRED: at least one item with a non-blank description, or the call is rejected"),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
       }),
     },
@@ -452,7 +452,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_update_task_draft",
     {
-      description: "Update a task draft in a Proposal",
+      description: "Update a task draft in a Proposal. Partial-update semantics: omit acceptanceCriteriaItems to leave existing criteria unchanged; if provided it replaces them and must be non-empty (cannot clear acceptance criteria).",
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
         draftUuid: z.string().describe("Task draft UUID"),
@@ -463,7 +463,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         acceptanceCriteriaItems: zArray(z.object({
           description: z.string().describe("Criterion description"),
           required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
-        })).optional().describe("Structured acceptance criteria items (replaces existing items)"),
+        })).optional().describe("Structured acceptance criteria items. If provided, replaces existing items and must be non-empty (at least one non-blank description); if omitted, existing items are preserved. Cannot be used to clear acceptance criteria."),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
       }),
     },

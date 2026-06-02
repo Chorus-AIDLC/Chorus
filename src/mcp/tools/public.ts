@@ -24,6 +24,11 @@ import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
 import { prisma } from "@/lib/prisma";
 import { registerPermissionedTool } from "./register-helpers";
+import {
+  ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
+  hasNonEmptyAcceptanceCriteria,
+  normalizeAcceptanceCriteria,
+} from "@/lib/acceptance-criteria";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_project - Get project details and context
@@ -787,7 +792,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         "Batch create tasks in a project. Two modes:\n\n" +
         "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches. Flow: create → claim → execute → verify → done.\n\n" +
         "**Proposal-linked** (traditional AI-DLC): pass proposalUuid to associate with an approved proposal.\n\n" +
-        "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).",
+        "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).\n\n" +
+        "Acceptance criteria are REQUIRED: every task must include at least one acceptanceCriteriaItems entry with a non-blank description, or the entire batch is rejected (no task is created).",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional — omit for Quick Task mode)"),
@@ -799,7 +805,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           acceptanceCriteriaItems: zArray(z.object({
             description: z.string().describe("Criterion description"),
             required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
-          })).optional().describe("Structured acceptance criteria items"),
+          })).optional().describe("Structured acceptance criteria items — REQUIRED: at least one item with a non-blank description per task"),
           draftUuid: z.string().optional().describe("Temporary UUID for intra-batch dependsOnDraftUuids references"),
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
           dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
@@ -815,6 +821,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.getProposalByUuid(auth.companyUuid, proposalUuid);
         if (!proposal) {
           return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
+        }
+      }
+
+      // Acceptance criteria are mandatory. Pre-validate every task BEFORE creating
+      // any, so a single AC-less task rejects the whole batch (no half-created set).
+      for (const task of tasks) {
+        if (!hasNonEmptyAcceptanceCriteria(task.acceptanceCriteriaItems)) {
+          return {
+            content: [{ type: "text", text: `Task "${task.title}": ${ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE}` }],
+            isError: true,
+          };
         }
       }
 
@@ -870,24 +887,19 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           }
         }
 
-        if (task.acceptanceCriteriaItems && task.acceptanceCriteriaItems.length > 0) {
-          const validItems = task.acceptanceCriteriaItems.filter(
-            (item) => item.description && item.description.trim().length > 0
-          );
-          if (validItems.length > 0) {
-            try {
-              await prisma.acceptanceCriterion.createMany({
-                data: validItems.map((item, index) => ({
-                  taskUuid: realUuid,
-                  description: item.description.trim(),
-                  required: item.required ?? true,
-                  sortOrder: index,
-                })),
-              });
-            } catch (error) {
-              warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
-            }
-          }
+        // AC presence was pre-validated above; normalize and persist.
+        const acItems = normalizeAcceptanceCriteria(task.acceptanceCriteriaItems);
+        try {
+          await prisma.acceptanceCriterion.createMany({
+            data: acItems.map((item, index) => ({
+              taskUuid: realUuid,
+              description: item.description,
+              required: item.required,
+              sortOrder: index,
+            })),
+          });
+        } catch (error) {
+          warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
         }
       }
 
@@ -927,6 +939,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description:
         "Update a task — edit fields, manage dependencies, or change status.\n\n" +
         "**Field editing** (any role): title, description, priority, storyPoints, addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
+        "**Acceptance criteria editing** (any role): pass acceptanceCriteriaItems to REPLACE the task's acceptance criteria with the provided non-empty set. Omit it to leave AC untouched. It cannot be used to clear AC — an empty or all-blank array is rejected. Replacing discards any prior dev/admin verification marks on the old criteria.\n\n" +
         "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
         "For Quick Tasks: create → claim → edit details → execute → verify → done.",
       inputSchema: z.object({
@@ -937,14 +950,28 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         description: z.string().optional().describe("New task description (supports @mentions)"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("New priority"),
         storyPoints: z.number().optional().describe("New effort estimate (agent hours)"),
+        acceptanceCriteriaItems: zArray(z.object({
+          description: z.string().describe("Criterion description"),
+          required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
+        })).optional().describe("Replace the task's acceptance criteria with this non-empty set. Omit to leave AC unchanged; cannot be used to clear AC (empty/all-blank is rejected)."),
         addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies"),
         removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies"),
       }),
     },
-    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, addDependsOn, removeDependsOn }) => {
+    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
+      }
+
+      // If acceptance criteria are supplied, they must be non-empty — the field
+      // replaces existing AC and cannot be used to clear them. Validate before
+      // any mutation so a bad AC payload rejects the whole call cleanly.
+      if (acceptanceCriteriaItems !== undefined && !hasNonEmptyAcceptanceCriteria(acceptanceCriteriaItems)) {
+        return {
+          content: [{ type: "text", text: ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE }],
+          isError: true,
+        };
       }
 
       // Status update requires assignee check
@@ -1042,6 +1069,24 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
+      // Replace acceptance criteria (validated non-empty above). Delete the old
+      // rows then recreate from the normalized set — this discards any prior
+      // dev/admin verification marks, which is correct since the AC changed.
+      let acReplaced = false;
+      if (acceptanceCriteriaItems !== undefined) {
+        const acItems = normalizeAcceptanceCriteria(acceptanceCriteriaItems);
+        await prisma.acceptanceCriterion.deleteMany({ where: { taskUuid: task.uuid } });
+        await prisma.acceptanceCriterion.createMany({
+          data: acItems.map((item, index) => ({
+            taskUuid: task.uuid,
+            description: item.description,
+            required: item.required,
+            sortOrder: index,
+          })),
+        });
+        acReplaced = true;
+      }
+
       // Log activity — merge all changes into a single record
       const activityValue: Record<string, unknown> = {};
       if (status) activityValue.status = status;
@@ -1049,10 +1094,11 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (description !== undefined) activityValue.descriptionUpdated = true;
       if (priority !== undefined) activityValue.priority = priority;
       if (storyPoints !== undefined) activityValue.storyPoints = storyPoints;
+      if (acReplaced) activityValue.acceptanceCriteriaReplaced = true;
       if (addDependsOn) activityValue.addedDependencies = addDependsOn.length;
       if (removeDependsOn) activityValue.removedDependencies = removeDependsOn.length;
 
-      const hasAnyChange = status || hasFieldUpdates || addDependsOn || removeDependsOn;
+      const hasAnyChange = status || hasFieldUpdates || acReplaced || addDependsOn || removeDependsOn;
       if (hasAnyChange) {
         await activityService.createActivity({
           companyUuid: auth.companyUuid,

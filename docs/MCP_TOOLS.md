@@ -707,6 +707,8 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and dependencies on existing tasks via `dependsOnTaskUuids`.
 
+> **Acceptance criteria are required.** Every task must include `acceptanceCriteriaItems` with at least one item whose `description` is non-blank. If any task in the batch fails this check, the entire call is rejected and **no** task is created (all-or-nothing).
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -721,7 +723,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 | description | string | No | Task description |
 | priority | enum | No | Priority: low, medium, high |
 | storyPoints | number | No | Effort estimate (Agent hours) |
-| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
+| acceptanceCriteriaItems | array | **Yes** | Structured acceptance criteria: `[{ description: string, required?: boolean }]`. At least one item with a non-blank `description` is required; an empty or all-blank array is rejected. |
 | draftUuid | string | No | Temporary UUID for intra-batch `dependsOnDraftUuids` references |
 | dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
@@ -735,7 +737,10 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
       "title": "Fix login button alignment",
       "description": "On the /login page the submit button is misaligned on mobile breakpoints.",
       "priority": "medium",
-      "storyPoints": 0.5
+      "storyPoints": 0.5,
+      "acceptanceCriteriaItems": [
+        { "description": "Submit button is centered at the 375px mobile breakpoint", "required": true }
+      ]
     }
   ]
 }
@@ -751,19 +756,28 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
       "draftUuid": "draft-1",
       "title": "Add database migration",
       "priority": "high",
-      "storyPoints": 1
+      "storyPoints": 1,
+      "acceptanceCriteriaItems": [
+        { "description": "Migration creates the new column and runs cleanly on a fresh DB", "required": true }
+      ]
     },
     {
       "draftUuid": "draft-2",
       "title": "Wire up service layer",
       "dependsOnDraftUuids": ["draft-1"],
-      "storyPoints": 2
+      "storyPoints": 2,
+      "acceptanceCriteriaItems": [
+        { "description": "Service reads/writes the new column with unit-test coverage", "required": true }
+      ]
     },
     {
       "title": "Add API route",
       "dependsOnDraftUuids": ["draft-2"],
       "dependsOnTaskUuids": ["existing-task-uuid"],
-      "storyPoints": 1
+      "storyPoints": 1,
+      "acceptanceCriteriaItems": [
+        { "description": "Route returns the new field and is covered by a route test", "required": true }
+      ]
     }
   ]
 }
@@ -772,14 +786,15 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 **Output**:
 ```json
 {
-  "tasks": [...],
-  "count": 3,
-  "draftToTaskUuidMap": { "draft-1": "real-uuid-1", "draft-2": "real-uuid-2" },
+  "tasks": [
+    { "uuid": "real-uuid-1", "title": "Add database migration" },
+    { "uuid": "real-uuid-2", "title": "Wire up service layer" }
+  ],
   "warnings": ["..."]
 }
 ```
-- `draftToTaskUuidMap`: Only returned when any task provides a `draftUuid`.
-- `warnings`: Only returned when there are issues creating dependencies or acceptance criteria (the tasks themselves are created successfully).
+- `tasks`: One `{ uuid, title }` entry per created task, in input order.
+- `warnings`: Only returned when there are issues creating dependencies (the tasks themselves are created successfully). Acceptance-criteria presence is validated up front — a missing/empty AC set rejects the whole call with `isError` rather than producing a warning.
 
 > Note: After `chorus_admin_approve_proposal` runs, taskDrafts are auto-materialized into Tasks. Calling `chorus_create_tasks` with the same `proposalUuid` would produce duplicates — only call this for proposal-linked tasks added outside the standard draft-and-approve flow.
 
@@ -1116,6 +1131,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Required Permission**: `proposal:write`
 
+> **Acceptance criteria are required.** `acceptanceCriteriaItems` must contain at least one item with a non-blank `description`, or the call is rejected and no draft is added.
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1124,8 +1141,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | description | string | No | Task description |
 | storyPoints | number | No | Effort estimate (Agent hours) |
 | priority | enum | No | Priority: low, medium, high |
-| acceptanceCriteria | string | No | Acceptance criteria (Markdown, legacy) |
-| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
+| acceptanceCriteriaItems | array | **Yes** | Structured acceptance criteria: `[{ description: string, required?: boolean }]`. At least one item with a non-blank `description` is required (materialized on approval). |
 | dependsOnDraftUuids | string[] | No | List of dependent taskDraft UUIDs (automatically converted to real dependencies upon approval) |
 
 **Output**: Updated Proposal JSON
@@ -1153,6 +1169,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Required Permission**: `proposal:write`
 
+> **Partial-update semantics for acceptance criteria.** Omit `acceptanceCriteriaItems` to leave the draft's existing criteria unchanged. If you provide it, it **replaces** the existing criteria and must contain at least one item with a non-blank `description` — an empty or all-blank array is rejected (the field cannot be used to clear acceptance criteria).
+
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1162,7 +1180,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | description | string | No | Task description |
 | storyPoints | number | No | Effort estimate |
 | priority | enum | No | Priority |
-| acceptanceCriteria | string | No | Acceptance criteria |
+| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]`. If provided, replaces existing items and must be non-empty; if omitted, existing criteria are preserved. |
 | dependsOnDraftUuids | string[] | No | List of dependent taskDraft UUIDs |
 
 **Output**: Updated Proposal JSON
@@ -1392,9 +1410,10 @@ Tools gated by `task:write`. Available to any agent whose effective permissions 
 
 > **Public tool** — not permission-gated. Available to every agent. Field edits and dependency edits require no special permission; status transitions are still gated at the handler level to the task's assignee.
 
-Two distinct edit modes can be combined in a single call:
+Three distinct edit modes can be combined in a single call:
 
 - **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `addDependsOn`, `removeDependsOn`.
+- **Acceptance criteria editing** (any agent): `acceptanceCriteriaItems` — **replaces** the task's acceptance criteria with the provided non-empty set. Omit it to leave criteria untouched.
 - **Status update** (assignee only): `status` (`in_progress` requires all dependencies resolved; `to_verify` submits for human verification).
 
 **Input**:
@@ -1405,12 +1424,14 @@ Two distinct edit modes can be combined in a single call:
 | description | string | No | New task description (supports @mentions) |
 | priority | enum | No | New priority: low, medium, high |
 | storyPoints | number | No | New effort estimate (agent hours) |
+| acceptanceCriteriaItems | array | No | Replace the task's acceptance criteria with this non-empty set: `[{ description: string, required?: boolean }]`. Omit to leave AC unchanged; an empty or all-blank array is rejected (cannot clear AC). |
 | addDependsOn | string[] | No | Task UUIDs to add as dependencies (incremental) |
 | removeDependsOn | string[] | No | Task UUIDs to remove from dependencies (incremental) |
 | status | enum | No | New status: in_progress, to_verify (assignee only) |
 | sessionUuid | string | No | Associated Session UUID (attributes which worker performed the action) |
 
 **Behavior**:
+- When `acceptanceCriteriaItems` is provided, the task's existing acceptance criteria are deleted and recreated from the new set. This discards any prior dev/admin verification marks on those criteria (changing the definition of done invalidates prior checks). Omitting the field leaves criteria untouched, so status transitions and dependency edits never require resending acceptance criteria.
 - When `sessionUuid` is provided, the Activity record includes session attribution, and a session heartbeat is automatically sent.
 - `addDependsOn` / `removeDependsOn` accept arrays — multiple dependency edits are applied in a single call. Each entry is validated independently (same-project check, self-dependency check, DFS cycle detection); per-entry failures surface in the `warnings` array of the response without rolling back successful edits.
 - **Dependency enforcement**: When transitioning to `in_progress`, the system checks that all `dependsOn` tasks are resolved (`done` or `closed`). If any dependency is unresolved, the request is rejected with a detailed error listing each blocker's title, status, assignee, and active session info. Use `chorus_get_unblocked_tasks` to find tasks that are ready to start.

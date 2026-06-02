@@ -287,6 +287,7 @@ describe("addTaskDraft", () => {
     await addTaskDraft("proposal-uuid", COMPANY_UUID, {
       title: "Task 2",
       description: "Second task",
+      acceptanceCriteriaItems: [{ description: "Works", required: true }],
     });
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
@@ -299,7 +300,10 @@ describe("addTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "Task" })
+      addTaskDraft("proposal-uuid", COMPANY_UUID, {
+        title: "Task",
+        acceptanceCriteriaItems: [{ description: "Works" }],
+      })
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 
@@ -308,10 +312,55 @@ describe("addTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "Task 1" });
+    await addTaskDraft("proposal-uuid", COMPANY_UUID, {
+      title: "Task 1",
+      acceptanceCriteriaItems: [{ description: "Works" }],
+    });
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts).toHaveLength(1);
+  });
+
+  it("should throw when acceptance criteria are missing", async () => {
+    const proposal = dbProposal({ taskDrafts: [] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "No AC" })
+    ).rejects.toThrow("acceptance criterion");
+    expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
+  });
+
+  it("should throw when acceptance criteria are all blank", async () => {
+    const proposal = dbProposal({ taskDrafts: [] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      addTaskDraft("proposal-uuid", COMPANY_UUID, {
+        title: "Blank AC",
+        acceptanceCriteriaItems: [{ description: "   " }, { description: "" }],
+      })
+    ).rejects.toThrow("acceptance criterion");
+    expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
+  });
+
+  it("should store normalized (trimmed, required-defaulted) acceptance criteria", async () => {
+    const proposal = dbProposal({ taskDrafts: [] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await addTaskDraft("proposal-uuid", COMPANY_UUID, {
+      title: "Normalize",
+      acceptanceCriteriaItems: [
+        { description: "  kept  " },
+        { description: "   " },
+      ],
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts[0].acceptanceCriteriaItems).toEqual([
+      { description: "kept", required: true },
+    ]);
   });
 });
 
@@ -390,6 +439,67 @@ describe("updateTaskDraft", () => {
     await expect(
       updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "X" })
     ).rejects.toThrow("Proposal not found or not in draft status");
+  });
+
+  it("should preserve existing acceptance criteria when the field is omitted", async () => {
+    const draft = validTaskDraft({ uuid: "td-1" });
+    const proposal = dbProposal({ taskDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "Renamed" });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts[0].title).toBe("Renamed");
+    expect(updateCall.data.taskDrafts[0].acceptanceCriteriaItems).toEqual([
+      { description: "Done", required: true },
+    ]);
+  });
+
+  // NOTE-2: an explicit empty array must reach the guard (not be treated as
+  // "omitted") and be rejected — the field cannot clear acceptance criteria.
+  it("should throw on an explicit empty acceptance-criteria array and leave the draft unchanged", async () => {
+    const draft = validTaskDraft({ uuid: "td-1" });
+    const proposal = dbProposal({ taskDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await expect(
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { acceptanceCriteriaItems: [] })
+    ).rejects.toThrow("acceptance criterion");
+    expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
+  });
+
+  it("should throw when the provided acceptance criteria are all blank", async () => {
+    const draft = validTaskDraft({ uuid: "td-1" });
+    const proposal = dbProposal({ taskDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+
+    await expect(
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", {
+        acceptanceCriteriaItems: [{ description: "  " }],
+      })
+    ).rejects.toThrow("acceptance criterion");
+    expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
+  });
+
+  it("should replace acceptance criteria with the normalized non-empty set", async () => {
+    const draft = validTaskDraft({ uuid: "td-1" });
+    const proposal = dbProposal({ taskDrafts: [draft] });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.proposal.update.mockResolvedValue(proposal);
+
+    await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", {
+      acceptanceCriteriaItems: [
+        { description: "  new one  ", required: false },
+        { description: "   " },
+      ],
+    });
+
+    const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
+    expect(updateCall.data.taskDrafts[0].acceptanceCriteriaItems).toEqual([
+      { description: "new one", required: false },
+    ]);
   });
 });
 

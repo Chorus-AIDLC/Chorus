@@ -208,7 +208,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
         name: "chorus_create_tasks",
         arguments: {
           projectUuid: "project-1",
-          tasks: [{ title: "Quick task", priority: "high" }],
+          tasks: [{ title: "Quick task", priority: "high", acceptanceCriteriaItems: [{ description: "Works" }] }],
         },
       });
 
@@ -252,7 +252,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
         arguments: {
           projectUuid: "project-1",
           proposalUuid: "prop-1",
-          tasks: [{ title: "Linked task" }],
+          tasks: [{ title: "Linked task", acceptanceCriteriaItems: [{ description: "Works" }] }],
         },
       });
 
