@@ -28,9 +28,9 @@ The installer:
 2. Registers the **chorus-plugins** marketplace (`codex plugin marketplace add …`)
 3. Prompts for your **Chorus URL** and **API key** (or reads them from `CHORUS_URL` / `CHORUS_API_KEY` env)
 4. Writes `[mcp_servers.chorus]` + `[mcp_servers.chorus.http_headers]` to `~/.codex/config.toml` (`chmod 600`, backed up once to `config.toml.chorus-bak`)
-5. Installs session hooks: writes `~/.codex/hooks.json` (absolute paths into the plugin cache) and sets `[features] codex_hooks = true`
+5. Enables lifecycle hooks with `[features] hooks = true`
 
-Codex 0.125.0 doesn't load plugin-local `hooks.json` automatically yet, so the installer wires them up into `~/.codex/hooks.json`. If you already have a non-Chorus `hooks.json`, the installer skips this step with a warning and tells you how to merge entries manually.
+Chorus lifecycle hooks are bundled in the Codex plugin manifest and loaded automatically after the plugin is installed and enabled. Use `/hooks` in Codex to review and trust newly installed or changed hook definitions.
 
 Then finish with `/plugins` inside the Codex TUI.
 
@@ -85,12 +85,12 @@ codex   # plugin auto-installs on first launch; use /plugins to confirm
 
 ## What's different from the Claude Code version
 
-The Codex port is intentionally **stateless** — no `.chorus/` directory is used anywhere. This is driven by Codex's hook model, which lacks `SubagentStart`, `SubagentStop`, `TeammateIdle`, `SessionEnd`, and `TaskCompleted` events.
+The Codex port is currently **stateless** — no `.chorus/` directory is used anywhere. Codex now supports `SubagentStart` and `SubagentStop` plugin hooks, but the Chorus Codex plugin has not yet wired them into automatic session lifecycle management. Codex still does not provide direct equivalents for Claude Code's `TeammateIdle`, `SessionEnd`, and `TaskCompleted` events.
 
 Consequences:
 
-- ❌ Sub-agent sessions are **not** auto-created by the plugin. The main agent creates/closes Chorus sessions manually when per-worker observability is desired.
-- ❌ No auto-checkout on sub-agent exit — workers must explicitly call `chorus_session_checkout_task` in their skill-driven workflow, and the main agent calls `chorus_close_session` after `spawn_agent` returns.
+- ❌ Sub-agent sessions are **not yet** auto-created by the plugin. The main agent creates/closes Chorus sessions manually when per-worker observability is desired.
+- ❌ No auto-checkout on sub-agent exit yet — workers must explicitly call `chorus_session_checkout_task` in their skill-driven workflow, and the main agent calls `chorus_close_session` after `spawn_agent` returns.
 - ❌ No idle-heartbeat hook — rely on Chorus backend session TTL, or have the main agent call `chorus_session_heartbeat` periodically.
 - ✅ Everything else works: all 40+ MCP tools over the HTTP transport, all skills, both reviewer subagents, and 4 of the most valuable hooks.
 
@@ -125,5 +125,5 @@ Both are invoked by the main agent via `spawn_agent(agent_type=..., message=...)
 | `chorus` is listed but tools don't work | URL or token wrong. Re-run `install-codex.sh` to update; the installer overwrites idempotently. |
 | Plugin (`/plugins` menu) is empty | The `marketplace add` step didn't run. Re-run `install-codex.sh`, or manually `codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus`. |
 | Skills don't show in `$<name>` autocomplete | Restart the Codex session. Skills are loaded at session start from `~/.codex/plugins/cache/chorus-plugins/chorus/*/skills/`. |
-| Hooks don't fire | Did the installer's step 5 run? Check `~/.codex/hooks.json` exists and `grep codex_hooks ~/.codex/config.toml` shows `true`. Re-run `install-codex.sh` to (re)install hooks. Codex 0.125.0 doesn't load plugin-local `hooks.json` directly; the installer bridges it into `~/.codex/hooks.json`. |
+| Hooks don't fire | Check `grep '^hooks = true' ~/.codex/config.toml`, confirm the plugin is installed/enabled in `/plugins`, then open `/hooks` to review/trust Chorus plugin hooks. Re-run `install-codex.sh` to refresh MCP/plugin config. |
 | Need to rotate API key | Just re-run `install-codex.sh` and enter the new key when prompted. |

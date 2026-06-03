@@ -30,7 +30,7 @@ The script is idempotent and safe to re-run. It will:
 1. Verify `codex` is installed.
 2. Register the `chorus-plugins` marketplace (or upgrade it if already registered).
 3. Write `[mcp_servers.chorus]` and `[plugins."chorus@chorus-plugins"]` into `~/.codex/config.toml` (mode `600`, backing up your original once to `config.toml.chorus-bak`).
-4. Install a lazy hook wrapper under `~/.codex/hooks/chorus/run-hook.sh` so Chorus hooks fire on first Codex launch, even before the plugin cache is materialized.
+4. Enable Codex lifecycle hooks with `[features] hooks = true`. Chorus hooks are bundled in the plugin and load automatically after the plugin is installed/enabled.
 
 If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, the installer will prompt for them interactively (provided you have a TTY).
 
@@ -60,7 +60,7 @@ CHORUS_API_KEY=cho_xxx \
 - **`401 Unauthorized`** on `check in` — API key wrong or revoked. Recreate under Settings → Agents, then re-run the installer (or edit the `Authorization` line in `config.toml`).
 - **`URL must start with http:// or https://`** — `CHORUS_URL` missing the scheme. Use `http://` or `https://`.
 - **Marketplace source conflict** — You previously registered `chorus-plugins` from a different URL. The installer detects this and auto-re-registers; check the `!` warnings it prints.
-- **Hook didn't fire on first launch** — Open `/plugins` inside Codex and click `Install` manually for `chorus@chorus-plugins`. The plugin cache will materialize and hooks will start firing on the next tool call.
+- **Hook didn't fire on first launch** — Open `/plugins` inside Codex and confirm `chorus@chorus-plugins` is installed/enabled, then open `/hooks` to review/trust the bundled Chorus hooks. Hooks run after the plugin cache is materialized.
 
 ## Next
 

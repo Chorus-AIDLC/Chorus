@@ -119,6 +119,10 @@ else
   grep -q '^\[mcp_servers\.chorus\]' "$cfg" && pass "[mcp_servers.chorus] block present" || fail "[mcp_servers.chorus] missing"
   grep -q 'url = "https://chorus.test/api/mcp"' "$cfg" && pass "url written literally" || fail "url not literal"
   grep -q 'Authorization = "Bearer cho_test_key_abc123"' "$cfg" && pass "Authorization header literal" || fail "Authorization not literal"
+  grep -q '^hooks = true' "$cfg" && pass "hooks feature enabled" || fail "hooks feature not enabled"
+  grep -q '^codex_hooks =' "$cfg" && fail "deprecated codex_hooks key written" || pass "deprecated codex_hooks key not written"
+  [ ! -f "$TMP_HOME/.codex/hooks.json" ] && pass "installer does not write user hooks.json" || fail "installer wrote user hooks.json"
+  [ ! -e "$TMP_HOME/.codex/hooks/chorus/run-hook.sh" ] && pass "installer does not write hook wrapper" || fail "installer wrote hook wrapper"
   if command -v stat >/dev/null 2>&1; then
     mode="$(stat -c '%a' "$cfg" 2>/dev/null || stat -f '%OLp' "$cfg" 2>/dev/null || echo "")"
     if [ "$mode" = "600" ]; then

@@ -30,7 +30,7 @@ curl -fsSL "$CHORUS_URL/install-codex.sh" | bash
 1. 检查 `codex` 是否已安装。
 2. 注册 `chorus-plugins` marketplace（如果已注册则升级）。
 3. 把 `[mcp_servers.chorus]` 和 `[plugins."chorus@chorus-plugins"]` 写入 `~/.codex/config.toml`（权限 `600`，原文件首次备份到 `config.toml.chorus-bak`）。
-4. 在 `~/.codex/hooks/chorus/run-hook.sh` 安装一个 lazy hook wrapper，保证 Codex 首次启动时 Chorus hooks 就能生效 —— 哪怕 plugin cache 还没生成。
+4. 用 `[features] hooks = true` 启用 Codex 生命周期 hook。Chorus hooks 随插件打包，插件安装并启用后由 Codex 自动加载。
 
 如果没有设置 `CHORUS_URL` / `CHORUS_API_KEY`，脚本会在有 TTY 的情况下交互式地询问你。
 
@@ -60,7 +60,7 @@ CHORUS_API_KEY=cho_xxx \
 - **`check in` 返回 `401 Unauthorized`** —— API Key 错误或已失效。到 Settings → Agents 重新创建，然后重新跑安装脚本（或手改 `config.toml` 里的 `Authorization` 行）。
 - **`URL must start with http:// or https://`** —— `CHORUS_URL` 缺了协议头，补上 `http://` 或 `https://`。
 - **Marketplace source conflict** —— 你之前用不同 URL 注册过 `chorus-plugins`。脚本会检测到并自动重新注册，留意它打印的 `!` 警告。
-- **Hook 在首次启动时没触发** —— 在 Codex 里打开 `/plugins`，对 `chorus@chorus-plugins` 手动点 `Install`。plugin cache 生成后，下一次工具调用 hook 就会生效了。
+- **Hook 在首次启动时没触发** —— 在 Codex 里打开 `/plugins`，确认 `chorus@chorus-plugins` 已安装并启用；再打开 `/hooks` review/trust Chorus 插件自带的 hooks。plugin cache 生成后，hook 会在后续工具调用时生效。
 
 ## 下一步
 

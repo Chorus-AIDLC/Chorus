@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -100,7 +100,7 @@ X-Chorus-Project = "project-uuid-1,project-uuid-2"
 
 ### Session (Optional, Codex Port)
 
-The Codex port is **intentionally stateless**: it does NOT auto-create, heartbeat, or close Chorus sessions. Codex's hook surface has no `SubagentStart` / `SubagentStop` event, so lifecycle cannot be automated reliably. Sessions are optional bookkeeping you may use when running multiple workers in parallel:
+The Codex port is currently **stateless**: it does NOT auto-create, heartbeat, or close Chorus sessions. Codex now supports `SubagentStart` / `SubagentStop` plugin hooks, but the Chorus Codex plugin has not yet wired them into automatic session lifecycle management. Sessions are optional bookkeeping you may use when running multiple workers in parallel:
 
 - Single-agent work — skip session tools entirely. Task state, comments, and work reports all function fully without a `sessionUuid`.
 - Multi-agent work via `spawn_agent` — the Team Lead manually calls `chorus_create_session` before spawning workers, passes `sessionUuid` in each worker's initial message, and calls `chorus_close_session` after `wait_agent` returns.
@@ -305,7 +305,7 @@ The plugin includes two independent review agents. After proposal submission or 
 | `enableProposalReviewer` | Spawn `chorus-proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
 | `enableTaskReviewer` | Spawn `chorus-task-reviewer` after `chorus_submit_for_verify` | `true` (enabled) |
 
-To disable in the Codex port, delete (or comment out) the matching `PostToolUse` entry in `~/.codex/hooks.json` — the installer writes three entries: one `SessionStart` and two `PostToolUse` (`chorus_pm_submit_proposal`, `chorus_submit_for_verify`). Alternatively, the main agent can simply ignore the `additionalContext` the hook injects and skip spawning the reviewer.
+To disable in the Codex port, open `/hooks` and disable the matching Chorus plugin `PostToolUse` hook, or disable the whole `chorus@chorus-plugins` plugin in `~/.codex/config.toml`. Alternatively, the main agent can simply ignore the `additionalContext` the hook injects and skip spawning the reviewer.
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
 

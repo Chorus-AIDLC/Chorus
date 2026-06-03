@@ -14,8 +14,8 @@
 #      [plugins."chorus@chorus-plugins"] enabled = true into ~/.codex/config.toml,
 #      so Codex auto-enables the plugin on first launch (falls back to one-click
 #      `/plugins → Install` if auto-install does not fire).
-#   4. Installs a lazy hook wrapper under ~/.codex/hooks/chorus/ so Chorus hooks
-#      work even before the plugin cache is materialized.
+#   4. Enables Codex lifecycle hooks. Chorus hook scripts are bundled in the
+#      plugin manifest and loaded by Codex after the plugin is installed/enabled.
 
 set -euo pipefail
 
@@ -34,6 +34,158 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG_TOML="$CODEX_HOME/config.toml"
 
 is_tty() { [ -t 0 ] && [ -t 1 ]; }
+
+clean_legacy_chorus_hooks_json() {
+  local hooks_json="$1"
+  local tmp backup removed
+
+  tmp="$(mktemp "${TMPDIR:-/tmp}/chorus-hooks.XXXXXX")"
+  backup="${hooks_json}.chorus-legacy-bak"
+  cp "$hooks_json" "$backup"
+
+  if command -v node >/dev/null 2>&1; then
+    removed="$(node - "$hooks_json" "$tmp" <<'NODE'
+const fs = require("fs");
+const input = process.argv[2];
+const output = process.argv[3];
+let removed = 0;
+
+function isLegacyCommand(value) {
+  return typeof value === "string" && value.indexOf("hooks/chorus/run-hook.sh") !== -1;
+}
+
+function clean(value, parentKey) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => clean(item, parentKey))
+      .filter((item) => item !== undefined);
+  }
+
+  if (value && typeof value === "object") {
+    if (isLegacyCommand(value.command)) {
+      removed += 1;
+      return undefined;
+    }
+
+    const hadHooksArray = Array.isArray(value.hooks);
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      const cleaned = clean(child, key);
+      if (cleaned === undefined) continue;
+      if (Array.isArray(cleaned) && cleaned.length === 0 && (key === "hooks" || parentKey === "hooks")) continue;
+      out[key] = cleaned;
+    }
+
+    if (hadHooksArray && (!Array.isArray(out.hooks) || out.hooks.length === 0)) {
+      return undefined;
+    }
+    return out;
+  }
+
+  return value;
+}
+
+let data = JSON.parse(fs.readFileSync(input, "utf8"));
+data = clean(data, "") || {};
+if (data.hooks && typeof data.hooks === "object" && !Array.isArray(data.hooks)) {
+  for (const key of Object.keys(data.hooks)) {
+    if (Array.isArray(data.hooks[key]) && data.hooks[key].length === 0) {
+      delete data.hooks[key];
+    }
+  }
+  if (Object.keys(data.hooks).length === 0) {
+    delete data.hooks;
+  }
+}
+fs.writeFileSync(output, JSON.stringify(data, null, 2) + "\n");
+process.stdout.write(String(removed));
+NODE
+    )" || {
+      rm -f "$tmp"
+      warn "Could not parse $hooks_json with node; leaving legacy hooks unchanged."
+      warn "Backup created at $backup"
+      return 1
+    }
+  elif command -v python3 >/dev/null 2>&1; then
+    removed="$(python3 - "$hooks_json" "$tmp" <<'PY'
+import json
+import sys
+
+input_path = sys.argv[1]
+output_path = sys.argv[2]
+removed = 0
+
+def is_legacy_command(value):
+    return isinstance(value, str) and "hooks/chorus/run-hook.sh" in value
+
+def clean(value, parent_key=""):
+    global removed
+    if isinstance(value, list):
+        return [item for item in (clean(child, parent_key) for child in value) if item is not None]
+    if isinstance(value, dict):
+        if is_legacy_command(value.get("command")):
+            removed += 1
+            return None
+        had_hooks_array = isinstance(value.get("hooks"), list)
+        out = {}
+        for key, child in value.items():
+            cleaned = clean(child, key)
+            if cleaned is None:
+                continue
+            if isinstance(cleaned, list) and not cleaned and (key == "hooks" or parent_key == "hooks"):
+                continue
+            out[key] = cleaned
+        if had_hooks_array and (not isinstance(out.get("hooks"), list) or not out["hooks"]):
+            return None
+        return out
+    return value
+
+with open(input_path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+data = clean(data) or {}
+if isinstance(data.get("hooks"), dict):
+    for key in list(data["hooks"].keys()):
+        if isinstance(data["hooks"][key], list) and not data["hooks"][key]:
+            del data["hooks"][key]
+    if not data["hooks"]:
+        del data["hooks"]
+
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+
+print(removed, end="")
+PY
+    )" || {
+      rm -f "$tmp"
+      warn "Could not parse $hooks_json with python3; leaving legacy hooks unchanged."
+      warn "Backup created at $backup"
+      return 1
+    }
+  else
+    rm -f "$tmp"
+    warn "Cannot auto-clean $hooks_json because neither node nor python3 is available."
+    warn "Backup created at $backup"
+    return 1
+  fi
+
+  if [ "${removed:-0}" = "0" ]; then
+    rm -f "$tmp"
+    warn "No legacy Chorus hook entries were removed from $hooks_json."
+    warn "Backup created at $backup"
+    return 1
+  fi
+
+  if grep -q '[^[:space:]{}]' "$tmp" 2>/dev/null; then
+    mv "$tmp" "$hooks_json"
+    ok "Removed $removed legacy Chorus hook entr$( [ "$removed" = "1" ] && printf 'y' || printf 'ies' ) from $hooks_json"
+  else
+    rm -f "$tmp" "$hooks_json"
+    ok "Removed $removed legacy Chorus hook entr$( [ "$removed" = "1" ] && printf 'y' || printf 'ies' ) and deleted now-empty $hooks_json"
+  fi
+  ok "Backup saved at $backup"
+}
 
 # If piped through `curl | bash`, stdin is the script body. Re-open from /dev/tty
 # so interactive prompts still work — but only if a real TTY is available AND we
@@ -181,104 +333,61 @@ TOML
 
 ok "Wrote [mcp_servers.chorus] and [plugins.\"chorus@chorus-plugins\"] → ${CONFIG_TOML}"
 
-# ---------- step 5: install hooks ----------
-hdr "5/5  Installing Chorus hooks"
-
-# Install a tiny wrapper that lazily resolves the newest plugin cache at
-# hook-run time. This lets us write hooks.json BEFORE `/plugins → Install`
-# has materialized the plugin cache — first-run UX becomes truly one-shot.
-WRAPPER_DIR="$CODEX_HOME/hooks/chorus"
-WRAPPER="$WRAPPER_DIR/run-hook.sh"
-mkdir -p "$WRAPPER_DIR"
-cat > "$WRAPPER" <<'WRAP'
-#!/usr/bin/env bash
-# Chorus hook wrapper (installed by public/install-codex.sh).
-# Resolves the newest installed Chorus plugin version at runtime and execs
-# the named hook script from its hooks/ directory. Exits 0 (no-op) if the
-# plugin has not been installed yet, so Codex sessions still start cleanly.
-set -eu
-HOOK_NAME="${1:-}"
-if [ -z "$HOOK_NAME" ]; then
-  echo '{}' ; exit 0
-fi
-shift
-CODEX_HOME_RESOLVED="${CODEX_HOME:-$HOME/.codex}"
-PLUGIN_ROOT="$CODEX_HOME_RESOLVED/plugins/cache/chorus-plugins/chorus"
-if [ ! -d "$PLUGIN_ROOT" ]; then
-  echo '{}' ; exit 0
-fi
-VER="$(ls -1 "$PLUGIN_ROOT" 2>/dev/null | sort -V | tail -1)"
-if [ -z "$VER" ]; then
-  echo '{}' ; exit 0
-fi
-SCRIPT="$PLUGIN_ROOT/$VER/hooks/$HOOK_NAME"
-if [ ! -x "$SCRIPT" ]; then
-  if [ -f "$SCRIPT" ]; then
-    chmod +x "$SCRIPT" 2>/dev/null || true
-  else
-    echo '{}' ; exit 0
-  fi
-fi
-exec "$SCRIPT" "$@"
-WRAP
-chmod +x "$WRAPPER"
-ok "Installed hook wrapper → $WRAPPER"
+# ---------- step 5: enable hooks ----------
+hdr "5/5  Enabling Codex lifecycle hooks"
 
 HOOKS_JSON="$CODEX_HOME/hooks.json"
-if [ -f "$HOOKS_JSON" ] && ! grep -q "hooks/chorus/run-hook.sh\|chorus-plugins/chorus" "$HOOKS_JSON" 2>/dev/null; then
-  warn "Found a non-Chorus $HOOKS_JSON — not overwriting."
-  warn "  Add Chorus hook entries manually (command = $WRAPPER on-session-start.sh | on-post-submit-proposal.sh | on-post-submit-for-verify.sh)."
-else
-  cat > "$HOOKS_JSON" <<HJSON
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          { "type": "command", "command": "$WRAPPER on-session-start.sh", "timeout": 20, "statusMessage": "Chorus: checkin" }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": ".*chorus_pm_submit_proposal",
-        "hooks": [
-          { "type": "command", "command": "$WRAPPER on-post-submit-proposal.sh", "timeout": 10 }
-        ]
-      },
-      {
-        "matcher": ".*chorus_submit_for_verify",
-        "hooks": [
-          { "type": "command", "command": "$WRAPPER on-post-submit-for-verify.sh", "timeout": 10 }
-        ]
-      }
-    ]
-  }
-}
-HJSON
-  ok "Wrote $HOOKS_JSON (routing through $WRAPPER)"
+if [ -f "$HOOKS_JSON" ] && grep -q "hooks/chorus/run-hook.sh" "$HOOKS_JSON" 2>/dev/null; then
+  warn "Found legacy copied Chorus hook entries in $HOOKS_JSON."
+  warn "These can duplicate the plugin-bundled Chorus hooks now loaded by Codex."
+  warn "Legacy entries:"
+  grep -n "hooks/chorus/run-hook.sh" "$HOOKS_JSON" 2>/dev/null | sed 's/^/    /' >&2 || true
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "  Clean legacy Chorus entries from %s now? [y/N]: " "$HOOKS_JSON" > /dev/tty
+    read -r clean_legacy_hooks_answer < /dev/tty
+    case "$clean_legacy_hooks_answer" in
+      y|Y|yes|YES|Yes)
+        clean_legacy_chorus_hooks_json "$HOOKS_JSON" || true
+        ;;
+      *)
+        warn "Keeping legacy hooks unchanged. Use /hooks to disable them or remove matching entries manually to avoid duplicates."
+        ;;
+    esac
+  else
+    warn "No interactive TTY available; keeping legacy hooks unchanged."
+    warn "Re-run this installer in a terminal to auto-clean them, or remove matching entries manually."
+  fi
 fi
 
-# Enable the codex_hooks feature flag in config.toml (idempotent).
+# Keep the current canonical feature key. `codex_hooks` is a deprecated alias;
+# remove any old hook feature setting from [features] before writing `hooks = true`
+# so reruns do not create duplicate TOML keys.
 if grep -qE "^\[features\]" "$CONFIG_TOML"; then
-  if ! grep -qE "^codex_hooks\s*=\s*true" "$CONFIG_TOML"; then
-    tmp="$(mktemp "${TMPDIR:-/tmp}/chorus-features.XXXXXX")"
-    awk '
-      /^\[features\][[:space:]]*$/ { print; print "codex_hooks = true"; inserted=1; next }
-      { print }
-    ' "$CONFIG_TOML" > "$tmp" && mv "$tmp" "$CONFIG_TOML"
-    ok "Added codex_hooks = true under existing [features]"
-  else
-    ok "codex_hooks feature flag already enabled"
-  fi
+  tmp="$(mktemp "${TMPDIR:-/tmp}/chorus-features.XXXXXX")"
+  awk '
+    /^\[features\][[:space:]]*$/ {
+      in_features = 1
+      print
+      print "hooks = true"
+      next
+    }
+    /^\[/ {
+      in_features = 0
+    }
+    in_features && /^[[:space:]]*(hooks|codex_hooks)[[:space:]]*=/ {
+      next
+    }
+    { print }
+  ' "$CONFIG_TOML" > "$tmp" && mv "$tmp" "$CONFIG_TOML"
+  ok "Set [features] hooks = true"
 else
   cat >> "$CONFIG_TOML" <<'TFEAT'
 
 [features]
-codex_hooks = true
+hooks = true
 TFEAT
-  ok "Appended [features] codex_hooks = true"
+  ok "Appended [features] hooks = true"
 fi
 
 # ---------- epilogue ----------
@@ -296,7 +405,8 @@ so one manual click is the fallback path).
 
 Verify anytime:
   ${BOLD}codex mcp list${RESET}         # 'chorus' row, Auth = 'Bearer token'
-  ${BOLD}codex features list${RESET}    # codex_hooks + plugins both true
+  ${BOLD}codex features list${RESET}    # hooks + plugins both true
+  ${BOLD}/hooks${RESET}                 # review/trust bundled Chorus hooks after launch
 
 Then in Codex type ${BOLD}\$chorus${RESET} (or \$develop, \$review, \$proposal, …) to
 activate a skill. To change your API key later, just re-run this installer.

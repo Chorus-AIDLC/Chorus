@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -275,7 +275,7 @@ If the task you just self-verified was the LAST one of its Idea (every Task acro
 
 ## Session (Optional, Codex Port)
 
-The Codex port is **intentionally stateless** — no hook auto-creates, heartbeats, or closes Chorus sessions (Codex has no `SubagentStart`/`SubagentStop` event). Treat `sessionUuid` as optional per-worker observability, not a requirement:
+The Codex port is currently **stateless** — no hook auto-creates, heartbeats, or closes Chorus sessions yet. Codex supports `SubagentStart`/`SubagentStop` plugin hooks, but this plugin has not wired them into automatic session lifecycle management. Treat `sessionUuid` as optional per-worker observability, not a requirement:
 
 - **Single-agent developer work**: skip session tools entirely. `chorus_update_task` / `chorus_report_work` / `chorus_submit_for_verify` all work without a `sessionUuid`.
 - **Team Lead orchestrating workers via `spawn_agent`**: manually call `chorus_create_session` before spawning, pass `sessionUuid` into each worker's initial message, and `chorus_close_session` after `wait_agent` returns. See the Multi-Agent Workers section below.
@@ -333,7 +333,7 @@ Task status, work reports, comments, AC self-checks all still function — you o
 
 ### Session Cleanup (Team Lead responsibility)
 
-Because Codex has no `SubagentStop` event, the Team Lead must close sessions after workers finish:
+Until the Codex plugin wires `SubagentStop` into Chorus session cleanup, the Team Lead must close sessions after workers finish:
 
 ```
 # After worker_a's spawn_agent returns:

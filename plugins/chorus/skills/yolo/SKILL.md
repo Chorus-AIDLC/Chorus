@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -366,7 +366,7 @@ loop:
   #    Each worker follows $develop skill:
   #    claim -> in_progress -> develop -> report -> self-check AC -> submit_for_verify
 
-  # 4. Close worker sessions (main agent responsibility — no SubagentStop hook)
+  # 4. Close worker sessions (main agent responsibility until the Codex plugin wires SubagentStop cleanup)
   for each session:
     chorus_close_session({ sessionUuid: session.uuid })
 

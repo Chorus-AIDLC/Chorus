@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Codex. De
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -18,7 +18,9 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 
 When you reach a point in proposal / develop / yolo where this skill is referenced, **read the value of `CHORUS_OPENSPEC_ACTIVE` from the SessionStart context** (see §1) and branch on it. Do not re-run the detection block — the SessionStart hook has already done it once for this session.
 
-> **Codex specifics:** Codex's stateless MCP wrapper is `chorus-mcp-call.sh`, located at `$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh`. It is invoked as `chorus-mcp-call.sh <TOOL_NAME> '<JSON_ARGUMENTS>'` — no `mcp-tool` subcommand (unlike the Claude Code variant). The Codex port has no on-disk session state; every call is self-contained.
+> **Codex specifics:** Codex's stateless MCP wrapper is `chorus-mcp-call.sh`, located at `$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh` after resolving `$CHORUS_PLUGIN_DIR` with §2.1. It is invoked as `chorus-mcp-call.sh <TOOL_NAME> '<JSON_ARGUMENTS>'` — no `mcp-tool` subcommand (unlike the Claude Code variant). The Codex port has no on-disk session state; every call is self-contained.
+>
+> The helper snippets below are Bash snippets. Codex executes shell commands through the user's configured shell, which may be `zsh`; run multi-line helper blocks under `bash -lc` (or save them as a `.sh` script with a Bash shebang) before using `json_encode_file` / `chorus_check_response`.
 
 ---
 
@@ -75,16 +77,55 @@ Use this only when SessionStart context is genuinely unavailable — duplicating
 
 ---
 
-## §2. ⛔ Two non-negotiable rules
+## §2. Wrapper setup and non-negotiable rules
 
 Both are enforced at review time. Both have caused incidents in past releases.
+
+### 2.1 Resolve the Codex wrapper path
+
+Define this once before the first wrapper call. Do not require the user to add plugin scripts to `PATH`; Codex does not do that automatically.
+
+```bash
+resolve_chorus_plugin_dir() {
+  if [[ -n "${CHORUS_PLUGIN_DIR:-}" && -x "$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh" ]]; then
+    printf '%s\n' "$CHORUS_PLUGIN_DIR"
+    return 0
+  fi
+  if [[ -n "${PLUGIN_ROOT:-}" && -x "$PLUGIN_ROOT/hooks/chorus-mcp-call.sh" ]]; then
+    printf '%s\n' "$PLUGIN_ROOT"
+    return 0
+  fi
+  if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -x "$CLAUDE_PLUGIN_ROOT/hooks/chorus-mcp-call.sh" ]]; then
+    printf '%s\n' "$CLAUDE_PLUGIN_ROOT"
+    return 0
+  fi
+
+  local _codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local _candidate
+  _candidate=$(
+    find "$_codex_home/plugins/cache" -path '*/hooks/chorus-mcp-call.sh' -type f 2>/dev/null | sort | tail -n 1
+  )
+  if [[ -n "$_candidate" ]]; then
+    dirname "$(dirname "$_candidate")"
+    return 0
+  fi
+
+  return 1
+}
+
+CHORUS_PLUGIN_DIR="$(resolve_chorus_plugin_dir)" || {
+  echo "Unable to locate Chorus Codex plugin root; cannot call chorus-mcp-call.sh" >&2
+  exit 1
+}
+API="$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh"
+```
 
 ### Rule 1 — Mirror via the wrapper, never re-type document content from agent output
 
 Document/draft mirror calls (`chorus_pm_add_document_draft`, `chorus_pm_update_document_draft`, `chorus_pm_update_document`) **MUST** go through:
 
 ```
-"$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh" <TOOL_NAME> "$PAYLOAD"
+"$API" <TOOL_NAME> "$PAYLOAD"
 ```
 
 with `$PAYLOAD` built using `json_encode_file` (defined in §3.4). Calling these tools directly from Codex's MCP harness with a hand-typed `content` field is a **protocol violation** for OpenSpec mode and will fail review. Reasons:
@@ -212,12 +253,12 @@ Define once at the top of the authoring session. With `jq` available it streams 
 
 ```bash
 json_encode_file() {
-  local _path="$1"
+  local _file_path="$1"
   if command -v jq >/dev/null 2>&1; then
-    jq -Rs '.' < "$_path"
+    jq -Rs '.' < "$_file_path"
   else
     local _content
-    _content=$(cat "$_path")
+    _content=$(cat "$_file_path")
     _content=${_content//\\/\\\\}
     _content=${_content//\"/\\\"}
     _content=${_content//$'\n'/\\n}
@@ -247,11 +288,9 @@ This line is machine-grep-able by future runs of this skill and by the §3.9 arc
 
 > **Rule 1 reminder:** these calls go through `chorus-mcp-call.sh`, not direct MCP. The agent must not retype the document body.
 
-Define the halt-on-error helper from §6 once at the top, then run one call per file. Note the **two-arg** Codex wrapper signature: `<TOOL_NAME> <JSON_ARGUMENTS>` — there is no `mcp-tool` subcommand.
+Define the wrapper path from §2.1 and the halt-on-error helper from §6 once at the top, then run one call per file. Note the **two-arg** Codex wrapper signature: `<TOOL_NAME> <JSON_ARGUMENTS>` — there is no `mcp-tool` subcommand.
 
 ```bash
-API="$CHORUS_PLUGIN_DIR/hooks/chorus-mcp-call.sh"
-
 # PRD draft
 CONTENT=$(json_encode_file "openspec/changes/$SLUG/proposal.md")
 PAYLOAD=$(cat <<JSON

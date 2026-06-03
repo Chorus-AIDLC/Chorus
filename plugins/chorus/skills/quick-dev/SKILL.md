@@ -1,6 +1,6 @@
 ---
 name: quick-dev
-version: 0.9.2
+version: 0.9.3
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
 ---
 
@@ -165,7 +165,7 @@ Quick Tasks support the same optional session pattern as proposal-based tasks:
 
 - **Single agent**: skip session entirely — `chorus_update_task` / `chorus_report_work` work fine without `sessionUuid`
 - **Multi-agent via `spawn_agent`**: main agent calls `chorus_create_session` before spawning workers, passes `sessionUuid` in the worker's initial message, and calls `chorus_close_session` after the worker returns
-- **No auto-lifecycle** — Codex has no SubagentStart/Stop hooks; session management is the main agent's responsibility (see `$develop` skill for the full pattern)
+- **No auto-lifecycle yet** — Codex supports SubagentStart/Stop hooks, but this plugin has not wired them into session automation; session management is the main agent's responsibility (see `$develop` skill for the full pattern)
 
 ---
 
