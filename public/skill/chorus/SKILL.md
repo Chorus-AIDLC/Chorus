@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.3.1"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -30,18 +30,28 @@ Skill files are hosted under the `<BASE_URL>/skill/` path.
 | **proposal-chorus** | Proposal creation, drafts, DAG, submission | `/skill/proposal-chorus/SKILL.md` |
 | **develop-chorus** | Task execution workflow | `/skill/develop-chorus/SKILL.md` |
 | **review-chorus** | Proposal approval, task verification, governance | `/skill/review-chorus/SKILL.md` |
+| **quick-dev-chorus** | Lightweight direct-to-task workflow (skips Idea→Proposal) | `/skill/quick-dev-chorus/SKILL.md` |
+| **brainstorm-chorus** | Optional divergent→convergent dialogue, prelude to elaboration | `/skill/brainstorm-chorus/SKILL.md` |
+| **proposal-reviewer-chorus** | Read-only adversarial proposal reviewer (posts VERDICT) | `/skill/proposal-reviewer-chorus/SKILL.md` |
+| **task-reviewer-chorus** | Read-only adversarial task reviewer (posts VERDICT) | `/skill/task-reviewer-chorus/SKILL.md` |
+| **yolo-chorus** | Full-auto AI-DLC pipeline — prompt to done | `/skill/yolo-chorus/SKILL.md` |
 | **package.json** | Version & download metadata | `/skill/package.json` |
 
 ### Install (Claude Code, project-level)
 
 ```bash
 BASE_URL="<BASE_URL>"
-mkdir -p .claude/skills/chorus .claude/skills/idea-chorus .claude/skills/proposal-chorus .claude/skills/develop-chorus .claude/skills/review-chorus
+mkdir -p .claude/skills/chorus .claude/skills/idea-chorus .claude/skills/proposal-chorus .claude/skills/develop-chorus .claude/skills/review-chorus .claude/skills/quick-dev-chorus .claude/skills/brainstorm-chorus .claude/skills/proposal-reviewer-chorus .claude/skills/task-reviewer-chorus .claude/skills/yolo-chorus
 curl -s $BASE_URL/skill/chorus/SKILL.md > .claude/skills/chorus/SKILL.md
 curl -s $BASE_URL/skill/idea-chorus/SKILL.md > .claude/skills/idea-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-chorus/SKILL.md > .claude/skills/proposal-chorus/SKILL.md
 curl -s $BASE_URL/skill/develop-chorus/SKILL.md > .claude/skills/develop-chorus/SKILL.md
 curl -s $BASE_URL/skill/review-chorus/SKILL.md > .claude/skills/review-chorus/SKILL.md
+curl -s $BASE_URL/skill/quick-dev-chorus/SKILL.md > .claude/skills/quick-dev-chorus/SKILL.md
+curl -s $BASE_URL/skill/brainstorm-chorus/SKILL.md > .claude/skills/brainstorm-chorus/SKILL.md
+curl -s $BASE_URL/skill/proposal-reviewer-chorus/SKILL.md > .claude/skills/proposal-reviewer-chorus/SKILL.md
+curl -s $BASE_URL/skill/task-reviewer-chorus/SKILL.md > .claude/skills/task-reviewer-chorus/SKILL.md
+curl -s $BASE_URL/skill/yolo-chorus/SKILL.md > .claude/skills/yolo-chorus/SKILL.md
 curl -s $BASE_URL/skill/package.json > .claude/skills/chorus/package.json
 ```
 
@@ -49,12 +59,17 @@ curl -s $BASE_URL/skill/package.json > .claude/skills/chorus/package.json
 
 ```bash
 BASE_URL="<BASE_URL>"
-mkdir -p ~/.moltbot/skills/chorus ~/.moltbot/skills/idea-chorus ~/.moltbot/skills/proposal-chorus ~/.moltbot/skills/develop-chorus ~/.moltbot/skills/review-chorus
+mkdir -p ~/.moltbot/skills/chorus ~/.moltbot/skills/idea-chorus ~/.moltbot/skills/proposal-chorus ~/.moltbot/skills/develop-chorus ~/.moltbot/skills/review-chorus ~/.moltbot/skills/quick-dev-chorus ~/.moltbot/skills/brainstorm-chorus ~/.moltbot/skills/proposal-reviewer-chorus ~/.moltbot/skills/task-reviewer-chorus ~/.moltbot/skills/yolo-chorus
 curl -s $BASE_URL/skill/chorus/SKILL.md > ~/.moltbot/skills/chorus/SKILL.md
 curl -s $BASE_URL/skill/idea-chorus/SKILL.md > ~/.moltbot/skills/idea-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-chorus/SKILL.md > ~/.moltbot/skills/proposal-chorus/SKILL.md
 curl -s $BASE_URL/skill/develop-chorus/SKILL.md > ~/.moltbot/skills/develop-chorus/SKILL.md
 curl -s $BASE_URL/skill/review-chorus/SKILL.md > ~/.moltbot/skills/review-chorus/SKILL.md
+curl -s $BASE_URL/skill/quick-dev-chorus/SKILL.md > ~/.moltbot/skills/quick-dev-chorus/SKILL.md
+curl -s $BASE_URL/skill/brainstorm-chorus/SKILL.md > ~/.moltbot/skills/brainstorm-chorus/SKILL.md
+curl -s $BASE_URL/skill/proposal-reviewer-chorus/SKILL.md > ~/.moltbot/skills/proposal-reviewer-chorus/SKILL.md
+curl -s $BASE_URL/skill/task-reviewer-chorus/SKILL.md > ~/.moltbot/skills/task-reviewer-chorus/SKILL.md
+curl -s $BASE_URL/skill/yolo-chorus/SKILL.md > ~/.moltbot/skills/yolo-chorus/SKILL.md
 curl -s $BASE_URL/skill/package.json > ~/.moltbot/skills/chorus/package.json
 ```
 
@@ -385,17 +400,54 @@ approved --> draft  (via revoke — cascade-closes tasks, deletes documents)
 
 ---
 
+## Independent Review
+
+Chorus uses **independent, read-only adversarial reviewers** at two gates: before a proposal is approved, and before a task is verified. The reviewer's job is to find what is wrong — not to rubber-stamp. Its output is **advisory**: it informs the admin's decision but does not by itself approve, reject, verify, or reopen anything.
+
+This is the **single canonical description** of the reviewer pattern. The `develop-chorus`, `review-chorus`, and `yolo-chorus` skills all point back here rather than redefining it.
+
+### The Pattern
+
+1. **Spawn a read-only sub-agent** that loads one of the two reviewer skills:
+   - `proposal-reviewer-chorus` (`<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md`) — for reviewing a **proposal** before approval. Pass it the `proposalUuid`.
+   - `task-reviewer-chorus` (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`) — for reviewing a **task** before verification. Pass it the `taskUuid`.
+2. **The reviewer audits independently** and posts exactly **one** structured `VERDICT` comment on the proposal/task via `chorus_add_comment`. The comment ends with one literal verdict string: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`.
+3. **Read the verdict and act.** Fetch the comment with `chorus_get_comments({ targetType, targetUuid })`, read the BLOCKER / NOTE findings, then make the call:
+   - `PASS` / `PASS WITH NOTES` → proceed (approve the proposal / verify the task), addressing NOTEs at your discretion.
+   - `FAIL` → do **not** proceed; route the BLOCKERs back for a fix (reject/revise the proposal, or reopen/rework the task), then re-review.
+
+> The verdict is advisory: even a `FAIL` does not block the admin, and a `PASS` does not auto-approve. A human/admin makes the final decision.
+
+### Spawn Mechanism Is Harness-Specific
+
+How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Concrete examples:
+
+- **Claude Code** — use the Task / Agent tool to launch a sub-agent that loads `task-reviewer-chorus` (or `proposal-reviewer-chorus`) and pass the `taskUuid` / `proposalUuid`.
+- **Codex** — use `spawn_agent` with the reviewer skill and the target UUID.
+- Other harnesses: use whatever sub-agent / sub-task primitive they expose.
+
+### Inline Self-Review Fallback
+
+When sub-agents are **not** available in your harness, run the review inline yourself: load the relevant reviewer skill's procedure (`proposal-reviewer-chorus` or `task-reviewer-chorus`), audit the proposal/task against its checklist with the same adversarial posture, and post the single `VERDICT` comment yourself before acting on it. A same-agent self-review is weaker than a fresh independent reviewer, but it is far better than skipping the gate.
+
+---
+
 ## Skill Routing
 
 This is the core overview skill. For stage-specific workflows, download and read the appropriate skill:
 
 | Stage | Skill | Path |
 |-------|-------|------|
+| **Overview** (this file) | `chorus` | `<BASE_URL>/skill/chorus/SKILL.md` |
 | **Quick Dev** | `quick-dev-chorus` | `<BASE_URL>/skill/quick-dev-chorus/SKILL.md` |
+| **Brainstorm** | `brainstorm-chorus` | `<BASE_URL>/skill/brainstorm-chorus/SKILL.md` |
 | **Ideation** | `idea-chorus` | `<BASE_URL>/skill/idea-chorus/SKILL.md` |
 | **Planning** | `proposal-chorus` | `<BASE_URL>/skill/proposal-chorus/SKILL.md` |
 | **Development** | `develop-chorus` | `<BASE_URL>/skill/develop-chorus/SKILL.md` |
 | **Review** | `review-chorus` | `<BASE_URL>/skill/review-chorus/SKILL.md` |
+| **Proposal Review** | `proposal-reviewer-chorus` | `<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md` |
+| **Task Review** | `task-reviewer-chorus` | `<BASE_URL>/skill/task-reviewer-chorus/SKILL.md` |
+| **Full-Auto** | `yolo-chorus` | `<BASE_URL>/skill/yolo-chorus/SKILL.md` |
 
 ### Getting Started
 

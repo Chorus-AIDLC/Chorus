@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.3.1"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -128,9 +128,11 @@ The `full` view returns: title, description, input ideas, **document drafts** (P
 chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 ```
 
-#### A3.5: Independent Review (Automatic)
+#### A3.5: Independent Review
 
-After `chorus_pm_submit_proposal`, consider spawning `chorus:proposal-reviewer` — a read-only agent that adversarially reviews the proposal's document quality, task granularity, AC alignment, and dependency DAG. Check for its VERDICT comment before approving.
+Before approving, run an independent review of the proposal. Spawn a read-only sub-agent that loads the `proposal-reviewer-chorus` skill (`<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md`), pass it the `proposalUuid`, and let it adversarially audit document quality, task granularity, AC alignment, and the dependency DAG. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the proposal; read it with `chorus_get_comments` before deciding.
+
+The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
 
 > **VERDICT: FAIL is advisory** — the reviewer's opinion does not block approval. The admin reads the review comment and makes the final decision.
 
@@ -194,6 +196,14 @@ Check: developer's work summary, acceptance criteria, self-check results.
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
+
+#### B2.5: Independent Review
+
+Before marking acceptance criteria and verifying, run an independent review of the task. Spawn a read-only sub-agent that loads the `task-reviewer-chorus` skill (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`), pass it the `taskUuid`, and let it independently verify the implementation against the acceptance criteria and proposal documents. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the task; read it with `chorus_get_comments` before deciding.
+
+The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
+
+> **VERDICT is advisory** — a `FAIL` does not block verification and a `PASS` does not auto-verify. The admin reads the review comment, marks the acceptance criteria, and makes the final decision.
 
 #### B3: Mark Acceptance Criteria
 

@@ -1,6 +1,6 @@
 {
   "name": "chorus-skill",
-  "version": "0.3.1",
+  "version": "0.9.3",
   "description": "Chorus AI Agent collaboration platform skill. Supports PM, Developer, and Admin roles via MCP tools for the Idea-Proposal-Task workflow.",
   "author": "chorus",
   "license": "AGPL-3.0",
@@ -23,7 +23,12 @@
       "idea-chorus/SKILL.md": "/skill/idea-chorus/SKILL.md",
       "proposal-chorus/SKILL.md": "/skill/proposal-chorus/SKILL.md",
       "develop-chorus/SKILL.md": "/skill/develop-chorus/SKILL.md",
-      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md"
+      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md",
+      "quick-dev-chorus/SKILL.md": "/skill/quick-dev-chorus/SKILL.md",
+      "brainstorm-chorus/SKILL.md": "/skill/brainstorm-chorus/SKILL.md",
+      "proposal-reviewer-chorus/SKILL.md": "/skill/proposal-reviewer-chorus/SKILL.md",
+      "task-reviewer-chorus/SKILL.md": "/skill/task-reviewer-chorus/SKILL.md",
+      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -38,7 +43,10 @@
       "report work",
       "verify task",
       "approve proposal",
-      "project management"
+      "project management",
+      "yolo",
+      "review agent",
+      "verify"
     ]
   },
   "moltbot": {
@@ -48,7 +56,12 @@
       "idea-chorus/SKILL.md": "/skill/idea-chorus/SKILL.md",
       "proposal-chorus/SKILL.md": "/skill/proposal-chorus/SKILL.md",
       "develop-chorus/SKILL.md": "/skill/develop-chorus/SKILL.md",
-      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md"
+      "review-chorus/SKILL.md": "/skill/review-chorus/SKILL.md",
+      "quick-dev-chorus/SKILL.md": "/skill/quick-dev-chorus/SKILL.md",
+      "brainstorm-chorus/SKILL.md": "/skill/brainstorm-chorus/SKILL.md",
+      "proposal-reviewer-chorus/SKILL.md": "/skill/proposal-reviewer-chorus/SKILL.md",
+      "task-reviewer-chorus/SKILL.md": "/skill/task-reviewer-chorus/SKILL.md",
+      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -63,7 +76,10 @@
       "report work",
       "verify task",
       "approve proposal",
-      "project management"
+      "project management",
+      "yolo",
+      "review agent",
+      "verify"
     ]
   }
 }

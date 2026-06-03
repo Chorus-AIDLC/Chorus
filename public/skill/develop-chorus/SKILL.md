@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, self-chec
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.3.1"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -182,7 +182,7 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, consider spawning `chorus:task-reviewer` — an independent, read-only review agent that adversarially checks the implementation against AC and proposal documents. It posts a VERDICT comment on the task. Its result is advisory (does not block verification).
+> **Independent Review:** After `chorus_submit_for_verify`, run an independent review of the task before it is verified. Spawn a read-only sub-agent that loads the `task-reviewer-chorus` skill (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`), pass it the `taskUuid`, and let it post a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the task; then read it with `chorus_get_comments` and act. The verdict is **advisory** (it does not block verification). The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
 
 ### Step 9: Handle Review Feedback
 

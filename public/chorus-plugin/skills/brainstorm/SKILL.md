@@ -4,7 +4,7 @@ description: Optional divergent-then-convergent dialogue for fuzzy ideas. Invoke
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.3"
   category: project-management
   mcp_server: chorus
 ---
