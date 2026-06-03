@@ -108,11 +108,11 @@ Every time **any** plugin package changes, bump the version in **all** of that p
 ### Claude Code plugin — bump together
 1. `.claude-plugin/marketplace.json` — `"version": "X.Y.Z"`
 2. `public/chorus-plugin/.claude-plugin/plugin.json` — `"version": "X.Y.Z"`
-3. Every skill under `public/chorus-plugin/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (or `version: X.Y.Z` for `quick-dev/` which uses a flat frontmatter)
+3. Every skill under `public/chorus-plugin/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (all skills, including `quick-dev/`, now use the standard nested `metadata:` block)
 
 ### Codex plugin — bump together
 4. `plugins/chorus/.codex-plugin/plugin.json` — `"version": "X.Y.Z"`
-5. Every skill under `plugins/chorus/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (or flat `version:` for `quick-dev/`). **Don't forget the two reviewer skills**: `chorus-proposal-reviewer/SKILL.md` and `chorus-task-reviewer/SKILL.md`.
+5. Every skill under `plugins/chorus/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (all skills, including `quick-dev/`, now use the standard nested `metadata:` block). **Don't forget the two reviewer skills**: `chorus-proposal-reviewer/SKILL.md` and `chorus-task-reviewer/SKILL.md`.
 6. `plugins/chorus/hooks/chorus-mcp-call.sh` — hardcoded `clientInfo.version` string in the JSON-RPC `initialize` payload
 
 ### OpenClaw plugin — bump together

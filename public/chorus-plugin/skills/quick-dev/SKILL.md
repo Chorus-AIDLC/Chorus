@@ -1,7 +1,12 @@
 ---
 name: quick-dev
-version: 0.9.3
 description: Quick Task workflow — skip Idea→Proposal, create tasks directly, execute, and verify.
+license: AGPL-3.0
+metadata:
+  author: chorus
+  version: "0.9.3"
+  category: project-management
+  mcp_server: chorus
 ---
 
 # Quick Dev Skill
