@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { CodeBlock } from "./CodeBlock";
+import { CodeBlock } from "@/components/install-guide/CodeBlock";
 
 interface TestConnectionStepProps {
   onNext: () => void;

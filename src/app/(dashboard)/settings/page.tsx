@@ -505,7 +505,7 @@ export default function SettingsPage() {
       {/* Create API Key Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25">
-          <div className="max-h-[90vh] w-full max-w-[520px] overflow-y-auto rounded-2xl bg-card shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card shadow-xl">
             <AgentCreateForm
               createAgentAndKey={createAgentAndKeyAction}
               onAgentCreated={() => {

@@ -690,6 +690,7 @@
     "created": "Created",
     "apiKeyCreated": "API Key Created",
     "apiKeyCreatedDesc": "Copy this key now. You won't be able to see it again!",
+    "installGuideIntro": "Connect your agent now — pick your client below. The key above is embedded in the snippets and won't be shown again.",
     "name": "Name",
     "namePlaceholder": "My Agent Key",
     "agentRoles": "Agent Roles",

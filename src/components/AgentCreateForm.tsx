@@ -11,6 +11,7 @@ import {
 } from "@/components/AgentFormFields";
 import type { AgentPermissionPickerChange } from "@/components/AgentPermissionPicker";
 import type { Permission } from "@/lib/authz/types";
+import { AgentInstallGuide } from "@/components/install-guide/AgentInstallGuide";
 
 export interface AgentCreateFormProps {
   /** Called after the agent and API key are successfully created */
@@ -154,6 +155,12 @@ export function AgentCreateForm({
           >
             {copied ? t("common.copied") : t("common.copy")}
           </Button>
+        </div>
+        <p className="mb-3 text-sm text-muted-foreground">
+          {t("settings.installGuideIntro")}
+        </p>
+        <div className="mb-4">
+          <AgentInstallGuide apiKey={createdKey} />
         </div>
         <Button onClick={handleClose} className="w-full">
           {t("common.done")}

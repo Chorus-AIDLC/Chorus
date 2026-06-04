@@ -691,6 +691,7 @@
     "created": "创建于",
     "apiKeyCreated": "API 密钥已创建",
     "apiKeyCreatedDesc": "请立即复制此密钥。您将无法再次查看它！",
+    "installGuideIntro": "现在就连接你的智能体——在下方选择你的客户端。上方密钥已嵌入到代码片段中，且不会再次显示。",
     "name": "名称",
     "namePlaceholder": "我的智能体密钥",
     "agentRoles": "智能体角色",
