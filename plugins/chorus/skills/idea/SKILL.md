@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.3"
+  version: "0.9.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -44,10 +44,10 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_pm_start_elaboration` | Start an elaboration round with structured questions |
-| `chorus_pm_validate_elaboration` | Validate answers (resolve or create follow-up round) |
+| `chorus_pm_start_elaboration` | Generate an elaboration round (first, follow-up, or appended-after-resolution) |
+| `chorus_pm_validate_elaboration` | Mark the whole elaboration complete (requires `idea:admin`; requires human confirmation first) |
 | `chorus_pm_skip_elaboration` | Skip elaboration for trivially clear Ideas |
-| `chorus_answer_elaboration` | Submit answers for an elaboration round |
+| `chorus_answer_elaboration` | Submit answers for an elaboration round (`roundUuid` optional — auto-locates the active round) |
 | `chorus_get_elaboration` | Get full elaboration state (rounds, questions, answers) |
 
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
@@ -123,8 +123,8 @@ If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice quest
 
 When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
 
-- If the synthesized round answers cover everything → call `chorus_pm_validate_elaboration` with `issues: []` to resolve elaboration.
-- If gaps remain → call `chorus_pm_validate_elaboration` with `issues + followUpQuestions` to start a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
+- If the synthesized round answers cover everything → obtain human confirmation, then call `chorus_pm_validate_elaboration` to resolve the elaboration. (Resolve needs `idea:admin` — see Step 5.6 if your key is `pm_agent`-preset.)
+- If gaps remain → call `chorus_pm_start_elaboration` again to open a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
 
 Either outcome ends Step 4.5; skip Step 5.
 
@@ -210,9 +210,11 @@ chorus_pm_skip_elaboration({
    - **Select an option + add a note**: `selectedOptionId: "a", customText: "additional context"`
    - **Choose "Other" (free text)**: `selectedOptionId: null, customText: "your answer"` — customText is required when no option is selected
 
+   > `roundUuid` is **optional** on `chorus_answer_elaboration`. Omit it and the service auto-locates the Idea's single active (`pending_answers`) round. Pass it explicitly only when you need to target a specific round.
+
 5. **Review answers and confirm with the owner (@mention flow):**
 
-   After answers are submitted, **@mention the answerer** (typically the agent's owner) with a summary of your understanding. This prevents misinterpretation before you validate.
+   After answers are submitted, **@mention the answerer** (typically the agent's owner) with a summary of your understanding. This prevents misinterpretation before you resolve.
 
    a. **Get owner info** from checkin response (`agent.owner`) or search:
       ```
@@ -231,37 +233,28 @@ chorus_pm_skip_elaboration({
    c. **Wait for confirmation** via comments.
 
    d. **Based on the response:**
-      - **Confirmed** — Proceed to validate with empty issues
-      - **Additions/corrections** — Incorporate feedback, optionally start a follow-up round
+      - **Confirmed** — Treat this as the human confirmation required to resolve; proceed to Step 5.6 and call `chorus_pm_validate_elaboration`
+      - **Additions/corrections** — Incorporate feedback, optionally open a follow-up round with `chorus_pm_start_elaboration`
       - **Unclear** — Ask clarifying questions via another comment
 
-6. **Validate the elaboration:**
+6. **Resolve the elaboration (the single commit gate):**
 
-   `chorus_pm_validate_elaboration` is the **single commit gate for the entire elaboration phase**, NOT a per-round close. Calling it with `issues: []` resolves the whole elaboration (sets `idea.elaborationStatus = "resolved"`); calling it with `issues + followUpQuestions` opens a new round while keeping elaboration in progress. Do not call validate after every round — call it once when you believe elaboration is done, or when you want to start a follow-up round.
+   Resolving marks the **whole elaboration phase** complete — it sets `idea.elaborationStatus = "resolved"` (Idea → `elaborated`), which is the gating signal that lets a downstream Proposal be submitted. It is NOT a per-round close. Resolve once, when you believe elaboration is done.
 
-   ```
-   chorus_pm_validate_elaboration({
-     ideaUuid: "<idea-uuid>",
-     roundUuid: "<round-uuid>",
-     issues: [],
-     followUpQuestions: []
-   })
-   ```
+   > **⚠️ Human confirmation required.** Outside YOLO automation you MUST obtain explicit human confirmation before resolving. The "Confirmed" reply in step 5d above counts as that confirmation. Never resolve on your own judgment alone.
 
-   If issues are found (contradictions, ambiguities, incomplete answers), include them in `issues` and provide `followUpQuestions` for a new round:
+   > **Permission (N1): `chorus_pm_validate_elaboration` requires `idea:admin`.** The `pm_agent` preset only grants `idea:write`, so a PM-preset agent **cannot** resolve — it must hand off to an `admin_agent`-preset agent (or an admin-preset API key) to perform the resolve. If your key lacks `idea:admin`, surface this to the human and request the handoff instead of failing silently.
+
+   > **Assignee precondition (N2):** the resolving actor must be the Idea's **assignee**. A separate human reviewer resolving a PM-owned Idea therefore needs **both** `idea:admin` **and** to be assigned the Idea (claim/reassign it first). Admin permission alone is not enough.
 
    ```
    chorus_pm_validate_elaboration({
-     ideaUuid: "<idea-uuid>",
-     roundUuid: "<round-uuid>",
-     issues: [
-       { questionId: "q1", type: "ambiguity", description: "Role-based access selected but no roles defined" }
-     ],
-     followUpQuestions: [
-       { id: "fq1", text: "Which specific roles should have access?", category: "functional", options: [...] }
-     ]
+     ideaUuid: "<idea-uuid>"
+     // roundUuid optional — defaults to the most recent answered round
    })
    ```
+
+   **Want a follow-up round instead of resolving?** Just call `chorus_pm_start_elaboration` again — there is no separate "open a round" flag. It works while still `elaborating` (a normal follow-up round) and, after you've already resolved, as an **appended round** (`isAppended: true`) that keeps the Idea `elaborated` and never blocks an in-flight Proposal. Per-question issue tagging no longer exists.
 
 7. **Check elaboration status** at any time:
    ```
@@ -272,8 +265,6 @@ chorus_pm_skip_elaboration({
 
 **Question categories:** `functional`, `non_functional`, `business_context`, `technical_context`, `user_scenario`, `scope`
 
-**Validation issue types:** `contradiction`, `ambiguity`, `incomplete`
-
 ---
 
 ## Tips
@@ -282,7 +273,7 @@ chorus_pm_skip_elaboration({
 - Elaboration improves Proposal quality — don't skip it unless the requirements are trivially clear
 - Use `AskUserQuestion` for all interactive questions — never plain text
 - Record decisions made in conversation as elaboration rounds for auditability
-- Always @mention the owner to confirm understanding before validating
+- Always @mention the owner to confirm understanding before resolving
 
 ---
 

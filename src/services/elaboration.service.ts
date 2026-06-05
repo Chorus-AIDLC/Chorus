@@ -7,7 +7,6 @@ import { activityService } from "@/services";
 import {
   type QuestionInput,
   type AnswerInput,
-  type ValidationIssueInput,
   type ElaborationDepth,
   type ElaborationResponse,
   type ElaborationRoundResponse,
@@ -45,11 +44,17 @@ export async function startElaboration({
   if (idea.assigneeUuid !== actorUuid) {
     throw new Error("Only the assigned agent can start elaboration");
   }
-  if (idea.status !== "elaborating") {
+  if (idea.status !== "elaborating" && idea.status !== "elaborated") {
     throw new Error(
-      `Cannot start elaboration from status '${idea.status}'. Idea must be in 'elaborating' status (claim it first).`
+      `Cannot start elaboration from status '${idea.status}'. Idea must be in 'elaborating' or 'elaborated' status (claim it first).`
     );
   }
+
+  // Appended round: the Idea's elaboration was already resolved at call time.
+  // Appended rounds are a pure supplement — they must NOT regress the Idea
+  // lifecycle (R2 decision): keep status `elaborated` and elaborationStatus
+  // `resolved` so an in-flight proposal is never re-blocked.
+  const isAppended = idea.status === "elaborated";
 
   // Determine round number
   const existingRounds = await prisma.elaborationRound.count({
@@ -57,8 +62,8 @@ export async function startElaboration({
   });
   const roundNumber = existingRounds + 1;
 
-  if (roundNumber > 5) {
-    throw new Error("Maximum 5 elaboration rounds per Idea");
+  if (roundNumber > 10) {
+    throw new Error("Maximum 10 elaboration rounds per Idea");
   }
 
   // Create round + questions
@@ -68,6 +73,7 @@ export async function startElaboration({
       ideaUuid,
       roundNumber,
       status: "pending_answers",
+      isAppended,
       createdByType: actorType,
       createdByUuid: actorUuid,
       questions: {
@@ -88,15 +94,24 @@ export async function startElaboration({
     include: { questions: true },
   });
 
-  // Update idea status + elaboration fields
-  await prisma.idea.update({
-    where: { uuid: ideaUuid },
-    data: {
-      status: "elaborating",
-      elaborationDepth: depth,
-      elaborationStatus: "pending_answers",
-    },
-  });
+  // Update idea status + elaboration fields.
+  // For appended rounds, do NOT downgrade idea.status and do NOT overwrite a
+  // `resolved` elaborationStatus — only the new round sits at pending_answers.
+  if (isAppended) {
+    await prisma.idea.update({
+      where: { uuid: ideaUuid },
+      data: { elaborationDepth: depth },
+    });
+  } else {
+    await prisma.idea.update({
+      where: { uuid: ideaUuid },
+      data: {
+        status: "elaborating",
+        elaborationDepth: depth,
+        elaborationStatus: "pending_answers",
+      },
+    });
+  }
 
   // Log activity
   const resolvedProjectUuid = projectUuid || idea.projectUuid;
@@ -128,14 +143,31 @@ export async function answerElaboration({
 }: {
   companyUuid: string;
   ideaUuid: string;
-  roundUuid: string;
+  roundUuid?: string;
   actorUuid: string;
   actorType: string;
   answers: AnswerInput[];
 }): Promise<ElaborationRoundResponse> {
+  // Resolve the target round. When roundUuid is omitted, auto-locate the
+  // Idea's single active (pending_answers) round.
+  let resolvedRoundUuid = roundUuid;
+  if (!resolvedRoundUuid) {
+    const activeRounds = await prisma.elaborationRound.findMany({
+      where: { ideaUuid, companyUuid, status: "pending_answers" },
+      select: { uuid: true },
+    });
+    if (activeRounds.length === 0) {
+      throw new Error("no active round to answer");
+    }
+    if (activeRounds.length > 1) {
+      throw new Error("multiple active rounds; specify roundUuid");
+    }
+    resolvedRoundUuid = activeRounds[0].uuid;
+  }
+
   // Load round with questions
   const round = await prisma.elaborationRound.findFirst({
-    where: { uuid: roundUuid, ideaUuid, companyUuid },
+    where: { uuid: resolvedRoundUuid, ideaUuid, companyUuid },
     include: { questions: true },
   });
   if (!round) throw new Error("Elaboration round not found");
@@ -185,28 +217,33 @@ export async function answerElaboration({
 
   // Check if all required questions are answered
   const updatedQuestions = await prisma.elaborationQuestion.findMany({
-    where: { roundUuid },
+    where: { roundUuid: resolvedRoundUuid },
   });
   const allRequiredAnswered = updatedQuestions
     .filter((q) => q.required)
     .every((q) => q.answeredAt !== null);
 
-  // Update round status if all answered
-  if (allRequiredAnswered) {
-    await prisma.elaborationRound.update({
-      where: { uuid: roundUuid },
-      data: { status: "answered" },
-    });
-    await prisma.idea.update({
-      where: { uuid: ideaUuid },
-      data: { elaborationStatus: "validating" },
-    });
-  }
-
-  // Load idea for project UUID
+  // Load idea (needed for project UUID and the resolved-state guard below)
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
+
+  // Update round status if all answered
+  if (allRequiredAnswered) {
+    await prisma.elaborationRound.update({
+      where: { uuid: resolvedRoundUuid },
+      data: { status: "answered" },
+    });
+    // R2 guard: never flip a resolved Idea back to `validating`. Appended
+    // rounds keep the Idea at `resolved` so an in-flight proposal is not
+    // re-blocked — the round still moves to `answered` above.
+    if (idea?.elaborationStatus !== "resolved") {
+      await prisma.idea.update({
+        where: { uuid: ideaUuid },
+        data: { elaborationStatus: "validating" },
+      });
+    }
+  }
 
   // Log activity
   await activityService.createActivity({
@@ -227,129 +264,68 @@ export async function answerElaboration({
 
   // Return updated round
   const updatedRound = await prisma.elaborationRound.findUnique({
-    where: { uuid: roundUuid },
+    where: { uuid: resolvedRoundUuid },
     include: { questions: true },
   });
   return formatRoundResponse(updatedRound!);
 }
 
-// ===== Validate Elaboration =====
+// ===== Resolve Elaboration =====
 
-export async function validateElaboration({
+export async function resolveElaboration({
   companyUuid,
   ideaUuid,
-  roundUuid,
   actorUuid,
   actorType,
-  issues,
-  followUpQuestions,
+  roundUuid,
 }: {
   companyUuid: string;
   ideaUuid: string;
-  roundUuid: string;
   actorUuid: string;
   actorType: string;
-  issues: ValidationIssueInput[];
-  followUpQuestions?: QuestionInput[];
-}): Promise<{
-  validatedRound: ElaborationRoundResponse;
-  followUpRound?: ElaborationRoundResponse;
-}> {
-  // Load round
-  const round = await prisma.elaborationRound.findFirst({
-    where: { uuid: roundUuid, ideaUuid, companyUuid },
-    include: { questions: true },
-  });
-  if (!round) throw new Error("Elaboration round not found");
-  if (round.status !== "answered") {
-    throw new Error(`Round is '${round.status}', expected 'answered'`);
-  }
-
-  // Verify actor is the idea assignee
+  roundUuid?: string;
+}): Promise<ElaborationRoundResponse> {
+  // Verify the Idea exists and the actor is its assignee
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
   if (idea.assigneeUuid !== actorUuid) {
-    throw new Error("Only the assigned agent can validate elaboration");
+    throw new Error("Only the assigned agent can resolve elaboration");
   }
 
-  const noIssues = issues.length === 0;
-
-  if (noIssues) {
-    // All clear — mark round as validated, elaboration as resolved
-    await prisma.elaborationRound.update({
-      where: { uuid: roundUuid },
-      data: { status: "validated", validatedAt: new Date() },
-    });
-    await prisma.idea.update({
-      where: { uuid: ideaUuid },
-      data: { status: "elaborated", elaborationStatus: "resolved" },
-    });
-
-    await activityService.createActivity({
-      companyUuid,
-      projectUuid: idea.projectUuid,
-      targetType: "idea",
-      targetUuid: ideaUuid,
-      actorType,
-      actorUuid,
-      action: "elaboration_resolved",
-      value: {
-        totalRounds: round.roundNumber,
-        totalQuestions: round.questions.length,
-      },
-    });
-
-    eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
-
-    const updated = await prisma.elaborationRound.findUnique({
-      where: { uuid: roundUuid },
+  // Resolve the target round: an explicit roundUuid, otherwise the most recent
+  // `answered` round.
+  let round;
+  if (roundUuid) {
+    round = await prisma.elaborationRound.findFirst({
+      where: { uuid: roundUuid, ideaUuid, companyUuid },
       include: { questions: true },
     });
-    return { validatedRound: formatRoundResponse(updated!) };
-  }
-
-  // Issues found — mark issues on questions, create follow-up round
-  for (const issue of issues) {
-    const question = round.questions.find(
-      (q) => q.questionId === issue.questionId
-    );
-    if (question) {
-      await prisma.elaborationQuestion.update({
-        where: { uuid: question.uuid },
-        data: {
-          issueType: issue.type,
-          issueDescription: issue.description,
-        },
-      });
+    if (!round) throw new Error("Elaboration round not found");
+    if (round.status !== "answered") {
+      throw new Error(`Round is '${round.status}', expected 'answered'`);
+    }
+  } else {
+    round = await prisma.elaborationRound.findFirst({
+      where: { ideaUuid, companyUuid, status: "answered" },
+      include: { questions: true },
+      orderBy: { roundNumber: "desc" },
+    });
+    if (!round) {
+      throw new Error("no answered round to resolve");
     }
   }
 
+  // Mark round as validated, elaboration as resolved
   await prisma.elaborationRound.update({
-    where: { uuid: roundUuid },
-    data: { status: "needs_followup", validatedAt: new Date() },
+    where: { uuid: round.uuid },
+    data: { status: "validated", validatedAt: new Date() },
   });
-
-  let followUpRound: ElaborationRoundResponse | undefined;
-
-  if (followUpQuestions && followUpQuestions.length > 0) {
-    followUpRound = await startElaboration({
-      companyUuid,
-      ideaUuid,
-      actorUuid,
-      actorType,
-      depth: (idea.elaborationDepth as ElaborationDepth) || "standard",
-      questions: followUpQuestions,
-      projectUuid: idea.projectUuid,
-    });
-  } else {
-    // Just mark as needs_followup, keep elaboration pending
-    await prisma.idea.update({
-      where: { uuid: ideaUuid },
-      data: { elaborationStatus: "pending_answers" },
-    });
-  }
+  await prisma.idea.update({
+    where: { uuid: ideaUuid },
+    data: { status: "elaborated", elaborationStatus: "resolved" },
+  });
 
   await activityService.createActivity({
     companyUuid,
@@ -358,21 +334,20 @@ export async function validateElaboration({
     targetUuid: ideaUuid,
     actorType,
     actorUuid,
-    action: "elaboration_followup",
+    action: "elaboration_resolved",
     value: {
-      roundNumber: round.roundNumber,
-      issueCount: issues.length,
-      followUpQuestionCount: followUpQuestions?.length || 0,
+      totalRounds: round.roundNumber,
+      totalQuestions: round.questions.length,
     },
   });
 
   eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
-  const updatedRound = await prisma.elaborationRound.findUnique({
-    where: { uuid: roundUuid },
+  const updated = await prisma.elaborationRound.findUnique({
+    where: { uuid: round.uuid },
     include: { questions: true },
   });
-  return { validatedRound: formatRoundResponse(updatedRound!), followUpRound };
+  return formatRoundResponse(updated!);
 }
 
 // ===== Skip Elaboration =====
@@ -498,6 +473,7 @@ export function formatRoundResponse(
     uuid: string;
     roundNumber: number;
     status: string;
+    isAppended: boolean;
     createdByType: string;
     createdByUuid: string;
     validatedAt: Date | null;
@@ -523,6 +499,7 @@ export function formatRoundResponse(
     uuid: round.uuid,
     roundNumber: round.roundNumber,
     status: round.status,
+    isAppended: round.isAppended,
     createdBy: {
       type: round.createdByType,
       uuid: round.createdByUuid,

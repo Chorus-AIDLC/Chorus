@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — drive a single prompt from Idea throu
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.3"
+  version: "0.9.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -192,15 +192,16 @@ In yolo mode you generate the elaboration questions AND answer them yourself —
    })
    ```
 
-3. **Validate** — in self-mode there are no outstanding human issues, so close the round clean:
+3. **Resolve** — in YOLO mode the agent resolves elaboration **autonomously, with no human-confirmation gate** (the human-confirmation requirement that applies to the interactive idea flow is explicitly waived under `/yolo` automation):
 
    ```
    chorus_pm_validate_elaboration({
-     ideaUuid: "<idea-uuid>",
-     roundUuid: "<round-uuid>",
-     issues: []
+     ideaUuid: "<idea-uuid>"
+     // roundUuid optional — defaults to the most recent answered round
    })
    ```
+
+   > `chorus_pm_validate_elaboration` requires `idea:admin`. `/yolo` already mandates an Admin-preset key in Prerequisites, so this is satisfied. To open another self-elaboration round instead of resolving, just call `chorus_pm_start_elaboration` again.
 
 #### Step 1.4: Create the Proposal
 

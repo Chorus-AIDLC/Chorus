@@ -31,7 +31,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_move_idea` | `idea:write` |
 | `chorus_pm_create_idea` | `idea:write` |
 | `chorus_pm_start_elaboration` | `idea:write` |
-| `chorus_pm_validate_elaboration` | `idea:write` |
+| `chorus_pm_validate_elaboration` | `idea:admin` |
 | `chorus_pm_skip_elaboration` | `idea:write` |
 | `chorus_pm_create_proposal` | `proposal:write` |
 | `chorus_pm_validate_proposal` | `proposal:write` |
@@ -471,13 +471,13 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_answer_elaboration
 
-**Description**: Answer elaboration questions for an Idea. Submits answers for a specific elaboration round. When all required questions are answered, the round moves to validation.
+**Description**: Answer elaboration questions for an Idea. Submits answers for an elaboration round. When all required questions are answered, the round moves to `answered`. `roundUuid` is optional — when omitted, the service auto-locates the Idea's single active (`pending_answers`) round.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
-| roundUuid | string | Yes | Elaboration round UUID |
+| roundUuid | string | No | Elaboration round UUID. **Optional** — when omitted, the active `pending_answers` round is auto-located. Pass explicitly to target a specific round. Fails if omitted and there is no active round, or more than one. |
 | answers | array | Yes | Answers to submit |
 
 **answers array item fields**:
@@ -509,6 +509,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
       "uuid": "...",
       "roundNumber": 1,
       "status": "validated",
+      "isAppended": false,
       "questions": [...],
       "createdAt": "ISO timestamp"
     }
@@ -1234,7 +1235,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_pm_start_elaboration
 
-**Description**: Start an elaboration round for an Idea. Creates structured questions for the Idea creator/stakeholder to answer, clarifying requirements before proposal creation. Recommended for every Idea. Structured elaboration improves Proposal quality and reduces rejection cycles.
+**Description**: Generate an elaboration round for an Idea — the single entry point for the first round, follow-up rounds, and rounds appended after resolution. Creates structured questions for the Idea creator/stakeholder to answer, clarifying requirements before proposal creation. Callable when the Idea is `elaborating` (normal/follow-up round) **and** when it is `elaborated`/`resolved`: in the resolved case it creates an **appended round** (`isAppended: true`) that keeps the Idea `elaborated` and `elaborationStatus = resolved`, so it never blocks an in-flight Proposal. The round cap is 10. Recommended for every Idea. Structured elaboration improves Proposal quality and reduces rejection cycles.
 
 **Required Permission**: `idea:write`
 
@@ -1265,28 +1266,19 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_pm_validate_elaboration
 
-**Description**: Validate answers from an elaboration round. If no issues are found, the elaboration is marked as resolved. If issues exist, optionally provide follow-up questions for a new round.
+**Description**: Mark an Idea's elaboration complete. Validates the most recent `answered` round, moves the Idea to `elaborated`, and sets `elaborationStatus = resolved` (the gating signal that lets a downstream Proposal be submitted). **Requires human confirmation before calling (except in YOLO mode).** To open a follow-up round instead, call `chorus_pm_start_elaboration` again.
 
-**Required Permission**: `idea:write`
+**Required Permission**: `idea:admin`
+
+> **Permission handoff:** the `pm_agent` preset grants only `idea:write`, so a PM-preset agent cannot resolve — resolving requires an `admin_agent`-preset agent (or an admin-preset key). **Assignee precondition:** the resolving actor must also be the Idea's assignee, so a separate human reviewer resolving a PM-owned Idea needs both `idea:admin` and the Idea assignment (claim/reassign first).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
-| roundUuid | string | Yes | Elaboration round UUID |
-| issues | array | Yes | List of issues found (empty array = all valid) |
-| followUpQuestions | array | No | Follow-up questions for a new round (only if issues found) |
+| roundUuid | string | No | Round to validate. **Optional** — defaults to the most recent `answered` round. |
 
-**issues array item fields**:
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| questionId | string | Yes | Question ID with the issue |
-| type | enum | Yes | Issue type: contradiction, ambiguity, incomplete |
-| description | string | Yes | Issue description |
-
-**followUpQuestions array item fields**: Same as `questions` in `chorus_pm_start_elaboration`.
-
-**Output**: Validation result JSON. If issues are empty, elaboration status changes to `resolved`. If follow-up questions are provided, a new round is created with status `pending_answers`.
+**Output**: Resolution result JSON. The targeted round becomes `validated`, the Idea status becomes `elaborated`, and `elaborationStatus` becomes `resolved`. Fails if there is no `answered` round to resolve.
 
 ### chorus_pm_skip_elaboration
 

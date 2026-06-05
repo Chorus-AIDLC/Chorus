@@ -1,10 +1,10 @@
 ---
 name: brainstorm-chorus
-description: Optional divergent-then-convergent dialogue for fuzzy ideas. Invoked from the idea skill as a prelude to structured elaboration; produces one ElaborationRound of decision-point Q&A and returns control. Never writes files, never posts comments, never validates elaboration.
+description: Optional divergent-then-convergent dialogue for fuzzy ideas. Invoked from the idea skill as a prelude to structured elaboration; produces one ElaborationRound of decision-point Q&A and returns control. Never writes files, never posts comments, never resolves elaboration.
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.3"
+  version: "0.9.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -13,7 +13,7 @@ metadata:
 
 A divergent-then-convergent dialogue cadence for ideas whose direction is still being formed. Compresses the conversation into one `ElaborationRound` of decision-point Q&A — same shape as a structured elaboration round, but the questions, options and answers are synthesized at the end of the conversation rather than asked up front.
 
-This skill is a **producer** of one elaboration round; the **scheduler** decision (validate vs. follow-up) belongs to the calling idea skill.
+This skill is a **producer** of one elaboration round; the **scheduler** decision (resolve vs. follow-up) belongs to the calling idea skill.
 
 ---
 
@@ -32,7 +32,7 @@ Only as a sub-step of the idea skill, only after the user has explicitly opted i
 5. **No files written.** Do NOT write any markdown, design doc, scratch file, or any other file to disk. The conversation produces an `ElaborationRound` and nothing else on disk.
 6. **No comments posted.** Do NOT call `chorus_add_comment` from this skill. Comments belong to the idea skill or the user, not to the brainstorm step.
 7. **No design-doc handoff.** Do NOT invoke `writing-plans`, `writing-skills`, or any skill whose purpose is to produce a design document. The brainstorm output is the synthesized round — there is no separate doc.
-8. **No `validate_elaboration` call.** Do NOT call `chorus_pm_validate_elaboration` from this skill. Whether to validate (resolve elaboration) or follow up (issues + followUpQuestions) is the calling idea skill's decision, not this skill's.
+8. **No `resolve_elaboration` call.** Do NOT call `chorus_pm_validate_elaboration` from this skill. Whether to resolve the elaboration or open a follow-up round (`chorus_pm_start_elaboration` again) is the calling idea skill's decision, not this skill's.
 
 ---
 
@@ -126,8 +126,8 @@ chorus_answer_elaboration({
 
 Stop here. Do **NOT** call `chorus_pm_validate_elaboration`. The idea skill's caller now decides:
 
-- If the synthesized round answers cover everything → caller validates with `issues: []`.
-- If gaps remain → caller validates with `issues + followUpQuestions` to start a structured Round 2.
+- If the synthesized round answers cover everything → caller obtains human confirmation, then resolves with `chorus_pm_validate_elaboration`.
+- If gaps remain → caller opens a structured Round 2 by calling `chorus_pm_start_elaboration` again.
 
 The depth of any follow-up round is the caller's call, not yours.
 
@@ -160,7 +160,7 @@ Do not do any of the following. Each has a specific failure mode that this skill
 - **Single-summary `customText` blob.** Compressing the entire conversation into one ElaborationQuestion with a long markdown summary in `customText`. The schema is multi-question for a reason — preserve the decision granularity.
 - **Transcript-as-comment.** Posting the raw conversation log as a comment on the idea (or anywhere). The synthesized round IS the artifact. Raw transcripts pollute the audit trail with noise.
 - **File writes.** Writing any markdown, design doc, plan, or scratch file to disk. There is no design doc in this flow. This is a deliberate divergence from the upstream `superpowers/brainstorming` cadence — read the design.md if confused.
-- **`validate_elaboration` calls.** Closing the elaboration phase from this skill. The lifecycle decision belongs to the idea skill. Calling validate here strips the caller of its scheduler role.
+- **`resolve_elaboration` calls.** Closing the elaboration phase from this skill. The lifecycle decision belongs to the idea skill. Calling resolve here strips the caller of its scheduler role.
 - **`writing-plans` / design-doc handoff.** Invoking any skill that produces an implementation plan or design document. The Chorus pipeline already has Proposal → Document Drafts → Task Drafts for that — the brainstorm output feeds them through ElaborationRound, not through external doc skills.
 - **Length-2 binary "yes / no" framings.** Reducing every decision to "do this thing — yes / no". Almost always the genuine alternatives are 3+ approaches with meaningfully different tradeoffs. Length-2 framings often mean the divergent phase ended too early.
 - **Asking multiple questions in one `AskUserQuestion`.** The cadence is one question per turn during divergence, then one final convergence question with 2-3 options. Combining unrelated questions is a sign you are rushing.

@@ -870,6 +870,7 @@
     "validated": "已验证",
     "pendingAnswers": "待回答",
     "statusAnswered": "已回答",
+    "appendedBadge": "后续补充",
     "noAnswer": "未回答",
     "otherOption": "其他",
     "otherPlaceholder": "请说明...",

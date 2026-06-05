@@ -110,6 +110,7 @@ describe("formatRoundResponse", () => {
     uuid: "round-uuid",
     roundNumber: 1,
     status: "pending_answers",
+    isAppended: false,
     createdByType: "agent",
     createdByUuid: "agent-uuid",
     validatedAt: null as Date | null,
@@ -122,10 +123,17 @@ describe("formatRoundResponse", () => {
     expect(result.uuid).toBe("round-uuid");
     expect(result.roundNumber).toBe(1);
     expect(result.status).toBe("pending_answers");
+    expect(result.isAppended).toBe(false);
     expect(result.createdBy).toEqual({ type: "agent", uuid: "agent-uuid" });
     expect(result.validatedAt).toBeNull();
     expect(result.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(result.questions).toEqual([]);
+  });
+
+  it("should pass through isAppended when true", () => {
+    const round = { ...baseRound, isAppended: true };
+    const result = formatRoundResponse(round);
+    expect(result.isAppended).toBe(true);
   });
 
   it("should format validatedAt as ISO string when present", () => {

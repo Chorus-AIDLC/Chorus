@@ -68,6 +68,7 @@ export interface ElaborationRoundResponse {
   uuid: string;
   roundNumber: number;
   status: string;
+  isAppended: boolean;
   createdBy: { type: string; uuid: string };
   validatedAt: string | null;
   questions: ElaborationQuestionResponse[];

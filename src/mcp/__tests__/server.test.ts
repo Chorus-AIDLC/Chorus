@@ -87,6 +87,11 @@ function registeredFor(permissions: Permission[]): Set<string> {
 // (covered by the update-task tool's incremental dependency arrays). See
 // permission-map.ts and pm.ts; the names are intentionally not spelled here so
 // downstream grep checks stay clean.
+//
+// Note: chorus_pm_validate_elaboration is gated on idea:admin, so it is NOT a
+// pm-surface (idea:write) tool and intentionally does not appear in this
+// idea:write baseline. It surfaces only for admin_agent; see the admin_agent
+// expectation and the dedicated validate assertions below.
 const OLD_PM_TOOLS = [
   "chorus_claim_idea",
   "chorus_release_idea",
@@ -103,7 +108,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_remove_task_draft",
   "chorus_pm_assign_task",
   "chorus_pm_start_elaboration",
-  "chorus_pm_validate_elaboration",
   "chorus_pm_skip_elaboration",
   "chorus_move_idea",
   "chorus_pm_reject_proposal",
@@ -198,7 +202,7 @@ describe("MCP tool permission wiring", () => {
   });
 
   describe("backward-compat: admin_agent preset (AC6)", () => {
-    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets plus 0.9.0 chorus_create_report", () => {
+    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets plus 0.9.0 chorus_create_report and 0.9.4 chorus_pm_validate_elaboration", () => {
       const registered = registeredFor([...ROLE_PRESETS.admin_agent]);
       const expected = new Set([
         ...OLD_ADMIN_TOOLS,
@@ -207,6 +211,10 @@ describe("MCP tool permission wiring", () => {
         // 0.9.0: public-namespaced, document:write-gated. admin_agent carries
         // document:write so the tool is visible to admin presets.
         "chorus_create_report",
+        // 0.9.4 (simplify-elaboration-flow): chorus_pm_validate_elaboration is
+        // now idea:admin-gated (the simplified resolve action). admin_agent
+        // carries idea:admin; pm_agent (idea:write only) does not.
+        "chorus_pm_validate_elaboration",
       ]);
       expect(registered).toEqual(expected);
     });
@@ -256,6 +264,26 @@ describe("MCP tool permission wiring", () => {
 
     it("chorus_create_report is gated on document:write (AC2 of add-idea-completion-report)", () => {
       expect(TOOL_PERMISSIONS.chorus_create_report).toBe("document:write");
+    });
+  });
+
+  // chorus_pm_validate_elaboration marks an Idea's elaboration complete and is
+  // gated on idea:admin (admin-only).
+  describe("elaboration validate tool wiring", () => {
+    it("chorus_pm_validate_elaboration is registered for an idea:admin agent", () => {
+      const registered = registeredFor(["idea:admin"]);
+      expect(registered.has("chorus_pm_validate_elaboration")).toBe(true);
+    });
+
+    it("chorus_pm_validate_elaboration is NOT registered for an idea:write-only agent", () => {
+      const registered = registeredFor(["idea:write"]);
+      expect(registered.has("chorus_pm_validate_elaboration")).toBe(false);
+    });
+
+    it("chorus_pm_validate_elaboration is mapped to idea:admin in the permission map", () => {
+      expect(
+        (TOOL_PERMISSIONS as Record<string, string>).chorus_pm_validate_elaboration
+      ).toBe("idea:admin");
     });
   });
 });

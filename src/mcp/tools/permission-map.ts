@@ -29,8 +29,12 @@ export const TOOL_PERMISSIONS = {
   chorus_pm_create_idea: "idea:write",
   // Elaboration (idea:write per §5.3)
   chorus_pm_start_elaboration: "idea:write",
-  chorus_pm_validate_elaboration: "idea:write",
   chorus_pm_skip_elaboration: "idea:write",
+  // Resolution is admin-gated (idea:admin) per simplify-elaboration-flow Tech
+  // Design §MCP & permissions: only admin_agent can resolve; pm_agent's preset
+  // (idea:write) cannot, by design. Exposed under the legacy name
+  // `chorus_pm_validate_elaboration` (reused, not a new tool).
+  chorus_pm_validate_elaboration: "idea:admin",
   // Proposal writes
   chorus_pm_create_proposal: "proposal:write",
   chorus_pm_validate_proposal: "proposal:write",

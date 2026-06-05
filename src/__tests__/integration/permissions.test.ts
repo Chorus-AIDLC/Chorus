@@ -211,6 +211,10 @@ function enumerateGatedMcpTools(auth: AgentAuthContext): Set<string> {
 // (covered by the update-task tool's incremental dependency arrays). See
 // permission-map.ts and pm.ts; the names are intentionally not spelled here so
 // downstream grep checks stay clean.
+//
+// Note: chorus_pm_validate_elaboration is gated on idea:admin, so it is
+// admin-only and not part of this idea:write baseline. See the admin_agent
+// expectation and the dedicated gating assertions below.
 const OLD_PM_TOOLS = [
   "chorus_claim_idea",
   "chorus_release_idea",
@@ -227,7 +231,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_remove_task_draft",
   "chorus_pm_assign_task",
   "chorus_pm_start_elaboration",
-  "chorus_pm_validate_elaboration",
   "chorus_pm_skip_elaboration",
   "chorus_move_idea",
   "chorus_pm_reject_proposal",
@@ -444,7 +447,7 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     expect(tools).toEqual(new Set(OLD_DEVELOPER_TOOLS));
   });
 
-  it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set plus 0.9.0 chorus_create_report", () => {
+  it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set plus 0.9.0 chorus_create_report and 0.9.4 chorus_pm_validate_elaboration", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.admin_agent], ["admin_agent"]);
     const tools = enumerateGatedMcpTools(auth);
     const expected = new Set([
@@ -453,6 +456,9 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       ...OLD_DEVELOPER_TOOLS,
       // 0.9.0 addition (document:write-gated, public-namespaced).
       "chorus_create_report",
+      // 0.9.4 (simplify-elaboration-flow): chorus_pm_validate_elaboration is
+      // re-gated to idea:admin. admin_agent carries idea:admin.
+      "chorus_pm_validate_elaboration",
     ]);
     expect(tools).toEqual(expected);
   });
@@ -492,9 +498,37 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       "chorus_admin_delete_task",
       "chorus_admin_delete_idea",
       "chorus_admin_delete_document",
+      // 0.9.4: chorus_pm_validate_elaboration is now idea:admin-gated; pm_agent
+      // (idea:write only) must not see it.
+      "chorus_pm_validate_elaboration",
     ]) {
       expect(tools.has(adminOnly)).toBe(false);
     }
+  });
+});
+
+// ============================================================
+// Scenario 2b — elaboration validate gating: chorus_pm_validate_elaboration is
+// gated on idea:admin.
+// ============================================================
+
+describe("Scenario 2b: elaboration validate gating", () => {
+  it("chorus_pm_validate_elaboration is gated on idea:admin in the permission map", () => {
+    expect(
+      (TOOL_PERMISSIONS as Record<string, string>).chorus_pm_validate_elaboration
+    ).toBe("idea:admin");
+  });
+
+  it("an idea:admin agent sees chorus_pm_validate_elaboration", () => {
+    const auth = makeAgentAuth(["idea:admin"]);
+    const tools = enumerateGatedMcpTools(auth);
+    expect(tools.has("chorus_pm_validate_elaboration")).toBe(true);
+  });
+
+  it("an idea:write-only agent does NOT see chorus_pm_validate_elaboration", () => {
+    const auth = makeAgentAuth(["idea:write"]);
+    const tools = enumerateGatedMcpTools(auth);
+    expect(tools.has("chorus_pm_validate_elaboration")).toBe(false);
   });
 });
 

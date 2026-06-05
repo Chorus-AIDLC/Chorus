@@ -35,7 +35,7 @@ vi.mock("@/services", () => ({
 import {
   startElaboration,
   answerElaboration,
-  validateElaboration,
+  resolveElaboration,
   skipElaboration,
   getElaboration,
 } from "@/services/elaboration.service";
@@ -96,6 +96,7 @@ function makeRound(overrides: Record<string, unknown> = {}) {
     ideaUuid: IDEA_UUID,
     roundNumber: 1,
     status: "pending_answers",
+    isAppended: false,
     createdByType: "agent",
     createdByUuid: ACTOR_UUID,
     validatedAt: null,
@@ -250,9 +251,39 @@ describe("startElaboration", () => {
     ).rejects.toThrow("Cannot start elaboration from status");
   });
 
-  it("should throw if max 5 rounds exceeded", async () => {
+  it("should allow starting a 10th round (cap is 10, not 5)", async () => {
+    const idea = makeIdea();
+    const created = { uuid: ROUND_UUID };
+    const round = makeRound({ roundNumber: 10 });
+
+    mockPrisma.idea.findFirst.mockResolvedValue(idea);
+    // 9 existing rounds → this is round 10, which is allowed.
+    mockPrisma.elaborationRound.count.mockResolvedValue(9);
+    mockPrisma.elaborationRound.create.mockResolvedValue(created);
+    mockPrisma.elaborationRound.findUniqueOrThrow.mockResolvedValue(round);
+    mockPrisma.idea.update.mockResolvedValue(idea);
+
+    const result = await startElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      actorUuid: ACTOR_UUID,
+      actorType: "agent",
+      depth: "standard",
+      questions: validQuestions,
+    });
+
+    expect(mockPrisma.elaborationRound.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ roundNumber: 10 }),
+      })
+    );
+    expect(result.roundNumber).toBe(10);
+  });
+
+  it("should throw if max 10 rounds exceeded (round 11)", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
-    mockPrisma.elaborationRound.count.mockResolvedValue(5);
+    // 10 existing rounds → this would be round 11, which exceeds the cap.
+    mockPrisma.elaborationRound.count.mockResolvedValue(10);
 
     await expect(
       startElaboration({
@@ -263,7 +294,95 @@ describe("startElaboration", () => {
         depth: "standard",
         questions: validQuestions,
       })
-    ).rejects.toThrow("Maximum 5 elaboration rounds per Idea");
+    ).rejects.toThrow("Maximum 10 elaboration rounds per Idea");
+  });
+
+  it("should create an appended round (isAppended=true) on a resolved Idea, keeping it elaborated/resolved", async () => {
+    // Idea already elaborated + resolved → appended round.
+    const idea = makeIdea({ status: "elaborated", elaborationStatus: "resolved" });
+    const created = { uuid: ROUND_UUID };
+    const appendedRound = makeRound({
+      roundNumber: 2,
+      isAppended: true,
+    });
+
+    mockPrisma.idea.findFirst.mockResolvedValue(idea);
+    mockPrisma.elaborationRound.count.mockResolvedValue(1);
+    mockPrisma.elaborationRound.create.mockResolvedValue(created);
+    mockPrisma.elaborationRound.findUniqueOrThrow.mockResolvedValue(appendedRound);
+    mockPrisma.idea.update.mockResolvedValue(idea);
+
+    const result = await startElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      actorUuid: ACTOR_UUID,
+      actorType: "agent",
+      depth: "standard",
+      questions: validQuestions,
+    });
+
+    // Round is created with isAppended=true and status pending_answers.
+    expect(mockPrisma.elaborationRound.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          isAppended: true,
+          status: "pending_answers",
+        }),
+      })
+    );
+
+    // R2 decision: the Idea is NOT regressed — its status/elaborationStatus are
+    // left untouched. The update only persists the elaboration depth; it must
+    // NOT write status or elaborationStatus.
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID },
+        data: { elaborationDepth: "standard" },
+      })
+    );
+    const ideaUpdateData = mockPrisma.idea.update.mock.calls[0][0].data;
+    expect(ideaUpdateData).not.toHaveProperty("status");
+    expect(ideaUpdateData).not.toHaveProperty("elaborationStatus");
+
+    expect(result.isAppended).toBe(true);
+  });
+
+  it("should create a non-appended round (isAppended=false) on an elaborating Idea and set elaborationStatus=pending_answers", async () => {
+    const idea = makeIdea({ status: "elaborating", elaborationStatus: "pending_answers" });
+    const created = { uuid: ROUND_UUID };
+    const round = makeRound({ isAppended: false });
+
+    mockPrisma.idea.findFirst.mockResolvedValue(idea);
+    mockPrisma.elaborationRound.count.mockResolvedValue(0);
+    mockPrisma.elaborationRound.create.mockResolvedValue(created);
+    mockPrisma.elaborationRound.findUniqueOrThrow.mockResolvedValue(round);
+    mockPrisma.idea.update.mockResolvedValue(idea);
+
+    const result = await startElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      actorUuid: ACTOR_UUID,
+      actorType: "agent",
+      depth: "standard",
+      questions: validQuestions,
+    });
+
+    expect(mockPrisma.elaborationRound.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ isAppended: false }),
+      })
+    );
+    // Normal flow: the Idea is moved to elaborating/pending_answers.
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID },
+        data: expect.objectContaining({
+          status: "elaborating",
+          elaborationStatus: "pending_answers",
+        }),
+      })
+    );
+    expect(result.isAppended).toBe(false);
   });
 });
 
@@ -321,6 +440,136 @@ describe("answerElaboration", () => {
     );
 
     expect(result.uuid).toBe(ROUND_UUID);
+  });
+
+  it("should auto-locate the single active round when roundUuid is omitted", async () => {
+    const round = makeRound({ status: "pending_answers" });
+    const answeredQuestions = round.questions.map((q: Record<string, unknown>) => ({
+      ...q,
+      answeredAt: now,
+      selectedOptionId: "o1",
+    }));
+
+    // Auto-location: exactly one pending_answers round.
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([{ uuid: ROUND_UUID }]);
+    mockPrisma.elaborationRound.findFirst.mockResolvedValue(round);
+    mockPrisma.elaborationQuestion.update.mockResolvedValue({});
+    mockPrisma.elaborationQuestion.findMany.mockResolvedValue(answeredQuestions);
+    mockPrisma.elaborationRound.update.mockResolvedValue({});
+    mockPrisma.idea.update.mockResolvedValue({});
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findUnique.mockResolvedValue(
+      makeRound({ status: "answered", questions: answeredQuestions })
+    );
+
+    const result = await answerElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      // no roundUuid
+      actorUuid: ACTOR_UUID,
+      actorType: "user",
+      answers: [
+        { questionId: "q1", selectedOptionId: "o1", customText: null },
+      ],
+    });
+
+    // It must have looked up the active round by status.
+    expect(mockPrisma.elaborationRound.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "pending_answers" }),
+      })
+    );
+    // And applied answers to that auto-located round.
+    expect(mockPrisma.elaborationRound.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ uuid: ROUND_UUID }),
+      })
+    );
+    expect(result.uuid).toBe(ROUND_UUID);
+  });
+
+  it("should throw 'no active round' when roundUuid omitted and zero active rounds", async () => {
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([]);
+
+    await expect(
+      answerElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "user",
+        answers: [{ questionId: "q1", selectedOptionId: "o1", customText: null }],
+      })
+    ).rejects.toThrow("no active round to answer");
+  });
+
+  it("should throw 'specify roundUuid' when roundUuid omitted and multiple active rounds", async () => {
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([
+      { uuid: "round-a" },
+      { uuid: "round-b" },
+    ]);
+
+    await expect(
+      answerElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "user",
+        answers: [{ questionId: "q1", selectedOptionId: "o1", customText: null }],
+      })
+    ).rejects.toThrow("multiple active rounds; specify roundUuid");
+  });
+
+  it("should mark an appended round answered but keep the Idea's elaborationStatus=resolved", async () => {
+    // Appended round on an already-resolved Idea.
+    const appendedRound = makeRound({ status: "pending_answers", isAppended: true });
+    const answeredQuestions = appendedRound.questions.map(
+      (q: Record<string, unknown>) => ({
+        ...q,
+        answeredAt: now,
+        selectedOptionId: "o1",
+      })
+    );
+
+    mockPrisma.elaborationRound.findFirst.mockResolvedValue(appendedRound);
+    mockPrisma.elaborationQuestion.update.mockResolvedValue({});
+    mockPrisma.elaborationQuestion.findMany.mockResolvedValue(answeredQuestions);
+    mockPrisma.elaborationRound.update.mockResolvedValue({});
+    mockPrisma.idea.update.mockResolvedValue({});
+    // The Idea is resolved — the R2 guard must prevent flipping to validating.
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ status: "elaborated", elaborationStatus: "resolved" })
+    );
+    mockPrisma.elaborationRound.findUnique.mockResolvedValue(
+      makeRound({ status: "answered", isAppended: true, questions: answeredQuestions })
+    );
+
+    const result = await answerElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      roundUuid: ROUND_UUID,
+      actorUuid: ACTOR_UUID,
+      actorType: "user",
+      answers: [
+        { questionId: "q1", selectedOptionId: "o1", customText: null },
+      ],
+    });
+
+    // Round advances to answered.
+    expect(mockPrisma.elaborationRound.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: ROUND_UUID },
+        data: { status: "answered" },
+      })
+    );
+
+    // R2 guard: the Idea's elaborationStatus must NOT be downgraded to validating.
+    // The only idea.update calls (if any) must not write elaborationStatus.
+    const wroteValidating = mockPrisma.idea.update.mock.calls.some(
+      (call) => call[0]?.data?.elaborationStatus === "validating"
+    );
+    expect(wroteValidating).toBe(false);
+
+    expect(result.status).toBe("answered");
   });
 
   it("should throw if round not found", async () => {
@@ -401,25 +650,32 @@ describe("answerElaboration", () => {
   });
 });
 
-describe("validateElaboration", () => {
-  it("should mark round as validated when no issues", async () => {
-    const round = makeRound({ status: "answered" });
+describe("resolveElaboration", () => {
+  it("should mark the most recent answered round validated and resolve the Idea (no roundUuid)", async () => {
+    const answeredRound = makeRound({ status: "answered", roundNumber: 2 });
     const validatedRound = makeRound({ status: "validated", validatedAt: now });
 
-    mockPrisma.elaborationRound.findFirst.mockResolvedValue(round);
+    // 1) assignee check, 2) most-recent answered round, ... 3) final reload
     mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findFirst.mockResolvedValue(answeredRound);
     mockPrisma.elaborationRound.update.mockResolvedValue({});
     mockPrisma.idea.update.mockResolvedValue({});
     mockPrisma.elaborationRound.findUnique.mockResolvedValue(validatedRound);
 
-    const result = await validateElaboration({
+    const result = await resolveElaboration({
       companyUuid: COMPANY_UUID,
       ideaUuid: IDEA_UUID,
-      roundUuid: ROUND_UUID,
       actorUuid: ACTOR_UUID,
       actorType: "agent",
-      issues: [],
     });
+
+    // Defaulted to the most recent answered round via desc ordering.
+    expect(mockPrisma.elaborationRound.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { ideaUuid: IDEA_UUID, companyUuid: COMPANY_UUID, status: "answered" },
+        orderBy: { roundNumber: "desc" },
+      })
+    );
 
     expect(mockPrisma.elaborationRound.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -438,104 +694,99 @@ describe("validateElaboration", () => {
     expect(mockCreateActivity).toHaveBeenCalledWith(
       expect.objectContaining({ action: "elaboration_resolved" })
     );
-
-    expect(result.validatedRound).toBeDefined();
-    expect(result.followUpRound).toBeUndefined();
+    expect(mockEventBus.emitChange).toHaveBeenCalled();
+    expect(result).toBeDefined();
   });
 
-  it("should create follow-up round when issues with follow-up questions", async () => {
-    const round = makeRound({ status: "answered" });
-    const idea = makeIdea({ elaborationDepth: "standard" });
+  it("should resolve a specific answered round when roundUuid is provided", async () => {
+    const answeredRound = makeRound({ status: "answered" });
 
-    mockPrisma.elaborationRound.findFirst.mockResolvedValue(round);
-    mockPrisma.idea.findFirst
-      .mockResolvedValueOnce(idea) // validateElaboration call
-      .mockResolvedValueOnce(idea); // startElaboration inner call
-    mockPrisma.elaborationQuestion.update.mockResolvedValue({});
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findFirst.mockResolvedValue(answeredRound);
     mockPrisma.elaborationRound.update.mockResolvedValue({});
-
-    // For startElaboration (follow-up round creation)
-    mockPrisma.elaborationRound.count.mockResolvedValue(1);
-    const followUpRound = makeRound({
-      uuid: "follow-up-round-uuid",
-      roundNumber: 2,
-    });
-    mockPrisma.elaborationRound.create.mockResolvedValue({ uuid: "follow-up-round-uuid" });
-    mockPrisma.elaborationRound.findUniqueOrThrow.mockResolvedValue(followUpRound);
     mockPrisma.idea.update.mockResolvedValue({});
-
-    // Final findUnique for validated round
     mockPrisma.elaborationRound.findUnique.mockResolvedValue(
-      makeRound({ status: "needs_followup", validatedAt: now })
+      makeRound({ status: "validated", validatedAt: now })
     );
 
-    const result = await validateElaboration({
+    await resolveElaboration({
       companyUuid: COMPANY_UUID,
       ideaUuid: IDEA_UUID,
       roundUuid: ROUND_UUID,
       actorUuid: ACTOR_UUID,
       actorType: "agent",
-      issues: [
-        { questionId: "q1", type: "ambiguity", description: "Unclear answer" },
-      ],
-      followUpQuestions: validQuestions,
     });
 
-    expect(mockPrisma.elaborationRound.update).toHaveBeenCalledWith(
+    // Looked up the explicit round, not the desc-ordered default.
+    expect(mockPrisma.elaborationRound.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { uuid: ROUND_UUID },
-        data: expect.objectContaining({ status: "needs_followup" }),
+        where: { uuid: ROUND_UUID, ideaUuid: IDEA_UUID, companyUuid: COMPANY_UUID },
       })
     );
-
-    expect(mockPrisma.elaborationQuestion.update).toHaveBeenCalledWith(
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          issueType: "ambiguity",
-          issueDescription: "Unclear answer",
-        }),
+        data: { status: "elaborated", elaborationStatus: "resolved" },
       })
     );
-
-    expect(result.validatedRound).toBeDefined();
-    expect(result.followUpRound).toBeDefined();
   });
 
-  it("should throw if round not in answered status", async () => {
+  it("should throw when there is no answered round to resolve", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findFirst.mockResolvedValue(null);
+
+    await expect(
+      resolveElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+      })
+    ).rejects.toThrow("no answered round to resolve");
+  });
+
+  it("should throw if an explicit round is not in answered status", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
     mockPrisma.elaborationRound.findFirst.mockResolvedValue(
       makeRound({ status: "pending_answers" })
     );
 
     await expect(
-      validateElaboration({
+      resolveElaboration({
         companyUuid: COMPANY_UUID,
         ideaUuid: IDEA_UUID,
         roundUuid: ROUND_UUID,
         actorUuid: ACTOR_UUID,
         actorType: "agent",
-        issues: [],
       })
     ).rejects.toThrow("expected 'answered'");
   });
 
   it("should throw if actor is not the idea assignee", async () => {
-    mockPrisma.elaborationRound.findFirst.mockResolvedValue(
-      makeRound({ status: "answered" })
-    );
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeUuid: "other-agent" })
     );
 
     await expect(
-      validateElaboration({
+      resolveElaboration({
         companyUuid: COMPANY_UUID,
         ideaUuid: IDEA_UUID,
-        roundUuid: ROUND_UUID,
         actorUuid: ACTOR_UUID,
         actorType: "agent",
-        issues: [],
       })
-    ).rejects.toThrow("Only the assigned agent can validate elaboration");
+    ).rejects.toThrow("Only the assigned agent can resolve elaboration");
+  });
+
+  it("should throw if the Idea is not found", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(null);
+
+    await expect(
+      resolveElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+      })
+    ).rejects.toThrow("Idea not found");
   });
 });
 

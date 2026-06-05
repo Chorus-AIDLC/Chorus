@@ -611,10 +611,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_answer_elaboration",
     {
-      description: "Answer elaboration questions for an Idea. Submits answers for a specific elaboration round. When all required questions are answered, the round moves to validation. Also use this to record decisions made outside the formal elaboration flow — if the user clarified requirements in conversation, capture those decisions here as answers so they are persisted to the Idea as an audit trail.",
+      description: "Answer elaboration questions for an Idea. Submits answers for an elaboration round. When roundUuid is omitted, the Idea's single active (pending_answers) round is located automatically. When all required questions are answered, the round moves to validation. Also use this to record decisions made outside the formal elaboration flow — if the user clarified requirements in conversation, capture those decisions here as answers so they are persisted to the Idea as an audit trail.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
-        roundUuid: z.string().describe("Elaboration round UUID"),
+        roundUuid: z.string().optional().describe("Elaboration round UUID (optional; when omitted, the active round is located automatically)"),
         answers: zArray(z.object({
           questionId: z.string().describe("Question ID to answer"),
           selectedOptionId: z.string().nullable().describe("Selected option ID. Set to null for free-text 'Other' answers."),

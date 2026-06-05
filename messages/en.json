@@ -869,6 +869,7 @@
     "validated": "Validated",
     "pendingAnswers": "Pending answers",
     "statusAnswered": "Answered",
+    "appendedBadge": "Follow-up",
     "noAnswer": "No answer",
     "otherOption": "Other",
     "otherPlaceholder": "Please specify...",

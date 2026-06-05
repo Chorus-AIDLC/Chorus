@@ -18,10 +18,12 @@ AI-DLC requires a **mandatory clarification loop** between receiving requirement
 
 ```
 Idea → PM analyzes → PM asks structured questions → Human answers →
-  PM validates (contradictions? gaps?) →
-    ├─ Issues found → PM asks follow-up questions → Human answers → ...
-    └─ All clear → PM creates Proposal (informed by validated answers)
+  PM reviews answers →
+    ├─ Gaps remain → PM opens another round (start_elaboration again) → Human answers → ...
+    └─ Clear      → PM resolves elaboration (human-confirmed) → creates Proposal
 ```
+
+> **Tool model.** Three tools drive the loop: `chorus_pm_start_elaboration` generates **any** round (first, follow-up, or a round appended after resolution); `chorus_answer_elaboration` records answers (its `roundUuid` is optional — it auto-locates the active round); and `chorus_pm_validate_elaboration` (gated `idea:admin`, human-confirmed except in YOLO) marks the whole elaboration complete. `chorus_pm_validate_elaboration` takes only `ideaUuid` and an optional `roundUuid`; opening a follow-up round is just another `start_elaboration` call. The round cap is **10**.
 
 ## Design Goals
 
@@ -94,13 +96,11 @@ interface ElaborationRound {
   questions: ElaborationQuestion[];
 
   // Round-level status
-  status: "pending_answers" | "answered" | "validated" | "needs_followup";
+  status: "pending_answers" | "answered" | "validated";
 
-  // Validation result (filled after PM validates)
-  validation?: {
-    validatedAt: string;
-    issues: ValidationIssue[];   // Empty if all clear
-  };
+  // True when the round was created after the Idea was first resolved
+  // (a pure supplement; keeps the Idea elaborated/resolved). See "Appended rounds".
+  isAppended: boolean;
 }
 
 interface ElaborationQuestion {
@@ -129,12 +129,9 @@ interface QuestionOption {
   description?: string; // Longer explanation
 }
 
-interface ValidationIssue {
-  questionId: string;
-  type: "contradiction" | "ambiguity" | "incomplete" | "out_of_scope";
-  description: string;
-  followUpQuestionIds?: string[];  // Questions in the next round addressing this
-}
+// NOTE: there is no per-question issue tagging — `ValidationIssue` / round
+// `validation` are not written. Opening a follow-up round is just another
+// `chorus_pm_start_elaboration` call.
 ```
 
 ### Example Data
@@ -184,6 +181,15 @@ interface ValidationIssue {
 }
 ```
 
+### Appended rounds
+
+Once an Idea's elaboration is resolved (`elaborationStatus = "resolved"`, Idea `elaborated`), a PM can still attach more clarification by calling `chorus_pm_start_elaboration` again. Such a round is flagged `isAppended = true` and is a **pure supplement**:
+
+- The Idea **stays** `elaborated` and `elaborationStatus` **stays** `resolved`. Creating or answering an appended round never regresses the Idea back to `elaborating`/`validating`.
+- Because the proposal-submission gate keys off `elaborationStatus === "resolved"`, an open appended round **never blocks** an in-flight Proposal.
+- Re-resolving (`chorus_pm_validate_elaboration`) after answering an appended round is optional — it simply re-validates that round; the Idea was already resolved.
+- The marker surfaces in `chorus_get_elaboration` (per-round `isAppended`) and in the elaboration UI as an "appended / follow-up" badge.
+
 ## Idea Status Flow (Simplified)
 
 ```
@@ -191,9 +197,9 @@ open → elaborating → proposal_created → completed
           │    ▲
           │    │ (follow-up round needed)
           ▼    │
-     [PM asks questions]
-     [Human answers]
-     [PM validates]
+     [PM asks questions — start_elaboration]
+     [Human answers — answer_elaboration]
+     [PM resolves — resolve_elaboration, human-confirmed]
           │
           ▼
     [All resolved] → PM creates Proposal → proposal_created
@@ -223,7 +229,7 @@ any → closed                 (admin closes)
 
 #### `chorus_pm_start_elaboration`
 
-PM Agent analyzes the Idea and determines the appropriate depth. Creates the first round of questions.
+PM Agent analyzes the Idea and determines the appropriate depth. This is the single entry point for **every** round — the first round, any follow-up round, and rounds appended after the elaboration was already resolved.
 
 ```typescript
 chorus_pm_start_elaboration({
@@ -245,41 +251,42 @@ chorus_pm_start_elaboration({
 ```
 
 **Behavior**:
-- Sets `elaborationDepth`, creates first `ElaborationRound` in `elaborationRounds`
-- Sets `elaborationStatus` to `"pending_answers"`
-- Transitions Idea status to `"elaborating"` (if currently `in_progress`)
+- Sets `elaborationDepth`, creates a new `ElaborationRound` in `elaborationRounds`
+- **Normal round** (Idea `elaborating`): sets `elaborationStatus` to `"pending_answers"`, `isAppended = false`
+- **Appended round** (Idea already `elaborated` / `elaborationStatus = "resolved"`): sets `isAppended = true`, leaves Idea status `"elaborated"` and `elaborationStatus = "resolved"` (a pure supplement — see "Appended rounds")
+- Transitions Idea status to `"elaborating"` (only when not already `elaborated`)
 - Creates Activity: `"elaboration_started"`
 - Returns the created round UUID
 
 **Validation**:
 - Idea must be assigned to calling agent
-- Idea must be in `in_progress` or `elaborating` status
+- Idea must be in `elaborating` **or** `elaborated` status (the `elaborated` case produces an appended round)
+- Round cap: at most **10** rounds per Idea
 - At least 1 question required
 - Each question must have 2-5 options
 
 #### `chorus_pm_validate_elaboration`
 
-PM Agent reviews answers and validates for contradictions/ambiguities.
+PM Agent marks the whole elaboration complete: validates the most recent `answered` round, moves the Idea to `elaborated`, and sets `elaborationStatus = resolved`. **Requires `idea:admin`** and **human confirmation before calling (except in YOLO mode).**
 
 ```typescript
 chorus_pm_validate_elaboration({
   ideaUuid: string,
-  roundUuid: string,
-  issues: [                    // Empty array if all clear
-    {
-      questionId: string,
-      type: "contradiction" | "ambiguity" | "incomplete",
-      description: string
-    }
-  ],
-  followUpQuestions?: [...]    // If issues found, create next round
+  roundUuid?: string           // Optional — defaults to the most recent `answered` round
 })
 ```
 
 **Behavior**:
-- If `issues` is empty: marks round as `"validated"`, sets `elaborationStatus` to `"resolved"`
-- If `issues` is non-empty AND `followUpQuestions` provided: marks round as `"needs_followup"`, creates new round, keeps `elaborationStatus` as `"pending_answers"`
-- Creates Activity: `"elaboration_validated"` or `"elaboration_followup_created"`
+- Validates the targeted (or latest `answered`) round → round status `"validated"`
+- Idea status → `"elaborated"`, `elaborationStatus` → `"resolved"`
+- Creates Activity: `"elaboration_resolved"`
+- Fails if there is no `answered` round to resolve
+
+**Permission / assignee notes**:
+- Gated `idea:admin`. The `pm_agent` preset only grants `idea:write`, so a PM-preset agent must hand off to an `admin_agent`-preset agent (or admin key) to resolve.
+- The resolving actor must also be the Idea's **assignee**. A separate human reviewer resolving a PM-owned Idea therefore needs **both** `idea:admin` and the Idea assignment.
+
+> **Opening a follow-up round** no longer goes through a dedicated tool — just call `chorus_pm_start_elaboration` again (works while `elaborating`, or appended after `resolved`).
 
 #### `chorus_pm_skip_elaboration`
 
@@ -306,7 +313,7 @@ Human (or Admin Agent) answers the pending questions.
 ```typescript
 chorus_answer_elaboration({
   ideaUuid: string,
-  roundUuid: string,
+  roundUuid?: string,                  // Optional — auto-locates the active `pending_answers` round
   answers: [
     {
       questionId: string,
@@ -318,8 +325,9 @@ chorus_answer_elaboration({
 ```
 
 **Behavior**:
+- `roundUuid` is **optional**: when omitted, the service auto-locates the Idea's single `pending_answers` round (errors if there are zero or more than one)
 - Fills in `answer` on each question in the round
-- If all required questions answered: marks round as `"answered"`, sets `elaborationStatus` to `"validating"`
+- If all required questions answered: marks round as `"answered"`; sets `elaborationStatus` to `"validating"` **unless** the Idea is already `resolved` (an appended round keeps `elaborationStatus = "resolved"` and never regresses the Idea — see "Appended rounds")
 - Creates Activity: `"elaboration_answered"`
 - Creates Notification to PM agent: "Elaboration answers received for Idea X"
 
@@ -327,6 +335,8 @@ chorus_answer_elaboration({
 - All required questions must have answers
 - `selectedOptionId` must match one of the question's option IDs (or null for custom)
 - If `selectedOptionId` is the "Other" option, `customText` is required
+
+> Each round object returned by `chorus_get_elaboration` includes an `isAppended` boolean so clients and the UI can render an "appended / follow-up" badge.
 
 #### `chorus_get_elaboration`
 
@@ -398,7 +408,7 @@ After analyzing the Idea, determine if clarification is needed:
 
   3. Wait for answers (human fills in via UI or chorus_answer_elaboration tool).
 
-  4. Validate the answers:
+  4. Review the answers:
      chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 
      Check for:
@@ -406,24 +416,23 @@ After analyzing the Idea, determine if clarification is needed:
      - Ambiguities (e.g., "Other" without clear explanation)
      - Missing context (required question unanswered)
 
-  5. If issues found, create follow-up round:
-     chorus_pm_validate_elaboration({
+  5. If gaps remain, open a follow-up round — just call start_elaboration again:
+     chorus_pm_start_elaboration({
        ideaUuid: "<idea-uuid>",
-       roundUuid: "<round-uuid>",
-       issues: [{ questionId: "q3", type: "ambiguity", description: "..." }],
-       followUpQuestions: [...]
+       depth: "standard",
+       questions: [ /* the follow-up questions */ ]
      })
 
-  6. Repeat until all rounds validated.
+  6. Repeat until you're satisfied the requirements are clear.
 
-  7. If all clear:
+  7. When all clear — obtain human confirmation (skipped only in YOLO), then resolve:
      chorus_pm_validate_elaboration({
-       ideaUuid: "<idea-uuid>",
-       roundUuid: "<round-uuid>",
-       issues: []
+       ideaUuid: "<idea-uuid>"
+       // roundUuid optional — defaults to the latest answered round
      })
-     → elaborationStatus becomes "resolved"
+     → Idea status becomes "elaborated", elaborationStatus becomes "resolved"
      → Proceed to create Proposal (Step 5)
+     (Requires idea:admin — a pm_agent-preset key must hand off to an admin-preset agent.)
 ```
 
 ## Question Categories
@@ -492,9 +501,9 @@ Human answers in terminal
 PM Agent calls chorus_answer_elaboration()          ← persists answers
   │
   ▼
-PM Agent validates (check contradictions / gaps)
-  ├─ All clear → proceed to Proposal
-  └─ Issues → AskUserQuestion with follow-up → iterate
+PM Agent reviews answers (check contradictions / gaps)
+  ├─ All clear → resolve (human-confirmed) → proceed to Proposal
+  └─ Gaps → start_elaboration again with follow-up questions → iterate
 ```
 
 **No plugin hooks, no message relay, no proxy.** The PM skill doc simply instructs: "After calling `chorus_pm_start_elaboration`, immediately present the questions to the user via `AskUserQuestion`, then submit answers via `chorus_answer_elaboration`."
@@ -516,7 +525,7 @@ PM Agent creates questions → Chorus stores → Notification created
 SSE pushes to browser → NotificationBell badge → Human clicks
   → Idea detail page → Elaboration panel → Radio buttons
   → Human answers → Server action calls elaborationService
-  → Notification to PM Agent → PM validates on next session
+  → Notification to PM Agent → PM resolves on next session
 ```
 
 ### Session Resume Flow
@@ -530,7 +539,7 @@ SessionStart hook → chorus_checkin() → assignments include:
   ▼
 PM Agent calls chorus_get_elaboration({ ideaUuid })
   ├─ Unanswered questions → AskUserQuestion (resume where left off)
-  ├─ Answers exist, not validated → validate → proceed or follow-up
+  ├─ Answers exist, not resolved → resolve (human-confirmed) → proceed, or start_elaboration again for a follow-up
   └─ Elaboration resolved → proceed to Proposal creation
 ```
 
@@ -543,7 +552,7 @@ This requires no special hook logic — the PM skill doc instructs the agent to 
   CC Terminal       │  elaborationService      │      Web UI
   (AskUserQuestion) │  .startElaboration()     │  (Radio button form)
         │           │  .answerElaboration()     │        │
-        │           │  .validateElaboration()   │        │
+        │           │  .resolveElaboration()    │        │
         ▼           │  .getElaboration()        │        ▼
   MCP Tool call ───▶│                          │◀─── Server Action
                     └──────────────────────────┘
@@ -670,7 +679,7 @@ When a PM Agent's CC session restarts (crash, timeout, next day), the SessionSta
 PM Agent starts session → chorus_checkin() → sees assigned Ideas
   → For each Idea with elaborationStatus = "pending_answers":
       → chorus_get_elaboration() → check if human answered on UI while PM was offline
-        ├─ Answers present → validate → proceed
+        ├─ Answers present → resolve (human-confirmed) → proceed
         └─ No answers → AskUserQuestion again (resume in CC)
 ```
 
@@ -685,7 +694,7 @@ No plugin hook changes needed — this is purely skill doc instructions.
 4. PM Agent IMMEDIATELY uses AskUserQuestion → human sees questions in terminal
 5. Human answers in terminal
 6. PM Agent calls chorus_answer_elaboration (persists answers)
-7. PM Agent validates → all clear → creates Proposal
+7. PM Agent resolves (human-confirmed) → all clear → creates Proposal
 ```
 
 Total round-trip: seconds. No async wait, no channel switching.
@@ -701,7 +710,7 @@ Total round-trip: seconds. No async wait, no channel switching.
 4. NotificationListener → SSE push → Dashboard bell badge
 5. Human clicks notification → Idea detail page → answers in UI
 6. NotificationListener → notification to PM Agent
-7. PM Agent's next session: chorus_get_elaboration → sees answers → validates → Proposal
+7. PM Agent's next session: chorus_get_elaboration → sees answers → resolves (human-confirmed) → Proposal
 ```
 
 Both flows use the same service layer. The difference is whether human interaction is synchronous (CC) or asynchronous (UI).
@@ -712,9 +721,9 @@ Both flows use the same service layer. The difference is whether human interacti
 
 ```typescript
 // Core functions
-startElaboration(companyUuid, ideaUuid, actorUuid, depth, questions): ElaborationResponse
-answerElaboration(companyUuid, ideaUuid, roundUuid, actorUuid, actorType, answers): ElaborationResponse
-validateElaboration(companyUuid, ideaUuid, roundUuid, actorUuid, issues, followUpQuestions?): ElaborationResponse
+startElaboration(companyUuid, ideaUuid, actorUuid, depth, questions): ElaborationResponse  // any round; sets isAppended when Idea already resolved
+answerElaboration(companyUuid, ideaUuid, actorUuid, actorType, answers, roundUuid?): ElaborationResponse  // roundUuid optional — auto-locates active round
+resolveElaboration(companyUuid, ideaUuid, actorUuid, actorType, roundUuid?): ElaborationResponse  // idea:admin; validates latest answered round → resolved
 skipElaboration(companyUuid, ideaUuid, actorUuid, reason): ElaborationResponse
 getElaboration(companyUuid, ideaUuid): ElaborationResponse
 
@@ -727,9 +736,9 @@ buildElaborationSummary(rounds): Summary  // Aggregates stats across rounds
 ### MCP Tool Registration
 
 New tools registered in `src/mcp/tools/pm.ts` (PM-only):
-- `chorus_pm_start_elaboration`
-- `chorus_pm_validate_elaboration`
-- `chorus_pm_skip_elaboration`
+- `chorus_pm_start_elaboration` (gated `idea:write`)
+- `chorus_pm_validate_elaboration` (gated `idea:admin`; human-confirmed except in YOLO)
+- `chorus_pm_skip_elaboration` (gated `idea:write`)
 
 New tools registered in `src/mcp/tools/public.ts` (all roles):
 - `chorus_answer_elaboration`

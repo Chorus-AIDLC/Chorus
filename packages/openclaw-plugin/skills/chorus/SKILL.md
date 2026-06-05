@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.2"
+  version: "0.9.4"
   category: project-management
   mcp_server: chorus
 ---

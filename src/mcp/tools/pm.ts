@@ -733,45 +733,31 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_pm_validate_elaboration - Validate answers from an elaboration round
+  // chorus_pm_validate_elaboration - Mark an Idea's elaboration as complete.
+  // The tool is exposed under the legacy name `chorus_pm_validate_elaboration`,
+  // but its behavior is the simplified "resolve" action (no issues[] /
+  // followUpQuestions — opening a follow-up round is just another
+  // chorus_pm_start_elaboration call). The backing service fn is resolveElaboration.
   registerPermissionedTool(
     server,
     auth,
-    "idea:write",
+    "idea:admin",
     "chorus_pm_validate_elaboration",
     {
-      description: "Validate answers from an elaboration round. If no issues are found, the elaboration is marked as resolved. If issues exist, optionally provide follow-up questions for a new round. IMPORTANT: Before resolving (empty issues), always confirm with the user that they have no remaining concerns or topics to discuss.",
+      description: "Resolve an Idea's elaboration (round -> validated, Idea -> elaborated, elaborationStatus -> resolved). Resolves the most recent answered round by default, or a specific round when roundUuid is provided. Requires human confirmation before calling (except in YOLO mode). Marks the elaboration complete.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
-        roundUuid: z.string().describe("Elaboration round UUID"),
-        issues: zArray(z.object({
-          questionId: z.string().describe("Question ID with the issue"),
-          type: z.enum(["contradiction", "ambiguity", "incomplete"]).describe("Issue type"),
-          description: z.string().describe("Issue description"),
-        })).describe("List of issues found (empty array = all valid)"),
-        followUpQuestions: zArray(z.object({
-          id: z.string().describe("Unique question identifier"),
-          text: z.string().describe("Question text"),
-          category: z.enum(["functional", "non_functional", "business_context", "technical_context", "user_scenario", "scope"]).describe("Question category"),
-          options: zArray(z.object({
-            id: z.string().describe("Option identifier"),
-            label: z.string().describe("Option label"),
-            description: z.string().optional().describe("Option description"),
-          })).describe("Answer options (2-5). Do NOT include 'Other' — the UI adds it automatically."),
-          required: z.boolean().optional().describe("Whether the question is required (default: true)"),
-        })).optional().describe("Follow-up questions for next round (only when issues exist)"),
+        roundUuid: z.string().optional().describe("Elaboration round UUID (optional; defaults to the most recent answered round)"),
       }),
     },
-    async ({ ideaUuid, roundUuid, issues, followUpQuestions }) => {
+    async ({ ideaUuid, roundUuid }) => {
       try {
-        const result = await elaborationService.validateElaboration({
+        const result = await elaborationService.resolveElaboration({
           companyUuid: auth.companyUuid,
           ideaUuid,
-          roundUuid,
           actorUuid: auth.actorUuid,
           actorType: "agent",
-          issues,
-          followUpQuestions,
+          roundUuid,
         });
 
         return {
@@ -779,7 +765,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Failed to validate elaboration: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          content: [{ type: "text", text: `Failed to resolve elaboration: ${error instanceof Error ? error.message : "Unknown error"}` }],
           isError: true,
         };
       }

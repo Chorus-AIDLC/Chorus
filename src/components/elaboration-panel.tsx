@@ -149,6 +149,14 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
                 {t("roundLabel", { number: round.roundNumber })}
               </span>
 
+              {/* Appended (follow-up) badge — muted accent, distinct from
+                  the round-number badge and the status badge */}
+              {round.isAppended && (
+                <span className="rounded bg-[#EDE7F6] px-2 py-0.5 text-[10px] font-medium text-[#6A4FB6]">
+                  {t("appendedBadge")}
+                </span>
+              )}
+
               {/* Question count (shown when collapsed) */}
               {!isOpen && (
                 <span className="text-xs text-[#9A9A9A]">
