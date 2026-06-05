@@ -199,7 +199,7 @@ open → elaborating → proposal_created → completed
           ▼    │
      [PM asks questions — start_elaboration]
      [Human answers — answer_elaboration]
-     [PM resolves — resolve_elaboration, human-confirmed]
+     [PM resolves — validate_elaboration, human-confirmed]
           │
           ▼
     [All resolved] → PM creates Proposal → proposal_created
