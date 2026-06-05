@@ -35,6 +35,7 @@ function formatActivityMessage(activity: ActivityResponse, t: TranslateFn): stri
       return t("activity.elaborationSkipped", { actor: actorName });
     case "elaboration_resolved":
       return t("activity.elaborationResolved", { actor: actorName });
+    // elaboration_followup is no longer emitted; retained for legacy rows.
     case "elaboration_followup":
       return t("activity.elaborationFollowup", { actor: actorName });
     default:

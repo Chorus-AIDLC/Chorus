@@ -32,6 +32,8 @@ function resolveNotificationType(action: string, targetType: string): string | n
     // elaboration events (target type is always "idea")
     "idea:elaboration_started": "elaboration_requested",
     "idea:elaboration_answered": "elaboration_answered",
+    // elaboration_followup is no longer emitted (the validate/follow-up
+    // mechanism was removed); mapping retained for legacy activity rows.
     "idea:elaboration_followup": "elaboration_requested",
     "idea:elaboration_resolved": "elaboration_answered",
     "idea:elaboration_skipped": "elaboration_answered",

@@ -468,7 +468,7 @@ model ElaborationRound {
   companyUuid   String
   ideaUuid      String
   roundNumber   Int
-  status        String    @default("pending_answers") // pending_answers | answered | validated | needs_followup
+  status        String    @default("pending_answers") // pending_answers | answered | validated (needs_followup retained for legacy rows only — no longer written)
   isAppended    Boolean   @default(false) // true when created after the Idea was first resolved
   createdByType String    // agent | user
   createdByUuid String

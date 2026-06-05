@@ -5,6 +5,9 @@ export type ElaborationDepth = "minimal" | "standard" | "comprehensive";
 
 export type ElaborationStatus = "pending_answers" | "validating" | "resolved";
 
+// "needs_followup" is retained for legacy data only — the service no longer
+// writes it (the per-question issue / follow-up mechanism was removed). New
+// rounds only ever reach "answered" or "validated".
 export type RoundStatus = "pending_answers" | "answered" | "validated" | "needs_followup";
 
 export type QuestionCategory =
@@ -14,8 +17,6 @@ export type QuestionCategory =
   | "technical_context"
   | "user_scenario"
   | "scope";
-
-export type ValidationIssueType = "contradiction" | "ambiguity" | "incomplete";
 
 export interface QuestionOption {
   id: string;
@@ -35,12 +36,6 @@ export interface AnswerInput {
   questionId: string;
   selectedOptionId: string | null;
   customText: string | null;
-}
-
-export interface ValidationIssueInput {
-  questionId: string;
-  type: ValidationIssueType;
-  description: string;
 }
 
 // Response types
