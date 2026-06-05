@@ -5,9 +5,10 @@ export type ElaborationDepth = "minimal" | "standard" | "comprehensive";
 
 export type ElaborationStatus = "pending_answers" | "validating" | "resolved";
 
-// "needs_followup" is retained for legacy data only — the service no longer
-// writes it (the per-question issue / follow-up mechanism was removed). New
-// rounds only ever reach "answered" or "validated".
+// A round's only active states are "pending_answers" → "answered". Resolution
+// is an Idea-level action (elaborationStatus = "resolved"), not a per-round one,
+// so the service no longer writes "validated" or "needs_followup" to rounds —
+// both are retained for legacy data only and read the same as "answered".
 export type RoundStatus = "pending_answers" | "answered" | "validated" | "needs_followup";
 
 export type QuestionCategory =

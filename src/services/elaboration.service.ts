@@ -277,14 +277,12 @@ export async function resolveElaboration({
   ideaUuid,
   actorUuid,
   actorType,
-  roundUuid,
 }: {
   companyUuid: string;
   ideaUuid: string;
   actorUuid: string;
   actorType: string;
-  roundUuid?: string;
-}): Promise<ElaborationRoundResponse> {
+}): Promise<ElaborationResponse> {
   // Verify the Idea exists and the actor is its assignee
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -294,34 +292,24 @@ export async function resolveElaboration({
     throw new Error("Only the assigned agent can resolve elaboration");
   }
 
-  // Resolve the target round: an explicit roundUuid, otherwise the most recent
-  // `answered` round.
-  let round;
-  if (roundUuid) {
-    round = await prisma.elaborationRound.findFirst({
-      where: { uuid: roundUuid, ideaUuid, companyUuid },
-      include: { questions: true },
-    });
-    if (!round) throw new Error("Elaboration round not found");
-    if (round.status !== "answered") {
-      throw new Error(`Round is '${round.status}', expected 'answered'`);
-    }
-  } else {
-    round = await prisma.elaborationRound.findFirst({
-      where: { ideaUuid, companyUuid, status: "answered" },
-      include: { questions: true },
-      orderBy: { roundNumber: "desc" },
-    });
-    if (!round) {
-      throw new Error("no answered round to resolve");
-    }
+  // Resolve operates on the whole Idea (not a single round). Precondition:
+  // there is at least one round and every round has been answered. A round
+  // counts as answered once it leaves `pending_answers` (legacy `validated`
+  // rounds are treated the same as `answered`).
+  const rounds = await prisma.elaborationRound.findMany({
+    where: { ideaUuid, companyUuid },
+  });
+  if (rounds.length === 0) {
+    throw new Error("Cannot resolve: the Idea has no elaboration rounds");
+  }
+  const unanswered = rounds.filter((r) => r.status === "pending_answers");
+  if (unanswered.length > 0) {
+    throw new Error(
+      `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`
+    );
   }
 
-  // Mark round as validated, elaboration as resolved
-  await prisma.elaborationRound.update({
-    where: { uuid: round.uuid },
-    data: { status: "validated", validatedAt: new Date() },
-  });
+  // Mark the whole elaboration resolved (Idea-level; round statuses untouched).
   await prisma.idea.update({
     where: { uuid: ideaUuid },
     data: { status: "elaborated", elaborationStatus: "resolved" },
@@ -336,18 +324,13 @@ export async function resolveElaboration({
     actorUuid,
     action: "elaboration_resolved",
     value: {
-      totalRounds: round.roundNumber,
-      totalQuestions: round.questions.length,
+      totalRounds: rounds.length,
     },
   });
 
   eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
-  const updated = await prisma.elaborationRound.findUnique({
-    where: { uuid: round.uuid },
-    include: { questions: true },
-  });
-  return formatRoundResponse(updated!);
+  return getElaboration({ companyUuid, ideaUuid });
 }
 
 // ===== Skip Elaboration =====
@@ -423,7 +406,10 @@ export async function getElaboration({
 
   const allQuestions = rounds.flatMap((r) => r.questions);
   const answeredQuestions = allQuestions.filter((q) => q.answeredAt !== null);
-  const validatedRounds = rounds.filter((r) => r.status === "validated");
+  // "done" rounds = anything past pending_answers. `validated` is legacy but
+  // counts the same as `answered` (see RoundStatus). Field name kept for
+  // response-shape stability.
+  const validatedRounds = rounds.filter((r) => r.status !== "pending_answers");
   const pendingRound = rounds.find((r) => r.status === "pending_answers");
 
   return {

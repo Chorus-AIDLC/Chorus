@@ -1266,7 +1266,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_pm_validate_elaboration
 
-**Description**: Mark an Idea's elaboration complete. Validates the most recent `answered` round, moves the Idea to `elaborated`, and sets `elaborationStatus = resolved` (the gating signal that lets a downstream Proposal be submitted). **Requires human confirmation before calling (except in YOLO mode).** To open a follow-up round instead, call `chorus_pm_start_elaboration` again.
+**Description**: Mark an Idea's whole elaboration complete. Moves the Idea to `elaborated` and sets `elaborationStatus = resolved` (the gating signal that lets a downstream Proposal be submitted). Operates on the whole Idea — it does not target a single round. Requires every elaboration round to be answered. **Requires human confirmation before calling (except in YOLO mode).** To open a follow-up round instead, call `chorus_pm_start_elaboration` again.
 
 **Required Permission**: `idea:admin`
 
@@ -1276,9 +1276,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
-| roundUuid | string | No | Round to validate. **Optional** — defaults to the most recent `answered` round. |
 
-**Output**: Resolution result JSON. The targeted round becomes `validated`, the Idea status becomes `elaborated`, and `elaborationStatus` becomes `resolved`. Fails if there is no `answered` round to resolve.
+**Output**: Resolution result JSON (full elaboration state). The Idea status becomes `elaborated` and `elaborationStatus` becomes `resolved`. Fails if the Idea has no rounds, or if any round still has unanswered questions.
 
 ### chorus_pm_skip_elaboration
 

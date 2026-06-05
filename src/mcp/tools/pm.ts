@@ -733,31 +733,27 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_pm_validate_elaboration - Mark an Idea's elaboration as complete.
-  // The tool is exposed under the legacy name `chorus_pm_validate_elaboration`,
-  // but its behavior is the simplified "resolve" action (no issues[] /
-  // followUpQuestions — opening a follow-up round is just another
-  // chorus_pm_start_elaboration call). The backing service fn is resolveElaboration.
+  // chorus_pm_validate_elaboration - Mark an Idea's whole elaboration complete.
+  // Idea-level resolve: it does not target a single round (the backing service
+  // fn is resolveElaboration). Requires every round to be answered.
   registerPermissionedTool(
     server,
     auth,
     "idea:admin",
     "chorus_pm_validate_elaboration",
     {
-      description: "Resolve an Idea's elaboration (round -> validated, Idea -> elaborated, elaborationStatus -> resolved). Resolves the most recent answered round by default, or a specific round when roundUuid is provided. Requires human confirmation before calling (except in YOLO mode). Marks the elaboration complete.",
+      description: "Mark an Idea's elaboration complete (Idea -> elaborated, elaborationStatus -> resolved). Operates on the whole Idea — takes only ideaUuid. Requires every elaboration round to be answered. Requires human confirmation before calling (except in YOLO mode).",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
-        roundUuid: z.string().optional().describe("Elaboration round UUID (optional; defaults to the most recent answered round)"),
       }),
     },
-    async ({ ideaUuid, roundUuid }) => {
+    async ({ ideaUuid }) => {
       try {
         const result = await elaborationService.resolveElaboration({
           companyUuid: auth.companyUuid,
           ideaUuid,
           actorUuid: auth.actorUuid,
           actorType: "agent",
-          roundUuid,
         });
 
         return {

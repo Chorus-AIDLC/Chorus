@@ -142,6 +142,8 @@ chorus_claim_idea({ ideaUuid: "<idea-uuid>" })
 
 In /yolo mode, the agent generates elaboration questions and answers them itself -- **no user interaction at all**. There is no `AskUserQuestion` primitive on OpenClaw, and yolo deliberately does not prompt the user; it self-answers to preserve an audit trail without interrupting the run.
 
+> **Self-elaboration is still a loop.** If answering your own questions surfaces a **new question, contradiction, or gap**, loop back to `chorus_pm_start_elaboration` for another self-answered round before resolving — don't force a resolve over unresolved ambiguity. There is no human gate in YOLO, so the loop exits on **your** judgment that nothing material is left open (round cap 10). Steps 1–2 are one round; repeat them as needed, then resolve once in Step 3.
+
 1. **Generate and submit questions:**
    ```
    chorus_pm_start_elaboration({
@@ -179,7 +181,6 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    ```
    chorus_pm_validate_elaboration({
      ideaUuid: "<idea-uuid>"
-     // roundUuid optional — defaults to the most recent answered round
    })
    ```
 

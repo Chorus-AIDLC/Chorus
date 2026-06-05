@@ -145,6 +145,12 @@ chorus_pm_skip_elaboration({
 
 #### Standard/Complex Ideas (run elaboration)
 
+> **Elaboration is a loop, not a straight line.** Steps 2–5 below are **one round**. Keep looping back to `chorus_pm_start_elaboration` (a new round) until every open question is settled, then resolve **once** in Step 6. You re-enter the loop whenever:
+> - the answers to a round **derive new questions** or surface a contradiction/gap, **or**
+> - at the resolve gate (Step 5d / Step 6) the **human raises a new concern or correction**.
+>
+> Each new round is just another `chorus_pm_start_elaboration` call — there is no separate "follow-up" flag, and you do not resolve until the loop is genuinely done. Round cap is 10.
+
 1. **Determine depth** based on idea complexity:
    - `"minimal"` — 2-4 questions (small features, minor enhancements)
    - `"standard"` — 5-10 questions (typical new features)
@@ -232,14 +238,17 @@ chorus_pm_skip_elaboration({
 
    c. **Wait for confirmation** via comments.
 
-   d. **Based on the response:**
-      - **Confirmed** — Treat this as the human confirmation required to resolve; proceed to Step 5.6 and call `chorus_pm_validate_elaboration`
-      - **Additions/corrections** — Incorporate feedback, optionally open a follow-up round with `chorus_pm_start_elaboration`
-      - **Unclear** — Ask clarifying questions via another comment
+   d. **Based on the response — this is the loop decision point:**
+      - **Confirmed, nothing left to discuss** — Treat this as the human confirmation required to resolve; proceed to Step 6 and call `chorus_pm_validate_elaboration`.
+      - **Human raises a new concern / correction / question** — Do **NOT** resolve. Loop back: open a **new round** with `chorus_pm_start_elaboration` capturing the new questions, collect answers (Steps 2–5 again), and re-confirm. Repeat until the human has no remaining concerns.
+      - **The answers themselves derived new questions or a contradiction** — Same as above: loop back to `chorus_pm_start_elaboration` for another round before resolving.
+      - **Unclear** — Ask clarifying questions via another comment, then continue the loop.
 
-6. **Resolve the elaboration (the single commit gate):**
+6. **Resolve the elaboration (the single commit gate — only when the loop is done):**
 
-   Resolving marks the **whole elaboration phase** complete — it sets `idea.elaborationStatus = "resolved"` (Idea → `elaborated`), which is the gating signal that lets a downstream Proposal be submitted. It is NOT a per-round close. Resolve once, when you believe elaboration is done.
+   Resolving marks the **whole elaboration phase** complete — it sets `idea.elaborationStatus = "resolved"` (Idea → `elaborated`), which is the gating signal that lets a downstream Proposal be submitted. It is an **Idea-level** action (takes only `ideaUuid`, does not target a round). Resolve **once**, only after the Step 5d loop has fully settled — every derived question answered and the human has no remaining concerns. If anything is still open, go back to `chorus_pm_start_elaboration` instead of resolving.
+
+   > **Precondition:** resolve requires the Idea to have at least one round and **every** round to be fully answered (none left in `pending_answers`). If a round still has open questions, answer it (or it'll be rejected).
 
    > **⚠️ Human confirmation required.** Outside YOLO automation you MUST obtain explicit human confirmation before resolving. The "Confirmed" reply in step 5d above counts as that confirmation. Never resolve on your own judgment alone.
 
@@ -250,7 +259,6 @@ chorus_pm_skip_elaboration({
    ```
    chorus_pm_validate_elaboration({
      ideaUuid: "<idea-uuid>"
-     // roundUuid optional — defaults to the most recent answered round
    })
    ```
 

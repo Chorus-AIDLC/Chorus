@@ -23,7 +23,7 @@ Idea → PM analyzes → PM asks structured questions → Human answers →
     └─ Clear      → PM resolves elaboration (human-confirmed) → creates Proposal
 ```
 
-> **Tool model.** Three tools drive the loop: `chorus_pm_start_elaboration` generates **any** round (first, follow-up, or a round appended after resolution); `chorus_answer_elaboration` records answers (its `roundUuid` is optional — it auto-locates the active round); and `chorus_pm_validate_elaboration` (gated `idea:admin`, human-confirmed except in YOLO) marks the whole elaboration complete. `chorus_pm_validate_elaboration` takes only `ideaUuid` and an optional `roundUuid`; opening a follow-up round is just another `start_elaboration` call. The round cap is **10**.
+> **Tool model.** Three tools drive the loop: `chorus_pm_start_elaboration` generates **any** round (first, follow-up, or a round appended after resolution); `chorus_answer_elaboration` records answers (its `roundUuid` is optional — it auto-locates the active round); and `chorus_pm_validate_elaboration` (gated `idea:admin`, human-confirmed except in YOLO) marks the whole elaboration complete. `chorus_pm_validate_elaboration` is Idea-level — it takes only `ideaUuid` and requires every round to be answered; opening a follow-up round is just another `start_elaboration` call. The round cap is **10**.
 
 ## Design Goals
 
@@ -95,8 +95,10 @@ interface ElaborationRound {
   // The questions
   questions: ElaborationQuestion[];
 
-  // Round-level status
-  status: "pending_answers" | "answered" | "validated";
+  // Round-level status. Active states are "pending_answers" → "answered".
+  // ("validated" / "needs_followup" are legacy-only — resolution is an
+  // Idea-level action, not a per-round one; they read the same as "answered".)
+  status: "pending_answers" | "answered";
 
   // True when the round was created after the Idea was first resolved
   // (a pure supplement; keeps the Idea elaborated/resolved). See "Appended rounds".
@@ -267,20 +269,18 @@ chorus_pm_start_elaboration({
 
 #### `chorus_pm_validate_elaboration`
 
-PM Agent marks the whole elaboration complete: validates the most recent `answered` round, moves the Idea to `elaborated`, and sets `elaborationStatus = resolved`. **Requires `idea:admin`** and **human confirmation before calling (except in YOLO mode).**
+PM Agent marks the whole elaboration complete (Idea-level — it does not target a single round): moves the Idea to `elaborated` and sets `elaborationStatus = resolved`. **Requires `idea:admin`** and **human confirmation before calling (except in YOLO mode).**
 
 ```typescript
 chorus_pm_validate_elaboration({
-  ideaUuid: string,
-  roundUuid?: string           // Optional — defaults to the most recent `answered` round
+  ideaUuid: string
 })
 ```
 
 **Behavior**:
-- Validates the targeted (or latest `answered`) round → round status `"validated"`
-- Idea status → `"elaborated"`, `elaborationStatus` → `"resolved"`
+- Idea status → `"elaborated"`, `elaborationStatus` → `"resolved"`. Round statuses are not modified.
 - Creates Activity: `"elaboration_resolved"`
-- Fails if there is no `answered` round to resolve
+- Precondition: the Idea has at least one round and **every** round is answered (no round still in `pending_answers`). Fails otherwise.
 
 **Permission / assignee notes**:
 - Gated `idea:admin`. The `pm_agent` preset only grants `idea:write`, so a PM-preset agent must hand off to an `admin_agent`-preset agent (or admin key) to resolve.
@@ -723,7 +723,7 @@ Both flows use the same service layer. The difference is whether human interacti
 // Core functions
 startElaboration(companyUuid, ideaUuid, actorUuid, depth, questions): ElaborationResponse  // any round; sets isAppended when Idea already resolved
 answerElaboration(companyUuid, ideaUuid, actorUuid, actorType, answers, roundUuid?): ElaborationResponse  // roundUuid optional — auto-locates active round
-resolveElaboration(companyUuid, ideaUuid, actorUuid, actorType, roundUuid?): ElaborationResponse  // idea:admin; validates latest answered round → resolved
+resolveElaboration(companyUuid, ideaUuid, actorUuid, actorType): ElaborationResponse  // idea:admin; Idea-level resolve, requires every round answered
 skipElaboration(companyUuid, ideaUuid, actorUuid, reason): ElaborationResponse
 getElaboration(companyUuid, ideaUuid): ElaborationResponse
 
