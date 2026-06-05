@@ -4,14 +4,14 @@
 
 ### Requirement: Dedicated admin-gated resolution action
 
-The system SHALL provide a `chorus_pm_validate_elaboration` MCP tool that marks an Idea's elaboration as complete. This tool SHALL require the `idea:admin` permission. It SHALL accept only `ideaUuid` and an optional `roundUuid`.
+The system SHALL provide a `chorus_pm_validate_elaboration` MCP tool that marks an Idea's whole elaboration complete. This tool SHALL require the `idea:admin` permission. It SHALL be an Idea-level action that accepts only `ideaUuid` — it does not target a single round and does not modify any round's status.
 
 #### Scenario: Resolve elaboration with admin permission
 
-- **WHEN** an agent holding `idea:admin` calls `chorus_pm_validate_elaboration` on an Idea that has an `answered` round and is the agent's assigned Idea
-- **THEN** the most recent answered round becomes `validated`
-- **AND** the Idea status becomes `elaborated`
+- **WHEN** an agent holding `idea:admin` calls `chorus_pm_validate_elaboration` on its assigned Idea, where every round is answered
+- **THEN** the Idea status becomes `elaborated`
 - **AND** the Idea `elaborationStatus` becomes `resolved`
+- **AND** round statuses are left unchanged
 - **AND** an `elaboration_resolved` activity is logged
 
 #### Scenario: Resolution rejected without admin permission
@@ -19,10 +19,15 @@ The system SHALL provide a `chorus_pm_validate_elaboration` MCP tool that marks 
 - **WHEN** an agent that holds `idea:write` but not `idea:admin` calls `chorus_pm_validate_elaboration`
 - **THEN** the call is rejected because the tool requires `idea:admin`
 
-#### Scenario: Resolution requires an answered round
+#### Scenario: Resolution requires every round answered
 
-- **WHEN** `chorus_pm_validate_elaboration` is called on an Idea whose latest round is still `pending_answers`
-- **THEN** the call fails with an error indicating there is no answered round to resolve
+- **WHEN** `chorus_pm_validate_elaboration` is called on an Idea that has at least one round still in `pending_answers`
+- **THEN** the call fails with an error indicating some round(s) still have unanswered questions
+
+#### Scenario: Resolution requires at least one round
+
+- **WHEN** `chorus_pm_validate_elaboration` is called on an Idea that has no elaboration rounds
+- **THEN** the call fails with an error indicating there are no elaboration rounds to resolve
 
 ### Requirement: Human confirmation is required before resolving
 
@@ -45,5 +50,5 @@ The `chorus_pm_validate_elaboration` tool SHALL perform only the resolution acti
 #### Scenario: Validate tool only resolves
 
 - **WHEN** an agent holding `idea:admin` calls `chorus_pm_validate_elaboration`
-- **THEN** the tool marks the elaboration complete and accepts only `ideaUuid` and an optional `roundUuid`
+- **THEN** the tool marks the elaboration complete and accepts only `ideaUuid`
 - **AND** opening a follow-up round is achieved by calling `chorus_pm_start_elaboration` again

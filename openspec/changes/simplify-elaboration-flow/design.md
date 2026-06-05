@@ -18,7 +18,7 @@ This change keeps the round/question data model and the human-in-the-loop verifi
 
 ## State machine (unchanged statuses, new transitions)
 
-`Idea.status`: `open → elaborating → elaborated`. `Idea.elaborationStatus`: `null → pending_answers → validating → resolved`. `Round.status`: `pending_answers → answered → validated`.
+`Idea.status`: `open → elaborating → elaborated`. `Idea.elaborationStatus`: `null → pending_answers → validating → resolved`. `Round.status`: `pending_answers → answered` (the only active states; `validated`/`needs_followup` are legacy-only and read the same as `answered`).
 
 New transitions introduced by this change:
 
@@ -26,7 +26,7 @@ New transitions introduced by this change:
 
 > **Decision (R2):** appended rounds are a *pure supplement*. To honor "never blocks downstream proposals", `start_elaboration` on a resolved Idea leaves `elaborationStatus = "resolved"` and only the new round sits at `pending_answers`. The "answered → validating" auto-transition in `answerElaboration` must therefore be guarded so it does not flip a resolved Idea back to `validating`. Net effect: an appended round can be answered and (optionally) re-resolved without ever un-resolving the Idea or blocking proposal submission. This is the behavior the owner asked for.
 
-- **`chorus_pm_validate_elaboration`**: round → `validated`, Idea → `elaborated`, `elaborationStatus → resolved`. Takes `ideaUuid` + optional `roundUuid`, gated `idea:admin`; the backing service fn is `resolveElaboration`. Idempotent-friendly: resolving an already-resolved Idea with a freshly answered appended round simply re-validates that round.
+- **`chorus_pm_validate_elaboration`**: Idea-level resolve → Idea `elaborated`, `elaborationStatus → resolved`. Takes only `ideaUuid` (gated `idea:admin`; backing service fn `resolveElaboration`). It does not target or mutate any single round's status. Precondition: the Idea has ≥1 round and every round is answered. Idempotent-friendly: resolving an already-resolved Idea with a freshly answered appended round simply re-confirms resolution.
 
 - **Follow-up while still `elaborating`** (the old `validate(followUpQuestions)` path): the PM just calls `start_elaboration` again. The prior answered round stays `answered` (no `needs_followup` status needed — that status existed only to record validate's issue path, which is gone). `getElaboration` treats any non-`pending_answers` round as "done" for display, exactly as the UI already does.
 
@@ -61,10 +61,9 @@ model ElaborationRound {
 
 ### `resolveElaboration` (new)
 
-- Inputs: `companyUuid, ideaUuid, actorUuid, actorType` (no `roundUuid` required — resolve operates on the Idea; it validates the latest answered round).
-- Optional `roundUuid` to target a specific answered round; default = most recent `answered` round.
-- Preconditions: actor is the Idea assignee; there is an `answered` round to validate.
-- Effect: round → `validated`; Idea → `elaborated`; `elaborationStatus → resolved`; activity `elaboration_resolved`.
+- Inputs: `companyUuid, ideaUuid, actorUuid, actorType` (no `roundUuid` — resolve operates on the whole Idea, not a single round).
+- Preconditions: actor is the Idea assignee; the Idea has ≥1 round and every round is answered (none in `pending_answers`).
+- Effect: Idea → `elaborated`; `elaborationStatus → resolved`; activity `elaboration_resolved`. Round statuses are not modified.
 - Permission: `idea:admin` (see permission-map).
 
 ### `chorus_pm_validate_elaboration` wiring
@@ -73,7 +72,7 @@ model ElaborationRound {
 
 ## MCP & permissions
 
-- `chorus_pm_validate_elaboration` → `permission-map.ts`: `idea:admin`. The tool calls `resolveElaboration` and takes `ideaUuid` + optional `roundUuid`.
+- `chorus_pm_validate_elaboration` → `permission-map.ts`: `idea:admin`. The tool calls `resolveElaboration` and takes only `ideaUuid`.
 - `chorus_answer_elaboration` stays public; `roundUuid` becomes optional in its zod schema.
 - `chorus_pm_start_elaboration` stays `idea:write`.
 - The `chorus_pm_validate_elaboration` tool description MUST include: *"Requires human confirmation before calling (except in YOLO mode). Marks the elaboration complete."*
