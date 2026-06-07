@@ -10,7 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Switch } from "@/components/ui/switch";
+import {
+  AcceptanceCriteriaEditor,
+  type AcceptanceCriteriaItemDraft,
+} from "@/components/acceptance-criteria-editor";
 import {
   Select,
   SelectContent,
@@ -101,7 +104,7 @@ export function TaskDraftDetailPanel({
   const [editStoryPoints, setEditStoryPoints] = useState(
     taskDraft?.storyPoints?.toString() || ""
   );
-  const [editCriteriaItems, setEditCriteriaItems] = useState<AcceptanceCriteriaItem[]>(
+  const [editCriteriaItems, setEditCriteriaItems] = useState<AcceptanceCriteriaItemDraft[]>(
     taskDraft?.acceptanceCriteriaItems?.map((item) => ({ description: item.description, required: item.required ?? true })) || []
   );
   // Pending deps for create mode (stored locally until save)
@@ -422,61 +425,10 @@ export function TaskDraftDetailPanel({
           <ClipboardCheck className="h-3.5 w-3.5 text-[#C67A52]" />
           {t("acceptanceCriteria.title")}
         </Label>
-        {editCriteriaItems.length > 0 && (
-          <div className="space-y-2">
-            {editCriteriaItems.map((item, index) => (
-              <div key={index} className="flex items-start gap-2 rounded-lg border border-[#E5E2DC] bg-[#FAF8F4] p-2.5">
-                <div className="flex-1 min-w-0">
-                  <Input
-                    value={item.description}
-                    onChange={(e) => {
-                      const updated = [...editCriteriaItems];
-                      updated[index] = { ...updated[index], description: e.target.value };
-                      setEditCriteriaItems(updated);
-                    }}
-                    placeholder={t("acceptanceCriteria.criterionPlaceholder")}
-                    className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52] h-8"
-                  />
-                </div>
-                <div className="flex items-center gap-2 shrink-0 pt-1">
-                  <Switch
-                    checked={item.required ?? true}
-                    onCheckedChange={(checked) => {
-                      const updated = [...editCriteriaItems];
-                      updated[index] = { ...updated[index], required: checked };
-                      setEditCriteriaItems(updated);
-                    }}
-                    className="data-[state=checked]:bg-[#C67A52]"
-                  />
-                  <span className="text-[10px] font-medium text-[#6B6B6B] min-w-[52px]">
-                    {(item.required ?? true) ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-7 p-0 border-[#E5E2DC] text-[#9A9A9A] hover:text-[#D32F2F] hover:border-[#D32F2F] hover:bg-[#FFEBEE]"
-                    onClick={() => {
-                      setEditCriteriaItems(editCriteriaItems.filter((_, i) => i !== index));
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1.5 border-[#E5E2DC] text-xs text-[#6B6B6B] hover:text-[#C67A52] hover:border-[#C67A52]"
-          onClick={() => {
-            setEditCriteriaItems([...editCriteriaItems, { description: "", required: true }]);
-          }}
-        >
-          <Plus className="h-3 w-3" />
-          {t("acceptanceCriteria.addCriterion")}
-        </Button>
+        <AcceptanceCriteriaEditor
+          items={editCriteriaItems}
+          onChange={setEditCriteriaItems}
+        />
       </div>
 
       {/* Dependencies section in edit/create form */}

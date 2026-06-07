@@ -985,7 +985,8 @@
     "gateReady": "All required criteria passed",
     "addCriterion": "Add Criterion",
     "removeCriterion": "Remove",
-    "criterionPlaceholder": "Describe the acceptance criterion..."
+    "criterionPlaceholder": "Describe the acceptance criterion...",
+    "atLeastOneRequired": "At least one acceptance criterion with a non-empty description is required."
   },
   "onboarding": {
     "skip": "Skip for now",

@@ -42,6 +42,11 @@ import {
 } from "./[taskUuid]/source-actions";
 import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
+import {
+  AcceptanceCriteriaEditor,
+  acCriteriaChanged,
+  type AcceptanceCriteriaItemDraft,
+} from "@/components/acceptance-criteria-editor";
 import { AssignTaskModal } from "./assign-task-modal";
 import {
   getTaskDependenciesAction,
@@ -274,8 +279,11 @@ export function TaskDetailPanel({
   const [editStoryPoints, setEditStoryPoints] = useState<string>(
     task?.storyPoints != null ? String(task.storyPoints) : ""
   );
-  const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState(
-    task?.acceptanceCriteria || ""
+  const [editCriteriaItems, setEditCriteriaItems] = useState<AcceptanceCriteriaItemDraft[]>(
+    (task?.acceptanceCriteriaItems ?? []).map((item) => ({
+      description: item.description,
+      required: item.required ?? true,
+    }))
   );
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -343,10 +351,15 @@ export function TaskDetailPanel({
       setEditDescription(task.description || "");
       setEditPriority(task.priority);
       setEditStoryPoints(task.storyPoints != null ? String(task.storyPoints) : "");
-      setEditAcceptanceCriteria(task.acceptanceCriteria || "");
+      setEditCriteriaItems(
+        (task.acceptanceCriteriaItems ?? []).map((item) => ({
+          description: item.description,
+          required: item.required ?? true,
+        }))
+      );
       setEditError(null);
     }
-  }, [task?.uuid, task?.title, task?.description, task?.priority, task?.storyPoints, task?.acceptanceCriteria]);
+  }, [task?.uuid, task?.title, task?.description, task?.priority, task?.storyPoints, task?.acceptanceCriteriaItems]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!task) return;
@@ -365,7 +378,12 @@ export function TaskDetailPanel({
     setEditDescription(task.description || "");
     setEditPriority(task.priority);
     setEditStoryPoints(task.storyPoints != null ? String(task.storyPoints) : "");
-    setEditAcceptanceCriteria(task.acceptanceCriteria || "");
+    setEditCriteriaItems(
+      (task.acceptanceCriteriaItems ?? []).map((item) => ({
+        description: item.description,
+        required: item.required ?? true,
+      }))
+    );
     setEditError(null);
     setIsEditing(true);
   };
@@ -381,7 +399,12 @@ export function TaskDetailPanel({
       setEditDescription(task.description || "");
       setEditPriority(task.priority);
       setEditStoryPoints(task.storyPoints != null ? String(task.storyPoints) : "");
-      setEditAcceptanceCriteria(task.acceptanceCriteria || "");
+      setEditCriteriaItems(
+        (task.acceptanceCriteriaItems ?? []).map((item) => ({
+          description: item.description,
+          required: item.required ?? true,
+        }))
+      );
     }
     setEditError(null);
   };
@@ -404,7 +427,7 @@ export function TaskDetailPanel({
         description: editDescription.trim() || undefined,
         priority: editPriority,
         storyPoints: storyPointsValue,
-        acceptanceCriteria: editAcceptanceCriteria.trim() || null,
+        acceptanceCriteria: null,
       });
 
       setIsSaving(false);
@@ -424,6 +447,27 @@ export function TaskDetailPanel({
         setEditError(result.error || t("tasks.createFailed"));
       }
     } else {
+      // Compute change-detection on structured AC: only send the new items
+      // when they actually differ from the task's current items, so unchanged
+      // saves preserve dev/admin verification marks. Filter blank rows first
+      // because the editor allows in-progress empty inputs.
+      const originalItems: AcceptanceCriteriaItemDraft[] = (task!.acceptanceCriteriaItems ?? []).map(
+        (item) => ({ description: item.description, required: item.required ?? true })
+      );
+      const filteredEdited = editCriteriaItems.filter(
+        (item) => item.description.trim().length > 0
+      );
+      const acChanged = acCriteriaChanged(originalItems, filteredEdited);
+
+      // Empty-set guard: if the user wiped all AC, surface the existing
+      // required-AC validation message inline rather than letting the server
+      // reject with a 500.
+      if (acChanged && filteredEdited.length === 0) {
+        setIsSaving(false);
+        setEditError(t("acceptanceCriteria.atLeastOneRequired"));
+        return;
+      }
+
       const result = await updateTaskFieldsAction({
         taskUuid: task!.uuid,
         projectUuid,
@@ -431,7 +475,14 @@ export function TaskDetailPanel({
         description: editDescription.trim() || null,
         priority: editPriority,
         storyPoints: storyPointsValue,
-        acceptanceCriteria: editAcceptanceCriteria.trim() || null,
+        ...(acChanged
+          ? {
+              acceptanceCriteriaItems: filteredEdited.map((item) => ({
+                description: item.description.trim(),
+                required: item.required,
+              })),
+            }
+          : {}),
       });
 
       setIsSaving(false);
@@ -574,15 +625,12 @@ export function TaskDetailPanel({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="edit-acceptance-criteria" className="text-[13px] font-medium text-[#2C2C2C]">
-          {t("tasks.acceptanceCriteriaLabel")}
+        <Label className="text-[13px] font-medium text-[#2C2C2C]">
+          {t("acceptanceCriteria.title")}
         </Label>
-        <Textarea
-          id="edit-acceptance-criteria"
-          value={editAcceptanceCriteria}
-          onChange={(e) => setEditAcceptanceCriteria(e.target.value)}
-          rows={4}
-          className="border-[#E5E0D8] text-sm resize-none focus-visible:ring-[#C67A52]"
+        <AcceptanceCriteriaEditor
+          items={editCriteriaItems}
+          onChange={setEditCriteriaItems}
         />
       </div>
 

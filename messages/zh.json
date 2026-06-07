@@ -986,7 +986,8 @@
     "gateReady": "所有必需标准已通过",
     "addCriterion": "添加标准",
     "removeCriterion": "移除",
-    "criterionPlaceholder": "描述验收标准..."
+    "criterionPlaceholder": "描述验收标准...",
+    "atLeastOneRequired": "至少需要一条非空的验收标准。"
   },
   "onboarding": {
     "skip": "暂时跳过",

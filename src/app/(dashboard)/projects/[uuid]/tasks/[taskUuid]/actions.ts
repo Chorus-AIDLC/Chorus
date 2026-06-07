@@ -2,9 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate } from "@/services/task.service";
+import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate, replaceAcceptanceCriteria } from "@/services/task.service";
 import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { createActivity } from "@/services/activity.service";
+import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
 import logger from "@/lib/logger";
 
 export async function claimTaskAction(taskUuid: string) {
@@ -319,6 +320,7 @@ interface UpdateTaskFieldsInput {
   priority?: string;
   storyPoints?: number | null;
   acceptanceCriteria?: string | null;
+  acceptanceCriteriaItems?: AcceptanceCriteriaItemInput[];
 }
 
 export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
@@ -341,11 +343,18 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
       acceptanceCriteria: input.acceptanceCriteria,
     });
 
+    // Only replace structured acceptance criteria when the client explicitly
+    // sends them (i.e. they actually changed). Omitting the field leaves the
+    // existing criteria — and their dev/admin verification marks — untouched.
+    if (input.acceptanceCriteriaItems !== undefined) {
+      await replaceAcceptanceCriteria(auth.companyUuid, input.taskUuid, input.acceptanceCriteriaItems);
+    }
+
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to update task");
-    return { success: false, error: "Failed to update task" };
+    return { success: false, error: error instanceof Error ? error.message : "Failed to update task" };
   }
 }
 
