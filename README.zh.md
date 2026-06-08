@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.9.4](https://chorus-ai.dev/zh/blog/chorus-v0.9.4-release/)** — OpenClaw 插件基于 OpenClaw 2026.4.27 Plugin SDK 全面重写（原生 MCP 注册、`runEmbeddedAgent` 处理 SSE 唤醒、reviewer 改为原生 skill）；Codex 插件 hook 改为随插件包分发，安装器同时清理用户目录中的历史 hook 拷贝。
+
 **[v0.9.0](https://chorus-ai.dev/zh/blog/chorus-v0.9.0-release/)** — 头脑风暴 skill 帮你把模糊的想法聊出形状（在结构化多选题前先开放式对话），想法落地后自动生成总结报告（Summary / Decisions / Follow-ups 三段式，挂在想法概览页）。
 
 **[v0.8.0](https://chorus-ai.dev/zh/blog/chorus-v0.8.0-release/)** — OpenSpec-aware 模式（仅 Claude Code）：当仓库下同时存在 `openspec/` 目录和 `openspec` CLI 时自动启用，新增 `/opsx/{explore,propose,apply,archive}` 与 task verify 后的 archive-trigger 钩子。

@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.9.4](https://chorus-ai.dev/blog/chorus-v0.9.4-release/)** — OpenClaw plugin rewritten on the OpenClaw 2026.4.27 Plugin SDK (native MCP registration, `runEmbeddedAgent` for SSE wake, reviewers as native skills); Codex plugin hooks now ship inside the package, with an installer that cleans up legacy hook copies in the user directory.
+
 **[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — Brainstorm skill for fuzzy ideas (open-ended chat before structured Q&A) and idea-completion reports (every shipped idea gets a Summary / Decisions / Follow-ups writeup, surfaced on the idea overview).
 
 **[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware mode (Claude Code): auto-activates when an `openspec/` directory and the `openspec` CLI are both present, adds `/opsx/{explore,propose,apply,archive}` and a post-verify archive-trigger hook.
