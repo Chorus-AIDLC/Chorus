@@ -1,0 +1,8 @@
+{
+  "name": "chorus-landing",
+  "compatibility_date": "2026-06-09",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}
