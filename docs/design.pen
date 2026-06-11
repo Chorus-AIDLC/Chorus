@@ -86631,6 +86631,452 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "rRjfZ",
+      "x": 7700,
+      "y": 0,
+      "name": "Login - Role Picker (email collision)",
+      "width": 1440,
+      "height": 900,
+      "fill": "#FAF8F4",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "ivvX8",
+          "name": "centerContainer",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "QeQGI",
+              "name": "pickerCard",
+              "width": 460,
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": "#E5E2DC",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#1F1B1208",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 28
+              },
+              "layout": "vertical",
+              "gap": 26,
+              "padding": 36,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "o67Ib1",
+                  "name": "logoRow",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Apqle",
+                      "width": 24,
+                      "height": 24,
+                      "icon": "music",
+                      "library": "lucide",
+                      "fill": "#171717"
+                    },
+                    {
+                      "type": "text",
+                      "id": "OG48H",
+                      "fill": "#171717",
+                      "content": "Chorus",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SVuQr",
+                  "name": "heading",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "AEWNO",
+                      "fill": "#171717",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Choose how to sign in",
+                      "textAlign": "center",
+                      "fontFamily": "Inter",
+                      "fontSize": 22,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VBLda",
+                      "fill": "#737373",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "This email can sign in more than one way. Choose how to continue.",
+                      "lineHeight": 1.5,
+                      "textAlign": "center",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "J0dnb",
+                  "name": "workspaceList",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Q9o7SY",
+                      "name": "superAdminOption",
+                      "width": "fill_container",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 10,
+                      "stroke": "#E5E2DC",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 14,
+                      "padding": 16,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "wNd4y",
+                          "name": "superAdminIconBox",
+                          "width": 40,
+                          "height": 40,
+                          "fill": "#C0413B",
+                          "cornerRadius": 8,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "gOGPY",
+                              "name": "superAdminIcon",
+                              "width": 20,
+                              "height": 20,
+                              "icon": "shield",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "zblri",
+                          "name": "wsInfo",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "MFy4U",
+                              "fill": "#171717",
+                              "content": "Sign in as Super Admin",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "P0c6qm",
+                              "name": "wsSSO",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "i6eWCf",
+                                  "width": 11,
+                                  "height": 11,
+                                  "icon": "lock",
+                                  "library": "lucide",
+                                  "fill": "#9A9A9A"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "rZUBq",
+                                  "fill": "#737373",
+                                  "content": "Full platform administration",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "Ovu2b",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#A3A3A3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "So2AY",
+                      "name": "passwordOption",
+                      "width": "fill_container",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 10,
+                      "stroke": "#E5E2DC",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 14,
+                      "padding": 16,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "h2WPY",
+                          "name": "passwordIconBox",
+                          "width": 40,
+                          "height": 40,
+                          "fill": "#C67A52",
+                          "cornerRadius": 8,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "NfrRA",
+                              "name": "passwordIcon",
+                              "width": 20,
+                              "height": 20,
+                              "icon": "key-round",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "msMM9",
+                          "name": "wsInfo2",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "h6YmA",
+                              "fill": "#171717",
+                              "content": "Sign in with password",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "G46ey",
+                              "name": "wsSSO2",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "BhVJJ",
+                                  "width": 11,
+                                  "height": 11,
+                                  "icon": "user",
+                                  "library": "lucide",
+                                  "fill": "#9A9A9A"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "wMPzk",
+                                  "fill": "#737373",
+                                  "content": "Regular user account",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "yYVz0",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#A3A3A3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "DY2sC",
+                      "name": "oidcOption",
+                      "width": "fill_container",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 10,
+                      "stroke": "#E5E2DC",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 14,
+                      "padding": 16,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "FK3IH",
+                          "name": "passwordIconBox",
+                          "width": 40,
+                          "height": 40,
+                          "fill": "#171717",
+                          "cornerRadius": 8,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "q3FZi",
+                              "name": "passwordIcon",
+                              "width": 20,
+                              "height": 20,
+                              "icon": "building-2",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "H35dCU",
+                          "name": "wsInfo2",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "wugg1",
+                              "fill": "#171717",
+                              "content": "Sign in with Acme Corp",
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "CqUiO",
+                              "name": "wsSSO2",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "PIehu",
+                                  "width": 11,
+                                  "height": 11,
+                                  "icon": "shield",
+                                  "library": "lucide",
+                                  "fill": "#9A9A9A"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "tV6W2",
+                                  "fill": "#737373",
+                                  "content": "sso.acme.com",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "haj7O",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#A3A3A3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z9m1h",
+                  "name": "wrongEmailRow",
+                  "width": "fill_container",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "g4XmV",
+                      "fill": "#737373",
+                      "content": "Not you@company.com?",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YHc3S",
+                      "name": "wrongLink",
+                      "gap": 2,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "IHixg",
+                          "fill": "#171717",
+                          "content": "Use a different email",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {
