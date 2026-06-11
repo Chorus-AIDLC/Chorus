@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
+import { listProjectsWithStats, createProject } from "@/services/project.service";
 
 // GET /api/projects - List Projects
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -19,37 +20,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const { page, pageSize, skip, take } = parsePagination(request);
 
-  const [projects, total] = await Promise.all([
-    prisma.project.findMany({
-      where: { companyUuid: auth.companyUuid },
-      skip,
-      take,
-      orderBy: { updatedAt: "desc" },
-      select: {
-        uuid: true,
-        name: true,
-        description: true,
-        groupUuid: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: {
-          select: {
-            ideas: true,
-            documents: true,
-            tasks: true,
-            proposals: true,
-          },
-        },
-        tasks: {
-          where: { status: { in: ["done", "closed"] } },
-          select: { uuid: true },
-        },
-      },
-    }),
-    prisma.project.count({
-      where: { companyUuid: auth.companyUuid },
-    }),
-  ]);
+  // Restrict results to the projects this actor can access (service injects the
+  // accessible-projects filter via `auth`).
+  const { projects, total } = await listProjectsWithStats({
+    companyUuid: auth.companyUuid,
+    skip,
+    take,
+    auth,
+  });
 
   // Transform to API response format
   const data = projects.map((p) => ({
@@ -57,13 +35,16 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     name: p.name,
     description: p.description,
     groupUuid: p.groupUuid,
+    visibility: p.visibility,
+    ownerType: p.ownerType,
+    ownerUuid: p.ownerUuid,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
     counts: {
       ideas: p._count.ideas,
       documents: p._count.documents,
       tasks: p._count.tasks,
-      doneTasks: p.tasks.length,
+      doneTasks: p.tasksDone,
       proposals: p._count.proposals,
     },
   }));
@@ -91,11 +72,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     name: string;
     description?: string;
     groupUuid?: string;
+    visibility?: "shared" | "private";
+    memberUuids?: { memberType: "user" | "agent"; memberUuid: string }[];
   }>(request);
 
   // Validate required fields
   if (!body.name || body.name.trim() === "") {
     return errors.validationError({ name: "Name is required" });
+  }
+
+  // Validate visibility if provided
+  if (body.visibility !== undefined && !["shared", "private"].includes(body.visibility)) {
+    return errors.validationError({ visibility: "Visibility must be 'shared' or 'private'" });
   }
 
   // Validate groupUuid belongs to the same company if provided
@@ -108,26 +96,31 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  const project = await prisma.project.create({
-    data: {
-      companyUuid: auth.companyUuid,
-      name: body.name.trim(),
-      description: body.description?.trim() || null,
-      groupUuid: body.groupUuid || null,
-    },
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+  // The owner is the acting actor. super_admin has no actorUuid, so the project
+  // is created ownerless (only super_admin / shared visibility grants access).
+  const isOwnerActor = auth.type === "user" || auth.type === "agent";
+  const ownerType = isOwnerActor ? auth.type : null;
+  const ownerUuid = isOwnerActor ? auth.actorUuid : null;
+
+  const project = await createProject({
+    companyUuid: auth.companyUuid,
+    name: body.name.trim(),
+    description: body.description?.trim() || null,
+    groupUuid: body.groupUuid || null,
+    visibility: body.visibility, // service defaults to "private" when undefined
+    ownerType,
+    ownerUuid,
+    memberUuids: body.memberUuids,
   });
 
   return success({
     uuid: project.uuid,
     name: project.name,
     description: project.description,
+    groupUuid: project.groupUuid,
+    visibility: project.visibility,
+    ownerType: project.ownerType,
+    ownerUuid: project.ownerUuid,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   });
