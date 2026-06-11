@@ -300,6 +300,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         content: report,
         authorType: "agent",
         authorUuid: auth.actorUuid,
+        auth,
       });
 
       // Log activity

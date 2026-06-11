@@ -4,6 +4,11 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import {
+  type AnyAuth,
+  ALL_PROJECTS,
+  getAccessibleProjectUuids,
+} from "@/lib/authz/project-access";
 
 // ===== Type Definitions =====
 
@@ -32,6 +37,8 @@ export interface NotificationListParams {
   archived?: boolean;
   skip?: number;
   take?: number;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface NotificationResponse {
@@ -243,9 +250,19 @@ export async function createBatch(
 export async function list(
   params: NotificationListParams
 ): Promise<{ notifications: NotificationResponse[]; total: number; unreadCount: number }> {
-  const { companyUuid, recipientType, recipientUuid, projectUuid, readFilter, archived } = params;
+  const { companyUuid, recipientType, recipientUuid, projectUuid, readFilter, archived, auth } = params;
   const skip = params.skip ?? 0;
   const take = params.take ?? 20;
+
+  // Visibility gate: restrict project-scoped notifications to the accessible
+  // set, but ALWAYS preserve non-project notifications (denormalized
+  // projectUuid is "" for those) so the recipient never loses them. Super
+  // admins (ALL_PROJECTS) skip the filter entirely.
+  const accessible = await getAccessibleProjectUuids(auth);
+  const visibilityFilter =
+    accessible === ALL_PROJECTS
+      ? undefined
+      : { OR: [{ projectUuid: { in: accessible } }, { projectUuid: "" }] };
 
   const where = {
     companyUuid,
@@ -256,6 +273,7 @@ export async function list(
     ...(readFilter === "read" && { readAt: { not: null } }),
     ...(archived === false && { archivedAt: null }),
     ...(archived === true && { archivedAt: { not: null } }),
+    ...(visibilityFilter ?? {}),
   };
 
   const [rawNotifications, total, unreadCount] = await Promise.all([

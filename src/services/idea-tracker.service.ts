@@ -9,6 +9,26 @@
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
 import { computeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
+import { ALL_PROJECTS, getAccessibleProjectUuids } from "@/lib/authz/project-access";
+
+// Intersect the caller-supplied project filter with the actor's accessible
+// project set. Returns the project UUIDs to scope by, or null when the actor
+// can access every project (super-admin path; no project filter needed). An
+// empty array means "no accessible projects" — callers short-circuit to {}.
+async function resolveAccessibleProjectUuids(
+  auth: AuthContext,
+  requested?: string[],
+): Promise<string[] | null> {
+  const accessible = await getAccessibleProjectUuids(auth);
+  if (accessible === ALL_PROJECTS) {
+    return requested && requested.length > 0 ? requested : null;
+  }
+  if (requested && requested.length > 0) {
+    const accessibleSet = new Set(accessible);
+    return requested.filter((u) => accessibleSet.has(u));
+  }
+  return accessible;
+}
 
 // ===== Idea tracker types =====
 
@@ -96,10 +116,12 @@ export async function buildIdeaTracker(
   options: BuildIdeaTrackerOptions = {},
 ): Promise<Record<string, IdeaTrackerProject>> {
   const maxIdeas = options.maxIdeas ?? Number.POSITIVE_INFINITY;
+  // Visibility gate: scope to the actor's accessible projects (intersected with
+  // any requested filter). null => actor sees all projects (no filter needed).
+  const scoped = await resolveAccessibleProjectUuids(auth, options.projectUuids);
+  if (scoped !== null && scoped.length === 0) return {};
   const projectFilter =
-    options.projectUuids && options.projectUuids.length > 0
-      ? { projectUuid: { in: options.projectUuids } }
-      : {};
+    scoped !== null ? { projectUuid: { in: scoped } } : {};
 
   // Q1: Ideas assigned to the agent OR to the agent's owner.
   // Exclude legacy "closed" (terminal) — elaborated/completed/etc. still flow
@@ -261,10 +283,12 @@ export async function buildTaskTracker(
   auth: AuthContext,
   options: BuildTaskTrackerOptions = {},
 ): Promise<Record<string, TaskTrackerProject>> {
+  // Visibility gate: scope to the actor's accessible projects (intersected with
+  // any requested filter). null => actor sees all projects (no filter needed).
+  const scoped = await resolveAccessibleProjectUuids(auth, options.projectUuids);
+  if (scoped !== null && scoped.length === 0) return {};
   const projectFilter =
-    options.projectUuids && options.projectUuids.length > 0
-      ? { projectUuid: { in: options.projectUuids } }
-      : {};
+    scoped !== null ? { projectUuid: { in: scoped } } : {};
 
   const rawTasks = await prisma.task.findMany({
     where: {

@@ -41,6 +41,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     targetUuid: query.targetUuid,
     skip,
     take,
+    auth,
   });
 
   return paginated(comments, page, pageSize, total);
@@ -84,6 +85,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       content: body.content.trim(),
       authorType: isUser(auth) ? "user" : "agent",
       authorUuid: auth.actorUuid,
+      auth,
     });
 
     return success(comment);

@@ -7,6 +7,12 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     count: vi.fn(),
   },
+  project: {
+    findFirst: vi.fn(),
+  },
+  projectMember: {
+    findUnique: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -35,6 +41,18 @@ const projectUuid = "project-0000-0000-0000-000000000001";
 const targetUuid = "task-0000-0000-0000-000000000001";
 const actorUuid = "user-0000-0000-0000-000000000001";
 const activityUuid = "activity-0000-0000-0000-000000000001";
+
+// Super-admin auth bypasses the project-visibility filter (canAccessProject
+// returns true without touching prisma), keeping the existing query-shape
+// assertions valid.
+const superAdminAuth = { type: "super_admin" as const, email: "admin@chorus.local" };
+
+// A regular user auth for visibility tests.
+const userAuth = {
+  type: "user" as const,
+  companyUuid,
+  actorUuid,
+};
 
 function makeActivity(overrides: Record<string, unknown> = {}) {
   return {
@@ -69,6 +87,7 @@ describe("listActivities", () => {
     const result = await listActivities({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });
@@ -86,6 +105,7 @@ describe("listActivities", () => {
     await listActivities({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
       targetType: "idea",
@@ -105,6 +125,7 @@ describe("listActivities", () => {
     await listActivities({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
       targetUuid: "specific-uuid",
@@ -124,6 +145,7 @@ describe("listActivities", () => {
     await listActivities({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });
@@ -142,6 +164,7 @@ describe("listActivities", () => {
     await listActivities({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 10,
       take: 5,
     });
@@ -149,6 +172,29 @@ describe("listActivities", () => {
     expect(mockPrisma.activity.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ skip: 10, take: 5 })
     );
+  });
+
+  it("returns empty for a non-member of a private project (visibility gate)", async () => {
+    // Private project not owned by the user, with no membership row.
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-user",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+
+    const result = await listActivities({
+      companyUuid,
+      projectUuid,
+      skip: 0,
+      take: 20,
+      auth: userAuth,
+    });
+
+    expect(result.activities).toEqual([]);
+    expect(result.total).toBe(0);
+    // Gate short-circuits before any activity query.
+    expect(mockPrisma.activity.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -163,6 +209,7 @@ describe("listActivitiesWithActorNames", () => {
     const result = await listActivitiesWithActorNames({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });
@@ -182,6 +229,7 @@ describe("listActivitiesWithActorNames", () => {
     const result = await listActivitiesWithActorNames({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });
@@ -200,6 +248,7 @@ describe("listActivitiesWithActorNames", () => {
     const result = await listActivitiesWithActorNames({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });
@@ -223,6 +272,7 @@ describe("listActivitiesWithActorNames", () => {
     const result = await listActivitiesWithActorNames({
       companyUuid,
       projectUuid,
+      auth: superAdminAuth,
       skip: 0,
       take: 20,
     });

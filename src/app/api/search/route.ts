@@ -76,6 +76,7 @@ export const GET = withErrorHandler(
       scopeUuid,
       entityTypes,
       limit,
+      auth,
     });
 
     return success(result);

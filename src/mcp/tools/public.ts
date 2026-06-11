@@ -282,6 +282,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         projectUuid,
         skip,
         take: pageSize,
+        auth,
       });
 
       return {
@@ -310,6 +311,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           content,
           authorType: "agent",
           authorUuid: auth.actorUuid,
+          auth,
         });
 
         // Resolve projectUuid from the target entity
@@ -539,6 +541,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         targetUuid,
         skip,
         take: pageSize,
+        auth,
       });
 
       return {
@@ -568,6 +571,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         readFilter: statusValue === "unread" ? "unread" : statusValue === "read" ? "read" : "all",
         skip: params.offset ?? 0,
         take: params.limit ?? 20,
+        auth,
       });
 
       // Auto-mark fetched unread notifications as read
@@ -780,6 +784,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         scope,
         scopeUuid,
         entityTypes,
+        auth,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

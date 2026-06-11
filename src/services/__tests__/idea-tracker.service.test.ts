@@ -7,6 +7,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     proposal: { findMany: vi.fn() },
     task: { findMany: vi.fn() },
     project: { findMany: vi.fn() },
+    projectMember: { findMany: vi.fn() },
   },
 }));
 
@@ -80,6 +81,14 @@ beforeEach(() => {
   mockPrisma.proposal.findMany.mockResolvedValue([]);
   mockPrisma.task.findMany.mockResolvedValue([]);
   mockPrisma.project.findMany.mockResolvedValue([]);
+  // Default: the actor is a member of both fixture projects, so the
+  // visibility gate (getAccessibleProjectUuids) treats every fixture project
+  // as accessible and existing tracker assertions are unaffected. Tests that
+  // exercise the gate override this with a narrower membership set.
+  mockPrisma.projectMember.findMany.mockResolvedValue([
+    { projectUuid: PROJECT_A },
+    { projectUuid: PROJECT_B },
+  ]);
 });
 
 // ============================================================
@@ -384,10 +393,49 @@ describe("buildIdeaTracker — grouping & ordering & options", () => {
     );
   });
 
-  it("does NOT add projectUuid filter when projectUuids is empty array", async () => {
+  it("scopes to the accessible project set when projectUuids is an empty array (visibility gate)", async () => {
+    // With no explicit request filter, a non-super-admin actor is still scoped
+    // to the projects they can access (here: both fixture projects via the
+    // default membership mock). The empty array no longer means "all projects".
     await buildIdeaTracker(agentAuth, { projectUuids: [] });
-    const callArg = mockPrisma.idea.findMany.mock.calls[0][0];
-    expect(callArg.where).not.toHaveProperty("projectUuid");
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectUuid: { in: [PROJECT_A, PROJECT_B] },
+        }),
+      }),
+    );
+  });
+
+  it("drops projects outside the accessible set (visibility gate)", async () => {
+    // Actor is a member of PROJECT_A only; an idea assigned to them in
+    // PROJECT_B must not surface.
+    mockPrisma.projectMember.findMany.mockResolvedValue([{ projectUuid: PROJECT_A }]);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i-a", PROJECT_A, "open"),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+
+    // Only PROJECT_A is queried; PROJECT_B is excluded at the DB layer.
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectUuid: { in: [PROJECT_A] } }),
+      }),
+    );
+    expect(Object.keys(tracker)).toEqual([PROJECT_A]);
+  });
+
+  it("returns empty when the actor has no accessible projects (visibility gate)", async () => {
+    mockPrisma.projectMember.findMany.mockResolvedValue([]);
+    mockPrisma.project.findMany.mockResolvedValue([]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+
+    expect(tracker).toEqual({});
+    // Gate short-circuits before the idea query.
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
   });
 });
 

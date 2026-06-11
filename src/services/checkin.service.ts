@@ -140,6 +140,7 @@ async function buildNotificationSummary(auth: AuthContext): Promise<CheckinRespo
     recipientUuid: auth.actorUuid,
     readFilter: "unread",
     take: 5,
+    auth,
   });
 
   const recent: CheckinNotification[] = list.notifications.map((n) => ({

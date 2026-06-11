@@ -34,6 +34,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
         projectUuid,
         skip: 0,
         take: 5,
+        auth,
       }),
     ]);
 

@@ -36,6 +36,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     archived: false,
     skip: offset,
     take: limit,
+    auth,
   });
 
   return success({

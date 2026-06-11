@@ -19,6 +19,9 @@ const { mockPrisma } = vi.hoisted(() => ({
     project: {
       findMany: vi.fn(),
     },
+    projectMember: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -97,6 +100,13 @@ beforeEach(() => {
   mockPrisma.proposal.findMany.mockResolvedValue([]);
   mockPrisma.task.findMany.mockResolvedValue([]);
   mockPrisma.project.findMany.mockResolvedValue([]);
+  // The agent is a member of both fixture projects, so the idea-tracker
+  // visibility gate (getAccessibleProjectUuids) treats every fixture project as
+  // accessible and existing checkin assertions are unaffected.
+  mockPrisma.projectMember.findMany.mockResolvedValue([
+    { projectUuid: PROJECT_A },
+    { projectUuid: PROJECT_B },
+  ]);
   mockNotificationService.list.mockResolvedValue(emptyNotifications());
   mockNotificationService.markRead.mockResolvedValue({});
   mockNotificationService.emitAgentCheckin.mockReturnValue(undefined);
@@ -384,7 +394,10 @@ describe("buildCheckinResponse — ideaTracker", () => {
     expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.proposal.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.project.findMany).toHaveBeenCalledTimes(1);
+    // project.findMany is now hit twice: once by the visibility gate
+    // (getAccessibleProjectUuids: shared/owned lookup) and once by the
+    // tracker's project-name resolution (Q4).
+    expect(mockPrisma.project.findMany).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -458,6 +471,7 @@ describe("buildCheckinResponse — notifications", () => {
     await buildCheckinResponse(auth);
 
     expect(mockNotificationService.list).toHaveBeenCalledWith({
+      auth,
       companyUuid: COMPANY_UUID,
       recipientType: "agent",
       recipientUuid: AGENT_UUID,

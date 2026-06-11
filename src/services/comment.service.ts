@@ -12,6 +12,7 @@ import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 import { eventBus, type RealtimeEvent } from "@/lib/event-bus";
 import logger from "@/lib/logger";
+import { type AnyAuth, canAccessProject } from "@/lib/authz/project-access";
 
 export interface CommentListParams {
   companyUuid: string;
@@ -19,6 +20,8 @@ export interface CommentListParams {
   targetUuid: string;
   skip: number;
   take: number;
+  /** Auth context used to gate access by the target entity's project. */
+  auth: AnyAuth;
 }
 
 export interface CommentCreateParams {
@@ -28,6 +31,8 @@ export interface CommentCreateParams {
   content: string;
   authorType: "user" | "agent";
   authorUuid: string;
+  /** Auth context used to gate access by the target entity's project. */
+  auth: AnyAuth;
 }
 
 // Comment response format (using UUIDs)
@@ -52,10 +57,21 @@ export async function listComments({
   targetUuid,
   skip,
   take,
+  auth,
 }: CommentListParams): Promise<{ comments: CommentResponse[]; total: number }> {
   // Validate target exists
   const exists = await validateTargetExists(targetType, targetUuid, companyUuid);
   if (!exists) {
+    return { comments: [], total: 0 };
+  }
+
+  // Visibility gate: a non-member of the target's project must not read its
+  // comments. Resolve the target's project and reject when inaccessible —
+  // mirror the not-found style (empty list) used above for a missing target.
+  // An unresolved project ("" ) denies non-super-admins via canAccessProject
+  // while super admins (who bypass the project filter) still pass.
+  const projectUuid = await resolveProjectUuid(targetType, targetUuid, companyUuid);
+  if (!(await canAccessProject(auth, projectUuid ?? ""))) {
     return { comments: [], total: 0 };
   }
 
@@ -112,10 +128,21 @@ export async function createComment({
   content,
   authorType,
   authorUuid,
+  auth,
 }: CommentCreateParams): Promise<CommentResponse> {
   // Validate target exists
   const exists = await validateTargetExists(targetType, targetUuid, companyUuid);
   if (!exists) {
+    throw new Error(`Target ${targetType} with UUID ${targetUuid} not found`);
+  }
+
+  // Visibility gate: a non-member of the target's project must not post a
+  // comment. Resolve the target's project and reject when inaccessible —
+  // reuse the same not-found error style used for a missing target above.
+  // An unresolved project ("") denies non-super-admins via canAccessProject
+  // while super admins (who bypass the project filter) still pass.
+  const targetProjectUuid = await resolveProjectUuid(targetType, targetUuid, companyUuid);
+  if (!(await canAccessProject(auth, targetProjectUuid ?? ""))) {
     throw new Error(`Target ${targetType} with UUID ${targetUuid} not found`);
   }
 
