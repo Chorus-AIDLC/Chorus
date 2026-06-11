@@ -255,7 +255,8 @@ describe("sessionCheckinToTask", () => {
         taskUuid,
         assigneeType: "agent",
         assigneeUuid: agentUuid,
-      })
+      }),
+      expect.anything()
     );
   });
 

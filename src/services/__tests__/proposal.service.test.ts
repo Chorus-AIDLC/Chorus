@@ -19,10 +19,17 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
     proposal: {
       create: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
       count: vi.fn(),
+    },
+    project: {
+      findFirst: vi.fn(),
+    },
+    projectMember: {
+      findUnique: vi.fn(),
     },
     idea: {
       findMany: vi.fn(),
@@ -105,12 +112,18 @@ import {
   toTaskDraftIndex,
 } from "@/services/proposal.service";
 import { makeProposal } from "@/__test-utils__/fixtures";
+import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Helpers =====
 
 const COMPANY_UUID = "00000000-0000-0000-0000-000000000001";
 const PROJECT_UUID = "00000000-0000-0000-0000-000000000010";
 const ACTOR_UUID = "00000000-0000-0000-0000-000000000002";
+
+// Super admin auth bypasses canAccessProject entirely (no prisma calls).
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
+// Regular user auth — gating resolves through prisma.project/projectMember mocks.
+const userAuth: AuthContext = { type: "user", companyUuid: COMPANY_UUID, actorUuid: "user-1" };
 
 /** A minimal valid proposal DB row for mocking findFirst/create returns */
 function dbProposal(overrides: Record<string, unknown> = {}) {
@@ -159,6 +172,8 @@ beforeEach(() => {
   // Default: idea.findMany returns empty array (needed when validateProposal
   // checks E5 for idea-type proposals)
   mockPrisma.idea.findMany.mockResolvedValue([]);
+  // Default: reject/close resolve the proposal's projectUuid via findUnique.
+  mockPrisma.proposal.findUnique.mockResolvedValue({ projectUuid: PROJECT_UUID });
 });
 
 // ====================================================================
@@ -177,7 +192,7 @@ describe("createProposal", () => {
       inputType: "idea",
       inputUuids: ["idea-1"],
       createdByUuid: ACTOR_UUID,
-    });
+    }, adminAuth);
 
     expect(mockPrisma.proposal.create).toHaveBeenCalledOnce();
     expect(result.uuid).toBe(created.uuid);
@@ -200,7 +215,7 @@ describe("createProposal", () => {
       createdByUuid: ACTOR_UUID,
       documentDrafts: [{ type: "prd", title: "PRD", content: "Content" }],
       taskDrafts: [{ title: "Task 1" }],
-    });
+    }, adminAuth);
 
     const callData = mockPrisma.proposal.create.mock.calls[0][0].data;
     expect(callData.documentDrafts[0].uuid).toBeDefined();
@@ -217,7 +232,7 @@ describe("createProposal", () => {
       inputType: "idea",
       inputUuids: [],
       createdByUuid: ACTOR_UUID,
-    });
+    }, adminAuth);
 
     const callData = mockPrisma.proposal.create.mock.calls[0][0].data;
     expect(callData.createdByType).toBe("agent");
@@ -238,7 +253,7 @@ describe("addDocumentDraft", () => {
       type: "tech_design",
       title: "Tech Design",
       content: "Design content",
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.documentDrafts).toHaveLength(2);
@@ -254,7 +269,7 @@ describe("addDocumentDraft", () => {
         type: "prd",
         title: "PRD",
         content: "Content",
-      })
+      }, adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 
@@ -267,7 +282,7 @@ describe("addDocumentDraft", () => {
       type: "prd",
       title: "PRD",
       content: "Content",
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.documentDrafts).toHaveLength(1);
@@ -288,7 +303,7 @@ describe("addTaskDraft", () => {
       title: "Task 2",
       description: "Second task",
       acceptanceCriteriaItems: [{ description: "Works", required: true }],
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts).toHaveLength(2);
@@ -303,7 +318,7 @@ describe("addTaskDraft", () => {
       addTaskDraft("proposal-uuid", COMPANY_UUID, {
         title: "Task",
         acceptanceCriteriaItems: [{ description: "Works" }],
-      })
+      }, adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 
@@ -315,7 +330,7 @@ describe("addTaskDraft", () => {
     await addTaskDraft("proposal-uuid", COMPANY_UUID, {
       title: "Task 1",
       acceptanceCriteriaItems: [{ description: "Works" }],
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts).toHaveLength(1);
@@ -326,7 +341,7 @@ describe("addTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     await expect(
-      addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "No AC" })
+      addTaskDraft("proposal-uuid", COMPANY_UUID, { title: "No AC" }, adminAuth)
     ).rejects.toThrow("acceptance criterion");
     expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
   });
@@ -339,7 +354,7 @@ describe("addTaskDraft", () => {
       addTaskDraft("proposal-uuid", COMPANY_UUID, {
         title: "Blank AC",
         acceptanceCriteriaItems: [{ description: "   " }, { description: "" }],
-      })
+      }, adminAuth)
     ).rejects.toThrow("acceptance criterion");
     expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
   });
@@ -355,7 +370,7 @@ describe("addTaskDraft", () => {
         { description: "  kept  " },
         { description: "   " },
       ],
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts[0].acceptanceCriteriaItems).toEqual([
@@ -378,7 +393,7 @@ describe("updateDocumentDraft", () => {
     await updateDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", {
       title: "Updated PRD",
       content: "New content",
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.documentDrafts[0].title).toBe("Updated PRD");
@@ -390,7 +405,7 @@ describe("updateDocumentDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     await expect(
-      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" })
+      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" }, adminAuth)
     ).rejects.toThrow("Document draft not found");
   });
 
@@ -398,7 +413,7 @@ describe("updateDocumentDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", { title: "X" })
+      updateDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", { title: "X" }, adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 });
@@ -417,7 +432,7 @@ describe("updateTaskDraft", () => {
     await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", {
       title: "Updated Task",
       priority: "high",
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts[0].title).toBe("Updated Task");
@@ -429,7 +444,7 @@ describe("updateTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     await expect(
-      updateTaskDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" })
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "nonexistent", { title: "X" }, adminAuth)
     ).rejects.toThrow("Task draft not found");
   });
 
@@ -437,7 +452,7 @@ describe("updateTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "X" })
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "X" }, adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 
@@ -447,7 +462,7 @@ describe("updateTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "Renamed" });
+    await updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { title: "Renamed" }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts[0].title).toBe("Renamed");
@@ -465,7 +480,7 @@ describe("updateTaskDraft", () => {
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
     await expect(
-      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { acceptanceCriteriaItems: [] })
+      updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", { acceptanceCriteriaItems: [] }, adminAuth)
     ).rejects.toThrow("acceptance criterion");
     expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
   });
@@ -478,7 +493,7 @@ describe("updateTaskDraft", () => {
     await expect(
       updateTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", {
         acceptanceCriteriaItems: [{ description: "  " }],
-      })
+      }, adminAuth)
     ).rejects.toThrow("acceptance criterion");
     expect(mockPrisma.proposal.update).not.toHaveBeenCalled();
   });
@@ -494,7 +509,7 @@ describe("updateTaskDraft", () => {
         { description: "  new one  ", required: false },
         { description: "   " },
       ],
-    });
+    }, adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts[0].acceptanceCriteriaItems).toEqual([
@@ -517,7 +532,7 @@ describe("removeDocumentDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1");
+    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.documentDrafts).toHaveLength(1);
@@ -529,7 +544,7 @@ describe("removeDocumentDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1");
+    await removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.documentDrafts).toBe("DbNull"); // Prisma.JsonNull
@@ -539,7 +554,7 @@ describe("removeDocumentDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1")
+      removeDocumentDraft("proposal-uuid", COMPANY_UUID, "dd-1", adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 });
@@ -558,7 +573,7 @@ describe("removeTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts).toHaveLength(1);
@@ -570,7 +585,7 @@ describe("removeTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     expect(updateCall.data.taskDrafts).toBe("DbNull");
@@ -586,7 +601,7 @@ describe("removeTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue(proposal);
 
-    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1");
+    await removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", adminAuth);
 
     const updateCall = mockPrisma.proposal.update.mock.calls[0][0];
     const remaining = updateCall.data.taskDrafts;
@@ -601,7 +616,7 @@ describe("removeTaskDraft", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1")
+      removeTaskDraft("proposal-uuid", COMPANY_UUID, "td-1", adminAuth)
     ).rejects.toThrow("Proposal not found or not in draft status");
   });
 });
@@ -615,7 +630,7 @@ describe("validateProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      validateProposal(COMPANY_UUID, "nonexistent")
+      validateProposal(COMPANY_UUID, "nonexistent", adminAuth)
     ).rejects.toThrow("Proposal not found");
   });
 
@@ -628,7 +643,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e1 = result.issues.find((i) => i.id === "E1");
     expect(e1).toBeDefined();
     expect(e1!.level).toBe("error");
@@ -644,7 +659,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e1 = result.issues.find((i) => i.id === "E1");
     expect(e1).toBeUndefined();
   });
@@ -658,7 +673,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e2 = result.issues.find((i) => i.id === "E2");
     expect(e2).toBeDefined();
     expect(e2!.level).toBe("error");
@@ -673,7 +688,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     expect(result.issues.some((i) => i.id === "E2")).toBe(true);
   });
 
@@ -686,7 +701,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e3 = result.issues.find((i) => i.id === "E3");
     expect(e3).toBeDefined();
     expect(e3!.level).toBe("error");
@@ -701,7 +716,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e4 = result.issues.find((i) => i.id === "E4");
     expect(e4).toBeDefined();
     expect(e4!.level).toBe("error");
@@ -720,7 +735,7 @@ describe("validateProposal", () => {
       { uuid: "idea-1", title: "My Idea", elaborationStatus: "pending" },
     ]);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e5 = result.issues.find((i) => i.id === "E5");
     expect(e5).toBeDefined();
     expect(e5!.level).toBe("error");
@@ -740,7 +755,7 @@ describe("validateProposal", () => {
       { uuid: "idea-1", title: "My Idea", elaborationStatus: "resolved" },
     ]);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e5 = result.issues.find((i) => i.id === "E5");
     expect(e5).toBeUndefined();
   });
@@ -755,7 +770,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
     const e5 = result.issues.find((i) => i.id === "E5");
     expect(e5).toBeUndefined();
@@ -777,7 +792,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const eac = result.issues.find((i) => i.id === "E-AC");
     expect(eac).toBeDefined();
     expect(eac!.level).toBe("error");
@@ -798,7 +813,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const eac = result.issues.find((i) => i.id === "E-AC");
     expect(eac).toBeUndefined();
   });
@@ -817,7 +832,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const eac = result.issues.find((i) => i.id === "E-AC");
     expect(eac).toBeDefined();
     expect(eac!.level).toBe("error");
@@ -832,7 +847,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w1 = result.issues.find((i) => i.id === "W1");
     expect(w1).toBeDefined();
     expect(w1!.level).toBe("warning");
@@ -850,7 +865,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w1 = result.issues.find((i) => i.id === "W1");
     expect(w1).toBeUndefined();
   });
@@ -864,7 +879,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w2 = result.issues.find((i) => i.id === "W2");
     expect(w2).toBeDefined();
     expect(w2!.level).toBe("warning");
@@ -879,7 +894,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w2 = result.issues.find((i) => i.id === "W2");
     expect(w2).toBeDefined();
   });
@@ -896,7 +911,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w4 = result.issues.find((i) => i.id === "W4");
     expect(w4).toBeDefined();
     expect(w4!.level).toBe("warning");
@@ -914,7 +929,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w4 = result.issues.find((i) => i.id === "W4");
     expect(w4).toBeUndefined();
   });
@@ -928,7 +943,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w4 = result.issues.find((i) => i.id === "W4");
     expect(w4).toBeUndefined();
   });
@@ -942,7 +957,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w5 = result.issues.find((i) => i.id === "W5");
     expect(w5).toBeDefined();
     expect(w5!.level).toBe("warning");
@@ -957,7 +972,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const w5 = result.issues.find((i) => i.id === "W5");
     expect(w5).toBeDefined();
   });
@@ -971,7 +986,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const i1 = result.issues.find((i) => i.id === "I1");
     expect(i1).toBeDefined();
     expect(i1!.level).toBe("info");
@@ -986,7 +1001,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const i2 = result.issues.find((i) => i.id === "I2");
     expect(i2).toBeDefined();
     expect(i2!.level).toBe("info");
@@ -1003,7 +1018,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     // Has W1, W2, W5, I1, I2 but no errors
     expect(result.valid).toBe(true);
     expect(result.issues.length).toBeGreaterThan(0);
@@ -1019,7 +1034,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     expect(result.valid).toBe(false);
     expect(result.issues.some((i) => i.level === "error")).toBe(true);
   });
@@ -1036,7 +1051,7 @@ describe("validateProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await validateProposal(COMPANY_UUID, proposal.uuid);
+    const result = await validateProposal(COMPANY_UUID, proposal.uuid, adminAuth);
     const e2Issues = result.issues.filter((i) => i.id === "E2");
     expect(e2Issues).toHaveLength(2);
   });
@@ -1051,7 +1066,7 @@ describe("submitProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      submitProposal("nonexistent", COMPANY_UUID)
+      submitProposal("nonexistent", COMPANY_UUID, adminAuth)
     ).rejects.toThrow("Proposal not found");
   });
 
@@ -1060,7 +1075,7 @@ describe("submitProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     await expect(
-      submitProposal(proposal.uuid, COMPANY_UUID)
+      submitProposal(proposal.uuid, COMPANY_UUID, adminAuth)
     ).rejects.toThrow("Only draft proposals can be submitted for review");
   });
 
@@ -1075,7 +1090,7 @@ describe("submitProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     await expect(
-      submitProposal(proposal.uuid, COMPANY_UUID)
+      submitProposal(proposal.uuid, COMPANY_UUID, adminAuth)
     ).rejects.toThrow("Proposal validation failed");
   });
 
@@ -1096,7 +1111,7 @@ describe("submitProposal", () => {
     mockPrisma.proposal.update.mockResolvedValue(updatedProposal);
     mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await submitProposal(proposal.uuid, COMPANY_UUID);
+    const result = await submitProposal(proposal.uuid, COMPANY_UUID, adminAuth);
 
     expect(mockPrisma.proposal.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1123,7 +1138,7 @@ describe("submitProposal", () => {
     ]);
     mockPrisma.proposal.update.mockResolvedValue(dbProposal({ ...proposal, status: "pending" }));
 
-    await submitProposal(proposal.uuid, COMPANY_UUID);
+    await submitProposal(proposal.uuid, COMPANY_UUID, adminAuth);
 
     // Should NOT call idea.updateMany — idea status is no longer changed on proposal submit
     expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
@@ -1139,7 +1154,7 @@ describe("approveProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      approveProposal("nonexistent", COMPANY_UUID, "reviewer-uuid")
+      approveProposal("nonexistent", COMPANY_UUID, "reviewer-uuid", undefined, adminAuth)
     ).rejects.toThrow("Proposal not found");
   });
 
@@ -1164,7 +1179,7 @@ describe("approveProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    const result = await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", "Looks good");
+    const result = await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", "Looks good", adminAuth);
 
     expect(txMock.document.createManyAndReturn).toHaveBeenCalledOnce();
     expect(result.status).toBe("approved");
@@ -1199,7 +1214,7 @@ describe("approveProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", undefined, adminAuth);
 
     expect(txMock.task.createManyAndReturn).toHaveBeenCalledOnce();
     expect(txMock.taskDependency.createMany).toHaveBeenCalledWith({
@@ -1235,7 +1250,7 @@ describe("approveProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", undefined, adminAuth);
 
     expect(txMock.acceptanceCriterion.createMany).toHaveBeenCalledWith({
       data: [
@@ -1273,7 +1288,7 @@ describe("approveProposal", () => {
     });
 
     await expect(
-      approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid")
+      approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", undefined, adminAuth)
     ).rejects.toThrow("no non-empty description");
   });
 
@@ -1299,7 +1314,7 @@ describe("approveProposal", () => {
       return cb(tx);
     });
 
-    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid");
+    await approveProposal(proposal.uuid, COMPANY_UUID, "reviewer-uuid", undefined, adminAuth);
 
     // Ideas should NOT be auto-completed — derived status is computed from task progress
     expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
@@ -1320,7 +1335,7 @@ describe("rejectProposal", () => {
     });
     mockPrisma.proposal.update.mockResolvedValue(updated);
 
-    const result = await rejectProposal("proposal-uuid", "reviewer-uuid", "Needs work");
+    const result = await rejectProposal("proposal-uuid", "reviewer-uuid", "Needs work", adminAuth);
 
     expect(mockPrisma.proposal.update).toHaveBeenCalledWith({
       where: { uuid: "proposal-uuid" },
@@ -1352,7 +1367,7 @@ describe("closeProposal", () => {
     });
     mockPrisma.proposal.update.mockResolvedValue(updated);
 
-    const result = await closeProposal("proposal-uuid", "admin-uuid", "No longer needed");
+    const result = await closeProposal("proposal-uuid", "admin-uuid", "No longer needed", adminAuth);
 
     expect(mockPrisma.proposal.update).toHaveBeenCalledWith({
       where: { uuid: "proposal-uuid" },
@@ -1397,7 +1412,7 @@ describe("revokeProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoking due to scope change");
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoking due to scope change", adminAuth);
 
     expect(result.proposalUuid).toBe(proposal.uuid);
     expect(result.closedTasks).toEqual([
@@ -1435,7 +1450,7 @@ describe("revokeProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
     await expect(
-      revokeProposal("nonexistent", COMPANY_UUID, ACTOR_UUID, "Revoke")
+      revokeProposal("nonexistent", COMPANY_UUID, ACTOR_UUID, "Revoke", adminAuth)
     ).rejects.toThrow("Proposal not found");
   });
 
@@ -1444,14 +1459,14 @@ describe("revokeProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(draftProposal);
 
     await expect(
-      revokeProposal(draftProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke")
+      revokeProposal(draftProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke", adminAuth)
     ).rejects.toThrow("Only approved proposals can be revoked");
 
     const pendingProposal = dbProposal({ status: "pending" });
     mockPrisma.proposal.findFirst.mockResolvedValue(pendingProposal);
 
     await expect(
-      revokeProposal(pendingProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke")
+      revokeProposal(pendingProposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke", adminAuth)
     ).rejects.toThrow("Only approved proposals can be revoked");
   });
 
@@ -1477,7 +1492,7 @@ describe("revokeProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke note");
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke note", adminAuth);
 
     // Verify return value shape
     expect(result.closedTasks).toHaveLength(1);
@@ -1504,7 +1519,7 @@ describe("revokeProposal", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
-    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke empty");
+    const result = await revokeProposal(proposal.uuid, COMPANY_UUID, ACTOR_UUID, "Revoke empty", adminAuth);
 
     expect(result.proposalUuid).toBe(proposal.uuid);
     expect(result.closedTasks).toEqual([]);
@@ -1540,7 +1555,7 @@ describe("deleteProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.delete.mockResolvedValue(proposal);
 
-    await deleteProposal("proposal-uuid", COMPANY_UUID);
+    await deleteProposal("proposal-uuid", COMPANY_UUID, adminAuth);
 
     expect(mockPrisma.proposal.findFirst).toHaveBeenCalledWith({
       where: { uuid: "proposal-uuid", companyUuid: COMPANY_UUID },
@@ -1559,7 +1574,7 @@ describe("deleteProposal", () => {
       mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
       mockPrisma.proposal.delete.mockResolvedValue(proposal);
 
-      await deleteProposal("proposal-uuid", COMPANY_UUID);
+      await deleteProposal("proposal-uuid", COMPANY_UUID, adminAuth);
 
       expect(mockPrisma.proposal.delete).toHaveBeenCalledWith({
         where: { uuid: "proposal-uuid" },
@@ -1570,7 +1585,7 @@ describe("deleteProposal", () => {
   it("should throw when proposal not found", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
-    await expect(deleteProposal("nonexistent", COMPANY_UUID)).rejects.toThrow("Proposal not found");
+    await expect(deleteProposal("nonexistent", COMPANY_UUID, adminAuth)).rejects.toThrow("Proposal not found");
   });
 });
 
@@ -1591,6 +1606,7 @@ describe("listProposals", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     expect(result.proposals).toHaveLength(2);
@@ -1616,6 +1632,7 @@ describe("listProposals", () => {
       skip: 0,
       take: 20,
       status: "pending",
+      auth: adminAuth,
     });
 
     expect(mockPrisma.proposal.findMany).toHaveBeenCalledWith(
@@ -1637,7 +1654,7 @@ describe("getProposal", () => {
     });
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
-    const result = await getProposal(COMPANY_UUID, "proposal-uuid");
+    const result = await getProposal(COMPANY_UUID, "proposal-uuid", adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.uuid).toBe(proposal.uuid);
@@ -1651,7 +1668,7 @@ describe("getProposal", () => {
   it("should return null when proposal not found", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
 
-    const result = await getProposal(COMPANY_UUID, "nonexistent");
+    const result = await getProposal(COMPANY_UUID, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 });
@@ -1686,6 +1703,12 @@ describe("getProposalByUuid", () => {
 // ====================================================================
 
 describe("updateProposalContent", () => {
+  beforeEach(() => {
+    // updateProposalContent resolves the proposal's project (findFirst) before
+    // updating, to gate by visibility. Provide a project for the access check.
+    mockPrisma.proposal.findFirst.mockResolvedValue(dbProposal({ projectUuid: PROJECT_UUID }));
+  });
+
   it("should update title and description", async () => {
     const updated = dbProposal({
       title: "Updated Title",
@@ -1697,7 +1720,7 @@ describe("updateProposalContent", () => {
     const result = await updateProposalContent("proposal-uuid", COMPANY_UUID, {
       title: "Updated Title",
       description: "Updated Description",
-    });
+    }, adminAuth);
 
     expect(result.title).toBe("Updated Title");
     expect(result.description).toBe("Updated Description");
@@ -1721,7 +1744,7 @@ describe("updateProposalContent", () => {
 
     const result = await updateProposalContent("proposal-uuid", COMPANY_UUID, {
       documentDrafts: newDrafts,
-    });
+    }, adminAuth);
 
     expect(result.documentDrafts).toEqual(newDrafts);
     expect(mockPrisma.proposal.update).toHaveBeenCalledWith(
@@ -1743,7 +1766,7 @@ describe("updateProposalContent", () => {
 
     const result = await updateProposalContent("proposal-uuid", COMPANY_UUID, {
       taskDrafts: newTasks,
-    });
+    }, adminAuth);
 
     expect(result.taskDrafts).toEqual(newTasks);
   });
@@ -1759,7 +1782,7 @@ describe("updateProposalContent", () => {
     const result = await updateProposalContent("proposal-uuid", COMPANY_UUID, {
       documentDrafts: null,
       taskDrafts: null,
-    });
+    }, adminAuth);
 
     expect(result.documentDrafts).toBeNull();
     expect(result.taskDrafts).toBeNull();
@@ -1782,7 +1805,7 @@ describe("updateProposalContent", () => {
 
     await updateProposalContent("proposal-uuid", COMPANY_UUID, {
       title: "New Title",
-    });
+    }, adminAuth);
 
     expect(mockPrisma.proposal.update).toHaveBeenCalledWith({
       where: { uuid: "proposal-uuid", companyUuid: COMPANY_UUID },
@@ -1949,7 +1972,7 @@ describe("approveProposal - edge cases", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (callback) => callback(txMock));
 
-    await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved");
+    await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved", adminAuth);
 
     // No dependencies, so taskDependency.createMany should not be called
     expect(txMock.taskDependency.createMany).not.toHaveBeenCalled();
@@ -1976,7 +1999,7 @@ describe("approveProposal - edge cases", () => {
     };
     mockPrisma.$transaction.mockImplementation(async (callback) => callback(txMock));
 
-    await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved");
+    await approveProposal("proposal-uuid", COMPANY_UUID, "reviewer-uuid", "Approved", adminAuth);
 
     // No AC items, so acceptanceCriterion.createMany should not be called
     expect(txMock.acceptanceCriterion.createMany).not.toHaveBeenCalled();
@@ -2002,7 +2025,7 @@ describe("getProjectProposals", () => {
       { proposalUuid: "p2", _count: 1 },
     ]);
 
-    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ uuid: "p1", title: "Proposal 1", sequenceNumber: 1, taskCount: 3 });
@@ -2022,7 +2045,7 @@ describe("getProjectProposals", () => {
     ]);
     mockPrisma.task.groupBy.mockResolvedValue([]);
 
-    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result).toHaveLength(1);
     expect(result[0].taskCount).toBe(0);
@@ -2032,7 +2055,7 @@ describe("getProjectProposals", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.groupBy.mockResolvedValue([]);
 
-    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID);
+    const result = await getProjectProposals(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result).toHaveLength(0);
   });
@@ -2079,7 +2102,7 @@ describe("Idea reuse - submitProposal with proposal_created Idea", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
     mockPrisma.proposal.update.mockResolvedValue({ ...proposal, status: "pending" });
 
-    const result = await submitProposal("proposal-reuse", COMPANY_UUID);
+    const result = await submitProposal("proposal-reuse", COMPANY_UUID, adminAuth);
 
     expect(result.status).toBe("pending");
     // Idea status is no longer changed on proposal submit — derived status handles lifecycle
@@ -2128,7 +2151,7 @@ describe("Idea reuse - approveProposal with completed Idea", () => {
       return callback(txMock);
     });
 
-    await approveProposal("proposal-reuse-2", COMPANY_UUID, "reviewer-uuid", "Approved");
+    await approveProposal("proposal-reuse-2", COMPANY_UUID, "reviewer-uuid", "Approved", adminAuth);
 
     // Ideas should NOT be auto-completed — derived status computed from task progress
     expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
@@ -2233,19 +2256,19 @@ describe("getProposalSection", () => {
 
   it("returns null when the proposal does not exist", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(null);
-    const result = await getProposalSection(COMPANY_UUID, "missing", "basic");
+    const result = await getProposalSection(COMPANY_UUID, "missing", "basic", adminAuth);
     expect(result).toBeNull();
   });
 
   it("issues a single DB read (reuses getProposal, no second query)", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    await getProposalSection(COMPANY_UUID, "prop-section", "basic", adminAuth);
     expect(mockPrisma.proposal.findFirst).toHaveBeenCalledOnce();
   });
 
   it("section='basic' returns metadata + lightweight indexes, no heavy bodies", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic", adminAuth);
     expect(result).not.toBeNull();
     if (result?.section !== "basic") throw new Error("expected basic section");
 
@@ -2271,13 +2294,13 @@ describe("getProposalSection", () => {
 
   it("defaults to the basic view when called with 'basic' (the omitted-param default)", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "basic", adminAuth);
     expect(result?.section).toBe("basic");
   });
 
   it("section='documents' returns full document drafts and omits full task drafts", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const result = await getProposalSection(COMPANY_UUID, "prop-section", "documents");
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "documents", adminAuth);
     if (result?.section !== "documents") throw new Error("expected documents section");
     expect(result.documentDrafts).toHaveLength(2);
     expect(result.documentDrafts?.[0].content).toBe("P".repeat(300));
@@ -2286,7 +2309,7 @@ describe("getProposalSection", () => {
 
   it("section='tasks' returns full task drafts and omits full document drafts", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const result = await getProposalSection(COMPANY_UUID, "prop-section", "tasks");
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "tasks", adminAuth);
     if (result?.section !== "tasks") throw new Error("expected tasks section");
     expect(result.taskDrafts).toHaveLength(2);
     expect(result.taskDrafts?.[0].description).toContain("Implement service");
@@ -2295,7 +2318,7 @@ describe("getProposalSection", () => {
 
   it("section='full' returns the complete payload with both draft arrays", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const result = await getProposalSection(COMPANY_UUID, "prop-section", "full");
+    const result = await getProposalSection(COMPANY_UUID, "prop-section", "full", adminAuth);
     if (result?.section !== "full") throw new Error("expected full section");
     expect(result.documentDrafts).toHaveLength(2);
     expect(result.taskDrafts).toHaveLength(2);
@@ -2304,9 +2327,9 @@ describe("getProposalSection", () => {
 
   it("the basic view serializes smaller than the full view for the same proposal", async () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const basic = await getProposalSection(COMPANY_UUID, "prop-section", "basic");
+    const basic = await getProposalSection(COMPANY_UUID, "prop-section", "basic", adminAuth);
     mockPrisma.proposal.findFirst.mockResolvedValue(richProposalRow());
-    const full = await getProposalSection(COMPANY_UUID, "prop-section", "full");
+    const full = await getProposalSection(COMPANY_UUID, "prop-section", "full", adminAuth);
     expect(JSON.stringify(basic).length).toBeLessThan(JSON.stringify(full).length);
   });
 
@@ -2314,11 +2337,62 @@ describe("getProposalSection", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(
       dbProposal({ uuid: "prop-empty", documentDrafts: null, taskDrafts: null })
     );
-    const result = await getProposalSection(COMPANY_UUID, "prop-empty", "basic");
+    const result = await getProposalSection(COMPANY_UUID, "prop-empty", "basic", adminAuth);
     if (result?.section !== "basic") throw new Error("expected basic section");
     expect(result.documentDraftCount).toBe(0);
     expect(result.taskDraftCount).toBe(0);
     expect(result.documentDraftIndex).toEqual([]);
     expect(result.taskDraftIndex).toEqual([]);
+  });
+});
+
+// ====================================================================
+// Project-visibility access gating
+// ====================================================================
+
+describe("access gating", () => {
+  /** Make canAccessProject(userAuth, ...) return false: private project the user
+   *  neither owns nor is a member of. */
+  function denyAccess() {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+  }
+
+  it("listProposals returns empty for a non-member (no proposal query)", async () => {
+    denyAccess();
+
+    const result = await listProposals({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+      auth: userAuth,
+    });
+
+    expect(result).toEqual({ proposals: [], total: 0 });
+    expect(mockPrisma.proposal.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getProposal returns null for a non-member", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(dbProposal({ projectUuid: PROJECT_UUID }));
+    denyAccess();
+
+    const result = await getProposal(COMPANY_UUID, "proposal-uuid", userAuth);
+
+    expect(result).toBeNull();
+  });
+
+  it("deleteProposal rejects a non-member (no delete)", async () => {
+    mockPrisma.proposal.findFirst.mockResolvedValue(dbProposal({ projectUuid: PROJECT_UUID }));
+    denyAccess();
+
+    await expect(
+      deleteProposal("proposal-uuid", COMPANY_UUID, userAuth)
+    ).rejects.toThrow("Proposal not found");
+    expect(mockPrisma.proposal.delete).not.toHaveBeenCalled();
   });
 });

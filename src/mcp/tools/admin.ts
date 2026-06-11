@@ -74,7 +74,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         proposalUuid,
         auth.companyUuid,
         auth.actorUuid,  // Admin Agent as reviewer
-        reviewNote || null
+        reviewNote || null,
+        auth
       );
 
       await activityService.createActivity({
@@ -124,7 +125,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       const updated = await proposalService.closeProposal(
         proposalUuid,
         auth.actorUuid,
-        reviewNote
+        reviewNote,
+        auth
       );
 
       await activityService.createActivity({
@@ -172,7 +174,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: `Cannot verify task: ${gate.reason}` }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "done" });
+      const updated = await taskService.updateTask(task.uuid, { status: "done" }, auth);
 
       await activityService.createActivity({
         companyUuid: auth.companyUuid,
@@ -231,7 +233,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "in_progress" });
+      const updated = await taskService.updateTask(task.uuid, { status: "in_progress" }, auth);
 
       // Log force_status_change activity when force is used
       if (force === true) {
@@ -286,6 +288,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         taskUuid,
         criteria,
         { type: auth.type, actorUuid: auth.actorUuid },
+        auth,
       );
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
@@ -313,7 +316,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Task is already in closed status" }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "closed" });
+      const updated = await taskService.updateTask(task.uuid, { status: "closed" }, auth);
 
       await activityService.createActivity({
         companyUuid: auth.companyUuid,
@@ -349,7 +352,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }
 
-      await ideaService.deleteIdea(ideaUuid);
+      await ideaService.deleteIdea(ideaUuid, auth);
 
       return {
         content: [{ type: "text", text: `Idea ${ideaUuid} deleted` }],
@@ -375,7 +378,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
 
-      await taskService.deleteTask(taskUuid);
+      await taskService.deleteTask(taskUuid, auth);
 
       return {
         content: [{ type: "text", text: `Task ${taskUuid} deleted` }],
@@ -396,12 +399,12 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ documentUuid }) => {
-      const doc = await documentService.getDocument(auth.companyUuid, documentUuid);
+      const doc = await documentService.getDocument(auth.companyUuid, documentUuid, auth);
       if (!doc) {
         return { content: [{ type: "text", text: "Document not found" }], isError: true };
       }
 
-      await documentService.deleteDocument(documentUuid);
+      await documentService.deleteDocument(documentUuid, auth);
 
       return {
         content: [{ type: "text", text: `Document ${documentUuid} deleted` }],

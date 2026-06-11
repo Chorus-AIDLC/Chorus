@@ -43,6 +43,7 @@ export default async function DocumentsPage({ params, searchParams }: PageProps)
     projectUuid,
     skip: 0,
     take: 1000,
+    auth,
   });
 
   // Calculate count per type

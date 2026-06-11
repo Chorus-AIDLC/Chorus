@@ -73,7 +73,7 @@ export async function createProposalAction(
       taskDrafts: data.taskDrafts,
       createdByUuid: auth.actorUuid,
       createdByType: "user",
-    });
+    }, auth);
 
     revalidatePath(`/projects/${projectUuid}/proposals`);
 
@@ -99,6 +99,7 @@ export async function fetchProposalsAction(projectUuid: string) {
       projectUuid,
       skip: 0,
       take: 1000,
+      auth,
     });
     return { success: true as const, data: proposals };
   } catch (error) {

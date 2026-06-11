@@ -53,7 +53,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const updated = await closeProposal(
       proposal.uuid,
       auth.actorUuid,
-      body.reviewNote.trim()
+      body.reviewNote.trim(),
+      auth
     );
 
     return success(updated);

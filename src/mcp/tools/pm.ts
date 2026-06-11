@@ -44,7 +44,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           companyUuid: auth.companyUuid,
           assigneeType: "agent",
           assigneeUuid: auth.actorUuid,
-        });
+        }, auth);
 
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
@@ -97,7 +97,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }
 
       try {
-        const updated = await ideaService.releaseIdea(idea.uuid);
+        const updated = await ideaService.releaseIdea(idea.uuid, auth);
 
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
@@ -178,7 +178,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         inputUuids,
         createdByUuid: auth.actorUuid,
         createdByType: "agent",
-      });
+      }, auth);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: proposal.uuid, title: proposal.title, status: proposal.status }, null, 2) + reusedWarning }],
@@ -202,7 +202,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       try {
         const result = await proposalService.validateProposal(
           auth.companyUuid,
-          proposalUuid
+          proposalUuid,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -232,7 +233,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       try {
         const proposal = await proposalService.submitProposal(
           proposalUuid,
-          auth.companyUuid
+          auth.companyUuid,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ uuid: proposal.uuid, status: proposal.status }, null, 2) }],
@@ -284,7 +286,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         content: content || null,
         proposalUuid: proposalUuid || null,
         createdByUuid: auth.actorUuid,
-      });
+      }, auth);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: document.uuid, title: document.title, type: document.type }, null, 2) }],
@@ -307,7 +309,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ documentUuid, title, content }) => {
-      const doc = await documentService.getDocument(auth.companyUuid, documentUuid);
+      const doc = await documentService.getDocument(auth.companyUuid, documentUuid, auth);
       if (!doc) {
         return { content: [{ type: "text", text: "Document not found" }], isError: true };
       }
@@ -316,7 +318,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         title,
         content,
         incrementVersion: true,
-      });
+      }, auth);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, version: updated.version }, null, 2) }],
@@ -346,7 +348,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.addDocumentDraft(
           proposalUuid,
           auth.companyUuid,
-          { type, title, content }
+          { type, title, content },
+          auth
         );
         const documentDrafts = proposal.documentDrafts as Array<{ uuid: string; title: string }> | null;
         const newDraft = documentDrafts?.[documentDrafts.length - 1];
@@ -388,7 +391,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.addTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }
+          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids },
+          auth
         );
         const taskDrafts = proposal.taskDrafts as Array<{ uuid: string; title: string }> | null;
         const newDraft = taskDrafts?.[taskDrafts.length - 1];
@@ -431,7 +435,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           proposalUuid,
           auth.companyUuid,
           draftUuid,
-          updates
+          updates,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "document_draft_updated" }, null, 2) }],
@@ -481,7 +486,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           proposalUuid,
           auth.companyUuid,
           draftUuid,
-          updates
+          updates,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "task_draft_updated" }, null, 2) }],
@@ -513,7 +519,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.removeDocumentDraft(
           proposalUuid,
           auth.companyUuid,
-          draftUuid
+          draftUuid,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "document_draft_removed" }, null, 2) }],
@@ -545,7 +552,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.removeTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          draftUuid
+          draftUuid,
+          auth
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "task_draft_removed" }, null, 2) }],
@@ -614,7 +622,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           assigneeType: "agent",
           assigneeUuid: agentUuid,
           assignedByUuid: auth.actorUuid,
-        });
+        }, auth);
 
         // Log activity
         await activityService.createActivity({
@@ -629,7 +637,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         });
 
         // Fetch full task details with dependencies
-        const fullTask = await taskService.getTask(auth.companyUuid, task.uuid);
+        const fullTask = await taskService.getTask(auth.companyUuid, task.uuid, auth);
 
         // Build compact response with only essential fields
         const compact: Record<string, unknown> = {
@@ -823,7 +831,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           ideaUuid,
           targetProjectUuid,
           auth.actorUuid,
-          auth.type
+          auth.type,
+          auth
         );
 
         // Surface both the updated idea identity and the cascade counts so
@@ -876,7 +885,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       const updated = await proposalService.rejectProposal(
         proposalUuid,
         auth.actorUuid,
-        reviewNote
+        reviewNote,
+        auth
       );
 
       await activityService.createActivity({
@@ -927,7 +937,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         proposal.uuid,
         auth.companyUuid,
         auth.actorUuid,
-        reviewNote
+        reviewNote,
+        auth
       );
 
       await activityService.createActivity({
@@ -982,7 +993,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         title,
         content: content || null,
         createdByUuid: auth.actorUuid,
-      });
+      }, auth);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: idea.uuid, title: idea.title }) }],

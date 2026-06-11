@@ -34,7 +34,8 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       uuid,
       body.targetProjectUuid,
       auth.actorUuid,
-      auth.type
+      auth.type,
+      auth
     );
 
     return success(updated);

@@ -52,7 +52,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.badRequest("Idea is already in the target project");
     }
 
-    const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
+    const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid, auth);
     return success({ moved: result.moved });
   }
 );

@@ -27,7 +27,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const idea = await getIdea(auth.companyUuid, uuid);
+    const idea = await getIdea(auth.companyUuid, uuid, auth);
 
     if (!idea) {
       return errors.notFound("Idea");
@@ -98,7 +98,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       updateData.status = body.status;
     }
 
-    const updated = await updateIdea(idea.uuid, auth.companyUuid, updateData);
+    const updated = await updateIdea(idea.uuid, auth.companyUuid, updateData, auth);
     return success(updated);
   }
 );
@@ -123,7 +123,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Idea");
     }
 
-    await deleteIdea(idea.uuid);
+    await deleteIdea(idea.uuid, auth);
     return success({ deleted: true });
   }
 );

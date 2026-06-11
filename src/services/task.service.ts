@@ -16,6 +16,10 @@ import {
   normalizeAcceptanceCriteria,
   type AcceptanceCriteriaItemInput,
 } from "@/lib/acceptance-criteria";
+import {
+  type AnyAuth,
+  canAccessProject,
+} from "@/lib/authz/project-access";
 
 // ===== Type Definitions =====
 
@@ -27,6 +31,8 @@ export interface TaskListParams {
   status?: string;
   priority?: string;
   proposalUuids?: string[];
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface TaskCreateParams {
@@ -410,7 +416,13 @@ export async function listTasks({
   status,
   priority,
   proposalUuids,
+  auth,
 }: TaskListParams): Promise<{ tasks: TaskResponse[]; total: number }> {
+  // Visibility gate: a non-member of this project sees nothing.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { tasks: [], total: 0 };
+  }
+
   const where = {
     projectUuid,
     companyUuid,
@@ -462,7 +474,8 @@ export async function listTasks({
 // Get Task details
 export async function getTask(
   companyUuid: string,
-  uuid: string
+  uuid: string,
+  auth: AnyAuth
 ): Promise<TaskResponse | null> {
   const task = await prisma.task.findFirst({
     where: { uuid, companyUuid },
@@ -473,6 +486,8 @@ export async function getTask(
   });
 
   if (!task) return null;
+  // Visibility gate: hide tasks in projects the actor cannot access.
+  if (!(await canAccessProject(auth, task.projectUuid))) return null;
 
   const commentCount = await prisma.comment.count({
     where: { companyUuid, targetType: "task", targetUuid: uuid },
@@ -489,7 +504,12 @@ export async function getTaskByUuid(companyUuid: string, uuid: string) {
 }
 
 // Create Task
-export async function createTask(params: TaskCreateParams): Promise<TaskResponse> {
+export async function createTask(params: TaskCreateParams, auth: AnyAuth): Promise<TaskResponse> {
+  // Visibility gate: cannot create a task in an inaccessible project.
+  if (!(await canAccessProject(auth, params.projectUuid))) {
+    throw new Error("Project not found");
+  }
+
   const task = await prisma.task.create({
     data: {
       companyUuid: params.companyUuid,
@@ -531,8 +551,14 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
 export async function updateTask(
   uuid: string,
   data: TaskUpdateParams,
+  auth: AnyAuth,
   actorContext?: { actorType: string; actorUuid: string }
 ): Promise<TaskResponse> {
+  // Visibility gate: resolve the task's project and reject non-members.
+  const target = await prisma.task.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Task not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Task not found");
+
   // If description is being updated and we have actor context, capture old description for mention diffing
   let oldDescription: string | null = null;
   if (data.description !== undefined && actorContext) {
@@ -600,7 +626,12 @@ export async function claimTask({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
-}: TaskClaimParams): Promise<TaskResponse> {
+}: TaskClaimParams, auth: AnyAuth): Promise<TaskResponse> {
+  // Visibility gate: resolve the task's project and reject non-members.
+  const target = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid }, select: { projectUuid: true } });
+  if (!target) throw new AlreadyClaimedError("Task");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new AlreadyClaimedError("Task");
+
   try {
     const task = await prisma.task.update({
       where: { uuid: taskUuid, status: { in: ["open", "assigned"] } },
@@ -628,7 +659,12 @@ export async function claimTask({
 }
 
 // Release Task (atomic: only succeeds if status is "assigned")
-export async function releaseTask(uuid: string): Promise<TaskResponse> {
+export async function releaseTask(uuid: string, auth: AnyAuth): Promise<TaskResponse> {
+  // Visibility gate: resolve the task's project and reject non-members.
+  const target = await prisma.task.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!target) throw new NotClaimedError("Task");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new NotClaimedError("Task");
+
   try {
     const task = await prisma.task.update({
       where: { uuid, status: "assigned" },
@@ -656,7 +692,11 @@ export async function releaseTask(uuid: string): Promise<TaskResponse> {
 }
 
 // Delete Task
-export async function deleteTask(uuid: string) {
+export async function deleteTask(uuid: string, auth: AnyAuth) {
+  // Visibility gate: resolve project before deleting; reject non-members.
+  const target = await prisma.task.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Task not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Task not found");
   const task = await prisma.task.delete({ where: { uuid } });
   eventBus.emitChange({ companyUuid: task.companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: task.uuid, action: "deleted" });
   return task;
@@ -756,9 +796,11 @@ export async function replaceAcceptanceCriteria(
   companyUuid: string,
   taskUuid: string,
   items: AcceptanceCriteriaItemInput[],
+  access: AnyAuth,
 ): Promise<AcceptanceCriterionResponse[]> {
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(access, task.projectUuid))) throw new Error("Task not found");
 
   if (!hasNonEmptyAcceptanceCriteria(items)) {
     throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
@@ -790,10 +832,12 @@ export async function markAcceptanceCriteria(
   taskUuid: string,
   criteria: Array<{ uuid: string; status: "passed" | "failed"; evidence?: string }>,
   auth: { type: string; actorUuid: string },
+  access: AnyAuth,
 ): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
   // Validate task belongs to company
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(access, task.projectUuid))) throw new Error("Task not found");
 
   // Pre-validate all criterion UUIDs belong to this task
   const validUuids = new Set(
@@ -821,7 +865,7 @@ export async function markAcceptanceCriteria(
   eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
 
   // Return updated state
-  return getAcceptanceStatus(companyUuid, taskUuid);
+  return getAcceptanceStatus(companyUuid, taskUuid, access);
 }
 
 // Dev agent reports self-check on acceptance criteria
@@ -830,10 +874,12 @@ export async function reportCriteriaSelfCheck(
   taskUuid: string,
   criteria: Array<{ uuid: string; devStatus: "passed" | "failed"; devEvidence?: string }>,
   auth: { type: string; actorUuid: string },
+  access: AnyAuth,
 ): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
   // Validate task belongs to company
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(access, task.projectUuid))) throw new Error("Task not found");
 
   // Pre-validate all criterion UUIDs belong to this task
   const validUuids = new Set(
@@ -861,7 +907,7 @@ export async function reportCriteriaSelfCheck(
   eventBus.emitChange({ companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: taskUuid, action: "updated" });
 
   // Return updated state
-  return getAcceptanceStatus(companyUuid, taskUuid);
+  return getAcceptanceStatus(companyUuid, taskUuid, access);
 }
 
 // Reset a single acceptance criterion back to pending (admin/user undo)
@@ -869,9 +915,11 @@ export async function resetAcceptanceCriterion(
   companyUuid: string,
   taskUuid: string,
   criterionUuid: string,
+  access: AnyAuth,
 ): Promise<void> {
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(access, task.projectUuid))) throw new Error("Task not found");
 
   // Validate criterion belongs to this task
   const criterion = await prisma.acceptanceCriterion.findFirst({ where: { uuid: criterionUuid, taskUuid } });
@@ -895,10 +943,12 @@ export async function resetAcceptanceCriterion(
 export async function getAcceptanceStatus(
   companyUuid: string,
   taskUuid: string,
+  access: AnyAuth,
 ): Promise<{ items: AcceptanceCriterionResponse[]; status: string; summary: AcceptanceSummary }> {
   // Validate task belongs to company
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(access, task.projectUuid))) throw new Error("Task not found");
 
   const rows = await prisma.acceptanceCriterion.findMany({
     where: { taskUuid },
@@ -1057,7 +1107,8 @@ async function wouldCreateCycle(
 export async function addTaskDependency(
   companyUuid: string,
   taskUuid: string,
-  dependsOnUuid: string
+  dependsOnUuid: string,
+  auth: AnyAuth
 ): Promise<{ taskUuid: string; dependsOnUuid: string; createdAt: Date }> {
   // Cannot depend on itself
   if (taskUuid === dependsOnUuid) {
@@ -1072,6 +1123,8 @@ export async function addTaskDependency(
 
   if (!task) throw new Error("Task not found");
   if (!dependsOnTask) throw new Error("Dependency task not found");
+  // Visibility gate: reject non-members of the task's project.
+  if (!(await canAccessProject(auth, task.projectUuid))) throw new Error("Task not found");
 
   if (task.projectUuid !== dependsOnTask.projectUuid) {
     throw new Error("Tasks must belong to the same project");
@@ -1095,11 +1148,13 @@ export async function addTaskDependency(
 export async function removeTaskDependency(
   companyUuid: string,
   taskUuid: string,
-  dependsOnUuid: string
+  dependsOnUuid: string,
+  auth: AnyAuth
 ): Promise<void> {
   // Verify task belongs to this company
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(auth, task.projectUuid))) throw new Error("Task not found");
 
   await prisma.taskDependency.deleteMany({
     where: { taskUuid, dependsOnUuid },
@@ -1109,7 +1164,8 @@ export async function removeTaskDependency(
 // Get task dependencies
 export async function getTaskDependencies(
   companyUuid: string,
-  taskUuid: string
+  taskUuid: string,
+  auth: AnyAuth
 ): Promise<{ dependsOn: TaskDependencyInfo[]; dependedBy: TaskDependencyInfo[] }> {
   const task = await prisma.task.findFirst({
     where: { uuid: taskUuid, companyUuid },
@@ -1117,6 +1173,7 @@ export async function getTaskDependencies(
   });
 
   if (!task) throw new Error("Task not found");
+  if (!(await canAccessProject(auth, task.projectUuid))) throw new Error("Task not found");
 
   return {
     dependsOn: task.dependsOn.map((d) => ({
@@ -1137,11 +1194,18 @@ export async function getUnblockedTasks({
   companyUuid,
   projectUuid,
   proposalUuids,
+  auth,
 }: {
   companyUuid: string;
   projectUuid: string;
   proposalUuids?: string[];
+  auth: AnyAuth;
 }): Promise<{ tasks: TaskResponse[]; total: number }> {
+  // Visibility gate: a non-member of this project sees nothing.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { tasks: [], total: 0 };
+  }
+
   const where = {
     projectUuid,
     companyUuid,
@@ -1289,11 +1353,17 @@ export async function checkDependenciesResolved(
 // Get all task dependencies within a project (for DAG visualization)
 export async function getProjectTaskDependencies(
   companyUuid: string,
-  projectUuid: string
+  projectUuid: string,
+  auth: AnyAuth
 ): Promise<{
   nodes: Array<{ uuid: string; title: string; status: string; priority: string; proposalUuid: string | null }>;
   edges: Array<{ from: string; to: string }>;
 }> {
+  // Visibility gate: a non-member of this project sees an empty graph.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { nodes: [], edges: [] };
+  }
+
   const [tasks, dependencies] = await Promise.all([
     prisma.task.findMany({
       where: { companyUuid, projectUuid },

@@ -35,6 +35,7 @@ export default async function ProposalsPage({ params }: PageProps) {
     projectUuid,
     skip: 0,
     take: 1000,
+    auth,
   });
 
   const pendingCount = proposals.filter((p) => p.status === "pending").length;

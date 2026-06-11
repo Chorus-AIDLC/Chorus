@@ -60,6 +60,7 @@ export async function IdeasPageContent({
     projectUuid,
     skip: 0,
     take: 1000,
+    auth,
   });
 
   // Get Ideas assigned to me (for counting)
@@ -71,6 +72,7 @@ export async function IdeasPageContent({
     assignedToMe: true,
     actorUuid: auth.actorUuid,
     actorType: auth.type,
+    auth,
   });
 
   // Calculate count per status

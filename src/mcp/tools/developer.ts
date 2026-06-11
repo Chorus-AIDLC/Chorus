@@ -38,7 +38,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
           companyUuid: auth.companyUuid,
           assigneeType: "agent",
           assigneeUuid: auth.actorUuid,
-        });
+        }, auth);
 
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
@@ -52,7 +52,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         });
 
         // Fetch full task details with dependencies
-        const fullTask = await taskService.getTask(auth.companyUuid, task.uuid);
+        const fullTask = await taskService.getTask(auth.companyUuid, task.uuid, auth);
 
         // Build compact response with only essential fields
         const compact: Record<string, unknown> = {
@@ -132,7 +132,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
       }
 
       try {
-        const updated = await taskService.releaseTask(task.uuid);
+        const updated = await taskService.releaseTask(task.uuid, auth);
 
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
@@ -190,7 +190,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         return { content: [{ type: "text", text: "Can only submit for verification from in_progress status" }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "to_verify" });
+      const updated = await taskService.updateTask(task.uuid, { status: "to_verify" }, auth);
 
       // Log activity
       await activityService.createActivity({
@@ -241,6 +241,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         taskUuid,
         criteria,
         { type: auth.type, actorUuid: auth.actorUuid },
+        auth,
       );
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
@@ -288,7 +289,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
 
       // Update status if requested
       if (status && taskService.isValidTaskStatusTransition(task.status, status)) {
-        await taskService.updateTask(task.uuid, { status });
+        await taskService.updateTask(task.uuid, { status }, auth);
       }
 
       // Write comment

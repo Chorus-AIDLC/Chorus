@@ -112,6 +112,7 @@ describe("chorus_create_tasks", () => {
         title: "Fix bug",
         proposalUuid: null,
       }),
+      expect.anything(),
     );
 
     expect(mockActivityService.createActivity).toHaveBeenCalledWith(
@@ -144,6 +145,7 @@ describe("chorus_create_tasks", () => {
 
     expect(mockTaskService.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ proposalUuid: "prop-1" }),
+      expect.anything(),
     );
 
     expect(mockActivityService.createActivity).toHaveBeenCalledWith(
@@ -222,6 +224,7 @@ describe("chorus_update_task", () => {
     expect(mockTaskService.updateTask).toHaveBeenCalledWith(
       "task-1",
       expect.objectContaining({ title: "New title", priority: "high" }),
+      expect.anything(),
       expect.objectContaining({ actorType: "agent" }),
     );
 
@@ -284,10 +287,10 @@ describe("chorus_update_task", () => {
     });
 
     expect(mockTaskService.addTaskDependency).toHaveBeenCalledTimes(2);
-    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1");
-    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-2");
+    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1", expect.anything());
+    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-2", expect.anything());
     expect(mockTaskService.removeTaskDependency).toHaveBeenCalledTimes(1);
-    expect(mockTaskService.removeTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-3");
+    expect(mockTaskService.removeTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-3", expect.anything());
   });
 
   it("returns error for nonexistent task", async () => {
@@ -319,6 +322,7 @@ describe("chorus_update_task", () => {
         expect.objectContaining({ description: "  new crit  ", required: false }),
         expect.objectContaining({ description: "   " }),
       ],
+      expect.anything(),
     );
     expect(mockActivityService.createActivity).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -363,7 +367,7 @@ describe("chorus_update_task", () => {
       addDependsOn: ["dep-1"],
     });
 
-    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1");
+    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1", expect.anything());
     expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
   });
 });

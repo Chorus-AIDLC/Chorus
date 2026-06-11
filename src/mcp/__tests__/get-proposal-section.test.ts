@@ -67,7 +67,7 @@ describe("chorus_get_proposal — section parameter", () => {
 
     await toolHandlers["chorus_get_proposal"]({ proposalUuid: "p1" });
 
-    expect(mockProposalService.getProposalSection).toHaveBeenCalledWith("company-1", "p1", "basic");
+    expect(mockProposalService.getProposalSection).toHaveBeenCalledWith("company-1", "p1", "basic", expect.anything());
     // The legacy full getProposal path must no longer be used by the tool
     expect(mockProposalService.getProposal).not.toHaveBeenCalled();
   });
@@ -79,7 +79,7 @@ describe("chorus_get_proposal — section parameter", () => {
 
       await toolHandlers["chorus_get_proposal"]({ proposalUuid: "p1", section });
 
-      expect(mockProposalService.getProposalSection).toHaveBeenCalledWith("company-1", "p1", section);
+      expect(mockProposalService.getProposalSection).toHaveBeenCalledWith("company-1", "p1", section, expect.anything());
     },
   );
 

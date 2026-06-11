@@ -7,6 +7,10 @@ import { formatCreatedBy } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import * as activityService from "@/services/activity.service";
 import logger from "@/lib/logger";
+import {
+  type AnyAuth,
+  canAccessProject,
+} from "@/lib/authz/project-access";
 
 const docLogger = logger.child({ module: "document.service" });
 
@@ -18,6 +22,8 @@ export interface DocumentListParams {
   skip: number;
   take: number;
   type?: string;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface DocumentCreateParams {
@@ -101,7 +107,13 @@ export async function listDocuments({
   skip,
   take,
   type,
+  auth,
 }: DocumentListParams): Promise<{ documents: DocumentResponse[]; total: number }> {
+  // Visibility gate: a non-member of this project sees nothing.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { documents: [], total: 0 };
+  }
+
   const where = {
     projectUuid,
     companyUuid,
@@ -172,7 +184,8 @@ export async function listDocumentsByProposalUuids(
 // Get Document details
 export async function getDocument(
   companyUuid: string,
-  uuid: string
+  uuid: string,
+  auth: AnyAuth
 ): Promise<DocumentResponse | null> {
   const doc = await prisma.document.findFirst({
     where: { uuid, companyUuid },
@@ -182,6 +195,8 @@ export async function getDocument(
   });
 
   if (!doc) return null;
+  // Visibility gate: hide documents in projects the actor cannot access.
+  if (!(await canAccessProject(auth, doc.projectUuid))) return null;
   return formatDocumentResponse(doc, true);
 }
 
@@ -203,8 +218,14 @@ export async function getDocumentByUuidUnscoped(uuid: string) {
 
 // Create Document
 export async function createDocument(
-  params: DocumentCreateParams
+  params: DocumentCreateParams,
+  auth: AnyAuth
 ): Promise<DocumentResponse> {
+  // Visibility gate: cannot create a document in an inaccessible project.
+  if (!(await canAccessProject(auth, params.projectUuid))) {
+    throw new Error("Project not found");
+  }
+
   const doc = await prisma.document.create({
     data: {
       companyUuid: params.companyUuid,
@@ -341,8 +362,14 @@ async function emitReportSideEffects(
 // Update Document
 export async function updateDocument(
   uuid: string,
-  { title, content, incrementVersion }: DocumentUpdateParams
+  { title, content, incrementVersion }: DocumentUpdateParams,
+  auth: AnyAuth
 ): Promise<DocumentResponse> {
+  // Visibility gate: resolve the document's project and reject non-members.
+  const target = await prisma.document.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Document not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Document not found");
+
   const data: { title?: string; content?: string | null; version?: { increment: number } } = {};
 
   if (title !== undefined) {
@@ -367,7 +394,11 @@ export async function updateDocument(
 }
 
 // Delete Document
-export async function deleteDocument(uuid: string) {
+export async function deleteDocument(uuid: string, auth: AnyAuth) {
+  // Visibility gate: resolve the document's project and reject non-members.
+  const target = await prisma.document.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Document not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Document not found");
   return prisma.document.delete({ where: { uuid } });
 }
 

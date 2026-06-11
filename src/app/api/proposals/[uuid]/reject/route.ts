@@ -54,7 +54,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const updated = await rejectProposal(
       proposal.uuid,
       auth.actorUuid,
-      body.reviewNote.trim()
+      body.reviewNote.trim(),
+      auth
     );
 
     await createActivity({

@@ -39,6 +39,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       skip,
       take,
       status: statusFilter,
+      auth,
     });
 
     return paginated(ideas, page, pageSize, total);
@@ -87,7 +88,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       content: body.content?.trim() || null,
       attachments: body.attachments,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     return success(idea);
   }

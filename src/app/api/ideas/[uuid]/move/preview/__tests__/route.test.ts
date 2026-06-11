@@ -78,6 +78,7 @@ describe("GET /api/ideas/[uuid]/move/preview", () => {
       COMPANY_UUID,
       IDEA_UUID,
       TARGET_PROJECT_UUID,
+      expect.anything(),
     );
   });
 
@@ -143,6 +144,7 @@ describe("GET /api/ideas/[uuid]/move/preview", () => {
       COMPANY_UUID,
       IDEA_UUID,
       TARGET_PROJECT_UUID,
+      expect.anything(),
     );
   });
 

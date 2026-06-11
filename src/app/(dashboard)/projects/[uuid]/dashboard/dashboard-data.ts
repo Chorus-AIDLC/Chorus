@@ -15,7 +15,7 @@ export async function getDashboardData(projectUuid: string) {
     redirect("/projects");
   }
 
-  const trackerData = await getTrackerGroups(auth.companyUuid, projectUuid);
+  const trackerData = await getTrackerGroups(auth.companyUuid, projectUuid, auth);
   const stats = await getProjectStats(auth.companyUuid, projectUuid, auth);
   if (!stats) {
     redirect("/projects");

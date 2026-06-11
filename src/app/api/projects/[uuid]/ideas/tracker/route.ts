@@ -26,7 +26,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Project");
     }
 
-    const result = await getTrackerGroups(auth.companyUuid, projectUuid);
+    const result = await getTrackerGroups(auth.companyUuid, projectUuid, auth);
     return success(result);
   }
 );

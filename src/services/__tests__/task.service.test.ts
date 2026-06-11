@@ -50,6 +50,12 @@ const mockPrisma = vi.hoisted(() => {
     sessionTaskCheckin: {
       findMany: vi.fn(),
     },
+    project: {
+      findFirst: vi.fn(),
+    },
+    projectMember: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txProxy)),
   };
 });
@@ -102,12 +108,26 @@ import {
   replaceAcceptanceCriteria,
 } from "@/services/task.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
+import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Helpers =====
 
 const COMPANY_UUID = authContexts.user.companyUuid;
 const PROJECT_UUID = "00000000-0000-0000-0000-000000000010";
 const TASK_UUID = "00000000-0000-0000-0000-000000000099";
+
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
+const userAuth: AuthContext = { type: "user", companyUuid: COMPANY_UUID, actorUuid: "user-1" };
+
+/** Configure prisma mocks so canAccessProject(userAuth, ...) returns false. */
+function denyAccess() {
+  mockPrisma.project.findFirst.mockResolvedValue({
+    visibility: "private",
+    ownerType: "user",
+    ownerUuid: "other-owner",
+  });
+  mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+}
 
 function rawTask(overrides: Record<string, unknown> = {}) {
   return makeTask({
@@ -133,6 +153,9 @@ function rawTaskWithRelations(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetFixtureCounter();
+  // Default project-visibility gate lookups (overridable per test).
+  mockPrisma.task.findUnique.mockResolvedValue({ projectUuid: PROJECT_UUID, status: "assigned" });
+  mockPrisma.task.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID });
 });
 
 // ---------- listTasks ----------
@@ -157,6 +180,7 @@ describe("listTasks", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 10,
+      auth: adminAuth,
     });
 
     expect(result.total).toBe(5);
@@ -175,6 +199,7 @@ describe("listTasks", () => {
       skip: 0,
       take: 10,
       status: "in_progress",
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -191,6 +216,7 @@ describe("listTasks", () => {
       skip: 0,
       take: 10,
       priority: "high",
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -206,6 +232,7 @@ describe("listTasks", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 10,
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -226,6 +253,7 @@ describe("listTasks", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 10,
+      auth: adminAuth,
     });
 
     expect(mockCommentService.batchCommentCounts).toHaveBeenCalledWith(
@@ -246,6 +274,7 @@ describe("listTasks", () => {
       skip: 0,
       take: 10,
       proposalUuids: ["proposal-1", "proposal-2"],
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -261,6 +290,7 @@ describe("listTasks", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 10,
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -277,6 +307,7 @@ describe("listTasks", () => {
       skip: 0,
       take: 10,
       proposalUuids: [],
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -292,7 +323,7 @@ describe("getTask", () => {
     mockPrisma.task.findFirst.mockResolvedValue(task);
     mockPrisma.comment.count.mockResolvedValue(2);
 
-    const result = await getTask(COMPANY_UUID, TASK_UUID);
+    const result = await getTask(COMPANY_UUID, TASK_UUID, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.uuid).toBe(TASK_UUID);
@@ -305,14 +336,14 @@ describe("getTask", () => {
   it("returns null when task not found", async () => {
     mockPrisma.task.findFirst.mockResolvedValue(null);
 
-    const result = await getTask(COMPANY_UUID, "nonexistent");
+    const result = await getTask(COMPANY_UUID, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 
   it("scopes query by companyUuid", async () => {
     mockPrisma.task.findFirst.mockResolvedValue(null);
 
-    await getTask(COMPANY_UUID, TASK_UUID);
+    await getTask(COMPANY_UUID, TASK_UUID, adminAuth);
 
     expect(mockPrisma.task.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -347,7 +378,7 @@ describe("getTask", () => {
     mockPrisma.task.findFirst.mockResolvedValue(taskWithDeps);
     mockPrisma.comment.count.mockResolvedValue(0);
 
-    const result = await getTask(COMPANY_UUID, TASK_UUID);
+    const result = await getTask(COMPANY_UUID, TASK_UUID, adminAuth);
 
     expect(result!.dependsOn).toEqual([
       { uuid: "dep1", title: "Dep Task", status: "done" },
@@ -374,7 +405,7 @@ describe("getTask", () => {
     mockPrisma.task.findFirst.mockResolvedValue(task);
     mockPrisma.comment.count.mockResolvedValue(0);
 
-    const result = await getTask(COMPANY_UUID, TASK_UUID);
+    const result = await getTask(COMPANY_UUID, TASK_UUID, adminAuth);
 
     expect(result!.acceptanceCriteriaItems).toHaveLength(1);
     expect(result!.acceptanceCriteriaItems[0].status).toBe("passed");
@@ -395,7 +426,7 @@ describe("createTask", () => {
       projectUuid: PROJECT_UUID,
       title: "New Task",
       createdByUuid: authContexts.user.actorUuid,
-    });
+    }, adminAuth);
 
     expect(result.uuid).toBe(TASK_UUID);
     expect(result.status).toBe("open");
@@ -417,7 +448,7 @@ describe("createTask", () => {
       title: "High Priority",
       priority: "high",
       createdByUuid: authContexts.user.actorUuid,
-    });
+    }, adminAuth);
 
     const createData = mockPrisma.task.create.mock.calls[0][0].data;
     expect(createData.priority).toBe("high");
@@ -431,7 +462,7 @@ describe("createTask", () => {
       projectUuid: PROJECT_UUID,
       title: "Task",
       createdByUuid: authContexts.user.actorUuid,
-    });
+    }, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -455,7 +486,7 @@ describe("createTask", () => {
       acceptanceCriteria: "- [ ] criterion",
       proposalUuid: "prop-uuid",
       createdByUuid: authContexts.user.actorUuid,
-    });
+    }, adminAuth);
 
     const createData = mockPrisma.task.create.mock.calls[0][0].data;
     expect(createData.description).toBe("Some desc");
@@ -480,7 +511,7 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a1",
-    });
+    }, adminAuth);
 
     expect(result.status).toBe("assigned");
     expect(mockPrisma.task.update).toHaveBeenCalledWith(
@@ -508,7 +539,7 @@ describe("claimTask", () => {
       assigneeType: "agent",
       assigneeUuid: "a2",
       assignedByUuid: "user-123",
-    });
+    }, adminAuth);
 
     expect(result.status).toBe("assigned");
     expect(mockPrisma.task.update).toHaveBeenCalledWith(
@@ -531,7 +562,7 @@ describe("claimTask", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: "a1",
-      }),
+      }, adminAuth),
     ).rejects.toThrow(AlreadyClaimedError);
   });
 
@@ -545,7 +576,7 @@ describe("claimTask", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: "a1",
-      }),
+      }, adminAuth),
     ).rejects.toThrow("DB connection lost");
   });
 
@@ -561,7 +592,7 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a1",
-    });
+    }, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -584,7 +615,7 @@ describe("claimTask", () => {
       assigneeType: "agent",
       assigneeUuid: "a1",
       assignedByUuid: "user-123",
-    });
+    }, adminAuth);
 
     const updateData = mockPrisma.task.update.mock.calls[0][0].data;
     expect(updateData.assignedByUuid).toBe("user-123");
@@ -601,7 +632,7 @@ describe("releaseTask", () => {
     };
     mockPrisma.task.update.mockResolvedValue(released);
 
-    const result = await releaseTask(TASK_UUID);
+    const result = await releaseTask(TASK_UUID, adminAuth);
 
     expect(result.status).toBe("open");
     expect(mockPrisma.task.update).toHaveBeenCalledWith(
@@ -621,14 +652,14 @@ describe("releaseTask", () => {
   it("throws NotClaimedError when task is not assigned (Prisma P2025)", async () => {
     mockPrisma.task.update.mockRejectedValue({ code: "P2025" });
 
-    await expect(releaseTask(TASK_UUID)).rejects.toThrow(NotClaimedError);
+    await expect(releaseTask(TASK_UUID, adminAuth)).rejects.toThrow(NotClaimedError);
   });
 
   it("re-throws non-P2025 errors", async () => {
     const dbError = new Error("Timeout");
     mockPrisma.task.update.mockRejectedValue(dbError);
 
-    await expect(releaseTask(TASK_UUID)).rejects.toThrow("Timeout");
+    await expect(releaseTask(TASK_UUID, adminAuth)).rejects.toThrow("Timeout");
   });
 
   it("emits change event on successful release", async () => {
@@ -638,7 +669,7 @@ describe("releaseTask", () => {
     };
     mockPrisma.task.update.mockResolvedValue(released);
 
-    await releaseTask(TASK_UUID);
+    await releaseTask(TASK_UUID, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -656,7 +687,7 @@ describe("deleteTask", () => {
     const task = rawTask();
     mockPrisma.task.delete.mockResolvedValue(task);
 
-    const result = await deleteTask(TASK_UUID);
+    const result = await deleteTask(TASK_UUID, adminAuth);
 
     expect(result.uuid).toBe(TASK_UUID);
     expect(mockPrisma.task.delete).toHaveBeenCalledWith({ where: { uuid: TASK_UUID } });
@@ -666,7 +697,7 @@ describe("deleteTask", () => {
     const task = rawTask();
     mockPrisma.task.delete.mockResolvedValue(task);
 
-    await deleteTask(TASK_UUID);
+    await deleteTask(TASK_UUID, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -699,7 +730,7 @@ describe("markAcceptanceCriteria", () => {
       COMPANY_UUID,
       TASK_UUID,
       [{ uuid: criterionUuid, status: "passed", evidence: "Looks good" }],
-      { type: "user", actorUuid: authContexts.user.actorUuid },
+      { type: "user", actorUuid: authContexts.user.actorUuid }, adminAuth,
     );
 
     expect(result.items).toHaveLength(1);
@@ -724,7 +755,7 @@ describe("markAcceptanceCriteria", () => {
         COMPANY_UUID,
         TASK_UUID,
         [{ uuid: criterionUuid, status: "passed" }],
-        { type: "user", actorUuid: "u1" },
+        { type: "user", actorUuid: "u1" }, adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -738,7 +769,7 @@ describe("markAcceptanceCriteria", () => {
         COMPANY_UUID,
         TASK_UUID,
         [{ uuid: "wrong-crit", status: "passed" }],
-        { type: "user", actorUuid: "u1" },
+        { type: "user", actorUuid: "u1" }, adminAuth,
       ),
     ).rejects.toThrow(/does not belong to task/);
   });
@@ -759,7 +790,7 @@ describe("markAcceptanceCriteria", () => {
       COMPANY_UUID,
       TASK_UUID,
       [{ uuid: criterionUuid, status: "passed" }],
-      { type: "user", actorUuid: "u1" },
+      { type: "user", actorUuid: "u1" }, adminAuth,
     );
 
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
@@ -784,7 +815,7 @@ describe("replaceAcceptanceCriteria", () => {
     await replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [
       { description: "  new crit  ", required: false },
       { description: "   " }, // blank dropped by normalization
-    ]);
+    ], adminAuth);
 
     // Ran inside a transaction (single atomic unit).
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
@@ -804,7 +835,7 @@ describe("replaceAcceptanceCriteria", () => {
     mockPrisma.task.findFirst.mockResolvedValue(null);
 
     await expect(
-      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "x" }]),
+      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "x" }], adminAuth),
     ).rejects.toThrow("Task not found");
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
@@ -814,7 +845,7 @@ describe("replaceAcceptanceCriteria", () => {
     mockPrisma.task.findFirst.mockResolvedValue(rawTask());
 
     await expect(
-      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "   " }]),
+      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "   " }], adminAuth),
     ).rejects.toThrow("acceptance criterion");
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockPrisma.acceptanceCriterion.deleteMany).not.toHaveBeenCalled();
@@ -843,7 +874,7 @@ describe("reportCriteriaSelfCheck", () => {
       COMPANY_UUID,
       TASK_UUID,
       [{ uuid: criterionUuid, devStatus: "passed", devEvidence: "Tests pass" }],
-      { type: "agent", actorUuid: authContexts.agent.actorUuid },
+      { type: "agent", actorUuid: authContexts.agent.actorUuid }, adminAuth,
     );
 
     expect(result.items).toHaveLength(1);
@@ -868,7 +899,7 @@ describe("reportCriteriaSelfCheck", () => {
         COMPANY_UUID,
         TASK_UUID,
         [{ uuid: "c1", devStatus: "passed" }],
-        { type: "agent", actorUuid: "a1" },
+        { type: "agent", actorUuid: "a1" }, adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -882,7 +913,7 @@ describe("reportCriteriaSelfCheck", () => {
         COMPANY_UUID,
         TASK_UUID,
         [{ uuid: "wrong-crit", devStatus: "failed" }],
-        { type: "agent", actorUuid: "a1" },
+        { type: "agent", actorUuid: "a1" }, adminAuth,
       ),
     ).rejects.toThrow(/does not belong to task/);
   });
@@ -903,7 +934,7 @@ describe("reportCriteriaSelfCheck", () => {
       COMPANY_UUID,
       TASK_UUID,
       [{ uuid: "c1", devStatus: "passed" }],
-      { type: "agent", actorUuid: "a1" },
+      { type: "agent", actorUuid: "a1" }, adminAuth,
     );
 
     const updateData = mockPrisma.acceptanceCriterion.update.mock.calls[0][0].data;
@@ -1020,7 +1051,7 @@ describe("addTaskDependency", () => {
       (await import("@/services/task.service")).addTaskDependency(
         COMPANY_UUID,
         taskUuid1,
-        taskUuid1,
+        taskUuid1, adminAuth,
       ),
     ).rejects.toThrow("A task cannot depend on itself");
   });
@@ -1034,7 +1065,7 @@ describe("addTaskDependency", () => {
       (await import("@/services/task.service")).addTaskDependency(
         COMPANY_UUID,
         "nonexistent",
-        taskUuid2,
+        taskUuid2, adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -1048,7 +1079,7 @@ describe("addTaskDependency", () => {
       (await import("@/services/task.service")).addTaskDependency(
         COMPANY_UUID,
         taskUuid1,
-        "nonexistent",
+        "nonexistent", adminAuth,
       ),
     ).rejects.toThrow("Dependency task not found");
   });
@@ -1062,7 +1093,7 @@ describe("addTaskDependency", () => {
       (await import("@/services/task.service")).addTaskDependency(
         COMPANY_UUID,
         taskUuid1,
-        taskUuid2,
+        taskUuid2, adminAuth,
       ),
     ).rejects.toThrow("Tasks must belong to the same project");
   });
@@ -1083,7 +1114,7 @@ describe("addTaskDependency", () => {
       (await import("@/services/task.service")).addTaskDependency(
         COMPANY_UUID,
         taskUuid3,
-        taskUuid1,
+        taskUuid1, adminAuth,
       ),
     ).rejects.toThrow("Adding this dependency would create a cycle");
   });
@@ -1102,7 +1133,7 @@ describe("addTaskDependency", () => {
     const result = await (await import("@/services/task.service")).addTaskDependency(
       COMPANY_UUID,
       taskUuid1,
-      taskUuid2,
+      taskUuid2, adminAuth,
     );
 
     expect(result.taskUuid).toBe(taskUuid1);
@@ -1123,7 +1154,7 @@ describe("removeTaskDependency", () => {
       (await import("@/services/task.service")).removeTaskDependency(
         COMPANY_UUID,
         "nonexistent",
-        "dep-uuid",
+        "dep-uuid", adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -1135,7 +1166,7 @@ describe("removeTaskDependency", () => {
     await (await import("@/services/task.service")).removeTaskDependency(
       COMPANY_UUID,
       "t1",
-      "dep-uuid",
+      "dep-uuid", adminAuth,
     );
 
     expect(mockPrisma.taskDependency.deleteMany).toHaveBeenCalledWith({
@@ -1213,7 +1244,7 @@ describe("getTaskDependencies", () => {
 
     const result = await (await import("@/services/task.service")).getTaskDependencies(
       COMPANY_UUID,
-      "t1",
+      "t1", adminAuth,
     );
 
     expect(result.dependsOn).toHaveLength(1);
@@ -1228,7 +1259,7 @@ describe("getTaskDependencies", () => {
     await expect(
       (await import("@/services/task.service")).getTaskDependencies(
         COMPANY_UUID,
-        "nonexistent",
+        "nonexistent", adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -1250,6 +1281,7 @@ describe("getUnblockedTasks", () => {
     const result = await (await import("@/services/task.service")).getUnblockedTasks({
       companyUuid: COMPANY_UUID,
       projectUuid: PROJECT_UUID,
+      auth: adminAuth,
     });
 
     expect(result.tasks).toHaveLength(1);
@@ -1263,6 +1295,7 @@ describe("getUnblockedTasks", () => {
     await (await import("@/services/task.service")).getUnblockedTasks({
       companyUuid: COMPANY_UUID,
       projectUuid: PROJECT_UUID,
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -1277,6 +1310,7 @@ describe("getUnblockedTasks", () => {
       companyUuid: COMPANY_UUID,
       projectUuid: PROJECT_UUID,
       proposalUuids: ["prop-1", "prop-2"],
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -1290,6 +1324,7 @@ describe("getUnblockedTasks", () => {
     await (await import("@/services/task.service")).getUnblockedTasks({
       companyUuid: COMPANY_UUID,
       projectUuid: PROJECT_UUID,
+      auth: adminAuth,
     });
 
     const whereArg = mockPrisma.task.findMany.mock.calls[0][0].where;
@@ -1380,7 +1415,7 @@ describe("getProjectTaskDependencies", () => {
 
     const result = await (await import("@/services/task.service")).getProjectTaskDependencies(
       COMPANY_UUID,
-      PROJECT_UUID,
+      PROJECT_UUID, adminAuth,
     );
 
     expect(result.nodes).toHaveLength(2);
@@ -1396,7 +1431,7 @@ describe("getProjectTaskDependencies", () => {
 
     const result = await (await import("@/services/task.service")).getProjectTaskDependencies(
       COMPANY_UUID,
-      PROJECT_UUID,
+      PROJECT_UUID, adminAuth,
     );
 
     expect(result.nodes).toEqual([]);
@@ -1418,7 +1453,7 @@ describe("resetAcceptanceCriterion", () => {
     await (await import("@/services/task.service")).resetAcceptanceCriterion(
       COMPANY_UUID,
       TASK_UUID,
-      "c1",
+      "c1", adminAuth,
     );
 
     expect(mockPrisma.acceptanceCriterion.update).toHaveBeenCalledWith({
@@ -1441,7 +1476,7 @@ describe("resetAcceptanceCriterion", () => {
       (await import("@/services/task.service")).resetAcceptanceCriterion(
         COMPANY_UUID,
         "nonexistent",
-        "c1",
+        "c1", adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -1454,7 +1489,7 @@ describe("resetAcceptanceCriterion", () => {
       (await import("@/services/task.service")).resetAcceptanceCriterion(
         COMPANY_UUID,
         TASK_UUID,
-        "wrong-crit",
+        "wrong-crit", adminAuth,
       ),
     ).rejects.toThrow("Criterion not found for this task");
   });
@@ -1473,7 +1508,7 @@ describe("getAcceptanceStatus", () => {
 
     const result = await (await import("@/services/task.service")).getAcceptanceStatus(
       COMPANY_UUID,
-      TASK_UUID,
+      TASK_UUID, adminAuth,
     );
 
     expect(result.items).toHaveLength(2);
@@ -1487,7 +1522,7 @@ describe("getAcceptanceStatus", () => {
     await expect(
       (await import("@/services/task.service")).getAcceptanceStatus(
         COMPANY_UUID,
-        "nonexistent",
+        "nonexistent", adminAuth,
       ),
     ).rejects.toThrow("Task not found");
   });
@@ -1545,7 +1580,6 @@ describe("createAcceptanceCriteria", () => {
 
 describe("updateTask", () => {
   it("should update task fields", async () => {
-    mockPrisma.task.findUnique.mockResolvedValue(null);
     const updated = {
       ...rawTask({ title: "Updated Title", status: "in_progress" }),
       project: { uuid: PROJECT_UUID, name: "Test Project" },
@@ -1555,7 +1589,7 @@ describe("updateTask", () => {
     const result = await updateTask(TASK_UUID, {
       title: "Updated Title",
       status: "in_progress",
-    });
+    }, adminAuth);
 
     expect(result.title).toBe("Updated Title");
     expect(result.status).toBe("in_progress");
@@ -1572,7 +1606,7 @@ describe("updateTask", () => {
     mockPrisma.task.update.mockResolvedValue(updated);
     mockPrisma.acceptanceCriterion.updateMany.mockResolvedValue({ count: 2 });
 
-    await updateTask(TASK_UUID, { status: "in_progress" });
+    await updateTask(TASK_UUID, { status: "in_progress" }, adminAuth);
 
     expect(mockPrisma.acceptanceCriterion.updateMany).toHaveBeenCalledWith({
       where: { taskUuid: TASK_UUID },
@@ -1592,7 +1626,7 @@ describe("updateTask", () => {
     mockPrisma.task.findUnique.mockResolvedValue({ status: "to_verify" });
     mockPrisma.task.update.mockResolvedValue(updated);
 
-    await updateTask(TASK_UUID, { status: "done" });
+    await updateTask(TASK_UUID, { status: "done" }, adminAuth);
 
     expect(mockPrisma.acceptanceCriterion.updateMany).not.toHaveBeenCalled();
   });
@@ -1615,6 +1649,7 @@ describe("updateTask", () => {
     await updateTask(
       TASK_UUID,
       { description: newDesc },
+      adminAuth,
       { actorType: "agent", actorUuid: "agent1" },
     );
 
@@ -1625,5 +1660,51 @@ describe("updateTask", () => {
     expect(mockMentionService.parseMentions).toHaveBeenCalledWith(newDesc);
     expect(mockMentionService.createMentions).toHaveBeenCalled();
     expect(mockActivityService.createActivity).toHaveBeenCalled();
+  });
+});
+
+// ---------- access gating (project visibility) ----------
+
+describe("access gating", () => {
+  it("listTasks returns empty for a non-member of a private project", async () => {
+    denyAccess();
+
+    const result = await listTasks({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 10,
+      auth: userAuth,
+    });
+
+    expect(result).toEqual({ tasks: [], total: 0 });
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getTask returns null for a non-member of a private project", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(rawTaskWithRelations());
+    denyAccess();
+
+    const result = await getTask(COMPANY_UUID, TASK_UUID, userAuth);
+
+    expect(result).toBeNull();
+  });
+
+  it("claimTask rejects a non-member of a private project", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID });
+    denyAccess();
+
+    await expect(
+      claimTask(
+        {
+          taskUuid: TASK_UUID,
+          companyUuid: COMPANY_UUID,
+          assigneeType: "agent",
+          assigneeUuid: "a1",
+        },
+        userAuth,
+      ),
+    ).rejects.toThrow(AlreadyClaimedError);
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
   });
 });

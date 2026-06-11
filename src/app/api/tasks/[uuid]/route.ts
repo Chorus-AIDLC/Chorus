@@ -29,7 +29,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const task = await getTask(auth.companyUuid, uuid);
+    const task = await getTask(auth.companyUuid, uuid, auth);
 
     if (!task) {
       return errors.notFound("Task");
@@ -161,7 +161,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       updateData.status = body.status;
     }
 
-    const updated = await updateTask(task.uuid, updateData);
+    const updated = await updateTask(task.uuid, updateData, auth);
     return success(updated);
   }
 );
@@ -186,7 +186,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Task");
     }
 
-    await deleteTask(task.uuid);
+    await deleteTask(task.uuid, auth);
     return success({ deleted: true });
   }
 );

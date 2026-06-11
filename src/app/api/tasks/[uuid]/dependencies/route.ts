@@ -37,7 +37,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     try {
-      const dep = await addTaskDependency(auth.companyUuid, uuid, body.dependsOnUuid);
+      const dep = await addTaskDependency(auth.companyUuid, uuid, body.dependsOnUuid, auth);
       return success(dep);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -69,7 +69,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Task");
     }
 
-    const deps = await getTaskDependencies(auth.companyUuid, uuid);
+    const deps = await getTaskDependencies(auth.companyUuid, uuid, auth);
     return success(deps);
   }
 );

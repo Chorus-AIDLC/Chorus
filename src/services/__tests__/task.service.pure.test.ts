@@ -52,6 +52,8 @@ import {
   addTaskDependency,
   TASK_STATUS_TRANSITIONS,
 } from "@/services/task.service";
+import type { SuperAdminAuthContext } from "@/types/auth";
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 
 // ===== isValidTaskStatusTransition =====
 
@@ -300,7 +302,7 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
     // addTaskDependency(companyUuid, taskUuid=A, dependsOnUuid=C)
     // wouldCreateCycle checks: from C, can we reach A via existing edges?
     // C has no outgoing edges, so no cycle
-    const result = await addTaskDependency(companyUuid, A, C);
+    const result = await addTaskDependency(companyUuid, A, C, adminAuth);
     expect(result.taskUuid).toBe(A);
     expect(result.dependsOnUuid).toBe(C);
   });
@@ -320,7 +322,7 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
 
     // addTaskDependency(companyUuid, taskUuid=B, dependsOnUuid=A)
     // wouldCreateCycle checks: from A, can we reach B? A -> B via existing edge, yes!
-    await expect(addTaskDependency(companyUuid, B, A)).rejects.toThrow(
+    await expect(addTaskDependency(companyUuid, B, A, adminAuth)).rejects.toThrow(
       "Adding this dependency would create a cycle"
     );
   });
@@ -347,7 +349,7 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
     // addTaskDependency(companyUuid, taskUuid=D, dependsOnUuid=A)
     // wouldCreateCycle(startUuid=A, targetUuid=D): from A, follow edges:
     // A -> B -> D (found!), cycle detected
-    await expect(addTaskDependency(companyUuid, D, A)).rejects.toThrow(
+    await expect(addTaskDependency(companyUuid, D, A, adminAuth)).rejects.toThrow(
       "Adding this dependency would create a cycle"
     );
   });
@@ -356,7 +358,7 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
     const A = "aaaa0000-0000-0000-0000-000000000001";
 
     // addTaskDependency checks self-dependency before prisma calls
-    await expect(addTaskDependency(companyUuid, A, A)).rejects.toThrow(
+    await expect(addTaskDependency(companyUuid, A, A, adminAuth)).rejects.toThrow(
       "A task cannot depend on itself"
     );
   });
@@ -388,7 +390,7 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
 
     // wouldCreateCycle(startUuid=D, targetUuid=A): from D, can we reach A?
     // D has no outgoing edges, so no cycle
-    const result = await addTaskDependency(companyUuid, A, D);
+    const result = await addTaskDependency(companyUuid, A, D, adminAuth);
     expect(result.taskUuid).toBe(A);
   });
 
@@ -408,9 +410,9 @@ describe("wouldCreateCycle (via addTaskDependency)", () => {
       { taskUuid: C, dependsOnUuid: D },
     ]);
 
-    // addTaskDependency(companyUuid, D, A): wouldCreateCycle(A, D)
+    // addTaskDependency(companyUuid, D, A, adminAuth): wouldCreateCycle(A, D)
     // A -> B -> C -> D (found!), cycle
-    await expect(addTaskDependency(companyUuid, D, A)).rejects.toThrow(
+    await expect(addTaskDependency(companyUuid, D, A, adminAuth)).rejects.toThrow(
       "Adding this dependency would create a cycle"
     );
   });

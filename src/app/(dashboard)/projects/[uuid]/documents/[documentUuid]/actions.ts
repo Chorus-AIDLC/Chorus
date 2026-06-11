@@ -22,7 +22,7 @@ export async function updateDocumentAction(
       return { success: false, error: "Document not found" };
     }
 
-    await updateDocument(documentUuid, { content });
+    await updateDocument(documentUuid, { content }, auth);
 
     revalidatePath(`/projects/${projectUuid}/documents/${documentUuid}`);
     revalidatePath(`/projects/${projectUuid}/documents`);

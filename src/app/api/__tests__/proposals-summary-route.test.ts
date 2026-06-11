@@ -66,7 +66,7 @@ describe("GET /api/projects/[uuid]/proposals/summary", () => {
     const req = makeRequest(`/api/projects/${projectUuid}/proposals/summary`);
     await GET(req, makeContext(projectUuid));
 
-    expect(mockGetProjectProposals).toHaveBeenCalledWith(companyUuid, projectUuid);
+    expect(mockGetProjectProposals).toHaveBeenCalledWith(companyUuid, projectUuid, expect.anything());
   });
 
   it("returns empty array when no approved proposals exist", async () => {

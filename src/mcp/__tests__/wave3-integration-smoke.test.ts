@@ -225,6 +225,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
           projectUuid: "project-1",
           proposalUuid: null,
         }),
+        expect.anything(),
       );
       expect(mockActivityService.createActivity).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -261,6 +262,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
       expect(result.isError).toBeFalsy();
       expect(mockTaskService.createTask).toHaveBeenCalledWith(
         expect.objectContaining({ proposalUuid: "prop-1" }),
+        expect.anything(),
       );
       expect(mockActivityService.createActivity).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -298,6 +300,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
         "company-1",
         "task-B",
         "task-A",
+        expect.anything(),
       );
       expect(mockActivityService.createActivity).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -332,6 +335,7 @@ describe("Wave 3 — MCP tool surface convergence: integration smoke", () => {
         "company-1",
         "task-B",
         "task-A",
+        expect.anything(),
       );
       expect(mockActivityService.createActivity).toHaveBeenCalledWith(
         expect.objectContaining({

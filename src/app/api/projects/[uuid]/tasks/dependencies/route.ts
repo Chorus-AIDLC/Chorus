@@ -27,7 +27,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Project");
     }
 
-    const dag = await getProjectTaskDependencies(auth.companyUuid, projectUuid);
+    const dag = await getProjectTaskDependencies(auth.companyUuid, projectUuid, auth);
     return success(dag);
   }
 );

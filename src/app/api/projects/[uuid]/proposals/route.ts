@@ -40,6 +40,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       skip,
       take,
       status: statusFilter,
+      auth,
     });
 
     return paginated(proposals, page, pageSize, total);
@@ -104,7 +105,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       taskDrafts: body.taskDrafts,
       createdByUuid: auth.actorUuid,
       createdByType,
-    });
+    }, auth);
 
     return success(proposal);
   }

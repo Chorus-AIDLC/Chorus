@@ -31,7 +31,7 @@ export async function claimIdeaAction(ideaUuid: string) {
       assigneeType: auth.type,
       assigneeUuid: auth.actorUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     await createActivity({
       companyUuid: auth.companyUuid,
@@ -78,7 +78,7 @@ export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     await createActivity({
       companyUuid: auth.companyUuid,
@@ -125,7 +125,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
       assigneeType: "user",
       assigneeUuid: userUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
     revalidatePath(`/projects/${idea.projectUuid}/ideas`);
@@ -155,7 +155,7 @@ export async function releaseIdeaAction(ideaUuid: string) {
       return { success: false, error: "Idea cannot be released from current status" };
     }
 
-    await releaseIdea(idea.uuid);
+    await releaseIdea(idea.uuid, auth);
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
     revalidatePath(`/projects/${idea.projectUuid}/ideas`);

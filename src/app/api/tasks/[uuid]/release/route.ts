@@ -36,7 +36,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     try {
-      const updated = await releaseTask(task.uuid);
+      const updated = await releaseTask(task.uuid, auth);
       return success(updated);
     } catch (e) {
       if (e instanceof NotClaimedError) {

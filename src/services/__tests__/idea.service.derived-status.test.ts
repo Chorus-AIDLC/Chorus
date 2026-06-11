@@ -37,6 +37,8 @@ import {
   getIdeasWithDerivedStatus,
   getTrackerGroups,
 } from "@/services/idea.service";
+import type { SuperAdminAuthContext } from "@/types/auth";
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 
 // ===== Test Data =====
 
@@ -307,7 +309,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result).toHaveLength(1);
     expect(result[0].derivedStatus).toBe("todo");
@@ -319,7 +321,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("in_progress");
     expect(result[0].badgeHint).toBe("researching");
@@ -330,7 +332,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("human_conduct_required");
     expect(result[0].badgeHint).toBe("answer_questions");
@@ -343,7 +345,7 @@ describe("getIdeasWithDerivedStatus", () => {
     ]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("human_conduct_required");
     expect(result[0].badgeHint).toBe("review_proposal");
@@ -362,7 +364,7 @@ describe("getIdeasWithDerivedStatus", () => {
       { proposalUuid, status: "done" },
     ]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("human_conduct_required");
     expect(result[0].badgeHint).toBe("verify_work");
@@ -377,7 +379,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("in_progress");
     expect(result[0].badgeHint).toBe("planning");
@@ -388,7 +390,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result[0].derivedStatus).toBe("in_progress");
     expect(result[0].badgeHint).toBe("planning");
@@ -408,7 +410,7 @@ describe("getIdeasWithDerivedStatus", () => {
       { proposalUuid: newProposalUuid, status: "done" },
     ]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     // Should use the NEW proposal — all tasks done → done
     expect(result[0].derivedStatus).toBe("done");
@@ -438,7 +440,7 @@ describe("getIdeasWithDerivedStatus", () => {
       { proposalUuid: "proposal-done", status: "done" },
     ]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     const statusMap = Object.fromEntries(result.map((r) => [r.uuid, r.derivedStatus]));
     expect(statusMap["idea-open"]).toBe("todo");
@@ -463,7 +465,7 @@ describe("getIdeasWithDerivedStatus", () => {
     mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "open")]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
   });
@@ -474,7 +476,7 @@ describe("getIdeasWithDerivedStatus", () => {
       { uuid: "proposal-bad", status: "approved", inputUuids: "not-an-array", createdAt: now },
     ]);
 
-    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     // Should not crash; no valid proposal mapping → no approved, no pending → in_progress/planning
     expect(result[0].derivedStatus).toBe("in_progress");
@@ -493,7 +495,7 @@ describe("getIdeaWithDerivedStatus", () => {
   it("returns null when idea not found", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(null);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "nonexistent");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 
@@ -501,7 +503,7 @@ describe("getIdeaWithDerivedStatus", () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "open"));
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.derivedStatus).toBe("todo");
@@ -519,7 +521,7 @@ describe("getIdeaWithDerivedStatus", () => {
       { status: "open" },
     ]);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(result!.derivedStatus).toBe("in_progress");
     expect(result!.badgeHint).toBe("building");
@@ -535,7 +537,7 @@ describe("getIdeaWithDerivedStatus", () => {
       { status: "closed" },
     ]);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(result!.derivedStatus).toBe("done");
     expect(result!.badgeHint).toBe("done");
@@ -551,7 +553,7 @@ describe("getIdeaWithDerivedStatus", () => {
       { status: "to_verify" },
     ]);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(result!.derivedStatus).toBe("human_conduct_required");
     expect(result!.badgeHint).toBe("verify_work");
@@ -563,7 +565,7 @@ describe("getIdeaWithDerivedStatus", () => {
       { uuid: "proposal-1", status: "pending" },
     ]);
 
-    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(result!.derivedStatus).toBe("human_conduct_required");
     expect(result!.badgeHint).toBe("review_proposal");
@@ -574,7 +576,7 @@ describe("getIdeaWithDerivedStatus", () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1", adminAuth);
 
     expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
   });
@@ -591,7 +593,7 @@ describe("getTrackerGroups", () => {
     mockPrisma.idea.findMany.mockResolvedValue([]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result.groups.todo).toEqual([]);
     expect(result.groups.in_progress).toEqual([]);
@@ -610,7 +612,7 @@ describe("getTrackerGroups", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([]);
     mockPrisma.task.findMany.mockResolvedValue([]);
 
-    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     // Legacy "closed" normalizes to "elaborated", which with no proposal becomes in_progress/planning
     const allItems = Object.values(result.groups).flat();
@@ -640,7 +642,7 @@ describe("getTrackerGroups", () => {
       { proposalUuid: doneProposalUuid, status: "done" },
     ]);
 
-    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result.counts.todo).toBe(1);
     expect(result.counts.in_progress).toBe(2); // elaborating + building
@@ -655,7 +657,7 @@ describe("getTrackerGroups", () => {
     mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "open")]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     const item = result.groups.todo[0];
     expect(item).toEqual({
@@ -676,7 +678,7 @@ describe("getTrackerGroups", () => {
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID, adminAuth);
 
     expect(result.groups.todo).toHaveLength(3);
     expect(result.counts.todo).toBe(3);

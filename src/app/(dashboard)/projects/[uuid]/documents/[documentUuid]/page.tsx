@@ -44,7 +44,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   }
 
   // Get Document details
-  const document = await getDocument(auth.companyUuid, documentUuid);
+  const document = await getDocument(auth.companyUuid, documentUuid, auth);
   if (!document) {
     return (
       <div className="flex h-full flex-col items-center justify-center">

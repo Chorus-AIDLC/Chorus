@@ -100,6 +100,19 @@ const mockPrisma = vi.hoisted(() => {
   // Defined lazily so each call sees the live mutated `store`.
   return {
     prisma: {
+      // Project-visibility gate: canAccessProject() resolves project access via
+      // these models. A "shared" project is accessible to any actor, so the
+      // cascade gate does not block the report write/read paths under test.
+      project: {
+        findFirst: vi.fn(async () => ({
+          visibility: "shared",
+          ownerType: "user",
+          ownerUuid: "owner-x",
+        })),
+      },
+      projectMember: {
+        findUnique: vi.fn(async () => ({ id: 1 })),
+      },
       proposal: {
         findFirst: vi.fn(async ({ where }: { where: { uuid: string; companyUuid: string } }) => {
           // store is captured via closure — use globalThis to dodge hoisting init order

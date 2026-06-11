@@ -27,7 +27,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Project");
     }
 
-    const data = await getProjectProposals(auth.companyUuid, projectUuid);
+    const data = await getProjectProposals(auth.companyUuid, projectUuid, auth);
 
     return success(data);
   }

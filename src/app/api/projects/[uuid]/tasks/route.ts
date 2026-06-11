@@ -43,6 +43,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       status: statusFilter,
       priority: priorityFilter,
       proposalUuids,
+      auth,
     });
 
     return paginated(tasks, page, pageSize, total);
@@ -110,7 +111,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       priority,
       storyPoints: storyPoints || null,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     return success(task);
   }
