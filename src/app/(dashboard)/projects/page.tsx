@@ -35,6 +35,7 @@ import {
   Bot,
   Layers,
   Sparkles,
+  Lock,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
@@ -48,6 +49,7 @@ interface ProjectData {
   name: string;
   description: string | null;
   groupUuid: string | null;
+  visibility?: "shared" | "private";
   createdAt: string;
   updatedAt: string;
   counts: {
@@ -141,6 +143,12 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
         <span className="truncate text-[13px] font-semibold text-[#2C2C2C]">
           {project.name}
         </span>
+        {project.visibility === "private" && (
+          <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[10px] font-medium">
+            <Lock className="h-2.5 w-2.5" />
+            {t("projects.visibilityPrivate")}
+          </Badge>
+        )}
         {isEmpty && (
           <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] px-1.5 py-0 text-[10px] font-medium text-[#92400E]">
             {t("projects.empty")}
@@ -206,6 +214,12 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
             <span className="truncate text-[13px] font-semibold text-[#2C2C2C]">
               {project.name}
             </span>
+            {project.visibility === "private" && (
+              <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[10px] font-medium">
+                <Lock className="h-2.5 w-2.5" />
+                {t("projects.visibilityPrivate")}
+              </Badge>
+            )}
             {isEmpty && (
               <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] px-1.5 py-0 text-[10px] font-medium text-[#92400E]">
                 {t("projects.empty")}

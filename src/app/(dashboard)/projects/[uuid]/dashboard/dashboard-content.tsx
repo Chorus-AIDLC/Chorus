@@ -22,7 +22,16 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
           <p className="mt-1 text-[13px] text-[#5F5E5A]">{t("ideaTracker.overviewSubtitle")}</p>
         </div>
         <div className="flex items-center gap-3">
-          <ProjectSettingsModal projectUuid={projectUuid} projectName={project.name} projectDescription={project.description ?? null} />
+          <ProjectSettingsModal
+            projectUuid={projectUuid}
+            projectName={project.name}
+            projectDescription={project.description ?? null}
+            visibility={project.visibility === "shared" ? "shared" : "private"}
+            isOwner={
+              project.ownerType === "user" &&
+              project.ownerUuid === currentUserUuid
+            }
+          />
         </div>
       </div>
       <div className="min-h-0 flex-1">
