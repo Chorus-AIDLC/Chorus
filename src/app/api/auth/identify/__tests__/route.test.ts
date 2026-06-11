@@ -52,6 +52,7 @@ beforeEach(() => {
 describe("POST /api/auth/identify", () => {
   it("returns super_admin when the email is a Super Admin", async () => {
     mockIsSuperAdminEmail.mockReturnValue(true);
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([]);
 
     const res = await POST(makeRequest({ email: "root@example.com" }), emptyCtx);
     const json = await res.json();
@@ -59,12 +60,12 @@ describe("POST /api/auth/identify", () => {
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
     expect(json.data).toEqual({ type: "super_admin" });
-    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
   });
 
   it("returns default_auth when default auth is enabled and the email matches", async () => {
     mockIsDefaultAuthEnabled.mockReturnValue(true);
     mockGetDefaultUserEmail.mockReturnValue("dev@example.com");
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([]);
 
     const res = await POST(makeRequest({ email: "dev@example.com" }), emptyCtx);
     const json = await res.json();
@@ -72,7 +73,6 @@ describe("POST /api/auth/identify", () => {
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
     expect(json.data).toEqual({ type: "default_auth" });
-    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
   });
 
   it("returns not_found when there are zero candidate Companies", async () => {
@@ -139,5 +139,128 @@ describe("POST /api/auth/identify", () => {
       expect(c.oidcClientId).toBeUndefined();
       expect(c.oidcIssuer).toBeUndefined();
     }
+  });
+
+  it("returns multi_role when super_admin and default_auth resolve for the same email, with no secrets", async () => {
+    mockIsSuperAdminEmail.mockReturnValue(true);
+    mockIsDefaultAuthEnabled.mockReturnValue(true);
+    mockGetDefaultUserEmail.mockReturnValue("root@example.com");
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([]);
+
+    const res = await POST(makeRequest({ email: "root@example.com" }), emptyCtx);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data.type).toBe("multi_role");
+    // Stable order: super_admin first, then default_auth.
+    expect(json.data.roles).toEqual([
+      { kind: "super_admin" },
+      { kind: "default_auth" },
+    ]);
+    // Neither non-oidc role carries any company / secret material.
+    for (const r of json.data.roles) {
+      expect(r.company).toBeUndefined();
+    }
+  });
+
+  it("returns multi_role when super_admin coexists with a single oidc company, carrying the full company payload", async () => {
+    mockIsSuperAdminEmail.mockReturnValue(true);
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([companyA]);
+
+    const res = await POST(makeRequest({ email: "root@acme.com" }), emptyCtx);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data.type).toBe("multi_role");
+    // super_admin first (no secret), then the oidc entry with full payload.
+    expect(json.data.roles).toEqual([
+      { kind: "super_admin" },
+      {
+        kind: "oidc",
+        company: {
+          uuid: companyA.uuid,
+          name: companyA.name,
+          oidcIssuer: companyA.oidcIssuer,
+          oidcClientId: companyA.oidcClientId,
+        },
+      },
+    ]);
+    expect(json.data.roles[0].company).toBeUndefined();
+  });
+
+  it("returns multi_role when default_auth coexists with multiple oidc companies, one entry per company in order", async () => {
+    mockIsDefaultAuthEnabled.mockReturnValue(true);
+    mockGetDefaultUserEmail.mockReturnValue("shared@example.com");
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([companyA, companyB]);
+
+    const res = await POST(
+      makeRequest({ email: "shared@example.com" }),
+      emptyCtx
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data.type).toBe("multi_role");
+    expect(json.data.roles).toEqual([
+      { kind: "default_auth" },
+      {
+        kind: "oidc",
+        company: {
+          uuid: companyA.uuid,
+          name: companyA.name,
+          oidcIssuer: companyA.oidcIssuer,
+          oidcClientId: companyA.oidcClientId,
+        },
+      },
+      {
+        kind: "oidc",
+        company: {
+          uuid: companyB.uuid,
+          name: companyB.name,
+          oidcIssuer: companyB.oidcIssuer,
+          oidcClientId: companyB.oidcClientId,
+        },
+      },
+    ]);
+  });
+
+  it("returns multi_role with all three kinds when super_admin, default_auth, and one oidc company all match", async () => {
+    mockIsSuperAdminEmail.mockReturnValue(true);
+    mockIsDefaultAuthEnabled.mockReturnValue(true);
+    mockGetDefaultUserEmail.mockReturnValue("root@acme.com");
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([companyA]);
+
+    const res = await POST(makeRequest({ email: "root@acme.com" }), emptyCtx);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data.type).toBe("multi_role");
+    expect(json.data.roles.map((r: { kind: string }) => r.kind)).toEqual([
+      "super_admin",
+      "default_auth",
+      "oidc",
+    ]);
+  });
+
+  it("rejects a missing email with a validation error", async () => {
+    const res = await POST(makeRequest({}), emptyCtx);
+    const json = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(json.success).toBe(false);
+    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed email with a validation error", async () => {
+    const res = await POST(makeRequest({ email: "not-an-email" }), emptyCtx);
+    const json = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(json.success).toBe(false);
+    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
   });
 });

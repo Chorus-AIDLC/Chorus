@@ -45,6 +45,19 @@ export interface IdentifyCandidate {
   oidcIssuerHost: string;
 }
 
+// A single resolvable login path for an email, used in multi_role responses.
+// super_admin / default_auth entries carry no company (no secret material);
+// oidc entries carry the full company payload needed to start the OIDC flow.
+export interface IdentifyRoleOption {
+  kind: "super_admin" | "default_auth" | "oidc";
+  company?: {
+    uuid: string;
+    name: string;
+    oidcIssuer: string;
+    oidcClientId: string;
+  };
+}
+
 // Email identification response
 export interface IdentifyResponse {
   type:
@@ -52,6 +65,7 @@ export interface IdentifyResponse {
     | "oidc"
     | "oidc_multi_match"
     | "default_auth"
+    | "multi_role"
     | "not_found";
   company?: {
     uuid: string;
@@ -60,5 +74,6 @@ export interface IdentifyResponse {
     oidcClientId: string;
   };
   candidates?: IdentifyCandidate[];
+  roles?: IdentifyRoleOption[];
   message?: string;
 }

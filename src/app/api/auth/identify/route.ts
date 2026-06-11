@@ -8,7 +8,7 @@ import { isSuperAdminEmail } from "@/lib/super-admin";
 import { isDefaultAuthEnabled, getDefaultUserEmail } from "@/lib/default-auth";
 import { parseHost } from "@/lib/oidc-utils";
 import * as companyService from "@/services/company.service";
-import { IdentifyResponse } from "@/types/admin";
+import { IdentifyResponse, IdentifyRoleOption } from "@/types/admin";
 
 interface IdentifyRequest {
   email: string;
@@ -29,25 +29,35 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.validationError({ email: "Invalid email format" });
   }
 
-  // Check if this is a Super Admin
-  if (isSuperAdminEmail(email)) {
-    const response: IdentifyResponse = {
-      type: "super_admin",
-    };
-    return success(response);
-  }
-
-  // Check if default auth is enabled and email matches
-  if (isDefaultAuthEnabled() && email === getDefaultUserEmail()) {
-    const response: IdentifyResponse = {
-      type: "default_auth",
-    };
-    return success(response);
-  }
-
+  // Exhaustively collect every login path this email can take, in a stable
+  // order: super_admin first, then default_auth, then one oidc entry per
+  // company in the order returned by getCandidateCompaniesForEmail.
+  const isSuperAdmin = isSuperAdminEmail(email);
+  const isDefaultAuth =
+    isDefaultAuthEnabled() && email === getDefaultUserEmail();
   const candidates = await companyService.getCandidateCompaniesForEmail(email);
 
-  if (candidates.length === 0) {
+  const roles: IdentifyRoleOption[] = [];
+  if (isSuperAdmin) {
+    roles.push({ kind: "super_admin" });
+  }
+  if (isDefaultAuth) {
+    roles.push({ kind: "default_auth" });
+  }
+  for (const c of candidates) {
+    roles.push({
+      kind: "oidc",
+      company: {
+        uuid: c.uuid,
+        name: c.name,
+        oidcIssuer: c.oidcIssuer,
+        oidcClientId: c.oidcClientId,
+      },
+    });
+  }
+
+  // 0 roles → not_found.
+  if (roles.length === 0) {
     const response: IdentifyResponse = {
       type: "not_found",
       message: "No organization found for this email domain",
@@ -55,27 +65,42 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return success(response);
   }
 
-  if (candidates.length === 1) {
-    const c = candidates[0];
+  // A single resolvable path returns its exact existing shape.
+  if (roles.length === 1) {
+    const only = roles[0];
+    if (only.kind === "super_admin") {
+      const response: IdentifyResponse = { type: "super_admin" };
+      return success(response);
+    }
+    if (only.kind === "default_auth") {
+      const response: IdentifyResponse = { type: "default_auth" };
+      return success(response);
+    }
+    // single oidc company
     const response: IdentifyResponse = {
       type: "oidc",
-      company: {
-        uuid: c.uuid,
-        name: c.name,
-        oidcIssuer: c.oidcIssuer,
-        oidcClientId: c.oidcClientId,
-      },
+      company: only.company,
     };
     return success(response);
   }
 
+  // 2+ oidc companies and NO super_admin/default_auth → oidc_multi_match.
+  if (!isSuperAdmin && !isDefaultAuth) {
+    const response: IdentifyResponse = {
+      type: "oidc_multi_match",
+      candidates: candidates.map((c) => ({
+        uuid: c.uuid,
+        name: c.name,
+        oidcIssuerHost: parseHost(c.oidcIssuer),
+      })),
+    };
+    return success(response);
+  }
+
+  // super_admin and/or default_auth present alongside ≥1 other distinct path.
   const response: IdentifyResponse = {
-    type: "oidc_multi_match",
-    candidates: candidates.map((c) => ({
-      uuid: c.uuid,
-      name: c.name,
-      oidcIssuerHost: parseHost(c.oidcIssuer),
-    })),
+    type: "multi_role",
+    roles,
   };
   return success(response);
 });

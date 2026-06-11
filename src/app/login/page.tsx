@@ -8,12 +8,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
+import type { IdentifyRoleOption } from "@/types/admin";
 
 interface DefaultAuthInfo {
   enabled: boolean;
-  email: string;
+  superAdminCollision: boolean;
 }
 
 export default function LoginPage() {
@@ -27,6 +28,12 @@ export default function LoginPage() {
   const [defaultAuth, setDefaultAuth] = useState<DefaultAuthInfo | null>(null);
   const [defaultAuthChecked, setDefaultAuthChecked] = useState(false);
   const [showSsoForm, setShowSsoForm] = useState(false);
+  // When non-null, the role picker is shown instead of any auth form. Seeded by
+  // a check-default superAdminCollision (Trigger A) or an identify multi_role
+  // response (Trigger B). Each entry routes to its own existing auth flow.
+  const [roleChoices, setRoleChoices] = useState<IdentifyRoleOption[] | null>(
+    null
+  );
 
   useEffect(() => {
     async function checkDefaultAuth() {
@@ -35,6 +42,12 @@ export default function LoginPage() {
         const data = await response.json();
         if (data.success && data.data?.enabled) {
           setDefaultAuth(data.data);
+          // Trigger A — the default-auth user is also the super admin. Offer
+          // both up front instead of dropping into the default-auth form, so
+          // the super admin can still reach /login/admin.
+          if (data.data.superAdminCollision) {
+            setRoleChoices([{ kind: "super_admin" }, { kind: "default_auth" }]);
+          }
         }
       } catch {
         // Default auth not available, show normal flow
@@ -90,6 +103,32 @@ export default function LoginPage() {
     }
   };
 
+  // Start the OIDC sign-in redirect for a single company, carrying the typed
+  // email as login_hint. Shared by the single-oidc identify branch and the
+  // multi_role role-picker's oidc entries so both behave identically.
+  const startOidcRedirect = async (company: {
+    uuid: string;
+    name: string;
+    oidcIssuer: string;
+    oidcClientId: string;
+  }) => {
+    const oidcConfig: OidcConfig = {
+      issuer: company.oidcIssuer,
+      clientId: company.oidcClientId,
+      companyUuid: company.uuid,
+      companyName: company.name,
+    };
+    storeOidcConfig(oidcConfig);
+
+    const userManager = createUserManager(oidcConfig);
+
+    await userManager.signinRedirect({
+      extraQueryParams: {
+        login_hint: email,
+      },
+    });
+  };
+
   const handleSsoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -113,24 +152,14 @@ export default function LoginPage() {
 
       if (result.type === "super_admin") {
         router.push(`/login/admin?email=${encodeURIComponent(email)}`);
+      } else if (result.type === "multi_role") {
+        // Trigger B — the email resolves to multiple distinct auth paths.
+        // Surface the role picker; each option routes to its own flow.
+        setRoleChoices(result.roles ?? []);
       } else if (result.type === "oidc_multi_match") {
         router.push(`/login/pick-workspace?email=${encodeURIComponent(email)}`);
       } else if (result.type === "oidc" && result.company) {
-        const oidcConfig: OidcConfig = {
-          issuer: result.company.oidcIssuer,
-          clientId: result.company.oidcClientId,
-          companyUuid: result.company.uuid,
-          companyName: result.company.name,
-        };
-        storeOidcConfig(oidcConfig);
-
-        const userManager = createUserManager(oidcConfig);
-
-        await userManager.signinRedirect({
-          extraQueryParams: {
-            login_hint: email,
-          },
-        });
+        await startOidcRedirect(result.company);
       } else {
         setError(result.message || t("login.noOrganizationFound"));
       }
@@ -142,6 +171,39 @@ export default function LoginPage() {
     }
   };
 
+  // Dispatch a chosen role from the picker to its existing auth flow. Does not
+  // change how any flow authenticates — only which one the user lands in.
+  const handleRoleSelect = async (role: IdentifyRoleOption) => {
+    setError("");
+    if (role.kind === "super_admin") {
+      router.push(`/login/admin?email=${encodeURIComponent(email)}`);
+      return;
+    }
+    if (role.kind === "default_auth") {
+      // Clear the picker and fall through to the default-auth password form.
+      setRoleChoices(null);
+      setShowSsoForm(false);
+      setPassword("");
+      return;
+    }
+    if (role.kind === "oidc" && role.company) {
+      try {
+        await startOidcRedirect(role.company);
+      } catch (err) {
+        clientLogger.error("OIDC redirect error:", err);
+        setError(t("login.networkError"));
+      }
+    }
+  };
+
+  // Leave the role picker and return to the email / default-auth entry point.
+  const handleRolePickerBack = () => {
+    setRoleChoices(null);
+    setError("");
+    setPassword("");
+    setShowSsoForm(false);
+  };
+
   if (!defaultAuthChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -150,7 +212,19 @@ export default function LoginPage() {
     );
   }
 
-  const showDefaultAuthForm = defaultAuth?.enabled && !showSsoForm;
+  const showRolePicker = roleChoices !== null;
+  const showDefaultAuthForm =
+    !showRolePicker && defaultAuth?.enabled && !showSsoForm;
+
+  // Human-readable label for a picker option. super_admin / default_auth use
+  // fixed i18n strings; oidc options are labeled by their company name.
+  const roleLabel = (role: IdentifyRoleOption): string => {
+    if (role.kind === "super_admin") return t("login.rolePicker.superAdmin");
+    if (role.kind === "default_auth") return t("login.rolePicker.regularUser");
+    return role.company
+      ? t("login.rolePicker.oidcCompany", { company: role.company.name })
+      : t("login.rolePicker.oidcCompanyFallback");
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -167,7 +241,57 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {showDefaultAuthForm ? (
+          {showRolePicker ? (
+            <>
+              {/* Role Picker — one button per resolvable auth path */}
+              <p className="mb-4 text-center text-sm text-muted-foreground">
+                {t("login.rolePicker.title")}
+              </p>
+              <div className="flex flex-col gap-3">
+                {roleChoices!.map((role, index) => (
+                  <Card
+                    key={
+                      role.kind === "oidc" && role.company
+                        ? `oidc-${role.company.uuid}`
+                        : `${role.kind}-${index}`
+                    }
+                    className="border-border py-0 shadow-none transition-colors hover:border-ring"
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => handleRoleSelect(role)}
+                      className="flex h-auto w-full items-center gap-3 px-4 py-3 text-left hover:bg-transparent"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                        {roleLabel(role)}
+                      </span>
+                      <ArrowRight
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  </Card>
+                ))}
+              </div>
+
+              {error && (
+                <div className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
+              <div className="mt-6 flex justify-center">
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={handleRolePickerBack}
+                >
+                  {t("login.rolePicker.back")}
+                </Button>
+              </div>
+            </>
+          ) : showDefaultAuthForm ? (
             <>
               {/* Default Auth Password Form */}
               <form onSubmit={handlePasswordLogin} className="space-y-4">

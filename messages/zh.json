@@ -752,6 +752,14 @@
       "loading": "加载 workspace...",
       "noCandidates": "未找到该邮箱对应的 workspace。",
       "errorLoading": "加载 workspace 失败，请重试。"
+    },
+    "rolePicker": {
+      "title": "该邮箱有多种登录方式，请选择如何继续。",
+      "superAdmin": "以超级管理员身份登录",
+      "regularUser": "使用密码登录",
+      "oidcCompany": "使用 {company} 登录",
+      "oidcCompanyFallback": "使用 SSO 登录",
+      "back": "换个邮箱"
     }
   },
   "projectOverview": {
