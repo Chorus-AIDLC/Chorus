@@ -120,3 +120,21 @@ This change MUST NOT modify how `/api/admin/login` or `/api/auth/default-login` 
 - **WHEN** the credential is valid
 - **THEN** authentication MUST proceed via `/api/auth/default-login` and set the `user_session` cookie exactly as before this change
 
+### Requirement: The admin login page SHALL accept an editable email when none is supplied
+
+The `/login/admin` page MUST allow the super admin to enter their email when it is not provided as a query parameter. In the up-front collision flow, the login page never learns the email (`/api/auth/check-default` does not echo it), so it routes to `/login/admin` with an empty `email`. If the page only displayed a read-only email, the super admin would be unable to authenticate. When an `email` query parameter IS present, the page MUST display it (read-only is acceptable) and need not show an editable field.
+
+#### Scenario: Admin page prompts for the email when no query parameter is present
+
+- **GIVEN** the super admin navigates to `/login/admin` with no `email` query parameter (the up-front collision flow)
+- **WHEN** the page renders
+- **THEN** the page MUST present an editable email input
+- **AND** after the user enters their email and password, submitting MUST `POST` that email (not an empty string) to `/api/admin/login`
+
+#### Scenario: Admin page shows the supplied email when the query parameter is present
+
+- **GIVEN** the super admin navigates to `/login/admin?email=<encoded>` (selected from a picker that already knew the email)
+- **WHEN** the page renders
+- **THEN** the page MUST display the supplied email
+- **AND** submitting MUST `POST` that same email to `/api/admin/login`
+

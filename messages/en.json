@@ -176,6 +176,8 @@
     "title": "Super Admin",
     "dashboard": "Dashboard",
     "welcome": "Welcome to Chorus Super Admin",
+    "email": "Email",
+    "emailPlaceholder": "you@company.com",
     "password": "Password",
     "passwordPlaceholder": "Enter password",
     "signingIn": "Signing in...",

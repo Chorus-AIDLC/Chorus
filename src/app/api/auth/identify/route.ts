@@ -98,6 +98,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // super_admin and/or default_auth present alongside ≥1 other distinct path.
+  //
+  // Note: oidc entries here carry the full company payload (oidcIssuer +
+  // oidcClientId) inline, whereas the oidc_multi_match branch above redacts to
+  // oidcIssuerHost and defers the full config to /api/auth/company-oidc. This
+  // divergence is intentional. oidcIssuer and oidcClientId are not secrets —
+  // they are sent to the browser in every OIDC authorize redirect, and the
+  // single-oidc branch already returns them inline. The multi_role OIDC case is
+  // dominated by "super_admin + exactly one company", which is byte-identical to
+  // the single-oidc branch; redacting it would add a fetch round-trip and a
+  // type split for no real confidentiality gain. The picker reuses the same
+  // inline startOidcRedirect path as the single-oidc branch.
   const response: IdentifyResponse = {
     type: "multi_role",
     roles,

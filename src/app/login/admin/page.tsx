@@ -19,11 +19,18 @@ function AdminLoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Whether the email arrived via the `?email=` query param. When it did, we
+  // display it read-only (it was already chosen on the previous screen). When
+  // it did not — e.g. the login page's up-front collision picker, which never
+  // learns the email because /api/auth/check-default deliberately does not echo
+  // it — we must let the super admin type it here, or this page is a dead end.
+  const [emailFromParam, setEmailFromParam] = useState(false);
 
   useEffect(() => {
     const emailParam = searchParams.get("email");
     if (emailParam) {
       setEmail(emailParam);
+      setEmailFromParam(true);
     }
   }, [searchParams]);
 
@@ -64,11 +71,29 @@ function AdminLoginForm() {
             <h1 className="text-[28px] font-semibold text-foreground">
               {t("admin.title")}
             </h1>
-            <p className="text-sm text-muted-foreground">{email}</p>
+            {emailFromParam && (
+              <p className="text-sm text-muted-foreground">{email}</p>
+            )}
           </div>
 
           {/* Form Section */}
           <form onSubmit={handleSubmit} className="space-y-4">
+            {!emailFromParam && (
+              <div className="space-y-2">
+                <Label htmlFor="email">{t("admin.email")}</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder={t("admin.emailPlaceholder")}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  disabled={loading}
+                  autoFocus
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="password">{t("admin.password")}</Label>
               <div className="relative">
@@ -80,7 +105,7 @@ function AdminLoginForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  autoFocus
+                  autoFocus={emailFromParam}
                   className="pr-10"
                 />
                 <Button

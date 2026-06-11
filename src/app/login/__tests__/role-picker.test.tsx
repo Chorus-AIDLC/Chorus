@@ -192,7 +192,10 @@ describe("LoginPage role picker — Trigger A (check-default collision)", () => 
       screen.getByText("Sign in as Super Admin").closest("button")!
     );
 
-    // Email is empty (no typing in collision flow), so it routes with empty email.
+    // In the up-front collision flow the page never learns the email
+    // (check-default does not echo it), so it routes to /login/admin with an
+    // empty email. The admin page then prompts for the email when no ?email=
+    // param is present — see admin/page.test.tsx for the recovery path.
     expect(mockRouterPush).toHaveBeenCalledWith("/login/admin?email=");
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;

@@ -176,6 +176,8 @@
     "title": "超级管理员",
     "dashboard": "仪表盘",
     "welcome": "欢迎使用 Chorus 超级管理后台",
+    "email": "邮箱",
+    "emailPlaceholder": "you@company.com",
     "password": "密码",
     "passwordPlaceholder": "输入密码",
     "signingIn": "登录中...",

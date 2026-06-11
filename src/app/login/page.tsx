@@ -213,6 +213,7 @@ export default function LoginPage() {
   }
 
   const showRolePicker = roleChoices !== null;
+  const choices = roleChoices ?? [];
   const showDefaultAuthForm =
     !showRolePicker && defaultAuth?.enabled && !showSsoForm;
 
@@ -248,7 +249,7 @@ export default function LoginPage() {
                 {t("login.rolePicker.title")}
               </p>
               <div className="flex flex-col gap-3">
-                {roleChoices!.map((role, index) => (
+                {choices.map((role, index) => (
                   <Card
                     key={
                       role.kind === "oidc" && role.company
