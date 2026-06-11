@@ -23,7 +23,7 @@ export async function createDocumentAction(input: {
   }
 
   try {
-    if (!(await projectExists(auth.companyUuid, input.projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, input.projectUuid, auth))) {
       return { success: false, error: "Project not found" };
     }
 

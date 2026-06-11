@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import {
+  type AnyAuth,
+  getAccessibleProjectUuids,
+  applyProjectFilter,
+  ALL_PROJECTS,
+} from "@/lib/authz/project-access";
 
 // ============================================================
 // Interfaces
@@ -172,15 +178,17 @@ export async function deleteProjectGroup(
 
 export async function getProjectGroup(
   companyUuid: string,
-  groupUuid: string
+  groupUuid: string,
+  auth: AnyAuth
 ): Promise<ProjectGroupDetailResponse | null> {
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
   if (!group) return null;
 
+  const accessible = await getAccessibleProjectUuids(auth);
   const projects = await prisma.project.findMany({
-    where: { groupUuid, companyUuid },
+    where: applyProjectFilter({ groupUuid, companyUuid }, accessible, "uuid"),
     select: { uuid: true, name: true, description: true },
     orderBy: { updatedAt: "desc" },
   });
@@ -197,20 +205,27 @@ export async function getProjectGroup(
 }
 
 export async function listProjectGroups(
-  companyUuid: string
+  companyUuid: string,
+  auth: AnyAuth
 ): Promise<{ groups: ProjectGroupResponse[]; total: number; ungroupedCount: number }> {
   const groups = await prisma.projectGroup.findMany({
     where: { companyUuid },
     orderBy: { createdAt: "asc" },
   });
 
-  // Batch count projects per group
+  const accessible = await getAccessibleProjectUuids(auth);
+
+  // Batch count ACCESSIBLE projects per group.
   const groupUuids = groups.map((g) => g.uuid);
   const projectCounts =
     groupUuids.length > 0
       ? await prisma.project.groupBy({
           by: ["groupUuid"],
-          where: { companyUuid, groupUuid: { in: groupUuids } },
+          where: applyProjectFilter(
+            { companyUuid, groupUuid: { in: groupUuids } },
+            accessible,
+            "uuid"
+          ),
           _count: { _all: true },
         })
       : [];
@@ -219,21 +234,25 @@ export async function listProjectGroups(
     projectCounts.map((pc) => [pc.groupUuid, pc._count._all])
   );
 
-  const result: ProjectGroupResponse[] = groups.map((g) => ({
-    uuid: g.uuid,
-    name: g.name,
-    description: g.description,
-    projectCount: countMap.get(g.uuid) ?? 0,
-    createdAt: g.createdAt.toISOString(),
-    updatedAt: g.updatedAt.toISOString(),
-  }));
+  // Only surface groups that contain at least one accessible project. Super
+  // admins (ALL sentinel) see every group regardless of count.
+  const result: ProjectGroupResponse[] = groups
+    .filter((g) => accessible === ALL_PROJECTS || (countMap.get(g.uuid) ?? 0) > 0)
+    .map((g) => ({
+      uuid: g.uuid,
+      name: g.name,
+      description: g.description,
+      projectCount: countMap.get(g.uuid) ?? 0,
+      createdAt: g.createdAt.toISOString(),
+      updatedAt: g.updatedAt.toISOString(),
+    }));
 
-  // Count ungrouped projects
+  // Count ungrouped projects the actor can access.
   const ungroupedCount = await prisma.project.count({
-    where: { companyUuid, groupUuid: null },
+    where: applyProjectFilter({ companyUuid, groupUuid: null }, accessible, "uuid"),
   });
 
-  return { groups: result, total: groups.length, ungroupedCount };
+  return { groups: result, total: result.length, ungroupedCount };
 }
 
 // ============================================================
@@ -285,16 +304,20 @@ export async function moveProjectToGroup(
 
 export async function getGroupDashboard(
   companyUuid: string,
-  groupUuid: string
+  groupUuid: string,
+  auth: AnyAuth
 ): Promise<GroupDashboardResponse | null> {
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
   if (!group) return null;
 
-  // Get all projects in this group
+  // Get all ACCESSIBLE projects in this group. All downstream stats derive from
+  // this list, so filtering here cascades the visibility boundary through the
+  // entire dashboard.
+  const accessible = await getAccessibleProjectUuids(auth);
   const projects = await prisma.project.findMany({
-    where: { groupUuid, companyUuid },
+    where: applyProjectFilter({ groupUuid, companyUuid }, accessible, "uuid"),
     select: { uuid: true, name: true },
   });
 

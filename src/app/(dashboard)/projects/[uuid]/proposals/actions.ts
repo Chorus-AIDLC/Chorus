@@ -31,7 +31,7 @@ export async function createProposalAction(
 
   try {
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return { success: false, error: "Project not found" };
     }
 

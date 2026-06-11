@@ -177,8 +177,8 @@ export async function getProjectsAndGroupsAction() {
   }
 
   const [{ projects }, { groups }] = await Promise.all([
-    listProjects({ companyUuid: auth.companyUuid, skip: 0, take: 100 }),
-    listProjectGroups(auth.companyUuid),
+    listProjects({ companyUuid: auth.companyUuid, skip: 0, take: 100, auth }),
+    listProjectGroups(auth.companyUuid, auth),
   ]);
 
   return { success: true as const, data: { projects, groups } };

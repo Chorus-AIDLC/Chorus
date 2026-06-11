@@ -20,7 +20,7 @@ export const GET = withErrorHandler(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const group = await getProjectGroup(auth.companyUuid, uuid);
+    const group = await getProjectGroup(auth.companyUuid, uuid, auth);
     if (!group) return errors.notFound("Project group");
 
     return success(group);

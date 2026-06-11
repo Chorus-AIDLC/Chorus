@@ -139,7 +139,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, title, description, inputType, inputUuids }) => {
       // Validate project exists
-      if (!(await projectExists(auth.companyUuid, projectUuid))) {
+      if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
 
@@ -264,7 +264,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, type, title, content, proposalUuid }) => {
       // Validate project exists
-      if (!(await projectExists(auth.companyUuid, projectUuid))) {
+      if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
 
@@ -971,7 +971,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid, title, content }) => {
-      const exists = await projectExists(auth.companyUuid, projectUuid);
+      const exists = await projectExists(auth.companyUuid, projectUuid, auth);
       if (!exists) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }

@@ -10,13 +10,16 @@ export async function getDashboardData(projectUuid: string) {
     redirect("/login");
   }
 
-  const project = await getProject(auth.companyUuid, projectUuid);
+  const project = await getProject(auth.companyUuid, projectUuid, auth);
   if (!project) {
     redirect("/projects");
   }
 
   const trackerData = await getTrackerGroups(auth.companyUuid, projectUuid);
-  const stats = await getProjectStats(auth.companyUuid, projectUuid);
+  const stats = await getProjectStats(auth.companyUuid, projectUuid, auth);
+  if (!stats) {
+    redirect("/projects");
+  }
   const { activities } = await listActivitiesWithActorNames({
     companyUuid: auth.companyUuid,
     projectUuid,

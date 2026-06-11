@@ -9,6 +9,9 @@ const mockPrisma = vi.hoisted(() => ({
     update: vi.fn(),
     delete: vi.fn(),
   },
+  projectMember: {
+    findMany: vi.fn(),
+  },
   project: {
     findFirst: vi.fn(),
     findMany: vi.fn(),
@@ -48,8 +51,12 @@ import {
   moveProjectToGroup,
   getGroupDashboard,
 } from "@/services/project-group.service";
+import type { SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Helpers =====
+// super_admin bypasses access gating (getAccessibleProjectUuids => ALL), so the
+// existing query-behavior assertions remain valid without extra mock setup.
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 const now = new Date("2026-03-13T00:00:00Z");
 const companyUuid = "company-0000-0000-0000-000000000001";
 const groupUuid = "group-0000-0000-0000-000000000001";
@@ -306,7 +313,7 @@ describe("getProjectGroup", () => {
     mockPrisma.projectGroup.findFirst.mockResolvedValue(group);
     mockPrisma.project.findMany.mockResolvedValue([project]);
 
-    const result = await getProjectGroup(companyUuid, groupUuid);
+    const result = await getProjectGroup(companyUuid, groupUuid, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.uuid).toBe(groupUuid);
@@ -318,7 +325,7 @@ describe("getProjectGroup", () => {
   it("should return null when group not found", async () => {
     mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
 
-    const result = await getProjectGroup(companyUuid, groupUuid);
+    const result = await getProjectGroup(companyUuid, groupUuid, adminAuth);
 
     expect(result).toBeNull();
     expect(mockPrisma.project.findMany).not.toHaveBeenCalled();
@@ -329,7 +336,7 @@ describe("getProjectGroup", () => {
     mockPrisma.projectGroup.findFirst.mockResolvedValue(group);
     mockPrisma.project.findMany.mockResolvedValue([]);
 
-    await getProjectGroup(companyUuid, groupUuid);
+    await getProjectGroup(companyUuid, groupUuid, adminAuth);
 
     expect(mockPrisma.project.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -352,7 +359,7 @@ describe("listProjectGroups", () => {
     ]);
     mockPrisma.project.count.mockResolvedValue(2);
 
-    const result = await listProjectGroups(companyUuid);
+    const result = await listProjectGroups(companyUuid, adminAuth);
 
     expect(result.groups).toHaveLength(2);
     expect(result.total).toBe(2);
@@ -367,7 +374,7 @@ describe("listProjectGroups", () => {
     mockPrisma.project.groupBy.mockResolvedValue([]);
     mockPrisma.project.count.mockResolvedValue(0);
 
-    const result = await listProjectGroups(companyUuid);
+    const result = await listProjectGroups(companyUuid, adminAuth);
 
     expect(result.groups[0].projectCount).toBe(0);
   });
@@ -377,7 +384,7 @@ describe("listProjectGroups", () => {
     mockPrisma.project.groupBy.mockResolvedValue([]);
     mockPrisma.project.count.mockResolvedValue(0);
 
-    await listProjectGroups(companyUuid);
+    await listProjectGroups(companyUuid, adminAuth);
 
     expect(mockPrisma.projectGroup.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -391,7 +398,7 @@ describe("listProjectGroups", () => {
     mockPrisma.project.groupBy.mockResolvedValue([]);
     mockPrisma.project.count.mockResolvedValue(10);
 
-    const result = await listProjectGroups(companyUuid);
+    const result = await listProjectGroups(companyUuid, adminAuth);
 
     expect(result.groups).toEqual([]);
     expect(result.total).toBe(0);
@@ -523,7 +530,7 @@ describe("getGroupDashboard", () => {
       },
     ]);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.group.uuid).toBe(groupUuid);
@@ -541,7 +548,7 @@ describe("getGroupDashboard", () => {
   it("should return null when group not found", async () => {
     mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result).toBeNull();
   });
@@ -551,7 +558,7 @@ describe("getGroupDashboard", () => {
     mockPrisma.projectGroup.findFirst.mockResolvedValue(group);
     mockPrisma.project.findMany.mockResolvedValue([]);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.stats.projectCount).toBe(0);
@@ -578,7 +585,7 @@ describe("getGroupDashboard", () => {
       .mockResolvedValueOnce([]);
     mockPrisma.activity.findMany.mockResolvedValue([]);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result!.stats.completionRate).toBe(0);
   });
@@ -595,7 +602,7 @@ describe("getGroupDashboard", () => {
     mockPrisma.task.groupBy.mockResolvedValue([]);
     mockPrisma.activity.findMany.mockResolvedValue([]);
 
-    await getGroupDashboard(companyUuid, groupUuid);
+    await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(mockPrisma.activity.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -628,7 +635,7 @@ describe("getGroupDashboard", () => {
       },
     ]);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result!.recentActivity[0].projectName).toBe("My Project");
   });
@@ -657,7 +664,7 @@ describe("getGroupDashboard", () => {
       },
     ]);
 
-    const result = await getGroupDashboard(companyUuid, groupUuid);
+    const result = await getGroupDashboard(companyUuid, groupUuid, adminAuth);
 
     expect(result!.recentActivity[0].projectName).toBe("Unknown");
   });

@@ -24,7 +24,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
   if (denied) return denied;
 
   const { uuid } = await context.params;
-  const project = await getProject(auth.companyUuid, uuid);
+  const project = await getProject(auth.companyUuid, uuid, auth);
 
   if (!project) {
     return errors.notFound("Project");

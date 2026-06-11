@@ -21,7 +21,7 @@ import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 export const ALL_PROJECTS = "ALL" as const;
 export type AccessibleProjects = string[] | typeof ALL_PROJECTS;
 
-type AnyAuth = AuthContext | SuperAdminAuthContext;
+export type AnyAuth = AuthContext | SuperAdminAuthContext;
 
 function isSuperAdmin(auth: AnyAuth): auth is SuperAdminAuthContext {
   return auth.type === "super_admin";
