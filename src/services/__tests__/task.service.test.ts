@@ -106,6 +106,11 @@ import {
   checkAcceptanceCriteriaGate,
   createAcceptanceCriteria,
   replaceAcceptanceCriteria,
+  resetAcceptanceCriterion,
+  getAcceptanceStatus,
+  addTaskDependency,
+  removeTaskDependency,
+  getTaskDependencies,
 } from "@/services/task.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
@@ -1706,5 +1711,73 @@ describe("access gating", () => {
       ),
     ).rejects.toThrow(AlreadyClaimedError);
     expect(mockPrisma.task.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------- Visibility write-gate rejections (non-member of a private project) ----------
+describe("write gates reject a non-member of a private project", () => {
+  // Each gated mutation first resolves the task (which carries projectUuid),
+  // then calls canAccessProject(access, projectUuid). Configure the task lookup
+  // to succeed and the project lookup to be private/owned-by-someone-else with
+  // no membership row, so the gate denies.
+  function denyForExistingTask() {
+    mockPrisma.task.findFirst.mockResolvedValue(rawTask());
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask());
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+  }
+
+  beforeEach(() => denyForExistingTask());
+
+  it("markAcceptanceCriteria denies non-member", async () => {
+    await expect(
+      markAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ uuid: "ac-1", status: "passed" }], { type: "user", actorUuid: "user-1" }, userAuth),
+    ).rejects.toThrow("Task not found");
+  });
+
+  it("reportCriteriaSelfCheck denies non-member", async () => {
+    await expect(
+      reportCriteriaSelfCheck(COMPANY_UUID, TASK_UUID, [{ uuid: "ac-1", devStatus: "passed" }], { type: "user", actorUuid: "user-1" }, userAuth),
+    ).rejects.toThrow("Task not found");
+  });
+
+  it("replaceAcceptanceCriteria denies non-member", async () => {
+    await expect(
+      replaceAcceptanceCriteria(COMPANY_UUID, TASK_UUID, [{ description: "x", required: true }], userAuth),
+    ).rejects.toThrow("Task not found");
+  });
+
+  it("resetAcceptanceCriterion denies non-member", async () => {
+    await expect(
+      resetAcceptanceCriterion(COMPANY_UUID, TASK_UUID, "ac-1", userAuth),
+    ).rejects.toThrow("Task not found");
+  });
+
+  it("getAcceptanceStatus denies non-member", async () => {
+    await expect(
+      getAcceptanceStatus(COMPANY_UUID, TASK_UUID, userAuth),
+    ).rejects.toThrow("Task not found");
+  });
+
+  it("addTaskDependency denies non-member", async () => {
+    await expect(
+      addTaskDependency(COMPANY_UUID, TASK_UUID, "dep-uuid", userAuth),
+    ).rejects.toThrow();
+  });
+
+  it("removeTaskDependency denies non-member", async () => {
+    await expect(
+      removeTaskDependency(COMPANY_UUID, TASK_UUID, "dep-uuid", userAuth),
+    ).rejects.toThrow();
+  });
+
+  it("getTaskDependencies denies non-member", async () => {
+    await expect(
+      getTaskDependencies(COMPANY_UUID, TASK_UUID, userAuth),
+    ).rejects.toThrow();
   });
 });

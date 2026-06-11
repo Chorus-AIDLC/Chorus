@@ -14,9 +14,7 @@ import * as proposalService from "@/services/proposal.service";
 import logger from "@/lib/logger";
 import {
   type AnyAuth,
-  getAccessibleProjectUuids,
   canAccessProject,
-  applyProjectFilter,
 } from "@/lib/authz/project-access";
 
 // ===== Derived Status =====

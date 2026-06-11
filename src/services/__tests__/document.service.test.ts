@@ -104,6 +104,24 @@ beforeEach(() => {
   mockPrisma.document.findUnique.mockResolvedValue(makeDocRecord());
 });
 
+// ===== visibility write-gate =====
+describe("createDocument visibility gate", () => {
+  it("rejects creating a document in a project the actor cannot access", async () => {
+    // canAccessProject(userAuth): private project owned by someone else, no membership.
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+
+    await expect(
+      createDocument({ companyUuid, projectUuid, type: "prd", title: "X", createdByUuid }, userAuth),
+    ).rejects.toThrow("Project not found");
+    expect(mockPrisma.document.create).not.toHaveBeenCalled();
+  });
+});
+
 // ===== createDocument =====
 describe("createDocument", () => {
   it("should create document with version 1 and return formatted response", async () => {

@@ -128,9 +128,16 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_list_projects` | List all projects (paginated, with entity counts) |
+| `chorus_list_projects` | List all projects you can access (paginated, with entity counts) |
 | `chorus_get_project` | Get project details |
 | `chorus_get_activity` | Get project activity stream (paginated) |
+| `chorus_list_project_members` | List a project's members (`project:read`) |
+| `chorus_admin_add_project_member` | Add a user/agent to a project (`project:admin`, owner-gated) |
+| `chorus_admin_remove_project_member` | Remove a member (`project:admin`, owner-gated) |
+
+### Project Visibility (Private / Shared)
+
+A project is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — grants access: a private project hides itself **and all its ideas, proposals, documents, tasks, activity, comments, notifications, and search results** from non-members, and `project:admin` does NOT bypass this. `chorus_admin_create_project` defaults new projects to **private** (creating agent = owner + first member); pass `visibility: "shared"` for company-wide projects and `memberUuids` to seed members (users or agents).
 
 ### Ideas
 

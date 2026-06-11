@@ -172,9 +172,20 @@ Results can be filtered by project(s) using optional HTTP headers in your MCP co
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_list_projects` | List all projects (paginated, with entity counts) |
+| `chorus_list_projects` | List all projects you can access (paginated, with entity counts) |
 | `chorus_get_project` | Get project details |
 | `chorus_get_activity` | Get project activity stream (paginated) |
+| `chorus_list_project_members` | List a project's members (`project:read`) |
+| `chorus_admin_add_project_member` | Add a user/agent to a project (`project:admin`, owner-gated) |
+| `chorus_admin_remove_project_member` | Remove a member (`project:admin`, owner-gated) |
+
+### Project Visibility (Private / Shared)
+
+A project is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — is what grants access:
+
+- A private project hides itself **and all its ideas, proposals, documents, tasks, activity, comments, notifications, and search results** from non-members. Holding `project:admin` does NOT bypass this; you must be a member.
+- `chorus_admin_create_project` defaults new projects to **private**, with the creating agent as owner + first member. Pass `visibility: "shared"` for company-wide projects, and `memberUuids` to seed members.
+- Members may be users *or* agents — an agent must be added as a member to work a private project's tasks.
 
 ### Ideas
 
