@@ -98,3 +98,24 @@ Both migrations (`add_project_visibility`, `add_project_group_visibility`) run a
 - Project cannot NARROW/remove inherited group members (union only — by design).
 - Nested groups (single level, unchanged).
 - `docs/design.pen` not updated (Pencil MCP tooling unavailable in this environment).
+
+---
+
+## Part 3 — Visibility UX fixes (claim-on-manage, group DELETE gate, member UX)
+
+Addresses three user-reported bugs, all rooted in **legacy null-owner entities** (the migration set pre-existing projects/groups to `shared` with no owner, so `isOwner` was false for everyone → manage controls hidden).
+
+- **Claim-on-first-manage**: the first actor who can **access AND manage** an owner-less project/group (via any manage action — set visibility, add/remove member, update, delete) **claims ownership** and is seeded as a member. Strictly **access-gated** (a non-member of a *private* owner-less entity can never claim it — no privacy hole), **never reassigns** an existing owner, race-safe (guarded `updateMany where ownerUuid:null` + lost-race re-read), and super_admin manages without claiming.
+- **Security fix**: `DELETE /api/project-groups/[uuid]` was **ungated** — added `canAccessGroup`(→404) then `claimOrCanManageGroup`(→403), matching PATCH.
+- **Member UX**: member lists now resolve **display names** (`getActorName`) instead of raw UUIDs; the member-add search surfaces **human users** (and a default list on empty input) via a `forMembers` flag on `/api/mentionables` (the @mention autocomplete default is unchanged).
+- **Dashboards** show manage controls for claimable legacy entities via a **pure** `canManageOrClaimable*` predicate (no write on a GET; the real claim happens on the manage action).
+
+Pure read gates (`canManageProject/Group`) stay side-effect-free; all MCP mutating tools + REST manage routes use the claim-aware variant.
+
+### Testing
+- Authz unit matrix extended: access-gated claim (non-member of private owner-less → denied, no write), never-reassign, lost-race, super_admin no-claim, pure-predicate no-write.
+- E2E integration: legacy null-owner project & group claimed by first accessible manager (owner set + member seeded), a different user then denied, private owner-less non-member denied (owner stays null), super_admin no-claim.
+- Full gate green: `tsc` ✓, **1990 tests pass / 1 skip** ✓, coverage **95.23% stmts / 88.77% branches / 96.06% funcs / 96.97% lines** ✓, `pnpm build` ✓.
+
+### Migration / rollout
+No schema change (owner columns already exist). Pure logic/UX + the DELETE gate fix. Already deployed to the live standalone instance.
