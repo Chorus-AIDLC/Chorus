@@ -10,6 +10,14 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     findUnique: vi.fn(),
   },
+  projectGroup: {
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -17,6 +25,9 @@ import {
   getAccessibleProjectUuids,
   canAccessProject,
   canManageProject,
+  getAccessibleGroupUuids,
+  canAccessGroup,
+  canManageGroup,
   applyProjectFilter,
   ALL_PROJECTS,
 } from "../project-access";
@@ -66,6 +77,12 @@ const adminAgentNonMember: AgentAuthContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Safe defaults: no group ownership/membership unless a test sets otherwise,
+  // so the project-union branch is a no-op for the existing project-level tests.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+  mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
 });
 
 describe("getAccessibleProjectUuids", () => {
@@ -243,5 +260,171 @@ describe("applyProjectFilter", () => {
       companyUuid: COMPANY,
       projectUuid: { in: [] },
     });
+  });
+});
+
+// ===========================================================================
+// Two-level inheritance (ProjectGroup → Project, dynamic union)
+// ===========================================================================
+
+const groupMemberUser: AuthContext = {
+  type: "user",
+  companyUuid: COMPANY,
+  actorUuid: "user-groupmember",
+};
+
+describe("canAccessProject — group inheritance", () => {
+  it("a GROUP member accesses a PRIVATE project in that group (union)", async () => {
+    // project: private, owned by someone else, no direct membership, belongs to group-1
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-owner",
+      groupUuid: "group-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    // isGroupOwnerOrMember: not owner, but a member of group-1
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-owner" });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue({ id: 1 });
+
+    expect(await canAccessProject(groupMemberUser, "private-in-group")).toBe(true);
+  });
+
+  it("a GROUP owner accesses a private project in that group", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "someone-else",
+      groupUuid: "group-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-groupmember" });
+
+    expect(await canAccessProject(groupMemberUser, "private-in-group")).toBe(true);
+  });
+
+  it("a NON-group-member is denied a private project in the group", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-owner",
+      groupUuid: "group-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-owner" });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+
+    expect(await canAccessProject(nonMemberUser, "private-in-group")).toBe(false);
+  });
+
+  it("INVARIANT: a SHARED project in a PRIVATE group is still company-wide (shared short-circuits)", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "shared",
+      ownerType: "user",
+      ownerUuid: "user-owner",
+      groupUuid: "private-group",
+    });
+    // even a total stranger gets it; group membership never consulted
+    expect(await canAccessProject(nonMemberUser, "shared-in-private-group")).toBe(true);
+    expect(mockPrisma.projectGroupMember.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("INVARIANT: a PRIVATE project in a SHARED group stays restricted (shared groups NOT in project-union)", async () => {
+    // The project's group is shared, but isGroupOwnerOrMember is shared-agnostic:
+    // a non-member/owner of the (shared) group must NOT inherit the private project.
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-owner",
+      groupUuid: "shared-group",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    // The group is explicitly SHARED and owned by someone else; the stranger is
+    // not its owner/member. Including visibility:"shared" here hardens the test:
+    // it would FAIL if a regression made isGroupOwnerOrMember grant access just
+    // because the group is shared.
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "shared", ownerType: "user", ownerUuid: "user-owner" });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+
+    expect(await canAccessProject(nonMemberUser, "private-in-shared-group")).toBe(false);
+  });
+
+  it("project:admin agent that is NOT a group member is still denied (no bypass)", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-owner",
+      groupUuid: "group-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-owner" });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+
+    expect(await canAccessProject(adminAgentNonMember, "private-in-group")).toBe(false);
+  });
+});
+
+describe("getAccessibleProjectUuids — group union", () => {
+  it("unions in projects of groups the actor owns/belongs to", async () => {
+    // shared/owned direct projects
+    mockPrisma.project.findMany
+      .mockResolvedValueOnce([{ uuid: "shared-1" }]) // visible projects
+      .mockResolvedValueOnce([{ uuid: "groupproj-1" }, { uuid: "groupproj-2" }]); // group projects
+    mockPrisma.projectMember.findMany.mockResolvedValue([]);
+    // owns group-1 (union group-set)
+    mockPrisma.projectGroup.findMany.mockResolvedValue([{ uuid: "group-1" }]);
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
+
+    const result = await getAccessibleProjectUuids(memberUser);
+    expect(new Set(result as string[])).toEqual(
+      new Set(["shared-1", "groupproj-1", "groupproj-2"]),
+    );
+  });
+
+  it("does NOT query group projects when the actor owns/belongs to no groups", async () => {
+    mockPrisma.project.findMany.mockResolvedValueOnce([{ uuid: "shared-1" }]);
+    mockPrisma.projectMember.findMany.mockResolvedValue([]);
+    mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
+
+    const result = await getAccessibleProjectUuids(memberUser);
+    expect(result).toEqual(["shared-1"]);
+    // only the first project.findMany (visible projects); no second group-projects query
+    expect(mockPrisma.project.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getAccessibleGroupUuids / canAccessGroup / canManageGroup", () => {
+  it("super admin => ALL, no query", async () => {
+    expect(await getAccessibleGroupUuids(superAdmin)).toBe(ALL_PROJECTS);
+    expect(mockPrisma.projectGroup.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getAccessibleGroupUuids includes shared ∪ owned ∪ member groups", async () => {
+    mockPrisma.projectGroup.findMany.mockResolvedValue([{ uuid: "shared-g" }, { uuid: "owned-g" }]);
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([{ projectGroupUuid: "member-g" }]);
+
+    const result = await getAccessibleGroupUuids(memberUser);
+    expect(new Set(result as string[])).toEqual(new Set(["shared-g", "owned-g", "member-g"]));
+  });
+
+  it("canAccessGroup: shared group accessible to anyone, no membership query", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "shared", ownerType: null, ownerUuid: null });
+    expect(await canAccessGroup(nonMemberUser, "shared-g")).toBe(true);
+  });
+
+  it("canAccessGroup: private group denied to non-member", async () => {
+    mockPrisma.projectGroup.findFirst
+      .mockResolvedValueOnce({ visibility: "private", ownerType: "user", ownerUuid: "user-owner" }) // canAccessGroup lookup
+      .mockResolvedValueOnce({ ownerType: "user", ownerUuid: "user-owner" }); // isGroupOwnerOrMember lookup
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+    expect(await canAccessGroup(nonMemberUser, "private-g")).toBe(false);
+  });
+
+  it("canManageGroup: owner yes, member no, super_admin yes", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-owner" });
+    expect(await canManageGroup(ownerUser, "g")).toBe(true);
+    expect(await canManageGroup(memberUser, "g")).toBe(false);
+    expect(await canManageGroup(superAdmin, "g")).toBe(true);
   });
 });
