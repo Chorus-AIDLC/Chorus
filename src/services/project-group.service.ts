@@ -4,7 +4,6 @@ import {
   type AnyAuth,
   getAccessibleProjectUuids,
   applyProjectFilter,
-  ALL_PROJECTS,
 } from "@/lib/authz/project-access";
 
 // ============================================================
@@ -234,18 +233,20 @@ export async function listProjectGroups(
     projectCounts.map((pc) => [pc.groupUuid, pc._count._all])
   );
 
-  // Only surface groups that contain at least one accessible project. Super
-  // admins (ALL sentinel) see every group regardless of count.
-  const result: ProjectGroupResponse[] = groups
-    .filter((g) => accessible === ALL_PROJECTS || (countMap.get(g.uuid) ?? 0) > 0)
-    .map((g) => ({
-      uuid: g.uuid,
-      name: g.name,
-      description: g.description,
-      projectCount: countMap.get(g.uuid) ?? 0,
-      createdAt: g.createdAt.toISOString(),
-      updatedAt: g.updatedAt.toISOString(),
-    }));
+  // Groups are organizational containers, not visibility-gated entities (this
+  // mirrors how search.service treats project_group results). We therefore
+  // surface every group in the company — including newly created empty ones —
+  // while the per-group projectCount reflects only the projects the actor can
+  // access. Hiding empty/no-accessible-project groups would make a freshly
+  // created group vanish from the list, which reads as a broken "create" button.
+  const result: ProjectGroupResponse[] = groups.map((g) => ({
+    uuid: g.uuid,
+    name: g.name,
+    description: g.description,
+    projectCount: countMap.get(g.uuid) ?? 0,
+    createdAt: g.createdAt.toISOString(),
+    updatedAt: g.updatedAt.toISOString(),
+  }));
 
   // Count ungrouped projects the actor can access.
   const ungroupedCount = await prisma.project.count({

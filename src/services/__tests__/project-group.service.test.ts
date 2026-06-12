@@ -51,7 +51,7 @@ import {
   moveProjectToGroup,
   getGroupDashboard,
 } from "@/services/project-group.service";
-import type { SuperAdminAuthContext } from "@/types/auth";
+import type { SuperAdminAuthContext, AuthContext } from "@/types/auth";
 
 // ===== Helpers =====
 // super_admin bypasses access gating (getAccessibleProjectUuids => ALL), so the
@@ -59,6 +59,7 @@ import type { SuperAdminAuthContext } from "@/types/auth";
 const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 const now = new Date("2026-03-13T00:00:00Z");
 const companyUuid = "company-0000-0000-0000-000000000001";
+const userAuth: AuthContext = { type: "user", companyUuid, actorUuid: "user-1" };
 const groupUuid = "group-0000-0000-0000-000000000001";
 const projectUuid = "project-0000-0000-0000-000000000001";
 
@@ -391,6 +392,26 @@ describe("listProjectGroups", () => {
         orderBy: { createdAt: "asc" },
       })
     );
+  });
+
+  it("regression: a regular user still sees a freshly-created empty group (no accessible-project filter on the group list)", async () => {
+    // A brand-new group has zero projects. For a non-super-admin,
+    // getAccessibleProjectUuids returns an empty set (no shared/owned projects,
+    // no memberships). The group must STILL appear — hiding it made the UI
+    // "create group" button look broken.
+    const freshGroup = makeProjectGroup({ uuid: "group-new", name: "Fresh" });
+    mockPrisma.projectGroup.findMany.mockResolvedValue([freshGroup]);
+    // getAccessibleProjectUuids: no accessible projects for this user.
+    mockPrisma.project.findMany.mockResolvedValue([]);
+    mockPrisma.projectMember.findMany.mockResolvedValue([]);
+    mockPrisma.project.groupBy.mockResolvedValue([]); // 0 projects in the group
+    mockPrisma.project.count.mockResolvedValue(0);
+
+    const result = await listProjectGroups(companyUuid, userAuth);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].uuid).toBe("group-new");
+    expect(result.groups[0].projectCount).toBe(0);
   });
 
   it("should handle empty groups list", async () => {
