@@ -41,6 +41,13 @@ const mockPrisma = vi.hoisted(() => ({
   activity: {
     findMany: vi.fn(),
   },
+  // getActorName (uuid-resolver) resolves member display names via these.
+  user: {
+    findUnique: vi.fn(),
+  },
+  agent: {
+    findUnique: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -250,15 +257,18 @@ describe("setGroupVisibility", () => {
 
 // ===== Group member CRUD =====
 describe("listGroupMembers", () => {
-  it("returns members ordered by createdAt asc", async () => {
+  it("returns members ordered by createdAt asc with resolved names", async () => {
     mockPrisma.projectGroupMember.findMany.mockResolvedValue([
       { uuid: "m1", memberType: "user", memberUuid: "user-1", role: "member", createdAt: now },
     ]);
+    // getActorName resolves a user's display name via prisma.user.findUnique.
+    mockPrisma.user.findUnique.mockResolvedValue({ name: "Alice", email: "alice@example.com" });
 
     const result = await listGroupMembers(companyUuid, groupUuid);
 
     expect(result).toHaveLength(1);
     expect(result[0].memberUuid).toBe("user-1");
+    expect(result[0].name).toBe("Alice");
     expect(mockPrisma.projectGroupMember.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { companyUuid, projectGroupUuid: groupUuid },

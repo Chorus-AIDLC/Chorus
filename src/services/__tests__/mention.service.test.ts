@@ -288,6 +288,75 @@ describe("searchMentionables", () => {
     expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
   });
 
+  it("should NOT include users on empty query when includeUsersOnEmpty is false (default)", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "MyBot", roles: ["developer_agent"] },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+      includeUsersOnEmpty: false,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results.every((r) => r.type === "agent")).toBe(true);
+    expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("should also return recent company users on empty query when includeUsersOnEmpty is true", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "MyBot", roles: ["developer_agent"] },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: USER_UUID, name: "Alice", email: "alice@example.com", avatarUrl: null },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+      includeUsersOnEmpty: true,
+    });
+
+    // Both the own agent and the recent company user are present.
+    expect(results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "agent", uuid: AGENT_UUID }),
+        expect.objectContaining({ type: "user", uuid: USER_UUID, name: "Alice" }),
+      ])
+    );
+    // Users are queried company-wide, ordered by createdAt desc.
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid: COMPANY_UUID },
+        orderBy: { createdAt: "desc" },
+      })
+    );
+  });
+
+  it("should fall back to email/Unknown for users with no name on empty query (includeUsersOnEmpty)", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: USER_UUID, name: null, email: "noname@example.com", avatarUrl: null },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+      includeUsersOnEmpty: true,
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({ type: "user", uuid: USER_UUID, name: "noname@example.com" }),
+    ]);
+  });
+
   it("should scope agents by ownerUuid for agent caller", async () => {
     const ownerUuid = "77777777-7777-7777-7777-777777777777";
 

@@ -17,6 +17,13 @@ const mockPrisma = vi.hoisted(() => ({
     createMany: vi.fn(),
     delete: vi.fn(),
   },
+  // getActorName (uuid-resolver) resolves member display names via these.
+  user: {
+    findUnique: vi.fn(),
+  },
+  agent: {
+    findUnique: vi.fn(),
+  },
   projectGroup: {
     findFirst: vi.fn(),
     findMany: vi.fn(),
@@ -653,13 +660,15 @@ describe("setProjectVisibility", () => {
 
 // ===== member CRUD =====
 describe("project members", () => {
-  it("listProjectMembers returns mapped members", async () => {
+  it("listProjectMembers returns mapped members with resolved names", async () => {
     mockPrisma.projectMember.findMany.mockResolvedValue([
       { uuid: "m1", memberType: "user", memberUuid: "user-2", role: "member", createdAt: now },
     ]);
+    // getActorName resolves a user's display name via prisma.user.findUnique.
+    mockPrisma.user.findUnique.mockResolvedValue({ name: "Bob", email: "bob@example.com" });
     const result = await listProjectMembers(companyUuid, projectUuid);
     expect(result).toEqual([
-      { uuid: "m1", memberType: "user", memberUuid: "user-2", role: "member", createdAt: now.toISOString() },
+      { uuid: "m1", memberType: "user", memberUuid: "user-2", name: "Bob", role: "member", createdAt: now.toISOString() },
     ]);
   });
 
@@ -669,9 +678,11 @@ describe("project members", () => {
     mockPrisma.projectMember.create.mockResolvedValue({
       uuid: "m2", memberType: "agent", memberUuid: "agent-7", role: "member", createdAt: now,
     });
+    mockPrisma.agent.findUnique.mockResolvedValue({ name: "Agent Seven" });
 
     const result = await addProjectMember(companyUuid, projectUuid, "agent", "agent-7");
     expect(result!.memberUuid).toBe("agent-7");
+    expect(result!.name).toBe("Agent Seven");
     expect(mockPrisma.projectMember.create).toHaveBeenCalled();
   });
 

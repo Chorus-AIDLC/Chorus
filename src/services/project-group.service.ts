@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import { getActorName } from "@/lib/uuid-resolver";
 import {
   type AnyAuth,
   getAccessibleProjectUuids,
@@ -538,6 +539,8 @@ export interface ProjectGroupMemberResponse {
   uuid: string;
   memberType: "user" | "agent";
   memberUuid: string;
+  /** Resolved display name for the member (null if unresolvable). */
+  name: string | null;
   role: string;
   createdAt: string;
 }
@@ -588,13 +591,16 @@ export async function listGroupMembers(
       createdAt: true,
     },
   });
-  return members.map((m) => ({
-    uuid: m.uuid,
-    memberType: m.memberType as "user" | "agent",
-    memberUuid: m.memberUuid,
-    role: m.role,
-    createdAt: m.createdAt.toISOString(),
-  }));
+  return Promise.all(
+    members.map(async (m) => ({
+      uuid: m.uuid,
+      memberType: m.memberType as "user" | "agent",
+      memberUuid: m.memberUuid,
+      name: await getActorName(m.memberType, m.memberUuid),
+      role: m.role,
+      createdAt: m.createdAt.toISOString(),
+    })),
+  );
 }
 
 // Add a member (user or agent) to a group. Idempotent on the unique key.
@@ -640,6 +646,7 @@ export async function addGroupMember(
     uuid: member.uuid,
     memberType: member.memberType as "user" | "agent",
     memberUuid: member.memberUuid,
+    name: await getActorName(member.memberType, member.memberUuid),
     role: member.role,
     createdAt: member.createdAt.toISOString(),
   };
