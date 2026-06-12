@@ -30,6 +30,9 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     count: vi.fn(),
   },
+  projectGroupMember: {
+    findMany: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -49,6 +52,10 @@ const superAdminAuth = { type: "super_admin" as const, email: "admin@chorus.loca
 describe("search.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // getAccessibleProjectUuids (non-super-admin path) also consults group
+    // ownership/membership; default these to empty so existing tests are unaffected.
+    mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
   });
 
   describe("global search", () => {

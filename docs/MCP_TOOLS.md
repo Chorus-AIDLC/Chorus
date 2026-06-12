@@ -61,6 +61,9 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_list_project_members` | `project:read` |
 | `chorus_admin_add_project_member` | `project:admin` |
 | `chorus_admin_remove_project_member` | `project:admin` |
+| `chorus_list_project_group_members` | `project:read` |
+| `chorus_admin_add_project_group_member` | `project:admin` |
+| `chorus_admin_remove_project_group_member` | `project:admin` |
 | `chorus_admin_approve_proposal` | `proposal:admin` |
 | `chorus_admin_close_proposal` | `proposal:admin` |
 | `chorus_admin_verify_task` | `task:admin` |
@@ -92,6 +95,14 @@ Every project is either **`shared`** (visible to the whole company — the histo
 - **Super admin** retains full visibility for governance.
 
 Member-management tools: `chorus_list_project_members` (`project:read`), `chorus_admin_add_project_member` and `chorus_admin_remove_project_member` (`project:admin`, owner-gated).
+
+### Two-level visibility (ProjectGroup → Project inheritance)
+
+Project **groups** carry the same `shared`/`private` + owner + member model, and a project **inherits** its group's accessors as a **dynamic union**:
+
+- A project's effective accessors = (its own owner + members) **∪** (its group's owner + members). Adding someone to a private group instantly grants them access to **every project in that group** (and all those projects' cascaded entities) — no snapshot.
+- **The project's own visibility flag stays authoritative** ("项目级 > 项目组"): a `shared` project inside a `private` group is still company-wide; a `private` project inside a `shared` group is still restricted. The group only *adds* accessors — a shared group never exposes its private projects to everyone.
+- Group management (`chorus_admin_create_project_group` with `visibility`/`memberUuids`, `chorus_admin_add_project_group_member`, `chorus_admin_remove_project_group_member`, `chorus_admin_update_project_group`, `chorus_admin_delete_project_group`) is owner-gated; `chorus_list_project_group_members` requires `project:read`. New groups default to `private` (creating agent = owner + first member). A new project with a `groupUuid` defaults to its group's visibility unless `visibility` is passed explicitly.
 
 ## Project Filtering
 

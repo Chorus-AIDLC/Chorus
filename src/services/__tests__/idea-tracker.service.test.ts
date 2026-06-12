@@ -8,6 +8,8 @@ const { mockPrisma } = vi.hoisted(() => ({
     task: { findMany: vi.fn() },
     project: { findMany: vi.fn() },
     projectMember: { findMany: vi.fn() },
+    projectGroup: { findMany: vi.fn() },
+    projectGroupMember: { findMany: vi.fn() },
   },
 }));
 
@@ -89,6 +91,10 @@ beforeEach(() => {
     { projectUuid: PROJECT_A },
     { projectUuid: PROJECT_B },
   ]);
+  // No group ownership/membership in tracker fixtures (access comes from the
+  // ProjectMember rows above); default the group queries to empty.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
 });
 
 // ============================================================

@@ -428,3 +428,47 @@ describe("getAccessibleGroupUuids / canAccessGroup / canManageGroup", () => {
     expect(await canManageGroup(superAdmin, "g")).toBe(true);
   });
 });
+
+describe("group helpers — guard branches", () => {
+  it("canAccessGroup: empty groupUuid => false", async () => {
+    expect(await canAccessGroup(memberUser, "")).toBe(false);
+  });
+  it("canAccessGroup: group not found => false", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+    expect(await canAccessGroup(memberUser, "missing")).toBe(false);
+  });
+  it("canAccessGroup: private group, owner allowed", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "private", ownerType: "user", ownerUuid: "user-owner" });
+    expect(await canAccessGroup(ownerUser, "g")).toBe(true);
+  });
+  it("canAccessGroup: private group, member allowed via membership row", async () => {
+    // first findFirst (canAccessGroup) + second (isGroupOwnerOrMember) both private/other-owner
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "private", ownerType: "user", ownerUuid: "user-owner" });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue({ id: 7 });
+    expect(await canAccessGroup(memberUser, "g")).toBe(true);
+  });
+  it("canManageGroup: empty groupUuid => false", async () => {
+    expect(await canManageGroup(memberUser, "")).toBe(false);
+  });
+  it("canManageGroup: group not found => false", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+    expect(await canManageGroup(ownerUser, "missing")).toBe(false);
+  });
+  it("getAccessibleGroupUuids: member-only group (not owned/shared) is included", async () => {
+    mockPrisma.projectGroup.findMany.mockResolvedValue([]); // no shared/owned
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([{ projectGroupUuid: "g-mem" }]);
+    const result = await getAccessibleGroupUuids(memberUser);
+    expect(result as string[]).toEqual(["g-mem"]);
+  });
+});
+
+describe("canAccessProject — group fallthrough when group missing/unowned", () => {
+  it("project in a group the actor neither owns nor belongs to => denied (isGroupOwnerOrMember group lookup null)", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private", ownerType: "user", ownerUuid: "user-owner", groupUuid: "ghost-group",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null); // group not found => isGroupOwnerOrMember false (line 84)
+    expect(await canAccessProject(nonMemberUser, "p-ghost")).toBe(false);
+  });
+});

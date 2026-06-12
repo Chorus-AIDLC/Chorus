@@ -134,10 +134,13 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 | `chorus_list_project_members` | List a project's members (`project:read`) |
 | `chorus_admin_add_project_member` | Add a user/agent to a project (`project:admin`, owner-gated) |
 | `chorus_admin_remove_project_member` | Remove a member (`project:admin`, owner-gated) |
+| `chorus_list_project_group_members` | List a project group's members (`project:read`) |
+| `chorus_admin_add_project_group_member` | Add a user/agent to a group (`project:admin`, owner-gated) |
+| `chorus_admin_remove_project_group_member` | Remove a group member (`project:admin`, owner-gated) |
 
-### Project Visibility (Private / Shared)
+### Project Visibility (Private / Shared) + two-level inheritance
 
-A project is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — grants access: a private project hides itself **and all its ideas, proposals, documents, tasks, activity, comments, notifications, and search results** from non-members, and `project:admin` does NOT bypass this. `chorus_admin_create_project` defaults new projects to **private** (creating agent = owner + first member); pass `visibility: "shared"` for company-wide projects and `memberUuids` to seed members (users or agents).
+A project (and a project **group**) is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — grants access: a private project hides itself **and all its ideas, proposals, documents, tasks, activity, comments, notifications, and search results** from non-members, and `project:admin` does NOT bypass this. `chorus_admin_create_project` / `chorus_admin_create_project_group` default new entities to **private** (creating agent = owner + first member); pass `visibility: "shared"` for company-wide entities and `memberUuids` to seed members (users or agents). **Two-level inheritance (dynamic union)**: a project inherits its group's owner+members as additional accessors (add someone to a private group → they reach every project in it, instantly); the project's own visibility flag stays authoritative (`shared`-in-`private`-group is still company-wide; `private`-in-`shared`-group is still restricted).
 
 ### Ideas
 

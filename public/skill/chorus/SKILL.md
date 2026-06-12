@@ -178,14 +178,18 @@ Results can be filtered by project(s) using optional HTTP headers in your MCP co
 | `chorus_list_project_members` | List a project's members (`project:read`) |
 | `chorus_admin_add_project_member` | Add a user/agent to a project (`project:admin`, owner-gated) |
 | `chorus_admin_remove_project_member` | Remove a member (`project:admin`, owner-gated) |
+| `chorus_list_project_group_members` | List a project group's members (`project:read`) |
+| `chorus_admin_add_project_group_member` | Add a user/agent to a group (`project:admin`, owner-gated) |
+| `chorus_admin_remove_project_group_member` | Remove a group member (`project:admin`, owner-gated) |
 
-### Project Visibility (Private / Shared)
+### Project Visibility (Private / Shared) + two-level inheritance
 
-A project is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — is what grants access:
+A project (and a project **group**) is **`shared`** (whole company) or **`private`** (owner + explicit members). Membership — not permission — is what grants access:
 
 - A private project hides itself **and all its ideas, proposals, documents, tasks, activity, comments, notifications, and search results** from non-members. Holding `project:admin` does NOT bypass this; you must be a member.
-- `chorus_admin_create_project` defaults new projects to **private**, with the creating agent as owner + first member. Pass `visibility: "shared"` for company-wide projects, and `memberUuids` to seed members.
+- `chorus_admin_create_project` / `chorus_admin_create_project_group` default new entities to **private**, with the creating agent as owner + first member. Pass `visibility: "shared"` for company-wide entities, and `memberUuids` to seed members.
 - Members may be users *or* agents — an agent must be added as a member to work a private project's tasks.
+- **Two-level inheritance (dynamic union)**: a project inherits its group's owner+members as additional accessors — add someone to a private group and they instantly reach every project in it. The project's own visibility stays authoritative: a `shared` project in a `private` group is still company-wide; a `private` project in a `shared` group is still restricted. A new project created with a `groupUuid` defaults to its group's visibility.
 
 ### Ideas
 

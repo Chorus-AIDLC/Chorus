@@ -20,6 +20,12 @@ const mockPrisma = vi.hoisted(() => ({
   projectMember: {
     findMany: vi.fn(),
   },
+  projectGroup: {
+    findMany: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -90,6 +96,10 @@ function makeNotifRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // getAccessibleProjectUuids (non-super-admin) also consults group ownership/
+  // membership; default empty so existing assertions are unaffected.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
 });
 
 // ===== create =====

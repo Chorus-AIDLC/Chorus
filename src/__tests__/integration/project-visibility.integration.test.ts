@@ -37,6 +37,7 @@ const { db } = vi.hoisted(() => ({
     user: [] as any[],
     agent: [] as any[],
     projectGroup: [] as any[],
+    projectGroupMember: [] as any[],
     taskDependency: [] as any[],
     acceptanceCriterion: [] as any[],
   } as Record<string, any[]>,
@@ -103,6 +104,11 @@ function makeModel(name: string) {
         const k = where.projectUuid_memberType_memberUuid;
         return rows().find((r) => r.projectUuid === k.projectUuid && r.memberType === k.memberType && r.memberUuid === k.memberUuid) ?? null;
       }
+      // composite unique key used by ProjectGroupMember
+      if (where?.projectGroupUuid_memberType_memberUuid) {
+        const k = where.projectGroupUuid_memberType_memberUuid;
+        return rows().find((r) => r.projectGroupUuid === k.projectGroupUuid && r.memberType === k.memberType && r.memberUuid === k.memberUuid) ?? null;
+      }
       const r = rows().find((row) => matchWhere(row, where));
       return r ? hydrate(name, r) : null;
     }),
@@ -148,7 +154,7 @@ for (const _ of []) void _; // noop to keep hoist ordering clear
 
 vi.mock("@/lib/prisma", () => {
   // Build the prisma stub lazily so `db` is populated per-test.
-  const models = ["project", "projectMember", "idea", "proposal", "document", "task", "activity", "notification", "comment", "user", "agent", "projectGroup", "taskDependency", "acceptanceCriterion"];
+  const models = ["project", "projectMember", "idea", "proposal", "document", "task", "activity", "notification", "comment", "user", "agent", "projectGroup", "projectGroupMember", "taskDependency", "acceptanceCriterion"];
   const client: any = {};
   for (const m of models) client[m] = makeModel(m);
   client.$transaction = async (arg: any) => (typeof arg === "function" ? arg(client) : Promise.all(arg));
@@ -159,7 +165,7 @@ vi.mock("@/lib/prisma", () => {
 // event bus is fire-and-forget; stub it
 vi.mock("@/lib/event-bus", () => ({ eventBus: { emitChange: vi.fn() } }));
 
-import { canAccessProject } from "@/lib/authz/project-access";
+import { canAccessProject, getAccessibleProjectUuids } from "@/lib/authz/project-access";
 import * as projectService from "@/services/project.service";
 import * as taskService from "@/services/task.service";
 import * as commentService from "@/services/comment.service";
@@ -372,5 +378,99 @@ describe("project-visibility cascade — writes", () => {
   it("createComment on a SHARED task: non-member of P is allowed (regression)", async () => {
     const ok = await commentService.createComment({ companyUuid: COMPANY, targetType: "task", targetUuid: "task-shar", content: "ok", authorType: "user", authorUuid: "userB", auth: B });
     expect(ok.uuid).toBeTruthy();
+  });
+});
+
+// ===========================================================================
+// Two-level inheritance (ProjectGroup → Project) — dynamic union
+// ===========================================================================
+//
+// Group GRP: PRIVATE, owned by user A, with agent M as a GROUP member (M is NOT
+// a direct member of the project below). Contains:
+//   - GP : a PRIVATE project (owner A, no extra direct members) with one task.
+//   - GPS: a SHARED project (must stay company-wide regardless of the private group).
+// userB is a non-member of everything.
+const GRP = "group-private";
+const GP = "proj-in-group";
+const GPS = "shared-in-private-group";
+
+function seedGroupFixtures() {
+  db.projectGroup.push({
+    uuid: GRP, companyUuid: COMPANY, name: "Private Group", description: "g",
+    visibility: "private", ownerType: "user", ownerUuid: "userA",
+  });
+  // Group members: owner A + agent M (M reaches projects ONLY via the group).
+  db.projectGroupMember.push(
+    { uuid: "gm-a", companyUuid: COMPANY, projectGroupUuid: GRP, memberType: "user", memberUuid: "userA", role: "member" },
+    { uuid: "gm-m", companyUuid: COMPANY, projectGroupUuid: GRP, memberType: "agent", memberUuid: "agentM", role: "member" },
+  );
+  db.project.push(
+    { uuid: GP, companyUuid: COMPANY, name: "GroupedPrivate", description: "gp", groupUuid: GRP, visibility: "private", ownerType: "user", ownerUuid: "userA" },
+    { uuid: GPS, companyUuid: COMPANY, name: "GroupedShared", description: "gps", groupUuid: GRP, visibility: "shared", ownerType: "user", ownerUuid: "userA" },
+  );
+  // GP has its own ProjectMember only for the owner (so M's access is purely via the group).
+  db.projectMember.push({ uuid: "pm-gp-a", companyUuid: COMPANY, projectUuid: GP, memberType: "user", memberUuid: "userA", role: "member" });
+  db.task.push({ uuid: "task-gp", companyUuid: COMPANY, projectUuid: GP, title: "grouped task", description: null, status: "open", priority: "medium", storyPoints: null, acceptanceCriteria: null, assigneeType: null, assigneeUuid: null, assignedAt: null, assignedByUuid: null, proposalUuid: null, createdByUuid: "userA", dependsOn: [], dependedBy: [], acceptanceCriteriaItems: [], createdAt: new Date("2026-06-11T00:00:00Z"), updatedAt: new Date("2026-06-11T00:00:00Z") });
+  db.comment.push({ uuid: "cmt-gp", companyUuid: COMPANY, targetType: "task", targetUuid: "task-gp", content: "hi", authorType: "user", authorUuid: "userA", createdAt: new Date("2026-06-11T00:00:00Z"), updatedAt: new Date("2026-06-11T00:00:00Z") });
+}
+
+describe("group inheritance — dynamic union (read + write via group membership)", () => {
+  beforeEach(() => seedGroupFixtures());
+
+  it("group member M can READ the group's private project + its task (purely via group membership)", async () => {
+    expect(await canAccessProject(M, GP)).toBe(true);
+    expect(await projectService.getProject(COMPANY, GP, M)).not.toBeNull();
+    expect(await taskService.getTask(COMPANY, "task-gp", M)).not.toBeNull();
+    expect((await taskService.listTasks({ companyUuid: COMPANY, projectUuid: GP, skip: 0, take: 50, auth: M })).total).toBe(1);
+  });
+
+  it("group member M can WRITE the group's private project (claim task, comment) via group membership", async () => {
+    const claimed = await taskService.claimTask({ taskUuid: "task-gp", companyUuid: COMPANY, assigneeType: "agent", assigneeUuid: "agentM", assignedByUuid: "agentM" }, M);
+    expect(claimed.status).toBe("assigned");
+    const c = await commentService.createComment({ companyUuid: COMPANY, targetType: "task", targetUuid: "task-gp", content: "via group", authorType: "agent", authorUuid: "agentM", auth: M });
+    expect(c.uuid).toBeTruthy();
+  });
+
+  it("the grouped private project appears in M's accessible-project set", async () => {
+    const accessible = await getAccessibleProjectUuids(M);
+    expect(accessible).not.toBe("ALL");
+    expect(accessible as string[]).toContain(GP);
+  });
+
+  it("a NON-group-member (user B) is denied the group's private project + task", async () => {
+    expect(await canAccessProject(B, GP)).toBe(false);
+    expect(await projectService.getProject(COMPANY, GP, B)).toBeNull();
+    expect(await taskService.getTask(COMPANY, "task-gp", B)).toBeNull();
+    await expect(
+      taskService.claimTask({ taskUuid: "task-gp", companyUuid: COMPANY, assigneeType: "user", assigneeUuid: "userB", assignedByUuid: "userB" }, B),
+    ).rejects.toThrow();
+  });
+
+  it("project:admin agent N (non-group-member) is still denied (no bypass)", async () => {
+    expect(await canAccessProject(N, GP)).toBe(false);
+  });
+
+  it("DYNAMIC: removing M from the group revokes access to the grouped project", async () => {
+    expect(await canAccessProject(M, GP)).toBe(true);
+    // Remove M's group membership row (dynamic — no snapshot).
+    const idx = db.projectGroupMember.findIndex((r) => r.projectGroupUuid === GRP && r.memberType === "agent" && r.memberUuid === "agentM");
+    db.projectGroupMember.splice(idx, 1);
+    expect(await canAccessProject(M, GP)).toBe(false);
+    expect(await taskService.getTask(COMPANY, "task-gp", M)).toBeNull();
+  });
+
+  it("INVARIANT: a SHARED project inside the PRIVATE group is still company-wide", async () => {
+    // userB is in no group and no project, yet the shared project is visible.
+    expect(await canAccessProject(B, GPS)).toBe(true);
+    expect(await projectService.getProject(COMPANY, GPS, B)).not.toBeNull();
+  });
+
+  it("INVARIANT: a non-member does NOT inherit the private grouped project just because they can't see the group", async () => {
+    // Sanity: B has no accessible projects from this group.
+    const accessible = await getAccessibleProjectUuids(B);
+    expect(accessible).not.toBe("ALL");
+    expect(accessible as string[]).not.toContain(GP);
+    // but DOES include the shared one
+    expect(accessible as string[]).toContain(GPS);
   });
 });

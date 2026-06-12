@@ -22,6 +22,12 @@ const { mockPrisma } = vi.hoisted(() => ({
     projectMember: {
       findMany: vi.fn(),
     },
+    projectGroup: {
+      findMany: vi.fn(),
+    },
+    projectGroupMember: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -107,6 +113,10 @@ beforeEach(() => {
     { projectUuid: PROJECT_A },
     { projectUuid: PROJECT_B },
   ]);
+  // No group ownership/membership in checkin fixtures (access comes from the
+  // ProjectMember rows above); default the group queries to empty.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
   mockNotificationService.list.mockResolvedValue(emptyNotifications());
   mockNotificationService.markRead.mockResolvedValue({});
   mockNotificationService.emitAgentCheckin.mockReturnValue(undefined);
