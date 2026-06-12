@@ -68,6 +68,7 @@
     "ideaReleased": "{actor} released this idea",
     "ideaStatusChanged": "{actor} changed the idea status",
     "ideaEdited": "{actor} edited the idea",
+    "ideaReparented": "{actor} changed the idea's parent",
     "elaborationStarted": "{actor} started elaboration",
     "elaborationAnswered": "{actor} answered elaboration",
     "elaborationSkipped": "{actor} skipped elaboration",
@@ -1171,6 +1172,7 @@
       "cycleBlocked": "Descendant · would cycle",
       "cycleWarning": "Greyed-out ideas are descendants of this idea; selecting one would form a cycle, so they are disabled.",
       "noCandidates": "No eligible ideas in this project",
+      "pickerTruncated": "Showing the first 200 ideas. If you don't see the parent you want, narrow by searching its title.",
       "save": "Set as parent",
       "saveFailed": "Failed to set parent",
       "deriveFailed": "Failed to derive idea"

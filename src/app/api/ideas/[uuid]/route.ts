@@ -98,7 +98,10 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       updateData.status = body.status;
     }
 
-    const updated = await updateIdea(idea.uuid, auth.companyUuid, updateData);
+    const updated = await updateIdea(idea.uuid, auth.companyUuid, updateData, {
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
+    });
     return success(updated);
   }
 );

@@ -5,13 +5,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockPrisma,
   mockEventBus,
+  mockCreateActivity,
   mockFormatAssigneeComplete,
   mockFormatCreatedBy,
 } = vi.hoisted(() => ({
+  mockCreateActivity: vi.fn().mockResolvedValue(undefined),
   mockPrisma: {
     idea: {
       create: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
       groupBy: vi.fn(),
       update: vi.fn(),
@@ -44,7 +47,7 @@ vi.mock("@/services/mention.service", () => ({
   createMentions: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/services/activity.service", () => ({
-  createActivity: vi.fn().mockResolvedValue(undefined),
+  createActivity: mockCreateActivity,
 }));
 // proposal.service is imported by idea.service for report aggregation in getIdea
 vi.mock("@/services/proposal.service", () => ({
@@ -192,13 +195,39 @@ describe("setIdeaParent cycle prevention", () => {
       ideaRow({ uuid: "A", parentUuid: "B", project: { uuid: PROJECT, name: "P" } }),
     );
 
-    const res = await setIdeaParent("A", "B", COMPANY);
+    const res = await setIdeaParent("A", "B", COMPANY, { actorType: "user", actorUuid: "u1" });
     expect(res.parentUuid).toBe("B");
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { parentUuid: "B" } }),
     );
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: "idea", action: "updated" }),
+    );
+    // Records a reparented activity capturing from/to (idea A had no parent).
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: "idea",
+        targetUuid: "A",
+        action: "reparented",
+        actorType: "user",
+        actorUuid: "u1",
+        value: { fromParentUuid: null, toParentUuid: "B" },
+      }),
+    );
+  });
+
+  it("does NOT record a reparented activity without actor context", async () => {
+    mockPrisma.idea.findFirst
+      .mockResolvedValueOnce({ uuid: "A", projectUuid: PROJECT, parentUuid: null })
+      .mockResolvedValueOnce({ uuid: "B", projectUuid: PROJECT, parentUuid: null });
+    mockPrisma.idea.update.mockResolvedValueOnce(
+      ideaRow({ uuid: "A", parentUuid: "B", project: { uuid: PROJECT, name: "P" } }),
+    );
+
+    await setIdeaParent("A", "B", COMPANY);
+
+    expect(mockCreateActivity).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "reparented" }),
     );
   });
 
@@ -235,7 +264,8 @@ describe("getDescendantUuids", () => {
 });
 
 describe("deleteIdea orphans children", () => {
-  it("nulls children parentUuid before deleting the parent", async () => {
+  it("nulls children parentUuid (company-scoped) before deleting the parent", async () => {
+    mockPrisma.idea.findUnique.mockResolvedValueOnce({ companyUuid: COMPANY });
     mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 2 });
     mockPrisma.idea.delete.mockResolvedValueOnce(
       ideaRow({ uuid: "parent", companyUuid: COMPANY, projectUuid: PROJECT }),
@@ -243,8 +273,9 @@ describe("deleteIdea orphans children", () => {
 
     await deleteIdea("parent");
 
+    // Orphan updateMany is scoped by both companyUuid and parentUuid.
     expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
-      where: { parentUuid: "parent" },
+      where: { companyUuid: COMPANY, parentUuid: "parent" },
       data: { parentUuid: null },
     });
     // orphan-first ordering: updateMany invoked before delete

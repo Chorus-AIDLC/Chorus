@@ -59,10 +59,15 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
   }
 
   try {
-    const idea = await updateIdea(input.ideaUuid, auth.companyUuid, {
-      title: input.title,
-      content: input.content,
-    });
+    const idea = await updateIdea(
+      input.ideaUuid,
+      auth.companyUuid,
+      {
+        title: input.title,
+        content: input.content,
+      },
+      { actorType: auth.type, actorUuid: auth.actorUuid },
+    );
 
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, idea };

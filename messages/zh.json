@@ -68,6 +68,7 @@
     "ideaReleased": "{actor} 释放了此想法",
     "ideaStatusChanged": "{actor} 更改了想法状态",
     "ideaEdited": "{actor} 编辑了想法",
+    "ideaReparented": "{actor} 更改了想法的父级",
     "elaborationStarted": "{actor} 发起了需求澄清",
     "elaborationAnswered": "{actor} 回答了需求澄清",
     "elaborationSkipped": "{actor} 跳过了需求澄清",
@@ -1172,6 +1173,7 @@
       "cycleBlocked": "后代 · 会成环",
       "cycleWarning": "灰显的想法是当前想法的后代，选择它们会形成环，因此已被禁用。",
       "noCandidates": "该项目内没有可选的想法",
+      "pickerTruncated": "仅显示前 200 个想法。如果没看到想要的父级，请用标题搜索缩小范围。",
       "save": "设为父想法",
       "saveFailed": "设置父级失败",
       "deriveFailed": "派生想法失败"

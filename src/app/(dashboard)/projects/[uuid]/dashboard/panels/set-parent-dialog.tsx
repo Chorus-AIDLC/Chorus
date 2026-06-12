@@ -60,6 +60,7 @@ export function SetParentDialog({
   const router = useRouter();
 
   const [candidates, setCandidates] = useState<PickerIdea[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export function SetParentDialog({
       const result = await getProjectIdeasForPickerAction(projectUuid);
       if (result.success) {
         setCandidates(result.data);
+        setTruncated(result.hasMore);
       } else {
         setError(result.error);
       }
@@ -176,6 +178,13 @@ export function SetParentDialog({
               {t("cycleWarning")}
             </p>
           </div>
+
+          {/* Truncation notice — the picker shows the first 200 ideas only. */}
+          {truncated && (
+            <p className="px-1 text-[12px] text-[#A8A498]" role="status">
+              {t("pickerTruncated")}
+            </p>
+          )}
 
           {error && (
             <p className="text-xs text-destructive" role="alert">

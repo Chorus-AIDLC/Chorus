@@ -810,7 +810,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_move_idea",
     {
-      description: "Move an Idea to another project. Also moves the Idea's full lineage subtree (all descendant Ideas) and detaches the moved root from any parent left behind, plus every moved Idea's linked Proposals (any status), their Documents/Tasks, and Activities. Returns the updated Idea + `moved: { ideas, proposals, documents, tasks, activities }` counts.",
+      description: "Move an Idea to another project, cascading its full lineage subtree (all descendant Ideas) plus every moved Idea's Proposals/Documents/Tasks/Activities. The moved root detaches from any parent left behind. Returns the updated Idea + `moved: { ideas, proposals, documents, tasks, activities }` counts.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         targetProjectUuid: z.string().describe("Target Project UUID"),
@@ -963,12 +963,12 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_create_idea",
     {
-      description: "Create an Idea (submits requirements on behalf of humans). Optionally pass parentUuid to derive this idea from an existing same-project idea (single-parent lineage). Derive a CHILD idea when the new direction needs its own elaboration/proposal lifecycle; otherwise add a Task to the current idea's proposal instead.",
+      description: "Create an Idea (submits requirements on behalf of humans). Optional parentUuid derives it from an existing same-project idea (single-parent lineage).",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         title: z.string().describe("Idea title"),
         content: z.string().optional().describe("Idea detailed description"),
-        parentUuid: z.string().optional().describe("Optional parent Idea UUID to derive from (must be in the same project). Establishes single-parent lineage; the parent shows a +N derived rollup."),
+        parentUuid: z.string().optional().describe("Same-project parent Idea to derive from (single-parent lineage)"),
       }),
     },
     async ({ projectUuid, title, content, parentUuid }) => {
@@ -999,19 +999,26 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
-  // chorus_edit_idea - Edit an Idea's title, content, and/or lineage parent
+  // chorus_edit_idea - Edit an Idea's title, content, and/or lineage parent.
+  //
+  // Implementation note (not exposed to callers): a parent change is applied
+  // first via the cycle-checked setIdeaParent, then the title/content edit via
+  // updateIdea. These are two independent writes (not one transaction), so a
+  // rare partial failure could persist the reparent while the title/content
+  // edit fails. Acceptable given they're independent edits; kept out of the
+  // tool description to avoid burning tokens on every tool-list load.
   registerPermissionedTool(
     server,
     auth,
     "idea:write",
     "chorus_edit_idea",
     {
-      description: "Edit an existing Idea: title, description (content), and/or lineage parent. Provide at least one field. Records an 'edited' activity (for title/content) attributed to you and signals your presence on the idea. `parentUuid` reparents the idea under another same-project idea (cycle-checked) — pass `null` to detach to top-level, or omit to leave the parent unchanged. Does NOT change status (status is a side-effect of claim/elaborate).",
+      description: "Edit an existing Idea's title, description (content), and/or lineage parent (`parentUuid`). Provide at least one field. Does not change status.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID to edit"),
         title: z.string().optional().describe("New title (omit to leave unchanged)"),
-        content: z.string().optional().describe("New description / content (omit to leave unchanged)"),
-        parentUuid: z.string().nullable().optional().describe("Reparent under this same-project Idea (cycle-checked); `null` detaches to top-level; omit to leave the parent unchanged"),
+        content: z.string().optional().describe("New description (omit to leave unchanged)"),
+        parentUuid: z.string().nullable().optional().describe("Same-project parent Idea to reparent under; null detaches to top-level; omit to leave unchanged"),
       }),
     },
     async ({ ideaUuid, title, content, parentUuid }) => {
@@ -1033,7 +1040,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         // Only invoked when parentUuid is explicitly present (null = detach).
         let resolvedParentUuid = existing.parentUuid ?? null;
         if (parentUuid !== undefined) {
-          const reparented = await ideaService.setIdeaParent(ideaUuid, parentUuid ?? null, auth.companyUuid);
+          const reparented = await ideaService.setIdeaParent(ideaUuid, parentUuid ?? null, auth.companyUuid, { actorType: "agent", actorUuid: auth.actorUuid });
           resolvedParentUuid = reparented.parentUuid ?? null;
         }
 

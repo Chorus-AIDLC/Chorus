@@ -196,7 +196,10 @@ export async function setIdeaParentAction(ideaUuid: string, parentUuid: string |
     return { success: false as const, error: "Unauthorized" };
   }
   try {
-    const updated = await setIdeaParent(ideaUuid, parentUuid, auth.companyUuid);
+    const updated = await setIdeaParent(ideaUuid, parentUuid, auth.companyUuid, {
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
+    });
     return { success: true as const, data: updated };
   } catch (e) {
     return { success: false as const, error: e instanceof Error ? e.message : "Failed to set parent" };
@@ -211,15 +214,20 @@ export async function getProjectIdeasForPickerAction(projectUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
-  const { ideas } = await listIdeas({
+  const PICKER_LIMIT = 200;
+  const { ideas, total } = await listIdeas({
     companyUuid: auth.companyUuid,
     projectUuid,
     skip: 0,
-    take: 200,
+    take: PICKER_LIMIT,
   });
   return {
     success: true as const,
     data: ideas.map((i) => ({ uuid: i.uuid, title: i.title })),
+    // Surface truncation so the picker can warn instead of silently dropping
+    // valid parent candidates in projects with more than PICKER_LIMIT ideas.
+    total,
+    hasMore: total > ideas.length,
   };
 }
 

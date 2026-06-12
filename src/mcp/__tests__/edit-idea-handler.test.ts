@@ -100,7 +100,7 @@ describe("chorus_edit_idea handler", () => {
   it("routes parentUuid through setIdeaParent (the cycle/same-project guard), not a bare update", async () => {
     const res = await toolHandlers["chorus_edit_idea"]({ ideaUuid, parentUuid: "parent-1" });
     expect(res.isError).toBeFalsy();
-    expect(mockIdeaService.setIdeaParent).toHaveBeenCalledWith(ideaUuid, "parent-1", companyUuid);
+    expect(mockIdeaService.setIdeaParent).toHaveBeenCalledWith(ideaUuid, "parent-1", companyUuid, { actorType: "agent", actorUuid: callerUuid });
     // Parent-only edit must not call updateIdea (no title/content change).
     expect(mockIdeaService.updateIdea).not.toHaveBeenCalled();
   });
@@ -109,7 +109,7 @@ describe("chorus_edit_idea handler", () => {
     mockIdeaService.setIdeaParent.mockResolvedValueOnce({ uuid: ideaUuid, parentUuid: null });
     const res = await toolHandlers["chorus_edit_idea"]({ ideaUuid, parentUuid: null });
     expect(res.isError).toBeFalsy();
-    expect(mockIdeaService.setIdeaParent).toHaveBeenCalledWith(ideaUuid, null, companyUuid);
+    expect(mockIdeaService.setIdeaParent).toHaveBeenCalledWith(ideaUuid, null, companyUuid, { actorType: "agent", actorUuid: callerUuid });
   });
 
   it("surfaces a cycle error from setIdeaParent as a tool error", async () => {

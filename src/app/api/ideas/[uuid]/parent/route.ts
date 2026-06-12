@@ -29,7 +29,10 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     }
 
     try {
-      const updated = await setIdeaParent(uuid, body.parentUuid ?? null, auth.companyUuid);
+      const updated = await setIdeaParent(uuid, body.parentUuid ?? null, auth.companyUuid, {
+        actorType: auth.type,
+        actorUuid: auth.actorUuid,
+      });
       return success(updated);
     } catch (error) {
       // Cycle / same-project / not-found validation surfaces as a 400.

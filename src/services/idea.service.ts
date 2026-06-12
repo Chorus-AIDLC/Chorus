@@ -609,12 +609,14 @@ export async function setIdeaParent(
   uuid: string,
   parentUuid: string | null,
   companyUuid: string,
+  actorContext?: { actorType: string; actorUuid: string },
 ): Promise<IdeaResponse> {
   const idea = await prisma.idea.findFirst({
     where: { uuid, companyUuid },
-    select: { uuid: true, projectUuid: true },
+    select: { uuid: true, projectUuid: true, parentUuid: true },
   });
   if (!idea) throw new Error("Idea not found");
+  const previousParentUuid = idea.parentUuid ?? null;
 
   if (parentUuid) {
     if (parentUuid === uuid) {
@@ -659,6 +661,22 @@ export async function setIdeaParent(
     entityUuid: updated.uuid,
     action: "updated",
   });
+
+  // Record a "reparented" activity when the parent actually changed and we have
+  // an actor. Captures from/to so the timeline can show the lineage move.
+  const newParentUuid = updated.parentUuid ?? null;
+  if (actorContext && newParentUuid !== previousParentUuid) {
+    await activityService.createActivity({
+      companyUuid: updated.companyUuid,
+      projectUuid: updated.projectUuid,
+      targetType: "idea",
+      targetUuid: updated.uuid,
+      actorType: actorContext.actorType,
+      actorUuid: actorContext.actorUuid,
+      action: "reparented",
+      value: { fromParentUuid: previousParentUuid, toParentUuid: newParentUuid },
+    });
+  }
 
   const response = await formatIdeaResponse(updated);
   response.parentUuid = updated.parentUuid;
@@ -826,14 +844,23 @@ async function processNewIdeaMentions(
 
 // Delete Idea
 export async function deleteIdea(uuid: string) {
+  // Resolve companyUuid up front so the orphan updateMany is tenant-scoped
+  // (defensive — parentUuid is a unique idea UUID, but we keep every write
+  // companyUuid-scoped per the multi-tenancy guideline).
+  const target = await prisma.idea.findUnique({
+    where: { uuid },
+    select: { companyUuid: true },
+  });
   // Orphan direct children to top-level BEFORE deleting the parent (weak
   // lineage: a parent does not own its children). Doing this first also means
   // the Restrict referential action on the self-relation never fires, since no
   // child references the parent by delete time.
-  await prisma.idea.updateMany({
-    where: { parentUuid: uuid },
-    data: { parentUuid: null },
-  });
+  if (target) {
+    await prisma.idea.updateMany({
+      where: { companyUuid: target.companyUuid, parentUuid: uuid },
+      data: { parentUuid: null },
+    });
+  }
   const idea = await prisma.idea.delete({ where: { uuid } });
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "deleted" });
   return idea;
@@ -889,6 +916,13 @@ export async function moveIdea(
   // transitive descendants up front (single-idea BFS, scoped to companyUuid),
   // so every idea in {root, ...descendants} migrates together and no
   // cross-project parentUuid edge is left behind. (add-idea-lineage follow-up.)
+  //
+  // KNOWN TOCTOU (accepted, pre-existing shape): this resolution runs before the
+  // $transaction below — same pattern as the proposal resolution. A child
+  // reparented under `ideaUuid` concurrently, between this read and the
+  // updateMany, would be left behind with a now-cross-project parentUuid.
+  // Tightening this means resolving descendants inside the transaction; tracked
+  // as a follow-up, not fixed here to keep the change scoped.
   const descendantUuids = await getDescendantUuids(ideaUuid, companyUuid);
   const movedIdeaUuids = [ideaUuid, ...descendantUuids];
 
