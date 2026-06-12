@@ -35,7 +35,7 @@ export async function createIdeaAction(input: CreateIdeaInput) {
       content: input.content || null,
       attachments: input.attachments || null,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, ideaUuid: idea.uuid };
@@ -62,7 +62,7 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
     const idea = await updateIdea(input.ideaUuid, auth.companyUuid, {
       title: input.title,
       content: input.content,
-    });
+    }, auth);
 
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, idea };
@@ -79,7 +79,7 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
   }
 
   try {
-    await deleteIdea(ideaUuid);
+    await deleteIdea(ideaUuid, auth);
     revalidatePath(`/projects/${projectUuid}/ideas`);
     return { success: true };
   } catch (error) {
@@ -104,6 +104,7 @@ export async function fetchIdeasAction(projectUuid: string) {
       projectUuid,
       skip: 0,
       take: 1000,
+      auth,
     });
 
     const allIdeaUuids = allIdeas.map((idea) => idea.uuid);

@@ -30,7 +30,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const statusFilter = url.searchParams.get("status") || undefined;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -40,6 +40,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       skip,
       take,
       status: statusFilter,
+      auth,
     });
 
     return paginated(proposals, page, pageSize, total);
@@ -66,7 +67,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -104,7 +105,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       taskDrafts: body.taskDrafts,
       createdByUuid: auth.actorUuid,
       createdByType,
-    });
+    }, auth);
 
     return success(proposal);
   }

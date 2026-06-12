@@ -31,7 +31,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const proposalUuids = url.searchParams.get("proposalUuids")?.split(",").filter(Boolean);
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -43,6 +43,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       status: statusFilter,
       priority: priorityFilter,
       proposalUuids,
+      auth,
     });
 
     return paginated(tasks, page, pageSize, total);
@@ -69,7 +70,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -110,7 +111,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       priority,
       storyPoints: storyPoints || null,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     return success(task);
   }

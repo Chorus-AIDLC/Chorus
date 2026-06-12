@@ -111,6 +111,7 @@ describe("chorus_pm_reject_proposal — author gate uses proposal:admin, not rol
       proposalUuid,
       agentUuid,
       "not ready",
+      expect.anything(),
     );
   });
 

@@ -123,6 +123,24 @@ const OLD_DEVELOPER_TOOLS = [
   "chorus_report_work",
 ];
 
+// Project-visibility member tools (Tech Design §6). chorus_list_project_members
+// is gated on project:read, so EVERY preset (developer/pm/admin) carries it —
+// the read bit is in all three presets. The two mutating member tools are gated
+// on project:admin, so only admin_agent sees them.
+// The group-visibility member tools mirror the project ones: the list tool is
+// project:read-gated (all presets see it), the two mutators are project:admin-
+// gated (only admin_agent sees them).
+const PROJECT_READ_MEMBER_TOOLS = [
+  "chorus_list_project_members",
+  "chorus_list_project_group_members",
+];
+const PROJECT_ADMIN_MEMBER_TOOLS = [
+  "chorus_admin_add_project_member",
+  "chorus_admin_remove_project_member",
+  "chorus_admin_add_project_group_member",
+  "chorus_admin_remove_project_group_member",
+];
+
 const OLD_ADMIN_TOOLS = [
   "chorus_admin_create_project",
   "chorus_admin_approve_proposal",
@@ -156,9 +174,11 @@ describe("MCP tool permission wiring", () => {
   });
 
   describe("backward-compat: developer_agent preset (AC4)", () => {
-    it("developer_agent with empty custom permissions sees exactly the 0.6.x developer tool set", () => {
+    it("developer_agent with empty custom permissions sees exactly the 0.6.x developer tool set plus the project:read member-list tool", () => {
       const registered = registeredFor([...ROLE_PRESETS.developer_agent]);
-      expect(registered).toEqual(new Set(OLD_DEVELOPER_TOOLS));
+      expect(registered).toEqual(
+        new Set([...OLD_DEVELOPER_TOOLS, ...PROJECT_READ_MEMBER_TOOLS]),
+      );
     });
   });
 
@@ -195,6 +215,11 @@ describe("MCP tool permission wiring", () => {
         "chorus_admin_delete_task",
         "chorus_admin_delete_idea",
         "chorus_admin_delete_document",
+        // project:admin member tools — pm_agent has project:write but not project:admin.
+        "chorus_admin_add_project_member",
+        "chorus_admin_remove_project_member",
+        "chorus_admin_add_project_group_member",
+        "chorus_admin_remove_project_group_member",
       ]) {
         expect(registered.has(adminOnly)).toBe(false);
       }
@@ -215,6 +240,10 @@ describe("MCP tool permission wiring", () => {
         // now idea:admin-gated (the simplified resolve action). admin_agent
         // carries idea:admin; pm_agent (idea:write only) does not.
         "chorus_pm_validate_elaboration",
+        // Project-visibility member tools (Tech Design §6). admin_agent holds
+        // project:read AND project:admin, so it sees all three member tools.
+        ...PROJECT_READ_MEMBER_TOOLS,
+        ...PROJECT_ADMIN_MEMBER_TOOLS,
       ]);
       expect(registered).toEqual(expected);
     });

@@ -26,7 +26,7 @@ export async function TasksPageContent({
   const t = await getTranslations();
 
   // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
+  const exists = await projectExists(auth.companyUuid, projectUuid, auth);
   if (!exists) {
     redirect("/projects");
   }
@@ -37,6 +37,7 @@ export async function TasksPageContent({
     projectUuid,
     skip: 0,
     take: 1000,
+    auth,
   });
 
   const totalHours = tasks.reduce((sum, task) => sum + (task.storyPoints || 0), 0);

@@ -26,7 +26,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const document = await getDocument(auth.companyUuid, uuid);
+    const document = await getDocument(auth.companyUuid, uuid, auth);
 
     if (!document) {
       return errors.notFound("Document");
@@ -76,7 +76,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       title: body.title?.trim(),
       content: body.content !== undefined ? (body.content.trim() || null) : undefined,
       incrementVersion: body.incrementVersion,
-    });
+    }, auth);
 
     return success(updated);
   }
@@ -106,7 +106,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
       return errors.notFound("Document");
     }
 
-    await deleteDocument(document.uuid);
+    await deleteDocument(document.uuid, auth);
     return success({ deleted: true });
   }
 );

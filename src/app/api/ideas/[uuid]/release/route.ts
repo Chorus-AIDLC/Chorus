@@ -36,7 +36,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     try {
-      const updated = await releaseIdea(idea.uuid);
+      const updated = await releaseIdea(idea.uuid, auth);
       return success(updated);
     } catch (e) {
       if (e instanceof NotClaimedError) {

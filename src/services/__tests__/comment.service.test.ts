@@ -30,6 +30,12 @@ const mockPrisma = vi.hoisted(() => ({
   user: {
     findMany: vi.fn(),
   },
+  project: {
+    findFirst: vi.fn(),
+  },
+  projectMember: {
+    findUnique: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -71,6 +77,17 @@ const targetUuid = "task-0000-0000-0000-000000000001";
 const authorUuid = "user-0000-0000-0000-000000000001";
 const commentUuid = "comment-0000-0000-0000-000000000001";
 
+// Super-admin auth: canAccessProject returns true without touching prisma, so
+// the visibility gate is a no-op and existing comment behavior is unchanged.
+const superAdminAuth = { type: "super_admin" as const, email: "admin@chorus.local" };
+
+// Regular user auth for the denial tests.
+const userAuth = {
+  type: "user" as const,
+  companyUuid,
+  actorUuid: authorUuid,
+};
+
 function makeCommentRecord(overrides: Record<string, unknown> = {}) {
   return {
     uuid: commentUuid,
@@ -98,6 +115,7 @@ describe("createComment", () => {
     mockPrisma.comment.create.mockResolvedValue(record);
 
     const result = await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -119,6 +137,7 @@ describe("createComment", () => {
 
     await expect(
       createComment({
+        auth: superAdminAuth,
         companyUuid,
         targetType: "task",
         targetUuid: "nonexistent",
@@ -134,6 +153,7 @@ describe("createComment", () => {
     mockPrisma.comment.create.mockResolvedValue(makeCommentRecord());
 
     const result = await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -152,6 +172,7 @@ describe("createComment", () => {
     mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -185,6 +206,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -236,6 +258,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -262,6 +285,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -282,6 +306,7 @@ describe("createComment", () => {
     (parseMentions as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -309,6 +334,7 @@ describe("createComment", () => {
     (createMentions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("DB error"));
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -334,6 +360,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "idea",
       targetUuid: ideaUuid,
@@ -365,6 +392,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "proposal",
       targetUuid: proposalUuid,
@@ -396,6 +424,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "document",
       targetUuid: docUuid,
@@ -430,6 +459,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "unknown" as "task",
       targetUuid: unknownUuid,
@@ -467,6 +497,7 @@ describe("createComment", () => {
     ]);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -491,6 +522,7 @@ describe("createComment", () => {
     mockPrisma.task.findFirst.mockResolvedValue(null);
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -512,6 +544,7 @@ describe("createComment", () => {
     mockPrisma.task.findUnique.mockRejectedValue(new Error("DB error"));
 
     await createComment({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -526,6 +559,33 @@ describe("createComment", () => {
     // Should not throw, fire-and-forget handles errors
     expect(eventBus.emitChange).not.toHaveBeenCalled();
   });
+
+  it("rejects a non-member of the target's private project (visibility gate)", async () => {
+    const projectUuid = "project-private-0000-0000-000000000001";
+    // Target resolves to a private project the user neither owns nor belongs to.
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-user",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+
+    await expect(
+      createComment({
+        auth: userAuth,
+        companyUuid,
+        targetType: "task",
+        targetUuid,
+        content: "Hello",
+        authorType: "user",
+        authorUuid,
+      })
+    ).rejects.toThrow(`Target task with UUID ${targetUuid} not found`);
+
+    // The comment is never written.
+    expect(mockPrisma.comment.create).not.toHaveBeenCalled();
+  });
 });
 
 // ===== listComments =====
@@ -536,6 +596,7 @@ describe("listComments", () => {
     mockPrisma.comment.count.mockResolvedValue(1);
 
     const result = await listComments({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -552,6 +613,7 @@ describe("listComments", () => {
     mockValidateTargetExists.mockResolvedValue(false);
 
     const result = await listComments({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid: "nonexistent",
@@ -572,6 +634,7 @@ describe("listComments", () => {
     mockPrisma.comment.count.mockResolvedValue(10);
 
     const result = await listComments({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -595,6 +658,7 @@ describe("listComments", () => {
     mockPrisma.comment.count.mockResolvedValue(1);
 
     const result = await listComments({
+      auth: superAdminAuth,
       companyUuid,
       targetType: "task",
       targetUuid,
@@ -603,6 +667,32 @@ describe("listComments", () => {
     });
 
     expect(result.comments[0].author.name).toBe("Unknown");
+  });
+
+  it("returns empty for a non-member of the target's private project (visibility gate)", async () => {
+    const projectUuid = "project-private-0000-0000-000000000001";
+    // Target exists and resolves to a private project the user cannot access.
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-user",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+
+    const result = await listComments({
+      auth: userAuth,
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result.comments).toEqual([]);
+    expect(result.total).toBe(0);
+    // Gate short-circuits before querying comments.
+    expect(mockPrisma.comment.findMany).not.toHaveBeenCalled();
   });
 });
 

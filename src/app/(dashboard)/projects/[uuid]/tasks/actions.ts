@@ -49,16 +49,16 @@ export async function moveTaskToColumnAction(
     // Done column should only be reached through verify action
     if (newStatus === "done" && task.status !== "to_verify") {
       // When dragging to done column, set to_verify instead
-      await updateTask(taskUuid, { status: "to_verify" });
+      await updateTask(taskUuid, { status: "to_verify" }, auth);
     } else if (newStatus === "done" && task.status === "to_verify") {
       // If task is in to_verify and dragged to done, verify it
       const gate = await checkAcceptanceCriteriaGate(taskUuid);
       if (!gate.allowed) {
         return { success: false, error: gate.reason || "Not all required acceptance criteria are passed", gateBlocked: true, unresolvedCriteria: gate.unresolvedCriteria || [] };
       }
-      await updateTask(taskUuid, { status: "done" });
+      await updateTask(taskUuid, { status: "done" }, auth);
     } else {
-      await updateTask(taskUuid, { status: newStatus });
+      await updateTask(taskUuid, { status: newStatus }, auth);
     }
 
     revalidatePath(`/projects/${projectUuid}/tasks`);
@@ -84,7 +84,7 @@ export async function forceMoveTaskToColumnAction(
       return { success: false, error: "Task not found" };
     }
 
-    await updateTask(taskUuid, { status });
+    await updateTask(taskUuid, { status }, auth);
 
     await createActivity({
       companyUuid: auth.companyUuid,
@@ -119,6 +119,7 @@ export async function fetchTasksAction(projectUuid: string) {
       projectUuid,
       skip: 0,
       take: 1000,
+      auth,
     });
     return { success: true as const, data: tasks };
   } catch (error) {
@@ -134,7 +135,7 @@ export async function getProjectDependenciesAction(projectUuid: string) {
   }
 
   try {
-    return await getProjectTaskDependencies(auth.companyUuid, projectUuid);
+    return await getProjectTaskDependencies(auth.companyUuid, projectUuid, auth);
   } catch (error) {
     logger.error({ err: error }, "Failed to get project dependencies");
     return { nodes: [], edges: [] };

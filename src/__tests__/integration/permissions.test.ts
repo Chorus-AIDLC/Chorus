@@ -288,6 +288,28 @@ const PM_AGENT_ADDED_IN_0_9_0 = [
   "chorus_create_report",
 ];
 
+// Project-visibility feature: chorus_list_project_members is gated on
+// project:read (pm_agent carries it). The two mutating member tools are gated
+// on project:admin, which pm_agent does NOT carry — so only the list tool
+// appears in the pm visibility set. admin_agent (carries project:admin) gets
+// all three (see ADMIN_AGENT_ADDED_PROJECT_VISIBILITY below).
+// The group-visibility feature mirrors the project member tools: the list tool
+// is project:read-gated (pm_agent + developer_agent see it), the two mutators
+// are project:admin-gated (only admin_agent sees them).
+const PM_AGENT_ADDED_PROJECT_VISIBILITY = [
+  "chorus_list_project_members",
+  "chorus_list_project_group_members",
+];
+
+const ADMIN_AGENT_ADDED_PROJECT_VISIBILITY = [
+  "chorus_list_project_members",
+  "chorus_admin_add_project_member",
+  "chorus_admin_remove_project_member",
+  "chorus_list_project_group_members",
+  "chorus_admin_add_project_group_member",
+  "chorus_admin_remove_project_group_member",
+];
+
 // ===== Shared beforeEach =====
 
 beforeEach(() => {
@@ -441,10 +463,11 @@ describe("Scenario 1: custom permissions agent end-to-end (AC1)", () => {
 // ============================================================
 
 describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
-  it("developer_agent preset registers exactly the 0.6.x developer tool set", () => {
+  it("developer_agent preset registers exactly the 0.6.x developer tool set plus the project-visibility list-members tool", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.developer_agent], ["developer_agent"]);
     const tools = enumerateGatedMcpTools(auth);
-    expect(tools).toEqual(new Set(OLD_DEVELOPER_TOOLS));
+    // developer_agent carries project:read, so it sees chorus_list_project_members.
+    expect(tools).toEqual(new Set([...OLD_DEVELOPER_TOOLS, ...PM_AGENT_ADDED_PROJECT_VISIBILITY]));
   });
 
   it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set plus 0.9.0 chorus_create_report and 0.9.4 chorus_pm_validate_elaboration", () => {
@@ -459,6 +482,9 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // 0.9.4 (simplify-elaboration-flow): chorus_pm_validate_elaboration is
       // re-gated to idea:admin. admin_agent carries idea:admin.
       "chorus_pm_validate_elaboration",
+      // project-visibility feature: member-management tools (project:read +
+      // project:admin gated). admin_agent carries both.
+      ...ADMIN_AGENT_ADDED_PROJECT_VISIBILITY,
     ]);
     expect(tools).toEqual(expected);
   });
@@ -482,7 +508,7 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     const tools = enumerateGatedMcpTools(auth);
     const baseline = new Set(OLD_PM_TOOLS);
     const diff = Array.from(tools).filter((t) => !baseline.has(t)).sort();
-    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0].sort());
+    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_PROJECT_VISIBILITY].sort());
   });
 
   it("pm_agent preset does not leak any *:admin-gated tool", () => {
@@ -501,6 +527,14 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // 0.9.4: chorus_pm_validate_elaboration is now idea:admin-gated; pm_agent
       // (idea:write only) must not see it.
       "chorus_pm_validate_elaboration",
+      // project-visibility: member mutation tools are project:admin-gated;
+      // pm_agent (project:write only) must not see them.
+      "chorus_admin_add_project_member",
+      "chorus_admin_remove_project_member",
+      // group-visibility: group member mutation tools are project:admin-gated;
+      // pm_agent (project:write only) must not see them.
+      "chorus_admin_add_project_group_member",
+      "chorus_admin_remove_project_group_member",
     ]) {
       expect(tools.has(adminOnly)).toBe(false);
     }

@@ -22,11 +22,11 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
-    const result = await getTrackerGroups(auth.companyUuid, projectUuid);
+    const result = await getTrackerGroups(auth.companyUuid, projectUuid, auth);
     return success(result);
   }
 );

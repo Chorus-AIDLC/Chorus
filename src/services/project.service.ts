@@ -4,11 +4,20 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import { getActorName } from "@/lib/uuid-resolver";
+import {
+  type AnyAuth,
+  getAccessibleProjectUuids,
+  canAccessProject,
+  applyProjectFilter,
+} from "@/lib/authz/project-access";
 
 export interface ProjectListParams {
   companyUuid: string;
   skip: number;
   take: number;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface ProjectCreateParams {
@@ -16,6 +25,13 @@ export interface ProjectCreateParams {
   name: string;
   description?: string | null;
   groupUuid?: string | null;
+  /** Visibility for the new project (default "private"). */
+  visibility?: "shared" | "private";
+  /** Owner of the project (the acting human or agent). */
+  ownerType?: "user" | "agent" | null;
+  ownerUuid?: string | null;
+  /** Initial members (besides the owner, who is always added). */
+  memberUuids?: { memberType: "user" | "agent"; memberUuid: string }[];
 }
 
 export interface ProjectUpdateParams {
@@ -23,11 +39,15 @@ export interface ProjectUpdateParams {
   description?: string | null;
 }
 
-// List projects query
-export async function listProjects({ companyUuid, skip, take }: ProjectListParams) {
+// List projects query — restricted to the projects the actor can access.
+export async function listProjects({ companyUuid, skip, take, auth }: ProjectListParams) {
+  const accessible = await getAccessibleProjectUuids(auth);
+  // Filter the Project table by its own `uuid` column against the accessible set.
+  const where = applyProjectFilter({ companyUuid }, accessible, "uuid");
+
   const [projects, total] = await Promise.all([
     prisma.project.findMany({
-      where: { companyUuid },
+      where,
       skip,
       take,
       orderBy: { updatedAt: "desc" },
@@ -36,6 +56,9 @@ export async function listProjects({ companyUuid, skip, take }: ProjectListParam
         name: true,
         description: true,
         groupUuid: true,
+        visibility: true,
+        ownerType: true,
+        ownerUuid: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -48,14 +71,15 @@ export async function listProjects({ companyUuid, skip, take }: ProjectListParam
         },
       },
     }),
-    prisma.project.count({ where: { companyUuid } }),
+    prisma.project.count({ where }),
   ]);
 
   return { projects, total };
 }
 
-// Get project details
-export async function getProject(companyUuid: string, uuid: string) {
+// Get project details — null if the actor cannot access it.
+export async function getProject(companyUuid: string, uuid: string, auth: AnyAuth) {
+  if (!(await canAccessProject(auth, uuid))) return null;
   return prisma.project.findFirst({
     where: { uuid, companyUuid },
     select: {
@@ -63,6 +87,9 @@ export async function getProject(companyUuid: string, uuid: string) {
       name: true,
       description: true,
       groupUuid: true,
+      visibility: true,
+      ownerType: true,
+      ownerUuid: true,
       createdAt: true,
       updatedAt: true,
       _count: {
@@ -78,8 +105,9 @@ export async function getProject(companyUuid: string, uuid: string) {
   });
 }
 
-// Verify if project exists
-export async function projectExists(companyUuid: string, projectUuid: string): Promise<boolean> {
+// Verify if project exists AND is accessible to the actor.
+export async function projectExists(companyUuid: string, projectUuid: string, auth: AnyAuth): Promise<boolean> {
+  if (!(await canAccessProject(auth, projectUuid))) return false;
   const project = await prisma.project.findFirst({
     where: { uuid: projectUuid, companyUuid },
     select: { uuid: true },
@@ -87,8 +115,9 @@ export async function projectExists(companyUuid: string, projectUuid: string): P
   return !!project;
 }
 
-// Get basic project info by UUID
-export async function getProjectByUuid(companyUuid: string, uuid: string) {
+// Get basic project info by UUID — null if inaccessible.
+export async function getProjectByUuid(companyUuid: string, uuid: string, auth: AnyAuth) {
+  if (!(await canAccessProject(auth, uuid))) return null;
   return prisma.project.findFirst({
     where: { uuid, companyUuid },
     select: { uuid: true, name: true },
@@ -107,19 +136,75 @@ export async function getProjectUuidsByGroup(companyUuid: string, groupUuid: str
   return projects.map((p) => p.uuid);
 }
 
-// Create project
-export async function createProject({ companyUuid, name, description, groupUuid }: ProjectCreateParams) {
+// Create project. Records owner + visibility (default private) and seeds a
+// ProjectMember row for the owner so the owner is always a member.
+export async function createProject({
+  companyUuid,
+  name,
+  description,
+  groupUuid,
+  visibility,
+  ownerType = null,
+  ownerUuid = null,
+  memberUuids = [],
+}: ProjectCreateParams) {
+  // Resolve the default visibility. When the caller does NOT pass visibility
+  // explicitly and the project is being created inside a group, inherit the
+  // group's visibility (so a project added to a shared group is shared by
+  // default). Otherwise default to "private". An explicit visibility always wins.
+  let effectiveVisibility: "shared" | "private" = visibility ?? "private";
+  if (visibility === undefined && groupUuid) {
+    const group = await prisma.projectGroup.findFirst({
+      where: { uuid: groupUuid, companyUuid },
+      select: { visibility: true },
+    });
+    if (group?.visibility === "shared" || group?.visibility === "private") {
+      effectiveVisibility = group.visibility;
+    }
+  }
+
   const project = await prisma.project.create({
-    data: { companyUuid, name, description, groupUuid: groupUuid ?? null },
+    data: {
+      companyUuid,
+      name,
+      description,
+      groupUuid: groupUuid ?? null,
+      visibility: effectiveVisibility,
+      ownerType,
+      ownerUuid,
+    },
     select: {
       uuid: true,
       name: true,
       description: true,
       groupUuid: true,
+      visibility: true,
+      ownerType: true,
+      ownerUuid: true,
       createdAt: true,
       updatedAt: true,
     },
   });
+
+  // Seed members: the owner (if any) plus any explicitly provided members,
+  // de-duplicated on (memberType, memberUuid).
+  const seed = new Map<string, { memberType: "user" | "agent"; memberUuid: string }>();
+  if (ownerType && ownerUuid) {
+    seed.set(`${ownerType}:${ownerUuid}`, { memberType: ownerType, memberUuid: ownerUuid });
+  }
+  for (const m of memberUuids) {
+    seed.set(`${m.memberType}:${m.memberUuid}`, m);
+  }
+  if (seed.size > 0) {
+    await prisma.projectMember.createMany({
+      data: [...seed.values()].map((m) => ({
+        companyUuid,
+        projectUuid: project.uuid,
+        memberType: m.memberType,
+        memberUuid: m.memberUuid,
+      })),
+    });
+  }
 
   eventBus.emitChange({
     companyUuid,
@@ -175,13 +260,20 @@ export async function deleteProject(companyUuid: string, uuid: string) {
   return true;
 }
 
-// Get company-level overview stats (for Projects list page)
-export async function getCompanyOverviewStats(companyUuid: string) {
+// Get company-level overview stats (for Projects list page) — counts restricted
+// to projects the actor can access.
+export async function getCompanyOverviewStats(companyUuid: string, auth: AnyAuth) {
+  const accessible = await getAccessibleProjectUuids(auth);
+  const projectWhere = applyProjectFilter({ companyUuid }, accessible, "uuid");
+  // Child-entity counts filter by the accessible projectUuid set.
+  const childWhere = applyProjectFilter({ companyUuid }, accessible);
+  const proposalWhere = applyProjectFilter({ companyUuid, status: "pending" }, accessible);
+
   const [projectCount, taskCount, openProposalCount, ideaCount] = await Promise.all([
-    prisma.project.count({ where: { companyUuid } }),
-    prisma.task.count({ where: { companyUuid } }),
-    prisma.proposal.count({ where: { companyUuid, status: "pending" } }),
-    prisma.idea.count({ where: { companyUuid } }),
+    prisma.project.count({ where: projectWhere }),
+    prisma.task.count({ where: childWhere }),
+    prisma.proposal.count({ where: proposalWhere }),
+    prisma.idea.count({ where: childWhere }),
   ]);
 
   return {
@@ -193,8 +285,8 @@ export async function getCompanyOverviewStats(companyUuid: string) {
 }
 
 // Get project list with task completion stats (for Projects list page)
-export async function listProjectsWithStats({ companyUuid, skip, take }: ProjectListParams) {
-  const { projects, total } = await listProjects({ companyUuid, skip, take });
+export async function listProjectsWithStats({ companyUuid, skip, take, auth }: ProjectListParams) {
+  const { projects, total } = await listProjects({ companyUuid, skip, take, auth });
 
   // Batch query completed task count for each project
   const projectUuids = projects.map((p) => p.uuid);
@@ -214,8 +306,9 @@ export async function listProjectsWithStats({ companyUuid, skip, take }: Project
   };
 }
 
-// Get project statistics (for Dashboard)
-export async function getProjectStats(companyUuid: string, projectUuid: string) {
+// Get project statistics (for Dashboard) — null if the actor cannot access it.
+export async function getProjectStats(companyUuid: string, projectUuid: string, auth: AnyAuth) {
+  if (!(await canAccessProject(auth, projectUuid))) return null;
   const [ideasStats, tasksStats, proposalsStats, documentsCount] = await Promise.all([
     // Ideas stats
     prisma.idea.groupBy({
@@ -265,4 +358,165 @@ export async function getProjectStats(companyUuid: string, projectUuid: string) 
     proposals: { total: proposalsTotal, pending: proposalsPending },
     documents: { total: documentsCount },
   };
+}
+
+// ============================================================
+// Visibility & Membership
+// ============================================================
+
+export interface ProjectMemberResponse {
+  uuid: string;
+  memberType: "user" | "agent";
+  memberUuid: string;
+  /** Resolved display name for the member (null if unresolvable). */
+  name: string | null;
+  role: string;
+  createdAt: string;
+}
+
+// Set a project's visibility ("shared" | "private"). Scoped by companyUuid.
+// Returns null if the project does not exist within the company.
+export async function setProjectVisibility(
+  companyUuid: string,
+  projectUuid: string,
+  visibility: "shared" | "private",
+) {
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!project) return null;
+
+  const updated = await prisma.project.update({
+    where: { uuid: project.uuid },
+    data: { visibility },
+    select: { uuid: true, visibility: true },
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid,
+    entityType: "project",
+    entityUuid: projectUuid,
+    action: "updated",
+  });
+
+  return updated;
+}
+
+// List members of a project. Scoped by companyUuid.
+export async function listProjectMembers(
+  companyUuid: string,
+  projectUuid: string,
+): Promise<ProjectMemberResponse[]> {
+  const members = await prisma.projectMember.findMany({
+    where: { companyUuid, projectUuid },
+    orderBy: { createdAt: "asc" },
+    select: {
+      uuid: true,
+      memberType: true,
+      memberUuid: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+  return Promise.all(
+    members.map(async (m) => ({
+      uuid: m.uuid,
+      memberType: m.memberType as "user" | "agent",
+      memberUuid: m.memberUuid,
+      name: await getActorName(m.memberType, m.memberUuid),
+      role: m.role,
+      createdAt: m.createdAt.toISOString(),
+    })),
+  );
+}
+
+// Add a member (user or agent) to a project. Idempotent on the unique key.
+export async function addProjectMember(
+  companyUuid: string,
+  projectUuid: string,
+  memberType: "user" | "agent",
+  memberUuid: string,
+): Promise<ProjectMemberResponse | null> {
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!project) return null;
+
+  const existing = await prisma.projectMember.findUnique({
+    where: {
+      projectUuid_memberType_memberUuid: { projectUuid, memberType, memberUuid },
+    },
+    select: { uuid: true, memberType: true, memberUuid: true, role: true, createdAt: true },
+  });
+
+  const member =
+    existing ??
+    (await prisma.projectMember.create({
+      data: { companyUuid, projectUuid, memberType, memberUuid },
+      select: { uuid: true, memberType: true, memberUuid: true, role: true, createdAt: true },
+    }));
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid,
+    entityType: "project",
+    entityUuid: projectUuid,
+    action: "updated",
+  });
+
+  return {
+    uuid: member.uuid,
+    memberType: member.memberType as "user" | "agent",
+    memberUuid: member.memberUuid,
+    name: await getActorName(member.memberType, member.memberUuid),
+    role: member.role,
+    createdAt: member.createdAt.toISOString(),
+  };
+}
+
+// Remove a member from a project. Returns false if the project or member is
+// not found. The owner cannot be removed (they retain access via ownership).
+export async function removeProjectMember(
+  companyUuid: string,
+  projectUuid: string,
+  memberType: "user" | "agent",
+  memberUuid: string,
+): Promise<boolean> {
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
+    select: { uuid: true, ownerType: true, ownerUuid: true },
+  });
+  if (!project) return false;
+
+  // Do not remove the owner's membership row.
+  if (project.ownerType === memberType && project.ownerUuid === memberUuid) {
+    return false;
+  }
+
+  const existing = await prisma.projectMember.findUnique({
+    where: {
+      projectUuid_memberType_memberUuid: { projectUuid, memberType, memberUuid },
+    },
+    select: { id: true },
+  });
+  if (!existing) return false;
+
+  await prisma.projectMember.delete({
+    where: {
+      projectUuid_memberType_memberUuid: { projectUuid, memberType, memberUuid },
+    },
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid,
+    entityType: "project",
+    entityUuid: projectUuid,
+    action: "updated",
+  });
+
+  return true;
 }

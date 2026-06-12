@@ -32,7 +32,7 @@ export async function claimTaskAction(taskUuid: string) {
       assigneeType: auth.type,
       assigneeUuid: auth.actorUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     // Record activity
     await createActivity({
@@ -79,7 +79,7 @@ export async function claimTaskToAgentAction(taskUuid: string, agentUuid: string
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     // Record activity
     await createActivity({
@@ -122,7 +122,7 @@ export async function releaseTaskAction(taskUuid: string) {
     }
 
     // Release task
-    await releaseTask(taskUuid);
+    await releaseTask(taskUuid, auth);
 
     // Record activity
     await createActivity({
@@ -158,7 +158,7 @@ export async function updateTaskStatusAction(taskUuid: string, newStatus: string
       return { success: false, error: "Task not found" };
     }
 
-    await updateTask(taskUuid, { status: newStatus });
+    await updateTask(taskUuid, { status: newStatus }, auth);
 
     // Record activity
     await createActivity({
@@ -205,7 +205,7 @@ export async function verifyTaskAction(taskUuid: string) {
       return { success: false, error: gate.reason || "Not all required acceptance criteria are passed" };
     }
 
-    await updateTask(taskUuid, { status: "done" });
+    await updateTask(taskUuid, { status: "done" }, auth);
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
     revalidatePath(`/projects/${task.projectUuid}/tasks`);
@@ -240,7 +240,7 @@ export async function claimTaskToUserAction(taskUuid: string, userUuid: string) 
       assigneeType: "user",
       assigneeUuid: userUuid,
       assignedByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     // Record activity
     await createActivity({
@@ -290,7 +290,7 @@ export async function createTaskAction(input: CreateTaskInput) {
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     // Record activity
     await createActivity({
@@ -341,13 +341,13 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
       priority: input.priority,
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
-    });
+    }, auth);
 
     // Only replace structured acceptance criteria when the client explicitly
     // sends them (i.e. they actually changed). Omitting the field leaves the
     // existing criteria — and their dev/admin verification marks — untouched.
     if (input.acceptanceCriteriaItems !== undefined) {
-      await replaceAcceptanceCriteria(auth.companyUuid, input.taskUuid, input.acceptanceCriteriaItems);
+      await replaceAcceptanceCriteria(auth.companyUuid, input.taskUuid, input.acceptanceCriteriaItems, auth);
     }
 
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
@@ -371,7 +371,7 @@ export async function deleteTaskAction(taskUuid: string, projectUuid: string) {
       return { success: false, error: "Task not found" };
     }
 
-    await deleteTask(taskUuid);
+    await deleteTask(taskUuid, auth);
     revalidatePath(`/projects/${projectUuid}/tasks`);
     return { success: true };
   } catch (error) {

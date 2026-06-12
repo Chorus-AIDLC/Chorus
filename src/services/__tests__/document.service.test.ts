@@ -5,6 +5,7 @@ const mockPrisma = vi.hoisted(() => ({
   document: {
     create: vi.fn(),
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
     update: vi.fn(),
@@ -12,6 +13,12 @@ const mockPrisma = vi.hoisted(() => ({
   },
   proposal: {
     findFirst: vi.fn(),
+  },
+  project: {
+    findFirst: vi.fn(),
+  },
+  projectMember: {
+    findUnique: vi.fn(),
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -51,6 +58,7 @@ import {
   listDocuments,
   createDocumentFromProposal,
 } from "@/services/document.service";
+import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Helpers =====
 const now = new Date("2026-03-13T00:00:00Z");
@@ -58,6 +66,12 @@ const companyUuid = "company-0000-0000-0000-000000000001";
 const projectUuid = "project-0000-0000-0000-000000000001";
 const docUuid = "doc-0000-0000-0000-000000000001";
 const createdByUuid = "agent-0000-0000-0000-000000000001";
+
+// super_admin bypasses access gating (no extra prisma queries), so existing
+// query-behavior tests thread it to isolate the function's own logic.
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
+// A regular user used for access-gating tests.
+const userAuth: AuthContext = { type: "user", companyUuid, actorUuid: "user-1" };
 
 function makeDocRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -67,6 +81,7 @@ function makeDocRecord(overrides: Record<string, unknown> = {}) {
     content: "# Test",
     version: 1,
     proposalUuid: null,
+    projectUuid,
     createdByUuid,
     createdAt: now,
     updatedAt: now,
@@ -84,6 +99,27 @@ beforeEach(() => {
   mockPrisma.proposal.findFirst.mockResolvedValue(null);
   mockActivityService.createActivity.mockResolvedValue(undefined);
   mockLogger.child.mockReturnValue(mockLogger);
+  // Default: the update/delete gate's project lookup resolves to an accessible
+  // document. Tests needing a missing document override this explicitly.
+  mockPrisma.document.findUnique.mockResolvedValue(makeDocRecord());
+});
+
+// ===== visibility write-gate =====
+describe("createDocument visibility gate", () => {
+  it("rejects creating a document in a project the actor cannot access", async () => {
+    // canAccessProject(userAuth): private project owned by someone else, no membership.
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+
+    await expect(
+      createDocument({ companyUuid, projectUuid, type: "prd", title: "X", createdByUuid }, userAuth),
+    ).rejects.toThrow("Project not found");
+    expect(mockPrisma.document.create).not.toHaveBeenCalled();
+  });
 });
 
 // ===== createDocument =====
@@ -99,7 +135,7 @@ describe("createDocument", () => {
       title: "Test Document",
       content: "# Test",
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(result.uuid).toBe(docUuid);
     expect(result.version).toBe(1);
@@ -124,7 +160,7 @@ describe("createDocument", () => {
       title: "From Proposal",
       createdByUuid,
       proposalUuid,
-    });
+    }, adminAuth);
 
     expect(result.proposalUuid).toBe(proposalUuid);
   });
@@ -158,7 +194,7 @@ describe("createDocument", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     // Output preserves type, title, content, proposalUuid, version=1.
     expect(result.type).toBe("report");
@@ -203,7 +239,7 @@ describe("createDocument", () => {
       content: "## Summary\nA",
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
     expect(first.type).toBe("report");
 
     // Second write to the same Proposal — service must not error.
@@ -224,7 +260,7 @@ describe("createDocument", () => {
       content: "## Summary\nB",
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
     expect(second.type).toBe("report");
     expect(second.uuid).toBe("doc-report-2");
 
@@ -271,7 +307,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(result.uuid).toBe(docUuid);
 
@@ -324,7 +360,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: "...",
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(mockEventBus.emitChange).not.toHaveBeenCalled();
     expect(mockActivityService.createActivity).not.toHaveBeenCalled();
@@ -348,7 +384,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     // document/created fires — Requirement 1 still holds.
     expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
@@ -377,7 +413,7 @@ describe("createDocument — report-realtime side effects", () => {
       title: reportTitle,
       content: reportContent,
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
@@ -405,7 +441,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     // Document insert is the source of truth — it MUST succeed end-to-end.
     expect(result.uuid).toBe(docUuid);
@@ -438,7 +474,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(result.uuid).toBe(docUuid);
     expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
@@ -460,7 +496,7 @@ describe("createDocument — report-realtime side effects", () => {
       content: reportContent,
       proposalUuid,
       createdByUuid,
-    });
+    }, adminAuth);
 
     expect(mockEventBus.emitChange).toHaveBeenCalledTimes(1);
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
@@ -478,7 +514,7 @@ describe("getDocument", () => {
     });
     mockPrisma.document.findFirst.mockResolvedValue(record);
 
-    const result = await getDocument(companyUuid, docUuid);
+    const result = await getDocument(companyUuid, docUuid, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.uuid).toBe(docUuid);
@@ -489,7 +525,7 @@ describe("getDocument", () => {
   it("should return null when document not found", async () => {
     mockPrisma.document.findFirst.mockResolvedValue(null);
 
-    const result = await getDocument(companyUuid, "nonexistent");
+    const result = await getDocument(companyUuid, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 });
@@ -507,7 +543,7 @@ describe("updateDocument", () => {
     const result = await updateDocument(docUuid, {
       title: "Updated Title",
       content: "# Updated",
-    });
+    }, adminAuth);
 
     expect(result.title).toBe("Updated Title");
     expect(result.content).toBe("# Updated");
@@ -523,7 +559,7 @@ describe("updateDocument", () => {
     const result = await updateDocument(docUuid, {
       content: "# V2",
       incrementVersion: true,
-    });
+    }, adminAuth);
 
     expect(result.version).toBe(2);
     expect(mockPrisma.document.update).toHaveBeenCalledWith(
@@ -541,7 +577,7 @@ describe("updateDocument", () => {
     });
     mockPrisma.document.update.mockResolvedValue(updated);
 
-    await updateDocument(docUuid, { title: "New Title" });
+    await updateDocument(docUuid, { title: "New Title" }, adminAuth);
 
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.version).toBeUndefined();
@@ -554,7 +590,7 @@ describe("updateDocument", () => {
     });
     mockPrisma.document.update.mockResolvedValue(updated);
 
-    await updateDocument(docUuid, { title: "Only Title Changed" });
+    await updateDocument(docUuid, { title: "Only Title Changed" }, adminAuth);
 
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.title).toBe("Only Title Changed");
@@ -569,7 +605,7 @@ describe("updateDocument", () => {
     });
     mockPrisma.document.update.mockResolvedValue(updated);
 
-    await updateDocument(docUuid, { content: "# Only content changed" });
+    await updateDocument(docUuid, { content: "# Only content changed" }, adminAuth);
 
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.content).toBe("# Only content changed");
@@ -583,7 +619,7 @@ describe("updateDocument", () => {
     });
     mockPrisma.document.update.mockResolvedValue(updated);
 
-    await updateDocument(docUuid, { content: null });
+    await updateDocument(docUuid, { content: null }, adminAuth);
 
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.content).toBeNull();
@@ -602,7 +638,7 @@ describe("updateDocument", () => {
       title: "All Updated",
       content: "# All fields",
       incrementVersion: true,
-    });
+    }, adminAuth);
 
     const callData = mockPrisma.document.update.mock.calls[0][0].data;
     expect(callData.title).toBe("All Updated");
@@ -616,7 +652,7 @@ describe("updateDocument", () => {
     mockPrisma.document.update.mockRejectedValue(notFoundError);
 
     await expect(
-      updateDocument("nonexistent-uuid", { title: "New Title" })
+      updateDocument("nonexistent-uuid", { title: "New Title" }, adminAuth)
     ).rejects.toThrow("Record to update not found.");
   });
 });
@@ -626,7 +662,7 @@ describe("deleteDocument", () => {
   it("should delete document by uuid", async () => {
     mockPrisma.document.delete.mockResolvedValue(makeDocRecord());
 
-    await deleteDocument(docUuid);
+    await deleteDocument(docUuid, adminAuth);
 
     expect(mockPrisma.document.delete).toHaveBeenCalledWith({
       where: { uuid: docUuid },
@@ -638,7 +674,7 @@ describe("deleteDocument", () => {
     (notFoundError as any).code = "P2025";
     mockPrisma.document.delete.mockRejectedValue(notFoundError);
 
-    await expect(deleteDocument("nonexistent-uuid")).rejects.toThrow(
+    await expect(deleteDocument("nonexistent-uuid", adminAuth)).rejects.toThrow(
       "Record to delete does not exist."
     );
   });
@@ -656,6 +692,7 @@ describe("listDocuments", () => {
       projectUuid,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     expect(result.documents).toHaveLength(1);
@@ -675,6 +712,7 @@ describe("listDocuments", () => {
       skip: 0,
       take: 20,
       type: "architecture",
+      auth: adminAuth,
     });
 
     expect(mockPrisma.document.findMany).toHaveBeenCalledWith(
@@ -769,5 +807,50 @@ describe("createDocumentFromProposal", () => {
     );
 
     expect(result.content).toBe(content);
+  });
+});
+
+// ===== Project-visibility access gating (non-super-admin) =====
+describe("access gating", () => {
+  function denyAccess() {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+  }
+
+  it("listDocuments returns an empty page for a non-member of the project", async () => {
+    denyAccess();
+
+    const result = await listDocuments({
+      companyUuid,
+      projectUuid,
+      skip: 0,
+      take: 20,
+      auth: userAuth,
+    });
+
+    expect(result).toEqual({ documents: [], total: 0 });
+    expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getDocument returns null for a non-member of the document's project", async () => {
+    mockPrisma.document.findFirst.mockResolvedValue(makeDocRecord());
+    denyAccess();
+
+    const result = await getDocument(companyUuid, docUuid, userAuth);
+    expect(result).toBeNull();
+  });
+
+  it("updateDocument rejects a non-member of the document's project", async () => {
+    mockPrisma.document.findUnique.mockResolvedValue(makeDocRecord());
+    denyAccess();
+
+    await expect(
+      updateDocument(docUuid, { title: "Nope" }, userAuth),
+    ).rejects.toThrow("Document not found");
+    expect(mockPrisma.document.update).not.toHaveBeenCalled();
   });
 });

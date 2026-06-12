@@ -14,6 +14,18 @@ const mockPrisma = vi.hoisted(() => ({
     create: vi.fn(),
     upsert: vi.fn(),
   },
+  project: {
+    findMany: vi.fn(),
+  },
+  projectMember: {
+    findMany: vi.fn(),
+  },
+  projectGroup: {
+    findMany: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -39,6 +51,18 @@ const now = new Date("2026-03-13T00:00:00Z");
 const companyUuid = "company-0000-0000-0000-000000000001";
 const recipientUuid = "user-0000-0000-0000-000000000001";
 const notifUuid = "notif-0000-0000-0000-000000000001";
+
+// Super-admin auth: getAccessibleProjectUuids returns the ALL sentinel without
+// touching prisma, so no visibility OR-clause is added and existing where-shape
+// assertions stay valid.
+const superAdminAuth = { type: "super_admin" as const, email: "admin@chorus.local" };
+
+// Regular user auth for the visibility test.
+const userAuth = {
+  type: "user" as const,
+  companyUuid,
+  actorUuid: recipientUuid,
+};
 
 function makeNotifParams(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,6 +96,10 @@ function makeNotifRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // getAccessibleProjectUuids (non-super-admin) also consults group ownership/
+  // membership; default empty so existing assertions are unaffected.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
 });
 
 // ===== create =====
@@ -141,6 +169,7 @@ describe("list", () => {
       .mockResolvedValueOnce(5); // unreadCount
 
     const result = await list({
+      auth: superAdminAuth,
       companyUuid,
       recipientType: "user",
       recipientUuid,
@@ -158,6 +187,7 @@ describe("list", () => {
     mockPrisma.notification.count.mockResolvedValue(0);
 
     await list({
+      auth: superAdminAuth,
       companyUuid,
       recipientType: "user",
       recipientUuid,
@@ -178,6 +208,7 @@ describe("list", () => {
     mockPrisma.notification.count.mockResolvedValue(0);
 
     await list({
+      auth: superAdminAuth,
       companyUuid,
       recipientType: "user",
       recipientUuid,
@@ -199,6 +230,7 @@ describe("list", () => {
     mockPrisma.notification.count.mockResolvedValue(0);
 
     await list({
+      auth: superAdminAuth,
       companyUuid,
       recipientType: "user",
       recipientUuid,
@@ -210,6 +242,33 @@ describe("list", () => {
     expect(mockPrisma.notification.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ projectUuid }),
+      })
+    );
+  });
+
+  it("restricts project-scoped rows to the accessible set but preserves non-project ones", async () => {
+    // User is a member of exactly one shared project; no extra memberships.
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: "project-accessible" }]);
+    mockPrisma.projectMember.findMany.mockResolvedValue([]);
+    mockPrisma.notification.findMany.mockResolvedValue([]);
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    await list({
+      auth: userAuth,
+      companyUuid,
+      recipientType: "user",
+      recipientUuid,
+      skip: 0,
+      take: 20,
+    });
+
+    // The where carries an additive OR: accessible projects OR the
+    // empty-projectUuid sentinel (non-project notifications are never hidden).
+    expect(mockPrisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ projectUuid: { in: ["project-accessible"] } }, { projectUuid: "" }],
+        }),
       })
     );
   });

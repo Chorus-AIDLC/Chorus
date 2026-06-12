@@ -38,6 +38,14 @@ const { hoistedPrisma, hoistedActivity } = vi.hoisted(() => ({
 }));
 
 const mockPrisma = buildMockPrisma();
+// Project-visibility gate: moveIdea now resolves access via canAccessProject,
+// which queries prisma.projectMember.findUnique for membership into the source
+// and target projects. The shared fixture's project rows have no `visibility`
+// field, so satisfy the gate by treating the actor as a member of every project.
+(mockPrisma as Record<string, unknown>).projectMember = {
+  findUnique: vi.fn().mockResolvedValue({ id: 1 }),
+  findMany: vi.fn().mockResolvedValue([]),
+};
 const mockActivityService = buildActivityServiceMock(COMPANY_UUID);
 hoistedPrisma.current = mockPrisma;
 hoistedActivity.current = mockActivityService;

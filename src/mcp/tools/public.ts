@@ -40,7 +40,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid }) => {
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -66,6 +66,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         companyUuid: auth.companyUuid,
         skip,
         take: pageSize,
+        auth,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -87,7 +88,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, status, page = 1, pageSize = 20 }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -99,6 +100,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         skip,
         take: pageSize,
         status,
+        auth,
       });
 
       return {
@@ -121,7 +123,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, type, page = 1, pageSize = 20 }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -133,6 +135,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         skip,
         take: pageSize,
         type,
+        auth,
       });
 
       return {
@@ -151,7 +154,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ documentUuid }) => {
-      const document = await documentService.getDocument(auth.companyUuid, documentUuid);
+      const document = await documentService.getDocument(auth.companyUuid, documentUuid, auth);
       if (!document) {
         return { content: [{ type: "text", text: "Document not found" }], isError: true };
       }
@@ -175,7 +178,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, status, page = 1, pageSize = 20 }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -187,6 +190,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         skip,
         take: pageSize,
         status,
+        auth,
       });
 
       return {
@@ -205,7 +209,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ taskUuid }) => {
-      const task = await taskService.getTask(auth.companyUuid, taskUuid);
+      const task = await taskService.getTask(auth.companyUuid, taskUuid, auth);
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
@@ -231,7 +235,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, status, priority, proposalUuids, page = 1, pageSize = 20 }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -245,6 +249,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         status,
         priority,
         proposalUuids,
+        auth,
       });
 
       return {
@@ -266,7 +271,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, page = 1, pageSize = 50 }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -277,6 +282,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         projectUuid,
         skip,
         take: pageSize,
+        auth,
       });
 
       return {
@@ -305,6 +311,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           content,
           authorType: "agent",
           authorUuid: auth.actorUuid,
+          auth,
         });
 
         // Resolve projectUuid from the target entity
@@ -377,7 +384,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -407,7 +414,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, proposalUuids }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -436,7 +443,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ ideaUuid }) => {
-      const idea = await ideaService.getIdea(auth.companyUuid, ideaUuid);
+      const idea = await ideaService.getIdea(auth.companyUuid, ideaUuid, auth);
       if (!idea) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }
@@ -474,7 +481,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ proposalUuid, section }) => {
       const view = section ?? "basic";
-      const proposal = await proposalService.getProposalSection(auth.companyUuid, proposalUuid, view);
+      const proposal = await proposalService.getProposalSection(auth.companyUuid, proposalUuid, view, auth);
       if (!proposal) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
@@ -496,7 +503,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ projectUuid, proposalUuids }) => {
       // Verify project exists
-      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
+      const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid, auth);
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
@@ -505,6 +512,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         companyUuid: auth.companyUuid,
         projectUuid,
         proposalUuids,
+        auth,
       });
 
       return {
@@ -533,6 +541,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         targetUuid,
         skip,
         take: pageSize,
+        auth,
       });
 
       return {
@@ -562,6 +571,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         readFilter: statusValue === "unread" ? "unread" : statusValue === "read" ? "read" : "all",
         skip: params.offset ?? 0,
         take: params.limit ?? 20,
+        auth,
       });
 
       // Auto-mark fetched unread notifications as read
@@ -683,7 +693,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await projectGroupService.listProjectGroups(auth.companyUuid);
+      const result = await projectGroupService.listProjectGroups(auth.companyUuid, auth);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
@@ -700,7 +710,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid }) => {
-      const group = await projectGroupService.getProjectGroup(auth.companyUuid, groupUuid);
+      const group = await projectGroupService.getProjectGroup(auth.companyUuid, groupUuid, auth);
       if (!group) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
@@ -720,7 +730,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid }) => {
-      const dashboard = await projectGroupService.getGroupDashboard(auth.companyUuid, groupUuid);
+      const dashboard = await projectGroupService.getGroupDashboard(auth.companyUuid, groupUuid, auth);
       if (!dashboard) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
@@ -774,6 +784,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         scope,
         scopeUuid,
         entityTypes,
+        auth,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -812,7 +823,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid, proposalUuid, tasks }) => {
-      if (!(await projectExists(auth.companyUuid, projectUuid))) {
+      if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
 
@@ -845,7 +856,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
             storyPoints: task.storyPoints ?? null,
             proposalUuid: proposalUuid || null,
             createdByUuid: auth.actorUuid,
-          })
+          }, auth)
         )
       );
 
@@ -869,7 +880,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
               continue;
             }
             try {
-              await taskService.addTaskDependency(auth.companyUuid, realUuid, depRealUuid);
+              await taskService.addTaskDependency(auth.companyUuid, realUuid, depRealUuid, auth);
             } catch (error) {
               warnings.push(`Task "${task.title}" -> draftUuid "${draftUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
             }
@@ -879,7 +890,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         if (task.dependsOnTaskUuids) {
           for (const depUuid of task.dependsOnTaskUuids) {
             try {
-              await taskService.addTaskDependency(auth.companyUuid, realUuid, depUuid);
+              await taskService.addTaskDependency(auth.companyUuid, realUuid, depUuid, auth);
             } catch (error) {
               warnings.push(`Task "${task.title}" -> taskUuid "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
             }
@@ -1030,7 +1041,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
 
       let updatedStatus = task.status;
       if (hasFieldUpdates) {
-        const updated = await taskService.updateTask(task.uuid, updateData, {
+        const updated = await taskService.updateTask(task.uuid, updateData, auth, {
           actorType: auth.type,
           actorUuid: auth.actorUuid,
         });
@@ -1043,7 +1054,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (addDependsOn) {
         for (const depUuid of addDependsOn) {
           try {
-            await taskService.addTaskDependency(auth.companyUuid, task.uuid, depUuid);
+            await taskService.addTaskDependency(auth.companyUuid, task.uuid, depUuid, auth);
           } catch (error) {
             warnings.push(`addDependsOn "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
           }
@@ -1054,7 +1065,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (removeDependsOn) {
         for (const depUuid of removeDependsOn) {
           try {
-            await taskService.removeTaskDependency(auth.companyUuid, task.uuid, depUuid);
+            await taskService.removeTaskDependency(auth.companyUuid, task.uuid, depUuid, auth);
           } catch (error) {
             warnings.push(`removeDependsOn "${depUuid}": ${error instanceof Error ? error.message : "unknown error"}`);
           }
@@ -1067,7 +1078,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       // verification marks, which is correct since the AC changed.
       let acReplaced = false;
       if (acceptanceCriteriaItems !== undefined) {
-        await taskService.replaceAcceptanceCriteria(auth.companyUuid, task.uuid, acceptanceCriteriaItems);
+        await taskService.replaceAcceptanceCriteria(auth.companyUuid, task.uuid, acceptanceCriteriaItems, auth);
         acReplaced = true;
       }
 
@@ -1188,7 +1199,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         content,
         proposalUuid,
         createdByUuid: auth.actorUuid,
-      });
+      }, auth);
 
       return {
         content: [

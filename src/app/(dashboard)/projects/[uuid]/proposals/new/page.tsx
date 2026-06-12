@@ -24,7 +24,7 @@ export default async function NewProposalPage({ params, searchParams }: PageProp
   const t = await getTranslations();
 
   // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
+  const exists = await projectExists(auth.companyUuid, projectUuid, auth);
   if (!exists) {
     redirect("/projects");
   }
@@ -38,6 +38,7 @@ export default async function NewProposalPage({ params, searchParams }: PageProp
     assignedToMe: true,
     actorUuid: auth.actorUuid,
     actorType: auth.type,
+    auth,
   });
 
   // All ideas with resolved elaboration are available (ideas can be reused across proposals)

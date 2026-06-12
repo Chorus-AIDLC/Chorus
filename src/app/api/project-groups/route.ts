@@ -17,7 +17,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const denied = checkAgentPermission(auth, "project:read");
   if (denied) return denied;
 
-  const result = await listProjectGroups(auth.companyUuid);
+  const result = await listProjectGroups(auth.companyUuid, auth);
   return success(result);
 });
 
@@ -33,15 +33,42 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.forbidden("Only users or permitted agents can create project groups");
   }
 
-  const body = await parseBody<{ name: string; description?: string }>(request);
+  const body = await parseBody<{
+    name: string;
+    description?: string;
+    visibility?: string;
+    memberUuids?: { memberType?: string; memberUuid?: string }[];
+  }>(request);
   if (!body.name || body.name.trim() === "") {
     return errors.validationError({ name: "Name is required" });
   }
+  if (body.visibility !== undefined && body.visibility !== "shared" && body.visibility !== "private") {
+    return errors.validationError({ visibility: "visibility must be 'shared' or 'private'" });
+  }
+
+  // Owner = the acting human or agent. Super admin creates an owner-less group.
+  const ownerType: "user" | "agent" | null =
+    isUser(auth) || isAgent(auth) ? auth.type : null;
+  const ownerUuid: string | null =
+    isUser(auth) || isAgent(auth) ? auth.actorUuid : null;
+
+  const memberUuids = (body.memberUuids ?? [])
+    .filter(
+      (m): m is { memberType: "user" | "agent"; memberUuid: string } =>
+        (m.memberType === "user" || m.memberType === "agent") &&
+        typeof m.memberUuid === "string" &&
+        m.memberUuid.trim() !== ""
+    )
+    .map((m) => ({ memberType: m.memberType, memberUuid: m.memberUuid.trim() }));
 
   const group = await createProjectGroup({
     companyUuid: auth.companyUuid,
     name: body.name.trim(),
     description: body.description?.trim() || null,
+    visibility: body.visibility as "shared" | "private" | undefined,
+    ownerType,
+    ownerUuid,
+    memberUuids,
   });
 
   return success(group);

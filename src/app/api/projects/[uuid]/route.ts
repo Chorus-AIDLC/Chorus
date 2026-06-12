@@ -10,7 +10,9 @@ import {
   getProject,
   updateProject,
   deleteProject,
+  setProjectVisibility,
 } from "@/services/project.service";
+import { claimOrCanManageProject } from "@/lib/authz/project-access";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -24,7 +26,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
   if (denied) return denied;
 
   const { uuid } = await context.params;
-  const project = await getProject(auth.companyUuid, uuid);
+  const project = await getProject(auth.companyUuid, uuid, auth);
 
   if (!project) {
     return errors.notFound("Project");
@@ -35,6 +37,9 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
     name: project.name,
     description: project.description,
     groupUuid: project.groupUuid,
+    visibility: project.visibility,
+    ownerType: project.ownerType,
+    ownerUuid: project.ownerUuid,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     counts: {
@@ -65,9 +70,21 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
 
   const { uuid } = await context.params;
 
+  // Leak rule: an inaccessible project must look like it does not exist (404),
+  // whereas an accessible project the actor cannot manage yields 403. We probe
+  // accessibility via the gated getProject first, then require management rights.
+  const existing = await getProject(auth.companyUuid, uuid, auth);
+  if (!existing) {
+    return errors.notFound("Project");
+  }
+  if (!(await claimOrCanManageProject(auth, uuid))) {
+    return errors.forbidden("Only the project owner can manage this project");
+  }
+
   const body = await parseBody<{
     name?: string;
     description?: string;
+    visibility?: "shared" | "private";
   }>(request);
 
   const updateData: { name?: string; description?: string | null } = {};
@@ -83,15 +100,32 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     updateData.description = body.description?.trim() || null;
   }
 
-  const project = await updateProject(auth.companyUuid, uuid, updateData);
-  if (!project) {
-    return errors.notFound("Project");
+  // Apply visibility change via the dedicated service (owner-only, already gated above).
+  if (body.visibility !== undefined) {
+    if (!["shared", "private"].includes(body.visibility)) {
+      return errors.validationError({ visibility: "Visibility must be 'shared' or 'private'" });
+    }
+    const updated = await setProjectVisibility(auth.companyUuid, uuid, body.visibility);
+    if (!updated) {
+      return errors.notFound("Project");
+    }
+  }
+
+  // Apply name/description updates if any were provided.
+  let project = existing;
+  if (Object.keys(updateData).length > 0) {
+    const result = await updateProject(auth.companyUuid, uuid, updateData);
+    if (!result) {
+      return errors.notFound("Project");
+    }
+    project = { ...existing, ...result };
   }
 
   return success({
     uuid: project.uuid,
     name: project.name,
     description: project.description,
+    visibility: body.visibility ?? existing.visibility,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   });
@@ -114,6 +148,15 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
   }
 
   const { uuid } = await context.params;
+
+  // Leak rule: inaccessible project -> 404; accessible but not the owner -> 403.
+  const existing = await getProject(auth.companyUuid, uuid, auth);
+  if (!existing) {
+    return errors.notFound("Project");
+  }
+  if (!(await claimOrCanManageProject(auth, uuid))) {
+    return errors.forbidden("Only the project owner can delete this project");
+  }
 
   const deleted = await deleteProject(auth.companyUuid, uuid);
   if (!deleted) {

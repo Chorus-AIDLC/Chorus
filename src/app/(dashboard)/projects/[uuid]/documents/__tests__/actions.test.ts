@@ -99,7 +99,7 @@ describe("deleteDocumentAction", () => {
 
     expect(result).toEqual({ success: true, projectUuid: PROJECT_UUID });
     expect(mockGetDocumentByUuidUnscoped).toHaveBeenCalledWith(DOCUMENT_UUID);
-    expect(mockDeleteDocument).toHaveBeenCalledWith(DOCUMENT_UUID);
+    expect(mockDeleteDocument).toHaveBeenCalledWith(DOCUMENT_UUID, expect.anything());
     expect(mockRevalidatePath).toHaveBeenCalledWith(DOCUMENTS_PATH);
   });
 

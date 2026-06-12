@@ -27,6 +27,7 @@ export async function getTaskActivitiesAction(
       targetUuid: taskUuid,
       skip: 0,
       take: 50,
+      auth,
     });
   } catch (error) {
     logger.error({ err: error }, "Failed to get task activities");

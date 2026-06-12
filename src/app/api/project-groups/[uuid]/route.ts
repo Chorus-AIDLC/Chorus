@@ -9,7 +9,9 @@ import {
   getProjectGroup,
   updateProjectGroup,
   deleteProjectGroup,
+  setGroupVisibility,
 } from "@/services/project-group.service";
+import { canAccessGroup, claimOrCanManageGroup } from "@/lib/authz/project-access";
 
 // GET /api/project-groups/[uuid]
 export const GET = withErrorHandler(
@@ -20,7 +22,7 @@ export const GET = withErrorHandler(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const group = await getProjectGroup(auth.companyUuid, uuid);
+    const group = await getProjectGroup(auth.companyUuid, uuid, auth);
     if (!group) return errors.notFound("Project group");
 
     return success(group);
@@ -41,7 +43,29 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    const body = await parseBody<{ name?: string; description?: string }>(request);
+    const body = await parseBody<{
+      name?: string;
+      description?: string;
+      visibility?: string;
+    }>(request);
+
+    // Leak rule: inaccessible -> 404; accessible but not owner -> 403. The
+    // accessibility check runs BEFORE the manage check (no existence leak).
+    if (!(await canAccessGroup(auth, uuid))) {
+      return errors.notFound("Project group");
+    }
+    if (!(await claimOrCanManageGroup(auth, uuid))) {
+      return errors.forbidden("Only the project group owner can update the group");
+    }
+
+    // Visibility change (if requested) goes through setGroupVisibility.
+    if (body.visibility !== undefined) {
+      if (body.visibility !== "shared" && body.visibility !== "private") {
+        return errors.validationError({ visibility: "visibility must be 'shared' or 'private'" });
+      }
+      const updated = await setGroupVisibility(auth.companyUuid, uuid, body.visibility);
+      if (!updated) return errors.notFound("Project group");
+    }
 
     const group = await updateProjectGroup({
       companyUuid: auth.companyUuid,
@@ -69,6 +93,16 @@ export const DELETE = withErrorHandler(
     }
 
     const { uuid } = await context.params;
+
+    // Leak rule: inaccessible -> 404; accessible but not owner -> 403. The
+    // accessibility check runs BEFORE the manage check (no existence leak).
+    if (!(await canAccessGroup(auth, uuid))) {
+      return errors.notFound("Project group");
+    }
+    if (!(await claimOrCanManageGroup(auth, uuid))) {
+      return errors.forbidden("Only the project group owner can delete the group");
+    }
+
     const shouldDeleteProjects = request.nextUrl.searchParams.get("deleteProjects") === "true";
     const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects);
 

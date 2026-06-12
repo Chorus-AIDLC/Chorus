@@ -73,6 +73,7 @@ describe("POST /api/ideas/[uuid]/claim — agent selection gating", () => {
         assigneeUuid: agentUuid,
         assignedByUuid: userUuid,
       }),
+      expect.anything(),
     );
   });
 
@@ -151,6 +152,7 @@ describe("POST /api/ideas/[uuid]/claim — agent self-claim", () => {
         assigneeType: "agent",
         assigneeUuid: agentUuid,
       }),
+      expect.anything(),
     );
   });
 

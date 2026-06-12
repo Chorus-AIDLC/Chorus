@@ -27,7 +27,7 @@ export const DELETE = withErrorHandler<{ uuid: string; dependsOnUuid: string }>(
       return errors.notFound("Task");
     }
 
-    await removeTaskDependency(auth.companyUuid, uuid, dependsOnUuid);
+    await removeTaskDependency(auth.companyUuid, uuid, dependsOnUuid, auth);
     return success({ deleted: true });
   }
 );

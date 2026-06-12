@@ -85,6 +85,8 @@ vi.mock("@/services/activity.service", () => ({
 }));
 
 import { moveIdea, moveIdeaPreview } from "@/services/idea.service";
+import type { SuperAdminAuthContext } from "@/types/auth";
+const cascadeAdminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 
 // ===== Tests =====
 
@@ -99,13 +101,13 @@ describe("cross-project Idea cascade move (integration)", () => {
     seedFullPipelineFixture();
 
     // ----- preview -----
-    const preview = await moveIdeaPreview(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW);
+    const preview = await moveIdeaPreview(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, cascadeAdminAuth);
     // 3 proposals (approved + draft + rejected), 1 document, 3 tasks, 8
     // historical activity rows (1 idea + 3 proposals + 1 document + 3 tasks).
     expect(preview.moved).toEqual({ proposals: 3, documents: 1, tasks: 3, activities: 8 });
 
     // ----- real move -----
-    const result = await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user");
+    const result = await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user", cascadeAdminAuth);
 
     // Counts match the preview exactly (no concurrent writes scenario).
     expect(result.moved).toEqual(preview.moved);
@@ -163,7 +165,7 @@ describe("cross-project Idea cascade move (integration)", () => {
       notifications: JSON.stringify(cascadeMoveStore.notifications),
     };
 
-    await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user");
+    await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user", cascadeAdminAuth);
 
     expect(JSON.stringify(cascadeMoveStore.comments)).toBe(beforeSnapshot.comments);
     expect(JSON.stringify(cascadeMoveStore.taskDependencies)).toBe(beforeSnapshot.taskDependencies);
@@ -186,7 +188,7 @@ describe("cross-project Idea cascade move (integration)", () => {
     const foreign = cascadeMoveStore.proposals.find((p) => p.companyUuid === FULL_COMPANY_B)!;
     const foreignBefore = JSON.stringify(foreign);
 
-    const result = await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user");
+    const result = await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user", cascadeAdminAuth);
 
     // Foreign-company row is byte-equal pre/post.
     expect(JSON.stringify(cascadeMoveStore.proposals.find((p) => p.companyUuid === FULL_COMPANY_B)!)).toBe(

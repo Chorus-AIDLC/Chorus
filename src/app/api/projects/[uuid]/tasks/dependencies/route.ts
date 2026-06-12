@@ -23,11 +23,11 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
-    const dag = await getProjectTaskDependencies(auth.companyUuid, projectUuid);
+    const dag = await getProjectTaskDependencies(auth.companyUuid, projectUuid, auth);
     return success(dag);
   }
 );

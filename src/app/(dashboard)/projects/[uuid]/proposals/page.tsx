@@ -25,7 +25,7 @@ export default async function ProposalsPage({ params }: PageProps) {
   const { uuid: projectUuid } = await params;
   const t = await getTranslations();
 
-  const exists = await projectExists(auth.companyUuid, projectUuid);
+  const exists = await projectExists(auth.companyUuid, projectUuid, auth);
   if (!exists) {
     redirect("/projects");
   }
@@ -35,6 +35,7 @@ export default async function ProposalsPage({ params }: PageProps) {
     projectUuid,
     skip: 0,
     take: 1000,
+    auth,
   });
 
   const pendingCount = proposals.filter((p) => p.status === "pending").length;

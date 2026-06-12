@@ -38,13 +38,13 @@ export default async function DocumentDetailPage({ params }: PageProps) {
   const t = await getTranslations();
 
   // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
+  const exists = await projectExists(auth.companyUuid, projectUuid, auth);
   if (!exists) {
     redirect("/projects");
   }
 
   // Get Document details
-  const document = await getDocument(auth.companyUuid, documentUuid);
+  const document = await getDocument(auth.companyUuid, documentUuid, auth);
   if (!document) {
     return (
       <div className="flex h-full flex-col items-center justify-center">

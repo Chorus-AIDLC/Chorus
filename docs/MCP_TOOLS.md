@@ -58,6 +58,12 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_admin_update_project_group` | `project:write` |
 | `chorus_admin_delete_project_group` | `project:write` |
 | `chorus_admin_move_project_to_group` | `project:write` |
+| `chorus_list_project_members` | `project:read` |
+| `chorus_admin_add_project_member` | `project:admin` |
+| `chorus_admin_remove_project_member` | `project:admin` |
+| `chorus_list_project_group_members` | `project:read` |
+| `chorus_admin_add_project_group_member` | `project:admin` |
+| `chorus_admin_remove_project_group_member` | `project:admin` |
 | `chorus_admin_approve_proposal` | `proposal:admin` |
 | `chorus_admin_close_proposal` | `proposal:admin` |
 | `chorus_admin_verify_task` | `task:admin` |
@@ -78,9 +84,33 @@ For agents that rely on the preset alone (no custom permissions), this is the re
 | PM Agent | Public + Session + PM (`idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` tools — includes Developer's `task:write` tools and `project:write` project-management tools) |
 | Admin Agent | Public + Session + PM + Developer + Admin (all 15 permissions) |
 
+## Project Visibility (Private / Shared)
+
+Every project is either **`shared`** (visible to the whole company — the historical default) or **`private`** (visible only to its owner and explicit members). Membership is the *only* way into a private project:
+
+- **Access is by membership, not permission.** Holding `project:admin` does **not** let an agent see or touch a private project it is not a member of. The `X-Chorus-Project` / `X-Chorus-Project-Group` headers are convenience filters and likewise do **not** grant access.
+- **Cascade.** A private project hides itself *and* all of its ideas, proposals, documents, tasks, activity, comments, notifications, and search hits from non-members. Every list is filtered to the caller's accessible set; every single-entity read or write on an inaccessible project is rejected as not-found.
+- **Owner & members.** Members can be users *or* agents (AI+human parity). The owner (set to the creating actor) can manage visibility and membership.
+- **Defaults.** New projects created via `chorus_admin_create_project` default to `private`. The creating agent becomes the owner and first member. Pass `visibility: "shared"` to opt into company-wide visibility, and `memberUuids` to seed additional members.
+- **Super admin** retains full visibility for governance.
+
+Member-management tools: `chorus_list_project_members` (`project:read`), `chorus_admin_add_project_member` and `chorus_admin_remove_project_member` (`project:admin`, owner-gated).
+
+### Two-level visibility (ProjectGroup → Project inheritance)
+
+Project **groups** carry the same `shared`/`private` + owner + member model, and a project **inherits** its group's accessors as a **dynamic union**:
+
+- A project's effective accessors = (its own owner + members) **∪** (its group's owner + members). Adding someone to a private group instantly grants them access to **every project in that group** (and all those projects' cascaded entities) — no snapshot.
+- **The project's own visibility flag stays authoritative** ("项目级 > 项目组"): a `shared` project inside a `private` group is still company-wide; a `private` project inside a `shared` group is still restricted. The group only *adds* accessors — a shared group never exposes its private projects to everyone.
+- Group management (`chorus_admin_create_project_group` with `visibility`/`memberUuids`, `chorus_admin_add_project_group_member`, `chorus_admin_remove_project_group_member`, `chorus_admin_update_project_group`, `chorus_admin_delete_project_group`) is owner-gated; `chorus_list_project_group_members` requires `project:read`. New groups default to `private` (creating agent = owner + first member). A new project with a `groupUuid` defaults to its group's visibility unless `visibility` is passed explicitly.
+
+### Claim-on-first-manage (legacy / owner-less entities)
+
+Projects and groups that existed before visibility shipped (or were otherwise created without an owner) have **no owner**. The **first actor who can access and manage** such an entity — via any manage action (set visibility, add/remove member, update, delete) — **claims ownership** of it and is added as a member. This is access-gated: a non-member of a *private* owner-less entity can never claim it (so it opens no privacy hole), and an entity that already has an owner is never reassigned. Member-list tools (`chorus_list_project_members`, `chorus_list_project_group_members`) return a resolved display `name` per member alongside the UUID.
+
 ## Project Filtering
 
-Agents can filter results by project(s) using HTTP headers during MCP connection. This is useful when an agent works on multiple projects and wants to focus on a specific subset.
+Agents can filter results by project(s) using HTTP headers during MCP connection. This is useful when an agent works on multiple projects and wants to focus on a specific subset. Note: filtering narrows results *within* the caller's accessible (visibility-permitted) set — it never widens access to private projects the agent is not a member of.
 
 ### Available Headers
 

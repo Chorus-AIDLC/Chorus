@@ -79,13 +79,13 @@ export default async function ProposalDetailPage({ params }: PageProps) {
   const t = await getTranslations();
 
   // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
+  const exists = await projectExists(auth.companyUuid, projectUuid, auth);
   if (!exists) {
     redirect("/projects");
   }
 
   // Get Proposal details
-  const proposal = await getProposal(auth.companyUuid, proposalUuid);
+  const proposal = await getProposal(auth.companyUuid, proposalUuid, auth);
   if (!proposal) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
@@ -103,7 +103,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
   // Fetch source ideas (when inputType is "idea" and inputUuids exist)
   const sourceIdeas = proposal.inputType === "idea" && proposal.inputUuids?.length
     ? (await Promise.all(
-        proposal.inputUuids.map((uuid: string) => getIdea(auth.companyUuid, uuid))
+        proposal.inputUuids.map((uuid: string) => getIdea(auth.companyUuid, uuid, auth))
       )).filter(Boolean) as Awaited<ReturnType<typeof getIdea>>[]
     : [];
 

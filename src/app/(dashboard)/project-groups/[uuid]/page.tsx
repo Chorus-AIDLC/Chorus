@@ -24,6 +24,10 @@ interface GroupDashboardData {
     uuid: string;
     name: string;
     description: string | null;
+    visibility: "shared" | "private";
+    ownerType: "user" | "agent" | null;
+    ownerUuid: string | null;
+    isOwner: boolean;
   };
   stats: {
     projectCount: number;
@@ -368,6 +372,8 @@ export default function ProjectGroupDashboardPage() {
         groupName={group.name}
         groupDescription={group.description}
         projectCount={stats.projectCount}
+        visibility={group.visibility}
+        isOwner={group.isOwner}
         onUpdated={() => {
           setShowManage(false);
           fetchDashboard();

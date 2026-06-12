@@ -7,7 +7,7 @@ export async function getTaskDependenciesAction(taskUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) return { dependsOn: [], dependedBy: [] };
   try {
-    return await taskService.getTaskDependencies(auth.companyUuid, taskUuid);
+    return await taskService.getTaskDependencies(auth.companyUuid, taskUuid, auth);
   } catch {
     return { dependsOn: [], dependedBy: [] };
   }
@@ -17,7 +17,7 @@ export async function addTaskDependencyAction(taskUuid: string, dependsOnUuid: s
   const auth = await getServerAuthContext();
   if (!auth) return { success: false, error: "Unauthorized" };
   try {
-    await taskService.addTaskDependency(auth.companyUuid, taskUuid, dependsOnUuid);
+    await taskService.addTaskDependency(auth.companyUuid, taskUuid, dependsOnUuid, auth);
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
@@ -28,7 +28,7 @@ export async function removeTaskDependencyAction(taskUuid: string, dependsOnUuid
   const auth = await getServerAuthContext();
   if (!auth) return { success: false, error: "Unauthorized" };
   try {
-    await taskService.removeTaskDependency(auth.companyUuid, taskUuid, dependsOnUuid);
+    await taskService.removeTaskDependency(auth.companyUuid, taskUuid, dependsOnUuid, auth);
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
@@ -44,6 +44,7 @@ export async function getProjectTasksForDependencyAction(projectUuid: string) {
       projectUuid,
       skip: 0,
       take: 1000,
+      auth,
     });
     return { tasks: result.tasks.map(t => ({ uuid: t.uuid, title: t.title, status: t.status })) };
   } catch {

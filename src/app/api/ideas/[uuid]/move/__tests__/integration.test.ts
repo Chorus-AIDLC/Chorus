@@ -37,6 +37,16 @@ const { hoistedPrisma, hoistedActivity } = vi.hoisted(() => ({
 }));
 
 const mockPrisma = buildMockPrisma();
+// canAccessProject (added by the project-visibility feature) consults
+// prisma.projectMember to authorize the synthetic human actor against the
+// source + target projects. The shared fixture's mock prisma predates that
+// table, so stub a membership-returning model here: the actor is treated as
+// a member of every project, which is all this cascade-move test needs.
+(mockPrisma as unknown as Record<string, unknown>).projectMember = {
+  findUnique: vi.fn().mockResolvedValue({ id: 1 }),
+  findFirst: vi.fn().mockResolvedValue({ id: 1 }),
+  findMany: vi.fn().mockResolvedValue([]),
+};
 const mockActivityService = buildActivityServiceMock(COMPANY_UUID);
 hoistedPrisma.current = mockPrisma;
 hoistedActivity.current = mockActivityService;

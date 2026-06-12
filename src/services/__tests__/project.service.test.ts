@@ -10,6 +10,27 @@ const mockPrisma = vi.hoisted(() => ({
     update: vi.fn(),
     delete: vi.fn(),
   },
+  projectMember: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    createMany: vi.fn(),
+    delete: vi.fn(),
+  },
+  // getActorName (uuid-resolver) resolves member display names via these.
+  user: {
+    findUnique: vi.fn(),
+  },
+  agent: {
+    findUnique: vi.fn(),
+  },
+  projectGroup: {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
+  },
   task: {
     count: vi.fn(),
     groupBy: vi.fn(),
@@ -40,12 +61,23 @@ import {
   getCompanyOverviewStats,
   getProjectStats,
   listProjectsWithStats,
+  setProjectVisibility,
+  listProjectMembers,
+  addProjectMember,
+  removeProjectMember,
 } from "@/services/project.service";
+import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Helpers =====
 const now = new Date("2026-03-13T00:00:00Z");
 const companyUuid = "company-0000-0000-0000-000000000001";
 const projectUuid = "project-0000-0000-0000-000000000001";
+
+// super_admin bypasses access gating (no extra prisma queries), so the existing
+// query-behavior tests below use it to isolate the function's own logic.
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
+// A regular user used for access-gating tests.
+const userAuth: AuthContext = { type: "user", companyUuid, actorUuid: "user-1" };
 
 function makeProject(overrides: Record<string, unknown> = {}) {
   return {
@@ -62,6 +94,11 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default empty results for the two-level group union lookups
+  // (getAccessibleProjectUuids -> getOwnedOrMemberGroupUuids). Tests that care
+  // about group inheritance override these.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
 });
 
 // ===== listProjects =====
@@ -71,7 +108,7 @@ describe("listProjects", () => {
     mockPrisma.project.findMany.mockResolvedValue([project]);
     mockPrisma.project.count.mockResolvedValue(1);
 
-    const result = await listProjects({ companyUuid, skip: 0, take: 20 });
+    const result = await listProjects({ companyUuid, skip: 0, take: 20, auth: adminAuth });
 
     expect(result.projects).toHaveLength(1);
     expect(result.total).toBe(1);
@@ -83,7 +120,7 @@ describe("listProjects", () => {
     mockPrisma.project.findMany.mockResolvedValue([]);
     mockPrisma.project.count.mockResolvedValue(0);
 
-    await listProjects({ companyUuid, skip: 10, take: 5 });
+    await listProjects({ companyUuid, skip: 10, take: 5, auth: adminAuth });
 
     expect(mockPrisma.project.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ skip: 10, take: 5 })
@@ -97,7 +134,7 @@ describe("getProject", () => {
     const project = makeProject({ _count: { ideas: 5, documents: 3, tasks: 10, proposals: 2, activities: 100 } });
     mockPrisma.project.findFirst.mockResolvedValue(project);
 
-    const result = await getProject(companyUuid, projectUuid);
+    const result = await getProject(companyUuid, projectUuid, adminAuth);
 
     expect(result).not.toBeNull();
     expect(result!.uuid).toBe(projectUuid);
@@ -107,7 +144,7 @@ describe("getProject", () => {
   it("should return null when project not found", async () => {
     mockPrisma.project.findFirst.mockResolvedValue(null);
 
-    const result = await getProject(companyUuid, "nonexistent");
+    const result = await getProject(companyUuid, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 
@@ -116,7 +153,7 @@ describe("getProject", () => {
     const project = makeProject({ groupUuid, _count: { ideas: 1, documents: 0, tasks: 0, proposals: 0, activities: 0 } });
     mockPrisma.project.findFirst.mockResolvedValue(project);
 
-    const result = await getProject(companyUuid, projectUuid);
+    const result = await getProject(companyUuid, projectUuid, adminAuth);
 
     expect(result!.groupUuid).toBe(groupUuid);
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
@@ -233,14 +270,14 @@ describe("projectExists", () => {
   it("should return true when project exists", async () => {
     mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
 
-    const result = await projectExists(companyUuid, projectUuid);
+    const result = await projectExists(companyUuid, projectUuid, adminAuth);
     expect(result).toBe(true);
   });
 
   it("should return false when project does not exist", async () => {
     mockPrisma.project.findFirst.mockResolvedValue(null);
 
-    const result = await projectExists(companyUuid, "missing");
+    const result = await projectExists(companyUuid, "missing", adminAuth);
     expect(result).toBe(false);
   });
 });
@@ -253,7 +290,7 @@ describe("getProjectByUuid", () => {
       name: "Test Project",
     });
 
-    const result = await getProjectByUuid(companyUuid, projectUuid);
+    const result = await getProjectByUuid(companyUuid, projectUuid, adminAuth);
 
     expect(result).toEqual({
       uuid: projectUuid,
@@ -268,7 +305,7 @@ describe("getProjectByUuid", () => {
   it("should return null when project not found", async () => {
     mockPrisma.project.findFirst.mockResolvedValue(null);
 
-    const result = await getProjectByUuid(companyUuid, "nonexistent");
+    const result = await getProjectByUuid(companyUuid, "nonexistent", adminAuth);
     expect(result).toBeNull();
   });
 });
@@ -307,7 +344,7 @@ describe("getCompanyOverviewStats", () => {
     mockPrisma.proposal.count.mockResolvedValue(2);
     mockPrisma.idea.count.mockResolvedValue(10);
 
-    const result = await getCompanyOverviewStats(companyUuid);
+    const result = await getCompanyOverviewStats(companyUuid, adminAuth);
 
     expect(result).toEqual({
       projects: 3,
@@ -339,12 +376,12 @@ describe("getProjectStats", () => {
     ]);
     mockPrisma.document.count.mockResolvedValue(8);
 
-    const result = await getProjectStats(companyUuid, projectUuid);
+    const result = await getProjectStats(companyUuid, projectUuid, adminAuth);
 
-    expect(result.ideas).toEqual({ total: 8, open: 5 });
-    expect(result.tasks).toEqual({ total: 16, inProgress: 4, todo: 3, toVerify: 2, done: 7 });
-    expect(result.proposals).toEqual({ total: 7, pending: 2 });
-    expect(result.documents).toEqual({ total: 8 });
+    expect(result!.ideas).toEqual({ total: 8, open: 5 });
+    expect(result!.tasks).toEqual({ total: 16, inProgress: 4, todo: 3, toVerify: 2, done: 7 });
+    expect(result!.proposals).toEqual({ total: 7, pending: 2 });
+    expect(result!.documents).toEqual({ total: 8 });
   });
 
   it("should default to zero when statuses are missing", async () => {
@@ -353,12 +390,12 @@ describe("getProjectStats", () => {
     mockPrisma.proposal.groupBy.mockResolvedValue([]);
     mockPrisma.document.count.mockResolvedValue(0);
 
-    const result = await getProjectStats(companyUuid, projectUuid);
+    const result = await getProjectStats(companyUuid, projectUuid, adminAuth);
 
-    expect(result.ideas).toEqual({ total: 0, open: 0 });
-    expect(result.tasks).toEqual({ total: 0, inProgress: 0, todo: 0, toVerify: 0, done: 0 });
-    expect(result.proposals).toEqual({ total: 0, pending: 0 });
-    expect(result.documents).toEqual({ total: 0 });
+    expect(result!.ideas).toEqual({ total: 0, open: 0 });
+    expect(result!.tasks).toEqual({ total: 0, inProgress: 0, todo: 0, toVerify: 0, done: 0 });
+    expect(result!.proposals).toEqual({ total: 0, pending: 0 });
+    expect(result!.documents).toEqual({ total: 0 });
   });
 });
 
@@ -375,7 +412,7 @@ describe("listProjectsWithStats", () => {
       { projectUuid: "project-0000-0000-0000-000000000002", _count: 3 },
     ]);
 
-    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20 });
+    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20, auth: adminAuth });
 
     expect(result.projects).toHaveLength(2);
     expect(result.total).toBe(2);
@@ -402,7 +439,7 @@ describe("listProjectsWithStats", () => {
       { projectUuid: "project-0000-0000-0000-000000000001", _count: 7 },
     ]);
 
-    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20 });
+    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20, auth: adminAuth });
 
     expect(result.projects[0].tasksDone).toBe(7);
     expect(mockPrisma.task.groupBy).toHaveBeenCalledWith({
@@ -422,8 +459,272 @@ describe("listProjectsWithStats", () => {
     mockPrisma.project.count.mockResolvedValue(1);
     mockPrisma.task.groupBy.mockResolvedValue([]);
 
-    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20 });
+    const result = await listProjectsWithStats({ companyUuid, skip: 0, take: 20, auth: adminAuth });
 
     expect(result.projects[0].tasksDone).toBe(0);
+  });
+});
+
+// ===== Access gating (non-super-admin) =====
+describe("access gating", () => {
+  it("getProject returns null for a non-member of a private project", async () => {
+    // canAccessProject: project is private, owned by someone else, no membership.
+    mockPrisma.project.findFirst.mockResolvedValueOnce({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValueOnce(null);
+
+    const result = await getProject(companyUuid, projectUuid, userAuth);
+    expect(result).toBeNull();
+  });
+
+  it("projectExists returns false for a non-member of a private project", async () => {
+    mockPrisma.project.findFirst.mockResolvedValueOnce({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValueOnce(null);
+
+    expect(await projectExists(companyUuid, projectUuid, userAuth)).toBe(false);
+  });
+
+  it("getProjectStats returns null for a non-member of a private project", async () => {
+    mockPrisma.project.findFirst.mockResolvedValueOnce({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValueOnce(null);
+
+    expect(await getProjectStats(companyUuid, projectUuid, userAuth)).toBeNull();
+  });
+
+  it("listProjects restricts the Project query to the accessible set for a user", async () => {
+    // getAccessibleProjectUuids: shared/owned + memberships.
+    mockPrisma.project.findMany
+      .mockResolvedValueOnce([{ uuid: "shared-1" }]) // accessible lookup
+      .mockResolvedValueOnce([]); // the actual list query
+    mockPrisma.projectMember.findMany.mockResolvedValueOnce([
+      { projectUuid: "private-mine" },
+    ]);
+    mockPrisma.project.count.mockResolvedValue(0);
+
+    await listProjects({ companyUuid, skip: 0, take: 20, auth: userAuth });
+
+    // The list query must filter Project.uuid by the accessible set.
+    const listCall = mockPrisma.project.findMany.mock.calls[1][0];
+    expect(listCall.where).toEqual({
+      companyUuid,
+      uuid: { in: ["shared-1", "private-mine"] },
+    });
+  });
+});
+
+// ===== createProject (owner + visibility + members) =====
+describe("createProject visibility & ownership", () => {
+  it("defaults to private, records owner, and seeds the owner as a member", async () => {
+    mockPrisma.project.create.mockResolvedValue(
+      makeProject({ visibility: "private", ownerType: "user", ownerUuid: "user-1" }),
+    );
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 1 });
+
+    await createProject({
+      companyUuid,
+      name: "Private Project",
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
+
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          visibility: "private",
+          ownerType: "user",
+          ownerUuid: "user-1",
+        }),
+      }),
+    );
+    // Owner seeded as a member.
+    expect(mockPrisma.projectMember.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ memberType: "user", memberUuid: "user-1" }),
+      ],
+    });
+  });
+
+  it("seeds owner + explicit members, de-duplicated", async () => {
+    mockPrisma.project.create.mockResolvedValue(
+      makeProject({ visibility: "private", ownerType: "user", ownerUuid: "user-1" }),
+    );
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 2 });
+
+    await createProject({
+      companyUuid,
+      name: "P",
+      ownerType: "user",
+      ownerUuid: "user-1",
+      memberUuids: [
+        { memberType: "agent", memberUuid: "agent-9" },
+        { memberType: "user", memberUuid: "user-1" }, // duplicate of owner
+      ],
+    });
+
+    const seeded = mockPrisma.projectMember.createMany.mock.calls[0][0].data;
+    expect(seeded).toHaveLength(2); // owner + agent-9, dedup removed the dup
+  });
+
+  it("supports an explicit shared visibility", async () => {
+    mockPrisma.project.create.mockResolvedValue(makeProject({ visibility: "shared" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Shared", visibility: "shared" });
+
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "shared" }),
+      }),
+    );
+  });
+
+  it("inherits the group's visibility when none is passed and a group is given", async () => {
+    const groupUuid = "group-0000-0000-0000-000000000001";
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "shared" });
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "shared" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Inherits", groupUuid });
+
+    expect(mockPrisma.projectGroup.findFirst).toHaveBeenCalledWith({
+      where: { uuid: groupUuid, companyUuid },
+      select: { visibility: true },
+    });
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "shared", groupUuid }),
+      }),
+    );
+  });
+
+  it("an explicit visibility overrides the group's visibility (no group lookup)", async () => {
+    const groupUuid = "group-0000-0000-0000-000000000001";
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "private" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Explicit", groupUuid, visibility: "private" });
+
+    expect(mockPrisma.projectGroup.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "private" }),
+      }),
+    );
+  });
+
+  it("defaults to private when a group is given but the group is not found", async () => {
+    const groupUuid = "group-missing";
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "private" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Orphan", groupUuid });
+
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "private" }),
+      }),
+    );
+  });
+});
+
+// ===== setProjectVisibility =====
+describe("setProjectVisibility", () => {
+  it("updates visibility when the project exists", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
+    mockPrisma.project.update.mockResolvedValue({ uuid: projectUuid, visibility: "shared" });
+
+    const result = await setProjectVisibility(companyUuid, projectUuid, "shared");
+    expect(result).toEqual({ uuid: projectUuid, visibility: "shared" });
+    expect(mockPrisma.project.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { visibility: "shared" } }),
+    );
+  });
+
+  it("returns null when the project is not found", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue(null);
+    expect(await setProjectVisibility(companyUuid, "missing", "private")).toBeNull();
+  });
+});
+
+// ===== member CRUD =====
+describe("project members", () => {
+  it("listProjectMembers returns mapped members with resolved names", async () => {
+    mockPrisma.projectMember.findMany.mockResolvedValue([
+      { uuid: "m1", memberType: "user", memberUuid: "user-2", role: "member", createdAt: now },
+    ]);
+    // getActorName resolves a user's display name via prisma.user.findUnique.
+    mockPrisma.user.findUnique.mockResolvedValue({ name: "Bob", email: "bob@example.com" });
+    const result = await listProjectMembers(companyUuid, projectUuid);
+    expect(result).toEqual([
+      { uuid: "m1", memberType: "user", memberUuid: "user-2", name: "Bob", role: "member", createdAt: now.toISOString() },
+    ]);
+  });
+
+  it("addProjectMember creates a new membership", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectMember.create.mockResolvedValue({
+      uuid: "m2", memberType: "agent", memberUuid: "agent-7", role: "member", createdAt: now,
+    });
+    mockPrisma.agent.findUnique.mockResolvedValue({ name: "Agent Seven" });
+
+    const result = await addProjectMember(companyUuid, projectUuid, "agent", "agent-7");
+    expect(result!.memberUuid).toBe("agent-7");
+    expect(result!.name).toBe("Agent Seven");
+    expect(mockPrisma.projectMember.create).toHaveBeenCalled();
+  });
+
+  it("addProjectMember is idempotent (returns existing without creating)", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
+    mockPrisma.projectMember.findUnique.mockResolvedValue({
+      uuid: "m3", memberType: "user", memberUuid: "user-2", role: "member", createdAt: now,
+    });
+
+    await addProjectMember(companyUuid, projectUuid, "user", "user-2");
+    expect(mockPrisma.projectMember.create).not.toHaveBeenCalled();
+  });
+
+  it("addProjectMember returns null for a missing project", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue(null);
+    expect(await addProjectMember(companyUuid, "missing", "user", "user-2")).toBeNull();
+  });
+
+  it("removeProjectMember refuses to remove the owner", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      uuid: projectUuid, ownerType: "user", ownerUuid: "user-1",
+    });
+    expect(await removeProjectMember(companyUuid, projectUuid, "user", "user-1")).toBe(false);
+    expect(mockPrisma.projectMember.delete).not.toHaveBeenCalled();
+  });
+
+  it("removeProjectMember deletes a non-owner member", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      uuid: projectUuid, ownerType: "user", ownerUuid: "user-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue({ id: 5 });
+    mockPrisma.projectMember.delete.mockResolvedValue({});
+
+    expect(await removeProjectMember(companyUuid, projectUuid, "agent", "agent-7")).toBe(true);
+    expect(mockPrisma.projectMember.delete).toHaveBeenCalled();
+  });
+
+  it("removeProjectMember returns false when the member does not exist", async () => {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      uuid: projectUuid, ownerType: "user", ownerUuid: "user-1",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    expect(await removeProjectMember(companyUuid, projectUuid, "user", "user-99")).toBe(false);
   });
 });

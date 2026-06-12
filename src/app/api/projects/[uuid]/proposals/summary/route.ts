@@ -23,11 +23,11 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Validate project exists and belongs to company
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
-    const data = await getProjectProposals(auth.companyUuid, projectUuid);
+    const data = await getProjectProposals(auth.companyUuid, projectUuid, auth);
 
     return success(data);
   }

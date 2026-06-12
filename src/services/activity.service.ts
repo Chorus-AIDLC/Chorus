@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { getActorName } from "@/lib/uuid-resolver";
+import { type AnyAuth, canAccessProject } from "@/lib/authz/project-access";
 
 export type TargetType = "idea" | "task" | "proposal" | "document";
 
@@ -15,6 +16,8 @@ export interface ActivityListParams {
   take: number;
   targetType?: TargetType;
   targetUuid?: string;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface ActivityCreateParams {
@@ -52,7 +55,13 @@ export async function listActivities({
   take,
   targetType,
   targetUuid,
+  auth,
 }: ActivityListParams) {
+  // Visibility gate: a non-member of this project sees no activity.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { activities: [], total: 0 };
+  }
+
   const where = {
     projectUuid,
     companyUuid,

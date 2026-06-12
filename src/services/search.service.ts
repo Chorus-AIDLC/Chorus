@@ -3,6 +3,11 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import {
+  type AnyAuth,
+  ALL_PROJECTS,
+  getAccessibleProjectUuids,
+} from "@/lib/authz/project-access";
 
 // ===== Type Definitions =====
 
@@ -16,6 +21,8 @@ export interface SearchParams {
   scopeUuid?: string;  // project group UUID or project UUID
   entityTypes?: EntityType[];
   limit?: number;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface SearchResult {
@@ -445,6 +452,19 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
   } else if (scope === "group" && scopeUuid) {
     projectUuids = await resolveGroupProjects(companyUuid, scopeUuid);
     groupUuid = scopeUuid;
+  }
+
+  // Visibility gate: intersect the scope-resolved project set with the actor's
+  // accessible projects so entities/projects in inaccessible private projects
+  // never surface. Super admins (ALL_PROJECTS) bypass the intersection.
+  // project_group results are unaffected (groups are containers, not projects).
+  const accessible = await getAccessibleProjectUuids(params.auth);
+  if (accessible !== ALL_PROJECTS) {
+    const accessibleSet = new Set(accessible);
+    projectUuids =
+      projectUuids === null
+        ? accessible
+        : projectUuids.filter((u) => accessibleSet.has(u));
   }
 
   // Execute searches in parallel

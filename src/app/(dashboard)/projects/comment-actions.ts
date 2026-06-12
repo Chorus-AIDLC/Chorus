@@ -40,6 +40,7 @@ export async function getCommentsAction(
       targetUuid,
       skip: 0,
       take: 100,
+      auth,
     });
 
     const commentsWithOwner = await resolveAgentOwners(result.comments);
@@ -83,6 +84,7 @@ export async function createCommentAction(
       content: content.trim(),
       authorType: auth.type,
       authorUuid: auth.actorUuid,
+      auth,
     });
 
     // Record activity for notification pipeline

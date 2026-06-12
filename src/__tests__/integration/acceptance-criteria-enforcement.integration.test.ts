@@ -90,6 +90,8 @@ vi.mock("@/services/checkin.service", () => ({}));
 
 // Real modules under test — NOT mocked.
 import { addTaskDraft, updateTaskDraft } from "@/services/proposal.service";
+import type { SuperAdminAuthContext } from "@/types/auth";
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
 import { registerPublicTools } from "@/mcp/tools/public";
 import { normalizeAcceptanceCriteria } from "@/lib/acceptance-criteria";
 import type { AgentAuthContext } from "@/types/auth";
@@ -171,14 +173,14 @@ describe("AC enforcement — cross-layer integration", () => {
 
     // Missing AC → rejected by the shared helper, nothing written.
     await expect(
-      addTaskDraft("prop-1", COMPANY, { title: "No AC" }),
+      addTaskDraft("prop-1", COMPANY, { title: "No AC" }, adminAuth),
     ).rejects.toThrow("acceptance criterion");
 
     // Non-empty AC (with a blank dropped) → persisted normalized.
     await addTaskDraft("prop-1", COMPANY, {
       title: "With AC",
       acceptanceCriteriaItems: [{ description: "  real  " }, { description: "  " }],
-    });
+    }, adminAuth);
     const drafts = (proposalStore.current as { taskDrafts: Array<{ title: string; acceptanceCriteriaItems: unknown }> }).taskDrafts;
     expect(drafts).toHaveLength(1);
     expect(drafts[0].acceptanceCriteriaItems).toEqual([{ description: "real", required: true }]);
@@ -263,7 +265,7 @@ describe("AC enforcement — cross-layer integration", () => {
     const result = await toolHandlers["chorus_update_task"]({ taskUuid: "task-1", addDependsOn: ["dep-1"] });
 
     expect(isError(result)).toBe(false);
-    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith(COMPANY, "task-1", "dep-1");
+    expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith(COMPANY, "task-1", "dep-1", expect.anything());
     expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
     expect(acStore).toEqual([expect.objectContaining({ description: "keep" })]);
   });
@@ -277,7 +279,7 @@ describe("AC enforcement — cross-layer integration", () => {
       createdAt: new Date("2026-06-02T00:00:00Z"), updatedAt: new Date("2026-06-02T00:00:00Z"),
     };
 
-    await updateTaskDraft("prop-1", COMPANY, "td-1", { title: "Renamed" });
+    await updateTaskDraft("prop-1", COMPANY, "td-1", { title: "Renamed" }, adminAuth);
 
     const drafts = (proposalStore.current as { taskDrafts: Array<{ title: string; acceptanceCriteriaItems: unknown }> }).taskDrafts;
     expect(drafts[0].title).toBe("Renamed");

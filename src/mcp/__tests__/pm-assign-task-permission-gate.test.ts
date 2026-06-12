@@ -114,6 +114,7 @@ describe("chorus_pm_assign_task — assignee gate uses effective task:write", ()
         assigneeType: "agent",
         assigneeUuid: targetUuid,
       }),
+      expect.anything(),
     );
   });
 

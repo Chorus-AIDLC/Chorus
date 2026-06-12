@@ -20,7 +20,7 @@ export const GET = withErrorHandler<{ uuid: string; proposalUuid: string }>(
     if (denied) return denied;
 
     const { proposalUuid } = await context.params;
-    const result = await validateProposal(auth.companyUuid, proposalUuid);
+    const result = await validateProposal(auth.companyUuid, proposalUuid, auth);
     return success(result);
   }
 );

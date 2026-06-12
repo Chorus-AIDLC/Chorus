@@ -21,7 +21,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const proposal = await getProposal(auth.companyUuid, uuid);
+    const proposal = await getProposal(auth.companyUuid, uuid, auth);
 
     if (!proposal) {
       return errors.notFound("Proposal");

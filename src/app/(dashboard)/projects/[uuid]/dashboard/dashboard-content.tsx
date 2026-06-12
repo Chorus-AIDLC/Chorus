@@ -12,7 +12,7 @@ interface DashboardContentProps {
 
 export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }: DashboardContentProps) {
   const t = await getTranslations();
-  const { project, trackerData, stats, activities, currentUserUuid } = await getDashboardData(projectUuid);
+  const { project, trackerData, stats, activities, currentUserUuid, isOwner } = await getDashboardData(projectUuid);
 
   return (
     <div className="flex h-full flex-col gap-5 p-5 md:p-6">
@@ -22,7 +22,13 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
           <p className="mt-1 text-[13px] text-[#5F5E5A]">{t("ideaTracker.overviewSubtitle")}</p>
         </div>
         <div className="flex items-center gap-3">
-          <ProjectSettingsModal projectUuid={projectUuid} projectName={project.name} projectDescription={project.description ?? null} />
+          <ProjectSettingsModal
+            projectUuid={projectUuid}
+            projectName={project.name}
+            projectDescription={project.description ?? null}
+            visibility={project.visibility === "shared" ? "shared" : "private"}
+            isOwner={isOwner}
+          />
         </div>
       </div>
       <div className="min-h-0 flex-1">

@@ -22,20 +22,25 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    const project = await getProject(auth.companyUuid, projectUuid);
+    const project = await getProject(auth.companyUuid, projectUuid, auth);
     if (!project) {
       return errors.notFound("Project");
     }
 
     const [stats, { activities }] = await Promise.all([
-      getProjectStats(auth.companyUuid, projectUuid),
+      getProjectStats(auth.companyUuid, projectUuid, auth),
       listActivitiesWithActorNames({
         companyUuid: auth.companyUuid,
         projectUuid,
         skip: 0,
         take: 5,
+        auth,
       }),
     ]);
+
+    if (!stats) {
+      return errors.notFound("Project");
+    }
 
     return success({ stats, recentActivities: activities });
   }

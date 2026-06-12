@@ -23,9 +23,15 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     count: vi.fn(),
   },
+  projectMember: {
+    findMany: vi.fn(),
+  },
   projectGroup: {
     findMany: vi.fn(),
     count: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
   },
 }));
 
@@ -35,11 +41,21 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 import { search } from "@/services/search.service";
 
+// ===== Auth fixtures =====
+// Super-admin: getAccessibleProjectUuids returns the ALL sentinel without
+// touching prisma, leaving the scope-resolved project filter unchanged so all
+// existing query-shape assertions stay valid.
+const superAdminAuth = { type: "super_admin" as const, email: "admin@chorus.local" };
+
 // ===== Test Suite =====
 
 describe("search.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // getAccessibleProjectUuids (non-super-admin path) also consults group
+    // ownership/membership; default these to empty so existing tests are unaffected.
+    mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
   });
 
   describe("global search", () => {
@@ -126,6 +142,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(1);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -171,6 +188,7 @@ describe("search.service", () => {
       mockPrisma.idea.count.mockResolvedValue(1);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -230,6 +248,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "project",
@@ -294,6 +313,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "group",
@@ -377,6 +397,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -417,6 +438,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query,
         companyUuid: "company-1",
         scope: "global",
@@ -484,6 +506,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid: "company-1",
         scope: "global",
@@ -529,6 +552,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -563,6 +587,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -641,6 +666,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(0);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -689,6 +715,7 @@ describe("search.service", () => {
       mockPrisma.projectGroup.count.mockResolvedValue(1);
 
       const result = await search({
+        auth: superAdminAuth,
         query: "test",
         companyUuid,
         scope: "global",
@@ -703,12 +730,91 @@ describe("search.service", () => {
     });
   });
 
+  describe("project visibility gating", () => {
+    it("restricts a regular user's global search to their accessible projects", async () => {
+      const companyUuid = "company-1";
+      const userAuth = {
+        type: "user" as const,
+        companyUuid,
+        actorUuid: "user-1",
+      };
+
+      // getAccessibleProjectUuids: one accessible (shared/owned) project, no
+      // extra memberships.
+      mockPrisma.project.findMany.mockResolvedValue([{ uuid: "project-accessible" }]);
+      mockPrisma.projectMember.findMany.mockResolvedValue([]);
+
+      mockPrisma.task.findMany.mockResolvedValue([]);
+      mockPrisma.task.count.mockResolvedValue(0);
+      mockPrisma.idea.findMany.mockResolvedValue([]);
+      mockPrisma.idea.count.mockResolvedValue(0);
+      mockPrisma.proposal.findMany.mockResolvedValue([]);
+      mockPrisma.proposal.count.mockResolvedValue(0);
+      mockPrisma.document.findMany.mockResolvedValue([]);
+      mockPrisma.document.count.mockResolvedValue(0);
+      mockPrisma.project.count.mockResolvedValue(0);
+      mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+      mockPrisma.projectGroup.count.mockResolvedValue(0);
+
+      await search({
+        auth: userAuth,
+        query: "test",
+        companyUuid,
+        scope: "global",
+        entityTypes: ["task"],
+      });
+
+      // The task search is constrained to the accessible project set even
+      // though the global scope itself imposes no project filter.
+      expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            projectUuid: { in: ["project-accessible"] },
+          }),
+        })
+      );
+    });
+
+    it("returns no entity hits when the user has no accessible projects", async () => {
+      const companyUuid = "company-1";
+      const userAuth = {
+        type: "user" as const,
+        companyUuid,
+        actorUuid: "user-1",
+      };
+
+      // No shared/owned projects and no memberships => empty accessible set.
+      mockPrisma.project.findMany.mockResolvedValue([]);
+      mockPrisma.projectMember.findMany.mockResolvedValue([]);
+
+      mockPrisma.task.findMany.mockResolvedValue([]);
+      mockPrisma.task.count.mockResolvedValue(0);
+
+      const result = await search({
+        auth: userAuth,
+        query: "test",
+        companyUuid,
+        scope: "global",
+        entityTypes: ["task"],
+      });
+
+      expect(result.results).toHaveLength(0);
+      // Task search runs with an empty accessible set (in: []), matching nothing.
+      expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ projectUuid: { in: [] } }),
+        })
+      );
+    });
+  });
+
   describe("error handling", () => {
     it("should throw error if scopeUuid missing for project scope", async () => {
       const companyUuid = "company-1";
 
       await expect(
         search({
+          auth: superAdminAuth,
           query: "test",
           companyUuid,
           scope: "project",
@@ -722,6 +828,7 @@ describe("search.service", () => {
 
       await expect(
         search({
+          auth: superAdminAuth,
           query: "test",
           companyUuid,
           scope: "group",

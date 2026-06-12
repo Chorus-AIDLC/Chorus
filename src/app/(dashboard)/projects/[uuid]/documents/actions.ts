@@ -23,7 +23,7 @@ export async function createDocumentAction(input: {
   }
 
   try {
-    if (!(await projectExists(auth.companyUuid, input.projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, input.projectUuid, auth))) {
       return { success: false, error: "Project not found" };
     }
 
@@ -34,7 +34,7 @@ export async function createDocumentAction(input: {
       title: input.title,
       content: input.content,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     await createActivity({
       companyUuid: auth.companyUuid,
@@ -78,7 +78,7 @@ export async function deleteDocumentAction(
       return { success: false, error: "forbidden" };
     }
 
-    await deleteDocument(document.uuid);
+    await deleteDocument(document.uuid, auth);
     revalidatePath(`/projects/${document.projectUuid}/documents`);
     return { success: true, projectUuid: document.projectUuid };
   } catch (error) {

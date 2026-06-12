@@ -80,6 +80,7 @@ describe("PATCH /api/ideas/[uuid]/move — moved cascade counts", () => {
       TARGET_PROJECT_UUID,
       USER_UUID,
       "user",
+      expect.anything(),
     );
   });
 

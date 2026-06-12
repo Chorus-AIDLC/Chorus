@@ -48,6 +48,13 @@ export interface SearchMentionablesParams {
   actorUuid: string;
   ownerUuid?: string;
   limit?: number;
+  /**
+   * When true AND the query is empty, also surface recent company users
+   * (in addition to the actor's own agents). Used by the member-add picker,
+   * which needs to list humans even before the user types. Defaults to false,
+   * which preserves the @mention empty-query behavior (agents only).
+   */
+  includeUsersOnEmpty?: boolean;
 }
 
 // ===== Service Methods =====
@@ -211,7 +218,7 @@ const DEFAULT_EMPTY_QUERY_LIMIT = 5;
  * - Agent caller: all company users + same-owner agents (agents with same ownerUuid)
  */
 export async function searchMentionables(params: SearchMentionablesParams): Promise<Mentionable[]> {
-  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10 } = params;
+  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10, includeUsersOnEmpty = false } = params;
 
   const effectiveLimit = Math.min(limit, 50);
   const results: Mentionable[] = [];
@@ -253,7 +260,34 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       }
     }
 
-    return results;
+    // For the member-add picker we also surface recent company users on an empty
+    // query, so the human can pick a teammate before typing. The default
+    // @mention behavior (flag off) stays agents-only.
+    if (includeUsersOnEmpty) {
+      const users = await prisma.user.findMany({
+        where: { companyUuid },
+        select: {
+          uuid: true,
+          name: true,
+          email: true,
+          avatarUrl: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: Math.min(DEFAULT_EMPTY_QUERY_LIMIT, effectiveLimit),
+      });
+
+      for (const user of users) {
+        results.push({
+          type: "user",
+          uuid: user.uuid,
+          name: user.name ?? user.email ?? "Unknown",
+          email: user.email,
+          avatarUrl: user.avatarUrl,
+        });
+      }
+    }
+
+    return results.slice(0, effectiveLimit);
   }
   // Search users (all company users are mentionable)
   const users = await prisma.user.findMany({

@@ -30,6 +30,7 @@ export async function markCriteriaAction(
       taskUuid,
       criteria,
       { type: auth.type, actorUuid: auth.actorUuid },
+      auth,
     );
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
@@ -61,7 +62,7 @@ export async function resetCriterionAction(
       return { success: false, error: "Task not found" };
     }
 
-    await resetAcceptanceCriterion(auth.companyUuid, taskUuid, criterionUuid);
+    await resetAcceptanceCriterion(auth.companyUuid, taskUuid, criterionUuid, auth);
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
     revalidatePath(`/projects/${task.projectUuid}/tasks`);
@@ -93,6 +94,7 @@ export async function selfCheckCriteriaAction(
       taskUuid,
       criteria,
       { type: auth.type, actorUuid: auth.actorUuid },
+      auth,
     );
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);

@@ -29,7 +29,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const typeFilter = url.searchParams.get("type") || undefined;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -39,6 +39,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       skip,
       take,
       type: typeFilter,
+      auth,
     });
 
     return paginated(documents, page, pageSize, total);
@@ -65,7 +66,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return errors.notFound("Project");
     }
 
@@ -90,7 +91,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       title: body.title.trim(),
       content: body.content?.trim() || null,
       createdByUuid: auth.actorUuid,
-    });
+    }, auth);
 
     return success(document);
   }

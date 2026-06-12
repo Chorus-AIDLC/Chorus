@@ -6,6 +6,7 @@ import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { moveProjectToGroup } from "@/services/project-group.service";
+import { canAccessProject } from "@/lib/authz/project-access";
 
 // PATCH /api/projects/[uuid]/group
 export const PATCH = withErrorHandler(
@@ -21,6 +22,12 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
+
+    // Must be able to access the project; otherwise hide its existence (404).
+    if (!(await canAccessProject(auth, uuid))) {
+      return errors.notFound("Project");
+    }
+
     const body = await parseBody<{ groupUuid: string | null }>(request);
 
     const result = await moveProjectToGroup(

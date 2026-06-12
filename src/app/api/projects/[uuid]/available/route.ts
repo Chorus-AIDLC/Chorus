@@ -24,7 +24,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
 
     // Find project
-    const project = await getProjectByUuid(auth.companyUuid, projectUuid);
+    const project = await getProjectByUuid(auth.companyUuid, projectUuid, auth);
     if (!project) {
       return errors.notFound("Project");
     }

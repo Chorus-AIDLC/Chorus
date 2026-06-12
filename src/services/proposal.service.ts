@@ -15,6 +15,10 @@ import {
   hasNonEmptyAcceptanceCriteria,
   normalizeAcceptanceCriteria,
 } from "@/lib/acceptance-criteria";
+import {
+  type AnyAuth,
+  canAccessProject,
+} from "@/lib/authz/project-access";
 
 // ===== UUID Helper Functions =====
 
@@ -42,6 +46,8 @@ export interface ProposalListParams {
   skip: number;
   take: number;
   status?: string;
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 // Document draft type (with UUID for tracking and modification)
@@ -233,13 +239,17 @@ export interface ValidationResult {
 // Validate Proposal completeness before submission
 export async function validateProposal(
   companyUuid: string,
-  proposalUuid: string
+  proposalUuid: string,
+  auth: AnyAuth
 ): Promise<ValidationResult> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found");
   }
 
@@ -519,7 +529,13 @@ export async function listProposals({
   skip,
   take,
   status,
+  auth,
 }: ProposalListParams): Promise<{ proposals: ProposalResponse[]; total: number }> {
+  // Visibility gate: a non-member of this project sees nothing.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { proposals: [], total: 0 };
+  }
+
   const where = {
     projectUuid,
     companyUuid,
@@ -562,7 +578,8 @@ export async function listProposals({
 // Get Proposal details
 export async function getProposal(
   companyUuid: string,
-  uuid: string
+  uuid: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse | null> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid, companyUuid },
@@ -572,6 +589,8 @@ export async function getProposal(
   });
 
   if (!proposal) return null;
+  // Visibility gate: hide proposals in projects the actor cannot access.
+  if (!(await canAccessProject(auth, proposal.projectUuid))) return null;
   return formatProposalResponse(proposal);
 }
 
@@ -607,9 +626,10 @@ export function toTaskDraftIndex(draft: TaskDraft): TaskDraftIndexEntry {
 export async function getProposalSection(
   companyUuid: string,
   uuid: string,
-  section: ProposalSection
+  section: ProposalSection,
+  auth: AnyAuth
 ): Promise<ProposalSectionResponse | null> {
-  const proposal = await getProposal(companyUuid, uuid);
+  const proposal = await getProposal(companyUuid, uuid, auth);
   if (!proposal) return null;
 
   // Split metadata from the heavy draft arrays.
@@ -644,8 +664,14 @@ export async function getProposalByUuid(companyUuid: string, uuid: string) {
 
 // Create Proposal (container)
 export async function createProposal(
-  params: ProposalCreateParams
+  params: ProposalCreateParams,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
+  // Visibility gate: cannot create a proposal in an inaccessible project.
+  if (!(await canAccessProject(auth, params.projectUuid))) {
+    throw new Error("Project not found");
+  }
+
   // Ensure all drafts have UUIDs (frontend may still pass drafts at creation time)
   const documentDraftsWithUuids = params.documentDrafts?.map(ensureDocumentDraftUuid);
   const taskDraftsWithUuids = params.taskDrafts?.map(ensureTaskDraftUuid);
@@ -697,8 +723,14 @@ export async function updateProposalContent(
     description?: string | null;
     documentDrafts?: DocumentDraft[] | null;
     taskDrafts?: TaskDraft[] | null;
-  }
+  },
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
+  // Visibility gate: resolve the proposal's project and reject non-members.
+  const target = await prisma.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Proposal not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Proposal not found");
+
   // Build update data with proper JSON null handling
   const updateData: Prisma.ProposalUpdateInput = {};
 
@@ -746,13 +778,17 @@ export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
   reviewedByUuid: string,
-  reviewNote?: string | null
+  reviewNote: string | null | undefined,
+  auth: AnyAuth
 ): Promise<ApprovalResult> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found");
   }
 
@@ -906,7 +942,8 @@ export async function revokeProposal(
   proposalUuid: string,
   companyUuid: string,
   revokedByUuid: string,
-  reviewNote?: string
+  reviewNote: string | undefined,
+  auth: AnyAuth
 ): Promise<RevokeResult> {
   // 1. Validate proposal exists, belongs to company, status === 'approved'
   const proposal = await prisma.proposal.findFirst({
@@ -914,6 +951,9 @@ export async function revokeProposal(
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found");
   }
 
@@ -993,8 +1033,14 @@ export async function revokeProposal(
 export async function rejectProposal(
   proposalUuid: string,
   reviewedByUuid: string,
-  reviewNote: string
+  reviewNote: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
+  // Visibility gate: resolve the proposal's project and reject non-members.
+  const target = await prisma.proposal.findUnique({ where: { uuid: proposalUuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Proposal not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Proposal not found");
+
   const proposal = await prisma.proposal.update({
     where: { uuid: proposalUuid },
     data: {
@@ -1017,8 +1063,14 @@ export async function rejectProposal(
 export async function closeProposal(
   proposalUuid: string,
   closedByUuid: string,
-  reviewNote: string
+  reviewNote: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
+  // Visibility gate: resolve the proposal's project and reject non-members.
+  const target = await prisma.proposal.findUnique({ where: { uuid: proposalUuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Proposal not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Proposal not found");
+
   const proposal = await prisma.proposal.update({
     where: { uuid: proposalUuid },
     data: {
@@ -1040,13 +1092,17 @@ export async function closeProposal(
 // Delete Proposal (only draft or closed)
 export async function deleteProposal(
   proposalUuid: string,
-  companyUuid: string
+  companyUuid: string,
+  auth: AnyAuth
 ): Promise<void> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found");
   }
 
@@ -1060,7 +1116,8 @@ export async function deleteProposal(
 // Submit Proposal for review (draft -> pending)
 export async function submitProposal(
   proposalUuid: string,
-  companyUuid: string
+  companyUuid: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
@@ -1069,13 +1126,16 @@ export async function submitProposal(
   if (!proposal) {
     throw new Error("Proposal not found");
   }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
+    throw new Error("Proposal not found");
+  }
 
   if (proposal.status !== "draft") {
     throw new Error("Only draft proposals can be submitted for review");
   }
 
   // Run full validation (includes elaboration gate E5 and all other checks)
-  const validation = await validateProposal(companyUuid, proposalUuid);
+  const validation = await validateProposal(companyUuid, proposalUuid, auth);
   if (!validation.valid) {
     const lines = validation.issues.map(
       (i) => `[${i.level}] ${i.message}`
@@ -1102,13 +1162,17 @@ export async function submitProposal(
 export async function addDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
-  draft: Omit<DocumentDraft, "uuid"> & { uuid?: string }
+  draft: Omit<DocumentDraft, "uuid"> & { uuid?: string },
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1134,13 +1198,17 @@ export async function addDocumentDraft(
 export async function addTaskDraft(
   proposalUuid: string,
   companyUuid: string,
-  draft: Omit<TaskDraft, "uuid"> & { uuid?: string }
+  draft: Omit<TaskDraft, "uuid"> & { uuid?: string },
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1176,13 +1244,17 @@ export async function updateDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
   draftUuid: string,
-  updates: Partial<Omit<DocumentDraft, "uuid">>
+  updates: Partial<Omit<DocumentDraft, "uuid">>,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1214,13 +1286,17 @@ export async function updateTaskDraft(
   proposalUuid: string,
   companyUuid: string,
   draftUuid: string,
-  updates: Partial<Omit<TaskDraft, "uuid">>
+  updates: Partial<Omit<TaskDraft, "uuid">>,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1262,13 +1338,17 @@ export async function updateTaskDraft(
 export async function removeDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
-  draftUuid: string
+  draftUuid: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1295,13 +1375,17 @@ export async function removeDocumentDraft(
 export async function removeTaskDraft(
   proposalUuid: string,
   companyUuid: string,
-  draftUuid: string
+  draftUuid: string,
+  auth: AnyAuth
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid, status: "draft" },
   });
 
   if (!proposal) {
+    throw new Error("Proposal not found or not in draft status");
+  }
+  if (!(await canAccessProject(auth, proposal.projectUuid))) {
     throw new Error("Proposal not found or not in draft status");
   }
 
@@ -1333,7 +1417,11 @@ export async function removeTaskDraft(
 export async function getProjectProposals(
   companyUuid: string,
   projectUuid: string,
+  auth: AnyAuth,
 ): Promise<Array<{ uuid: string; title: string; sequenceNumber: number; taskCount: number }>> {
+  // Visibility gate: a non-member of this project sees no proposals.
+  if (!(await canAccessProject(auth, projectUuid))) return [];
+
   const proposals = await prisma.proposal.findMany({
     where: { companyUuid, projectUuid, status: "approved" },
     select: {

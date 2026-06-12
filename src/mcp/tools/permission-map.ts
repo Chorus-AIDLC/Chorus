@@ -72,6 +72,19 @@ export const TOOL_PERMISSIONS = {
   chorus_admin_update_project_group: "project:write",
   chorus_admin_delete_project_group: "project:write",
   chorus_admin_move_project_to_group: "project:write",
+  // Project member management (visibility feature, Tech Design §6).
+  // The two mutating member tools are owner-gated at the service/guard layer
+  // (canManageProject) but exposed under project:admin so plain project:write
+  // agents don't see them. The list tool is project:read-gated.
+  chorus_admin_add_project_member: "project:admin",
+  chorus_admin_remove_project_member: "project:admin",
+  chorus_list_project_members: "project:read",
+  // Project-group member management (group visibility, Tech Design §6). Same
+  // gating shape as the project member tools: list under project:read, the two
+  // mutators owner-gated (canManageGroup) but exposed under project:admin.
+  chorus_admin_add_project_group_member: "project:admin",
+  chorus_admin_remove_project_group_member: "project:admin",
+  chorus_list_project_group_members: "project:read",
   // Proposal admin (approve + admin-only close)
   chorus_admin_approve_proposal: "proposal:admin",
   chorus_admin_close_proposal: "proposal:admin",

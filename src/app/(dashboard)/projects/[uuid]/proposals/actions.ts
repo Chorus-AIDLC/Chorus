@@ -31,7 +31,7 @@ export async function createProposalAction(
 
   try {
     // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
+    if (!(await projectExists(auth.companyUuid, projectUuid, auth))) {
       return { success: false, error: "Project not found" };
     }
 
@@ -73,7 +73,7 @@ export async function createProposalAction(
       taskDrafts: data.taskDrafts,
       createdByUuid: auth.actorUuid,
       createdByType: "user",
-    });
+    }, auth);
 
     revalidatePath(`/projects/${projectUuid}/proposals`);
 
@@ -99,6 +99,7 @@ export async function fetchProposalsAction(projectUuid: string) {
       projectUuid,
       skip: 0,
       take: 1000,
+      auth,
     });
     return { success: true as const, data: proposals };
   } catch (error) {

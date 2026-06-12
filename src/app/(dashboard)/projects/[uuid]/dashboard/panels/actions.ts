@@ -22,7 +22,7 @@ export async function getIdeaAction(ideaUuid: string) {
     return { success: false as const, error: "Unauthorized" };
   }
 
-  const idea = await getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid);
+  const idea = await getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid, auth);
   if (!idea) {
     return { success: false as const, error: "Not found" };
   }
@@ -36,7 +36,7 @@ export async function getTaskAction(taskUuid: string) {
     return { success: false as const, error: "Unauthorized" };
   }
 
-  const task = await getTask(auth.companyUuid, taskUuid);
+  const task = await getTask(auth.companyUuid, taskUuid, auth);
   if (!task) {
     return { success: false as const, error: "Not found" };
   }
@@ -57,6 +57,7 @@ export async function moveIdeaAction(ideaUuid: string, targetProjectUuid: string
       targetProjectUuid,
       auth.actorUuid,
       auth.type,
+      auth,
     );
     // Surface the cascade counts so the dialog can render an accurate
     // success toast ("moved 2 proposals, 3 tasks, ...") rather than a
@@ -87,7 +88,7 @@ export async function moveIdeaPreviewAction(ideaUuid: string, targetProjectUuid:
       return { success: false as const, error: "Idea is already in the target project" };
     }
 
-    const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
+    const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid, auth);
     return { success: true as const, moved: result.moved };
   } catch (e) {
     logger.error({ err: e }, "Failed to preview idea move");
@@ -128,6 +129,7 @@ export async function getTasksForProposalAction(
     proposalUuids: [proposalUuid],
     skip: 0,
     take: 100,
+    auth,
   });
 
   return { success: true as const, data: tasks };
@@ -177,8 +179,8 @@ export async function getProjectsAndGroupsAction() {
   }
 
   const [{ projects }, { groups }] = await Promise.all([
-    listProjects({ companyUuid: auth.companyUuid, skip: 0, take: 100 }),
-    listProjectGroups(auth.companyUuid),
+    listProjects({ companyUuid: auth.companyUuid, skip: 0, take: 100, auth }),
+    listProjectGroups(auth.companyUuid, auth),
   ]);
 
   return { success: true as const, data: { projects, groups } };

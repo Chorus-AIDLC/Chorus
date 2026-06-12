@@ -12,6 +12,10 @@ import * as activityService from "@/services/activity.service";
 import * as documentService from "@/services/document.service";
 import * as proposalService from "@/services/proposal.service";
 import logger from "@/lib/logger";
+import {
+  type AnyAuth,
+  canAccessProject,
+} from "@/lib/authz/project-access";
 
 // ===== Derived Status =====
 
@@ -28,6 +32,8 @@ export interface IdeaListParams {
   assignedToMe?: boolean;  // Filter for ideas assigned to current user
   actorUuid?: string;      // Current user/agent UUID for assignedToMe filter
   actorType?: string;      // "user" | "agent" for assignedToMe filter
+  /** Auth context used to restrict results to projects the actor can access. */
+  auth: AnyAuth;
 }
 
 export interface IdeaCreateParams {
@@ -182,7 +188,13 @@ export async function listIdeas({
   assignedToMe,
   actorUuid,
   actorType,
+  auth,
 }: IdeaListParams): Promise<{ ideas: IdeaResponse[]; total: number }> {
+  // Visibility gate: a non-member of this project sees nothing.
+  if (!(await canAccessProject(auth, projectUuid))) {
+    return { ideas: [], total: 0 };
+  }
+
   const where: {
     projectUuid: string;
     companyUuid: string;
@@ -321,7 +333,8 @@ async function getReportCountsForIdeas(
 // no reports is one extra cheap proposal lookup.
 export async function getIdea(
   companyUuid: string,
-  uuid: string
+  uuid: string,
+  auth: AnyAuth
 ): Promise<IdeaResponse | null> {
   const idea = await prisma.idea.findFirst({
     where: { uuid, companyUuid },
@@ -331,6 +344,8 @@ export async function getIdea(
   });
 
   if (!idea) return null;
+  // Visibility gate: hide ideas in projects the actor cannot access.
+  if (!(await canAccessProject(auth, idea.projectUuid))) return null;
   const response = await formatIdeaResponse(idea);
 
   // Step 1: idea-rooted report-bearing proposals (approved or closed —
@@ -367,7 +382,12 @@ export async function getIdeaByUuid(companyUuid: string, uuid: string) {
 }
 
 // Create Idea
-export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse> {
+export async function createIdea(params: IdeaCreateParams, auth: AnyAuth): Promise<IdeaResponse> {
+  // Visibility gate: cannot create an idea in a project the actor cannot access.
+  if (!(await canAccessProject(auth, params.projectUuid))) {
+    throw new Error("Project not found");
+  }
+
   const idea = await prisma.idea.create({
     data: {
       companyUuid: params.companyUuid,
@@ -406,8 +426,14 @@ export async function updateIdea(
   uuid: string,
   companyUuid: string,
   data: { title?: string; content?: string | null; status?: string },
+  auth: AnyAuth,
   actorContext?: { actorType: string; actorUuid: string }
 ): Promise<IdeaResponse> {
+  // Visibility gate: resolve the idea's project and reject non-members.
+  const target = await prisma.idea.findFirst({ where: { uuid, companyUuid }, select: { projectUuid: true } });
+  if (!target) throw new Error("Idea not found");
+  if (!(await canAccessProject(auth, target.projectUuid))) throw new Error("Idea not found");
+
   // If content is being updated and we have actor context, capture old content for mention diffing
   let oldContent: string | null = null;
   if (data.content !== undefined && actorContext) {
@@ -449,11 +475,12 @@ export async function claimIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
-}: IdeaClaimParams): Promise<IdeaResponse> {
+}: IdeaClaimParams, auth: AnyAuth): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new AlreadyClaimedError("Idea");
+  if (!(await canAccessProject(auth, existing.projectUuid))) throw new AlreadyClaimedError("Idea");
   if (existing.assigneeUuid) {
     throw new AlreadyClaimedError("Idea");
   }
@@ -488,11 +515,12 @@ export async function assignIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
-}: IdeaClaimParams): Promise<IdeaResponse> {
+}: IdeaClaimParams, auth: AnyAuth): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new Error("Idea not found");
+  if (!(await canAccessProject(auth, existing.projectUuid))) throw new Error("Idea not found");
   const normalizedAssignStatus = normalizeIdeaStatus(existing.status);
   if (normalizedAssignStatus === "elaborated") {
     throw new Error("Cannot assign an elaborated Idea");
@@ -521,9 +549,10 @@ export async function assignIdea({
 }
 
 // Release Idea (clears assignee, resets to open; any non-terminal status)
-export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
+export async function releaseIdea(uuid: string, auth: AnyAuth): Promise<IdeaResponse> {
   const existing = await prisma.idea.findUnique({ where: { uuid } });
   if (!existing) throw new Error("Idea not found");
+  if (!(await canAccessProject(auth, existing.projectUuid))) throw new Error("Idea not found");
   const normalizedReleaseStatus = normalizeIdeaStatus(existing.status);
   if (normalizedReleaseStatus === "elaborated") {
     throw new Error("Cannot release an elaborated Idea");
@@ -602,7 +631,11 @@ async function processNewIdeaMentions(
 }
 
 // Delete Idea
-export async function deleteIdea(uuid: string) {
+export async function deleteIdea(uuid: string, auth: AnyAuth) {
+  // Visibility gate: resolve project before deleting; reject non-members.
+  const existing = await prisma.idea.findUnique({ where: { uuid }, select: { projectUuid: true } });
+  if (!existing) throw new Error("Idea not found");
+  if (!(await canAccessProject(auth, existing.projectUuid))) throw new Error("Idea not found");
   const idea = await prisma.idea.delete({ where: { uuid } });
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "deleted" });
   return idea;
@@ -632,7 +665,8 @@ export async function moveIdea(
   ideaUuid: string,
   targetProjectUuid: string,
   actorUuid: string,
-  actorType: string = "user"
+  actorType: string = "user",
+  auth: AnyAuth
 ): Promise<MoveIdeaResponse> {
   // Validate idea exists and belongs to same company
   const idea = await prisma.idea.findFirst({
@@ -640,6 +674,10 @@ export async function moveIdea(
     include: { project: { select: { uuid: true, name: true } } },
   });
   if (!idea) throw new ApiError("NOT_FOUND", "Idea not found", 404);
+  // Visibility gate: both source idea's project and target project must be accessible.
+  if (!(await canAccessProject(auth, idea.projectUuid))) {
+    throw new ApiError("NOT_FOUND", "Idea not found", 404);
+  }
 
   // Validate target project exists and belongs to same company
   const targetProject = await prisma.project.findFirst({
@@ -647,6 +685,9 @@ export async function moveIdea(
     select: { uuid: true, name: true },
   });
   if (!targetProject) throw new ApiError("NOT_FOUND", "Target project not found", 404);
+  if (!(await canAccessProject(auth, targetProjectUuid))) {
+    throw new ApiError("NOT_FOUND", "Target project not found", 404);
+  }
 
   if (idea.projectUuid === targetProjectUuid) {
     throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
@@ -794,7 +835,8 @@ export async function moveIdea(
 export async function moveIdeaPreview(
   companyUuid: string,
   ideaUuid: string,
-  targetProjectUuid: string
+  targetProjectUuid: string,
+  auth: AnyAuth
 ): Promise<MoveIdeaPreviewResult> {
   // Validate idea exists and belongs to same company
   const idea = await prisma.idea.findFirst({
@@ -802,6 +844,9 @@ export async function moveIdeaPreview(
     select: { uuid: true, projectUuid: true },
   });
   if (!idea) throw new ApiError("NOT_FOUND", "Idea not found", 404);
+  if (!(await canAccessProject(auth, idea.projectUuid))) {
+    throw new ApiError("NOT_FOUND", "Idea not found", 404);
+  }
 
   // Validate target project exists and belongs to same company
   const targetProject = await prisma.project.findFirst({
@@ -809,6 +854,9 @@ export async function moveIdeaPreview(
     select: { uuid: true },
   });
   if (!targetProject) throw new ApiError("NOT_FOUND", "Target project not found", 404);
+  if (!(await canAccessProject(auth, targetProjectUuid))) {
+    throw new ApiError("NOT_FOUND", "Target project not found", 404);
+  }
 
   if (idea.projectUuid === targetProjectUuid) {
     throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
@@ -938,8 +986,9 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
 export async function getIdeaWithDerivedStatus(
   companyUuid: string,
   ideaUuid: string,
+  auth: AnyAuth,
 ): Promise<(IdeaResponse & DerivedStatusResult) | null> {
-  const idea = await getIdea(companyUuid, ideaUuid);
+  const idea = await getIdea(companyUuid, ideaUuid, auth);
   if (!idea) return null;
 
   const proposals = await prisma.proposal.findMany({
@@ -994,7 +1043,11 @@ export interface IdeaWithDerivedStatus {
 export async function getIdeasWithDerivedStatus(
   companyUuid: string,
   projectUuid: string,
+  auth: AnyAuth,
 ): Promise<IdeaWithDerivedStatus[]> {
+  // Visibility gate: a non-member of this project sees no ideas.
+  if (!(await canAccessProject(auth, projectUuid))) return [];
+
   // Query 1: All ideas in the project
   const ideas = await prisma.idea.findMany({
     where: { companyUuid, projectUuid },
@@ -1134,8 +1187,9 @@ const TRACKER_STATUSES: DerivedIdeaStatus[] = [
 export async function getTrackerGroups(
   companyUuid: string,
   projectUuid: string,
+  auth: AnyAuth,
 ): Promise<TrackerGroupsResult> {
-  const ideas = await getIdeasWithDerivedStatus(companyUuid, projectUuid);
+  const ideas = await getIdeasWithDerivedStatus(companyUuid, projectUuid, auth);
 
   const groups: Record<string, TrackerIdeaItem[]> = {};
   const counts: Record<string, number> = {};

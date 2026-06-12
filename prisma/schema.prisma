@@ -106,10 +106,37 @@ model ProjectGroup {
   companyUuid String
   name        String
   description String?  @default("")
+  // Visibility & ownership (project-access.ts gates on these; projects inherit
+  // a group's owner+members as additional accessors via dynamic union).
+  visibility  String   @default("private")  // "shared" (whole company) | "private" (owner + members)
+  ownerType   String?  // "user" | "agent" | null (null = legacy/migrated shared group)
+  ownerUuid   String?  // User or Agent UUID of the owner
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  members     ProjectGroupMember[]
+
   @@index([companyUuid])
+  @@index([visibility])
+}
+
+// Project Group membership — who can access a private group (and, by dynamic
+// union, all projects in that group). Mirrors ProjectMember.
+model ProjectGroupMember {
+  id               Int      @id @default(autoincrement())
+  uuid             String   @unique @default(uuid())
+  companyUuid      String                          // multi-tenancy defense-in-depth
+  projectGroupUuid String
+  group            ProjectGroup @relation(fields: [projectGroupUuid], references: [uuid], onDelete: Cascade)
+  memberType       String                          // "user" | "agent"
+  memberUuid       String                          // User or Agent UUID
+  role             String   @default("member")     // reserved for future per-member RBAC
+  createdAt        DateTime @default(now())
+
+  @@unique([projectGroupUuid, memberType, memberUuid])
+  @@index([companyUuid])
+  @@index([projectGroupUuid])
+  @@index([memberType, memberUuid])
 }
 
 // Project
@@ -121,6 +148,10 @@ model Project {
   name        String
   description String?
   groupUuid   String?  // nullable FK → ProjectGroup.uuid
+  // Visibility & ownership (project-access.ts gates on these)
+  visibility  String   @default("private")  // "shared" (whole company) | "private" (owner + members)
+  ownerType   String?  // "user" | "agent" | null (null = legacy/migrated shared project)
+  ownerUuid   String?  // User or Agent UUID of the owner
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -129,9 +160,29 @@ model Project {
   tasks      Task[]
   proposals  Proposal[]
   activities Activity[]
+  members    ProjectMember[]
 
   @@index([companyUuid])
   @@index([groupUuid])
+  @@index([visibility])
+}
+
+// Project membership — who can access a private project (users or agents)
+model ProjectMember {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @unique @default(uuid())
+  companyUuid String                          // multi-tenancy defense-in-depth
+  projectUuid String
+  project     Project  @relation(fields: [projectUuid], references: [uuid], onDelete: Cascade)
+  memberType  String                          // "user" | "agent"
+  memberUuid  String                          // User or Agent UUID
+  role        String   @default("member")     // reserved for future per-member RBAC
+  createdAt   DateTime @default(now())
+
+  @@unique([projectUuid, memberType, memberUuid])
+  @@index([companyUuid])
+  @@index([projectUuid])
+  @@index([memberType, memberUuid])            // reverse lookup: "projects this actor belongs to"
 }
 
 // Idea (raw human input)

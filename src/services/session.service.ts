@@ -280,7 +280,7 @@ export async function sessionCheckinToTask(
         companyUuid,
         assigneeType: "agent",
         assigneeUuid: session.agentUuid,
-      });
+      }, { type: "agent", companyUuid, actorUuid: session.agentUuid });
     } catch {
       // Claim may fail if task was concurrently claimed — safe to ignore
     }

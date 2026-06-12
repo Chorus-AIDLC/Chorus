@@ -15,6 +15,11 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
     },
     project: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
+    projectMember: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     proposal: {
       findMany: vi.fn(),
@@ -64,6 +69,7 @@ vi.mock("@/services/activity.service", () => ({
 
 import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, moveIdeaPreview, deleteIdea, updateIdea, listIdeas, getIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
+import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
 
 // ===== Test Data =====
 
@@ -71,6 +77,12 @@ const COMPANY_UUID = "company-1111-1111-1111-111111111111";
 const PROJECT_UUID = "project-2222-2222-2222-222222222222";
 const IDEA_UUID = "idea-3333-3333-3333-333333333333";
 const ACTOR_UUID = "actor-4444-4444-4444-444444444444";
+
+// super_admin bypasses access gating (no extra prisma queries), so the existing
+// query-behavior tests below thread it to isolate the function's own logic.
+const adminAuth: SuperAdminAuthContext = { type: "super_admin", email: "root@chorus.local" };
+// A regular user used for access-gating tests.
+const userAuth: AuthContext = { type: "user", companyUuid: COMPANY_UUID, actorUuid: "user-1" };
 
 const now = new Date("2026-01-15T10:00:00Z");
 
@@ -101,6 +113,9 @@ function makeIdeaRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: the updateIdea gate's project lookup resolves to an accessible
+  // idea. Tests needing a missing idea or a specific record override this.
+  mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
 });
 
 describe("createIdea", () => {
@@ -114,7 +129,7 @@ describe("createIdea", () => {
       title: "Test Idea",
       content: "Some content",
       createdByUuid: ACTOR_UUID,
-    });
+    }, adminAuth);
 
     expect(mockPrisma.idea.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -153,7 +168,7 @@ describe("createIdea", () => {
       title: "No Content Idea",
       content: null,
       createdByUuid: ACTOR_UUID,
-    });
+    }, adminAuth);
 
     expect(result.content).toBeNull();
   });
@@ -178,7 +193,7 @@ describe("claimIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: ACTOR_UUID,
-    });
+    }, adminAuth);
 
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -208,7 +223,7 @@ describe("claimIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow(AlreadyClaimedError);
   });
 
@@ -221,7 +236,7 @@ describe("claimIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow(AlreadyClaimedError);
   });
 
@@ -235,7 +250,7 @@ describe("claimIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow("Cannot claim an elaborated Idea");
   });
 
@@ -249,7 +264,7 @@ describe("claimIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow("Cannot claim an elaborated Idea");
   });
 });
@@ -274,7 +289,7 @@ describe("assignIdea", () => {
       assigneeType: "user",
       assigneeUuid: ACTOR_UUID,
       assignedByUuid: "admin-uuid",
-    });
+    }, adminAuth);
 
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -314,7 +329,7 @@ describe("assignIdea", () => {
       assigneeType: "user",
       assigneeUuid: ACTOR_UUID,
       assignedByUuid: "admin-uuid",
-    });
+    }, adminAuth);
 
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -336,7 +351,7 @@ describe("assignIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "user",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow("Idea not found");
   });
 
@@ -350,7 +365,7 @@ describe("assignIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "user",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow("Cannot assign an elaborated Idea");
   });
 
@@ -364,7 +379,7 @@ describe("assignIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "user",
         assigneeUuid: ACTOR_UUID,
-      })
+      }, adminAuth)
     ).rejects.toThrow("Cannot assign an elaborated Idea");
   });
 });
@@ -389,7 +404,7 @@ describe("releaseIdea", () => {
     mockPrisma.idea.findUnique.mockResolvedValue(existing);
     mockPrisma.idea.update.mockResolvedValue(released);
 
-    const result = await releaseIdea(IDEA_UUID);
+    const result = await releaseIdea(IDEA_UUID, adminAuth);
 
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -413,13 +428,13 @@ describe("releaseIdea", () => {
   it("should throw if idea not found", async () => {
     mockPrisma.idea.findUnique.mockResolvedValue(null);
 
-    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow("Idea not found");
+    await expect(releaseIdea(IDEA_UUID, adminAuth)).rejects.toThrow("Idea not found");
   });
 
   it("should throw if idea is elaborated", async () => {
     mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "elaborated" }));
 
-    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
+    await expect(releaseIdea(IDEA_UUID, adminAuth)).rejects.toThrow(
       "Cannot release an elaborated Idea"
     );
   });
@@ -427,7 +442,7 @@ describe("releaseIdea", () => {
   it("should throw if idea has legacy closed status (normalizes to elaborated)", async () => {
     mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "closed" }));
 
-    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
+    await expect(releaseIdea(IDEA_UUID, adminAuth)).rejects.toThrow(
       "Cannot release an elaborated Idea"
     );
   });
@@ -495,7 +510,8 @@ describe("moveIdea", () => {
       IDEA_UUID,
       TARGET_PROJECT_UUID,
       ACTOR_UUID,
-      "user"
+      "user",
+      adminAuth
     );
 
     // Idea row updated.
@@ -587,7 +603,7 @@ describe("moveIdea", () => {
       return await fn(mockPrisma);
     });
 
-    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth);
     expect(result.moved).toEqual({ proposals: 2, documents: 1, tasks: 3, activities: 7 });
   });
 
@@ -604,7 +620,7 @@ describe("moveIdea", () => {
       return await fn(mockPrisma);
     });
 
-    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth);
 
     // Every findMany / updateMany inside the transaction must carry companyUuid.
     for (const call of mockPrisma.proposal.findMany.mock.calls) {
@@ -647,7 +663,7 @@ describe("moveIdea", () => {
       return await fn(mockPrisma);
     });
 
-    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth);
 
     // The mockPrisma object only declares idea/project/proposal/document/task/activity.
     // If moveIdea ever reached for a forbidden table, TypeScript would have
@@ -686,7 +702,7 @@ describe("moveIdea", () => {
       return await fn(mockPrisma);
     });
 
-    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth);
 
     expect(result.moved).toEqual({ proposals: 0, documents: 0, tasks: 0, activities: 2 });
     // Idea + activity ran; everything in between is short-circuited.
@@ -703,7 +719,7 @@ describe("moveIdea", () => {
     mockPrisma.idea.findFirst.mockResolvedValue(null);
 
     await expect(
-      moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID)
+      moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth)
     ).rejects.toThrow("Idea not found");
   });
 
@@ -712,7 +728,7 @@ describe("moveIdea", () => {
     mockPrisma.project.findFirst.mockResolvedValue(null);
 
     await expect(
-      moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID)
+      moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth)
     ).rejects.toThrow("Target project not found");
   });
 
@@ -724,7 +740,7 @@ describe("moveIdea", () => {
     });
 
     await expect(
-      moveIdea(COMPANY_UUID, IDEA_UUID, PROJECT_UUID, ACTOR_UUID)
+      moveIdea(COMPANY_UUID, IDEA_UUID, PROJECT_UUID, ACTOR_UUID, "user", adminAuth)
     ).rejects.toThrow("Idea is already in the target project");
   });
 });
@@ -754,7 +770,7 @@ describe("moveIdeaPreview", () => {
     mockPrisma.task.count.mockResolvedValueOnce(1);
     mockPrisma.activity.count.mockResolvedValueOnce(4);
 
-    const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+    const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, adminAuth);
     expect(preview.moved).toEqual({ proposals: 1, documents: 1, tasks: 1, activities: 4 });
 
     // ----- real move (same fixture, no concurrent writes) -----
@@ -771,7 +787,7 @@ describe("moveIdeaPreview", () => {
       return await fn(mockPrisma);
     });
 
-    const real = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
+    const real = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user", adminAuth);
 
     expect(real.moved).toEqual(preview.moved);
   });
@@ -784,7 +800,7 @@ describe("moveIdeaPreview", () => {
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
     mockPrisma.activity.count.mockResolvedValueOnce(0);
 
-    await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+    await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, adminAuth);
 
     // No mutations on any cascaded table.
     expect(mockPrisma.idea.update).not.toHaveBeenCalled();
@@ -811,7 +827,7 @@ describe("moveIdeaPreview", () => {
   it("throws if idea not found", async () => {
     mockPrisma.idea.findFirst.mockResolvedValueOnce(null);
     await expect(
-      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID)
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, adminAuth)
     ).rejects.toThrow("Idea not found");
   });
 
@@ -819,7 +835,7 @@ describe("moveIdeaPreview", () => {
     mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
     mockPrisma.project.findFirst.mockResolvedValueOnce(null);
     await expect(
-      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID)
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, adminAuth)
     ).rejects.toThrow("Target project not found");
   });
 
@@ -827,7 +843,7 @@ describe("moveIdeaPreview", () => {
     mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
     mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: PROJECT_UUID, name: "Same" });
     await expect(
-      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, PROJECT_UUID)
+      moveIdeaPreview(COMPANY_UUID, IDEA_UUID, PROJECT_UUID, adminAuth)
     ).rejects.toThrow("Idea is already in the target project");
   });
 });
@@ -837,7 +853,7 @@ describe("updateIdea", () => {
     const updated = makeIdeaRecord({ title: "Updated Title" });
     mockPrisma.idea.update.mockResolvedValue(updated);
 
-    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { title: "Updated Title" });
+    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { title: "Updated Title" }, adminAuth);
 
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -853,7 +869,7 @@ describe("updateIdea", () => {
     const updated = makeIdeaRecord({ status: "elaborated" });
     mockPrisma.idea.update.mockResolvedValue(updated);
 
-    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { status: "elaborated" });
+    const result = await updateIdea(IDEA_UUID, COMPANY_UUID, { status: "elaborated" }, adminAuth);
 
     expect(result.status).toBe("elaborated");
   });
@@ -879,6 +895,7 @@ describe("updateIdea", () => {
       IDEA_UUID,
       COMPANY_UUID,
       { content: newContent },
+      adminAuth,
       { actorType: "user", actorUuid: ACTOR_UUID }
     );
 
@@ -927,7 +944,7 @@ describe("updateIdea", () => {
 
     await updateIdea(IDEA_UUID, COMPANY_UUID, {
       content: "Content with @user[user-uuid]",
-    });
+    }, adminAuth);
 
     expect(mockPrisma.idea.findUnique).not.toHaveBeenCalled();
     expect(mockParseMentions).not.toHaveBeenCalled();
@@ -942,6 +959,7 @@ describe("updateIdea", () => {
       IDEA_UUID,
       COMPANY_UUID,
       { title: "Updated Title" },
+      adminAuth,
       { actorType: "user", actorUuid: ACTOR_UUID }
     );
 
@@ -960,6 +978,7 @@ describe("updateIdea", () => {
       IDEA_UUID,
       COMPANY_UUID,
       { content: null },
+      adminAuth,
       { actorType: "user", actorUuid: ACTOR_UUID }
     );
 
@@ -979,6 +998,7 @@ describe("updateIdea", () => {
       IDEA_UUID,
       COMPANY_UUID,
       { content: "" },
+      adminAuth,
       { actorType: "user", actorUuid: ACTOR_UUID }
     );
 
@@ -993,7 +1013,7 @@ describe("deleteIdea", () => {
     const deleted = makeIdeaRecord();
     mockPrisma.idea.delete.mockResolvedValue(deleted);
 
-    const result = await deleteIdea(IDEA_UUID);
+    const result = await deleteIdea(IDEA_UUID, adminAuth);
 
     expect(mockPrisma.idea.delete).toHaveBeenCalledWith({
       where: { uuid: IDEA_UUID },
@@ -1025,6 +1045,7 @@ describe("listIdeas — reportCount aggregation", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     expect(result.ideas).toHaveLength(2);
@@ -1048,6 +1069,7 @@ describe("listIdeas — reportCount aggregation", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     expect(result.ideas[0].reportCount).toBe(0);
@@ -1074,6 +1096,7 @@ describe("listIdeas — reportCount aggregation", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     // Bad rows ignored; good row counted: 2 reports under idea-A.
@@ -1099,6 +1122,7 @@ describe("listIdeas — reportCount aggregation", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     const a = result.ideas.find((i) => i.uuid === "idea-A");
@@ -1125,6 +1149,7 @@ describe("listIdeas — reportCount aggregation", () => {
       projectUuid: PROJECT_UUID,
       skip: 0,
       take: 20,
+      auth: adminAuth,
     });
 
     expect(result.ideas[0].reportCount).toBe(2);
@@ -1145,7 +1170,7 @@ describe("getIdea — reports[] aggregation", () => {
     // No proposals point at this idea.
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID, adminAuth);
 
     expect(result?.reports).toEqual([]);
     // Skipped the document fetch entirely.
@@ -1235,7 +1260,7 @@ describe("getIdea — reports[] aggregation", () => {
       },
     ]);
 
-    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID, adminAuth);
 
     expect(result?.reports).toHaveLength(2);
     expect(result?.reports?.map((r) => r.uuid).sort()).toEqual(
@@ -1260,9 +1285,64 @@ describe("getIdea — reports[] aggregation", () => {
   it("returns null when the idea does not exist", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(null);
 
-    const result = await getIdea(COMPANY_UUID, IDEA_UUID);
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID, adminAuth);
 
     expect(result).toBeNull();
     expect(mockPrisma.proposal.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Project-visibility access gating (non-super-admin) =====
+
+describe("access gating", () => {
+  // canAccessProject for a regular user: project is private, owned by someone
+  // else, with no membership row -> access denied.
+  function denyAccess() {
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "other-owner",
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+  }
+
+  it("listIdeas returns an empty page for a non-member of the project", async () => {
+    denyAccess();
+
+    const result = await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+      auth: userAuth,
+    });
+
+    expect(result).toEqual({ ideas: [], total: 0 });
+    // The list query must be short-circuited before hitting the idea table.
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
+  });
+
+  it("getIdea returns null for a non-member of the idea's project", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
+    denyAccess();
+
+    const result = await getIdea(COMPANY_UUID, IDEA_UUID, userAuth);
+    expect(result).toBeNull();
+  });
+
+  it("claimIdea rejects a non-member of the idea's project", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ assigneeUuid: null }));
+    denyAccess();
+
+    await expect(
+      claimIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: ACTOR_UUID,
+      }, userAuth)
+    ).rejects.toThrow(AlreadyClaimedError);
+    // Must not have mutated the idea.
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 });

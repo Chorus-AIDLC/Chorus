@@ -92,7 +92,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
         assigneeType,
         assigneeUuid,
         assignedByUuid,
-      });
+      }, auth);
 
       return success(updated);
     } catch (e) {

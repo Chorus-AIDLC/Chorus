@@ -26,6 +26,7 @@ export async function getIdeaActivitiesAction(
       targetUuid: ideaUuid,
       skip: 0,
       take: 50,
+      auth,
     });
   } catch (error) {
     logger.error({ err: error }, "Failed to get idea activities");
