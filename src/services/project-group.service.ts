@@ -3,7 +3,10 @@ import { eventBus } from "@/lib/event-bus";
 import {
   type AnyAuth,
   getAccessibleProjectUuids,
+  getAccessibleGroupUuids,
+  canAccessGroup,
   applyProjectFilter,
+  ALL_PROJECTS,
 } from "@/lib/authz/project-access";
 
 // ============================================================
@@ -14,6 +17,13 @@ export interface ProjectGroupCreateParams {
   companyUuid: string;
   name: string;
   description?: string | null;
+  /** Visibility for the new group (default "private"). */
+  visibility?: "shared" | "private";
+  /** Owner of the group (the acting human or agent). */
+  ownerType?: "user" | "agent" | null;
+  ownerUuid?: string | null;
+  /** Initial members (besides the owner, who is always added). */
+  memberUuids?: { memberType: "user" | "agent"; memberUuid: string }[];
 }
 
 export interface ProjectGroupUpdateParams {
@@ -81,13 +91,46 @@ export interface GroupDashboardResponse {
 export async function createProjectGroup(
   params: ProjectGroupCreateParams
 ): Promise<ProjectGroupResponse> {
+  const {
+    companyUuid,
+    name,
+    description,
+    visibility = "private",
+    ownerType = null,
+    ownerUuid = null,
+    memberUuids = [],
+  } = params;
+
   const group = await prisma.projectGroup.create({
     data: {
-      companyUuid: params.companyUuid,
-      name: params.name,
-      description: params.description ?? "",
+      companyUuid,
+      name,
+      description: description ?? "",
+      visibility,
+      ownerType,
+      ownerUuid,
     },
   });
+
+  // Seed members: the owner (if any) plus any explicitly provided members,
+  // de-duplicated on (memberType, memberUuid). Mirrors createProject.
+  const seed = new Map<string, { memberType: "user" | "agent"; memberUuid: string }>();
+  if (ownerType && ownerUuid) {
+    seed.set(`${ownerType}:${ownerUuid}`, { memberType: ownerType, memberUuid: ownerUuid });
+  }
+  for (const m of memberUuids) {
+    seed.set(`${m.memberType}:${m.memberUuid}`, m);
+  }
+  if (seed.size > 0) {
+    await prisma.projectGroupMember.createMany({
+      data: [...seed.values()].map((m) => ({
+        companyUuid,
+        projectGroupUuid: group.uuid,
+        memberType: m.memberType,
+        memberUuid: m.memberUuid,
+      })),
+    });
+  }
 
   eventBus.emitChange({
     companyUuid: params.companyUuid,
@@ -180,6 +223,9 @@ export async function getProjectGroup(
   groupUuid: string,
   auth: AnyAuth
 ): Promise<ProjectGroupDetailResponse | null> {
+  // Inaccessible group => looks like it does not exist.
+  if (!(await canAccessGroup(auth, groupUuid))) return null;
+
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
@@ -207,10 +253,21 @@ export async function listProjectGroups(
   companyUuid: string,
   auth: AnyAuth
 ): Promise<{ groups: ProjectGroupResponse[]; total: number; ungroupedCount: number }> {
-  const groups = await prisma.projectGroup.findMany({
+  const allGroups = await prisma.projectGroup.findMany({
     where: { companyUuid },
     orderBy: { createdAt: "asc" },
   });
+
+  // Visibility gate: keep only groups the actor may see — shared groups, groups
+  // they OWN, or groups they are a member of (super_admin => ALL). A freshly
+  // created empty group is still returned to its creator because they are its
+  // owner; another user's PRIVATE group is filtered out. The accessible-GROUP
+  // set (not the accessible-project set) is authoritative here.
+  const accessibleGroups = await getAccessibleGroupUuids(auth);
+  const groups =
+    accessibleGroups === ALL_PROJECTS
+      ? allGroups
+      : allGroups.filter((g) => accessibleGroups.includes(g.uuid));
 
   const accessible = await getAccessibleProjectUuids(auth);
 
@@ -233,12 +290,9 @@ export async function listProjectGroups(
     projectCounts.map((pc) => [pc.groupUuid, pc._count._all])
   );
 
-  // Groups are organizational containers, not visibility-gated entities (this
-  // mirrors how search.service treats project_group results). We therefore
-  // surface every group in the company — including newly created empty ones —
-  // while the per-group projectCount reflects only the projects the actor can
-  // access. Hiding empty/no-accessible-project groups would make a freshly
-  // created group vanish from the list, which reads as a broken "create" button.
+  // The list is already visibility-filtered above (accessibleGroups). The
+  // per-group projectCount still reflects only the projects the actor can
+  // access within each visible group.
   const result: ProjectGroupResponse[] = groups.map((g) => ({
     uuid: g.uuid,
     name: g.name,
@@ -308,6 +362,9 @@ export async function getGroupDashboard(
   groupUuid: string,
   auth: AnyAuth
 ): Promise<GroupDashboardResponse | null> {
+  // Inaccessible group => looks like it does not exist.
+  if (!(await canAccessGroup(auth, groupUuid))) return null;
+
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
@@ -438,4 +495,171 @@ export async function getGroupDashboard(
       createdAt: a.createdAt.toISOString(),
     })),
   };
+}
+
+// ============================================================
+// Visibility & Membership (mirrors project.service)
+// ============================================================
+
+export interface ProjectGroupMemberResponse {
+  uuid: string;
+  memberType: "user" | "agent";
+  memberUuid: string;
+  role: string;
+  createdAt: string;
+}
+
+// Set a group's visibility ("shared" | "private"). Scoped by companyUuid.
+// Returns null if the group does not exist within the company.
+export async function setGroupVisibility(
+  companyUuid: string,
+  groupUuid: string,
+  visibility: "shared" | "private",
+) {
+  const group = await prisma.projectGroup.findFirst({
+    where: { uuid: groupUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!group) return null;
+
+  const updated = await prisma.projectGroup.update({
+    where: { uuid: group.uuid },
+    data: { visibility },
+    select: { uuid: true, visibility: true },
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: "",
+    entityType: "project_group",
+    entityUuid: groupUuid,
+    action: "updated",
+  });
+
+  return updated;
+}
+
+// List members of a group. Scoped by companyUuid.
+export async function listGroupMembers(
+  companyUuid: string,
+  groupUuid: string,
+): Promise<ProjectGroupMemberResponse[]> {
+  const members = await prisma.projectGroupMember.findMany({
+    where: { companyUuid, projectGroupUuid: groupUuid },
+    orderBy: { createdAt: "asc" },
+    select: {
+      uuid: true,
+      memberType: true,
+      memberUuid: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+  return members.map((m) => ({
+    uuid: m.uuid,
+    memberType: m.memberType as "user" | "agent",
+    memberUuid: m.memberUuid,
+    role: m.role,
+    createdAt: m.createdAt.toISOString(),
+  }));
+}
+
+// Add a member (user or agent) to a group. Idempotent on the unique key.
+export async function addGroupMember(
+  companyUuid: string,
+  groupUuid: string,
+  memberType: "user" | "agent",
+  memberUuid: string,
+): Promise<ProjectGroupMemberResponse | null> {
+  const group = await prisma.projectGroup.findFirst({
+    where: { uuid: groupUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!group) return null;
+
+  const existing = await prisma.projectGroupMember.findUnique({
+    where: {
+      projectGroupUuid_memberType_memberUuid: {
+        projectGroupUuid: groupUuid,
+        memberType,
+        memberUuid,
+      },
+    },
+    select: { uuid: true, memberType: true, memberUuid: true, role: true, createdAt: true },
+  });
+
+  const member =
+    existing ??
+    (await prisma.projectGroupMember.create({
+      data: { companyUuid, projectGroupUuid: groupUuid, memberType, memberUuid },
+      select: { uuid: true, memberType: true, memberUuid: true, role: true, createdAt: true },
+    }));
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: "",
+    entityType: "project_group",
+    entityUuid: groupUuid,
+    action: "updated",
+  });
+
+  return {
+    uuid: member.uuid,
+    memberType: member.memberType as "user" | "agent",
+    memberUuid: member.memberUuid,
+    role: member.role,
+    createdAt: member.createdAt.toISOString(),
+  };
+}
+
+// Remove a member from a group. Returns false if the group or member is not
+// found. The owner cannot be removed (they retain access via ownership).
+export async function removeGroupMember(
+  companyUuid: string,
+  groupUuid: string,
+  memberType: "user" | "agent",
+  memberUuid: string,
+): Promise<boolean> {
+  const group = await prisma.projectGroup.findFirst({
+    where: { uuid: groupUuid, companyUuid },
+    select: { uuid: true, ownerType: true, ownerUuid: true },
+  });
+  if (!group) return false;
+
+  // Do not remove the owner's membership row.
+  if (group.ownerType === memberType && group.ownerUuid === memberUuid) {
+    return false;
+  }
+
+  const existing = await prisma.projectGroupMember.findUnique({
+    where: {
+      projectGroupUuid_memberType_memberUuid: {
+        projectGroupUuid: groupUuid,
+        memberType,
+        memberUuid,
+      },
+    },
+    select: { id: true },
+  });
+  if (!existing) return false;
+
+  await prisma.projectGroupMember.delete({
+    where: {
+      projectGroupUuid_memberType_memberUuid: {
+        projectGroupUuid: groupUuid,
+        memberType,
+        memberUuid,
+      },
+    },
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid: "",
+    entityType: "project_group",
+    entityUuid: groupUuid,
+    action: "updated",
+  });
+
+  return true;
 }

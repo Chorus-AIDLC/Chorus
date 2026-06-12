@@ -9,7 +9,9 @@ import {
   getProjectGroup,
   updateProjectGroup,
   deleteProjectGroup,
+  setGroupVisibility,
 } from "@/services/project-group.service";
+import { canAccessGroup, canManageGroup } from "@/lib/authz/project-access";
 
 // GET /api/project-groups/[uuid]
 export const GET = withErrorHandler(
@@ -41,7 +43,29 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    const body = await parseBody<{ name?: string; description?: string }>(request);
+    const body = await parseBody<{
+      name?: string;
+      description?: string;
+      visibility?: string;
+    }>(request);
+
+    // Leak rule: inaccessible -> 404; accessible but not owner -> 403. The
+    // accessibility check runs BEFORE the manage check (no existence leak).
+    if (!(await canAccessGroup(auth, uuid))) {
+      return errors.notFound("Project group");
+    }
+    if (!(await canManageGroup(auth, uuid))) {
+      return errors.forbidden("Only the project group owner can update the group");
+    }
+
+    // Visibility change (if requested) goes through setGroupVisibility.
+    if (body.visibility !== undefined) {
+      if (body.visibility !== "shared" && body.visibility !== "private") {
+        return errors.validationError({ visibility: "visibility must be 'shared' or 'private'" });
+      }
+      const updated = await setGroupVisibility(auth.companyUuid, uuid, body.visibility);
+      if (!updated) return errors.notFound("Project group");
+    }
 
     const group = await updateProjectGroup({
       companyUuid: auth.companyUuid,

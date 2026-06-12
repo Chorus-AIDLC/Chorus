@@ -17,6 +17,13 @@ const mockPrisma = vi.hoisted(() => ({
     createMany: vi.fn(),
     delete: vi.fn(),
   },
+  projectGroup: {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+  },
+  projectGroupMember: {
+    findMany: vi.fn(),
+  },
   task: {
     count: vi.fn(),
     groupBy: vi.fn(),
@@ -80,6 +87,11 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default empty results for the two-level group union lookups
+  // (getAccessibleProjectUuids -> getOwnedOrMemberGroupUuids). Tests that care
+  // about group inheritance override these.
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
 });
 
 // ===== listProjects =====
@@ -566,6 +578,55 @@ describe("createProject visibility & ownership", () => {
     expect(mockPrisma.project.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ visibility: "shared" }),
+      }),
+    );
+  });
+
+  it("inherits the group's visibility when none is passed and a group is given", async () => {
+    const groupUuid = "group-0000-0000-0000-000000000001";
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "shared" });
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "shared" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Inherits", groupUuid });
+
+    expect(mockPrisma.projectGroup.findFirst).toHaveBeenCalledWith({
+      where: { uuid: groupUuid, companyUuid },
+      select: { visibility: true },
+    });
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "shared", groupUuid }),
+      }),
+    );
+  });
+
+  it("an explicit visibility overrides the group's visibility (no group lookup)", async () => {
+    const groupUuid = "group-0000-0000-0000-000000000001";
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "private" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Explicit", groupUuid, visibility: "private" });
+
+    expect(mockPrisma.projectGroup.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "private" }),
+      }),
+    );
+  });
+
+  it("defaults to private when a group is given but the group is not found", async () => {
+    const groupUuid = "group-missing";
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+    mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid, visibility: "private" }));
+    mockPrisma.projectMember.createMany.mockResolvedValue({ count: 0 });
+
+    await createProject({ companyUuid, name: "Orphan", groupUuid });
+
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ visibility: "private" }),
       }),
     );
   });

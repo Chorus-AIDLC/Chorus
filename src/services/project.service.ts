@@ -142,18 +142,33 @@ export async function createProject({
   name,
   description,
   groupUuid,
-  visibility = "private",
+  visibility,
   ownerType = null,
   ownerUuid = null,
   memberUuids = [],
 }: ProjectCreateParams) {
+  // Resolve the default visibility. When the caller does NOT pass visibility
+  // explicitly and the project is being created inside a group, inherit the
+  // group's visibility (so a project added to a shared group is shared by
+  // default). Otherwise default to "private". An explicit visibility always wins.
+  let effectiveVisibility: "shared" | "private" = visibility ?? "private";
+  if (visibility === undefined && groupUuid) {
+    const group = await prisma.projectGroup.findFirst({
+      where: { uuid: groupUuid, companyUuid },
+      select: { visibility: true },
+    });
+    if (group?.visibility === "shared" || group?.visibility === "private") {
+      effectiveVisibility = group.visibility;
+    }
+  }
+
   const project = await prisma.project.create({
     data: {
       companyUuid,
       name,
       description,
       groupUuid: groupUuid ?? null,
-      visibility,
+      visibility: effectiveVisibility,
       ownerType,
       ownerUuid,
     },

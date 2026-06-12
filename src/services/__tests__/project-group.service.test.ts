@@ -12,6 +12,13 @@ const mockPrisma = vi.hoisted(() => ({
   projectMember: {
     findMany: vi.fn(),
   },
+  projectGroupMember: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    createMany: vi.fn(),
+    delete: vi.fn(),
+  },
   project: {
     findFirst: vi.fn(),
     findMany: vi.fn(),
@@ -50,6 +57,10 @@ import {
   listProjectGroups,
   moveProjectToGroup,
   getGroupDashboard,
+  setGroupVisibility,
+  listGroupMembers,
+  addGroupMember,
+  removeGroupMember,
 } from "@/services/project-group.service";
 import type { SuperAdminAuthContext, AuthContext } from "@/types/auth";
 
@@ -113,6 +124,9 @@ describe("createProjectGroup", () => {
         companyUuid,
         name: "Test Group",
         description: "A test group",
+        visibility: "private",
+        ownerType: null,
+        ownerUuid: null,
       },
     });
   });
@@ -132,6 +146,9 @@ describe("createProjectGroup", () => {
         companyUuid,
         name: "Test Group",
         description: "",
+        visibility: "private",
+        ownerType: null,
+        ownerUuid: null,
       },
     });
   });
@@ -150,8 +167,200 @@ describe("createProjectGroup", () => {
         companyUuid,
         name: "Test Group",
         description: "",
+        visibility: "private",
+        ownerType: null,
+        ownerUuid: null,
       },
     });
+  });
+
+  it("persists visibility/owner and seeds the owner + members (de-duped)", async () => {
+    const group = makeProjectGroup({
+      visibility: "shared",
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
+    mockPrisma.projectGroup.create.mockResolvedValue(group);
+    mockPrisma.projectGroupMember.createMany.mockResolvedValue({ count: 2 });
+
+    await createProjectGroup({
+      companyUuid,
+      name: "Test Group",
+      visibility: "shared",
+      ownerType: "user",
+      ownerUuid: "user-1",
+      // owner duplicated in memberUuids — must be de-duped; agent-9 is distinct.
+      memberUuids: [
+        { memberType: "user", memberUuid: "user-1" },
+        { memberType: "agent", memberUuid: "agent-9" },
+      ],
+    });
+
+    expect(mockPrisma.projectGroup.create).toHaveBeenCalledWith({
+      data: {
+        companyUuid,
+        name: "Test Group",
+        description: "",
+        visibility: "shared",
+        ownerType: "user",
+        ownerUuid: "user-1",
+      },
+    });
+    // Owner + agent-9 = 2 rows (user-1 not duplicated).
+    expect(mockPrisma.projectGroupMember.createMany).toHaveBeenCalledWith({
+      data: [
+        { companyUuid, projectGroupUuid: groupUuid, memberType: "user", memberUuid: "user-1" },
+        { companyUuid, projectGroupUuid: groupUuid, memberType: "agent", memberUuid: "agent-9" },
+      ],
+    });
+  });
+
+  it("does not seed members when there is no owner and no members", async () => {
+    mockPrisma.projectGroup.create.mockResolvedValue(makeProjectGroup());
+
+    await createProjectGroup({ companyUuid, name: "Test Group" });
+
+    expect(mockPrisma.projectGroupMember.createMany).not.toHaveBeenCalled();
+  });
+});
+
+// ===== setGroupVisibility =====
+describe("setGroupVisibility", () => {
+  it("updates visibility when the group exists", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ uuid: groupUuid });
+    mockPrisma.projectGroup.update.mockResolvedValue({ uuid: groupUuid, visibility: "shared" });
+
+    const result = await setGroupVisibility(companyUuid, groupUuid, "shared");
+
+    expect(result).toEqual({ uuid: groupUuid, visibility: "shared" });
+    expect(mockPrisma.projectGroup.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { visibility: "shared" } })
+    );
+  });
+
+  it("returns null when the group does not exist", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+
+    const result = await setGroupVisibility(companyUuid, groupUuid, "shared");
+
+    expect(result).toBeNull();
+    expect(mockPrisma.projectGroup.update).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Group member CRUD =====
+describe("listGroupMembers", () => {
+  it("returns members ordered by createdAt asc", async () => {
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([
+      { uuid: "m1", memberType: "user", memberUuid: "user-1", role: "member", createdAt: now },
+    ]);
+
+    const result = await listGroupMembers(companyUuid, groupUuid);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].memberUuid).toBe("user-1");
+    expect(mockPrisma.projectGroupMember.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid, projectGroupUuid: groupUuid },
+        orderBy: { createdAt: "asc" },
+      })
+    );
+  });
+});
+
+describe("addGroupMember", () => {
+  it("adds a new member when not already present", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ uuid: groupUuid });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+    mockPrisma.projectGroupMember.create.mockResolvedValue({
+      uuid: "m2",
+      memberType: "user",
+      memberUuid: "new-user",
+      role: "member",
+      createdAt: now,
+    });
+
+    const result = await addGroupMember(companyUuid, groupUuid, "user", "new-user");
+
+    expect(result!.memberUuid).toBe("new-user");
+    expect(mockPrisma.projectGroupMember.create).toHaveBeenCalled();
+  });
+
+  it("is idempotent — returns the existing member without creating", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ uuid: groupUuid });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue({
+      uuid: "m1",
+      memberType: "user",
+      memberUuid: "user-1",
+      role: "member",
+      createdAt: now,
+    });
+
+    const result = await addGroupMember(companyUuid, groupUuid, "user", "user-1");
+
+    expect(result!.uuid).toBe("m1");
+    expect(mockPrisma.projectGroupMember.create).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the group does not exist", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+
+    const result = await addGroupMember(companyUuid, groupUuid, "user", "x");
+
+    expect(result).toBeNull();
+    expect(mockPrisma.projectGroupMember.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeGroupMember", () => {
+  it("removes a non-owner member", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({
+      uuid: groupUuid,
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue({ id: 5 });
+    mockPrisma.projectGroupMember.delete.mockResolvedValue({});
+
+    const result = await removeGroupMember(companyUuid, groupUuid, "user", "victim");
+
+    expect(result).toBe(true);
+    expect(mockPrisma.projectGroupMember.delete).toHaveBeenCalled();
+  });
+
+  it("refuses to remove the owner", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({
+      uuid: groupUuid,
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
+
+    const result = await removeGroupMember(companyUuid, groupUuid, "user", "user-1");
+
+    expect(result).toBe(false);
+    expect(mockPrisma.projectGroupMember.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns false when the group does not exist", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue(null);
+
+    const result = await removeGroupMember(companyUuid, groupUuid, "user", "x");
+
+    expect(result).toBe(false);
+  });
+
+  it("returns false when the member is not present", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({
+      uuid: groupUuid,
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+
+    const result = await removeGroupMember(companyUuid, groupUuid, "user", "ghost");
+
+    expect(result).toBe(false);
+    expect(mockPrisma.projectGroupMember.delete).not.toHaveBeenCalled();
   });
 });
 
@@ -394,13 +603,21 @@ describe("listProjectGroups", () => {
     );
   });
 
-  it("regression: a regular user still sees a freshly-created empty group (no accessible-project filter on the group list)", async () => {
-    // A brand-new group has zero projects. For a non-super-admin,
-    // getAccessibleProjectUuids returns an empty set (no shared/owned projects,
-    // no memberships). The group must STILL appear — hiding it made the UI
-    // "create group" button look broken.
-    const freshGroup = makeProjectGroup({ uuid: "group-new", name: "Fresh" });
+  it("regression: a regular user still sees a freshly-created empty PRIVATE group they own (no accessible-project filter on the group list)", async () => {
+    // A brand-new group has zero projects. The creator OWNS it, so it must
+    // STILL appear even though they have no accessible projects yet — hiding it
+    // made the UI "create group" button look broken.
+    const freshGroup = makeProjectGroup({
+      uuid: "group-new",
+      name: "Fresh",
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-1",
+    });
     mockPrisma.projectGroup.findMany.mockResolvedValue([freshGroup]);
+    // getAccessibleGroupUuids: this user owns freshGroup (findMany returns it),
+    // and has no extra group memberships.
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
     // getAccessibleProjectUuids: no accessible projects for this user.
     mockPrisma.project.findMany.mockResolvedValue([]);
     mockPrisma.projectMember.findMany.mockResolvedValue([]);
@@ -412,6 +629,65 @@ describe("listProjectGroups", () => {
     expect(result.groups).toHaveLength(1);
     expect(result.groups[0].uuid).toBe("group-new");
     expect(result.groups[0].projectCount).toBe(0);
+  });
+
+  it("gating: a non-member does NOT see another user's private group", async () => {
+    // Two groups in the company: a shared one, and another user's PRIVATE group.
+    const sharedGroup = makeProjectGroup({ uuid: "group-shared", visibility: "shared" });
+    const othersPrivate = makeProjectGroup({
+      uuid: "group-other-private",
+      visibility: "private",
+      ownerType: "user",
+      ownerUuid: "user-2",
+    });
+    // listProjectGroups' own findMany returns ALL company groups; the
+    // getAccessibleGroupUuids findMany (shared OR owned-by-user-1) returns only
+    // the shared one. We model both calls returning the full list — the service
+    // filters by the accessible-group set, which the helper computes.
+    mockPrisma.projectGroup.findMany.mockImplementation(({ where }) => {
+      // getAccessibleGroupUuids passes an OR clause; emulate by returning only
+      // groups visible to user-1 (shared OR owned by user-1).
+      if (where?.OR) {
+        return Promise.resolve([sharedGroup]);
+      }
+      return Promise.resolve([sharedGroup, othersPrivate]);
+    });
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
+    mockPrisma.project.groupBy.mockResolvedValue([]);
+    mockPrisma.project.count.mockResolvedValue(0);
+
+    const result = await listProjectGroups(companyUuid, userAuth);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].uuid).toBe("group-shared");
+  });
+
+  it("gating: shared groups are visible to any user in the company", async () => {
+    const sharedGroup = makeProjectGroup({ uuid: "group-shared", visibility: "shared" });
+    mockPrisma.projectGroup.findMany.mockImplementation(({ where }) => {
+      if (where?.OR) return Promise.resolve([sharedGroup]);
+      return Promise.resolve([sharedGroup]);
+    });
+    mockPrisma.projectGroupMember.findMany.mockResolvedValue([]);
+    mockPrisma.project.groupBy.mockResolvedValue([]);
+    mockPrisma.project.count.mockResolvedValue(0);
+
+    const result = await listProjectGroups(companyUuid, userAuth);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].uuid).toBe("group-shared");
+  });
+
+  it("gating: super_admin sees all groups (no filter)", async () => {
+    const g1 = makeProjectGroup({ uuid: "g1", visibility: "private", ownerUuid: "user-9" });
+    const g2 = makeProjectGroup({ uuid: "g2", visibility: "shared" });
+    mockPrisma.projectGroup.findMany.mockResolvedValue([g1, g2]);
+    mockPrisma.project.groupBy.mockResolvedValue([]);
+    mockPrisma.project.count.mockResolvedValue(0);
+
+    const result = await listProjectGroups(companyUuid, adminAuth);
+
+    expect(result.groups).toHaveLength(2);
   });
 
   it("should handle empty groups list", async () => {
