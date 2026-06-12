@@ -5,6 +5,7 @@ import {
   getAccessibleProjectUuids,
   getAccessibleGroupUuids,
   canAccessGroup,
+  canManageGroup,
   applyProjectFilter,
   ALL_PROJECTS,
 } from "@/lib/authz/project-access";
@@ -38,6 +39,9 @@ export interface ProjectGroupResponse {
   name: string;
   description: string | null;
   projectCount: number;
+  visibility: "shared" | "private";
+  ownerType: "user" | "agent" | null;
+  ownerUuid: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,6 +59,11 @@ export interface GroupDashboardResponse {
     uuid: string;
     name: string;
     description: string | null;
+    visibility: "shared" | "private";
+    ownerType: "user" | "agent" | null;
+    ownerUuid: string | null;
+    /** Whether the requesting actor owns (can manage) this group. */
+    isOwner: boolean;
   };
   stats: {
     projectCount: number;
@@ -145,6 +154,9 @@ export async function createProjectGroup(
     name: group.name,
     description: group.description,
     projectCount: 0,
+    visibility: group.visibility as "shared" | "private",
+    ownerType: (group.ownerType as "user" | "agent" | null) ?? null,
+    ownerUuid: group.ownerUuid ?? null,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
   };
@@ -175,6 +187,9 @@ export async function updateProjectGroup(
     name: updated.name,
     description: updated.description,
     projectCount,
+    visibility: updated.visibility as "shared" | "private",
+    ownerType: (updated.ownerType as "user" | "agent" | null) ?? null,
+    ownerUuid: updated.ownerUuid ?? null,
     createdAt: updated.createdAt.toISOString(),
     updatedAt: updated.updatedAt.toISOString(),
   };
@@ -243,6 +258,9 @@ export async function getProjectGroup(
     name: group.name,
     description: group.description,
     projectCount: projects.length,
+    visibility: group.visibility as "shared" | "private",
+    ownerType: (group.ownerType as "user" | "agent" | null) ?? null,
+    ownerUuid: group.ownerUuid ?? null,
     projects,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
@@ -298,6 +316,9 @@ export async function listProjectGroups(
     name: g.name,
     description: g.description,
     projectCount: countMap.get(g.uuid) ?? 0,
+    visibility: g.visibility as "shared" | "private",
+    ownerType: (g.ownerType as "user" | "agent" | null) ?? null,
+    ownerUuid: g.ownerUuid ?? null,
     createdAt: g.createdAt.toISOString(),
     updatedAt: g.updatedAt.toISOString(),
   }));
@@ -370,6 +391,18 @@ export async function getGroupDashboard(
   });
   if (!group) return null;
 
+  // The actor owns the group iff they can manage it (owner or super_admin).
+  const isOwner = await canManageGroup(auth, groupUuid);
+  const groupInfo = {
+    uuid: group.uuid,
+    name: group.name,
+    description: group.description,
+    visibility: group.visibility as "shared" | "private",
+    ownerType: (group.ownerType as "user" | "agent" | null) ?? null,
+    ownerUuid: group.ownerUuid ?? null,
+    isOwner,
+  };
+
   // Get all ACCESSIBLE projects in this group. All downstream stats derive from
   // this list, so filtering here cascades the visibility boundary through the
   // entire dashboard.
@@ -383,7 +416,7 @@ export async function getGroupDashboard(
 
   if (projectUuids.length === 0) {
     return {
-      group: { uuid: group.uuid, name: group.name, description: group.description },
+      group: groupInfo,
       stats: {
         projectCount: 0,
         totalTasks: 0,
@@ -471,7 +504,7 @@ export async function getGroupDashboard(
   const projectNameMap = new Map(projects.map((p) => [p.uuid, p.name]));
 
   return {
-    group: { uuid: group.uuid, name: group.name, description: group.description },
+    group: groupInfo,
     stats: {
       projectCount: projects.length,
       totalTasks,

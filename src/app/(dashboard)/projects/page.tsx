@@ -66,6 +66,9 @@ interface ProjectGroupData {
   name: string;
   description: string | null;
   projectCount: number;
+  visibility?: "shared" | "private";
+  ownerType?: "user" | "agent" | null;
+  ownerUuid?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -332,6 +335,15 @@ function GroupSection({
                       >
                         {projects.length}
                       </Badge>
+                      {group.visibility === "private" && (
+                        <Badge
+                          variant="secondary"
+                          className="shrink-0 gap-1 px-1.5 py-0 text-[10px] font-medium md:text-[11px]"
+                        >
+                          <Lock className="h-2.5 w-2.5" />
+                          {t("projects.visibilityPrivate")}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-[#9A9A9A] md:text-[11px]">
                       <span>
