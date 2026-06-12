@@ -5,18 +5,22 @@ const mockPrisma = vi.hoisted(() => ({
   project: {
     findMany: vi.fn(),
     findFirst: vi.fn(),
+    updateMany: vi.fn(),
   },
   projectMember: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    upsert: vi.fn(),
   },
   projectGroup: {
     findMany: vi.fn(),
     findFirst: vi.fn(),
+    updateMany: vi.fn(),
   },
   projectGroupMember: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    upsert: vi.fn(),
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -28,6 +32,10 @@ import {
   getAccessibleGroupUuids,
   canAccessGroup,
   canManageGroup,
+  claimOrCanManageProject,
+  claimOrCanManageGroup,
+  canManageOrClaimableProject,
+  canManageOrClaimableGroup,
   applyProjectFilter,
   ALL_PROJECTS,
 } from "../project-access";
@@ -470,5 +478,113 @@ describe("canAccessProject — group fallthrough when group missing/unowned", ()
     mockPrisma.projectMember.findUnique.mockResolvedValue(null);
     mockPrisma.projectGroup.findFirst.mockResolvedValue(null); // group not found => isGroupOwnerOrMember false (line 84)
     expect(await canAccessProject(nonMemberUser, "p-ghost")).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Claim-on-manage (access-gated)
+// ===========================================================================
+describe("claimOrCanManageProject", () => {
+  it("super_admin => true, no claim", async () => {
+    expect(await claimOrCanManageProject(superAdmin, "p")).toBe(true);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("BLOCKER guard: non-member of a PRIVATE null-owner project => false, NO claim", async () => {
+    // canAccessProject: private, owner null, no membership, no group → false
+    mockPrisma.project.findFirst.mockResolvedValue({
+      visibility: "private", ownerType: null, ownerUuid: null, groupUuid: null,
+    });
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    expect(await claimOrCanManageProject(nonMemberUser, "p-priv")).toBe(false);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("accessible (shared) null-owner project => claims + seeds owner member + true", async () => {
+    // 1st findFirst: canAccessProject (shared → accessible). 2nd: owner lookup (null).
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ visibility: "shared", ownerType: null, ownerUuid: null, groupUuid: null })
+      .mockResolvedValueOnce({ ownerType: null, ownerUuid: null });
+    mockPrisma.project.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.projectMember.upsert.mockResolvedValue({});
+
+    expect(await claimOrCanManageProject(nonMemberUser, "p-shared")).toBe(true);
+    expect(mockPrisma.project.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ ownerType: null, ownerUuid: null }),
+        data: { ownerType: "user", ownerUuid: "user-stranger" },
+      }),
+    );
+    expect(mockPrisma.projectMember.upsert).toHaveBeenCalled();
+  });
+
+  it("already-owned by someone else => false, never reassigns", async () => {
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ visibility: "shared", ownerType: null, ownerUuid: null, groupUuid: null }) // canAccess (shared)
+      .mockResolvedValueOnce({ ownerType: "user", ownerUuid: "other" }); // owner lookup
+    expect(await claimOrCanManageProject(nonMemberUser, "p-owned")).toBe(false);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("already-owned by the actor => true, no claim", async () => {
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ visibility: "private", ownerType: "user", ownerUuid: "user-owner", groupUuid: null }) // canAccess (owner)
+      .mockResolvedValueOnce({ ownerType: "user", ownerUuid: "user-owner" });
+    expect(await claimOrCanManageProject(ownerUser, "p")).toBe(true);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lost race: updateMany 0 rows + re-read shows different owner => false", async () => {
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ visibility: "shared", ownerType: null, ownerUuid: null, groupUuid: null }) // canAccess
+      .mockResolvedValueOnce({ ownerType: null, ownerUuid: null }) // owner lookup
+      .mockResolvedValueOnce({ ownerType: "user", ownerUuid: "winner" }); // re-read after lost race
+    mockPrisma.project.updateMany.mockResolvedValue({ count: 0 });
+    expect(await claimOrCanManageProject(nonMemberUser, "p")).toBe(false);
+  });
+});
+
+describe("claimOrCanManageGroup", () => {
+  it("BLOCKER guard: non-member of a PRIVATE null-owner group => false, NO claim", async () => {
+    // canAccessGroup: private, not owner, not member → false
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ visibility: "private", ownerType: null, ownerUuid: null });
+    mockPrisma.projectGroupMember.findUnique.mockResolvedValue(null);
+    expect(await claimOrCanManageGroup(nonMemberUser, "g-priv")).toBe(false);
+    expect(mockPrisma.projectGroup.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("accessible (shared) null-owner group => claims + true", async () => {
+    mockPrisma.projectGroup.findFirst
+      .mockResolvedValueOnce({ visibility: "shared", ownerType: null, ownerUuid: null }) // canAccessGroup (shared)
+      .mockResolvedValueOnce({ ownerType: null, ownerUuid: null }); // owner lookup
+    mockPrisma.projectGroup.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.projectGroupMember.upsert.mockResolvedValue({});
+    expect(await claimOrCanManageGroup(nonMemberUser, "g-shared")).toBe(true);
+    expect(mockPrisma.projectGroup.updateMany).toHaveBeenCalled();
+    expect(mockPrisma.projectGroupMember.upsert).toHaveBeenCalled();
+  });
+});
+
+describe("canManageOrClaimable* (pure — no writes)", () => {
+  it("project: claimable null-owner accessible => true, performs NO update", async () => {
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ ownerType: null, ownerUuid: null }) // predicate owner lookup
+      .mockResolvedValueOnce({ visibility: "shared", ownerType: null, ownerUuid: null, groupUuid: null }); // canAccess
+    expect(await canManageOrClaimableProject(nonMemberUser, "p")).toBe(true);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("project: private null-owner inaccessible => false", async () => {
+    mockPrisma.project.findFirst
+      .mockResolvedValueOnce({ ownerType: null, ownerUuid: null }) // predicate
+      .mockResolvedValueOnce({ visibility: "private", ownerType: null, ownerUuid: null, groupUuid: null }); // canAccess
+    mockPrisma.projectMember.findUnique.mockResolvedValue(null);
+    expect(await canManageOrClaimableProject(nonMemberUser, "p")).toBe(false);
+    expect(mockPrisma.project.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("group: owner => true", async () => {
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ ownerType: "user", ownerUuid: "user-owner" });
+    expect(await canManageOrClaimableGroup(ownerUser, "g")).toBe(true);
   });
 });

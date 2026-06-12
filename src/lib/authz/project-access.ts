@@ -288,6 +288,157 @@ export async function canManageGroup(
   return group.ownerType === type && group.ownerUuid === actorUuid;
 }
 
+// ===========================================================================
+// Claim-on-manage: legacy entities created before the visibility feature have
+// a NULL owner (the migration set them shared/private with no owner). The
+// manage gates above would reject everyone but super_admin for those rows. To
+// keep them manageable, the FIRST accessible actor to perform a manage action
+// claims ownership. CRITICAL: the claim is ACCESS-GATED — an actor who cannot
+// access the entity (e.g. a non-member of a private null-owner project) can
+// NEVER claim it, so this opens no privacy hole. Existing owners are never
+// reassigned.
+// ===========================================================================
+
+/**
+ * Gate-then-claim for project management. Returns true if the actor may manage
+ * the project — claiming ownership of a NULL-owner project they can access.
+ * Has a side effect (the claim UPDATE) only in the null-owner branch.
+ */
+export async function claimOrCanManageProject(
+  auth: AnyAuth,
+  projectUuid: string,
+): Promise<boolean> {
+  if (isSuperAdmin(auth)) return true;
+  if (!projectUuid) return false;
+
+  // ACCESS PRECHECK FIRST — the security guarantee. A non-member of a private
+  // null-owner project is not accessible, so it can never be claimed here.
+  if (!(await canAccessProject(auth, projectUuid))) return false;
+
+  const { companyUuid, actorUuid, type } = auth;
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
+    select: { ownerType: true, ownerUuid: true },
+  });
+  if (!project) return false;
+
+  // Already owned → exact-owner match only; never reassign.
+  if (project.ownerType !== null || project.ownerUuid !== null) {
+    return project.ownerType === type && project.ownerUuid === actorUuid;
+  }
+
+  // Null owner → claim atomically (guard on ownerUuid: null for race-safety).
+  const claimed = await prisma.project.updateMany({
+    where: { uuid: projectUuid, companyUuid, ownerType: null, ownerUuid: null },
+    data: { ownerType: type, ownerUuid: actorUuid },
+  });
+  if (claimed.count === 0) {
+    // Lost the race — someone claimed first. We manage only if it was us.
+    const reread = await prisma.project.findFirst({
+      where: { uuid: projectUuid, companyUuid },
+      select: { ownerType: true, ownerUuid: true },
+    });
+    return reread?.ownerType === type && reread?.ownerUuid === actorUuid;
+  }
+  // Seed the owner as a member (idempotent on the unique key).
+  await prisma.projectMember.upsert({
+    where: {
+      projectUuid_memberType_memberUuid: { projectUuid, memberType: type, memberUuid: actorUuid },
+    },
+    create: { companyUuid, projectUuid, memberType: type, memberUuid: actorUuid },
+    update: {},
+  });
+  return true;
+}
+
+/** Gate-then-claim for group management (mirror of claimOrCanManageProject). */
+export async function claimOrCanManageGroup(
+  auth: AnyAuth,
+  groupUuid: string,
+): Promise<boolean> {
+  if (isSuperAdmin(auth)) return true;
+  if (!groupUuid) return false;
+
+  if (!(await canAccessGroup(auth, groupUuid))) return false;
+
+  const { companyUuid, actorUuid, type } = auth;
+  const group = await prisma.projectGroup.findFirst({
+    where: { uuid: groupUuid, companyUuid },
+    select: { ownerType: true, ownerUuid: true },
+  });
+  if (!group) return false;
+
+  if (group.ownerType !== null || group.ownerUuid !== null) {
+    return group.ownerType === type && group.ownerUuid === actorUuid;
+  }
+
+  const claimed = await prisma.projectGroup.updateMany({
+    where: { uuid: groupUuid, companyUuid, ownerType: null, ownerUuid: null },
+    data: { ownerType: type, ownerUuid: actorUuid },
+  });
+  if (claimed.count === 0) {
+    const reread = await prisma.projectGroup.findFirst({
+      where: { uuid: groupUuid, companyUuid },
+      select: { ownerType: true, ownerUuid: true },
+    });
+    return reread?.ownerType === type && reread?.ownerUuid === actorUuid;
+  }
+  await prisma.projectGroupMember.upsert({
+    where: {
+      projectGroupUuid_memberType_memberUuid: { projectGroupUuid: groupUuid, memberType: type, memberUuid: actorUuid },
+    },
+    create: { companyUuid, projectGroupUuid: groupUuid, memberType: type, memberUuid: actorUuid },
+    update: {},
+  });
+  return true;
+}
+
+/**
+ * PURE predicate (no DB writes) for dashboards/UI: whether the actor manages
+ * the entity OR could claim it (null owner + accessible + user/agent). Lets the
+ * UI show manage controls for claimable legacy entities without mutating on a
+ * read; the actual claim happens server-side via claimOrCanManage* on a manage
+ * action. `owner` is the entity's current {ownerType, ownerUuid}.
+ */
+export async function canManageOrClaimableProject(
+  auth: AnyAuth,
+  projectUuid: string,
+): Promise<boolean> {
+  if (isSuperAdmin(auth)) return true;
+  if (!projectUuid) return false;
+  const { companyUuid, actorUuid, type } = auth;
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
+    select: { ownerType: true, ownerUuid: true },
+  });
+  if (!project) return false;
+  if (project.ownerType === type && project.ownerUuid === actorUuid) return true;
+  // Claimable: null owner + the actor can access it.
+  if (project.ownerType === null && project.ownerUuid === null) {
+    return canAccessProject(auth, projectUuid);
+  }
+  return false;
+}
+
+export async function canManageOrClaimableGroup(
+  auth: AnyAuth,
+  groupUuid: string,
+): Promise<boolean> {
+  if (isSuperAdmin(auth)) return true;
+  if (!groupUuid) return false;
+  const { companyUuid, actorUuid, type } = auth;
+  const group = await prisma.projectGroup.findFirst({
+    where: { uuid: groupUuid, companyUuid },
+    select: { ownerType: true, ownerUuid: true },
+  });
+  if (!group) return false;
+  if (group.ownerType === type && group.ownerUuid === actorUuid) return true;
+  if (group.ownerType === null && group.ownerUuid === null) {
+    return canAccessGroup(auth, groupUuid);
+  }
+  return false;
+}
+
 /**
  * Query-injection helper. Given an existing Prisma `where` (already scoped by
  * companyUuid) and an accessible-projects result, returns a `where` that also
