@@ -6,7 +6,13 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { AgentAuthContext } from "@/types/auth";
 import type { Permission } from "@/lib/authz/types";
-import { canAccessProject, canManageProject, type AnyAuth } from "@/lib/authz/project-access";
+import {
+  canAccessProject,
+  canManageProject,
+  canAccessGroup,
+  canManageGroup,
+  type AnyAuth,
+} from "@/lib/authz/project-access";
 
 /** Standard MCP error content shape returned when a project is inaccessible. */
 type McpErrorResult = { content: [{ type: "text"; text: string }]; isError: true };
@@ -14,6 +20,13 @@ type McpErrorResult = { content: [{ type: "text"; text: string }]; isError: true
 function projectDeniedError(): McpErrorResult {
   return {
     content: [{ type: "text", text: "Project not found or access denied" }],
+    isError: true,
+  };
+}
+
+function groupDeniedError(): McpErrorResult {
+  return {
+    content: [{ type: "text", text: "Project group not found or access denied" }],
     isError: true,
   };
 }
@@ -43,6 +56,32 @@ export async function assertProjectManage(
 ): Promise<McpErrorResult | null> {
   const allowed = await canManageProject(auth, projectUuid);
   return allowed ? null : projectDeniedError();
+}
+
+/**
+ * Group-visibility guard for MCP tools that take a `groupUuid` directly. Returns
+ * an MCP error content object when the actor cannot access the group, or null
+ * when access is granted. Mirror of assertProjectAccess. See Tech Design §6.
+ */
+export async function assertGroupAccess(
+  auth: AnyAuth,
+  groupUuid: string,
+): Promise<McpErrorResult | null> {
+  const allowed = await canAccessGroup(auth, groupUuid);
+  return allowed ? null : groupDeniedError();
+}
+
+/**
+ * Group-management guard for MCP tools that mutate a group's membership or
+ * visibility. Restricted to the owner (or super admin). Mirror of
+ * assertProjectManage.
+ */
+export async function assertGroupManage(
+  auth: AnyAuth,
+  groupUuid: string,
+): Promise<McpErrorResult | null> {
+  const allowed = await canManageGroup(auth, groupUuid);
+  return allowed ? null : groupDeniedError();
 }
 
 type ToolInputSchema = ZodRawShapeCompat | AnySchema | undefined;

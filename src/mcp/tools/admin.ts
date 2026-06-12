@@ -14,7 +14,7 @@ import * as documentService from "@/services/document.service";
 import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
 import { zArray } from "./schema-utils";
-import { registerPermissionedTool, assertProjectAccess, assertProjectManage } from "./register-helpers";
+import { registerPermissionedTool, assertProjectAccess, assertProjectManage, assertGroupAccess, assertGroupManage } from "./register-helpers";
 
 export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_admin_create_project - Create a new project
@@ -433,17 +433,29 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_create_project_group",
     {
-      description: "Create a new project group (Admin exclusive)",
+      description: "Create a new project group (Admin exclusive). Defaults to private visibility, owned by the calling actor (who is auto-added as a member). Pass visibility=\"shared\" to make it visible to everyone in the company, or supply memberUuids to grant other users/agents access to a private group.",
       inputSchema: z.object({
         name: z.string().describe("Project group name"),
         description: z.string().optional().describe("Project group description"),
+        visibility: z.enum(["shared", "private"]).optional().describe("Group visibility. \"shared\" = visible to everyone in the company; \"private\" (default) = only the owner and explicit members."),
+        memberUuids: zArray(z.object({
+          memberType: z.enum(["user", "agent"]).describe("Member actor type"),
+          memberUuid: z.string().describe("Member actor UUID"),
+        })).optional().describe("Optional initial members (users/agents) to grant access to a private group. The owner is added automatically."),
       }),
     },
-    async ({ name, description }) => {
+    async ({ name, description, visibility, memberUuids }) => {
+      // MCP tools always run under an AgentAuthContext, so the calling actor is
+      // the agent itself and becomes the group owner (auto-added as a member by
+      // the service). The auth shape here is never super_admin.
       const group = await projectGroupService.createProjectGroup({
         companyUuid: auth.companyUuid,
         name,
         description: description || null,
+        visibility,
+        ownerType: auth.type,
+        ownerUuid: auth.actorUuid,
+        memberUuids,
       });
 
       return {
@@ -467,6 +479,12 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid, name, description }) => {
+      // Visibility guard: only the group owner (or super admin) may rename/retag
+      // a group. assertGroupManage returns the same not-found-or-denied error for
+      // an inaccessible group — no existence leak.
+      const denied = await assertGroupManage(auth, groupUuid);
+      if (denied) return denied;
+
       const group = await projectGroupService.updateProjectGroup({
         companyUuid: auth.companyUuid,
         groupUuid,
@@ -497,6 +515,10 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid }) => {
+      // Visibility guard: only the group owner (or super admin) may delete it.
+      const denied = await assertGroupManage(auth, groupUuid);
+      if (denied) return denied;
+
       const deleted = await projectGroupService.deleteProjectGroup(auth.companyUuid, groupUuid);
 
       if (!deleted) {
@@ -632,6 +654,97 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }
       return {
         content: [{ type: "text", text: JSON.stringify({ projectUuid, memberType, memberUuid, removed: true }, null, 2) }],
+      };
+    }
+  );
+
+  // ===== Project Group Member Management (visibility feature, Tech Design §6) =====
+
+  // chorus_list_project_group_members - List members of a project group
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:read",
+    "chorus_list_project_group_members",
+    {
+      description: "List the members (users and agents) of a project group. Requires access to the group.",
+      inputSchema: z.object({
+        groupUuid: z.string().describe("Project Group UUID"),
+      }),
+    },
+    async ({ groupUuid }) => {
+      const denied = await assertGroupAccess(auth, groupUuid);
+      if (denied) return denied;
+
+      const members = await projectGroupService.listGroupMembers(auth.companyUuid, groupUuid);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ members }, null, 2) }],
+      };
+    }
+  );
+
+  // chorus_admin_add_project_group_member - Add a member to a project group
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:admin",
+    "chorus_admin_add_project_group_member",
+    {
+      description: "Add a member (user or agent) to a project group, granting them access to a private group (and, by inheritance, its projects). Only the group owner (or super admin) can manage members.",
+      inputSchema: z.object({
+        groupUuid: z.string().describe("Project Group UUID"),
+        memberType: z.enum(["user", "agent"]).describe("Member actor type"),
+        memberUuid: z.string().describe("Member actor UUID"),
+      }),
+    },
+    async ({ groupUuid, memberType, memberUuid }) => {
+      const denied = await assertGroupManage(auth, groupUuid);
+      if (denied) return denied;
+
+      const member = await projectGroupService.addGroupMember(
+        auth.companyUuid,
+        groupUuid,
+        memberType,
+        memberUuid
+      );
+      if (!member) {
+        return { content: [{ type: "text", text: "Project group not found" }], isError: true };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({ member }, null, 2) }],
+      };
+    }
+  );
+
+  // chorus_admin_remove_project_group_member - Remove a member from a project group
+  registerPermissionedTool(
+    server,
+    auth,
+    "project:admin",
+    "chorus_admin_remove_project_group_member",
+    {
+      description: "Remove a member (user or agent) from a project group. The owner cannot be removed. Only the group owner (or super admin) can manage members.",
+      inputSchema: z.object({
+        groupUuid: z.string().describe("Project Group UUID"),
+        memberType: z.enum(["user", "agent"]).describe("Member actor type"),
+        memberUuid: z.string().describe("Member actor UUID"),
+      }),
+    },
+    async ({ groupUuid, memberType, memberUuid }) => {
+      const denied = await assertGroupManage(auth, groupUuid);
+      if (denied) return denied;
+
+      const removed = await projectGroupService.removeGroupMember(
+        auth.companyUuid,
+        groupUuid,
+        memberType,
+        memberUuid
+      );
+      if (!removed) {
+        return { content: [{ type: "text", text: "Member not found or cannot be removed (owner)" }], isError: true };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({ groupUuid, memberType, memberUuid, removed: true }, null, 2) }],
       };
     }
   );

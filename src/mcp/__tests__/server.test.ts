@@ -127,10 +127,18 @@ const OLD_DEVELOPER_TOOLS = [
 // is gated on project:read, so EVERY preset (developer/pm/admin) carries it —
 // the read bit is in all three presets. The two mutating member tools are gated
 // on project:admin, so only admin_agent sees them.
-const PROJECT_READ_MEMBER_TOOLS = ["chorus_list_project_members"];
+// The group-visibility member tools mirror the project ones: the list tool is
+// project:read-gated (all presets see it), the two mutators are project:admin-
+// gated (only admin_agent sees them).
+const PROJECT_READ_MEMBER_TOOLS = [
+  "chorus_list_project_members",
+  "chorus_list_project_group_members",
+];
 const PROJECT_ADMIN_MEMBER_TOOLS = [
   "chorus_admin_add_project_member",
   "chorus_admin_remove_project_member",
+  "chorus_admin_add_project_group_member",
+  "chorus_admin_remove_project_group_member",
 ];
 
 const OLD_ADMIN_TOOLS = [
@@ -210,6 +218,8 @@ describe("MCP tool permission wiring", () => {
         // project:admin member tools — pm_agent has project:write but not project:admin.
         "chorus_admin_add_project_member",
         "chorus_admin_remove_project_member",
+        "chorus_admin_add_project_group_member",
+        "chorus_admin_remove_project_group_member",
       ]) {
         expect(registered.has(adminOnly)).toBe(false);
       }

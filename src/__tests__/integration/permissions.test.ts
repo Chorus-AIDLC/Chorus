@@ -293,14 +293,21 @@ const PM_AGENT_ADDED_IN_0_9_0 = [
 // on project:admin, which pm_agent does NOT carry — so only the list tool
 // appears in the pm visibility set. admin_agent (carries project:admin) gets
 // all three (see ADMIN_AGENT_ADDED_PROJECT_VISIBILITY below).
+// The group-visibility feature mirrors the project member tools: the list tool
+// is project:read-gated (pm_agent + developer_agent see it), the two mutators
+// are project:admin-gated (only admin_agent sees them).
 const PM_AGENT_ADDED_PROJECT_VISIBILITY = [
   "chorus_list_project_members",
+  "chorus_list_project_group_members",
 ];
 
 const ADMIN_AGENT_ADDED_PROJECT_VISIBILITY = [
   "chorus_list_project_members",
   "chorus_admin_add_project_member",
   "chorus_admin_remove_project_member",
+  "chorus_list_project_group_members",
+  "chorus_admin_add_project_group_member",
+  "chorus_admin_remove_project_group_member",
 ];
 
 // ===== Shared beforeEach =====
@@ -524,6 +531,10 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // pm_agent (project:write only) must not see them.
       "chorus_admin_add_project_member",
       "chorus_admin_remove_project_member",
+      // group-visibility: group member mutation tools are project:admin-gated;
+      // pm_agent (project:write only) must not see them.
+      "chorus_admin_add_project_group_member",
+      "chorus_admin_remove_project_group_member",
     ]) {
       expect(tools.has(adminOnly)).toBe(false);
     }
