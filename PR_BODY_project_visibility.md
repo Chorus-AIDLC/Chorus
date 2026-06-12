@@ -1,4 +1,10 @@
-# Project Visibility (Private / Shared)
+# Project Visibility (Private / Shared) + Two-Level Group Inheritance
+
+> This branch contains **two stacked features**: (1) per-**project** visibility, and (2) per-**project-group** visibility that projects **inherit** via a dynamic union. They share the `project-access.ts` authz core and ship together. A mid-stream regression (empty groups vanishing from the list) was also fixed (commit `4500008`).
+
+---
+
+## Part 1 — Project Visibility (Private / Shared)
 
 ## Summary
 
@@ -53,3 +59,42 @@ The migration adds the columns (default `private`) **and** runs `UPDATE "Project
 - `docs/design.pen` not updated in this environment (Pencil MCP tooling unavailable) — to refresh when design tooling is available.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+---
+
+## Part 2 — Two-Level Visibility (ProjectGroup → Project inheritance)
+
+### Summary
+
+Project **groups** gain the same `shared`/`private` + owner + member model, and a project's effective access becomes the **dynamic union** of its own accessors and its group's accessors.
+
+- **Inheritance = dynamic union**: a project's accessors = (project owner + members) ∪ (its group's owner + members). Add someone to a private group → they instantly reach **every project in it** (and all cascaded entities). No snapshot; computed at query time.
+- **"项目级 > 项目组" (project-level is authoritative)**: a project's own `visibility` flag wins. A `shared` project inside a `private` group is still company-wide; a **`private` project inside a `shared` group is still restricted** — a shared group never exposes its private projects. (Enforced by using *only owner/member* groups for the project-union, never shared groups.)
+- New groups default **private** (creator = owner + first member); existing groups migrate to **shared**. A new project created with a `groupUuid` defaults to its group's visibility.
+- Group management (visibility, members, update, delete) is **owner + super-admin only** — no `project:admin` bypass.
+
+### Surfaces
+
+- **Schema**: `ProjectGroup.visibility`/`ownerType`/`ownerUuid`, new `ProjectGroupMember` table, migration with `shared` backfill.
+- **Authz core** (`project-access.ts`): `getAccessibleProjectUuids` + `canAccessProject` fold in owned/member groups; new `getAccessibleGroupUuids` / `canAccessGroup` / `canManageGroup`. Two **distinct** group-sets kept rigorously separate (project-union = owner/member only; group-visibility = shared∪owned∪member).
+- **Service / REST**: group visibility + member CRUD, `listProjectGroups` gated by `canAccessGroup` (preserving the empty-group fix), new `/api/project-groups/[uuid]/members`, project inherits group visibility default.
+- **MCP**: `chorus_admin_create_project_group` gains `visibility`/`memberUuids`; new `chorus_list_project_group_members` (`project:read`), `chorus_admin_add/remove_project_group_member` (`project:admin`); `update`/`delete` group tools now owner-gated.
+- **Frontend**: Lock badge on private groups; manage-group dialog visibility toggle + owner-only members manager (i18n en/zh).
+- **Docs**: MCP_TOOLS.md + both skill doc sets.
+
+### Testing (whole branch)
+
+- Authz unit matrix extended for group inheritance incl. **both cross-case invariants** (shared-in-private-group still company-wide; private-in-shared-group still restricted) and `project:admin`-non-member-denied.
+- End-to-end integration test extended: a group member gains read+write across the group's private project + cascade purely via group membership; **dynamic revocation** (remove from group → access flips); non-member + `project:admin`-non-member denied.
+- Full gate green: `tsc` ✓, **1954 tests pass / 1 skip** ✓, coverage **95.16% stmts / 88.5% branches / 96.03% funcs / 96.92% lines** (≥ thresholds) ✓, `pnpm build` ✓.
+
+### Migration / rollout
+
+Both migrations (`add_project_visibility`, `add_project_group_visibility`) run automatically via the Docker entrypoint and backfill existing rows to `shared`. Already deployed to the live standalone instance for validation.
+
+### Known follow-ups (out of scope)
+
+- Per-member roles (viewer/editor/admin) — single `member` role for both projects and groups.
+- Project cannot NARROW/remove inherited group members (union only — by design).
+- Nested groups (single level, unchanged).
+- `docs/design.pen` not updated (Pencil MCP tooling unavailable in this environment).
