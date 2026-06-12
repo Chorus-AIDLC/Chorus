@@ -146,6 +146,31 @@ function makeModel(name: string) {
       // task.update includes project relation in some callers
       return { ...row, project: db.project.find((p) => p.uuid === row.projectUuid) };
     }),
+    updateMany: vi.fn(async ({ where, data }: any) => {
+      const matched = rows().filter((r) => matchWhere(r, where));
+      for (const row of matched) Object.assign(row, data, { updatedAt: new Date() });
+      return { count: matched.length };
+    }),
+    upsert: vi.fn(async ({ where, create }: any) => {
+      // composite-key upsert used for seeding owner membership rows. Match on the
+      // SPECIFIC key field present (projectUuid for ProjectMember, projectGroupUuid
+      // for ProjectGroupMember) — never via undefined===undefined.
+      const pk = where.projectUuid_memberType_memberUuid;
+      const gk = where.projectGroupUuid_memberType_memberUuid;
+      let row;
+      if (pk) {
+        row = rows().find((r) => r.projectUuid === pk.projectUuid && r.memberType === pk.memberType && r.memberUuid === pk.memberUuid);
+      } else if (gk) {
+        row = rows().find((r) => r.projectGroupUuid === gk.projectGroupUuid && r.memberType === gk.memberType && r.memberUuid === gk.memberUuid);
+      } else {
+        row = rows().find((r) => matchWhere(r, where));
+      }
+      if (!row) {
+        row = { uuid: `${name}-${rows().length + 1}`, createdAt: new Date(), updatedAt: new Date(), ...create };
+        rows().push(row);
+      }
+      return { ...row };
+    }),
   };
 }
 
@@ -165,7 +190,14 @@ vi.mock("@/lib/prisma", () => {
 // event bus is fire-and-forget; stub it
 vi.mock("@/lib/event-bus", () => ({ eventBus: { emitChange: vi.fn() } }));
 
-import { canAccessProject, getAccessibleProjectUuids } from "@/lib/authz/project-access";
+import {
+  canAccessProject,
+  getAccessibleProjectUuids,
+  claimOrCanManageProject,
+  claimOrCanManageGroup,
+  canManageProject,
+  canManageGroup,
+} from "@/lib/authz/project-access";
 import * as projectService from "@/services/project.service";
 import * as taskService from "@/services/task.service";
 import * as commentService from "@/services/comment.service";
@@ -472,5 +504,76 @@ describe("group inheritance — dynamic union (read + write via group membership
     expect(accessible as string[]).not.toContain(GP);
     // but DOES include the shared one
     expect(accessible as string[]).toContain(GPS);
+  });
+});
+
+// ===========================================================================
+// Claim-on-manage for legacy NULL-owner entities (the reported UX fix)
+// ===========================================================================
+//
+// Migrated entities have visibility='shared' with ownerType/ownerUuid = NULL.
+// The first accessible user/agent to MANAGE one claims ownership (access-gated).
+// Actors here: user A (userA) and user B (userB) — both non-owners initially.
+const LP = "legacy-project";       // shared, null owner
+const LPP = "legacy-private-proj"; // private, null owner (B is NOT a member)
+const LG = "legacy-group";         // shared, null owner
+
+function seedLegacyNullOwner() {
+  db.project.push(
+    { uuid: LP, companyUuid: COMPANY, name: "Legacy Shared", description: "", groupUuid: null, visibility: "shared", ownerType: null, ownerUuid: null },
+    { uuid: LPP, companyUuid: COMPANY, name: "Legacy Private", description: "", groupUuid: null, visibility: "private", ownerType: null, ownerUuid: null },
+  );
+  db.projectGroup.push(
+    { uuid: LG, companyUuid: COMPANY, name: "Legacy Group", description: "", visibility: "shared", ownerType: null, ownerUuid: null },
+  );
+}
+
+describe("claim-on-manage: legacy null-owner entities", () => {
+  beforeEach(() => seedLegacyNullOwner());
+
+  it("a shared null-owner PROJECT: first manager (user A) claims it; user B then cannot manage", async () => {
+    // Before: nobody owns it → canManageProject false for both.
+    expect(await canManageProject(A, LP)).toBe(false);
+    // User A manages (claim) → becomes owner.
+    expect(await claimOrCanManageProject(A, LP)).toBe(true);
+    const claimed = db.project.find((p) => p.uuid === LP);
+    expect(claimed.ownerType).toBe("user");
+    expect(claimed.ownerUuid).toBe("userA");
+    // A is now a member too (seeded).
+    expect(db.projectMember.some((m) => m.projectUuid === LP && m.memberUuid === "userA")).toBe(true);
+    // User B can no longer claim/manage (owner now set, B isn't it).
+    expect(await claimOrCanManageProject(B, LP)).toBe(false);
+    // ...and the existing owner is never reassigned.
+    expect(db.project.find((p) => p.uuid === LP).ownerUuid).toBe("userA");
+  });
+
+  it("a PRIVATE null-owner project: a non-member CANNOT claim it (access-gated)", async () => {
+    // B is not a member of the private legacy project → cannot access → cannot claim.
+    expect(await claimOrCanManageProject(B, LPP)).toBe(false);
+    expect(db.project.find((p) => p.uuid === LPP).ownerType).toBeNull();
+  });
+
+  it("super_admin manages a null-owner project WITHOUT claiming (stays owner-less)", async () => {
+    expect(await claimOrCanManageProject(SA, LP)).toBe(true);
+    // super_admin path returns before any claim — owner stays null.
+    expect(db.project.find((p) => p.uuid === LP).ownerType).toBeNull();
+  });
+
+  it("a shared null-owner GROUP: first manager (user A) claims it; user B then cannot manage", async () => {
+    expect(await canManageGroup(A, LG)).toBe(false);
+    expect(await claimOrCanManageGroup(A, LG)).toBe(true);
+    const claimed = db.projectGroup.find((g) => g.uuid === LG);
+    expect(claimed.ownerType).toBe("user");
+    expect(claimed.ownerUuid).toBe("userA");
+    expect(db.projectGroupMember.some((m) => m.projectGroupUuid === LG && m.memberUuid === "userA")).toBe(true);
+    expect(await claimOrCanManageGroup(B, LG)).toBe(false);
+  });
+
+  it("an already-owned group is not re-claimed by a different actor", async () => {
+    // Give LG an owner first (A claims).
+    await claimOrCanManageGroup(A, LG);
+    // B attempts → denied, owner unchanged.
+    expect(await claimOrCanManageGroup(B, LG)).toBe(false);
+    expect(db.projectGroup.find((g) => g.uuid === LG).ownerUuid).toBe("userA");
   });
 });

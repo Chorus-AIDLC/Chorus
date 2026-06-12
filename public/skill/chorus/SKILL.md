@@ -190,6 +190,7 @@ A project (and a project **group**) is **`shared`** (whole company) or **`privat
 - `chorus_admin_create_project` / `chorus_admin_create_project_group` default new entities to **private**, with the creating agent as owner + first member. Pass `visibility: "shared"` for company-wide entities, and `memberUuids` to seed members.
 - Members may be users *or* agents — an agent must be added as a member to work a private project's tasks.
 - **Two-level inheritance (dynamic union)**: a project inherits its group's owner+members as additional accessors — add someone to a private group and they instantly reach every project in it. The project's own visibility stays authoritative: a `shared` project in a `private` group is still company-wide; a `private` project in a `shared` group is still restricted. A new project created with a `groupUuid` defaults to its group's visibility.
+- **Claim-on-first-manage**: a legacy/owner-less project or group is claimed by the first actor who can access + manage it (any manage action: set visibility, add/remove member, update, delete) — they become owner and a member. Access-gated (a non-member of a private owner-less entity can't claim it) and never reassigns an existing owner. Member lists return a resolved display name per member.
 
 ### Ideas
 
