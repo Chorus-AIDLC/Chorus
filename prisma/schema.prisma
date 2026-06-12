@@ -154,6 +154,10 @@ model Idea {
   // Elaboration (AI-DLC Stage 3 — structured requirements clarification)
   elaborationDepth   String?  // "minimal" | "standard" | "comprehensive"
   elaborationStatus  String?  // "pending_answers" | "validating" | "resolved"
+  // Lineage (single-parent forest — weak read-only relation, see openspec change add-idea-lineage)
+  parentUuid     String?   // Single parent Idea UUID (nullable = top-level). One undifferentiated edge; semantics by context.
+  parent         Idea?     @relation("IdeaLineage", fields: [parentUuid], references: [uuid], onDelete: Restrict, onUpdate: Restrict)
+  children       Idea[]    @relation("IdeaLineage")
   createdByUuid  String    // User UUID
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -162,6 +166,7 @@ model Idea {
   @@index([projectUuid])
   @@index([status])
   @@index([assigneeUuid])
+  @@index([parentUuid])
 }
 
 // Document (PRD, tech design, etc. — Proposal output)

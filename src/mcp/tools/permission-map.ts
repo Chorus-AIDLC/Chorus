@@ -27,6 +27,7 @@ export const TOOL_PERMISSIONS = {
   chorus_release_idea: "idea:write",
   chorus_move_idea: "idea:write",
   chorus_pm_create_idea: "idea:write",
+  chorus_edit_idea: "idea:write",
   // Elaboration (idea:write per §5.3)
   chorus_pm_start_elaboration: "idea:write",
   chorus_pm_skip_elaboration: "idea:write",

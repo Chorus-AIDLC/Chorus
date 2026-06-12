@@ -9,8 +9,10 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
       findFirst: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      groupBy: vi.fn(),
       count: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
     },
     project: {
@@ -447,19 +449,29 @@ describe("moveIdea", () => {
     proposals?: Array<{ uuid: string }>;
     documents?: Array<{ uuid: string }>;
     tasks?: Array<{ uuid: string }>;
+    ideaCount?: number;
     proposalCount?: number;
     documentCount?: number;
     taskCount?: number;
     activityCount?: number;
+    descendants?: Array<{ uuid: string }>;
   }) {
     const proposals = opts.proposals ?? [];
     const documents = opts.documents ?? [];
     const tasks = opts.tasks ?? [];
 
+    // idea.findMany is consulted by getDescendantUuids (lineage cascade) — one
+    // BFS frontier hop per level. Default: no descendants (single-idea move).
+    // First call returns the descendant set; subsequent frontier hops return [].
+    mockPrisma.idea.findMany
+      .mockResolvedValueOnce(opts.descendants ?? [])
+      .mockResolvedValue([]);
     mockPrisma.proposal.findMany.mockResolvedValue(proposals);
     mockPrisma.document.findMany.mockResolvedValue(documents);
     mockPrisma.task.findMany.mockResolvedValue(tasks);
 
+    // idea.updateMany moves the subtree; count = root + descendants.
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: opts.ideaCount ?? (1 + (opts.descendants?.length ?? 0)) });
     mockPrisma.proposal.updateMany.mockResolvedValue({ count: opts.proposalCount ?? proposals.length });
     mockPrisma.document.updateMany.mockResolvedValue({ count: opts.documentCount ?? documents.length });
     mockPrisma.task.updateMany.mockResolvedValue({ count: opts.taskCount ?? tasks.length });
@@ -498,10 +510,11 @@ describe("moveIdea", () => {
       "user"
     );
 
-    // Idea row updated.
-    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+    // Idea subtree moved via updateMany over {root, ...descendants}. This idea
+    // has no descendants (getDescendantUuids → []) so the set is just the root.
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { uuid: IDEA_UUID },
+        where: { companyUuid: COMPANY_UUID, uuid: { in: [IDEA_UUID] } },
         data: { projectUuid: TARGET_PROJECT_UUID },
       })
     );
@@ -534,7 +547,7 @@ describe("moveIdea", () => {
     const activityUpdate = mockPrisma.activity.updateMany.mock.calls[0][0];
     expect(activityUpdate.where.companyUuid).toBe(COMPANY_UUID);
     expect(activityUpdate.where.OR).toEqual([
-      { targetType: "idea", targetUuid: IDEA_UUID },
+      { targetType: "idea", targetUuid: { in: [IDEA_UUID] } },
       { targetType: "proposal", targetUuid: { in: [PROPOSAL_A] } },
       { targetType: "task", targetUuid: { in: [TASK_UUID] } },
       { targetType: "document", targetUuid: { in: [DOC_UUID] } },
@@ -548,7 +561,7 @@ describe("moveIdea", () => {
         value: expect.objectContaining({
           fromProjectUuid: PROJECT_UUID,
           toProjectUuid: TARGET_PROJECT_UUID,
-          moved: { proposals: 1, documents: 1, tasks: 1, activities: 5 },
+          moved: { ideas: 1, proposals: 1, documents: 1, tasks: 1, activities: 5 },
         }),
       })
     );
@@ -559,7 +572,7 @@ describe("moveIdea", () => {
     // Return shape: existing IdeaResponse + the new `moved` field with the
     // exact `count` returned from each updateMany.
     expect(result.uuid).toBe(IDEA_UUID);
-    expect(result.moved).toEqual({ proposals: 1, documents: 1, tasks: 1, activities: 5 });
+    expect(result.moved).toEqual({ ideas: 1, proposals: 1, documents: 1, tasks: 1, activities: 5 });
   });
 
   it("returns counts equal to each updateMany().count", async () => {
@@ -588,7 +601,7 @@ describe("moveIdea", () => {
     });
 
     const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
-    expect(result.moved).toEqual({ proposals: 2, documents: 1, tasks: 3, activities: 7 });
+    expect(result.moved).toEqual({ ideas: 1, proposals: 2, documents: 1, tasks: 3, activities: 7 });
   });
 
   it("scopes every updateMany by companyUuid (cross-company isolation)", async () => {
@@ -680,6 +693,8 @@ describe("moveIdea", () => {
 
     mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
     mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    mockPrisma.idea.findMany.mockResolvedValue([]); // getDescendantUuids: no descendants
+    mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 1 }); // moved subtree = just the root
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]); // no proposals
     mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 2 });
     mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
@@ -688,9 +703,12 @@ describe("moveIdea", () => {
 
     const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID);
 
-    expect(result.moved).toEqual({ proposals: 0, documents: 0, tasks: 0, activities: 2 });
-    // Idea + activity ran; everything in between is short-circuited.
-    expect(mockPrisma.idea.update).toHaveBeenCalledTimes(1);
+    expect(result.moved).toEqual({ ideas: 1, proposals: 0, documents: 0, tasks: 0, activities: 2 });
+    // Idea subtree (updateMany) + activity ran; everything in between is short-circuited.
+    // idea.update is NOT called here — it only runs to detach a non-moving parent,
+    // and this root idea has no parentUuid.
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.updateMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
@@ -746,6 +764,7 @@ describe("moveIdeaPreview", () => {
     // ----- preview path -----
     mockPrisma.idea.findFirst.mockResolvedValueOnce(ideaForPreview);
     mockPrisma.project.findFirst.mockResolvedValueOnce(targetProject);
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]); // getDescendantUuids: none
     mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
     mockPrisma.document.findMany.mockResolvedValueOnce([{ uuid: DOC_UUID }]);
     mockPrisma.task.findMany.mockResolvedValueOnce([{ uuid: TASK_UUID }]);
@@ -755,11 +774,13 @@ describe("moveIdeaPreview", () => {
     mockPrisma.activity.count.mockResolvedValueOnce(4);
 
     const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
-    expect(preview.moved).toEqual({ proposals: 1, documents: 1, tasks: 1, activities: 4 });
+    expect(preview.moved).toEqual({ ideas: 1, proposals: 1, documents: 1, tasks: 1, activities: 4 });
 
     // ----- real move (same fixture, no concurrent writes) -----
     mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
     mockPrisma.project.findFirst.mockResolvedValueOnce(targetProject);
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]); // getDescendantUuids: none
+    mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 1 });
     mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
     mockPrisma.document.findMany.mockResolvedValueOnce([{ uuid: DOC_UUID }]);
     mockPrisma.task.findMany.mockResolvedValueOnce([{ uuid: TASK_UUID }]);
@@ -779,6 +800,7 @@ describe("moveIdeaPreview", () => {
   it("does NOT write — only findMany + activity.count are called", async () => {
     mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
     mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]); // getDescendantUuids: none
     // No proposals → short-circuits document/task findMany; only proposal.findMany
     // and activity.count run for an idea that hasn't been proposalized yet.
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
@@ -847,6 +869,40 @@ describe("updateIdea", () => {
     );
     expect(result.title).toBe("Updated Title");
     expect(mockEventBus.emitChange).toHaveBeenCalled();
+  });
+
+  it("records an 'edited' activity for a title/content edit with actor context", async () => {
+    const updated = makeIdeaRecord({ title: "Renamed" });
+    mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord());
+    mockPrisma.idea.update.mockResolvedValue(updated);
+
+    await updateIdea(
+      IDEA_UUID,
+      COMPANY_UUID,
+      { title: "Renamed", content: "New body" },
+      { actorType: "agent", actorUuid: ACTOR_UUID },
+    );
+
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: "idea",
+        targetUuid: IDEA_UUID,
+        action: "edited",
+        actorType: "agent",
+        actorUuid: ACTOR_UUID,
+        value: { changedFields: ["title", "content"] },
+      }),
+    );
+  });
+
+  it("does NOT record an 'edited' activity when no actor context is provided", async () => {
+    mockPrisma.idea.update.mockResolvedValue(makeIdeaRecord({ title: "X" }));
+
+    await updateIdea(IDEA_UUID, COMPANY_UUID, { title: "X" });
+
+    expect(mockCreateActivity).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "edited" }),
+    );
   });
 
   it("should update idea status", async () => {

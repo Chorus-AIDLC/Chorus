@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.4"
+  version: "0.10.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -35,10 +35,11 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans) |
+| `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans). Optional `parentUuid` derives a child idea from an existing same-project idea (single-parent lineage). |
+| `chorus_edit_idea` | Edit an existing idea's title, description, and/or lineage parent. `parentUuid`: another same-project idea to reparent under, `null` to detach to top-level, omit to leave unchanged (cycle-checked + same-project). Single-parent **weak** lineage — a parent shows a read-only `+N derived` rollup but never blocks either idea's flow. Records an "edited" activity and signals presence. |
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
 | `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
-| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea, all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
 
 **Requirements Elaboration:**
 
@@ -272,6 +273,20 @@ chorus_pm_skip_elaboration({
 **Elaboration as audit trail:** Even if the user discusses requirements with you outside the formal elaboration flow, record key decisions as elaboration rounds so they are persisted and visible to the team.
 
 **Question categories:** `functional`, `non_functional`, `business_context`, `technical_context`, `user_scenario`, `scope`
+
+---
+
+## Idea Lineage (derive vs. task)
+
+Ideas can form a **single-parent forest**: an idea may have one parent (`parentUuid`), establishing a weak lineage. "Weak" means the parent only shows a read-only `+N derived` rollup of its **direct** children — it never blocks or alters either idea's elaboration/proposal/task flow, and a parent is always a full first-class idea (it can have its own content, proposals, and tasks).
+
+When a new direction surfaces (during elaboration, brainstorm, or review), decide where it belongs:
+
+- **Derive a child idea** (`chorus_pm_create_idea` with `parentUuid`, or `chorus_edit_idea` with `parentUuid` to reparent an existing idea) when the new direction needs **its own elaboration/proposal lifecycle** — it is an independent AI-DLC pass.
+- **Add a task** to the current idea's proposal when the new work is just *how to implement the current idea*.
+- **Create a plain top-level idea** (no `parentUuid`) when there is no lineage to the current idea.
+
+This is a soft heuristic, not a rule — use judgment. Cycle prevention is automatic: you cannot set a parent that is the idea itself or one of its descendants. Parent and child must be in the same project (cross-project lineage is not supported yet). Deleting a parent re-parents its children to top-level (it never cascades).
 
 ---
 

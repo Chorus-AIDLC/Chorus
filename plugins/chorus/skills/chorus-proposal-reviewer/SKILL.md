@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, au
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.4"
+  version: "0.10.0"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus proposal reviewer

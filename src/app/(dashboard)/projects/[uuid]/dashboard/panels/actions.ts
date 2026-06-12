@@ -6,6 +6,8 @@ import {
   moveIdeaPreview,
   getIdeaWithDerivedStatus,
   getIdeaByUuid,
+  setIdeaParent,
+  listIdeas,
 } from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { listDocumentsByProposalUuids } from "@/services/document.service";
@@ -182,6 +184,43 @@ export async function getProjectsAndGroupsAction() {
   ]);
 
   return { success: true as const, data: { projects, groups } };
+}
+
+// ===== Idea Lineage (single-parent forest) =====
+
+// Set or clear an idea's lineage parent. parentUuid:null detaches.
+// Cycle / same-project / not-found validation lives in the service.
+export async function setIdeaParentAction(ideaUuid: string, parentUuid: string | null) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+  try {
+    const updated = await setIdeaParent(ideaUuid, parentUuid, auth.companyUuid);
+    return { success: true as const, data: updated };
+  } catch (e) {
+    return { success: false as const, error: e instanceof Error ? e.message : "Failed to set parent" };
+  }
+}
+
+// List same-project ideas as candidate parents for the set-parent picker.
+// Returns lightweight {uuid,title} rows; the client filters out the idea
+// itself and its descendants (descendantUuids) to prevent cycles.
+export async function getProjectIdeasForPickerAction(projectUuid: string) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+  const { ideas } = await listIdeas({
+    companyUuid: auth.companyUuid,
+    projectUuid,
+    skip: 0,
+    take: 200,
+  });
+  return {
+    success: true as const,
+    data: ideas.map((i) => ({ uuid: i.uuid, title: i.title })),
+  };
 }
 
 export async function getElaborationAction(

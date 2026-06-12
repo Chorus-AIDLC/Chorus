@@ -7,6 +7,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     idea: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      groupBy: vi.fn().mockResolvedValue([]),
     },
     proposal: {
       findMany: vi.fn(),
@@ -665,6 +666,8 @@ describe("getTrackerGroups", () => {
       derivedStatus: "todo",
       badgeHint: "open",
       createdAt: now.toISOString(),
+      parentUuid: null,
+      childCount: 0,
     });
   });
 

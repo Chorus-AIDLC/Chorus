@@ -109,7 +109,7 @@ describe("PATCH /api/ideas/[uuid]/move — REST integration with shared fixture"
 
     // Load-bearing assertion: equal to what the MCP test asserts and to
     // the fixture's stated expected counts.
-    expect(body.data.moved).toEqual({ proposals: 1, documents: 1, tasks: 3, activities: 5 });
+    expect(body.data.moved).toEqual({ ideas: 1, proposals: 1, documents: 1, tasks: 3, activities: 5 });
     expect(body.data.moved).toEqual(fixture.expectedMoved);
 
     // Sanity: the response identifies the moved Idea on the new project.

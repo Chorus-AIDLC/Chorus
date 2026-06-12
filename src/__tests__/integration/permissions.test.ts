@@ -288,6 +288,12 @@ const PM_AGENT_ADDED_IN_0_9_0 = [
   "chorus_create_report",
 ];
 
+// add-idea-lineage: chorus_edit_idea is idea:write-gated — pm_agent
+// (and admin_agent) carry idea:write so it appears in their visibility set.
+const PM_AGENT_ADDED_IN_0_10_0 = [
+  "chorus_edit_idea",
+];
+
 // ===== Shared beforeEach =====
 
 beforeEach(() => {
@@ -459,6 +465,8 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // 0.9.4 (simplify-elaboration-flow): chorus_pm_validate_elaboration is
       // re-gated to idea:admin. admin_agent carries idea:admin.
       "chorus_pm_validate_elaboration",
+      // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
+      ...PM_AGENT_ADDED_IN_0_10_0,
     ]);
     expect(tools).toEqual(expected);
   });
@@ -477,12 +485,12 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     }
   });
 
-  it("pm_agent diff vs 0.6.x pm baseline is exactly the 10 expected 0.7.0 tools plus the 0.9.0 chorus_create_report", () => {
+  it("pm_agent diff vs 0.6.x pm baseline is exactly the 10 expected 0.7.0 tools plus the 0.9.0 chorus_create_report and 0.10.0 chorus_edit_idea", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.pm_agent], ["pm_agent"]);
     const tools = enumerateGatedMcpTools(auth);
     const baseline = new Set(OLD_PM_TOOLS);
     const diff = Array.from(tools).filter((t) => !baseline.has(t)).sort();
-    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0].sort());
+    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_IN_0_10_0].sort());
   });
 
   it("pm_agent preset does not leak any *:admin-gated tool", () => {

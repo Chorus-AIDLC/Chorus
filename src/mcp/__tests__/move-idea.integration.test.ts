@@ -163,7 +163,7 @@ describe("MCP chorus_move_idea — integration with shared cascade-move fixture"
 
     // Counts: this is the load-bearing assertion for the cross-surface
     // checkpoint. The REST integration test asserts the same shape.
-    expect(parsed.moved).toEqual({ proposals: 1, documents: 1, tasks: 3, activities: 5 });
+    expect(parsed.moved).toEqual({ ideas: 1, proposals: 1, documents: 1, tasks: 3, activities: 5 });
     expect(parsed.moved).toEqual(fixture.expectedMoved);
 
     // Sanity: the fixture's primary entities are now on P_NEW…

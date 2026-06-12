@@ -360,7 +360,7 @@ export interface CascadeMoveFixture {
   siblingTaskUuid: string;
   actorUuid: string;
   /** Expected `moved` counts the move call should return / the UI should display. */
-  expectedMoved: { proposals: 1; documents: 1; tasks: 3; activities: 5 };
+  expectedMoved: { ideas: 1; proposals: 1; documents: 1; tasks: 3; activities: 5 };
   /** Snapshot of sibling-resource UUIDs+projects taken at fixture build time
    *  for cross-fixture isolation assertions. */
   siblingSnapshot: {
@@ -578,7 +578,7 @@ export function buildCascadeMoveFixture(): CascadeMoveFixture {
     siblingDocumentUuid: SIBLING_DOC_UUID,
     siblingTaskUuid: SIBLING_TASK_UUID,
     actorUuid: ACTOR_USER,
-    expectedMoved: { proposals: 1, documents: 1, tasks: 3, activities: 5 },
+    expectedMoved: { ideas: 1, proposals: 1, documents: 1, tasks: 3, activities: 5 },
     siblingSnapshot: {
       ideaProjectUuid: P_OLD,
       proposalProjectUuid: P_OLD,

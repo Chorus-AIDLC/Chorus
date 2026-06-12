@@ -133,11 +133,11 @@ beforeEach(() => {
   getProjectsAndGroupsActionMock.mockResolvedValue(ALL_PROJECTS);
   moveIdeaPreviewActionMock.mockResolvedValue({
     success: true,
-    moved: { proposals: 2, documents: 1, tasks: 3, activities: 7 },
+    moved: { ideas: 1, proposals: 2, documents: 1, tasks: 3, activities: 7 },
   });
   moveIdeaActionMock.mockResolvedValue({
     success: true,
-    moved: { proposals: 2, documents: 1, tasks: 3, activities: 7 },
+    moved: { ideas: 1, proposals: 2, documents: 1, tasks: 3, activities: 7 },
   });
 });
 
@@ -192,7 +192,7 @@ describe("MoveIdeaDialog", () => {
     // Counts surface in the preview block.
     await waitFor(() => {
       expect(
-        screen.getByText("Will also move: 2 proposals, 1 documents, 3 tasks, 7 activities."),
+        screen.getByText("Will move: 1 ideas (incl. derived), 2 proposals, 1 documents, 3 tasks, 7 activities."),
       ).toBeTruthy();
     });
     expect(screen.getByText("This action cannot be undone.")).toBeTruthy();
@@ -222,7 +222,7 @@ describe("MoveIdeaDialog", () => {
 
     await waitFor(() => {
       expect(toastSuccess).toHaveBeenCalledWith(
-        "Moved idea — 2 proposals, 1 documents, 3 tasks, 7 activities updated.",
+        "Moved 1 ideas — 2 proposals, 1 documents, 3 tasks, 7 activities updated.",
         expect.objectContaining({
           action: expect.objectContaining({
             label: "View",
@@ -243,6 +243,7 @@ describe("MoveIdeaDialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onMoved).toHaveBeenCalledWith({
+      ideas: 1,
       proposals: 2,
       documents: 1,
       tasks: 3,

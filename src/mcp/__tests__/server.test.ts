@@ -202,7 +202,7 @@ describe("MCP tool permission wiring", () => {
   });
 
   describe("backward-compat: admin_agent preset (AC6)", () => {
-    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets plus 0.9.0 chorus_create_report and 0.9.4 chorus_pm_validate_elaboration", () => {
+    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets plus 0.9.0 chorus_create_report, 0.9.4 chorus_pm_validate_elaboration, and 0.10.0 chorus_edit_idea", () => {
       const registered = registeredFor([...ROLE_PRESETS.admin_agent]);
       const expected = new Set([
         ...OLD_ADMIN_TOOLS,
@@ -215,6 +215,9 @@ describe("MCP tool permission wiring", () => {
         // now idea:admin-gated (the simplified resolve action). admin_agent
         // carries idea:admin; pm_agent (idea:write only) does not.
         "chorus_pm_validate_elaboration",
+        // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
+        // Both pm_agent and admin_agent carry idea:write, so it is visible to both.
+        "chorus_edit_idea",
       ]);
       expect(registered).toEqual(expected);
     });

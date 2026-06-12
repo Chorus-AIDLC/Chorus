@@ -73,6 +73,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       title: string;
       content?: string;
       attachments?: unknown;
+      parentUuid?: string | null;
     }>(request);
 
     // Validate required fields
@@ -80,15 +81,23 @@ export const POST = withErrorHandler<{ uuid: string }>(
       return errors.validationError({ title: "Title is required" });
     }
 
-    const idea = await createIdea({
-      companyUuid: auth.companyUuid,
-      projectUuid,
-      title: body.title.trim(),
-      content: body.content?.trim() || null,
-      attachments: body.attachments,
-      createdByUuid: auth.actorUuid,
-    });
+    try {
+      const idea = await createIdea({
+        companyUuid: auth.companyUuid,
+        projectUuid,
+        title: body.title.trim(),
+        content: body.content?.trim() || null,
+        attachments: body.attachments,
+        createdByUuid: auth.actorUuid,
+        parentUuid: body.parentUuid ?? null,
+      });
 
-    return success(idea);
+      return success(idea);
+    } catch (error) {
+      // Lineage validation (missing / cross-project parent) surfaces as a 400.
+      return errors.badRequest(
+        error instanceof Error ? error.message : "Failed to create idea",
+      );
+    }
   }
 );

@@ -810,7 +810,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_move_idea",
     {
-      description: "Move an Idea to another project. Cascades to all linked Proposals (any status), their Documents/Tasks, and Activities. Returns the updated Idea + `moved: { proposals, documents, tasks, activities }` counts.",
+      description: "Move an Idea to another project. Also moves the Idea's full lineage subtree (all descendant Ideas) and detaches the moved root from any parent left behind, plus every moved Idea's linked Proposals (any status), their Documents/Tasks, and Activities. Returns the updated Idea + `moved: { ideas, proposals, documents, tasks, activities }` counts.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         targetProjectUuid: z.string().describe("Target Project UUID"),
@@ -963,30 +963,105 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_create_idea",
     {
-      description: "Create an Idea (submits requirements on behalf of humans)",
+      description: "Create an Idea (submits requirements on behalf of humans). Optionally pass parentUuid to derive this idea from an existing same-project idea (single-parent lineage). Derive a CHILD idea when the new direction needs its own elaboration/proposal lifecycle; otherwise add a Task to the current idea's proposal instead.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         title: z.string().describe("Idea title"),
         content: z.string().optional().describe("Idea detailed description"),
+        parentUuid: z.string().optional().describe("Optional parent Idea UUID to derive from (must be in the same project). Establishes single-parent lineage; the parent shows a +N derived rollup."),
       }),
     },
-    async ({ projectUuid, title, content }) => {
+    async ({ projectUuid, title, content, parentUuid }) => {
       const exists = await projectExists(auth.companyUuid, projectUuid);
       if (!exists) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
 
-      const idea = await ideaService.createIdea({
-        companyUuid: auth.companyUuid,
-        projectUuid,
-        title,
-        content: content || null,
-        createdByUuid: auth.actorUuid,
-      });
+      try {
+        const idea = await ideaService.createIdea({
+          companyUuid: auth.companyUuid,
+          projectUuid,
+          title,
+          content: content || null,
+          createdByUuid: auth.actorUuid,
+          parentUuid: parentUuid ?? null,
+        });
 
-      return {
-        content: [{ type: "text", text: JSON.stringify({ uuid: idea.uuid, title: idea.title }) }],
-      };
+        return {
+          content: [{ type: "text", text: JSON.stringify({ uuid: idea.uuid, title: idea.title, parentUuid: idea.parentUuid ?? null }) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to create Idea: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // chorus_edit_idea - Edit an Idea's title, content, and/or lineage parent
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:write",
+    "chorus_edit_idea",
+    {
+      description: "Edit an existing Idea: title, description (content), and/or lineage parent. Provide at least one field. Records an 'edited' activity (for title/content) attributed to you and signals your presence on the idea. `parentUuid` reparents the idea under another same-project idea (cycle-checked) — pass `null` to detach to top-level, or omit to leave the parent unchanged. Does NOT change status (status is a side-effect of claim/elaborate).",
+      inputSchema: z.object({
+        ideaUuid: z.string().describe("Idea UUID to edit"),
+        title: z.string().optional().describe("New title (omit to leave unchanged)"),
+        content: z.string().optional().describe("New description / content (omit to leave unchanged)"),
+        parentUuid: z.string().nullable().optional().describe("Reparent under this same-project Idea (cycle-checked); `null` detaches to top-level; omit to leave the parent unchanged"),
+      }),
+    },
+    async ({ ideaUuid, title, content, parentUuid }) => {
+      if (title === undefined && content === undefined && parentUuid === undefined) {
+        return {
+          content: [{ type: "text", text: "Provide at least one of title, content, or parentUuid to edit." }],
+          isError: true,
+        };
+      }
+      // Confirm the idea exists in this company before editing (clear 404 vs a
+      // raw Prisma error on a bad uuid).
+      const existing = await ideaService.getIdeaByUuid(auth.companyUuid, ideaUuid);
+      if (!existing) {
+        return { content: [{ type: "text", text: "Idea not found" }], isError: true };
+      }
+      try {
+        // Lineage parent change goes through setIdeaParent so the cycle +
+        // same-project guards apply (a bare update would let a cyclic edge in).
+        // Only invoked when parentUuid is explicitly present (null = detach).
+        let resolvedParentUuid = existing.parentUuid ?? null;
+        if (parentUuid !== undefined) {
+          const reparented = await ideaService.setIdeaParent(ideaUuid, parentUuid ?? null, auth.companyUuid);
+          resolvedParentUuid = reparented.parentUuid ?? null;
+        }
+
+        // Title/content edit (records the "edited" activity). Skipped when only
+        // the parent changed.
+        let title_ = existing.title;
+        if (title !== undefined || content !== undefined) {
+          const updated = await ideaService.updateIdea(
+            ideaUuid,
+            auth.companyUuid,
+            {
+              ...(title !== undefined ? { title } : {}),
+              ...(content !== undefined ? { content: content || null } : {}),
+            },
+            { actorType: "agent", actorUuid: auth.actorUuid },
+          );
+          title_ = updated.title;
+        }
+
+        return {
+          content: [{ type: "text", text: JSON.stringify({ uuid: ideaUuid, title: title_, parentUuid: resolvedParentUuid }) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to edit Idea: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
     }
   );
 }

@@ -37,6 +37,21 @@ export interface IdeaCreateParams {
   content?: string | null;
   attachments?: unknown;
   createdByUuid: string;
+  // Optional lineage parent (single-parent forest). Must be a same-project Idea.
+  parentUuid?: string | null;
+}
+
+// Lightweight lineage references emitted on single-idea reads.
+export interface IdeaLineageParent {
+  uuid: string;
+  title: string;
+  status: string;
+}
+export interface IdeaLineageChild {
+  uuid: string;
+  title: string;
+  status: string;
+  derivedStatus: DerivedIdeaStatus;
 }
 
 export interface IdeaClaimParams {
@@ -74,6 +89,17 @@ export interface IdeaResponse {
   // proposals, sorted by createdAt descending. Only emitted by getIdea
   // (single-entity reads), not by listIdeas — list rows carry the count only.
   reports?: import("./document.service").DocumentResponse[];
+  // Lineage (single-parent forest, weak read-only relation). parentUuid is the
+  // stored edge; parent/children/descendantUuids are emitted by getIdea only.
+  parentUuid?: string | null;
+  parent?: IdeaLineageParent | null;
+  children?: IdeaLineageChild[];
+  // Direct-children rollup count (drives the "+N derived" chip). Emitted on
+  // list rows (listIdeas). Direct children only, not the recursive subtree.
+  childCount?: number;
+  // Transitive descendant UUID set of THIS idea — used by the set-parent picker
+  // to disable cycle-forming candidates. Distinct from the direct-child rollup.
+  descendantUuids?: string[];
 }
 
 // Cascade-move counts — emitted by moveIdea / moveIdeaPreview so REST/MCP/UI
@@ -81,6 +107,9 @@ export interface IdeaResponse {
 // Numbers come straight from each Prisma updateMany().count (or .count() for
 // the preview path). See openspec change idea-cross-project-cascade-move §D4.
 export interface MoveIdeaCounts {
+  // Idea rows moved = the moved root + its full lineage descendant subtree.
+  // Always >= 1. Added with the lineage cascade (see add-idea-lineage follow-up).
+  ideas: number;
   proposals: number;
   documents: number;
   tasks: number;
@@ -219,6 +248,7 @@ export async function listIdeas({
         assigneeUuid: true,
         assignedAt: true,
         assignedByUuid: true,
+        parentUuid: true,
         createdByUuid: true,
         createdAt: true,
         updatedAt: true,
@@ -228,6 +258,11 @@ export async function listIdeas({
   ]);
 
   const ideas = await Promise.all(rawIdeas.map(formatIdeaResponse));
+  // Carry the stored lineage edge onto every row so the client can build the
+  // forest. (formatIdeaResponse omits it; set it from the raw row by index.)
+  rawIdeas.forEach((raw, i) => {
+    ideas[i].parentUuid = raw.parentUuid ?? null;
+  });
 
   // Attach reportCount to every row. Two extra queries per page (independent
   // of page size) with early returns when there's nothing to count.
@@ -239,6 +274,21 @@ export async function listIdeas({
     );
     for (const idea of ideas) {
       idea.reportCount = counts.get(idea.uuid) ?? 0;
+    }
+
+    // Direct-child rollup for the "+N derived" chip — one groupBy across the
+    // whole project (no N+1). childCount counts DIRECT children only.
+    const childCountRows = (await prisma.idea.groupBy({
+      by: ["parentUuid"],
+      where: { companyUuid, projectUuid, parentUuid: { not: null } },
+      _count: { _all: true },
+    })) ?? [];
+    const childCountByParent = new Map<string, number>();
+    for (const row of childCountRows) {
+      if (row.parentUuid) childCountByParent.set(row.parentUuid, row._count._all);
+    }
+    for (const idea of ideas) {
+      idea.childCount = childCountByParent.get(idea.uuid) ?? 0;
     }
   }
 
@@ -327,11 +377,39 @@ export async function getIdea(
     where: { uuid, companyUuid },
     include: {
       project: { select: { uuid: true, name: true } },
+      parent: { select: { uuid: true, title: true, status: true } },
+      children: {
+        select: { uuid: true, title: true, status: true, elaborationStatus: true },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
 
   if (!idea) return null;
   const response = await formatIdeaResponse(idea);
+
+  // Lineage: stored edge + resolved parent + direct children (with derived
+  // status) + this idea's transitive descendant set (for the set-parent picker).
+  response.parentUuid = idea.parentUuid ?? null;
+  response.parent = idea.parent
+    ? { uuid: idea.parent.uuid, title: idea.parent.title, status: normalizeIdeaStatus(idea.parent.status) }
+    : null;
+  const childRows = idea.children ?? [];
+  if (childRows.length > 0) {
+    // Reuse the batched project-wide derived-status computation (no N+1) and
+    // pick out the derived status for each direct child.
+    const projectIdeas = await getIdeasWithDerivedStatus(companyUuid, idea.projectUuid);
+    const derivedByUuid = new Map(projectIdeas.map((i) => [i.uuid, i.derivedStatus]));
+    response.children = childRows.map((child) => ({
+      uuid: child.uuid,
+      title: child.title,
+      status: normalizeIdeaStatus(child.status),
+      derivedStatus: derivedByUuid.get(child.uuid) ?? ("todo" as DerivedIdeaStatus),
+    }));
+  } else {
+    response.children = [];
+  }
+  response.descendantUuids = await getDescendantUuids(uuid, companyUuid);
 
   // Step 1: idea-rooted report-bearing proposals (approved or closed —
   // see REPORT_BEARING_PROPOSAL_STATUSES rationale).
@@ -368,6 +446,20 @@ export async function getIdeaByUuid(companyUuid: string, uuid: string) {
 
 // Create Idea
 export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse> {
+  // Validate optional lineage parent: must exist, same company, same project.
+  if (params.parentUuid) {
+    const parent = await prisma.idea.findFirst({
+      where: { uuid: params.parentUuid, companyUuid: params.companyUuid },
+      select: { projectUuid: true },
+    });
+    if (!parent) {
+      throw new Error("Parent idea not found");
+    }
+    if (parent.projectUuid !== params.projectUuid) {
+      throw new Error("Parent idea must be in the same project");
+    }
+  }
+
   const idea = await prisma.idea.create({
     data: {
       companyUuid: params.companyUuid,
@@ -377,6 +469,7 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
       attachments: params.attachments || undefined,
       status: "open",
       createdByUuid: params.createdByUuid,
+      parentUuid: params.parentUuid ?? undefined,
     },
     select: {
       uuid: true,
@@ -390,6 +483,7 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
       assigneeUuid: true,
       assignedAt: true,
       assignedByUuid: true,
+      parentUuid: true,
       createdByUuid: true,
       createdAt: true,
       updatedAt: true,
@@ -398,7 +492,9 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
 
   eventBus.emitChange({ companyUuid: params.companyUuid, projectUuid: params.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "created" });
 
-  return formatIdeaResponse(idea);
+  const response = await formatIdeaResponse(idea);
+  response.parentUuid = idea.parentUuid;
+  return response;
 }
 
 // Update Idea
@@ -425,6 +521,25 @@ export async function updateIdea(
 
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.project!.uuid, entityType: "idea", entityUuid: idea.uuid, action: "updated" });
 
+  // Record an "edited" activity for title/content edits (status changes have
+  // their own dedicated activities elsewhere, so they're excluded here to avoid
+  // double-logging). Attributed to the actor when actorContext is provided.
+  if (actorContext) {
+    const changedFields = (["title", "content"] as const).filter((f) => data[f] !== undefined);
+    if (changedFields.length > 0) {
+      await activityService.createActivity({
+        companyUuid: idea.companyUuid,
+        projectUuid: idea.project!.uuid,
+        targetType: "idea",
+        targetUuid: idea.uuid,
+        actorType: actorContext.actorType,
+        actorUuid: actorContext.actorUuid,
+        action: "edited",
+        value: { changedFields },
+      });
+    }
+  }
+
   // Process new @mentions in content (append-only: only new mentions)
   if (data.content !== undefined && actorContext && data.content) {
     processNewIdeaMentions(
@@ -440,6 +555,114 @@ export async function updateIdea(
   }
 
   return formatIdeaResponse(idea);
+}
+
+// ===== Lineage (single-parent forest — weak read-only relation) =====
+
+/**
+ * Return the transitive descendant UUID set of a single idea (direct + indirect
+ * children, all the way down). Bounded subtree walk via repeated indexed lookups
+ * on parentUuid — this is an on-demand, single-idea query used by the set-parent
+ * picker to disable cycle-forming candidates. It is intentionally distinct from
+ * the direct-child-only list rollup (which stays shallow to avoid N+1 across
+ * many rows); here we walk one idea's subtree only.
+ *
+ * A `visited` set guards against any pre-existing cyclic data so the walk always
+ * terminates.
+ */
+export async function getDescendantUuids(
+  uuid: string,
+  companyUuid: string,
+): Promise<string[]> {
+  const descendants = new Set<string>();
+  let frontier = [uuid];
+  while (frontier.length > 0) {
+    const children = (await prisma.idea.findMany({
+      where: { companyUuid, parentUuid: { in: frontier } },
+      select: { uuid: true },
+    })) ?? [];
+    const next: string[] = [];
+    for (const child of children) {
+      if (child.uuid === uuid) continue; // defensive: skip self
+      if (!descendants.has(child.uuid)) {
+        descendants.add(child.uuid);
+        next.push(child.uuid);
+      }
+    }
+    frontier = next;
+  }
+  return [...descendants];
+}
+
+/**
+ * Set (or clear) an idea's lineage parent.
+ *
+ * - `parentUuid: null` detaches the idea (becomes top-level).
+ * - Rejects self-parent, and any parent that is a descendant of the idea
+ *   (transitive cycle) — the authoritative cycle guard.
+ * - Enforces same-project (first version; cross-project deferred).
+ *
+ * Cycle detection walks the prospective parent's ancestor chain: if we reach
+ * `uuid` while climbing from `parentUuid`, the assignment would close a loop.
+ */
+export async function setIdeaParent(
+  uuid: string,
+  parentUuid: string | null,
+  companyUuid: string,
+): Promise<IdeaResponse> {
+  const idea = await prisma.idea.findFirst({
+    where: { uuid, companyUuid },
+    select: { uuid: true, projectUuid: true },
+  });
+  if (!idea) throw new Error("Idea not found");
+
+  if (parentUuid) {
+    if (parentUuid === uuid) {
+      throw new Error("An idea cannot be its own parent");
+    }
+    const parent = await prisma.idea.findFirst({
+      where: { uuid: parentUuid, companyUuid },
+      select: { uuid: true, projectUuid: true, parentUuid: true },
+    });
+    if (!parent) throw new Error("Parent idea not found");
+    if (parent.projectUuid !== idea.projectUuid) {
+      throw new Error("Parent idea must be in the same project");
+    }
+    // Walk the prospective parent's ancestor chain; reject if it reaches `uuid`.
+    const seen = new Set<string>();
+    let cursor: string | null = parent.parentUuid;
+    while (cursor) {
+      if (cursor === uuid) {
+        throw new Error("Cannot set parent: would create a cycle");
+      }
+      if (seen.has(cursor)) break; // defensive against pre-existing cycles
+      seen.add(cursor);
+      const ancestor: { parentUuid: string | null } | null =
+        await prisma.idea.findFirst({
+          where: { uuid: cursor, companyUuid },
+          select: { parentUuid: true },
+        });
+      cursor = ancestor?.parentUuid ?? null;
+    }
+  }
+
+  const updated = await prisma.idea.update({
+    where: { uuid },
+    data: { parentUuid: parentUuid ?? null },
+    include: { project: { select: { uuid: true, name: true } } },
+  });
+
+  eventBus.emitChange({
+    companyUuid: updated.companyUuid,
+    projectUuid: updated.projectUuid,
+    entityType: "idea",
+    entityUuid: updated.uuid,
+    action: "updated",
+  });
+
+  const response = await formatIdeaResponse(updated);
+  response.parentUuid = updated.parentUuid;
+  return response;
 }
 
 // Claim Idea (self-claim: only works when no assignee)
@@ -603,6 +826,14 @@ async function processNewIdeaMentions(
 
 // Delete Idea
 export async function deleteIdea(uuid: string) {
+  // Orphan direct children to top-level BEFORE deleting the parent (weak
+  // lineage: a parent does not own its children). Doing this first also means
+  // the Restrict referential action on the self-relation never fires, since no
+  // child references the parent by delete time.
+  await prisma.idea.updateMany({
+    where: { parentUuid: uuid },
+    data: { parentUuid: null },
+  });
   const idea = await prisma.idea.delete({ where: { uuid } });
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "deleted" });
   return idea;
@@ -654,29 +885,48 @@ export async function moveIdea(
 
   const fromProjectUuid = idea.projectUuid;
 
-  // Transaction: cascade-update Idea + linked Proposals + their Documents/Tasks
-  // + the Activity stream that targets any of those rows. Counts are returned
-  // to the caller so REST/MCP/UI can render a "moved N proposals, ..." summary.
+  // Lineage: the move carries the whole subtree. Resolve the moved root's
+  // transitive descendants up front (single-idea BFS, scoped to companyUuid),
+  // so every idea in {root, ...descendants} migrates together and no
+  // cross-project parentUuid edge is left behind. (add-idea-lineage follow-up.)
+  const descendantUuids = await getDescendantUuids(ideaUuid, companyUuid);
+  const movedIdeaUuids = [ideaUuid, ...descendantUuids];
+
+  // Transaction: cascade-update the moved Idea subtree + their linked Proposals
+  // + those Proposals' Documents/Tasks + the Activity stream that targets any of
+  // those rows. Counts are returned so REST/MCP/UI can render a summary.
   const moved = await prisma.$transaction(async (tx) => {
-    // Resolve the proposal set via JSON inputUuids match. No status filter
-    // (D1) — every status follows the idea. This is the only call that touches
-    // the JSON column; subsequent steps reuse the resulting uuid list to walk
-    // the primary-key index instead of rescanning the JSON predicate.
+    // Resolve the proposal set for EVERY moved idea via JSON inputUuids match.
+    // inputUuids is a Json column, so the only indexable operator is
+    // `array_contains` (single-value containment); we OR one clause per moved
+    // idea to cover the whole subtree. No status filter (D1) — every status
+    // follows the idea. This is the only call that touches the JSON column;
+    // subsequent steps reuse the resulting uuid list to walk the PK index.
     const proposals = await tx.proposal.findMany({
       where: {
         companyUuid,
         inputType: "idea",
-        inputUuids: { array_contains: [ideaUuid] },
+        OR: movedIdeaUuids.map((u) => ({ inputUuids: { array_contains: [u] } })),
       },
       select: { uuid: true },
     });
     const proposalUuids = proposals.map((p) => p.uuid);
 
-    // Idea row — always updated.
-    await tx.idea.update({
-      where: { uuid: ideaUuid },
+    // Idea rows — move the whole subtree. Then detach the moved ROOT from a
+    // parent that is NOT moving (a parent is always an ancestor, never in the
+    // moved set), so no cross-project lineage edge survives. Descendants keep
+    // their parentUuid because their parents ARE in the moved set.
+    const ideaUpdate = await tx.idea.updateMany({
+      where: { companyUuid, uuid: { in: movedIdeaUuids } },
       data: { projectUuid: targetProjectUuid },
     });
+    const ideaCount = ideaUpdate.count;
+    if (idea.parentUuid) {
+      await tx.idea.update({
+        where: { uuid: ideaUuid },
+        data: { parentUuid: null },
+      });
+    }
 
     // Short-circuit when no proposals are linked: skip the proposal/document/
     // task lookups and updateMany calls that would all return count 0 anyway.
@@ -704,7 +954,7 @@ export async function moveIdea(
       taskUuids = taskRows.map((t) => t.uuid);
 
       // Proposals — walk the uuid PK from step 1's result instead of rescanning
-      // the JSON inputUuids column. `array_contains` cannot use a btree index
+      // the JSON inputUuids column. `array_overlaps` cannot use a btree index
       // and forces a seq scan, while `uuid IN (...)` hits Proposal_uuid_key.
       const proposalUpdate = await tx.proposal.updateMany({
         where: { companyUuid, uuid: { in: proposalUuids } },
@@ -736,7 +986,7 @@ export async function moveIdea(
       where: {
         companyUuid,
         OR: [
-          { targetType: "idea", targetUuid: ideaUuid },
+          { targetType: "idea", targetUuid: { in: movedIdeaUuids } },
           { targetType: "proposal", targetUuid: { in: proposalUuids } },
           { targetType: "task", targetUuid: { in: taskUuids } },
           { targetType: "document", targetUuid: { in: documentUuids } },
@@ -746,6 +996,7 @@ export async function moveIdea(
     });
 
     return {
+      ideas: ideaCount,
       proposals: proposalCount,
       documents: documentCount,
       tasks: taskCount,
@@ -814,6 +1065,11 @@ export async function moveIdeaPreview(
     throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
   }
 
+  // Mirror moveIdea's lineage cascade: the preview counts the whole moved
+  // subtree (root + transitive descendants), not just the root idea.
+  const descendantUuids = await getDescendantUuids(ideaUuid, companyUuid);
+  const movedIdeaUuids = [ideaUuid, ...descendantUuids];
+
   // Same SELECT pipeline as moveIdea — proposals → documents/tasks → activity.
   // The single JSON-column scan is the proposal.findMany; everything downstream
   // walks primary-key indexes. proposalUuids.length doubles as the proposal
@@ -822,7 +1078,7 @@ export async function moveIdeaPreview(
     where: {
       companyUuid,
       inputType: "idea",
-      inputUuids: { array_contains: [ideaUuid] },
+      OR: movedIdeaUuids.map((u) => ({ inputUuids: { array_contains: [u] } })),
     },
     select: { uuid: true },
   });
@@ -854,7 +1110,7 @@ export async function moveIdeaPreview(
     where: {
       companyUuid,
       OR: [
-        { targetType: "idea", targetUuid: ideaUuid },
+        { targetType: "idea", targetUuid: { in: movedIdeaUuids } },
         { targetType: "proposal", targetUuid: { in: proposalUuids } },
         { targetType: "task", targetUuid: { in: taskUuids } },
         { targetType: "document", targetUuid: { in: documentUuids } },
@@ -864,6 +1120,7 @@ export async function moveIdeaPreview(
 
   return {
     moved: {
+      ideas: movedIdeaUuids.length,
       proposals: proposalUuids.length,
       documents: documentCount,
       tasks: taskCount,
@@ -985,6 +1242,10 @@ export interface IdeaWithDerivedStatus {
   projectUuid: string;
   proposalCount: number;
   taskCount: number;
+  // Lineage: stored parent edge + count of direct children (rollup). The forest
+  // is built client-side from parentUuid; childCount drives the "+N derived" chip.
+  parentUuid: string | null;
+  childCount: number;
 }
 
 /**
@@ -1003,11 +1264,24 @@ export async function getIdeasWithDerivedStatus(
       title: true,
       status: true,
       elaborationStatus: true,
+      parentUuid: true,
       createdAt: true,
       updatedAt: true,
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // Query 1b: Direct-child counts per parent — a single groupBy (no N+1). Only
+  // counts direct children (weak-semantic rollup; not the recursive subtree).
+  const childCountRows = (await prisma.idea.groupBy({
+    by: ["parentUuid"],
+    where: { companyUuid, projectUuid, parentUuid: { not: null } },
+    _count: { _all: true },
+  })) ?? [];
+  const childCountByParent = new Map<string, number>();
+  for (const row of childCountRows) {
+    if (row.parentUuid) childCountByParent.set(row.parentUuid, row._count._all);
+  }
 
   // Query 2: All proposals (approved + pending) for the project
   const proposals = await prisma.proposal.findMany({
@@ -1098,6 +1372,8 @@ export async function getIdeasWithDerivedStatus(
       projectUuid,
       proposalCount: ideaProposalCounts.get(idea.uuid) ?? 0,
       taskCount: taskStatuses.length,
+      parentUuid: idea.parentUuid ?? null,
+      childCount: childCountByParent.get(idea.uuid) ?? 0,
     };
   });
 }
@@ -1112,6 +1388,10 @@ export interface TrackerIdeaItem {
   derivedStatus: DerivedIdeaStatus;
   badgeHint: BadgeHint;
   createdAt: string;
+  // Lineage (single-parent forest). parentUuid lets the client build the tree
+  // view; childCount drives the "+N derived" rollup chip. Direct children only.
+  parentUuid: string | null;
+  childCount: number;
 }
 
 export interface TrackerGroupsResult {
@@ -1154,6 +1434,8 @@ export async function getTrackerGroups(
       derivedStatus: ds,
       badgeHint: idea.badgeHint,
       createdAt: idea.createdAt.toISOString(),
+      parentUuid: idea.parentUuid,
+      childCount: idea.childCount,
     };
 
     if (groups[ds]) {

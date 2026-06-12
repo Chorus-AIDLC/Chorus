@@ -30,6 +30,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
 | `chorus_pm_create_idea` | `idea:write` |
+| `chorus_edit_idea` | `idea:write` |
 | `chorus_pm_start_elaboration` | `idea:write` |
 | `chorus_pm_validate_elaboration` | `idea:admin` |
 | `chorus_pm_skip_elaboration` | `idea:write` |
@@ -239,7 +240,7 @@ Tools available to all Agents.
 
 ### chorus_get_ideas
 
-**Description**: Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.
+**Description**: Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea — plus lineage fields `parentUuid` (the single-parent edge, or null) and `childCount` (number of **direct** children, for the `+N derived` rollup). Build the lineage forest client-side from `parentUuid`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -252,7 +253,7 @@ Tools available to all Agents.
 **Output**:
 ```json
 {
-  "ideas": [{ ..., "reportCount": 0 }],
+  "ideas": [{ ..., "reportCount": 0, "parentUuid": null, "childCount": 2 }],
   "total": 10,
   "page": 1,
   "pageSize": 20
@@ -261,14 +262,14 @@ Tools available to all Agents.
 
 ### chorus_get_idea
 
-**Description**: Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.
+**Description**: Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first — and lineage: `parentUuid`, `parent` ({uuid,title,status} or null), `children[]` ({uuid,title,status,derivedStatus}), and `descendantUuids` (the transitive descendant set, used by the set-parent picker to disable cycle-forming candidates).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none).
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
 
 ### chorus_get_documents
 
@@ -1302,7 +1303,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_move_idea
 
-**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself, all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` permission only — no project-level checks.
+**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` permission only — no project-level checks.
 
 **Required Permission**: `idea:write`
 
@@ -1312,11 +1313,11 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | ideaUuid | string | Yes | Idea UUID |
 | targetProjectUuid | string | Yes | Target Project UUID |
 
-**Output**: Updated Idea JSON with cascade counts (`{ uuid, project: { uuid, name }, moved: { proposals, documents, tasks, activities } }`)
+**Output**: Updated Idea JSON with cascade counts (`{ uuid, project: { uuid, name }, moved: { ideas, proposals, documents, tasks, activities } }`)
 
 ### chorus_pm_create_idea
 
-**Description**: Create an Idea in a project (submit requirements on behalf of humans or from discovered requirements)
+**Description**: Create an Idea in a project (submit requirements on behalf of humans or from discovered requirements). Optionally derive from an existing same-project Idea via `parentUuid` (single-parent lineage).
 
 **Required Permission**: `idea:write`
 
@@ -1326,8 +1327,27 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | projectUuid | string | Yes | Project UUID |
 | title | string | Yes | Idea title |
 | content | string | No | Idea detailed description |
+| parentUuid | string | No | Parent Idea UUID to derive from (must be in the same project). Establishes single-parent lineage. |
 
-**Output**: Created Idea JSON (`{ uuid, title }`)
+**Output**: Created Idea JSON (`{ uuid, title, parentUuid }`)
+
+**Derive-vs-Task heuristic**: derive a **child Idea** (set `parentUuid`) when the new direction needs its own elaboration/proposal lifecycle (it is an independent AI-DLC pass). When the new work is just *how to implement the current idea*, add a **Task** to the current idea's proposal instead. When there is no lineage to the current idea, create a plain top-level Idea (no `parentUuid`). The relation is weak — it never blocks either idea's flow.
+
+### chorus_edit_idea
+
+**Description**: Edit an existing Idea's `title`, `content` (description), and/or lineage `parentUuid`. Provide at least one field. Title/content edits record an `edited` activity attributed to the caller and signal presence on the idea. `parentUuid` reparents under another same-project Idea (routed through the cycle-checked set-parent path) — pass `null` to detach to top-level, or omit to leave the parent unchanged. Does NOT change status (status is a side-effect of claim/elaborate).
+
+**Required Permission**: `idea:write`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string | Yes | Idea UUID to edit |
+| title | string | No | New title (omit to leave unchanged) |
+| content | string | No | New description / content (omit to leave unchanged) |
+| parentUuid | string \| null | No | Reparent under this same-project Idea (cycle-checked); `null` detaches to top-level; omit to leave the parent unchanged |
+
+**Output**: Updated Idea JSON (`{ uuid, title, parentUuid }`)
 
 ### chorus_pm_reject_proposal
 

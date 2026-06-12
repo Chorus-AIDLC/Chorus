@@ -2,11 +2,12 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { AlertCircle, Lightbulb, Plus } from "lucide-react";
+import { AlertCircle, GitFork, Lightbulb, List, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { IdeaStatusGroup } from "./idea-status-group";
+import { IdeaLineageTree } from "./idea-lineage-tree";
 import type { IdeaCardItem } from "./idea-card";
 
 interface TrackerApiResponse {
@@ -41,6 +42,9 @@ export function IdeaTrackerList({
   const [groups, setGroups] = useState<Record<string, IdeaCardItem[]>>(initialData?.groups ?? {});
   const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
+  // View mode: "flat" (default, status-grouped) or "tree" (lineage-indented).
+  // Default flat — the lineage is opt-in, never force-imposed on the list.
+  const [viewMode, setViewMode] = useState<"flat" | "tree">("flat");
 
   const fetchData = useCallback(async () => {
     try {
@@ -74,6 +78,9 @@ export function IdeaTrackerList({
     (sum, s) => sum + (groups[s] || []).length,
     0
   );
+
+  // Flatten all status groups into a single list for the lineage tree view.
+  const allIdeas: IdeaCardItem[] = STATUS_ORDER.flatMap((s) => groups[s] || []);
 
   useEffect(() => {
     if (!isLoading) {
@@ -154,22 +161,60 @@ export function IdeaTrackerList({
         </div>
       )}
 
-      {/* Status groups — only show groups with ideas */}
-      <div className="space-y-4">
-        {STATUS_ORDER.map((status) => {
-          const ideas = groups[status] || [];
-          if (ideas.length === 0) return null;
-          return (
-            <IdeaStatusGroup
-              key={status}
-              status={status}
-              ideas={ideas}
-              defaultOpen={status !== "done"}
-              onIdeaClick={onIdeaClick}
-            />
-          );
-        })}
+      {/* Flat / Tree view toggle — segmented control. Flat is the default; the
+          lineage tree groups by derivation when the user opts in. */}
+      <div className="flex justify-end">
+        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#EFEBE3] p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("flat")}
+            aria-pressed={viewMode === "flat"}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
+              viewMode === "flat"
+                ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
+                : "text-[#888780] hover:text-[#2C2C2A]"
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            {t("lineage.viewFlat")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("tree")}
+            aria-pressed={viewMode === "tree"}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
+              viewMode === "tree"
+                ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
+                : "text-[#888780] hover:text-[#2C2C2A]"
+            }`}
+          >
+            <GitFork className="h-3.5 w-3.5" />
+            {t("lineage.viewTree")}
+          </button>
+        </div>
       </div>
+
+      {viewMode === "tree" ? (
+        /* Lineage tree — single indented forest built from parentUuid */
+        <IdeaLineageTree ideas={allIdeas} onIdeaClick={onIdeaClick} />
+      ) : (
+        /* Status groups — only show groups with ideas */
+        <div className="space-y-4">
+          {STATUS_ORDER.map((status) => {
+            const ideas = groups[status] || [];
+            if (ideas.length === 0) return null;
+            return (
+              <IdeaStatusGroup
+                key={status}
+                status={status}
+                ideas={ideas}
+                defaultOpen={status !== "done"}
+                onIdeaClick={onIdeaClick}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

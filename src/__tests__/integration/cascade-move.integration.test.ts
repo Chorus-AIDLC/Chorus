@@ -100,9 +100,10 @@ describe("cross-project Idea cascade move (integration)", () => {
 
     // ----- preview -----
     const preview = await moveIdeaPreview(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW);
-    // 3 proposals (approved + draft + rejected), 1 document, 3 tasks, 8
-    // historical activity rows (1 idea + 3 proposals + 1 document + 3 tasks).
-    expect(preview.moved).toEqual({ proposals: 3, documents: 1, tasks: 3, activities: 8 });
+    // 1 idea (no lineage descendants in this fixture), 3 proposals (approved +
+    // draft + rejected), 1 document, 3 tasks, 8 historical activity rows
+    // (1 idea + 3 proposals + 1 document + 3 tasks).
+    expect(preview.moved).toEqual({ ideas: 1, proposals: 3, documents: 1, tasks: 3, activities: 8 });
 
     // ----- real move -----
     const result = await moveIdea(FULL_COMPANY_A, FULL_IDEA_UUID, FULL_P_NEW, "user-1", "user");

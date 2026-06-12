@@ -21,6 +21,11 @@ interface NewIdeaDialogProps {
   onOpenChange: (open: boolean) => void;
   projectUuid: string;
   onCreated?: (uuid: string) => void;
+  /** When set, the new idea is derived as a child of this idea (single-parent
+   *  lineage). Switches the dialog copy to "derive" wording. */
+  parentUuid?: string | null;
+  /** Display title of the parent, shown in the derive subtitle for context. */
+  parentTitle?: string;
 }
 
 export function NewIdeaDialog({
@@ -28,8 +33,12 @@ export function NewIdeaDialog({
   onOpenChange,
   projectUuid,
   onCreated,
+  parentUuid,
+  parentTitle,
 }: NewIdeaDialogProps) {
   const t = useTranslations("ideaTracker");
+  const tLineage = useTranslations("ideaTracker.lineage");
+  const isDerive = !!parentUuid;
   const tCommon = useTranslations("common");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -50,6 +59,7 @@ export function NewIdeaDialog({
         body: JSON.stringify({
           title: trimmedTitle,
           content: content.trim() || undefined,
+          ...(parentUuid ? { parentUuid } : {}),
         }),
       });
       const json = await res.json();
@@ -72,7 +82,12 @@ export function NewIdeaDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>{t("newIdea.title")}</DialogTitle>
+          <DialogTitle>{isDerive ? tLineage("deriveIdea") : t("newIdea.title")}</DialogTitle>
+          {isDerive && parentTitle && (
+            <p className="text-[13px] text-[#6B6B6B]">
+              {tLineage("derivedFrom")} · {parentTitle}
+            </p>
+          )}
         </DialogHeader>
 
         <div className="space-y-4 py-2">

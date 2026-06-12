@@ -113,6 +113,9 @@ function formatActivityMessage(activity: ActivityResponse, t: any): string {
     case "status_changed":
     case "idea_status_changed":
       return t("activity.ideaStatusChanged", { actor: actorName });
+    case "edited":
+    case "idea_edited":
+      return t("activity.ideaEdited", { actor: actorName });
     case "elaboration_started":
       return t("activity.elaborationStarted", { actor: actorName });
     case "elaboration_answered":
