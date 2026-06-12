@@ -13,8 +13,10 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const mockProjectAccess = vi.hoisted(() => ({
   canAccessProject: vi.fn(),
   canManageProject: vi.fn(),
+  claimOrCanManageProject: vi.fn(),
   canAccessGroup: vi.fn(),
   canManageGroup: vi.fn(),
+  claimOrCanManageGroup: vi.fn(),
 }));
 
 const mockProjectGroupService = vi.hoisted(() => ({
@@ -80,6 +82,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockProjectAccess.canAccessGroup.mockResolvedValue(true);
   mockProjectAccess.canManageGroup.mockResolvedValue(true);
+  mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(true);
   mockProjectGroupService.listGroupMembers.mockResolvedValue([]);
   mockProjectGroupService.addGroupMember.mockResolvedValue({ uuid: "m-1" });
   mockProjectGroupService.removeGroupMember.mockResolvedValue(true);
@@ -144,7 +147,7 @@ describe("project group member tools — access guards", () => {
 
   it("chorus_admin_add_project_group_member rejects when canManageGroup=false", async () => {
     registerWith(buildAuth(["project:admin"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_add_project_group_member({
       groupUuid,
@@ -177,7 +180,7 @@ describe("project group member tools — access guards", () => {
 
   it("chorus_admin_remove_project_group_member rejects when canManageGroup=false", async () => {
     registerWith(buildAuth(["project:admin"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_remove_project_group_member({
       groupUuid,
@@ -235,7 +238,7 @@ describe("chorus_admin_create_project_group — visibility + ownership", () => {
 describe("chorus_admin_update_project_group / delete_project_group — manage gate", () => {
   it("update rejects a non-owner (canManageGroup=false) without updating", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_update_project_group({ groupUuid, name: "X" });
     expect(res.isError).toBe(true);
@@ -245,7 +248,7 @@ describe("chorus_admin_update_project_group / delete_project_group — manage ga
 
   it("update succeeds for the owner (canManageGroup=true)", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(true);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(true);
 
     const res = await toolHandlers.chorus_admin_update_project_group({ groupUuid, name: "X" });
     expect(res.isError).toBeFalsy();
@@ -254,7 +257,7 @@ describe("chorus_admin_update_project_group / delete_project_group — manage ga
 
   it("delete rejects a non-owner without deleting", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_delete_project_group({ groupUuid });
     expect(res.isError).toBe(true);
@@ -263,7 +266,7 @@ describe("chorus_admin_update_project_group / delete_project_group — manage ga
 
   it("delete succeeds for the owner", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageGroup.mockResolvedValue(true);
+    mockProjectAccess.claimOrCanManageGroup.mockResolvedValue(true);
 
     const res = await toolHandlers.chorus_admin_delete_project_group({ groupUuid });
     expect(res.isError).toBeFalsy();

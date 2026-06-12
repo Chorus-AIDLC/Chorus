@@ -7,7 +7,7 @@ const mockUpdateProject = vi.fn();
 const mockDeleteProject = vi.fn();
 const mockSetProjectVisibility = vi.fn();
 const mockGetAuthContext = vi.fn();
-const mockCanManageProject = vi.fn();
+const mockClaimOrCanManageProject = vi.fn();
 
 vi.mock("@/services/project.service", () => ({
   getProject: (...args: unknown[]) => mockGetProject(...args),
@@ -17,7 +17,7 @@ vi.mock("@/services/project.service", () => ({
 }));
 
 vi.mock("@/lib/authz/project-access", () => ({
-  canManageProject: (...args: unknown[]) => mockCanManageProject(...args),
+  claimOrCanManageProject: (...args: unknown[]) => mockClaimOrCanManageProject(...args),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -94,7 +94,7 @@ describe("PATCH /api/projects/[uuid] — manage gating", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockGetProject.mockResolvedValue(projectRecord);
-    mockCanManageProject.mockResolvedValue(true);
+    mockClaimOrCanManageProject.mockResolvedValue(true);
     mockSetProjectVisibility.mockResolvedValue({ uuid: projectUuid, visibility: "shared" });
     mockUpdateProject.mockResolvedValue({
       uuid: projectUuid,
@@ -121,7 +121,7 @@ describe("PATCH /api/projects/[uuid] — manage gating", () => {
 
   it("non-owner member gets 403 when changing visibility", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageProject.mockResolvedValue(false);
+    mockClaimOrCanManageProject.mockResolvedValue(false);
 
     const res = await PATCH(
       makeRequest(`/api/projects/${projectUuid}`, {
@@ -144,7 +144,7 @@ describe("PATCH /api/projects/[uuid] — manage gating", () => {
       makeContext(projectUuid)
     );
     expect(res.status).toBe(404);
-    expect(mockCanManageProject).not.toHaveBeenCalled();
+    expect(mockClaimOrCanManageProject).not.toHaveBeenCalled();
   });
 
   it("rejects invalid visibility value with 422", async () => {
@@ -164,7 +164,7 @@ describe("DELETE /api/projects/[uuid] — manage gating", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockGetProject.mockResolvedValue(projectRecord);
-    mockCanManageProject.mockResolvedValue(true);
+    mockClaimOrCanManageProject.mockResolvedValue(true);
     mockDeleteProject.mockResolvedValue(true);
   });
 
@@ -179,7 +179,7 @@ describe("DELETE /api/projects/[uuid] — manage gating", () => {
 
   it("non-owner member gets 403", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageProject.mockResolvedValue(false);
+    mockClaimOrCanManageProject.mockResolvedValue(false);
 
     const res = await DELETE(
       makeRequest(`/api/projects/${projectUuid}`, { method: "DELETE" }),
@@ -196,6 +196,6 @@ describe("DELETE /api/projects/[uuid] — manage gating", () => {
       makeContext(projectUuid)
     );
     expect(res.status).toBe(404);
-    expect(mockCanManageProject).not.toHaveBeenCalled();
+    expect(mockClaimOrCanManageProject).not.toHaveBeenCalled();
   });
 });

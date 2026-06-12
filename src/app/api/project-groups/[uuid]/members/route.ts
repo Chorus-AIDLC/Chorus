@@ -15,7 +15,7 @@ import {
   addGroupMember,
   removeGroupMember,
 } from "@/services/project-group.service";
-import { canAccessGroup, canManageGroup } from "@/lib/authz/project-access";
+import { canAccessGroup, claimOrCanManageGroup } from "@/lib/authz/project-access";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -70,7 +70,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     if (!(await canAccessGroup(auth, groupUuid))) {
       return errors.notFound("Project group");
     }
-    if (!(await canManageGroup(auth, groupUuid))) {
+    if (!(await claimOrCanManageGroup(auth, groupUuid))) {
       return errors.forbidden("Only the project group owner can manage members");
     }
 
@@ -122,7 +122,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     if (!(await canAccessGroup(auth, groupUuid))) {
       return errors.notFound("Project group");
     }
-    if (!(await canManageGroup(auth, groupUuid))) {
+    if (!(await claimOrCanManageGroup(auth, groupUuid))) {
       return errors.forbidden("Only the project group owner can manage members");
     }
 

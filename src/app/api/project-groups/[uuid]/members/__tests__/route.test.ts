@@ -7,7 +7,7 @@ const mockAddGroupMember = vi.fn();
 const mockRemoveGroupMember = vi.fn();
 const mockGetAuthContext = vi.fn();
 const mockCanAccessGroup = vi.fn();
-const mockCanManageGroup = vi.fn();
+const mockClaimOrCanManageGroup = vi.fn();
 
 vi.mock("@/services/project-group.service", () => ({
   listGroupMembers: (...args: unknown[]) => mockListGroupMembers(...args),
@@ -17,7 +17,7 @@ vi.mock("@/services/project-group.service", () => ({
 
 vi.mock("@/lib/authz/project-access", () => ({
   canAccessGroup: (...args: unknown[]) => mockCanAccessGroup(...args),
-  canManageGroup: (...args: unknown[]) => mockCanManageGroup(...args),
+  claimOrCanManageGroup: (...args: unknown[]) => mockClaimOrCanManageGroup(...args),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -96,7 +96,7 @@ describe("POST /api/project-groups/[uuid]/members", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockCanAccessGroup.mockResolvedValue(true);
-    mockCanManageGroup.mockResolvedValue(true);
+    mockClaimOrCanManageGroup.mockResolvedValue(true);
     mockAddGroupMember.mockResolvedValue({
       uuid: "m2",
       memberType: "user",
@@ -123,7 +123,7 @@ describe("POST /api/project-groups/[uuid]/members", () => {
 
   it("non-owner member gets 403", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageGroup.mockResolvedValue(false);
+    mockClaimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await POST(
       makeRequest(`/api/project-groups/${groupUuid}/members`, {
@@ -149,7 +149,7 @@ describe("POST /api/project-groups/[uuid]/members", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mockCanManageGroup).not.toHaveBeenCalled();
+    expect(mockClaimOrCanManageGroup).not.toHaveBeenCalled();
   });
 
   it("returns 422 for invalid memberType", async () => {
@@ -182,7 +182,7 @@ describe("DELETE /api/project-groups/[uuid]/members", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockCanAccessGroup.mockResolvedValue(true);
-    mockCanManageGroup.mockResolvedValue(true);
+    mockClaimOrCanManageGroup.mockResolvedValue(true);
     mockRemoveGroupMember.mockResolvedValue(true);
   });
 
@@ -203,7 +203,7 @@ describe("DELETE /api/project-groups/[uuid]/members", () => {
 
   it("non-owner member gets 403", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageGroup.mockResolvedValue(false);
+    mockClaimOrCanManageGroup.mockResolvedValue(false);
 
     const res = await DELETE(
       makeRequest(
@@ -229,7 +229,7 @@ describe("DELETE /api/project-groups/[uuid]/members", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mockCanManageGroup).not.toHaveBeenCalled();
+    expect(mockClaimOrCanManageGroup).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the member does not exist", async () => {

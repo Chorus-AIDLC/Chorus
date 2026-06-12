@@ -12,7 +12,7 @@ import {
   deleteProject,
   setProjectVisibility,
 } from "@/services/project.service";
-import { canManageProject } from "@/lib/authz/project-access";
+import { claimOrCanManageProject } from "@/lib/authz/project-access";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -77,7 +77,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
   if (!existing) {
     return errors.notFound("Project");
   }
-  if (!(await canManageProject(auth, uuid))) {
+  if (!(await claimOrCanManageProject(auth, uuid))) {
     return errors.forbidden("Only the project owner can manage this project");
   }
 
@@ -154,7 +154,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
   if (!existing) {
     return errors.notFound("Project");
   }
-  if (!(await canManageProject(auth, uuid))) {
+  if (!(await claimOrCanManageProject(auth, uuid))) {
     return errors.forbidden("Only the project owner can delete this project");
   }
 

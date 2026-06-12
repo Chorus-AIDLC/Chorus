@@ -9,8 +9,10 @@ import type { Permission } from "@/lib/authz/types";
 import {
   canAccessProject,
   canManageProject,
+  claimOrCanManageProject,
   canAccessGroup,
   canManageGroup,
+  claimOrCanManageGroup,
   type AnyAuth,
 } from "@/lib/authz/project-access";
 
@@ -59,6 +61,21 @@ export async function assertProjectManage(
 }
 
 /**
+ * Claim-aware project-management guard. Identical to assertProjectManage but
+ * uses claimOrCanManageProject, so a NULL-owner project the actor can access is
+ * claimed (ownership assigned) on the first manage action. Use this at MUTATING
+ * entry points; the access-gated claim opens no privacy hole (see
+ * project-access.ts). Returns an MCP error when the actor cannot manage, else null.
+ */
+export async function assertProjectManageOrClaim(
+  auth: AnyAuth,
+  projectUuid: string,
+): Promise<McpErrorResult | null> {
+  const allowed = await claimOrCanManageProject(auth, projectUuid);
+  return allowed ? null : projectDeniedError();
+}
+
+/**
  * Group-visibility guard for MCP tools that take a `groupUuid` directly. Returns
  * an MCP error content object when the actor cannot access the group, or null
  * when access is granted. Mirror of assertProjectAccess. See Tech Design §6.
@@ -81,6 +98,19 @@ export async function assertGroupManage(
   groupUuid: string,
 ): Promise<McpErrorResult | null> {
   const allowed = await canManageGroup(auth, groupUuid);
+  return allowed ? null : groupDeniedError();
+}
+
+/**
+ * Claim-aware group-management guard. Mirror of assertProjectManageOrClaim:
+ * uses claimOrCanManageGroup so a NULL-owner group the actor can access is
+ * claimed on the first manage action. Use this at MUTATING entry points.
+ */
+export async function assertGroupManageOrClaim(
+  auth: AnyAuth,
+  groupUuid: string,
+): Promise<McpErrorResult | null> {
+  const allowed = await claimOrCanManageGroup(auth, groupUuid);
   return allowed ? null : groupDeniedError();
 }
 

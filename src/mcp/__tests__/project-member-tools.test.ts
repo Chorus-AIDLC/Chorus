@@ -10,6 +10,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 const mockProjectAccess = vi.hoisted(() => ({
   canAccessProject: vi.fn(),
   canManageProject: vi.fn(),
+  claimOrCanManageProject: vi.fn(),
 }));
 
 const mockProjectService = vi.hoisted(() => ({
@@ -76,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockProjectAccess.canAccessProject.mockResolvedValue(true);
   mockProjectAccess.canManageProject.mockResolvedValue(true);
+  mockProjectAccess.claimOrCanManageProject.mockResolvedValue(true);
   mockProjectService.listProjectMembers.mockResolvedValue([]);
   mockProjectService.addProjectMember.mockResolvedValue({ uuid: "m-1" });
   mockProjectService.removeProjectMember.mockResolvedValue(true);
@@ -85,7 +87,7 @@ beforeEach(() => {
 describe("chorus_admin_move_project_to_group — visibility guard", () => {
   it("rejects a non-manager (canManageProject=false) without moving", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageProject.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageProject.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_move_project_to_group({
       projectUuid,
@@ -99,7 +101,7 @@ describe("chorus_admin_move_project_to_group — visibility guard", () => {
 
   it("moves the project when the actor can manage it", async () => {
     registerWith(buildAuth(["project:write"]));
-    mockProjectAccess.canManageProject.mockResolvedValue(true);
+    mockProjectAccess.claimOrCanManageProject.mockResolvedValue(true);
 
     const res = await toolHandlers.chorus_admin_move_project_to_group({
       projectUuid,
@@ -163,7 +165,7 @@ describe("project member tools — access guards", () => {
 
   it("chorus_admin_add_project_member rejects when canManageProject=false", async () => {
     registerWith(buildAuth(["project:admin"]));
-    mockProjectAccess.canManageProject.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageProject.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_add_project_member({
       projectUuid,
@@ -196,7 +198,7 @@ describe("project member tools — access guards", () => {
 
   it("chorus_admin_remove_project_member rejects when canManageProject=false", async () => {
     registerWith(buildAuth(["project:admin"]));
-    mockProjectAccess.canManageProject.mockResolvedValue(false);
+    mockProjectAccess.claimOrCanManageProject.mockResolvedValue(false);
 
     const res = await toolHandlers.chorus_admin_remove_project_member({
       projectUuid,

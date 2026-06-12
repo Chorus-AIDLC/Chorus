@@ -14,7 +14,7 @@ import * as documentService from "@/services/document.service";
 import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
 import { zArray } from "./schema-utils";
-import { registerPermissionedTool, assertProjectAccess, assertProjectManage, assertGroupAccess, assertGroupManage } from "./register-helpers";
+import { registerPermissionedTool, assertProjectAccess, assertProjectManageOrClaim, assertGroupAccess, assertGroupManageOrClaim } from "./register-helpers";
 
 export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_admin_create_project - Create a new project
@@ -482,7 +482,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       // Visibility guard: only the group owner (or super admin) may rename/retag
       // a group. assertGroupManage returns the same not-found-or-denied error for
       // an inaccessible group — no existence leak.
-      const denied = await assertGroupManage(auth, groupUuid);
+      const denied = await assertGroupManageOrClaim(auth, groupUuid);
       if (denied) return denied;
 
       const group = await projectGroupService.updateProjectGroup({
@@ -516,7 +516,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ groupUuid }) => {
       // Visibility guard: only the group owner (or super admin) may delete it.
-      const denied = await assertGroupManage(auth, groupUuid);
+      const denied = await assertGroupManageOrClaim(auth, groupUuid);
       if (denied) return denied;
 
       const deleted = await projectGroupService.deleteProjectGroup(auth.companyUuid, groupUuid);
@@ -548,7 +548,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       // Visibility guard: moving a project between groups is a structural change,
       // so require management rights (owner / super admin). Non-members get the
       // same not-found-or-denied error — no existence leak.
-      const denied = await assertProjectManage(auth, projectUuid);
+      const denied = await assertProjectManageOrClaim(auth, projectUuid);
       if (denied) return denied;
 
       const result = await projectGroupService.moveProjectToGroup(
@@ -607,7 +607,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid, memberType, memberUuid }) => {
-      const denied = await assertProjectManage(auth, projectUuid);
+      const denied = await assertProjectManageOrClaim(auth, projectUuid);
       if (denied) return denied;
 
       const member = await projectService.addProjectMember(
@@ -640,7 +640,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ projectUuid, memberType, memberUuid }) => {
-      const denied = await assertProjectManage(auth, projectUuid);
+      const denied = await assertProjectManageOrClaim(auth, projectUuid);
       if (denied) return denied;
 
       const removed = await projectService.removeProjectMember(
@@ -698,7 +698,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid, memberType, memberUuid }) => {
-      const denied = await assertGroupManage(auth, groupUuid);
+      const denied = await assertGroupManageOrClaim(auth, groupUuid);
       if (denied) return denied;
 
       const member = await projectGroupService.addGroupMember(
@@ -731,7 +731,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid, memberType, memberUuid }) => {
-      const denied = await assertGroupManage(auth, groupUuid);
+      const denied = await assertGroupManageOrClaim(auth, groupUuid);
       if (denied) return denied;
 
       const removed = await projectGroupService.removeGroupMember(

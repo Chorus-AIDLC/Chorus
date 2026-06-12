@@ -7,7 +7,7 @@ const mockAddProjectMember = vi.fn();
 const mockRemoveProjectMember = vi.fn();
 const mockGetAuthContext = vi.fn();
 const mockCanAccessProject = vi.fn();
-const mockCanManageProject = vi.fn();
+const mockClaimOrCanManageProject = vi.fn();
 
 vi.mock("@/services/project.service", () => ({
   listProjectMembers: (...args: unknown[]) => mockListProjectMembers(...args),
@@ -17,7 +17,7 @@ vi.mock("@/services/project.service", () => ({
 
 vi.mock("@/lib/authz/project-access", () => ({
   canAccessProject: (...args: unknown[]) => mockCanAccessProject(...args),
-  canManageProject: (...args: unknown[]) => mockCanManageProject(...args),
+  claimOrCanManageProject: (...args: unknown[]) => mockClaimOrCanManageProject(...args),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -96,7 +96,7 @@ describe("POST /api/projects/[uuid]/members", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockCanAccessProject.mockResolvedValue(true);
-    mockCanManageProject.mockResolvedValue(true);
+    mockClaimOrCanManageProject.mockResolvedValue(true);
     mockAddProjectMember.mockResolvedValue({
       uuid: "m2",
       memberType: "user",
@@ -123,7 +123,7 @@ describe("POST /api/projects/[uuid]/members", () => {
 
   it("non-owner member gets 403", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageProject.mockResolvedValue(false);
+    mockClaimOrCanManageProject.mockResolvedValue(false);
 
     const res = await POST(
       makeRequest(`/api/projects/${projectUuid}/members`, {
@@ -149,7 +149,7 @@ describe("POST /api/projects/[uuid]/members", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mockCanManageProject).not.toHaveBeenCalled();
+    expect(mockClaimOrCanManageProject).not.toHaveBeenCalled();
   });
 
   it("returns 422 for invalid memberType", async () => {
@@ -182,7 +182,7 @@ describe("DELETE /api/projects/[uuid]/members", () => {
     vi.clearAllMocks();
     mockGetAuthContext.mockResolvedValue(ownerAuth);
     mockCanAccessProject.mockResolvedValue(true);
-    mockCanManageProject.mockResolvedValue(true);
+    mockClaimOrCanManageProject.mockResolvedValue(true);
     mockRemoveProjectMember.mockResolvedValue(true);
   });
 
@@ -203,7 +203,7 @@ describe("DELETE /api/projects/[uuid]/members", () => {
 
   it("non-owner member gets 403", async () => {
     mockGetAuthContext.mockResolvedValue(memberAuth);
-    mockCanManageProject.mockResolvedValue(false);
+    mockClaimOrCanManageProject.mockResolvedValue(false);
 
     const res = await DELETE(
       makeRequest(

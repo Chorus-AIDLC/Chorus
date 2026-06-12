@@ -15,7 +15,7 @@ import {
   addProjectMember,
   removeProjectMember,
 } from "@/services/project.service";
-import { canAccessProject, canManageProject } from "@/lib/authz/project-access";
+import { canAccessProject, claimOrCanManageProject } from "@/lib/authz/project-access";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -70,7 +70,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     if (!(await canAccessProject(auth, projectUuid))) {
       return errors.notFound("Project");
     }
-    if (!(await canManageProject(auth, projectUuid))) {
+    if (!(await claimOrCanManageProject(auth, projectUuid))) {
       return errors.forbidden("Only the project owner can manage members");
     }
 
@@ -122,7 +122,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     if (!(await canAccessProject(auth, projectUuid))) {
       return errors.notFound("Project");
     }
-    if (!(await canManageProject(auth, projectUuid))) {
+    if (!(await claimOrCanManageProject(auth, projectUuid))) {
       return errors.forbidden("Only the project owner can manage members");
     }
 
