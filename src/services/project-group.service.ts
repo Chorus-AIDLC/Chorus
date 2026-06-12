@@ -6,7 +6,7 @@ import {
   getAccessibleProjectUuids,
   getAccessibleGroupUuids,
   canAccessGroup,
-  canManageGroup,
+  canManageOrClaimableGroup,
   applyProjectFilter,
   ALL_PROJECTS,
 } from "@/lib/authz/project-access";
@@ -392,8 +392,10 @@ export async function getGroupDashboard(
   });
   if (!group) return null;
 
-  // The actor owns the group iff they can manage it (owner or super_admin).
-  const isOwner = await canManageGroup(auth, groupUuid);
+  // The actor "owns" the group for UI purposes iff they manage it OR could claim
+  // it (null-owner legacy group they can access). Shows manage controls without
+  // mutating on read — the real claim happens server-side on a manage action.
+  const isOwner = await canManageOrClaimableGroup(auth, groupUuid);
   const groupInfo = {
     uuid: group.uuid,
     name: group.name,

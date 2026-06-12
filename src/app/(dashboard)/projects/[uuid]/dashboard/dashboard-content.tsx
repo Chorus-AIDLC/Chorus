@@ -12,7 +12,7 @@ interface DashboardContentProps {
 
 export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }: DashboardContentProps) {
   const t = await getTranslations();
-  const { project, trackerData, stats, activities, currentUserUuid } = await getDashboardData(projectUuid);
+  const { project, trackerData, stats, activities, currentUserUuid, isOwner } = await getDashboardData(projectUuid);
 
   return (
     <div className="flex h-full flex-col gap-5 p-5 md:p-6">
@@ -27,10 +27,7 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
             projectName={project.name}
             projectDescription={project.description ?? null}
             visibility={project.visibility === "shared" ? "shared" : "private"}
-            isOwner={
-              project.ownerType === "user" &&
-              project.ownerUuid === currentUserUuid
-            }
+            isOwner={isOwner}
           />
         </div>
       </div>

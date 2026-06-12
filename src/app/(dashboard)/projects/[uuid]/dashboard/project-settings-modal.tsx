@@ -39,6 +39,7 @@ interface ProjectMember {
   uuid: string;
   memberType: "user" | "agent";
   memberUuid: string;
+  name?: string | null;
   role: string | null;
   createdAt: string;
 }
@@ -129,7 +130,7 @@ export function ProjectSettingsModal({
     const handle = setTimeout(async () => {
       try {
         const res = await fetch(
-          `/api/mentionables?q=${encodeURIComponent(search.trim())}&limit=10`,
+          `/api/mentionables?q=${encodeURIComponent(search.trim())}&limit=10&forMembers=1`,
         );
         const json = await res.json();
         if (json.success) {
@@ -429,7 +430,7 @@ export function ProjectSettingsModal({
                             <UserIcon className="h-3.5 w-3.5 shrink-0 text-[#6B6B6B]" />
                           )}
                           <span className="truncate text-[13px] text-[#2C2C2C]">
-                            {m.memberUuid}
+                            {m.name ?? m.memberUuid}
                           </span>
                           <Badge variant="secondary" className="shrink-0 text-[10px]">
                             {m.memberType === "agent"
