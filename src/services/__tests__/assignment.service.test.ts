@@ -41,6 +41,7 @@ function makeIdea(overrides: Record<string, unknown> = {}) {
     title: "Test Idea",
     content: "Idea content",
     status: "open",
+    parentUuid: null,
     createdByUuid: userUuid,
     createdAt: now,
     ...overrides,
@@ -329,6 +330,40 @@ describe("getAvailableItems", () => {
     expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { createdAt: "desc" },
+      })
+    );
+  });
+
+  it("should carry parentUuid through to the formatted idea response (set parent)", async () => {
+    const parentIdeaUuid = "idea-0000-0000-0000-0000000000aa";
+    const idea = makeIdea({ parentUuid: parentIdeaUuid });
+    mockPrisma.idea.findMany.mockResolvedValue([idea]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const result = await getAvailableItems(companyUuid, projectUuid, true, true);
+
+    expect(result.ideas[0].parentUuid).toBe(parentIdeaUuid);
+  });
+
+  it("should normalize a missing/null parentUuid to null", async () => {
+    const idea = makeIdea({ parentUuid: null });
+    mockPrisma.idea.findMany.mockResolvedValue([idea]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    const result = await getAvailableItems(companyUuid, projectUuid, true, true);
+
+    expect(result.ideas[0].parentUuid).toBeNull();
+  });
+
+  it("should request parentUuid in the idea select projection (no extra query)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
+
+    await getAvailableItems(companyUuid, projectUuid, true, true);
+
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ parentUuid: true }),
       })
     );
   });

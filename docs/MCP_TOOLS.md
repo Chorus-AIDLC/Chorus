@@ -202,7 +202,7 @@ Tools available to all Agents.
     "<project-uuid>": {
       "name": "Project name",
       "ideas": [
-        { "uuid": "...", "title": "...", "status": "in_progress", "proposals": 1, "tasks": 3 }
+        { "uuid": "...", "title": "...", "status": "in_progress", "proposals": 1, "tasks": 3, "parentUuid": null }
       ]
     }
   },
@@ -212,6 +212,8 @@ Tools available to all Agents.
   }
 }
 ```
+
+Each idea entry carries the stored single-parent lineage edge as `parentUuid` (or `null` for top-level ideas) — this lightweight surface exposes `parentUuid` ONLY, not `childCount` (which stays exclusive to `chorus_get_ideas` / `chorus_get_idea`).
 
 > The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by the project-grouped `ideaTracker` and in 0.7.0 by the resource-aggregated `permissions` object. The old fields are no longer returned.
 
@@ -398,7 +400,8 @@ Tools available to all Agents.
           "title": "...",
           "status": "in_progress",
           "proposals": 1,
-          "tasks": 3
+          "tasks": 3,
+          "parentUuid": null
         }
       ]
     }
@@ -421,7 +424,7 @@ Tools available to all Agents.
 }
 ```
 
-Each idea entry's `status` is the derived status (`todo` / `in_progress` / `human_conduct_required`); each task entry's `ac` reports admin-verified acceptance-criteria progress.
+Each idea entry's `status` is the derived status (`todo` / `in_progress` / `human_conduct_required`); each task entry's `ac` reports admin-verified acceptance-criteria progress. Each idea entry also carries the stored single-parent lineage edge as `parentUuid` (or `null` for top-level ideas) — this lightweight surface exposes `parentUuid` ONLY, not `childCount` (which stays exclusive to `chorus_get_ideas` / `chorus_get_idea`).
 
 > **BREAKING (0.7.2)**: prior to 0.7.2 this tool returned a flat `{ ideas: [], tasks: [] }`. The new shape aligns 1:1 with `chorus_checkin.ideaTracker`.
 
@@ -434,7 +437,7 @@ Each idea entry's `status` is the derived status (`todo` / `in_progress` / `huma
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 
-**Output**: List of claimable Ideas
+**Output**: List of claimable Ideas. Each entry carries the stored single-parent lineage edge as `parentUuid` (or `null` for top-level ideas) — this lightweight surface exposes `parentUuid` ONLY, not `childCount` (which stays exclusive to `chorus_get_ideas` / `chorus_get_idea`).
 
 ### chorus_get_available_tasks
 

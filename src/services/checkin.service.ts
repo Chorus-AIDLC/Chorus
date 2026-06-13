@@ -33,6 +33,7 @@ export interface CheckinIdea {
   uuid: string;
   title: string;
   status: DerivedIdeaStatus;
+  parentUuid: string | null;
   proposals: number;
   tasks: number;
 }

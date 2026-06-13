@@ -49,6 +49,7 @@ function makeIdea(
     title: `Idea ${uuid}`,
     status,
     elaborationStatus: null,
+    parentUuid: null,
     projectUuid,
     createdAt: now,
     updatedAt: now,
@@ -316,6 +317,38 @@ describe("buildIdeaTracker — proposal/task counts", () => {
 
     const tracker = await buildIdeaTracker(agentAuth);
     expect(tracker[PROJECT_A].ideas[0].proposals).toBe(0);
+  });
+});
+
+describe("buildIdeaTracker — parentUuid pass-through", () => {
+  it("requests parentUuid in the idea select projection (no extra query)", async () => {
+    await buildIdeaTracker(agentAuth);
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ parentUuid: true }),
+      }),
+    );
+  });
+
+  it("carries the stored parentUuid onto the tracker entry when set", async () => {
+    const parentIdeaUuid = "idea-pppp-pppp-pppp-pppppppppppp";
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i_child", PROJECT_A, "open", { parentUuid: parentIdeaUuid }),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker[PROJECT_A].ideas[0].parentUuid).toBe(parentIdeaUuid);
+  });
+
+  it("normalizes a parentless idea to parentUuid: null", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i_top", PROJECT_A, "open", { parentUuid: null }),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker[PROJECT_A].ideas[0].parentUuid).toBeNull();
   });
 });
 

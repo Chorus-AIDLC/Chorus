@@ -20,6 +20,7 @@ export interface AvailableIdeaResponse {
   title: string;
   content: string | null;
   status: string;
+  parentUuid: string | null;
   createdBy: { type: string; uuid: string; name: string } | null;
   createdAt: string;
 }
@@ -57,6 +58,7 @@ async function formatAvailableIdea(idea: {
   title: string;
   content: string | null;
   status: string;
+  parentUuid: string | null;
   createdByUuid: string;
   createdAt: Date;
 }): Promise<AvailableIdeaResponse> {
@@ -67,6 +69,7 @@ async function formatAvailableIdea(idea: {
     title: idea.title,
     content: idea.content,
     status: idea.status,
+    parentUuid: idea.parentUuid ?? null,
     createdBy,
     createdAt: idea.createdAt.toISOString(),
   };
@@ -140,6 +143,7 @@ export async function getAvailableItems(
             title: true,
             content: true,
             status: true,
+            parentUuid: true,
             createdByUuid: true,
             createdAt: true,
           },

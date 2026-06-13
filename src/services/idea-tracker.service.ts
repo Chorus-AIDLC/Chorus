@@ -16,6 +16,7 @@ export interface IdeaTrackerEntry {
   uuid: string;
   title: string;
   status: DerivedIdeaStatus;
+  parentUuid: string | null;
   proposals: number;
   tasks: number;
 }
@@ -116,6 +117,7 @@ export async function buildIdeaTracker(
       title: true,
       status: true,
       elaborationStatus: true,
+      parentUuid: true,
       projectUuid: true,
       createdAt: true,
       updatedAt: true,
@@ -233,6 +235,7 @@ export async function buildIdeaTracker(
       uuid: idea.uuid,
       title: idea.title,
       status: derivedStatus,
+      parentUuid: idea.parentUuid ?? null,
       proposals: ideaProposalCount.get(idea.uuid) ?? 0,
       tasks: taskStatuses.length,
     });
