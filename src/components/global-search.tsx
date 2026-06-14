@@ -200,7 +200,8 @@ export function GlobalSearch({ currentProjectUuid, currentProjectName, currentGr
         if (result.projectUuid) router.push(`/projects/${result.projectUuid}/tasks/${result.uuid}`);
         break;
       case "idea":
-        if (result.projectUuid) router.push(`/projects/${result.projectUuid}/ideas/${result.uuid}`);
+        // Ideas live in the Dashboard side panel (the /ideas page was removed).
+        if (result.projectUuid) router.push(`/projects/${result.projectUuid}/dashboard?panel=${result.uuid}`);
         break;
       case "proposal":
         if (result.projectUuid) router.push(`/projects/${result.projectUuid}/proposals/${result.uuid}`);

@@ -104,7 +104,8 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
       value: stats.ideas.total,
       badge: stats.ideas.open > 0 ? t("stats.openCount", { count: stats.ideas.open }) : null,
       badgeStyle: "bg-[#C67A5220] text-[#C67A52]",
-      href: `/projects/${projectUuid}/ideas`,
+      // Idea browsing lives in this Dashboard (the /ideas page was removed).
+      href: `/projects/${projectUuid}/dashboard`,
       iconBg: "bg-[#FFF3E0]",
       icon: <Lightbulb className="h-5 w-5 text-[#E65100]" />,
     },

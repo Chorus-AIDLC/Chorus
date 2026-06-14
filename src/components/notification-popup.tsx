@@ -119,7 +119,7 @@ function getEntityPath(notification: Notification): string {
   // Reports notify on the parent Idea (entityType: "idea"). Deep-link to the
   // dashboard's Idea panel — `panel=<ideaUuid>` selects which Idea to open and
   // `tab=overview` opens the overview tab where ReportsList renders inline
-  // (matching `move-idea-dialog.tsx` and `[ideaUuid]/page.tsx`).
+  // (matching the dashboard's own panel deep-link scheme).
   if (action === "report_created") {
     return `${base}/dashboard?panel=${entityUuid}&tab=overview`;
   }
@@ -127,7 +127,8 @@ function getEntityPath(notification: Notification): string {
     case "task":
       return `${base}/tasks/${entityUuid}`;
     case "idea":
-      return `${base}/ideas/${entityUuid}`;
+      // Ideas open in the Dashboard side panel (the /ideas page was removed).
+      return `${base}/dashboard?panel=${entityUuid}`;
     case "proposal":
       return `${base}/proposals/${entityUuid}`;
     case "document":

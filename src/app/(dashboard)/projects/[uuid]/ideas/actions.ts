@@ -95,7 +95,7 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
 
 /**
  * Fetch enriched ideas data for client-side refetch (SSE-driven updates).
- * Mirrors the data enrichment in ideas-page-content.tsx server component.
+ * Mirrors the data enrichment performed by the Dashboard tracker's server load.
  */
 export async function fetchIdeasAction(projectUuid: string) {
   const auth = await getServerAuthContext();

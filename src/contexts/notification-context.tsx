@@ -66,7 +66,8 @@ function getEntityPath(entityType: string, entityUuid: string, projectUuid: stri
   const base = `/projects/${projectUuid}`;
   switch (entityType) {
     case "task": return `${base}/tasks/${entityUuid}`;
-    case "idea": return `${base}/ideas/${entityUuid}`;
+    // Ideas open in the Dashboard side panel (the /ideas page was removed).
+    case "idea": return `${base}/dashboard?panel=${entityUuid}`;
     case "proposal": return `${base}/proposals/${entityUuid}`;
     case "document": return `${base}/documents/${entityUuid}`;
     default: return base;

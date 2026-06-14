@@ -9,17 +9,19 @@ import { ANIM } from "@/lib/animation";
  * that render as side panels (e.g. task/idea detail overlays).
  *
  * /projects/[uuid]/tasks/[taskUuid]  → /projects/[uuid]/tasks
- * /projects/[uuid]/ideas/[ideaUuid]  → /projects/[uuid]/ideas
  * /projects/[uuid]/documents/[docUuid] → /projects/[uuid]/documents
  * /projects/[uuid]/proposals/[propUuid] → /projects/[uuid]/proposals
  * /projects/[uuid]/dashboard          → /projects/[uuid]/dashboard
  * /projects                           → /projects
  * /settings                           → /settings
+ *
+ * Note: ideas have no detail route — they open as a Dashboard side panel via
+ * ?panel=, so there is no /ideas/[ideaUuid] page to strip here.
  */
 function getPageKey(pathname: string): string {
   // Match /projects/<uuid>/<section>/<detail-uuid> — strip the detail UUID
   const match = pathname.match(
-    /^(\/projects\/[a-f0-9-]{36}\/(tasks|ideas|documents|proposals))\/.+$/
+    /^(\/projects\/[a-f0-9-]{36}\/(tasks|documents|proposals))\/.+$/
   );
   if (match) return match[1];
   return pathname;

@@ -9,7 +9,6 @@ import {
   ArrowLeft,
   ChevronDown,
   LayoutDashboard,
-  Lightbulb,
   FileText,
   Tags,
   CheckSquare,
@@ -236,7 +235,8 @@ export default function DashboardLayout({
   // Project navigation items - build URLs using UUIDs
   const getProjectNavItems = (projectUuid: string) => [
     { href: `/projects/${projectUuid}/dashboard`, label: t("nav.overview"), icon: LayoutDashboard },
-    { href: `/projects/${projectUuid}/ideas`, label: t("nav.ideas"), icon: Lightbulb },
+    // Ideas list page removed — idea browsing lives in the Dashboard (Overview).
+    // The /ideas RESTful URLs are 308-redirected to the Dashboard in middleware.
     { href: `/projects/${projectUuid}/documents`, label: t("nav.documents"), icon: FileText },
     { href: `/projects/${projectUuid}/proposals`, label: t("nav.proposals"), icon: Tags },
     { href: `/projects/${projectUuid}/tasks`, label: t("nav.tasks"), icon: CheckSquare },
