@@ -16,12 +16,15 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
 
   return (
     <div className="flex h-full flex-col gap-5 p-5 md:p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-medium text-[#2C2C2A]">{t("ideaTracker.overview")}</h1>
-          <p className="mt-1 text-[13px] text-[#5F5E5A]">{t("ideaTracker.overviewSubtitle")}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#A8A39B]">{t("ideaTracker.overview")}</p>
+          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-[#2C2C2A]">{project.name}</h1>
+          <p className="mt-1 text-[13px] text-[#5F5E5A]">
+            {project.description?.trim() ? project.description : t("ideaTracker.overviewSubtitle")}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <ProjectSettingsModal projectUuid={projectUuid} projectName={project.name} projectDescription={project.description ?? null} />
         </div>
       </div>
