@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 import { ACCESS_TOKEN_EXPIRY, ACCESS_TOKEN_MAX_AGE } from "@/lib/user-session";
 import { getCookieOptions } from "@/lib/cookie-utils";
+import { resolveIdeaRedirect } from "@/lib/idea-url-redirect";
 import logger from "@/lib/logger";
 
 const mwLogger = logger.child({ module: "middleware" });
@@ -154,16 +155,25 @@ async function handleUserSessionRefresh(request: NextRequest): Promise<NextRespo
 
 // ─── Main middleware ─────────────────────────────────────────────────────────
 export async function middleware(request: NextRequest) {
-  // --- 0. Legacy URL redirects: ?idea={id} → /ideas/{id}, ?task={id} → /tasks/{id} ---
+  // --- 0. URL redirects ---
   const { pathname, searchParams } = request.nextUrl;
-  const ideasMatch = pathname.match(/^\/projects\/([^/]+)\/ideas$/);
-  if (ideasMatch && searchParams.has("idea")) {
-    const ideaUuid = searchParams.get("idea")!;
+
+  // The Idea List page was removed (idea browsing lives in the Dashboard Idea
+  // Tracker). Keep the RESTful idea URLs alive by 308-redirecting them into the
+  // Dashboard + side-panel address. Also collapses the legacy ?idea={id} link
+  // straight to the panel (was a two-hop /ideas/{id} redirect). See
+  // src/lib/idea-url-redirect.ts for the mapping.
+  const ideaRedirect = resolveIdeaRedirect(pathname, searchParams.get("idea"));
+  if (ideaRedirect) {
     const url = request.nextUrl.clone();
-    url.pathname = `/projects/${ideasMatch[1]}/ideas/${ideaUuid}`;
-    url.searchParams.delete("idea");
-    return NextResponse.redirect(url, 307);
+    url.pathname = ideaRedirect.pathname;
+    // Drop list-page filter params (status/assignedToMe) and the legacy ?idea=;
+    // rebuild the query with only the panel param when there is one.
+    url.search = "";
+    if (ideaRedirect.panel) url.searchParams.set("panel", ideaRedirect.panel);
+    return NextResponse.redirect(url, 308);
   }
+
   const tasksMatch = pathname.match(/^\/projects\/([^/]+)\/tasks$/);
   if (tasksMatch && searchParams.has("task")) {
     const taskUuid = searchParams.get("task")!;
