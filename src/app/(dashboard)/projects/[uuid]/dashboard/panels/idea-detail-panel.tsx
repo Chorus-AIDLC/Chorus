@@ -134,6 +134,11 @@ interface IdeaDetailPanelProps {
   projectUuid: string;
   currentUserUuid: string;
   onClose: () => void;
+  // Switch the open panel to another idea (lineage parent/child, post-derive).
+  // Wired to the parent's usePanelUrl.openPanel so the panel actually re-renders
+  // for the new idea — a bare router.push of ?panel= changes the URL but not the
+  // hook's selectedId state, so the panel would never switch.
+  onNavigate?: (ideaUuid: string) => void;
 }
 
 export function IdeaDetailPanel({
@@ -141,6 +146,7 @@ export function IdeaDetailPanel({
   projectUuid,
   currentUserUuid,
   onClose,
+  onNavigate,
 }: IdeaDetailPanelProps) {
   const t = useTranslations();
   const tTracker = useTranslations("ideaTracker");
@@ -423,14 +429,14 @@ export function IdeaDetailPanel({
     setIsEditing(true);
   };
 
-  // After the derive dialog creates the child, open it in the panel.
+  // After the derive dialog creates the child, switch the panel to it.
+  // router.refresh() repaints the underlying tree/list with the new edge;
+  // onNavigate (the parent's openPanel) is what actually swaps the open panel —
+  // a bare router.push of ?panel= changes the URL but not the hook's state.
   const handleDerived = (childUuid: string) => {
     toast.success(tLineage("deriveIdea"));
     router.refresh();
-    const params = new URLSearchParams(window.location.search);
-    params.set("panel", childUuid);
-    params.set("tab", "overview");
-    router.push(`${window.location.pathname}?${params.toString()}`);
+    onNavigate?.(childUuid);
   };
 
   const handleCancelEdit = () => {
@@ -698,12 +704,7 @@ export function IdeaDetailPanel({
                         {idea.parent ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              const params = new URLSearchParams(window.location.search);
-                              params.set("panel", idea.parent!.uuid);
-                              params.set("tab", "overview");
-                              router.push(`${window.location.pathname}?${params.toString()}`);
-                            }}
+                            onClick={() => onNavigate?.(idea.parent!.uuid)}
                             className="flex w-full items-center gap-2 rounded-lg bg-[#FAF8F4] px-3 py-2.5 text-left transition-colors hover:bg-[#F5F2EC]"
                           >
                             <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
@@ -727,12 +728,7 @@ export function IdeaDetailPanel({
                                   {idx > 0 && <div className="h-px bg-[#F0EEEA]" />}
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const params = new URLSearchParams(window.location.search);
-                                      params.set("panel", child.uuid);
-                                      params.set("tab", "overview");
-                                      router.push(`${window.location.pathname}?${params.toString()}`);
-                                    }}
+                                    onClick={() => onNavigate?.(child.uuid)}
                                     className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[#FAF8F4]"
                                   >
                                     <span className="flex min-w-0 items-center gap-2">

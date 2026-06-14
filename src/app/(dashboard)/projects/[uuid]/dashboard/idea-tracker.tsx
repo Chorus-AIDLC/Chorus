@@ -159,6 +159,7 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
           projectUuid={projectUuid}
           currentUserUuid={currentUserUuid}
           onClose={closePanel}
+          onNavigate={openPanel}
         />
       )}
     </div>
