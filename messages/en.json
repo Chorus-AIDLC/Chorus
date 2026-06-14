@@ -1134,6 +1134,7 @@
     "overviewSubtitle": "Track ideas, proposals, and tasks at a glance",
     "tabs": {
       "ideas": "Ideas",
+      "lineage": "Lineage",
       "stats": "Stats"
     },
     "badge": {

@@ -1135,6 +1135,7 @@
     "overviewSubtitle": "追踪想法、提案和任务进展",
     "tabs": {
       "ideas": "想法",
+      "lineage": "血缘",
       "stats": "统计"
     },
     "badge": {

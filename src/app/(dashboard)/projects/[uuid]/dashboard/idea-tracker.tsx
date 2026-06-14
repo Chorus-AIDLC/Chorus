@@ -2,13 +2,20 @@
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { BarChart3, GitFork, List, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePanelUrl } from "@/hooks/use-panel-url";
 import { IdeaTrackerList } from "./idea-tracker-list";
 import { IdeaTrackerStats } from "./idea-tracker-stats";
 import { IdeaDetailPanel } from "./panels/idea-detail-panel";
 import { NewIdeaDialog } from "./new-idea-dialog";
+import {
+  adaptiveDefault,
+  hasLineageInGroups,
+  readStoredView,
+  storeView,
+  type DashboardView,
+} from "./dashboard-view-preference";
 import type { TrackerGroupsResult } from "@/services/idea.service";
 
 interface IdeaTrackerProps {
@@ -35,68 +42,91 @@ interface IdeaTrackerProps {
 
 export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
   const t = useTranslations("ideaTracker");
-  const [activeTab, setActiveTab] = useState<"ideas" | "stats">("ideas");
-  const [isEmpty, setIsEmpty] = useState(false);
+
+  // Single owner of the view selection. Resolved once on mount: a stored
+  // per-project preference wins; otherwise the adaptive default (lineage when
+  // the project has derivation, else the flat list). Lazy initializer so this
+  // never recomputes on re-render or data refresh — the view must not jump
+  // under the user when ideas change.
+  const [view, setView] = useState<DashboardView>(() => {
+    const stored = readStoredView(projectUuid);
+    if (stored) return stored;
+    return adaptiveDefault(hasLineageInGroups(initialTrackerData?.groups));
+  });
   const [showNewIdeaDialog, setShowNewIdeaDialog] = useState(false);
+
+  // Persist the manual choice so it wins on the next visit.
+  const selectView = (next: DashboardView) => {
+    setView(next);
+    storeView(projectUuid, next);
+  };
+
+  // Emptiness is owned here, derived from the same tracker data the switch is
+  // built on — not signalled up from the list (which only renders for one view).
+  const isEmpty = initialTrackerData
+    ? Object.values(initialTrackerData.groups).reduce((n, arr) => n + arr.length, 0) === 0
+    : false;
 
   const basePath = `/projects/${projectUuid}/dashboard`;
   const { selectedId: selectedIdeaUuid, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedIdeaUuid);
 
+  // One segmented control, three peer options. Beige-fill style, unified across
+  // all three (no second control, no layout jump when switching to Stats).
+  const viewOptions: { id: DashboardView; label: string; icon: typeof List }[] = [
+    { id: "ideas", label: t("tabs.ideas"), icon: List },
+    { id: "lineage", label: t("tabs.lineage"), icon: GitFork },
+    { id: "stats", label: t("tabs.stats"), icon: BarChart3 },
+  ];
+
   return (
     <div className="flex h-full flex-col">
-      {/* Header: Tabs + New Idea button */}
-      {!isEmpty && (
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] p-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveTab("ideas")}
-              className={`rounded-md px-3 py-1 h-auto text-[12px] font-medium transition-colors ${
-                activeTab === "ideas"
-                  ? "bg-white text-[#2C2C2C] shadow-sm"
-                  : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+      {/* Header: single 3-way view switch + New Idea button */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#EFEBE3] p-0.5">
+          {viewOptions.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => selectView(id)}
+              aria-pressed={view === id}
+              className={`flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
+                view === id
+                  ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
+                  : "text-[#888780] hover:text-[#2C2C2A]"
               }`}
             >
-              {t("tabs.ideas")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveTab("stats")}
-              className={`rounded-md px-3 py-1 h-auto text-[12px] font-medium transition-colors ${
-                activeTab === "stats"
-                  ? "bg-white text-[#2C2C2C] shadow-sm"
-                  : "text-[#9A9A9A] hover:text-[#6B6B6B]"
-              }`}
-            >
-              {t("tabs.stats")}
-            </Button>
-          </div>
-
-          {activeTab === "ideas" && (
-            <Button
-              onClick={() => setShowNewIdeaDialog(true)}
-              size="sm"
-              className="gap-1.5 rounded-md bg-[#C67A52] px-3.5 py-2 text-white hover:bg-[#B56A42]"
-            >
-              <Plus className="h-4 w-4" />
-              {t("actions.newIdea")}
-            </Button>
-          )}
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
         </div>
-      )}
 
-      {activeTab === "ideas" ? (
+        {/* New Idea lives in the header for non-stats views. When the project is
+            empty the list renders its own centered CTA (with a New Idea button),
+            so the header button is suppressed to avoid two. The switch itself
+            always stays mounted and reachable, even at zero ideas. */}
+        {view !== "stats" && !isEmpty && (
+          <Button
+            onClick={() => setShowNewIdeaDialog(true)}
+            size="sm"
+            className="gap-1.5 rounded-md bg-[#C67A52] px-3.5 py-2 text-white hover:bg-[#B56A42]"
+          >
+            <Plus className="h-4 w-4" />
+            {t("actions.newIdea")}
+          </Button>
+        )}
+      </div>
+
+      {view === "stats" ? (
+        <IdeaTrackerStats projectUuid={projectUuid} initialData={initialStatsData} />
+      ) : (
         <IdeaTrackerList
           projectUuid={projectUuid}
           initialData={initialTrackerData}
+          viewMode={view === "lineage" ? "tree" : "flat"}
           onIdeaClick={openPanel}
           onNewIdea={() => setShowNewIdeaDialog(true)}
-          onEmptyChange={setIsEmpty}
         />
-      ) : (
-        <IdeaTrackerStats projectUuid={projectUuid} initialData={initialStatsData} />
       )}
 
       <NewIdeaDialog
