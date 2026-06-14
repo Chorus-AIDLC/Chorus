@@ -1155,8 +1155,6 @@
       "done": "Done"
     },
     "lineage": {
-      "viewFlat": "Flat",
-      "viewTree": "By lineage",
       "derivedCount": "{count} derived",
       "title": "Lineage",
       "derivedFrom": "Derived from",

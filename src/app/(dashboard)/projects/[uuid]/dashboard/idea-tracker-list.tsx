@@ -27,6 +27,12 @@ interface IdeaTrackerListProps {
   viewMode: "flat" | "tree";
   onIdeaClick?: (uuid: string) => void;
   onNewIdea?: () => void;
+  // Reports the *live* emptiness of the list (after realtime refetches) up to
+  // the parent, which owns whether the header "New Idea" button shows. The
+  // parent's SSR snapshot can't see ideas created during the session, so this
+  // bottom-up signal keeps the button in sync. Fires for both flat and tree
+  // views — emptiness is computed before the viewMode branch below.
+  onEmptyChange?: (isEmpty: boolean) => void;
 }
 
 // Display order matching the Pencil design
@@ -38,6 +44,7 @@ export function IdeaTrackerList({
   viewMode,
   onIdeaClick,
   onNewIdea,
+  onEmptyChange,
 }: IdeaTrackerListProps) {
   const t = useTranslations("ideaTracker");
 
@@ -77,6 +84,14 @@ export function IdeaTrackerList({
     (sum, s) => sum + (groups[s] || []).length,
     0
   );
+
+  // Report emptiness up to the parent once data has settled, so the header
+  // "New Idea" button tracks the live list (e.g. after creating the first idea
+  // from the empty-state CTA). Skipped while still loading to avoid a spurious
+  // "empty" flash before the first fetch resolves.
+  useEffect(() => {
+    if (!isLoading) onEmptyChange?.(totalIdeas === 0);
+  }, [totalIdeas, isLoading, onEmptyChange]);
 
   // Flatten all status groups into a single list for the lineage tree view.
   const allIdeas: IdeaCardItem[] = STATUS_ORDER.flatMap((s) => groups[s] || []);

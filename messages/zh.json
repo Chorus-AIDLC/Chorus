@@ -1156,8 +1156,6 @@
       "done": "已完成"
     },
     "lineage": {
-      "viewFlat": "扁平",
-      "viewTree": "按血缘",
       "derivedCount": "{count} 派生",
       "title": "派生关系",
       "derivedFrom": "派生自",

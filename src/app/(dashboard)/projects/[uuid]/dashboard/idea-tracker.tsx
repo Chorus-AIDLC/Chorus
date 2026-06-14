@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BarChart3, GitFork, List, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePanelUrl } from "@/hooks/use-panel-url";
@@ -43,17 +43,26 @@ interface IdeaTrackerProps {
 export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
   const t = useTranslations("ideaTracker");
 
-  // Single owner of the view selection. Resolved once on mount: a stored
-  // per-project preference wins; otherwise the adaptive default (lineage when
-  // the project has derivation, else the flat list). Lazy initializer so this
-  // never recomputes on re-render or data refresh — the view must not jump
-  // under the user when ideas change.
-  const [view, setView] = useState<DashboardView>(() => {
-    const stored = readStoredView(projectUuid);
-    if (stored) return stored;
-    return adaptiveDefault(hasLineageInGroups(initialTrackerData?.groups));
-  });
+  // Single owner of the view selection. The initial value is the *adaptive
+  // default* (lineage when the project has derivation, else the flat list) and
+  // is computed identically on server and client — localStorage is deliberately
+  // NOT read here. Reading it in the initializer would make the client's first
+  // render diverge from the server HTML for anyone with a stored override,
+  // producing a React hydration mismatch on every load. Instead the stored
+  // per-project preference is applied once after mount (effect below).
+  const [view, setView] = useState<DashboardView>(() =>
+    adaptiveDefault(hasLineageInGroups(initialTrackerData?.groups)),
+  );
   const [showNewIdeaDialog, setShowNewIdeaDialog] = useState(false);
+
+  // Apply the stored per-project override after hydration. This runs only on
+  // the client (post-mount), so it can safely touch localStorage without
+  // affecting the server-rendered HTML. The empty dep array means it runs once;
+  // a later data refresh must never yank the user to a different view.
+  useEffect(() => {
+    const stored = readStoredView(projectUuid);
+    if (stored) setView(stored);
+  }, [projectUuid]);
 
   // Persist the manual choice so it wins on the next visit.
   const selectView = (next: DashboardView) => {
@@ -61,11 +70,18 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
     storeView(projectUuid, next);
   };
 
-  // Emptiness is owned here, derived from the same tracker data the switch is
-  // built on — not signalled up from the list (which only renders for one view).
-  const isEmpty = initialTrackerData
-    ? Object.values(initialTrackerData.groups).reduce((n, arr) => n + arr.length, 0) === 0
-    : false;
+  // Emptiness is owned here but kept in sync with the *live* tracker data. The
+  // SSR snapshot seeds the first value; the child list refetches its groups on
+  // realtime idea/proposal/task events and reports the current emptiness back
+  // via onEmptyChange. Without this, creating the first idea from the empty-state
+  // CTA would populate the list but leave the header "New Idea" button hidden
+  // (the SSR prop never updates), stranding the user with no way to add another
+  // idea until a full reload.
+  const [isEmpty, setIsEmpty] = useState<boolean>(() =>
+    initialTrackerData
+      ? Object.values(initialTrackerData.groups).reduce((n, arr) => n + arr.length, 0) === 0
+      : false,
+  );
 
   const basePath = `/projects/${projectUuid}/dashboard`;
   const { selectedId: selectedIdeaUuid, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedIdeaUuid);
@@ -126,6 +142,7 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
           viewMode={view === "lineage" ? "tree" : "flat"}
           onIdeaClick={openPanel}
           onNewIdea={() => setShowNewIdeaDialog(true)}
+          onEmptyChange={setIsEmpty}
         />
       )}
 
