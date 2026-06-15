@@ -273,6 +273,36 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 **Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
 
+### chorus_resolve_root_idea
+
+**Description**: Resolve any entity (task / document / proposal / idea) to the **root idea** of its lineage in a single server-side call — the single source of truth for entity→root-idea attribution (used by the Chorus CLI daemon to anchor one local Claude session per root idea). Walks `task`/`document` → `proposal` (when `inputType="idea"`) → idea, then follows `idea.parentUuid` to the topmost idea of the lineage forest. Public read tool, scoped to the caller's company; no permission gate.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| entityType | string | Yes | One of `task`, `document`, `proposal`, `idea` |
+| entityUuid | string | Yes | Entity UUID |
+
+**Output**: JSON object:
+| Field | Type | Description |
+|-------|------|-------------|
+| rootIdeaUuid | string \| null | Root idea UUID, or `null` when there is no idea ancestor. `null` is a **successful** result, not an error. |
+| lineage | array | Resolved path ordered child→root; each node is `{ type, uuid, title }`. |
+| resolvedVia | string | Why the result was produced (enum below). |
+| ambiguous | boolean? | Present and `true` only when a multi-idea proposal forced an `inputUuids[0]` choice. |
+| candidates | string[]? | When ambiguous: the resolved root idea UUID of each input idea (`candidates[0] === rootIdeaUuid`). |
+
+**`resolvedVia` values**:
+| Value | Meaning | rootIdeaUuid |
+|-------|---------|--------------|
+| `root_idea` | Entity is/resolved to an idea, walked to its root. | non-null |
+| `via_proposal` | task → proposal(`inputType="idea"`) → idea → root. | non-null |
+| `via_document_proposal` | document → proposal(`inputType="idea"`) → idea → root. | non-null |
+| `no_proposal` | Task/document with no `proposalUuid` (e.g. a quick task). | null |
+| `proposal_input_not_idea` | Proposal's `inputType` is not `"idea"` (or it has no input ideas). | null |
+| `standalone_document` | Document with no `proposalUuid`. | null |
+| `not_found` | Entity UUID not found in the caller's company. | null |
+
 ### chorus_get_documents
 
 **Description**: Get the list of documents for a project

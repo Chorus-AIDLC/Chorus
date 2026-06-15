@@ -1,7 +1,17 @@
 // cli/lineage.mjs
 // Resolves any inbound Chorus notification to its ROOT idea, so the daemon can
-// key one Claude session per root idea (the idea_root anchor). Verified field
-// chains against the repo:
+// key one Claude session per root idea (the idea_root anchor).
+//
+// SERVER-FIRST with a client-side fallback (cli-daemon spec "Lineage-anchored
+// session continuity"): the daemon prefers the server tool chorus_resolve_root_idea
+// (the single source of truth — it closes the document-attribution gap and defines
+// multi-idea semantics). When that tool is unavailable (an older server that does
+// not register it, or a transport error that survived ChorusClient's one retry),
+// the daemon falls back to the original client-side walk so attribution still
+// works against any server version. A well-formed server response — INCLUDING a
+// rootIdeaUuid of null — is authoritative and never triggers the fallback.
+//
+// Client-side fallback walk (verified field chains against the repo):
 //   • get_task → { proposalUuid: string | null }            (task.service.ts)
 //   • get_proposal → { inputType, inputUuids: string[] }     (proposal.service.ts)
 //       an idea-derived proposal has inputType "idea" and inputUuids[0] = idea
@@ -31,7 +41,9 @@ export class LineageResolver {
   }
 
   /**
-   * Resolve an event to its root idea uuid, or null if none.
+   * Resolve an event to its root idea uuid, or null if none. Server-first: prefer
+   * the chorus_resolve_root_idea tool; fall back to the client-side walk only when
+   * that tool is unavailable. The per-run cache single-flights both paths.
    * @param {{ entityType?: string, entityUuid?: string }} event
    * @returns {Promise<string|null>}
    */
@@ -46,15 +58,65 @@ export class LineageResolver {
     if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
 
     let root = null;
-    try {
-      const startIdeaUuid = await this.#toIdeaUuid(entityType, entityUuid);
-      root = startIdeaUuid ? await this.#walkToRoot(startIdeaUuid) : null;
-    } catch (err) {
-      this.logger.warn(`[Chorus] lineage resolution failed for ${cacheKey}: ${err}`);
-      root = null;
+    // 1) Prefer the server-side resolver (single source of truth).
+    const server = await this.#resolveViaServer(entityType, entityUuid);
+    if (server.ok) {
+      root = server.rootIdeaUuid;
+      this.logger.info(
+        `[Chorus] lineage(server): ${cacheKey} → ${root ?? "none"}` +
+          (server.resolvedVia ? ` (${server.resolvedVia})` : "")
+      );
+    } else {
+      // 2) Fall back to the client-side walk (older server / unavailable tool).
+      this.logger.info(
+        `[Chorus] lineage(fallback): ${cacheKey} — server resolver unavailable (${server.reason})`
+      );
+      try {
+        const startIdeaUuid = await this.#toIdeaUuid(entityType, entityUuid);
+        root = startIdeaUuid ? await this.#walkToRoot(startIdeaUuid) : null;
+      } catch (err) {
+        this.logger.warn(`[Chorus] lineage resolution failed for ${cacheKey}: ${err}`);
+        root = null;
+      }
     }
     this.cache.set(cacheKey, root);
     return root;
+  }
+
+  /**
+   * Call the server-side chorus_resolve_root_idea tool. Returns a discriminated
+   * result: { ok:true, rootIdeaUuid, resolvedVia } when the server answered with a
+   * well-formed payload (rootIdeaUuid string-or-null — authoritative, including
+   * null), or { ok:false, reason } when the tool is unavailable / non-conforming /
+   * errored, signalling the caller to use the client-side fallback.
+   * @param {string} entityType @param {string} entityUuid
+   */
+  async #resolveViaServer(entityType, entityUuid) {
+    let result;
+    try {
+      result = await this.mcp.callTool("chorus_resolve_root_idea", { entityType, entityUuid });
+    } catch (err) {
+      // ChorusClient has already retried once on a transport/session error, so any
+      // throw here means: unknown tool (older server) or a persistent failure.
+      // Either way, fall back — the client walk is the safe path.
+      return { ok: false, reason: `call-error: ${err?.message ?? err}` };
+    }
+    // A well-formed response is an object carrying a rootIdeaUuid of string|null.
+    // Anything else (null, primitive, missing/!=type field) means the tool isn't
+    // really there (older server returned an empty/parse-fallback body) — fall back.
+    if (
+      result &&
+      typeof result === "object" &&
+      "rootIdeaUuid" in result &&
+      (typeof result.rootIdeaUuid === "string" || result.rootIdeaUuid === null)
+    ) {
+      return {
+        ok: true,
+        rootIdeaUuid: result.rootIdeaUuid,
+        resolvedVia: typeof result.resolvedVia === "string" ? result.resolvedVia : undefined,
+      };
+    }
+    return { ok: false, reason: "non-conforming-shape" };
   }
 
   /**
