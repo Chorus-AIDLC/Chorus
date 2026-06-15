@@ -1,7 +1,13 @@
 # daemon-connection-registry Specification
 
 ## Purpose
-TBD - created by archiving change add-daemon-connection-tracking. Update Purpose after archive.
+Defines the server-side registry of long-lived daemon SSE connections: the
+`DaemonConnection` model, the register/deregister lifecycle wired into the SSE
+routes, heartbeat-driven liveness (abort-primary with a `lastSeenAt` staleness
+safety net for instance crashes), and the owner-scoped visibility contract that
+binds any future read API. This is the data-collection + liveness layer only —
+the read API, the Daemons observability UI, the per-connection session view, and
+the `AgentSession` linkage are owned by the consuming capability (idea f2fe9a7f).
 ## Requirements
 ### Requirement: The server SHALL persist registered daemon connections in a DaemonConnection model
 

@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   // null, the lifecycle below is skipped and the route behaves exactly as before
   // (no DaemonConnection row is written).
   const report = parseSelfReport(request.nextUrl.searchParams);
-  const connUuid = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+  const conn = await registerConnection(auth.companyUuid, auth.actorUuid, report);
 
   const stream = new ReadableStream({
     start(controller) {
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
         send(": heartbeat\n\n");
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
         // swallows + logs its own errors and never throws.
-        if (connUuid) void touchConnection(auth.companyUuid, connUuid);
+        if (conn) void touchConnection(auth.companyUuid, conn);
       }, 30_000);
 
       // Cleanup on abort (client disconnect)
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
         }
         // Primary disconnect signal: mark the registry row offline.
         // Fire-and-forget — never throws to the client.
-        if (connUuid) void markDisconnected(auth.companyUuid, connUuid);
+        if (conn) void markDisconnected(auth.companyUuid, conn);
       });
     },
   });

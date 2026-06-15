@@ -39,6 +39,20 @@ export interface SelfReport {
   startedAt?: Date | null;
 }
 
+/**
+ * Handle returned by `registerConnection`, identifying a specific connection
+ * *generation*. `connectedAt` is a fencing token: each (re)registration stamps a
+ * fresh `connectedAt` on the row, and the per-connection lifecycle calls
+ * (`touchConnection` / `markDisconnected`) only act on the row while it still
+ * carries the same `connectedAt`. This isolates connection generations: once a
+ * newer connection refreshes the row, an older generation's lingering heartbeat
+ * or late `abort` becomes a no-op instead of corrupting the newer row's status.
+ */
+export interface ConnectionHandle {
+  uuid: string;
+  connectedAt: Date;
+}
+
 // ===== Helpers =====
 
 function isDaemonClientType(value: string): value is DaemonClientType {
@@ -78,7 +92,8 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
 /**
  * Register (upsert) a daemon connection as `online`.
  *
- * Returns the row uuid on success, or `null` when:
+ * Returns a `ConnectionHandle` (`{ uuid, connectedAt }`) on success, or `null`
+ * when:
  *  - the clientType is not a recognized daemon type (the caller then skips the
  *    rest of the lifecycle — no touch / no markDisconnected), or
  *  - the persistence write fails (swallowed + logged).
@@ -89,12 +104,19 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
  * defaults to "" so the composite unique key is deterministic even for a
  * host-less self-report (Prisma treats null as distinct, which would defeat the
  * dedup — see schema comment).
+ *
+ * The returned `connectedAt` is the fencing token for the lifecycle calls: it is
+ * stamped fresh on every (re)registration, so a later reconnect's `connectedAt`
+ * differs from an earlier generation's. `touchConnection` / `markDisconnected`
+ * gate on it, so an older connection's late `abort` or lingering heartbeat
+ * cannot flip the newer generation's row (the "stale-abort-resurrects-offline"
+ * race).
  */
 export async function registerConnection(
   companyUuid: string,
   agentUuid: string,
   report: SelfReport,
-): Promise<string | null> {
+): Promise<ConnectionHandle | null> {
   if (!isDaemonClientType(report.clientType)) {
     return null;
   }
@@ -133,9 +155,9 @@ export async function registerConnection(
         lastSeenAt: now,
         disconnectedAt: null,
       },
-      select: { uuid: true },
+      select: { uuid: true, connectedAt: true },
     });
-    return row.uuid;
+    return { uuid: row.uuid, connectedAt: row.connectedAt };
   } catch (err) {
     logger.error(
       { err, companyUuid, agentUuid, clientType: report.clientType },
@@ -147,21 +169,24 @@ export async function registerConnection(
 
 /**
  * Mark a connection `offline` with `disconnectedAt = now` (primary disconnect
- * signal: the SSE stream's `abort` event). companyUuid-scoped. Swallows + logs
- * on failure; never throws to the caller.
+ * signal: the SSE stream's `abort` event). companyUuid-scoped and fenced on
+ * `connectedAt`: if a newer connection generation has since re-registered the
+ * row (refreshing `connectedAt`), this update matches 0 rows and is a no-op, so
+ * a stale `abort` from an old generation never flips a freshly-online row to
+ * `offline`. Swallows + logs on failure; never throws to the caller.
  */
 export async function markDisconnected(
   companyUuid: string,
-  connectionUuid: string,
+  handle: ConnectionHandle,
 ): Promise<void> {
   try {
     await prisma.daemonConnection.updateMany({
-      where: { uuid: connectionUuid, companyUuid },
+      where: { uuid: handle.uuid, companyUuid, connectedAt: handle.connectedAt },
       data: { status: "offline", disconnectedAt: new Date() },
     });
   } catch (err) {
     logger.error(
-      { err, companyUuid, connectionUuid },
+      { err, companyUuid, connectionUuid: handle.uuid },
       "Failed to mark daemon connection disconnected",
     );
   }
@@ -169,20 +194,24 @@ export async function markDisconnected(
 
 /**
  * Heartbeat tick → bump `lastSeenAt` (and ensure status stays `online`).
- * companyUuid-scoped. Swallows + logs on failure; never throws to the caller.
+ * companyUuid-scoped and fenced on `connectedAt`: a heartbeat from an old
+ * connection generation (whose row has since been re-registered by a newer
+ * generation) matches 0 rows and is a no-op, so it cannot resurrect or keep
+ * alive a row that now belongs to a different connection. Swallows + logs on
+ * failure; never throws to the caller.
  */
 export async function touchConnection(
   companyUuid: string,
-  connectionUuid: string,
+  handle: ConnectionHandle,
 ): Promise<void> {
   try {
     await prisma.daemonConnection.updateMany({
-      where: { uuid: connectionUuid, companyUuid },
+      where: { uuid: handle.uuid, companyUuid, connectedAt: handle.connectedAt },
       data: { status: "online", lastSeenAt: new Date() },
     });
   } catch (err) {
     logger.error(
-      { err, companyUuid, connectionUuid },
+      { err, companyUuid, connectionUuid: handle.uuid },
       "Failed to touch daemon connection",
     );
   }

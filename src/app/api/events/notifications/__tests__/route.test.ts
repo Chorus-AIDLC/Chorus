@@ -36,6 +36,9 @@ import { GET } from "@/app/api/events/notifications/route";
 const companyUuid = "company-0000-0000-0000-000000000001";
 const actorUuid = "agent-0000-0000-0000-000000000001";
 const connectionUuid = "conn-0000-0000-0000-000000000001";
+// registerConnection now returns a {uuid, connectedAt} handle (the connectedAt
+// is a generation fence); touch/markDisconnected receive the whole handle.
+const connHandle = { uuid: connectionUuid, connectedAt: new Date("2026-06-15T03:00:00.000Z") };
 
 const agentAuth = { type: "agent", companyUuid, actorUuid, permissions: [] };
 
@@ -75,7 +78,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetAuthContext.mockResolvedValue(agentAuth);
   mockParseSelfReport.mockReturnValue({ clientType: "openclaw", host: "h" });
-  mockRegisterConnection.mockResolvedValue(connectionUuid);
+  mockRegisterConnection.mockResolvedValue(connHandle);
 });
 
 afterEach(() => {
@@ -131,7 +134,7 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     expect(mockTouchConnection).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockTouchConnection).toHaveBeenCalledTimes(1);
-    expect(mockTouchConnection).toHaveBeenCalledWith(companyUuid, connectionUuid);
+    expect(mockTouchConnection).toHaveBeenCalledWith(companyUuid, connHandle);
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockTouchConnection).toHaveBeenCalledTimes(2);
@@ -147,7 +150,7 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     await Promise.resolve();
 
     expect(mockMarkDisconnected).toHaveBeenCalledTimes(1);
-    expect(mockMarkDisconnected).toHaveBeenCalledWith(companyUuid, connectionUuid);
+    expect(mockMarkDisconnected).toHaveBeenCalledWith(companyUuid, connHandle);
     expect(mockEventBus.off).toHaveBeenCalledWith(
       `notification:agent:${actorUuid}`,
       expect.any(Function),

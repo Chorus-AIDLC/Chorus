@@ -31,6 +31,8 @@ import {
 const companyUuid = "company-0000-0000-0000-000000000001";
 const agentUuid = "agent-0000-0000-0000-000000000001";
 const connectionUuid = "conn-0000-0000-0000-000000000001";
+const connectedAt = new Date("2026-06-15T03:00:00.000Z");
+const handle = { uuid: connectionUuid, connectedAt };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -91,8 +93,8 @@ describe("parseSelfReport", () => {
 
 // ===== registerConnection =====
 describe("registerConnection", () => {
-  it("writes an online row for a daemon clientType and returns its uuid", async () => {
-    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid });
+  it("writes an online row for a daemon clientType and returns a {uuid, connectedAt} handle", async () => {
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     const report: SelfReport = {
       clientType: "claude_code",
       clientVersion: "0.11.0",
@@ -102,7 +104,7 @@ describe("registerConnection", () => {
 
     const result = await registerConnection(companyUuid, agentUuid, report);
 
-    expect(result).toBe(connectionUuid);
+    expect(result).toEqual({ uuid: connectionUuid, connectedAt });
     expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
     const arg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
     // Upsert key is the composite unique (agentUuid, clientType, host).
@@ -118,19 +120,23 @@ describe("registerConnection", () => {
     expect(arg.create.host).toBe("mac.local");
     expect(arg.create.connectedAt).toBeInstanceOf(Date);
     expect(arg.create.lastSeenAt).toBeInstanceOf(Date);
-    // update branch flips back to online + clears disconnectedAt
+    // update branch flips back to online + clears disconnectedAt + refreshes
+    // connectedAt (the fencing token for an older generation's late calls).
     expect(arg.update.status).toBe("online");
     expect(arg.update.disconnectedAt).toBeNull();
+    expect(arg.update.connectedAt).toBeInstanceOf(Date);
     expect(arg.update.companyUuid).toBe(companyUuid);
+    // The handle's connectedAt comes from the persisted row, not the local clock.
+    expect(arg.select).toEqual({ uuid: true, connectedAt: true });
   });
 
   it("registers an openclaw clientType", async () => {
-    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid });
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     const result = await registerConnection(companyUuid, agentUuid, {
       clientType: "openclaw",
       host: "linux-box",
     });
-    expect(result).toBe(connectionUuid);
+    expect(result).toEqual({ uuid: connectionUuid, connectedAt });
     expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
   });
 
@@ -158,14 +164,14 @@ describe("registerConnection", () => {
   });
 
   it("upserts the same (agentUuid, clientType, host) row on reconnect rather than inserting", async () => {
-    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid });
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     const report: SelfReport = { clientType: "claude_code", host: "mac.local" };
 
     const first = await registerConnection(companyUuid, agentUuid, report);
     const second = await registerConnection(companyUuid, agentUuid, report);
 
-    expect(first).toBe(connectionUuid);
-    expect(second).toBe(connectionUuid);
+    expect(first).toEqual({ uuid: connectionUuid, connectedAt });
+    expect(second).toEqual({ uuid: connectionUuid, connectedAt });
     // Two upsert calls, both keyed on the same composite — never .create.
     expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(2);
     const firstWhere = mockPrisma.daemonConnection.upsert.mock.calls[0][0].where;
@@ -174,7 +180,7 @@ describe("registerConnection", () => {
   });
 
   it("defaults a missing host to '' so the composite key stays deterministic", async () => {
-    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid });
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     await registerConnection(companyUuid, agentUuid, { clientType: "claude_code" });
     const arg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
     expect(arg.where.agentUuid_clientType_host.host).toBe("");
@@ -182,7 +188,7 @@ describe("registerConnection", () => {
   });
 
   it("coerces missing clientVersion/startedAt to null", async () => {
-    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid });
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     await registerConnection(companyUuid, agentUuid, {
       clientType: "claude_code",
       host: "h",
@@ -205,38 +211,54 @@ describe("registerConnection", () => {
 
 // ===== markDisconnected =====
 describe("markDisconnected", () => {
-  it("sets status=offline + disconnectedAt, scoped by companyUuid + uuid", async () => {
+  it("sets status=offline + disconnectedAt, fenced by companyUuid + uuid + connectedAt", async () => {
     mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 1 });
-    await markDisconnected(companyUuid, connectionUuid);
+    await markDisconnected(companyUuid, handle);
     expect(mockPrisma.daemonConnection.updateMany).toHaveBeenCalledTimes(1);
     const arg = mockPrisma.daemonConnection.updateMany.mock.calls[0][0];
-    expect(arg.where).toEqual({ uuid: connectionUuid, companyUuid });
+    // connectedAt in the where clause is the generation fence: a stale abort
+    // from an older generation matches 0 rows once the row has been re-registered.
+    expect(arg.where).toEqual({ uuid: connectionUuid, companyUuid, connectedAt });
     expect(arg.data.status).toBe("offline");
     expect(arg.data.disconnectedAt).toBeInstanceOf(Date);
   });
 
+  it("matches 0 rows (no-op) when a newer generation has refreshed connectedAt", async () => {
+    // The conditional update simply affects 0 rows — the service neither throws
+    // nor logs an error for the stale-abort case.
+    mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 0 });
+    await expect(markDisconnected(companyUuid, handle)).resolves.toBeUndefined();
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
   it("swallows + logs a persistence error (never throws)", async () => {
     mockPrisma.daemonConnection.updateMany.mockRejectedValue(new Error("db down"));
-    await expect(markDisconnected(companyUuid, connectionUuid)).resolves.toBeUndefined();
+    await expect(markDisconnected(companyUuid, handle)).resolves.toBeUndefined();
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
   });
 });
 
 // ===== touchConnection =====
 describe("touchConnection", () => {
-  it("bumps lastSeenAt and ensures status=online, scoped by companyUuid + uuid", async () => {
+  it("bumps lastSeenAt and ensures status=online, fenced by companyUuid + uuid + connectedAt", async () => {
     mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 1 });
-    await touchConnection(companyUuid, connectionUuid);
+    await touchConnection(companyUuid, handle);
     expect(mockPrisma.daemonConnection.updateMany).toHaveBeenCalledTimes(1);
     const arg = mockPrisma.daemonConnection.updateMany.mock.calls[0][0];
-    expect(arg.where).toEqual({ uuid: connectionUuid, companyUuid });
+    expect(arg.where).toEqual({ uuid: connectionUuid, companyUuid, connectedAt });
     expect(arg.data.status).toBe("online");
     expect(arg.data.lastSeenAt).toBeInstanceOf(Date);
   });
 
+  it("matches 0 rows (no-op) when a newer generation has refreshed connectedAt", async () => {
+    mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 0 });
+    await expect(touchConnection(companyUuid, handle)).resolves.toBeUndefined();
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
   it("swallows + logs a persistence error (never throws)", async () => {
     mockPrisma.daemonConnection.updateMany.mockRejectedValue(new Error("db down"));
-    await expect(touchConnection(companyUuid, connectionUuid)).resolves.toBeUndefined();
+    await expect(touchConnection(companyUuid, handle)).resolves.toBeUndefined();
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
   });
 });
