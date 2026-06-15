@@ -14,6 +14,7 @@ import {
   CheckSquare,
   Activity,
   FolderKanban,
+  RadioTower,
   Settings,
   LogOut,
   Menu,
@@ -246,6 +247,7 @@ export default function DashboardLayout({
   // Global navigation items
   const globalNavItems = [
     { href: "/projects", label: t("nav.projects"), icon: FolderKanban },
+    { href: "/agent-connections", label: t("nav.agentConnections"), icon: RadioTower },
     { href: "/settings", label: t("nav.settings"), icon: Settings },
   ];
 

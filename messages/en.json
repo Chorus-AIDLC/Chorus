@@ -128,6 +128,7 @@
   },
   "nav": {
     "projects": "Projects",
+    "agentConnections": "Agent Connections",
     "settings": "Settings",
     "overview": "Overview",
     "documents": "Documents",
@@ -1347,5 +1348,30 @@
   "idea": {
     "reportsList": "REPORTS",
     "reportsAcrossProposals": "across all approved proposals"
+  },
+  "agentConnections": {
+    "title": "Agent Connections",
+    "subtitle": "Daemons you own that are connected to Chorus and listening for task dispatches.",
+    "summary": "{online} online · {total} total",
+    "loading": "Loading connections...",
+    "statusOnline": "Online",
+    "statusOffline": "Offline",
+    "fieldHost": "Host",
+    "fieldUptime": "Uptime",
+    "fieldLastActive": "Last active",
+    "fieldStarted": "Started",
+    "hostUnknown": "Unknown host",
+    "versionUnknown": "Unknown",
+    "clientClaudeCode": "Claude Code",
+    "clientOpenclaw": "OpenClaw",
+    "clientUnknown": "Unknown client",
+    "uptimeJustStarted": "Just started",
+    "uptimeMinutes": "{minutes}m",
+    "uptimeHoursMinutes": "{hours}h {minutes}m",
+    "uptimeDaysHours": "{days}d {hours}h",
+    "empty": {
+      "title": "No agent connections yet",
+      "body": "Start a daemon to connect an agent to Chorus. Run `chorus daemon` from your terminal, or enable the OpenClaw plugin, then this page will show it here."
+    }
   }
 }

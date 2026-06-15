@@ -5,6 +5,7 @@ const mockPrisma = vi.hoisted(() => ({
   daemonConnection: {
     upsert: vi.fn(),
     updateMany: vi.fn(),
+    findMany: vi.fn(),
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -24,6 +25,8 @@ import {
   registerConnection,
   markDisconnected,
   touchConnection,
+  listConnectionsForOwner,
+  listConnectionsForAgent,
   type SelfReport,
 } from "@/services/daemon-connection.service";
 
@@ -260,5 +263,224 @@ describe("touchConnection", () => {
     mockPrisma.daemonConnection.updateMany.mockRejectedValue(new Error("db down"));
     await expect(touchConnection(companyUuid, handle)).resolves.toBeUndefined();
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===== Read projection (listConnectionsForOwner / listConnectionsForAgent) =====
+
+// Pin "now" so the staleness boundary is deterministic. Date.now() in the
+// mapper is driven by the faked clock.
+const NOW = new Date("2026-06-15T04:00:00.000Z");
+const ownerUuid = "owner-0000-0000-0000-000000000001";
+
+// Build a DaemonConnection row fixture, dating lastSeenAt `agoMs` before NOW.
+function makeRow(
+  overrides: {
+    uuid?: string;
+    status?: string;
+    agoMs?: number; // how long before NOW lastSeenAt was
+    startedAt?: Date | null;
+    clientVersion?: string | null;
+    host?: string;
+    disconnectedAt?: Date | null;
+  } = {},
+) {
+  const agoMs = overrides.agoMs ?? 0;
+  return {
+    uuid: overrides.uuid ?? connectionUuid,
+    agentUuid,
+    clientType: "claude_code",
+    // Use `in` (not `??`) for the nullable fields so an explicit null override
+    // is honored rather than falling through to the default.
+    clientVersion: "clientVersion" in overrides ? overrides.clientVersion : "0.11.0",
+    host: overrides.host ?? "mac.local",
+    startedAt:
+      "startedAt" in overrides ? overrides.startedAt : new Date("2026-06-15T03:00:00.000Z"),
+    status: overrides.status ?? "online",
+    connectedAt: new Date("2026-06-15T03:30:00.000Z"),
+    lastSeenAt: new Date(NOW.getTime() - agoMs),
+    disconnectedAt: "disconnectedAt" in overrides ? overrides.disconnectedAt : null,
+  };
+}
+
+describe("listConnectionsForOwner", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  it("filters by companyUuid + agent.ownerUuid and maps rows to ConnectionView", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow()]);
+
+    const result = await listConnectionsForOwner(companyUuid, ownerUuid);
+
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0]).toEqual({
+      where: { companyUuid, agent: { ownerUuid } },
+    });
+    expect(result).toHaveLength(1);
+    const view = result[0];
+    // Full projection shape, with timestamps mapped to ISO strings.
+    expect(view).toEqual({
+      uuid: connectionUuid,
+      agentUuid,
+      clientType: "claude_code",
+      clientVersion: "0.11.0",
+      host: "mac.local",
+      startedAt: "2026-06-15T03:00:00.000Z",
+      status: "online",
+      effectiveStatus: "online",
+      connectedAt: "2026-06-15T03:30:00.000Z",
+      lastSeenAt: "2026-06-15T04:00:00.000Z",
+      disconnectedAt: null,
+    });
+  });
+
+  it("maps null startedAt / clientVersion / disconnectedAt through as null", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ startedAt: null, clientVersion: null, disconnectedAt: null, host: "" }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.startedAt).toBeNull();
+    expect(view.clientVersion).toBeNull();
+    expect(view.disconnectedAt).toBeNull();
+    expect(view.host).toBe("");
+  });
+
+  it("returns an empty array when there are genuinely no rows", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    await expect(listConnectionsForOwner(companyUuid, ownerUuid)).resolves.toEqual([]);
+  });
+
+  it("PROPAGATES a query error (does NOT swallow to [] like the write functions)", async () => {
+    mockPrisma.daemonConnection.findMany.mockRejectedValue(new Error("db down"));
+    await expect(listConnectionsForOwner(companyUuid, ownerUuid)).rejects.toThrow("db down");
+    // Crucially, no swallow-and-log: the read path surfaces the error.
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("listConnectionsForAgent", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  it("filters by companyUuid + agentUuid and maps rows to ConnectionView", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow()]);
+
+    const result = await listConnectionsForAgent(companyUuid, agentUuid);
+
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0]).toEqual({
+      where: { companyUuid, agentUuid },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].uuid).toBe(connectionUuid);
+    expect(result[0].effectiveStatus).toBe("online");
+  });
+
+  it("PROPAGATES a query error (does NOT swallow to [])", async () => {
+    mockPrisma.daemonConnection.findMany.mockRejectedValue(new Error("db down"));
+    await expect(listConnectionsForAgent(companyUuid, agentUuid)).rejects.toThrow("db down");
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("effectiveStatus derivation", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  it("online + fresh (lastSeenAt within threshold) → online", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ status: "online", agoMs: STALE_THRESHOLD_MS - 1 }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.effectiveStatus).toBe("online");
+  });
+
+  it("online + stale (lastSeenAt older than threshold) → offline", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ status: "online", agoMs: STALE_THRESHOLD_MS + 1 }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.effectiveStatus).toBe("offline");
+    // raw status is still passed through unchanged
+    expect(view.status).toBe("online");
+  });
+
+  it("online + exactly at the threshold → online (inclusive boundary)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ status: "online", agoMs: STALE_THRESHOLD_MS }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.effectiveStatus).toBe("online");
+  });
+
+  it("online + one ms over the threshold → offline (just-over boundary)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ status: "online", agoMs: STALE_THRESHOLD_MS + 1 }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.effectiveStatus).toBe("offline");
+  });
+
+  it("offline → offline regardless of a fresh lastSeenAt", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ status: "offline", agoMs: 0 }),
+    ]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.effectiveStatus).toBe("offline");
+  });
+});
+
+describe("ordering", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  it("sorts online-first, then lastSeenAt desc", async () => {
+    // Build rows out of final order:
+    //  - offlineOld:  offline, lastSeenAt 1h ago
+    //  - onlineOld:   online + fresh, lastSeenAt 60s ago
+    //  - onlineNew:   online + fresh, lastSeenAt now
+    //  - offlineNew:  offline, lastSeenAt 30s ago
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ uuid: "offline-old", status: "offline", agoMs: 60 * 60 * 1000 }),
+      makeRow({ uuid: "online-old", status: "online", agoMs: 60_000 }),
+      makeRow({ uuid: "online-new", status: "online", agoMs: 0 }),
+      makeRow({ uuid: "offline-new", status: "offline", agoMs: 30_000 }),
+    ]);
+
+    const result = await listConnectionsForOwner(companyUuid, ownerUuid);
+
+    // Online (newest lastSeenAt first), then offline (newest lastSeenAt first).
+    expect(result.map((v) => v.uuid)).toEqual([
+      "online-new",
+      "online-old",
+      "offline-new",
+      "offline-old",
+    ]);
+    expect(result.map((v) => v.effectiveStatus)).toEqual([
+      "online",
+      "online",
+      "offline",
+      "offline",
+    ]);
+  });
+
+  it("treats a stale online row as offline for ordering purposes", async () => {
+    // A status=online but stale row must sort with the offline group, since
+    // ordering keys on effectiveStatus, not the raw status.
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ uuid: "stale-online", status: "online", agoMs: STALE_THRESHOLD_MS + 1 }),
+      makeRow({ uuid: "fresh-online", status: "online", agoMs: 0 }),
+    ]);
+    const result = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(result.map((v) => v.uuid)).toEqual(["fresh-online", "stale-online"]);
+    expect(result.map((v) => v.effectiveStatus)).toEqual(["online", "offline"]);
   });
 });

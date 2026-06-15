@@ -1,11 +1,16 @@
 // src/services/daemon-connection.service.ts
-// Daemon Connection Registry Service — persistence layer for long-lived daemon
-// SSE connections. Collection + liveness only: no read/query API, no HTTP/MCP
-// endpoint, no AgentSession link, no UI (those are deferred to idea f2fe9a7f).
+// Daemon Connection Registry Service — persistence + read projection for
+// long-lived daemon SSE connections.
 //
-// All functions are companyUuid-scoped and swallow-and-log on failure: a registry
-// write must NEVER throw to the caller, so a failing DB write can never block or
-// break SSE stream setup / event delivery.
+// All functions are companyUuid-scoped. The two error-handling regimes are
+// deliberately different:
+//   - WRITE functions (registerConnection / markDisconnected / touchConnection)
+//     swallow-and-log on failure: a registry write must NEVER throw to the
+//     caller, so a failing DB write can never block or break SSE stream setup /
+//     event delivery.
+//   - READ functions (listConnectionsForOwner / listConnectionsForAgent) do NOT
+//     swallow: a query failure propagates so the route surfaces a 500. An empty
+//     list must mean genuinely zero rows, not a hidden error.
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -53,10 +58,97 @@ export interface ConnectionHandle {
   connectedAt: Date;
 }
 
+/**
+ * Read projection of a `DaemonConnection` row returned to callers of the read
+ * API. The raw `status` and the timestamps are passed through so a client can
+ * render uptime and last-active without re-implementing liveness; the
+ * server-derived `effectiveStatus` is the single liveness verdict the client
+ * renders verbatim.
+ *
+ * Note the two distinct timestamps:
+ *  - `startedAt`   — self-reported daemon *process* start time (untrusted,
+ *                    display-only; may be null if the daemon did not report it).
+ *  - `connectedAt` — when *this* SSE connection registered with the server
+ *                    (server-stamped; the fencing token for the connection
+ *                    generation). Used for the "uptime" of the current
+ *                    connection, which is not the same as process uptime.
+ */
+export interface ConnectionView {
+  uuid: string;
+  agentUuid: string;
+  clientType: string;
+  clientVersion: string | null;
+  host: string; // "" when host-less (display can show a placeholder)
+  startedAt: string | null; // ISO-8601 — self-reported daemon process start
+  status: string; // raw persisted status
+  effectiveStatus: "online" | "offline";
+  connectedAt: string; // ISO-8601 — when this SSE connection registered
+  lastSeenAt: string; // ISO-8601
+  disconnectedAt: string | null;
+}
+
 // ===== Helpers =====
 
 function isDaemonClientType(value: string): value is DaemonClientType {
   return (DAEMON_CLIENT_TYPES as readonly string[]).includes(value);
+}
+
+// Subset of the DaemonConnection row the mapper reads. Kept structural (rather
+// than importing Prisma's generated type) so the mapper is trivially unit-
+// testable with plain fixture objects.
+interface DaemonConnectionRow {
+  uuid: string;
+  agentUuid: string;
+  clientType: string;
+  clientVersion: string | null;
+  host: string;
+  startedAt: Date | null;
+  status: string;
+  connectedAt: Date;
+  lastSeenAt: Date;
+  disconnectedAt: Date | null;
+}
+
+/**
+ * Map a persisted row to its `ConnectionView`, deriving `effectiveStatus` —
+ * the single source of truth for liveness. A connection is *effectively online*
+ * iff its raw `status` is the literal "online" AND its `lastSeenAt` is within
+ * `STALE_THRESHOLD_MS` of now; otherwise it is "offline". This REUSES the
+ * exported `STALE_THRESHOLD_MS` so producer (the SSE heartbeat) and consumer
+ * (this read path) can never drift. The boundary is inclusive: elapsed exactly
+ * equal to the threshold still counts as fresh → "online".
+ */
+function toConnectionView(row: DaemonConnectionRow): ConnectionView {
+  const fresh = Date.now() - row.lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
+  const effectiveStatus = row.status === "online" && fresh ? "online" : "offline";
+
+  return {
+    uuid: row.uuid,
+    agentUuid: row.agentUuid,
+    clientType: row.clientType,
+    clientVersion: row.clientVersion,
+    host: row.host,
+    startedAt: row.startedAt ? row.startedAt.toISOString() : null,
+    status: row.status,
+    effectiveStatus,
+    connectedAt: row.connectedAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+    disconnectedAt: row.disconnectedAt ? row.disconnectedAt.toISOString() : null,
+  };
+}
+
+/**
+ * Order the projected views online-first, then by `lastSeenAt` desc — the
+ * most-relevant connections surface at the top. Sorts a copy; does not mutate
+ * the input.
+ */
+function sortConnectionViews(views: ConnectionView[]): ConnectionView[] {
+  return [...views].sort((a, b) => {
+    if (a.effectiveStatus !== b.effectiveStatus) {
+      return a.effectiveStatus === "online" ? -1 : 1;
+    }
+    return b.lastSeenAt.localeCompare(a.lastSeenAt);
+  });
 }
 
 /**
@@ -215,4 +307,43 @@ export async function touchConnection(
       "Failed to touch daemon connection",
     );
   }
+}
+
+// ===== Read functions =====
+//
+// Unlike the write functions above, the read functions deliberately do NOT
+// swallow-and-log to an empty list. A query failure is a real error the caller
+// (the route) must surface (as a 500 via withErrorHandler) — an empty list MUST
+// mean genuinely zero rows, never "the DB threw". So these intentionally have no
+// try/catch: a rejected query propagates.
+
+/**
+ * List the daemon connections visible to a *user* owner: every connection whose
+ * agent is owned by `ownerUuid`, scoped to `companyUuid`. Projected to
+ * `ConnectionView` (with server-derived `effectiveStatus`) and ordered
+ * online-first then `lastSeenAt` desc.
+ */
+export async function listConnectionsForOwner(
+  companyUuid: string,
+  ownerUuid: string,
+): Promise<ConnectionView[]> {
+  const rows = await prisma.daemonConnection.findMany({
+    where: { companyUuid, agent: { ownerUuid } },
+  });
+  return sortConnectionViews(rows.map(toConnectionView));
+}
+
+/**
+ * List the daemon connections owned by a single agent (`agentUuid`), scoped to
+ * `companyUuid` — the agent-key analogue of owner-scoping ("am I registered?").
+ * Projected to `ConnectionView` and ordered online-first then `lastSeenAt` desc.
+ */
+export async function listConnectionsForAgent(
+  companyUuid: string,
+  agentUuid: string,
+): Promise<ConnectionView[]> {
+  const rows = await prisma.daemonConnection.findMany({
+    where: { companyUuid, agentUuid },
+  });
+  return sortConnectionViews(rows.map(toConnectionView));
 }
