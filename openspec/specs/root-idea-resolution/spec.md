@@ -1,69 +1,87 @@
 # root-idea-resolution Specification
 
 ## Purpose
-Defines the server-side `chorus_resolve_root_idea` MCP tool — the single source of
-truth for attributing any entity (task / document / proposal / idea) up the Chorus
-lineage to its root idea. It powers the CLI daemon's per-root-idea session anchoring,
-closes the document-attribution gap, and gives multi-idea proposals explicit,
-deterministic semantics.
+Defines the standalone REST endpoint `GET /api/entities/{type}/{uuid}/root-idea` —
+the single source of truth for attributing any entity (task / document / proposal /
+idea) up the Chorus lineage to its root idea. It powers the CLI daemon's per-root-idea
+session anchoring, closes the document-attribution gap, and gives multi-idea proposals
+explicit, deterministic semantics. It is deliberately NOT an MCP tool: it is a plain
+REST endpoint callable with any valid auth (notably an agent API key).
 
 ## Requirements
-### Requirement: Server-side root-idea resolution tool
+### Requirement: Standalone REST root-idea resolution endpoint
 
-The Chorus MCP server SHALL expose a public, read-only tool
-`chorus_resolve_root_idea` that accepts `entityType` (one of `task`, `document`,
-`proposal`, `idea`) and `entityUuid`, and resolves the entity to the root idea of
-its lineage in a single call. The tool SHALL be available without a permission gate
-(consistent with `chorus_get_idea`), and all resolution SHALL be scoped to the
-caller's `companyUuid` so no cross-company entity is ever traversed or returned.
+The Chorus server SHALL expose a REST endpoint
+`GET /api/entities/{type}/{uuid}/root-idea` where `{type}` is one of `task`,
+`document`, `proposal`, `idea` and `{uuid}` is the entity uuid, that resolves the
+entity to the root idea of its lineage in a single call. The endpoint SHALL be
+callable with any valid authentication context — in particular an agent API key
+(`Bearer cho_...`) — and SHALL NOT require any fine-grained permission gate. All
+resolution SHALL be scoped to the caller's `companyUuid` so no cross-company entity
+is ever traversed or returned. This capability SHALL NOT be exposed as an MCP tool.
 
-The tool SHALL return an object containing `rootIdeaUuid` (a string, or `null` when
-no idea ancestor exists), a `lineage` array ordered from the input entity to the root
-idea where each element carries `type`, `uuid`, and `title`, and a `resolvedVia`
-string explaining the outcome.
+The endpoint SHALL return the standard success envelope `{ success: true, data }`
+where `data` contains `rootIdeaUuid` (a string, or `null` when no idea ancestor
+exists), a `lineage` array ordered from the input entity to the root idea where each
+element carries `type`, `uuid`, and `title`, and a `resolvedVia` string explaining the
+outcome. An unrecognized `{type}` SHALL return HTTP 400; an unauthenticated request
+SHALL return HTTP 401.
 
 #### Scenario: Task with an idea-derived proposal resolves to the root idea
 
-- **WHEN** `chorus_resolve_root_idea` is called with `entityType: "task"` and a task
-  whose `proposalUuid` points to a proposal with `inputType: "idea"`
-- **THEN** the tool walks task → proposal → idea → `parentUuid` to the topmost idea
-  and returns that uuid as `rootIdeaUuid` with `resolvedVia: "via_proposal"`
+- **WHEN** `GET /api/entities/task/{uuid}/root-idea` is called for a task whose
+  `proposalUuid` points to a proposal with `inputType: "idea"`
+- **THEN** the endpoint walks task → proposal → idea → `parentUuid` to the topmost
+  idea and returns that uuid as `rootIdeaUuid` with `resolvedVia: "via_proposal"`
 
 #### Scenario: Idea resolves to its own lineage root
 
-- **WHEN** the tool is called with `entityType: "idea"` for an idea that has a chain
+- **WHEN** the endpoint is called with `type: "idea"` for an idea that has a chain
   of `parentUuid` ancestors
 - **THEN** it returns the topmost ancestor as `rootIdeaUuid` with
   `resolvedVia: "root_idea"`
 
+#### Scenario: Callable with an agent API key and no permission gate
+
+- **WHEN** the endpoint is called with an agent API key whose preset grants no
+  special permission
+- **THEN** the request succeeds and the lineage is resolved — there is no permission
+  short-circuit
+
 #### Scenario: Resolution is scoped to the caller's company
 
-- **WHEN** the tool is called with an `entityUuid` that exists only in another company
+- **WHEN** the endpoint is called with a `{uuid}` that exists only in another company
 - **THEN** it returns `rootIdeaUuid: null` with `resolvedVia: "not_found"` and never
   reads or returns the other company's entity
 
+#### Scenario: Unrecognized entity type is rejected
+
+- **WHEN** the endpoint is called with a `{type}` that is not one of `task`,
+  `document`, `proposal`, `idea`
+- **THEN** it returns HTTP 400 and does not attempt resolution
+
 ### Requirement: Document attribution via proposal
 
-The resolution tool SHALL attribute a document to a root idea by following
+The endpoint SHALL attribute a document to a root idea by following
 `document.proposalUuid → proposal → idea`, closing the gap where documents were never
 attributed. A document with no `proposalUuid` SHALL resolve to `rootIdeaUuid: null`
 with `resolvedVia: "standalone_document"`.
 
 #### Scenario: Document of an idea-derived proposal resolves to the root idea
 
-- **WHEN** the tool is called with `entityType: "document"` for a document whose
+- **WHEN** the endpoint is called with `type: "document"` for a document whose
   `proposalUuid` points to a proposal with `inputType: "idea"`
 - **THEN** it returns the proposal's idea walked to its root as `rootIdeaUuid` with
   `resolvedVia: "via_document_proposal"`
 
 #### Scenario: Standalone document has no idea ancestor
 
-- **WHEN** the tool is called for a document whose `proposalUuid` is null
+- **WHEN** the endpoint is called for a document whose `proposalUuid` is null
 - **THEN** it returns `rootIdeaUuid: null` with `resolvedVia: "standalone_document"`
 
 ### Requirement: Explicit multi-idea ambiguity
 
-When a proposal's `inputUuids` contains more than one idea, the resolution tool SHALL
+When a proposal's `inputUuids` contains more than one idea, the endpoint SHALL
 return the root of the first input idea as `rootIdeaUuid` (keeping the result
 single-valued so a consumer's session anchoring stays deterministic), and SHALL set
 `ambiguous: true` with a `candidates` array listing the resolved root idea uuid of
@@ -71,34 +89,33 @@ each input idea.
 
 #### Scenario: Merged proposal flags ambiguity but stays single-valued
 
-- **WHEN** the tool resolves a task whose proposal has `inputType: "idea"` and two or
-  more entries in `inputUuids`
+- **WHEN** the endpoint resolves a task whose proposal has `inputType: "idea"` and two
+  or more entries in `inputUuids`
 - **THEN** `rootIdeaUuid` is the root of `inputUuids[0]`, `ambiguous` is `true`, and
   `candidates` lists the root idea of each input idea
 
 #### Scenario: Single-idea proposal is not ambiguous
 
-- **WHEN** the tool resolves an entity whose proposal has exactly one entry in
+- **WHEN** the endpoint resolves an entity whose proposal has exactly one entry in
   `inputUuids`
 - **THEN** `ambiguous` is absent or `false` and no `candidates` array is required
 
 ### Requirement: No idea ancestor is a successful null, not an error
 
-The resolution tool SHALL treat the absence of an idea ancestor as a successful
-result with `rootIdeaUuid: null` and a `resolvedVia` value that names the reason
-(`no_proposal`, `proposal_input_not_idea`, `standalone_document`, or `not_found`).
-It SHALL NOT return a tool error for these cases, so a caller can distinguish "no
-ancestor" from a genuine failure without parsing error text.
+The endpoint SHALL treat the absence of an idea ancestor as a successful result with
+`rootIdeaUuid: null` and a `resolvedVia` value that names the reason (`no_proposal`,
+`proposal_input_not_idea`, `standalone_document`, or `not_found`). It SHALL NOT return
+an HTTP error status for these cases, so a caller can distinguish "no ancestor" from a
+genuine failure without parsing error text.
 
 #### Scenario: Quick task with no proposal returns null
 
-- **WHEN** the tool is called for a task whose `proposalUuid` is null
-- **THEN** it returns `rootIdeaUuid: null` with `resolvedVia: "no_proposal"` and the
-  call is not an error
+- **WHEN** the endpoint is called for a task whose `proposalUuid` is null
+- **THEN** it returns HTTP 200 with `rootIdeaUuid: null` and `resolvedVia: "no_proposal"`
 
 #### Scenario: Document-derived proposal returns null
 
-- **WHEN** the tool resolves an entity whose proposal has `inputType` other than
+- **WHEN** the endpoint resolves an entity whose proposal has `inputType` other than
   `"idea"`
 - **THEN** it returns `rootIdeaUuid: null` with `resolvedVia: "proposal_input_not_idea"`
 
@@ -113,4 +130,3 @@ indefinitely if the lineage data contains a cycle.
 - **WHEN** the `parentUuid` chain forms a cycle
 - **THEN** the walk detects the repeat via the visited set and returns without
   exceeding the hop bound
-

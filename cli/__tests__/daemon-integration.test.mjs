@@ -20,7 +20,7 @@ const TASK_NOTIF = {
   actorName: "Alice",
 };
 
-/** A mock MCP client answering the lineage walk + notification fetch. */
+/** A mock MCP client answering the notification fetch (backfill path). */
 function mockMcp() {
   return {
     disconnected: false,
@@ -28,12 +28,6 @@ function mockMcp() {
       switch (name) {
         case "chorus_get_notifications":
           return { notifications: [TASK_NOTIF] };
-        case "chorus_get_task":
-          return { proposalUuid: "prop-1" };
-        case "chorus_get_proposal":
-          return { inputType: "idea", inputUuids: ["root-idea"] };
-        case "chorus_get_idea":
-          return { parentUuid: null }; // root-idea is its own root
         default:
           return null;
       }
@@ -42,6 +36,26 @@ function mockMcp() {
       this.disconnected = true;
     },
   };
+}
+
+/**
+ * A fake fetch for the lineage REST endpoint. Resolves task-1 → root-idea via
+ * the standard success envelope; anything else → no idea ancestor.
+ */
+function lineageFetch() {
+  return async (url) => ({
+    ok: true,
+    status: 200,
+    async json() {
+      if (String(url).includes("/api/entities/task/task-1/root-idea")) {
+        return {
+          success: true,
+          data: { rootIdeaUuid: "root-idea", lineage: [], resolvedVia: "via_proposal" },
+        };
+      }
+      return { success: true, data: { rootIdeaUuid: null, lineage: [], resolvedVia: "not_found" } };
+    },
+  });
 }
 
 /** A mock SSE listener we can manually drive. */
@@ -82,6 +96,7 @@ describe("daemon integration: notification → spawn", () => {
       {
         logger: silent,
         mcpClient: mockMcp(),
+        fetchImpl: lineageFetch(),
         spawner,
         sessionMap,
         makeSseListener: (o) => {
@@ -122,7 +137,13 @@ describe("daemon integration: notification → spawn", () => {
     let captured;
     const daemon = buildDaemon(
       { url: "https://c", apiKey: "k" },
-      { logger: silent, mcpClient: mcp, spawner, makeSseListener: (o) => (captured = new MockSse(o)) }
+      {
+        logger: silent,
+        mcpClient: mcp,
+        fetchImpl: lineageFetch(),
+        spawner,
+        makeSseListener: (o) => (captured = new MockSse(o)),
+      }
     );
     await daemon.start();
     captured.deliver({ type: "new_notification", notificationUuid: "notif-1" });

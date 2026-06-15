@@ -38,6 +38,8 @@ function defaultLogger() {
  * @param {{
  *   logger?: any,
  *   mcpClient?: any,
+ *   lineage?: any,
+ *   fetchImpl?: typeof fetch,
  *   sseListener?: any,
  *   spawner?: any,
  *   sessionMap?: any,
@@ -54,7 +56,11 @@ export function buildDaemon(creds, deps = {}) {
 
   const mcpClient =
     deps.mcpClient ?? new ChorusClient({ url: creds.url, apiKey: creds.apiKey, logger });
-  const lineage = new LineageResolver({ mcpClient, logger });
+  // Lineage resolution is a plain REST call (Bearer agent key) per notification —
+  // it does not go through the MCP client. (deps.fetchImpl is injectable for tests.)
+  const lineage =
+    deps.lineage ??
+    new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
   const sessionMap = deps.sessionMap ?? new SessionMap({ logger });
   const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
   const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });

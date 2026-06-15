@@ -22,7 +22,6 @@ import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
-import * as lineageService from "@/services/lineage.service";
 import { registerPermissionedTool } from "./register-helpers";
 import {
   ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
@@ -443,32 +442,6 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }
       return {
         content: [{ type: "text", text: JSON.stringify(idea, null, 2) }],
-      };
-    }
-  );
-
-  // chorus_resolve_root_idea - Resolve any entity to its root idea (lineage attribution)
-  server.registerTool(
-    "chorus_resolve_root_idea",
-    {
-      description:
-        "Resolve any entity (task/document/proposal/idea) to the root idea of its lineage in a single call. Walks task/document → proposal (inputType=idea) → idea, then follows idea.parentUuid to the topmost idea. Returns { rootIdeaUuid (string|null), lineage[] (ordered child→root, each { type, uuid, title }), resolvedVia (root_idea|via_proposal|via_document_proposal|no_proposal|proposal_input_not_idea|standalone_document|not_found), ambiguous?, candidates? }. A null rootIdeaUuid is a SUCCESSFUL result meaning 'no idea ancestor' (e.g. a quick task or standalone document) — not an error. A multi-idea proposal returns the first input idea's root as rootIdeaUuid and sets ambiguous=true with candidates listing every input idea's root.",
-      inputSchema: z.object({
-        entityType: z
-          .enum(["task", "document", "proposal", "idea"])
-          .describe("Type of the entity to resolve"),
-        entityUuid: z.string().describe("Entity UUID"),
-      }),
-    },
-    async ({ entityType, entityUuid }) => {
-      const result = await lineageService.resolveRootIdea(
-        auth.companyUuid,
-        entityType,
-        entityUuid
-      );
-      // A null rootIdeaUuid is a normal success payload (no isError).
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     }
   );

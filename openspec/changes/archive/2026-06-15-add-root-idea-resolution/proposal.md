@@ -1,5 +1,14 @@
 # Server-side root-idea resolution endpoint
 
+> **Post-archive revision (2026-06-15):** this change originally exposed resolution as
+> a public MCP tool `chorus_resolve_root_idea`. Before merge, the exposure was changed
+> to a **standalone REST endpoint** `GET /api/entities/{type}/{uuid}/root-idea`
+> (callable with an agent API key, no permission gate), and the daemon was changed to
+> call it once per notification with **no client-side fallback walk**. The cumulative
+> specs in `openspec/specs/root-idea-resolution/` and `openspec/specs/cli-daemon/`
+> reflect the shipped REST design; the delta files below preserve the original MCP
+> proposal for history.
+
 ## Why
 
 The Chorus CLI daemon anchors each local Claude session on the **root idea** of a
