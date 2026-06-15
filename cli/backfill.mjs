@@ -52,8 +52,12 @@ export function createBackfill(opts) {
     let redispatched = 0;
     for (const n of notifications) {
       if (!n || typeof n.uuid !== "string") continue;
+      // Pre-check only — do NOT mark seen here. The router (dispatch) is the
+      // single owner of marking-at-dispatch; if backfill marked first, the
+      // router's own `seen.has(...)` early-return would fire and the wake would
+      // never enqueue (every backfilled dispatch silently dropped). This
+      // pre-check is just a cheap early-out for notifications already handled.
       if (seen.has(n.uuid)) continue;
-      seen.add(n.uuid);
       redispatched++;
       dispatch({ type: "new_notification", notificationUuid: n.uuid });
     }

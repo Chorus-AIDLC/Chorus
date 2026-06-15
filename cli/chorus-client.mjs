@@ -96,7 +96,13 @@ export class ChorusClient {
     const blocks = /** @type {Array<{type:string,text?:string}>} */ (result.content ?? []);
     if (result.isError) {
       const text = blocks.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      throw new Error(`Chorus MCP tool error (${name}): ${text}`);
+      // Tool-LEVEL error (e.g. "Task not found"): the call reached the server
+      // and the tool ran — this is NOT a transport/session failure. Tag it so
+      // #isSessionExpired won't mistake its text (which may contain "not found")
+      // for a stateless-404 and trigger a pointless reconnect + retry.
+      const err = new Error(`Chorus MCP tool error (${name}): ${text}`);
+      /** @type {any} */ (err).isToolError = true;
+      throw err;
     }
     const textBlock = blocks.find((c) => c.type === "text");
     if (!textBlock?.text) return null;
@@ -109,11 +115,15 @@ export class ChorusClient {
 
   /** @param {unknown} err */
   #isSessionExpired(err) {
-    if (err instanceof Error) {
-      const m = err.message.toLowerCase();
-      return m.includes("404") || m.includes("session") || m.includes("not found");
-    }
-    return false;
+    if (!(err instanceof Error)) return false;
+    // A tool-level error reached the server and ran — never a session/transport
+    // issue, so don't reconnect+retry on it (it'd fail identically).
+    if (/** @type {any} */ (err).isToolError) return false;
+    const m = err.message.toLowerCase();
+    // Stateless-404 / lost-transport signals only. "not found" is intentionally
+    // NOT matched on its own (too broad — collides with entity-not-found tool
+    // text); a transport 404 still contains "404".
+    return m.includes("404") || m.includes("session");
   }
 }
 
