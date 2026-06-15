@@ -6,11 +6,46 @@
 // Endpoint: GET /api/events/notifications, Bearer <cho_ key>. Verified against
 // src/app/api/events/notifications/route.ts: getAuthContext accepts the Bearer
 // API key; data lines are `data: <json>\n\n`, heartbeats are `: ...` comments.
+//
+// Self-report: the listener appends ?clientType=claude_code&clientVersion=…&
+// host=…&startedAt=… to the endpoint so the server's DaemonConnection registry
+// (src/services/daemon-connection.service.ts → parseSelfReport) can record which
+// client is on the other end. The CLI reports clientType=claude_code (it only
+// drives a local Claude Code subprocess — not a generic "daemon"). These params
+// are display-only metadata; auth remains the unchanged Bearer header.
+
+import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const INITIAL_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+
+// chorus CLI version — read from the package's own package.json (the chorus CLI
+// is `@chorus-aidlc/chorus`, whose package.json sits one level above cli/). This
+// is the same source `chorus.mjs` uses for `--version`, so the self-reported
+// version always matches the installed CLI rather than a hardcoded literal.
+// Defensive: fall back to "0.0.0" if the file is unreadable for any reason — a
+// missing version must never block the daemon from connecting.
+function readCliVersion() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8"));
+    return typeof pkg.version === "string" && pkg.version ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const CLI_VERSION = readCliVersion();
+
+// Daemon process start time, captured once at module load. ISO-8601 string is
+// recomputed at URL-construction time from this fixed Date so reconnects report
+// the original start, not the reconnect moment.
+const PROCESS_STARTED_AT = new Date();
 
 /**
  * @typedef {Object} SseListenerOptions
@@ -37,6 +72,16 @@ export class SseListener {
     this.initialDelayMs = opts.initialDelayMs ?? INITIAL_DELAY_MS;
     this.maxDelayMs = opts.maxDelayMs ?? MAX_DELAY_MS;
 
+    // Build the self-reporting endpoint URL once and reuse it across every
+    // (re)connect, so the reconnect path always re-sends the same params.
+    const params = new URLSearchParams({
+      clientType: "claude_code",
+      clientVersion: CLI_VERSION,
+      host: hostname(),
+      startedAt: PROCESS_STARTED_AT.toISOString(),
+    });
+    this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;
+
     this.status = "disconnected";
     /** @type {AbortController | null} */
     this.abortController = null;
@@ -51,10 +96,9 @@ export class SseListener {
     const abortController = new AbortController();
     this.abortController = abortController;
 
-    const endpoint = `${this.url}/api/events/notifications`;
     let response;
     try {
-      response = await this.fetchImpl(endpoint, {
+      response = await this.fetchImpl(this.endpoint, {
         headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "text/event-stream" },
         signal: abortController.signal,
       });

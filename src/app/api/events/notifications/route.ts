@@ -4,6 +4,12 @@
 
 import { getAuthContext } from "@/lib/auth";
 import { eventBus } from "@/lib/event-bus";
+import {
+  parseSelfReport,
+  registerConnection,
+  touchConnection,
+  markDisconnected,
+} from "@/services/daemon-connection.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +19,14 @@ export async function GET(request: NextRequest) {
   if (!auth) {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  // Self-report registry (auth is already settled above — these query params
+  // are read AFTER auth and never influence the authorization outcome).
+  // connUuid is null for non-daemon (browser/unknown/absent) clientType; when
+  // null, the lifecycle below is skipped and the route behaves exactly as before
+  // (no DaemonConnection row is written).
+  const report = parseSelfReport(request.nextUrl.searchParams);
+  const connUuid = await registerConnection(auth.companyUuid, auth.actorUuid, report);
 
   const userKey = `${auth.type}:${auth.actorUuid}`;
   const encoder = new TextEncoder();
@@ -40,6 +54,9 @@ export async function GET(request: NextRequest) {
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
+        // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
+        // swallows + logs its own errors and never throws.
+        if (connUuid) void touchConnection(auth.companyUuid, connUuid);
       }, 30_000);
 
       // Cleanup on abort (client disconnect)
@@ -51,6 +68,9 @@ export async function GET(request: NextRequest) {
         } catch {
           // Already closed
         }
+        // Primary disconnect signal: mark the registry row offline.
+        // Fire-and-forget — never throws to the client.
+        if (connUuid) void markDisconnected(auth.companyUuid, connUuid);
       });
     },
   });

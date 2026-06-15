@@ -35,6 +35,7 @@ model Company {
   activities Activity[]
   comments   Comment[]
   sessions   AgentSession[]
+  daemonConnections DaemonConnection[]
 }
 
 // User (human, OIDC login)
@@ -74,6 +75,7 @@ model Agent {
 
   apiKeys  ApiKey[]
   sessions AgentSession[]
+  daemonConnections DaemonConnection[]
 
   @@index([companyUuid])
   @@index([ownerUuid])
@@ -384,6 +386,41 @@ model SessionTaskCheckin {
   @@unique([sessionUuid, taskUuid])
   @@index([sessionUuid])
   @@index([taskUuid])
+}
+
+// Daemon SSE connection registry — one row per long-lived daemon SSE connection.
+// Mirrors AgentSession conventions (Int PK + uuid public id, application-level
+// company/agent relations, indexed status/liveness columns).
+model DaemonConnection {
+  id             Int       @id @default(autoincrement())
+  uuid           String    @unique @default(uuid())
+  companyUuid    String
+  company        Company   @relation(fields: [companyUuid], references: [uuid])
+  agentUuid      String
+  agent          Agent     @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+
+  clientType     String    // claude_code | openclaw | browser | other
+  clientVersion  String?   // self-reported, untrusted, display-only
+  // Self-reported hostname (display-only). Non-null with "" default: a @@unique
+  // over a nullable column is broken for dedup because connectors treat each
+  // null as distinct (Prisma docs), which would let reconnects accumulate rows.
+  // Defaulting to "" makes (agentUuid, clientType, host) a deterministic upsert key.
+  host           String    @default("")
+  startedAt      DateTime? // self-reported daemon process start time
+
+  status         String    @default("online") // online | offline
+  connectedAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  disconnectedAt DateTime?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([agentUuid, clientType, host])
+  @@index([companyUuid])
+  @@index([agentUuid])
+  @@index([status])
+  @@index([lastSeenAt])
 }
 
 // Notification
