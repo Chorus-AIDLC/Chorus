@@ -1,0 +1,290 @@
+// cli/claude-spawner.mjs
+// Cross-platform headless Claude Code spawner. This is the load-bearing
+// engineering point of the daemon: parsing stream-json is plain JS and
+// platform-neutral; the real work is spawning, and it is all Windows.
+//
+// Verified against Claude Code CLI 2.1.177:
+//   • `-p/--print` + `--output-format stream-json` emits NDJSON (one JSON object
+//     per line); every line carries `session_id`.
+//   • `--session-id <uuid>` sets the session id for a fresh run, and
+//     `--resume <uuid>` continues it. So we GENERATE the session id client-side
+//     and pass it in, rather than scraping it from the init event — the id is
+//     authoritative on our side. We still read `session_id` from the stream as
+//     confirmation.
+//   • `--mcp-config <file>` loads MCP servers from a JSON file.
+//
+// The flag list lives in ONE place (buildArgs) so a CLI flag change is a
+// single-line edit.
+
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
+import { win32 as pathWin32, posix as pathPosix } from "node:path";
+
+const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+
+/**
+ * Resolve the real `claude` executable path WITHOUT a shell. On Windows the bin
+ * is `claude.cmd` (npm shim); `spawn("claude")` without `shell:true` throws
+ * ENOENT because it won't resolve `.cmd`. We walk PATH for the platform's
+ * candidate names and return the first that exists. `shell:true` is avoided
+ * deliberately — it re-introduces the escaping/injection surface.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, isFile?: (p: string) => boolean }} [deps]
+ * @returns {string | null}
+ */
+export function resolveClaudePath(deps = {}) {
+  const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  const isFile =
+    deps.isFile ??
+    ((p) => {
+      // isFile (not just exists): a directory named `claude` on PATH would
+      // otherwise be "found" and then fail at spawn time.
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    });
+
+  // An explicit override always wins (set by the daemon if the user configured it).
+  if (env.CHORUS_CLAUDE_PATH && isFile(env.CHORUS_CLAUDE_PATH)) {
+    return env.CHORUS_CLAUDE_PATH;
+  }
+
+  // Use platform-correct path semantics so the resolver is testable for
+  // Windows from a POSIX host (`;` delimiter + `\` join vs `:` + `/`).
+  const isWin = platform === "win32";
+  const p = isWin ? pathWin32 : pathPosix;
+  const names = isWin ? ["claude.cmd", "claude.exe", "claude"] : ["claude"];
+  const pathVar = env.PATH || env.Path || "";
+  const dirs = pathVar.split(p.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = p.join(dir, name);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * The MCP server name the daemon writes into --mcp-config (see mcp-config.mjs).
+ * Claude namespaces its tools as `mcp__<serverName>__<tool>`, so this drives the
+ * default allowlist below. Keep in sync with mcp-config.mjs's `mcpServers` key.
+ */
+export const CHORUS_MCP_SERVER_NAME = "chorus";
+
+/**
+ * Permission posture for the spawned headless Claude. Headless `claude -p`
+ * auto-DENIES any tool that isn't pre-approved (there's no interactive prompt to
+ * answer), so without one of these the woken agent can't call a single chorus_*
+ * tool and exits having done nothing. Verified against Claude Code 2.1.177.
+ *
+ * - "chorus" (default): `--allowedTools "mcp__chorus__*"` — the woken agent may
+ *   use Chorus MCP tools (comment, claim, report, status) but NOT Bash / file
+ *   edits. Safe default: covers comment/assign/elaboration wakes out of the box,
+ *   minimal blast radius.
+ * - "yolo": `--dangerously-skip-permissions` — full autonomy (Bash, file writes,
+ *   everything). Needed for real code-writing AI-DLC work. Dangerous: the woken
+ *   agent gets a full shell under the daemon's key, with a prompt that embeds
+ *   server-supplied strings. Use only in a trusted/sandboxed environment.
+ * @typedef {"chorus"|"yolo"} PermissionMode
+ */
+
+/**
+ * Build the argv for a headless run. Prompt is NEVER here — it goes over stdin.
+ * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode }} o
+ * @returns {string[]}
+ */
+export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus" }) {
+  const args = ["-p", "--output-format", "stream-json", "--verbose"];
+  if (isNew) args.push("--session-id", sessionId);
+  else args.push("--resume", sessionId);
+  if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
+  if (permissionMode === "yolo") {
+    args.push("--dangerously-skip-permissions");
+  } else {
+    // Default: allow only this daemon's Chorus MCP tools through, nothing else.
+    args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`);
+  }
+  return args;
+}
+
+/**
+ * Resolve the actual command + argv to spawn, given the resolved claude path
+ * and the headless args. On Windows a `.cmd`/`.bat` shim is NOT a PE executable,
+ * so `CreateProcess` (i.e. spawn with shell:false) cannot run it directly — it
+ * must be invoked through `cmd.exe /d /s /c <path> ...args`. We keep shell:false
+ * and pass argv as an array (no string concatenation), so there is no shell
+ * word-splitting / injection surface. On POSIX, and for a real `.exe`, we spawn
+ * the path directly.
+ *
+ * @param {string} claudePath
+ * @param {string[]} args
+ * @param {NodeJS.Platform} [platform]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ command: string, argv: string[] }}
+ */
+export function resolveSpawnCommand(claudePath, args, platform = process.platform, env = process.env) {
+  const isWin = platform === "win32";
+  const lower = claudePath.toLowerCase();
+  if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
+    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    // /d skip AutoRun, /s treat everything after /c literally, /c run then exit.
+    return { command: comspec, argv: ["/d", "/s", "/c", claudePath, ...args] };
+  }
+  return { command: claudePath, argv: args };
+}
+
+/**
+ * Parse a chunk of NDJSON, appending to a line buffer. Strips trailing CR
+ * (Windows \r\n) and ignores blank lines. Returns parsed objects; malformed
+ * lines are reported to `onWarn` and skipped (never throw).
+ *
+ * @param {string} buffer  Carry-over from previous chunk.
+ * @param {string} chunk
+ * @param {(obj: any) => void} onObject
+ * @param {(msg: string) => void} [onWarn]
+ * @returns {string}  New carry-over buffer (incomplete trailing line).
+ */
+export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
+  buffer += chunk;
+  let nl;
+  while ((nl = buffer.indexOf("\n")) !== -1) {
+    const line = buffer.slice(0, nl).replace(/\r$/, "");
+    buffer = buffer.slice(nl + 1);
+    if (!line.trim()) continue;
+    try {
+      onObject(JSON.parse(line));
+    } catch (err) {
+      onWarn(`stream-json parse error: ${err} — line: ${line}`);
+    }
+  }
+  return buffer;
+}
+
+/**
+ * @typedef {Object} ClaudeSpawnerOptions
+ * @property {string} [claudePath]   Resolved claude path (resolved lazily if omitted).
+ * @property {(o: object) => { stdin: any, stdout: any, stderr: any, on: Function, kill?: Function }} [spawnImpl]
+ * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
+ * @property {() => string} [genId]  Session-id generator (override in tests).
+ * @property {PermissionMode} [permissionMode]  How much the woken Claude may do (default "chorus").
+ */
+
+export class ClaudeSpawner {
+  /** @param {ClaudeSpawnerOptions} [opts] */
+  constructor(opts = {}) {
+    this.claudePath = opts.claudePath ?? null;
+    this.spawnImpl = opts.spawnImpl ?? spawn;
+    this.logger = opts.logger ?? NOOP_LOGGER;
+    this.genId = opts.genId ?? randomUUID;
+    this.permissionMode = opts.permissionMode ?? "chorus";
+  }
+
+  /**
+   * Spawn a headless Claude run. Resolves when the subprocess exits. The prompt
+   * is written to stdin (never argv) — this is what keeps long prompts off the
+   * Windows command line and out of shell escaping/injection.
+   *
+   * @param {{ prompt: string, sessionId?: string|null, mcpConfigPath?: string,
+   *           cwd?: string, onMessage?: (obj: any) => void }} params
+   * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
+   */
+  async wake({ prompt, sessionId = null, mcpConfigPath, cwd, onMessage }) {
+    const isNew = !sessionId;
+    const id = sessionId ?? this.genId();
+
+    const claudePath = this.claudePath ?? resolveClaudePath();
+    if (!claudePath) {
+      // No crash — surface visibly and resolve with a failure result.
+      this.logger.error("[Chorus] cannot locate the `claude` executable on PATH; skipping wake");
+      return { sessionId: id, exitCode: null, isNew };
+    }
+
+    const args = buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode });
+    // On Windows, a .cmd/.bat shim must be run via cmd.exe /c (CreateProcess
+    // can't exec a script directly). resolveSpawnCommand keeps shell:false and
+    // passes argv as an array — no shell injection surface either way.
+    const { command, argv } = resolveSpawnCommand(claudePath, args);
+
+    return new Promise((resolve) => {
+      let child;
+      try {
+        child = this.spawnImpl(command, argv, {
+          cwd: cwd ?? process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          // No shell:true — command is either the real executable or cmd.exe
+          // with the script as an argv element. Avoids shell word-splitting /
+          // injection; .cmd is handled explicitly via cmd.exe above.
+          shell: false,
+          windowsHide: true,
+        });
+      } catch (err) {
+        this.logger.error(`[Chorus] failed to spawn claude: ${err}`);
+        resolve({ sessionId: id, exitCode: null, isNew });
+        return;
+      }
+
+      let stdoutBuf = "";
+      let observedSessionId = id;
+
+      child.stdout?.setEncoding?.("utf8");
+      child.stdout?.on("data", (chunk) => {
+        stdoutBuf = parseNdjsonChunk(
+          stdoutBuf,
+          String(chunk),
+          (obj) => {
+            if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
+            if (onMessage) {
+              try {
+                onMessage(obj);
+              } catch (err) {
+                this.logger.warn(`[Chorus] onMessage handler threw: ${err}`);
+              }
+            }
+          },
+          (msg) => this.logger.warn(`[Chorus] ${msg}`)
+        );
+      });
+
+      child.stderr?.setEncoding?.("utf8");
+      child.stderr?.on("data", (chunk) => {
+        const text = String(chunk).trim();
+        if (text) this.logger.warn(`[Chorus] claude stderr: ${text}`);
+      });
+
+      child.on("error", (err) => {
+        // e.g. ENOENT if the resolved path vanished — log, don't throw.
+        this.logger.error(`[Chorus] claude process error: ${err}`);
+        resolve({ sessionId: observedSessionId, exitCode: null, isNew });
+      });
+
+      child.on("close", (code) => {
+        if (code !== 0) {
+          this.logger.warn(`[Chorus] claude exited with code ${code}`);
+        }
+        resolve({ sessionId: observedSessionId, exitCode: code, isNew });
+      });
+
+      // Guard against an ASYNC stdin error (EPIPE): if claude exits/closes
+      // stdin before the prompt finishes flushing, the writable emits an
+      // 'error' event. Without this listener it becomes an uncaughtException
+      // and crashes the daemon — violating "one failed wake does not kill the
+      // daemon". The try/catch below only catches a synchronous throw.
+      child.stdin?.on?.("error", (err) => {
+        this.logger.warn(`[Chorus] claude stdin error (ignored): ${err}`);
+      });
+
+      // Feed the prompt over stdin, then close it so the model runs.
+      try {
+        child.stdin?.write(prompt);
+        child.stdin?.end();
+      } catch (err) {
+        this.logger.warn(`[Chorus] failed writing prompt to claude stdin: ${err}`);
+      }
+    });
+  }
+}

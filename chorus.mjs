@@ -17,6 +17,59 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
+// Subcommand router (client-mode commands)
+// ---------------------------------------------------------------------------
+// `chorus` with no subcommand (or the existing server flags) launches the
+// Next.js server exactly as before. `chorus daemon` and `chorus login` are
+// client commands that connect OUT to a remote Chorus server. Their modules are
+// lazy-imported so the server-launch path pays no startup cost.
+
+const SUBCOMMANDS = new Set(["daemon", "login"]);
+
+/** Parse `--url` / `--api-key` (and `=` forms) + boolean `--yolo` out of an arg list. */
+function parseClientFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--url") out.url = argv[i + 1];
+    else if (a.startsWith("--url=")) out.url = a.slice("--url=".length);
+    else if (a === "--api-key") out.apiKey = argv[i + 1];
+    else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
+    else if (a === "--yolo") out.yolo = true;
+  }
+  return out;
+}
+
+async function runSubcommand(name, rest) {
+  const flags = parseClientFlags(rest);
+  if (name === "login") {
+    const { runLogin } = await import("./cli/login.mjs");
+    return runLogin(flags);
+  }
+  if (name === "daemon") {
+    const { runDaemon } = await import("./cli/daemon.mjs");
+    return runDaemon(flags);
+  }
+  return 1;
+}
+
+{
+  const sub = process.argv[2];
+  if (sub && SUBCOMMANDS.has(sub)) {
+    runSubcommand(sub, process.argv.slice(3))
+      .then((code) => process.exit(typeof code === "number" ? code : 0))
+      .catch((err) => {
+        console.error(`Fatal error in 'chorus ${sub}':`, err);
+        process.exit(1);
+      });
+    // Stop the server-launch module body from executing in this process tick.
+    // The promise above owns process lifetime from here.
+  }
+}
+
+const isSubcommand = SUBCOMMANDS.has(process.argv[2]);
+
+// ---------------------------------------------------------------------------
 // Dependency resolution (hoist-safe — see issue #214)
 // ---------------------------------------------------------------------------
 // Use import.meta.resolve so the correct copy of each dependency is found
@@ -57,16 +110,21 @@ function hasFlag(long, short) {
   return args.includes(long) || args.includes(short);
 }
 
-// --help / --version fast paths
-if (hasFlag("--help", "-h")) {
+// --help / --version fast paths (skipped when a client subcommand was dispatched —
+// e.g. `chorus login --help` belongs to the subcommand, not the server)
+if (!isSubcommand && hasFlag("--help", "-h")) {
   const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8"));
   process.stdout.write(`
 Chorus v${pkg.version} — AI Agent & Human collaboration platform
 
 USAGE
-  chorus [options]
+  chorus [options]                 Start the Chorus server (default)
+  chorus login [--url --api-key]   Authenticate as an agent; saves ~/.chorus/daemon.json
+  chorus daemon [--url --api-key]  Connect to a remote Chorus server, subscribe to the
+                                   agent notification stream, and wake a local headless
+                                   Claude Code on task dispatch
 
-OPTIONS
+SERVER OPTIONS
   -p, --port <port>        HTTP server port             (default: 8637, env: PORT)
   -d, --data-dir <path>    Data directory for PGlite    (default: ~/.chorus-data, env: CHORUS_DATA_DIR)
       --hostname <host>    Bind address                 (default: 0.0.0.0)
@@ -84,16 +142,35 @@ ENVIRONMENT VARIABLES
   NEXTAUTH_SECRET          Session signing secret (auto-generated if unset)
   COOKIE_SECURE            Set to "true" for HTTPS deployments
 
+DAEMON / LOGIN (client mode)
+  --url <url>              Remote Chorus server URL      (env: CHORUS_URL)
+  --api-key <cho_...>      Agent API key                 (env: CHORUS_API_KEY)
+  --yolo                   Give the woken Claude FULL permissions             (env: CHORUS_YOLO=1)
+                           (--dangerously-skip-permissions: Bash, file writes,
+                           any command). Default is Chorus-MCP-tools-only.
+
+  Credential resolution order: flags > CHORUS_URL/CHORUS_API_KEY env >
+  ~/.chorus/daemon.json (from 'chorus login') > Claude Code plugin config.
+
+  The daemon spawns the local 'claude' CLI headlessly per task dispatch; it must
+  be on PATH. Override with CHORUS_CLAUDE_PATH. By default the woken Claude may
+  use only Chorus MCP tools (comment/claim/report/status) — pass --yolo for full
+  autonomy (real code-writing AI-DLC), which is dangerous: run it sandboxed.
+
 EXAMPLES
   chorus                                     # Embedded PGlite (default)
   chorus --port 3000                         # Custom port
   chorus --data-dir /var/lib/chorus          # Custom data directory
   DATABASE_URL=postgres://... chorus --use-pglite=false   # External PostgreSQL
+  chorus login                               # Interactive: validate key, save credentials
+  chorus daemon                              # Connect & wake local Claude Code (Chorus tools only)
+  chorus daemon --yolo                       # Full autonomy: woken Claude can run Bash / edit files
+  CHORUS_URL=https://... CHORUS_API_KEY=cho_... chorus daemon
 `);
   process.exit(0);
 }
 
-if (hasFlag("--version", "-v")) {
+if (!isSubcommand && hasFlag("--version", "-v")) {
   const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8"));
   process.stdout.write(`${pkg.version}\n`);
   process.exit(0);
@@ -362,8 +439,11 @@ process.on("exit", () => {
 // Run
 // ---------------------------------------------------------------------------
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  if (pgliteProcess && !pgliteProcess.killed) pgliteProcess.kill("SIGTERM");
-  process.exit(1);
-});
+// Only launch the server when no client subcommand was dispatched above.
+if (!isSubcommand) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    if (pgliteProcess && !pgliteProcess.killed) pgliteProcess.kill("SIGTERM");
+    process.exit(1);
+  });
+}
