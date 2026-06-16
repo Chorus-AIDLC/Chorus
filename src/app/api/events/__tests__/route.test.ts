@@ -15,6 +15,10 @@ const mockRegisterConnection = vi.fn();
 const mockTouchConnection = vi.fn();
 const mockMarkDisconnected = vi.fn();
 
+const mockReconcileOffline = vi.fn();
+const mockPublishExecutionChange = vi.fn();
+const mockListVisibleConnectionUuids = vi.fn();
+
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
 }));
@@ -28,6 +32,18 @@ vi.mock("@/services/daemon-connection.service", () => ({
   registerConnection: (...args: unknown[]) => mockRegisterConnection(...args),
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
   markDisconnected: (...args: unknown[]) => mockMarkDisconnected(...args),
+}));
+
+// The route now also resolves the caller's visible connections (to subscribe to
+// their execution:{uuid} channels) and reconciles/publishes execution state on
+// disconnect. Mock the execution service so the route test stays a unit test —
+// executionEventName keeps the real `execution:{uuid}` channel-name convention so
+// the subscription assertions exercise the actual channel string.
+vi.mock("@/services/daemon-execution.service", () => ({
+  reconcileOffline: (...args: unknown[]) => mockReconcileOffline(...args),
+  publishExecutionChange: (...args: unknown[]) => mockPublishExecutionChange(...args),
+  listVisibleConnectionUuids: (...args: unknown[]) => mockListVisibleConnectionUuids(...args),
+  executionEventName: (connectionUuid: string) => `execution:${connectionUuid}`,
 }));
 
 import { GET } from "@/app/api/events/route";
@@ -85,6 +101,10 @@ beforeEach(() => {
   // Default: behave as a daemon connection.
   mockParseSelfReport.mockReturnValue({ clientType: "claude_code", host: "h" });
   mockRegisterConnection.mockResolvedValue(connHandle);
+  // Default: the caller sees no other connections (no execution channels).
+  mockListVisibleConnectionUuids.mockResolvedValue([]);
+  mockReconcileOffline.mockResolvedValue(0);
+  mockPublishExecutionChange.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -212,5 +232,88 @@ describe("GET /api/events (change events SSE)", () => {
     const { chunks } = await startStream(res);
     expect(res.status).toBe(200);
     expect(chunks.join("")).toContain(": connected");
+  });
+});
+
+describe("GET /api/events (execution-state SSE)", () => {
+  const connA = "conn-a";
+  const connB = "conn-b";
+
+  it("subscribes to execution:{uuid} for every visible connection at stream-start", async () => {
+    mockListVisibleConnectionUuids.mockResolvedValue([connA, connB]);
+    const res = await GET(makeRequest("clientType=claude_code"));
+    await startStream(res);
+
+    expect(mockListVisibleConnectionUuids).toHaveBeenCalledWith(agentAuth);
+    const channels = mockEventBus.on.mock.calls.map((c) => c[0]);
+    expect(channels).toContain(`execution:${connA}`);
+    expect(channels).toContain(`execution:${connB}`);
+  });
+
+  it("subscribes to no execution channel when the caller sees no connections", async () => {
+    mockListVisibleConnectionUuids.mockResolvedValue([]);
+    const res = await GET(makeRequest("clientType=claude_code"));
+    await startStream(res);
+    const channels = mockEventBus.on.mock.calls.map((c) => c[0]);
+    expect(channels.some((ch) => typeof ch === "string" && ch.startsWith("execution:"))).toBe(false);
+  });
+
+  it("forwards a same-company execution event tagged type:execution", async () => {
+    mockListVisibleConnectionUuids.mockResolvedValue([connA]);
+    const res = await GET(makeRequest("clientType=claude_code"));
+    const { chunks } = await startStream(res);
+
+    const execCall = mockEventBus.on.mock.calls.find((c) => c[0] === `execution:${connA}`);
+    expect(execCall).toBeDefined();
+    const handler = execCall![1] as (e: Record<string, unknown>) => void;
+
+    const before = chunks.length;
+    handler({ companyUuid, connectionUuid: connA, executions: [{ taskUuid: "t1" }] });
+    await flush();
+    expect(chunks.length).toBe(before + 1);
+    const last = chunks[chunks.length - 1];
+    expect(last).toContain('"type":"execution"');
+    expect(last).toContain(connA);
+  });
+
+  it("drops execution events from a different company (multi-tenancy)", async () => {
+    mockListVisibleConnectionUuids.mockResolvedValue([connA]);
+    const res = await GET(makeRequest("clientType=claude_code"));
+    const { chunks } = await startStream(res);
+    const handler = mockEventBus.on.mock.calls.find((c) => c[0] === `execution:${connA}`)![1] as (
+      e: Record<string, unknown>,
+    ) => void;
+
+    const before = chunks.length;
+    handler({ companyUuid: "other-company", connectionUuid: connA, executions: [] });
+    await flush();
+    expect(chunks.length).toBe(before);
+  });
+
+  it("unsubscribes every execution channel on abort", async () => {
+    mockListVisibleConnectionUuids.mockResolvedValue([connA, connB]);
+    const ac = new AbortController();
+    const res = await GET(makeRequest("clientType=claude_code", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await Promise.resolve();
+
+    const offChannels = mockEventBus.off.mock.calls.map((c) => c[0]);
+    expect(offChannels).toContain(`execution:${connA}`);
+    expect(offChannels).toContain(`execution:${connB}`);
+  });
+
+  it("reconciles + publishes execution on disconnect for the registered connection", async () => {
+    const ac = new AbortController();
+    const res = await GET(makeRequest("clientType=claude_code", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    // Let the markDisconnected → reconcileOffline → publish chain settle.
+    await flush();
+
+    expect(mockReconcileOffline).toHaveBeenCalledWith(companyUuid, connectionUuid);
+    expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
 });

@@ -14,7 +14,7 @@ export class EventRouter {
   /**
    * @param {{
    *   mcpClient: { callTool: (name: string, args?: Record<string, unknown>) => Promise<any> },
-   *   waker: { keyFor: (n: any) => Promise<string>, wake: (n: any, key: string) => Promise<void> },
+   *   waker: { keyFor: (n: any) => Promise<string>, wake: (n: any, key: string) => Promise<void>, markQueued?: (n: any, key: string) => void },
    *   queue: { enqueue: (key: string, task: () => Promise<void>) => void },
    *   wakeActions: Set<string>,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
@@ -86,6 +86,14 @@ export class EventRouter {
     } catch (err) {
       this.logger.warn(`[Chorus] could not resolve wake key for ${notificationUuid}: ${err}`);
       return;
+    }
+    // Mark the task queued (emits a snapshot) BEFORE enqueue, so the server
+    // sees it waiting even while it sits behind a same-root wake. Optional +
+    // non-throwing so a missing/failed hook never breaks routing.
+    try {
+      this.waker.markQueued?.(n, key);
+    } catch (err) {
+      this.logger.warn(`[Chorus] markQueued failed for ${notificationUuid}: ${err}`);
     }
     this.queue.enqueue(key, () => this.waker.wake(n, key));
   }

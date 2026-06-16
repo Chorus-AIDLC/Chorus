@@ -26,18 +26,27 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import {
   Bot,
   Clock3,
   ChevronLeft,
-  MessagesSquare,
+  ExternalLink,
+  ListChecks,
+  Loader2,
+  Play,
   RadioTower,
+  Sparkles,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
+import {
+  useExecutionSubscription,
+  type ExecutionView,
+} from "@/contexts/realtime-context";
 
 // Shape returned by GET /api/agent-connections (see daemon-connection.service.ts → ConnectionView).
 interface ConnectionView {
@@ -104,6 +113,32 @@ function useUptimeMono() {
       if (days > 0) {
         // Localized day prefix + monospace HH:MM:SS so the second-by-second
         // tick is still visible after 24h.
+        return t("uptimeMonoDays", { days, time: hms });
+      }
+      return hms;
+    },
+    [t],
+  );
+}
+
+// Monospace elapsed timer for a RUNNING execution row, ticking every second off
+// the same shared `nowMs` the uptime ticker uses. Returns a single string (no
+// JSX). Mirrors useUptimeMono — past 24h a localized `Dd ` prefix keeps the
+// second-by-second tick scannable. Reduced-motion is honored the same way the
+// uptime is: the value is a plain ticking number, no animation; any decorative
+// pulse around it is gated behind `motion-safe:` at the call site.
+function useElapsedMono() {
+  const t = useTranslations("agentConnections");
+  return useCallback(
+    (startedAt: string, nowMs: number) => {
+      const diffMs = Math.max(0, nowMs - new Date(startedAt).getTime());
+      const totalSeconds = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSeconds / 86_400);
+      const hours = Math.floor((totalSeconds % 86_400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const hms = `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+      if (days > 0) {
         return t("uptimeMonoDays", { days, time: hms });
       }
       return hms;
@@ -248,39 +283,222 @@ function StatTile({ label, value, mono }: { label: string; value: string; mono?:
   );
 }
 
-function ComingSoonPlaceholder() {
+// =====================================================================
+// Execution view — running + queued tasks for the selected connection
+// =====================================================================
+
+// One execution row: a task title that deep-links to the task, an optional
+// root-idea session badge, and (for running rows only) a live HH:MM:SS elapsed
+// indicator off `startedAt`. Queued rows show a static "waiting" hint, never a
+// timer. A row whose task no longer resolves (deleted) falls back to a localized
+// placeholder title and renders as plain text (no link).
+function ExecutionRow({
+  exec,
+  nowMs,
+}: {
+  exec: ExecutionView;
+  nowMs: number;
+}) {
   const t = useTranslations("agentConnections");
+  const formatElapsed = useElapsedMono();
+  const running = exec.status === "running";
+
+  const title = exec.taskTitle?.trim() || t("execTaskUnknown");
+  const canLink = Boolean(exec.projectUuid);
+  const taskHref = canLink
+    ? `/projects/${exec.projectUuid}/tasks/${exec.taskUuid}`
+    : null;
+
   return (
-    <div className="flex h-full min-h-[180px] flex-col gap-3 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <MessagesSquare className="h-4 w-4 text-[#C67A52]" />
-          <span className="text-[14px] font-semibold text-[#2C2C2C]">
-            {t("comingSoonTitle")}
+    <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+          running ? "bg-[#C67A5214]" : "bg-[#F0EDE8]"
+        }`}
+        aria-hidden
+      >
+        {running ? (
+          // Decorative spin gated behind motion-safe so reduced-motion users see
+          // a static icon (same reduced-motion regime as the online pulse dot).
+          <Loader2 className="h-4 w-4 text-[#C67A52] motion-safe:animate-spin" />
+        ) : (
+          <Clock3 className="h-4 w-4 text-[#9A9A9A]" />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        {taskHref ? (
+          <Link
+            href={taskHref}
+            className="group inline-flex max-w-full items-center gap-1.5 truncate text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]"
+          >
+            <span className="truncate">{title}</span>
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
+          </Link>
+        ) : (
+          <span className="block truncate text-[14px] font-medium text-[#9A9A9A]">
+            {title}
           </span>
-        </div>
+        )}
+        {exec.rootIdeaTitle && (
+          <div className="mt-1 flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3 shrink-0 text-[#9A8C7E]" aria-hidden />
+            <span className="truncate text-[11px] text-[#9A8C7E]">
+              {t("execSession", { idea: exec.rootIdeaTitle })}
+            </span>
+          </div>
+        )}
+      </div>
+      {running ? (
+        exec.startedAt ? (
+          <span
+            className="shrink-0 font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
+            title={t("execElapsedLabel")}
+          >
+            {formatElapsed(exec.startedAt, nowMs)}
+          </span>
+        ) : null
+      ) : (
+        <span className="shrink-0 text-[11px] font-medium text-[#9A9A9A]">
+          {t("execWaiting")}
+        </span>
+      )}
+    </li>
+  );
+}
+
+// A labeled section (running / queued) with a count badge and its rows.
+function ExecutionSection({
+  icon: Icon,
+  label,
+  count,
+  children,
+}: {
+  icon: typeof Play;
+  label: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-[#C67A52]" aria-hidden />
+        <span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B6B]">
+          {label}
+        </span>
         <Badge
           variant="secondary"
-          className="border-0 bg-[#F0EDE8] px-2 py-0.5 font-mono text-[10px] tracking-wide text-[#9A8C7E]"
+          className="border-0 bg-[#F0EDE8] px-1.5 py-0 font-mono text-[10px] font-medium text-[#9A8C7E]"
         >
-          {t("comingSoonTag")}
+          {count}
         </Badge>
       </div>
-      <p className="text-[13px] leading-relaxed text-[#9A9A9A]">
-        {t("comingSoonBody")}
-      </p>
-      <div className="mt-1 flex flex-1 flex-col justify-center gap-2.5">
-        {[200, 150, 230].map((w) => (
-          <div key={w} className="flex items-center gap-2.5">
-            <span className="h-2 w-2 rounded-full bg-[#E3DDD3]" aria-hidden />
-            <span
-              className="h-2 rounded bg-[#EFEBE4]"
-              style={{ width: `${w}px`, maxWidth: "70%" }}
-              aria-hidden
-            />
-          </div>
-        ))}
+      <ul className="flex flex-col gap-2">{children}</ul>
+    </div>
+  );
+}
+
+// The execution pane that replaces the old "coming soon" placeholder. First
+// paint reads GET /api/daemon/execution-state?connectionUuid=… (correct state
+// before any SSE event), then subscribes to execution:{connectionUuid} via the
+// RealtimeProvider and re-renders on each event (a task starting/finishing, or
+// the connection going offline → empty active set). Keyed by connection uuid at
+// the call site so switching connections resets fetch state cleanly.
+function ExecutionPane({
+  connectionUuid,
+  nowMs,
+}: {
+  connectionUuid: string;
+  nowMs: number;
+}) {
+  const t = useTranslations("agentConnections");
+  const [executions, setExecutions] = useState<ExecutionView[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // First-paint fetch — runs once per connection (component is keyed by uuid).
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const res = await authFetch(
+          `/api/daemon/execution-state?connectionUuid=${encodeURIComponent(connectionUuid)}`,
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && json.success) {
+          setExecutions(json.data.executions ?? []);
+        }
+      } catch (error) {
+        clientLogger.error("Failed to fetch daemon execution state:", error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionUuid]);
+
+  // Live updates — the SSE event carries the connection's full current active
+  // set, so we replace wholesale (no merge). Filtered to this connection by the
+  // hook. Offline → empty set → the empty state renders.
+  useExecutionSubscription(connectionUuid, (event) => {
+    setExecutions(event.executions);
+  });
+
+  const running = useMemo(
+    () => executions.filter((e) => e.status === "running"),
+    [executions],
+  );
+  const queued = useMemo(
+    () => executions.filter((e) => e.status === "queued"),
+    [executions],
+  );
+
+  return (
+    <div className="flex h-full min-h-[180px] flex-col gap-4 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
+      <div className="flex items-center gap-2">
+        <ListChecks className="h-4 w-4 text-[#C67A52]" aria-hidden />
+        <span className="text-[14px] font-semibold text-[#2C2C2C]">
+          {t("execTitle")}
+        </span>
       </div>
+
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center gap-2 py-6 text-[13px] text-[#9A9A9A]">
+          <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+          {t("execLoading")}
+        </div>
+      ) : running.length === 0 && queued.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F0EDE8]">
+            <Clock3 className="h-5 w-5 text-[#9A9A9A]" aria-hidden />
+          </div>
+          <p className="text-[13px] font-medium text-[#6B6B6B]">
+            {t("execEmptyTitle")}
+          </p>
+          <p className="max-w-xs text-[12px] leading-relaxed text-[#9A9A9A]">
+            {t("execEmptyBody")}
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {running.length > 0 && (
+            <ExecutionSection icon={Play} label={t("execRunning")} count={running.length}>
+              {running.map((exec) => (
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+              ))}
+            </ExecutionSection>
+          )}
+          {queued.length > 0 && (
+            <ExecutionSection icon={ListChecks} label={t("execQueued")} count={queued.length}>
+              {queued.map((exec) => (
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+              ))}
+            </ExecutionSection>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -479,7 +697,11 @@ function DetailContent({
             />
           </div>
           <div className="flex-1">
-            <ComingSoonPlaceholder />
+            <ExecutionPane
+              key={connection.uuid}
+              connectionUuid={connection.uuid}
+              nowMs={nowMs}
+            />
           </div>
         </div>
       </div>
@@ -526,7 +748,11 @@ function DetailContent({
           mono
         />
       </div>
-      <ComingSoonPlaceholder />
+      <ExecutionPane
+        key={connection.uuid}
+        connectionUuid={connection.uuid}
+        nowMs={nowMs}
+      />
     </div>
   );
 }

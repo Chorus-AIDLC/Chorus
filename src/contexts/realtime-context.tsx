@@ -42,10 +42,29 @@ export interface PresenceEvent {
 
 type PresenceSubscriber = (event: PresenceEvent) => void;
 
+// Re-export the backend execution-state types so consumers (the Agent
+// Connections page) share one source of truth for the row/event shape.
+export type {
+  ExecutionView,
+  ExecutionEvent as ExecutionEventBase,
+} from "@/services/daemon-execution.service";
+import type { ExecutionEvent as ExecutionEventBase } from "@/services/daemon-execution.service";
+
+// SSE-tagged execution event: the backend ExecutionEvent plus the `type`
+// discriminator the SSE route adds so the client can route it. Carries the
+// connection's full current active (`running`/`queued`) set so a subscriber
+// re-renders directly off the event without a follow-up read.
+export interface ExecutionEvent extends ExecutionEventBase {
+  type: "execution";
+}
+
+type ExecutionSubscriber = (event: ExecutionEvent) => void;
+
 interface RealtimeContextType {
   subscribe: (callback: Subscriber) => () => void;
   subscribeEntity: (callback: EntitySubscriber) => () => void;
   subscribePresence: (callback: PresenceSubscriber) => () => void;
+  subscribeExecution: (callback: ExecutionSubscriber) => () => void;
 }
 
 const RealtimeContext = createContext<RealtimeContextType | null>(null);
@@ -59,6 +78,7 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
   const subscribersRef = useRef<Set<Subscriber>>(new Set());
   const entitySubscribersRef = useRef<Set<EntitySubscriber>>(new Set());
   const presenceSubscribersRef = useRef<Set<PresenceSubscriber>>(new Set());
+  const executionSubscribersRef = useRef<Set<ExecutionSubscriber>>(new Set());
 
   const notify = useCallback(() => {
     subscribersRef.current.forEach((cb) => cb());
@@ -110,6 +130,15 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
         // Route presence events to dedicated subscribers — skip notify/debouncedNotifyEntity
         if (parsed.type === "presence") {
           presenceSubscribersRef.current.forEach((cb) => cb(parsed as unknown as PresenceEvent));
+          return;
+        }
+
+        // Route execution-state events to dedicated subscribers. Delivered
+        // immediately (no debounce): execution changes are already coalesced
+        // server-side into a single per-connection snapshot, and the detail pane
+        // must reflect a task starting/finishing without lag.
+        if (parsed.type === "execution") {
+          executionSubscribersRef.current.forEach((cb) => cb(parsed as unknown as ExecutionEvent));
           return;
         }
 
@@ -191,8 +220,18 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     };
   }, []);
 
+  const subscribeExecution = useCallback((callback: ExecutionSubscriber) => {
+    executionSubscribersRef.current.add(callback);
+    return () => {
+      executionSubscribersRef.current.delete(callback);
+    };
+  }, []);
+
   // Memoize context value to avoid unnecessary re-renders of consumers
-  const contextValue = useMemo(() => ({ subscribe, subscribeEntity, subscribePresence }), [subscribe, subscribeEntity, subscribePresence]);
+  const contextValue = useMemo(
+    () => ({ subscribe, subscribeEntity, subscribePresence, subscribeExecution }),
+    [subscribe, subscribeEntity, subscribePresence, subscribeExecution],
+  );
 
   return (
     <RealtimeContext.Provider value={contextValue}>
@@ -277,6 +316,36 @@ export function usePresenceSubscription(callback: (event: PresenceEvent) => void
     const handler = (event: PresenceEvent) => callbackRef.current(event);
     return context.subscribePresence(handler);
   }, [context]);
+}
+
+/**
+ * Subscribe to daemon execution-state events for a single connection. The
+ * callback fires only on `execution` events whose `connectionUuid` matches the
+ * given one, carrying that connection's current active (`running`/`queued`) set.
+ * Does NOT fire on mount — the caller renders first-paint state from the read API
+ * and then lets this hook keep it live. No-ops gracefully outside
+ * RealtimeProvider (e.g. during initial layout render).
+ *
+ * A null/empty `connectionUuid` subscribes to nothing (the page passes null when
+ * no connection is selected), so the hook order stays stable across selections.
+ */
+export function useExecutionSubscription(
+  connectionUuid: string | null | undefined,
+  callback: (event: ExecutionEvent) => void,
+) {
+  const context = useContext(RealtimeContext);
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  useEffect(() => {
+    if (!context || !connectionUuid) return;
+    const handler = (event: ExecutionEvent) => {
+      if (event.connectionUuid === connectionUuid) {
+        callbackRef.current(event);
+      }
+    };
+    return context.subscribeExecution(handler);
+  }, [context, connectionUuid]);
 }
 
 /**

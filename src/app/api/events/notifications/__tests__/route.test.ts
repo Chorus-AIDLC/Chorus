@@ -108,6 +108,18 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     expect(mockParseSelfReport.mock.calls[0][0]).toBeInstanceOf(URLSearchParams);
   });
 
+  it("emits a connection_registered data event carrying the connectionUuid for a daemon connection", async () => {
+    const res = await GET(makeRequest("clientType=openclaw"));
+    const { chunks } = await startStream(res);
+
+    const joined = chunks.join("");
+    expect(joined).toContain(": connected");
+    // The daemon parses this to learn which DaemonConnection it registered as
+    // (needed to attribute POST /api/daemon/execution-state snapshots).
+    expect(joined).toContain('"type":"connection_registered"');
+    expect(joined).toContain(`"connectionUuid":"${connectionUuid}"`);
+  });
+
   it("subscribes to the per-user notification channel and delivers events", async () => {
     const res = await GET(makeRequest("clientType=openclaw"));
     const { chunks } = await startStream(res);
@@ -171,6 +183,8 @@ describe("GET /api/events/notifications (notification SSE)", () => {
 
       expect(mockRegisterConnection).toHaveBeenCalledTimes(1);
       expect(chunks.join("")).toContain(": connected");
+      // No registry row (conn === null) → no connection_registered event emitted.
+      expect(chunks.join("")).not.toContain("connection_registered");
 
       await vi.advanceTimersByTimeAsync(30_000);
       expect(chunks.join("")).toContain(": heartbeat");

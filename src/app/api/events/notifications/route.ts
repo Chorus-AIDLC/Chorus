@@ -10,6 +10,10 @@ import {
   touchConnection,
   markDisconnected,
 } from "@/services/daemon-connection.service";
+import {
+  reconcileOffline,
+  publishExecutionChange,
+} from "@/services/daemon-execution.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +48,18 @@ export async function GET(request: NextRequest) {
       // Send initial connection confirmation
       send(": connected\n\n");
 
+      // Tell a self-reporting daemon which DaemonConnection it registered as, so
+      // it can attribute its execution-state snapshots to this connection
+      // (POST /api/daemon/execution-state requires the connectionUuid). Emitted
+      // as a normal data event the daemon's SSE listener parses; browser clients
+      // ignore the unrecognized `type`. Only sent when a connection row was
+      // actually registered (conn is null for non-daemon clientTypes).
+      if (conn) {
+        send(
+          `data: ${JSON.stringify({ type: "connection_registered", connectionUuid: conn.uuid })}\n\n`,
+        );
+      }
+
       // Subscribe to notification events for this user
       const handler = (event: Record<string, unknown>) => {
         send(`data: ${JSON.stringify(event)}\n\n`);
@@ -68,9 +84,17 @@ export async function GET(request: NextRequest) {
         } catch {
           // Already closed
         }
-        // Primary disconnect signal: mark the registry row offline.
-        // Fire-and-forget — never throws to the client.
-        if (conn) void markDisconnected(auth.companyUuid, conn);
+        // Primary disconnect signal: mark the registry row offline, then
+        // reconcile its running/queued execution rows to the `ended` terminal
+        // state (rows retained as history) and push the now-empty active set to
+        // any UI viewing this connection. All fire-and-forget — never throw to
+        // the client; the reconcile + publish swallow + log their own errors.
+        if (conn) {
+          void markDisconnected(auth.companyUuid, conn);
+          void reconcileOffline(auth.companyUuid, conn.uuid).then(() =>
+            publishExecutionChange(auth.companyUuid, conn.uuid),
+          );
+        }
       });
     },
   });

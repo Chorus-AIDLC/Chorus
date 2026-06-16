@@ -19,7 +19,7 @@ import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { SessionMap } from "./session-map.mjs";
 import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
-import { createNoopUploadHooks } from "./upload-hooks.mjs";
+import { createExecutionUploadHooks } from "./upload-hooks.mjs";
 import { WAKE_ACTIONS } from "./prompts.mjs";
 
 function defaultLogger() {
@@ -51,7 +51,6 @@ function defaultLogger() {
  */
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
-  const hooks = deps.hooks ?? createNoopUploadHooks();
   const permissionMode = deps.permissionMode ?? "chorus";
 
   const mcpClient =
@@ -65,10 +64,36 @@ export function buildDaemon(creds, deps = {}) {
   const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
   const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });
 
+  // The connection this daemon registered as. Learned from the SSE handshake's
+  // `connection_registered` event (threaded via the listener's onConnectionId).
+  // Held in a mutable box so the upload hooks (created before the listener) can
+  // read the latest value after the handshake. `waker` is assigned just below;
+  // the snapshot closure reads it lazily so the hooks can predate it.
+  /** @type {{ connectionUuid: string|null }} */
+  const connectionState = { connectionUuid: null };
+  /** @type {Waker|undefined} */
+  let waker;
+
+  // Execution-state upload hooks: POST the WakeQueue/waker-derived snapshot to
+  // the server on each lifecycle transition. `getSnapshot` reads the waker's
+  // per-task registry (which reuses the already-resolved root-idea lineage).
+  // Fire-and-forget; failures logged + non-fatal (see upload-hooks.mjs). The
+  // hooks share the daemon's existing creds + zero new deps (global fetch).
+  const hooks =
+    deps.hooks ??
+    createExecutionUploadHooks({
+      url: creds.url,
+      apiKey: creds.apiKey,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
+      logger,
+      fetchImpl: deps.fetchImpl,
+    });
+
   // One dedup set shared by the router (live SSE path) and the reconnect
   // backfill, so a notification handled live is never re-woken on reconnect.
   const seen = new Set();
-  const waker = new Waker({ creds, lineage, sessionMap, spawner, hooks, logger });
+  waker = new Waker({ creds, lineage, sessionMap, spawner, hooks, logger });
   const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
 
   // Reconnect backfill re-dispatches notifications missed during a gap, through
@@ -88,6 +113,12 @@ export function buildDaemon(creds, deps = {}) {
       url: creds.url,
       apiKey: creds.apiKey,
       onEvent: (event) => router.dispatch(event),
+      // Capture the connectionUuid the server reports for this stream so the
+      // execution-state upload hooks can attribute snapshots to it.
+      onConnectionId: (connectionUuid) => {
+        connectionState.connectionUuid = connectionUuid;
+        logger.info(`[Chorus] registered as connection ${connectionUuid}`);
+      },
       onReconnect: backfill,
       logger,
     });

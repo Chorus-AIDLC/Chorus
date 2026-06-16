@@ -33,6 +33,78 @@ export class Waker {
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
+
+    // Per-task execution registry — the source of truth for the execution
+    // snapshot uploaded to the server. Keyed by taskUuid (the notification's
+    // entityUuid for a task), so a task appears at most once regardless of how
+    // many notifications target it. Each entry carries the rootIdeaUuid the
+    // waker ALREADY resolved (reused, never re-walked) plus the daemon-side
+    // status/startedAt. Only `task` entities are tracked: a snapshot row is a
+    // DaemonTaskExecution keyed on a real task uuid, and the server validates
+    // every taskUuid as a Task — a non-task entity (idea/proposal/document
+    // wake) has no task row to attribute and is intentionally excluded.
+    /** @type {Map<string, { rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>} */
+    this.executions = new Map();
+  }
+
+  /**
+   * Extract the task uuid an execution row would key on for this notification,
+   * or null when the wake does not target a task (idea/proposal/document) — in
+   * which case there is no DaemonTaskExecution to report.
+   * @param {{ entityType?: string, entityUuid?: string }} notification
+   * @returns {string|null}
+   */
+  #taskUuidOf(notification) {
+    if (notification?.entityType === "task" && typeof notification.entityUuid === "string") {
+      return notification.entityUuid;
+    }
+    return null;
+  }
+
+  /**
+   * Build the current execution snapshot for upload: one entry per tracked task
+   * (running or queued), carrying the reused rootIdeaUuid and the daemon-side
+   * status/startedAt. Returns a fresh array each call so the caller can't mutate
+   * internal state. Never throws.
+   * @returns {Array<{ taskUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
+   */
+  buildExecutionSnapshot() {
+    return [...this.executions.entries()].map(([taskUuid, e]) => ({
+      taskUuid,
+      rootIdeaUuid: e.rootIdeaUuid,
+      status: e.status,
+      startedAt: e.startedAt,
+    }));
+  }
+
+  /**
+   * Record a task as QUEUED and emit a fresh snapshot. Called by the router at
+   * enqueue time (before the wake runs), so the server sees the task waiting
+   * even while it sits behind a same-root wake. The rootIdeaUuid passed here is
+   * the one already derived from `key` (idea:<root>) — no extra lineage call.
+   * A non-task notification is ignored (nothing to attribute). Never throws.
+   * @param {{ entityType?: string, entityUuid?: string }} notification
+   * @param {string} key  The serialization key from keyFor (idea:<root> | entity:…).
+   */
+  markQueued(notification, key) {
+    const taskUuid = this.#taskUuidOf(notification);
+    if (!taskUuid) return;
+    const rootIdeaUuid = key.startsWith("idea:") ? key.slice("idea:".length) : null;
+    const existing = this.executions.get(taskUuid);
+    // Don't downgrade a running task to queued if a duplicate dispatch arrives
+    // while it's mid-wake; only (re)mark queued when it isn't already running.
+    if (existing && existing.status === "running") return;
+    this.executions.set(taskUuid, { rootIdeaUuid, status: "queued", startedAt: existing?.startedAt ?? null });
+    this.#emitExecutionChange();
+  }
+
+  /** Fire-and-forget snapshot upload. Never throws into the wake path. */
+  #emitExecutionChange() {
+    try {
+      this.hooks?.onExecutionChange?.();
+    } catch (err) {
+      this.logger.warn(`[Chorus] execution-change hook failed: ${err}`);
+    }
   }
 
   /**
@@ -56,11 +128,25 @@ export class Waker {
    */
   async wake(notification, key) {
     let cfg;
+    const taskUuid = this.#taskUuidOf(notification);
     try {
       const prompt = buildPrompt(notification);
       if (!prompt) {
         this.logger.info(`[Chorus] no wake prompt for action "${notification.action}" — skipping`);
         return;
+      }
+
+      // Transition this task to RUNNING with a start timestamp and emit a fresh
+      // snapshot, so the server/UI sees it leave the queue and begin executing.
+      // Reuse the rootIdeaUuid already derived from `key` — no extra lineage call.
+      if (taskUuid) {
+        const rootIdeaUuid = key.startsWith("idea:") ? key.slice("idea:".length) : null;
+        this.executions.set(taskUuid, {
+          rootIdeaUuid,
+          status: "running",
+          startedAt: new Date().toISOString(),
+        });
+        this.#emitExecutionChange();
       }
 
       const { sessionId, isNew } = this.sessionMap.resolve(key);
@@ -108,6 +194,12 @@ export class Waker {
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
     } finally {
+      // Wake finished (cleanly or not): the task leaves the active set. Drop it
+      // and emit a fresh snapshot so the server ends its running/queued row. The
+      // server reconcile is snapshot-authoritative, so absence == ended.
+      if (taskUuid && this.executions.delete(taskUuid)) {
+        this.#emitExecutionChange();
+      }
       try {
         cfg?.cleanup?.();
       } catch {

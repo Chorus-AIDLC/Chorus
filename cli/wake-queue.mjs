@@ -55,6 +55,26 @@ export class WakeQueue {
     return [...this.pending.values()].filter((q) => q.length > 0).length;
   }
 
+  /**
+   * Snapshot of the keys with a task currently running (observability read).
+   * Returns a fresh array so a caller can't mutate the internal Set.
+   * @returns {string[]}
+   */
+  runningKeys() {
+    return [...this.running];
+  }
+
+  /**
+   * Snapshot of the keys that have at least one task still waiting to run —
+   * i.e. enqueued but not yet started (observability read). A key that is
+   * currently running with no further queued work is NOT pending. Returns a
+   * fresh array so a caller can't mutate internal state.
+   * @returns {string[]}
+   */
+  pendingKeys() {
+    return [...this.pending.entries()].filter(([, q]) => q.length > 0).map(([k]) => k);
+  }
+
   /** Try to start as many ready keys as the concurrency cap allows. */
   #pump() {
     while (this.activeCount < this.maxConcurrency && this.readyKeys.length > 0) {

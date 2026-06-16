@@ -76,6 +76,7 @@ model Agent {
   apiKeys  ApiKey[]
   sessions AgentSession[]
   daemonConnections DaemonConnection[]
+  daemonTaskExecutions DaemonTaskExecution[]
 
   @@index([companyUuid])
   @@index([ownerUuid])
@@ -421,6 +422,40 @@ model DaemonConnection {
   @@index([agentUuid])
   @@index([status])
   @@index([lastSeenAt])
+}
+
+// Daemon task execution state — one row per (connection, task) the daemon is
+// running or has queued. Fed by the snapshot-reconcile ingest path; rows are
+// retained as history (status -> "ended") rather than deleted, so a connection
+// that goes offline still leaves a queryable trail. References DaemonConnection
+// and Task by uuid (relationMode = "prisma"); only the `agent` relation is
+// modeled with a DB-level back-relation so the cascade convention matches
+// DaemonConnection/ApiKey (delete an agent -> its execution rows go too).
+model DaemonTaskExecution {
+  id             Int       @id @default(autoincrement())
+  uuid           String    @unique @default(uuid())
+  companyUuid    String
+  agentUuid      String
+  agent          Agent     @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  // → DaemonConnection.uuid (weak ref, no DB FK — the row outlives the
+  //   connection as history).
+  connectionUuid String
+  // → Task.uuid (weak ref).
+  taskUuid       String
+  // → Idea.uuid; null for a quick task with no root-idea lineage.
+  rootIdeaUuid   String?
+
+  status         String    // running | queued | ended
+  startedAt      DateTime? // set when/once the row is running; null while queued
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // A task appears at most once per connection: re-dispatch updates the
+  // existing row (queued -> running -> ended) rather than inserting a duplicate.
+  @@unique([connectionUuid, taskUuid])
+  @@index([connectionUuid, status])
+  @@index([companyUuid, agentUuid])
 }
 
 // Notification

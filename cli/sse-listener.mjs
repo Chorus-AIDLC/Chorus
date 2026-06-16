@@ -52,6 +52,10 @@ const PROCESS_STARTED_AT = new Date();
  * @property {string} url       Chorus base URL.
  * @property {string} apiKey    `cho_` API key.
  * @property {(event: Record<string, unknown>) => void} onEvent
+ * @property {(connectionUuid: string) => void} [onConnectionId]  Called once the
+ *   server reports which DaemonConnection this stream registered as (the first
+ *   `connection_registered` data event). The daemon uses this connectionUuid to
+ *   attribute its execution-state snapshots.
  * @property {() => Promise<void>} [onReconnect]  Called after a reconnect so the
  *   caller can back-fill notifications missed during the gap.
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
@@ -66,7 +70,10 @@ export class SseListener {
     this.url = opts.url.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
     this.onEvent = opts.onEvent;
+    this.onConnectionId = opts.onConnectionId ?? (() => {});
     this.onReconnect = opts.onReconnect ?? (async () => {});
+    /** @type {string|null} The connection this stream registered as (once reported). */
+    this.connectionUuid = null;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.initialDelayMs = opts.initialDelayMs ?? INITIAL_DELAY_MS;
@@ -189,11 +196,26 @@ export class SseListener {
       if (line.startsWith(":")) continue;
       if (line.startsWith("data: ")) {
         const jsonStr = line.slice(6);
+        let event;
         try {
-          this.onEvent(JSON.parse(jsonStr));
+          event = JSON.parse(jsonStr);
         } catch (err) {
           this.logger.warn(`[Chorus] SSE JSON parse error: ${err} — raw: ${jsonStr}`);
+          continue;
         }
+        // The server's first data event tells us which DaemonConnection this
+        // stream registered as. Capture it (for execution-state attribution) and
+        // do NOT forward it as a notification — it isn't one.
+        if (event && event.type === "connection_registered" && typeof event.connectionUuid === "string") {
+          this.connectionUuid = event.connectionUuid;
+          try {
+            this.onConnectionId(event.connectionUuid);
+          } catch (err) {
+            this.logger.warn(`[Chorus] onConnectionId callback error: ${err}`);
+          }
+          continue;
+        }
+        this.onEvent(event);
       }
     }
   }

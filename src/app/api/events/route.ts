@@ -10,6 +10,13 @@ import {
   touchConnection,
   markDisconnected,
 } from "@/services/daemon-connection.service";
+import {
+  reconcileOffline,
+  publishExecutionChange,
+  listVisibleConnectionUuids,
+  executionEventName,
+  type ExecutionEvent,
+} from "@/services/daemon-execution.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +36,15 @@ export async function GET(request: NextRequest) {
   // (no DaemonConnection row is written).
   const report = parseSelfReport(request.nextUrl.searchParams);
   const conn = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+
+  // Resolve which daemon connections this caller may see (owner/self scoped) so
+  // the stream can forward their per-connection `execution:{uuid}` events. The
+  // execution channel is per-connection, so we subscribe to exactly the visible
+  // set — never another owner's, never cross-company. Resolved at stream-start;
+  // a connection that registers later is picked up by the next stream (the page's
+  // connection poll + EventSource reconnect re-resolve this set). Resolved here so
+  // a query failure surfaces as a 500 before the stream opens, never mid-stream.
+  const visibleConnectionUuids = await listVisibleConnectionUuids(auth);
 
   const stream = new ReadableStream({
     start(controller) {
@@ -69,6 +85,22 @@ export async function GET(request: NextRequest) {
 
       eventBus.on("presence", presenceHandler);
 
+      // Subscribe to per-connection execution-state events for every connection
+      // this caller may see. Each event is forwarded tagged with a `type:
+      // "execution"` discriminator the client routes on (alongside change +
+      // presence). The companyUuid is re-checked defensively even though the
+      // channel is already owner/self scoped, mirroring the change/presence
+      // multi-tenancy fence. The full active set rides in the event payload, so
+      // the client re-renders without a follow-up read round-trip.
+      const executionHandler = (event: ExecutionEvent) => {
+        if (event.companyUuid !== auth.companyUuid) return;
+        send(`data: ${JSON.stringify({ type: "execution", ...event })}\n\n`);
+      };
+      const executionChannels = visibleConnectionUuids.map(executionEventName);
+      for (const channel of executionChannels) {
+        eventBus.on(channel, executionHandler);
+      }
+
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
@@ -81,15 +113,26 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener("abort", () => {
         eventBus.off("change", handler);
         eventBus.off("presence", presenceHandler);
+        for (const channel of executionChannels) {
+          eventBus.off(channel, executionHandler);
+        }
         clearInterval(heartbeat);
         try {
           controller.close();
         } catch {
           // Already closed
         }
-        // Primary disconnect signal: mark the registry row offline.
-        // Fire-and-forget — never throws to the client.
-        if (conn) void markDisconnected(auth.companyUuid, conn);
+        // Primary disconnect signal: mark the registry row offline, then
+        // reconcile its running/queued execution rows to the `ended` terminal
+        // state (rows retained as history) and push the now-empty active set to
+        // any UI viewing this connection. All fire-and-forget — never throw to
+        // the client; the reconcile + publish swallow + log their own errors.
+        if (conn) {
+          void markDisconnected(auth.companyUuid, conn);
+          void reconcileOffline(auth.companyUuid, conn.uuid).then(() =>
+            publishExecutionChange(auth.companyUuid, conn.uuid),
+          );
+        }
       });
     },
   });

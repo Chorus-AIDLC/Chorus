@@ -83,6 +83,34 @@ describe("SseListener parsing", () => {
     expect(events).toEqual([{ type: "x", v: 1 }]);
   });
 
+  it("captures connection_registered as the connectionUuid and does NOT forward it as an event", async () => {
+    const events = [];
+    const connIds = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        ": connected\n\n",
+        'data: {"type":"connection_registered","connectionUuid":"conn-42"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"n1"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      onConnectionId: (id) => connIds.push(id),
+      logger: silentLogger,
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The connection_registered event is captured, not delivered as a notification.
+    expect(connIds).toEqual(["conn-42"]);
+    expect(listener.connectionUuid).toBe("conn-42");
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "n1" }]);
+    listener.disconnect();
+  });
+
   it("tolerates malformed data line without throwing", async () => {
     const events = [];
     const warns = [];
