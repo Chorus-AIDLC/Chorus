@@ -129,7 +129,12 @@ function ConnectionCard({ connection }: { connection: ConnectionView }) {
       {/* Meta */}
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <MetaRow icon={Server} label={t("fieldHost")} value={host} />
-        <MetaRow icon={Clock} label={t("fieldUptime")} value={formatUptime(connection.connectedAt)} />
+        {/* Uptime is only meaningful while the daemon is up — computing now-connectedAt
+            for an offline connection would show an ever-growing, misleading duration.
+            Offline connections convey their timing via "last active" below instead. */}
+        {isOnline && (
+          <MetaRow icon={Clock} label={t("fieldUptime")} value={formatUptime(connection.connectedAt)} />
+        )}
         <MetaRow icon={Activity} label={t("fieldLastActive")} value={formatRelative(connection.lastSeenAt)} />
         {connection.startedAt && (
           <MetaRow

@@ -103,12 +103,15 @@ The dashboard SHALL provide a top-level page at `/agent-connections`, reachable
 from a global sidebar navigation item labeled "Agent Connections" (and its
 localized equivalent), that lists the caller's visible connections. The page SHALL
 display, per connection, the client type and version, an online/offline indicator
-driven by the server-derived `effectiveStatus`, the host, the uptime (from
-`connectedAt`), and the last-active time (from `lastSeenAt`). The page SHALL
-refresh on a periodic interval so that online↔offline transitions appear without
-a manual reload, and SHALL show an empty state explaining how to start a daemon
-when the caller has no connections. All user-facing strings SHALL be localized in
-both supported locales. The navigation item SHALL NOT be labeled "Daemons".
+driven by the server-derived `effectiveStatus`, the host, and the last-active time
+(from `lastSeenAt`). The page SHALL display the uptime (from `connectedAt`) only
+for connections whose `effectiveStatus` is `online`; an offline connection SHALL
+NOT show an uptime, because `now - connectedAt` for a connection that is no longer
+up is an ever-growing, misleading value. The page SHALL refresh on a periodic
+interval so that online↔offline transitions appear without a manual reload, and
+SHALL show an empty state explaining how to start a daemon when the caller has no
+connections. All user-facing strings SHALL be localized in both supported locales.
+The navigation item SHALL NOT be labeled "Daemons".
 
 #### Scenario: The page lists the caller's connections
 
@@ -116,6 +119,13 @@ both supported locales. The navigation item SHALL NOT be labeled "Daemons".
 - **WHEN** the user opens `/agent-connections`
 - **THEN** the page MUST render both connections with their client type, host, and
   an indicator reflecting each connection's `effectiveStatus`
+
+#### Scenario: Uptime is shown only for online connections
+
+- **GIVEN** an online connection and an offline connection
+- **WHEN** the user opens `/agent-connections`
+- **THEN** the online connection MUST show an uptime derived from `connectedAt`
+- **AND** the offline connection MUST NOT show an uptime
 
 #### Scenario: The page shows an empty state with no connections
 
