@@ -164,19 +164,15 @@ function StatusDot({
 
 function StatusBadge({ online }: { online: boolean }) {
   const t = useTranslations("agentConnections");
-  if (online) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#15803D]">
-        <StatusDot online />
-        {t("statusOnline").toUpperCase()}
-      </span>
-    );
-  }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F0EDE8] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#6B6B6B]">
-      <StatusDot online={false} />
-      {t("statusOffline").toUpperCase()}
-    </span>
+    <Badge
+      className={`gap-1.5 rounded-full border-0 px-2.5 py-1 text-[11px] font-semibold tracking-wide ${
+        online ? "bg-[#DCFCE7] text-[#15803D]" : "bg-[#F0EDE8] text-[#6B6B6B]"
+      }`}
+    >
+      <StatusDot online={online} />
+      {(online ? t("statusOnline") : t("statusOffline")).toUpperCase()}
+    </Badge>
   );
 }
 
@@ -578,31 +574,48 @@ export default function AgentConnectionsPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Default selection: first connection (already sorted online-first by the
-  // service). Re-pin if the previously-selected connection disappears.
-  useEffect(() => {
-    if (connections.length === 0) {
-      if (selectedUuid !== null) setSelectedUuid(null);
-      return;
-    }
-    if (selectedUuid && connections.some((c) => c.uuid === selectedUuid)) return;
-    setSelectedUuid(connections[0].uuid);
-  }, [connections, selectedUuid]);
-
   const onlineCount = useMemo(
     () => connections.filter((c) => c.effectiveStatus === "online").length,
     [connections],
   );
+
+  // Selection is derived, not stored-then-synced: the explicit `selectedUuid`
+  // wins when it still resolves, otherwise we fall back to the first connection
+  // (already sorted online-first by the service). Deriving it inline means the
+  // desktop detail pane shows the default on the very first paint — no
+  // one-frame flash of the "select a connection" prompt before an effect fires.
   const selected = useMemo(
-    () => connections.find((c) => c.uuid === selectedUuid) ?? null,
+    () =>
+      connections.find((c) => c.uuid === selectedUuid) ??
+      connections[0] ??
+      null,
     [connections, selectedUuid],
   );
+  // Highlight the rail row that matches what the detail pane actually shows,
+  // which is the derived selection (not the raw `selectedUuid`, which may be
+  // null on first load or stale after a poll).
+  const selectedId = selected?.uuid ?? null;
 
   // Mobile drill-down state: any row tap on mobile sets selectedUuid AND opens
   // the detail screen. We use a separate `mobileDetailOpen` so going back
   // doesn't lose the selection (and so desktop, which always shows detail,
   // is unaffected).
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+
+  // Guard against the mobile detail silently swapping to a different agent: if
+  // the user has drilled into a connection and it later drops out of a poll,
+  // close the drill-down back to the list instead of re-pinning the detail
+  // screen to connections[0] (which would show a different agent under the
+  // same open detail view without the user navigating).
+  useEffect(() => {
+    if (
+      mobileDetailOpen &&
+      selectedUuid &&
+      !connections.some((c) => c.uuid === selectedUuid)
+    ) {
+      setMobileDetailOpen(false);
+    }
+  }, [connections, mobileDetailOpen, selectedUuid]);
 
   return (
     <div className="min-h-full bg-[#FAF8F4]">
@@ -709,7 +722,7 @@ export default function AgentConnectionsPage() {
                     <div key={connection.uuid}>
                       <RailRow
                         connection={connection}
-                        selected={selectedUuid === connection.uuid}
+                        selected={selectedId === connection.uuid}
                         onSelect={() => setSelectedUuid(connection.uuid)}
                         nowMs={nowMs}
                       />
