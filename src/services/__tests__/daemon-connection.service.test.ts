@@ -274,6 +274,9 @@ const NOW = new Date("2026-06-15T04:00:00.000Z");
 const ownerUuid = "owner-0000-0000-0000-000000000001";
 
 // Build a DaemonConnection row fixture, dating lastSeenAt `agoMs` before NOW.
+// The `agent` relation is included by default (matches the production query's
+// `include: { agent: { select: { name: true } } }`). Pass `agent: null` to
+// simulate a row whose related agent could not be resolved.
 function makeRow(
   overrides: {
     uuid?: string;
@@ -283,6 +286,7 @@ function makeRow(
     clientVersion?: string | null;
     host?: string;
     disconnectedAt?: Date | null;
+    agent?: { name: string } | null;
   } = {},
 ) {
   const agoMs = overrides.agoMs ?? 0;
@@ -300,6 +304,7 @@ function makeRow(
     connectedAt: new Date("2026-06-15T03:30:00.000Z"),
     lastSeenAt: new Date(NOW.getTime() - agoMs),
     disconnectedAt: "disconnectedAt" in overrides ? overrides.disconnectedAt : null,
+    agent: "agent" in overrides ? overrides.agent : { name: "Build Agent" },
   };
 }
 
@@ -309,14 +314,17 @@ describe("listConnectionsForOwner", () => {
     vi.setSystemTime(NOW);
   });
 
-  it("filters by companyUuid + agent.ownerUuid and maps rows to ConnectionView", async () => {
+  it("filters by companyUuid + agent.ownerUuid, joins the agent's display name, and maps rows to ConnectionView", async () => {
     mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow()]);
 
     const result = await listConnectionsForOwner(companyUuid, ownerUuid);
 
     expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledTimes(1);
+    // The `include` is what carries Agent.name into the projection — without it
+    // agentName would silently project null for every connection.
     expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0]).toEqual({
       where: { companyUuid, agent: { ownerUuid } },
+      include: { agent: { select: { name: true } } },
     });
     expect(result).toHaveLength(1);
     const view = result[0];
@@ -324,6 +332,7 @@ describe("listConnectionsForOwner", () => {
     expect(view).toEqual({
       uuid: connectionUuid,
       agentUuid,
+      agentName: "Build Agent",
       clientType: "claude_code",
       clientVersion: "0.11.0",
       host: "mac.local",
@@ -347,6 +356,17 @@ describe("listConnectionsForOwner", () => {
     expect(view.host).toBe("");
   });
 
+  it("projects agentName: null (not throw) when the agent relation cannot be resolved", async () => {
+    // Should not happen in practice given onDelete: Cascade, but the mapper
+    // is belt-and-suspenders so a missing relation never crashes the read path.
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow({ agent: null })]);
+    const [view] = await listConnectionsForOwner(companyUuid, ownerUuid);
+    expect(view.agentName).toBeNull();
+    // Other fields still project correctly.
+    expect(view.uuid).toBe(connectionUuid);
+    expect(view.agentUuid).toBe(agentUuid);
+  });
+
   it("returns an empty array when there are genuinely no rows", async () => {
     mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
     await expect(listConnectionsForOwner(companyUuid, ownerUuid)).resolves.toEqual([]);
@@ -366,18 +386,28 @@ describe("listConnectionsForAgent", () => {
     vi.setSystemTime(NOW);
   });
 
-  it("filters by companyUuid + agentUuid and maps rows to ConnectionView", async () => {
+  it("filters by companyUuid + agentUuid, joins the agent's display name, and maps rows to ConnectionView", async () => {
     mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow()]);
 
     const result = await listConnectionsForAgent(companyUuid, agentUuid);
 
     expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledTimes(1);
+    // Same `include` as the owner-scoped query so agent-self callers see
+    // agentName too — uniform projection across both scopes.
     expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0]).toEqual({
       where: { companyUuid, agentUuid },
+      include: { agent: { select: { name: true } } },
     });
     expect(result).toHaveLength(1);
     expect(result[0].uuid).toBe(connectionUuid);
+    expect(result[0].agentName).toBe("Build Agent");
     expect(result[0].effectiveStatus).toBe("online");
+  });
+
+  it("projects agentName: null (not throw) when the agent relation cannot be resolved", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([makeRow({ agent: null })]);
+    const [view] = await listConnectionsForAgent(companyUuid, agentUuid);
+    expect(view.agentName).toBeNull();
   });
 
   it("PROPAGATES a query error (does NOT swallow to [])", async () => {
