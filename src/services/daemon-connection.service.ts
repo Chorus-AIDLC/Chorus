@@ -76,6 +76,11 @@ export interface ConnectionHandle {
 export interface ConnectionView {
   uuid: string;
   agentUuid: string;
+  // Owning agent's display name (Agent.name). Joined from the `agent` relation;
+  // null if the relation cannot be resolved (e.g. the agent row was deleted out
+  // from under the connection — we project null rather than throwing so the
+  // page can still render the daemon's own self-reported clientType/host).
+  agentName: string | null;
   clientType: string;
   clientVersion: string | null;
   host: string; // "" when host-less (display can show a placeholder)
@@ -95,7 +100,11 @@ function isDaemonClientType(value: string): value is DaemonClientType {
 
 // Subset of the DaemonConnection row the mapper reads. Kept structural (rather
 // than importing Prisma's generated type) so the mapper is trivially unit-
-// testable with plain fixture objects.
+// testable with plain fixture objects. The `agent` relation is included with a
+// `name`-only select so the mapper can project the owning agent's display name
+// without pulling the full Agent row; nullable for the rare case where Prisma
+// returns no related row (deleted agent — should not happen given the
+// onDelete: Cascade, but we belt-and-suspenders the mapping rather than throw).
 interface DaemonConnectionRow {
   uuid: string;
   agentUuid: string;
@@ -107,6 +116,7 @@ interface DaemonConnectionRow {
   connectedAt: Date;
   lastSeenAt: Date;
   disconnectedAt: Date | null;
+  agent: { name: string } | null;
 }
 
 /**
@@ -125,6 +135,7 @@ function toConnectionView(row: DaemonConnectionRow): ConnectionView {
   return {
     uuid: row.uuid,
     agentUuid: row.agentUuid,
+    agentName: row.agent?.name ?? null,
     clientType: row.clientType,
     clientVersion: row.clientVersion,
     host: row.host,
@@ -329,6 +340,9 @@ export async function listConnectionsForOwner(
 ): Promise<ConnectionView[]> {
   const rows = await prisma.daemonConnection.findMany({
     where: { companyUuid, agent: { ownerUuid } },
+    // Pull only the owning agent's display name — the page leads with agent
+    // identity, so the read must carry it. `name`-only keeps the payload tight.
+    include: { agent: { select: { name: true } } },
   });
   return sortConnectionViews(rows.map(toConnectionView));
 }
@@ -344,6 +358,9 @@ export async function listConnectionsForAgent(
 ): Promise<ConnectionView[]> {
   const rows = await prisma.daemonConnection.findMany({
     where: { companyUuid, agentUuid },
+    // Same join as the owner-scoped read — agent self-scope still wants the
+    // display name (it's the agent's own name, but the projection stays uniform).
+    include: { agent: { select: { name: true } } },
   });
   return sortConnectionViews(rows.map(toConnectionView));
 }

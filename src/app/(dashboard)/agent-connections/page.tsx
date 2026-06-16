@@ -1,10 +1,41 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+// Agent Connections — master-detail observation deck.
+//
+// Identity inversion: every surface leads with the owning agent's display name
+// (`agentName` from the read API) and demotes the client type to a small badge.
+// Two connections that share a client type but belong to different agents must
+// stay distinguishable, so the agent name wins as primary identity everywhere.
+//
+// Layout: a single client component renders BOTH compositions off the same
+// dataset and formatters; only Tailwind breakpoints switch between them.
+//   - lg+ : two-pane master-detail (rail + detail panel).
+//   - < lg: mobile list + drill-down detail; selection state is a normal piece
+//           of client state, no separate route.
+//
+// Liveness intervals (both clear on unmount):
+//   - 15s POLL_INTERVAL_MS — refreshes the dataset so online↔offline flips
+//     surface without a manual reload.
+//   - 1s  UPTIME_TICK_MS  — drives the monospace `HH:MM:SS` uptime ticker for
+//     ONLINE connections only. Offline connections show no uptime row at all
+//     (now - connectedAt for a stopped daemon would grow forever, which is
+//     misleading — this carries forward the shipped uptime bug fix).
+//
+// Pulse animation is gated behind Tailwind's `motion-safe:` variant so it
+// degrades to a static dot under `prefers-reduced-motion`.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import {
+  Bot,
+  Clock3,
+  ChevronLeft,
+  MessagesSquare,
+  RadioTower,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Bot, RadioTower, Server, Clock, Activity, CalendarClock } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 
@@ -12,6 +43,7 @@ import { clientLogger } from "@/lib/logger-client";
 interface ConnectionView {
   uuid: string;
   agentUuid: string;
+  agentName: string | null;
   clientType: string;
   clientVersion: string | null;
   host: string; // "" when host-less
@@ -24,134 +56,495 @@ interface ConnectionView {
 }
 
 const POLL_INTERVAL_MS = 15_000;
+const UPTIME_TICK_MS = 1_000;
 
-// Relative "last active" formatter — reuses the shared `time.*` i18n namespace
-// already used by the projects page, so wording stays consistent.
+// =====================================================================
+// Formatters (shared by desktop + mobile compositions)
+// =====================================================================
+
+// Relative "last active" / "started" formatter — reuses the shared `time.*`
+// i18n namespace already used elsewhere so wording stays consistent.
 function useRelativeTime() {
   const t = useTranslations("time");
-  return (dateStr: string) => {
-    const diffMs = Date.now() - new Date(dateStr).getTime();
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    if (diffMinutes < 1) return t("justNow");
-    if (diffMinutes < 60) return t("minutesAgo", { minutes: diffMinutes });
-    if (diffHours < 24) return t("hoursAgo", { hours: diffHours });
-    return t("daysAgo", { days: diffDays });
-  };
+  return useCallback(
+    (dateStr: string, nowMs: number) => {
+      const diffMs = nowMs - new Date(dateStr).getTime();
+      const diffMinutes = Math.floor(diffMs / (1000 * 60));
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffMinutes < 1) return t("justNow");
+      if (diffMinutes < 60) return t("minutesAgo", { minutes: diffMinutes });
+      if (diffHours < 24) return t("hoursAgo", { hours: diffHours });
+      return t("daysAgo", { days: diffDays });
+    },
+    [t],
+  );
 }
 
-// Uptime (duration since connectedAt) formatter — its own i18n keys since the
-// shared `time.*` namespace only covers "ago"-style relative time.
-function useUptime() {
+// Pad an integer to two digits — used by the monospace HH:MM:SS uptime.
+function pad2(n: number) {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+// Monospace uptime that ticks every second. Days are split off into a
+// localized `Dd ` prefix so the seconds-tick stays meaningful past 24h —
+// `999:00:00` would lose its scannability. Returns a single string (no JSX),
+// which is intentionally placed inside a font-mono span by the caller.
+function useUptimeMono() {
   const t = useTranslations("agentConnections");
-  return (connectedAt: string) => {
-    const diffMs = Date.now() - new Date(connectedAt).getTime();
-    const totalMinutes = Math.floor(diffMs / (1000 * 60));
-    if (totalMinutes < 1) return t("uptimeJustStarted");
-    const totalHours = Math.floor(totalMinutes / 60);
-    if (totalHours < 1) return t("uptimeMinutes", { minutes: totalMinutes });
-    const totalDays = Math.floor(totalHours / 24);
-    if (totalDays < 1) return t("uptimeHoursMinutes", { hours: totalHours, minutes: totalMinutes % 60 });
-    return t("uptimeDaysHours", { days: totalDays, hours: totalHours % 24 });
-  };
+  return useCallback(
+    (connectedAt: string, nowMs: number) => {
+      const diffMs = Math.max(0, nowMs - new Date(connectedAt).getTime());
+      const totalSeconds = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSeconds / 86_400);
+      const hours = Math.floor((totalSeconds % 86_400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const hms = `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+      if (days > 0) {
+        // Localized day prefix + monospace HH:MM:SS so the second-by-second
+        // tick is still visible after 24h.
+        return t("uptimeMonoDays", { days, time: hms });
+      }
+      return hms;
+    },
+    [t],
+  );
 }
 
 function useClientTypeLabel() {
   const t = useTranslations("agentConnections");
-  return (clientType: string) => {
-    switch (clientType) {
-      case "claude_code":
-        return t("clientClaudeCode");
-      case "openclaw":
-        return t("clientOpenclaw");
-      default:
-        return t("clientUnknown");
-    }
-  };
+  return useCallback(
+    (clientType: string) => {
+      switch (clientType) {
+        case "claude_code":
+          return t("clientClaudeCode");
+        case "openclaw":
+          return t("clientOpenclaw");
+        default:
+          return t("clientUnknown");
+      }
+    },
+    [t],
+  );
 }
 
-function MetaRow({ icon: Icon, label, value }: { icon: typeof Server; label: string; value: string }) {
+// =====================================================================
+// Shared sub-components
+// =====================================================================
+
+// Pulsing online dot — green core with a translucent halo that animates only
+// under `motion-safe:`. Offline renders as a flat grey dot, no halo.
+function StatusDot({
+  online,
+  size = "sm",
+}: {
+  online: boolean;
+  size?: "sm" | "md";
+}) {
+  const halo = size === "md" ? "h-2.5 w-2.5" : "h-2 w-2";
+  const core = size === "md" ? "h-1.5 w-1.5" : "h-1 w-1";
+  if (!online) {
+    return (
+      <span
+        aria-hidden
+        className={`${halo} rounded-full bg-[#9A9A9A] opacity-60`}
+      />
+    );
+  }
   return (
-    <div className="flex items-center gap-2 text-[12px]">
-      <Icon className="h-3.5 w-3.5 shrink-0 text-[#9A9A9A]" />
-      <span className="text-[#9A9A9A]">{label}</span>
-      <span className="truncate font-medium text-[#2C2C2C]">{value}</span>
+    <span aria-hidden className={`relative inline-flex ${halo} items-center justify-center`}>
+      <span
+        className={`absolute inline-flex h-full w-full rounded-full bg-[#22C55E] opacity-30 motion-safe:animate-ping`}
+      />
+      <span className={`relative inline-flex ${core} rounded-full bg-[#22C55E]`} />
+    </span>
+  );
+}
+
+function StatusBadge({ online }: { online: boolean }) {
+  const t = useTranslations("agentConnections");
+  if (online) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#DCFCE7] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#15803D]">
+        <StatusDot online />
+        {t("statusOnline").toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F0EDE8] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#6B6B6B]">
+      <StatusDot online={false} />
+      {t("statusOffline").toUpperCase()}
+    </span>
+  );
+}
+
+// Identity tile (icon-on-tinted-square + agent name + clientType badge + version·host subline).
+// Used by desktop detail header AND mobile list cards / mobile detail screen,
+// just at slightly different sizes via `size`.
+function IdentityBlock({
+  connection,
+  size,
+}: {
+  connection: ConnectionView;
+  size: "sm" | "md" | "lg";
+}) {
+  const t = useTranslations("agentConnections");
+  const clientTypeLabel = useClientTypeLabel();
+  const online = connection.effectiveStatus === "online";
+
+  // Icon: bot for online (active agent), clock for offline (paused/stopped).
+  const Icon = online ? Bot : Clock3;
+  const iconColor = online ? "#C67A52" : "#9A9A9A";
+  const tileColor = online ? "#C67A5214" : "#9A9A9A14";
+
+  const tileSize = size === "lg" ? "h-12 w-12" : size === "md" ? "h-10 w-10" : "h-9 w-9";
+  const iconSize = size === "lg" ? "h-6 w-6" : size === "md" ? "h-5 w-5" : "h-4 w-4";
+  const tileRadius = size === "lg" ? "rounded-xl" : "rounded-lg";
+  const nameSize = size === "lg" ? "text-[20px]" : size === "md" ? "text-[16px]" : "text-[14px]";
+
+  const agentName = connection.agentName?.trim() || t("unknownAgent");
+  const version = connection.clientVersion ?? t("versionUnknown");
+  const host = connection.host === "" ? t("hostUnknown") : connection.host;
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div
+        className={`${tileSize} ${tileRadius} flex shrink-0 items-center justify-center`}
+        style={{ backgroundColor: tileColor }}
+      >
+        <Icon className={iconSize} style={{ color: iconColor }} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className={`truncate font-semibold text-[#2C2C2C] ${nameSize}`}>
+          {agentName}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <Badge
+            variant="secondary"
+            className="shrink-0 border-0 bg-[#F0EDE8] px-2 py-0.5 text-[10px] font-medium text-[#6B6B6B]"
+          >
+            {clientTypeLabel(connection.clientType)}
+          </Badge>
+          <span className="truncate font-mono text-[11px] text-[#9A9A9A]">
+            v{version} · {host}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ConnectionCard({ connection }: { connection: ConnectionView }) {
+// One labeled stat tile — used in both the desktop 2x2 grid and mobile detail.
+function StatTile({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        {label}
+      </div>
+      <div
+        className={`mt-1.5 truncate text-[15px] font-medium text-[#2C2C2C] ${mono ? "font-mono" : ""}`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ComingSoonPlaceholder() {
+  const t = useTranslations("agentConnections");
+  return (
+    <div className="flex h-full min-h-[180px] flex-col gap-3 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessagesSquare className="h-4 w-4 text-[#C67A52]" />
+          <span className="text-[14px] font-semibold text-[#2C2C2C]">
+            {t("comingSoonTitle")}
+          </span>
+        </div>
+        <Badge
+          variant="secondary"
+          className="border-0 bg-[#F0EDE8] px-2 py-0.5 font-mono text-[10px] tracking-wide text-[#9A8C7E]"
+        >
+          {t("comingSoonTag")}
+        </Badge>
+      </div>
+      <p className="text-[13px] leading-relaxed text-[#9A9A9A]">
+        {t("comingSoonBody")}
+      </p>
+      <div className="mt-1 flex flex-1 flex-col justify-center gap-2.5">
+        {[200, 150, 230].map((w) => (
+          <div key={w} className="flex items-center gap-2.5">
+            <span className="h-2 w-2 rounded-full bg-[#E3DDD3]" aria-hidden />
+            <span
+              className="h-2 rounded bg-[#EFEBE4]"
+              style={{ width: `${w}px`, maxWidth: "70%" }}
+              aria-hidden
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// Connection rail row (desktop) + connection card (mobile list)
+// =====================================================================
+
+function RailRow({
+  connection,
+  selected,
+  onSelect,
+  nowMs,
+}: {
+  connection: ConnectionView;
+  selected: boolean;
+  onSelect: () => void;
+  nowMs: number;
+}) {
   const t = useTranslations("agentConnections");
   const clientTypeLabel = useClientTypeLabel();
   const formatRelative = useRelativeTime();
-  const formatUptime = useUptime();
-
-  const isOnline = connection.effectiveStatus === "online";
+  const online = connection.effectiveStatus === "online";
+  const agentName = connection.agentName?.trim() || t("unknownAgent");
   const host = connection.host === "" ? t("hostUnknown") : connection.host;
-  const version = connection.clientVersion ?? t("versionUnknown");
 
   return (
-    <Card className="gap-3 rounded-xl border-[#E5E2DC] p-5 shadow-none">
-      {/* Header: client type + version pill, status badge */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#C67A5215]">
-            <Bot className="h-4 w-4 text-[#C67A52]" />
+    <Button
+      variant="ghost"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      className={`relative h-auto w-full justify-start gap-0 rounded-none px-0 py-0 text-left transition-colors ${
+        selected
+          ? "bg-[#FBF4EF] hover:bg-[#FBF4EF]"
+          : "bg-white hover:bg-[#FAF8F4]"
+      }`}
+    >
+      {selected && (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-[3px] bg-[#C67A52]"
+        />
+      )}
+      <span className="flex w-full items-center gap-3 px-4 py-3.5">
+        <span className="shrink-0">
+          <StatusDot online={online} size="md" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14px] font-semibold text-[#2C2C2C]">
+            {agentName}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1.5">
+            <Badge
+              variant="secondary"
+              className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+            >
+              {clientTypeLabel(connection.clientType)}
+            </Badge>
+            <span className="truncate font-mono text-[10px] text-[#9A9A9A]">
+              · {host}
+            </span>
+          </span>
+        </span>
+        <span
+          className={`shrink-0 text-[11px] font-medium tabular-nums ${
+            online ? "text-[#15803D]" : "text-[#9A9A9A]"
+          }`}
+        >
+          {formatRelative(connection.lastSeenAt, nowMs)}
+        </span>
+      </span>
+    </Button>
+  );
+}
+
+function MobileCard({
+  connection,
+  onSelect,
+  nowMs,
+}: {
+  connection: ConnectionView;
+  onSelect: () => void;
+  nowMs: number;
+}) {
+  const t = useTranslations("agentConnections");
+  const formatRelative = useRelativeTime();
+  const formatUptime = useUptimeMono();
+  const online = connection.effectiveStatus === "online";
+
+  return (
+    <Button
+      variant="ghost"
+      onClick={onSelect}
+      className="block h-auto w-full rounded-2xl p-0 text-left hover:bg-transparent"
+    >
+      <Card className="w-full gap-3.5 rounded-2xl border-[#E5E0D8] bg-white p-4 shadow-none transition-colors hover:bg-[#FBF4EF]/40">
+        <div className="flex items-center justify-between gap-3">
+          <IdentityBlock connection={connection} size="md" />
+          <div className="shrink-0">
+            <StatusBadge online={online} />
           </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[14px] font-semibold text-[#2C2C2C]">
-                {clientTypeLabel(connection.clientType)}
-              </span>
-              <Badge
-                variant="secondary"
-                className="shrink-0 border-0 bg-[#F0EDE8] text-[10px] font-medium text-[#6B6B6B]"
-              >
-                {version}
-              </Badge>
+        </div>
+        <div className="h-px w-full bg-[#F2EEE7]" />
+        <div className="grid grid-cols-2 gap-3">
+          {/* Uptime tile is conditional — offline cards omit it entirely so the
+              footer becomes a single Last-active tile, never a placeholder dash. */}
+          {online ? (
+            <div>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                {t("fieldUptime")}
+              </div>
+              <div className="mt-1 truncate font-mono text-[14px] font-medium text-[#2C2C2C]">
+                {formatUptime(connection.connectedAt, nowMs)}
+              </div>
+            </div>
+          ) : (
+            <div />
+          )}
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+              {t("fieldLastActive")}
+            </div>
+            <div className="mt-1 truncate text-[14px] font-medium text-[#2C2C2C]">
+              {formatRelative(connection.lastSeenAt, nowMs)}
             </div>
           </div>
         </div>
-        <Badge
-          className={`shrink-0 gap-1.5 border-0 text-[11px] font-medium ${
-            isOnline ? "bg-[#DCFCE7] text-[#15803D]" : "bg-[#F0EDE8] text-[#6B6B6B]"
-          }`}
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-[#22C55E]" : "bg-[#9A9A9A]"}`}
-            aria-hidden
-          />
-          {isOnline ? t("statusOnline") : t("statusOffline")}
-        </Badge>
-      </div>
-
-      {/* Meta */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <MetaRow icon={Server} label={t("fieldHost")} value={host} />
-        {/* Uptime is only meaningful while the daemon is up — computing now-connectedAt
-            for an offline connection would show an ever-growing, misleading duration.
-            Offline connections convey their timing via "last active" below instead. */}
-        {isOnline && (
-          <MetaRow icon={Clock} label={t("fieldUptime")} value={formatUptime(connection.connectedAt)} />
-        )}
-        <MetaRow icon={Activity} label={t("fieldLastActive")} value={formatRelative(connection.lastSeenAt)} />
-        {connection.startedAt && (
-          <MetaRow
-            icon={CalendarClock}
-            label={t("fieldStarted")}
-            value={formatRelative(connection.startedAt)}
-          />
-        )}
-      </div>
-    </Card>
+      </Card>
+    </Button>
   );
 }
+
+// =====================================================================
+// Detail composition (shared by desktop right-pane + mobile detail screen)
+// =====================================================================
+
+function DetailContent({
+  connection,
+  nowMs,
+  variant,
+}: {
+  connection: ConnectionView;
+  nowMs: number;
+  variant: "desktop" | "mobile";
+}) {
+  const t = useTranslations("agentConnections");
+  const formatRelative = useRelativeTime();
+  const formatUptime = useUptimeMono();
+  const online = connection.effectiveStatus === "online";
+
+  // The desktop variant frames the whole panel (rounded white card) — mobile
+  // sits directly on the page background and uses individual stat tiles.
+  if (variant === "desktop") {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex items-start justify-between gap-4 px-6 py-5">
+          <IdentityBlock connection={connection} size="md" />
+          <div className="shrink-0 pt-1">
+            <StatusBadge online={online} />
+          </div>
+        </div>
+        <div className="h-px w-full bg-[#EFEBE4]" />
+        <div className="flex flex-1 flex-col gap-6 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            {/* Uptime is online-only. The slot stays empty for offline
+                connections — never a placeholder dash, never a misleading
+                ever-growing duration. */}
+            {online ? (
+              <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                  {t("fieldUptime")}
+                </div>
+                <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-[#2C2C2C]">
+                  {formatUptime(connection.connectedAt, nowMs)}
+                </div>
+              </div>
+            ) : (
+              <div />
+            )}
+            <StatTile
+              label={t("fieldLastActive")}
+              value={formatRelative(connection.lastSeenAt, nowMs)}
+            />
+            <StatTile
+              label={t("fieldStarted")}
+              value={
+                connection.startedAt
+                  ? formatRelative(connection.startedAt, nowMs)
+                  : t("startedUnknown")
+              }
+            />
+            <StatTile
+              label={t("fieldHost")}
+              value={connection.host === "" ? t("hostUnknown") : connection.host}
+              mono
+            />
+          </div>
+          <div className="flex-1">
+            <ComingSoonPlaceholder />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Mobile variant
+  return (
+    <div className="flex flex-col gap-5 px-5 pb-6">
+      <div className="flex flex-col gap-4">
+        <IdentityBlock connection={connection} size="lg" />
+        <div>
+          <StatusBadge online={online} />
+        </div>
+      </div>
+      <div className="grid gap-3">
+        {online && (
+          <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+              {t("fieldUptime")}
+            </div>
+            <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-[#2C2C2C]">
+              {formatUptime(connection.connectedAt, nowMs)}
+            </div>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <StatTile
+            label={t("fieldLastActive")}
+            value={formatRelative(connection.lastSeenAt, nowMs)}
+          />
+          <StatTile
+            label={t("fieldStarted")}
+            value={
+              connection.startedAt
+                ? formatRelative(connection.startedAt, nowMs)
+                : t("startedUnknown")
+            }
+          />
+        </div>
+        <StatTile
+          label={t("fieldHost")}
+          value={connection.host === "" ? t("hostUnknown") : connection.host}
+          mono
+        />
+      </div>
+      <ComingSoonPlaceholder />
+    </div>
+  );
+}
+
+// =====================================================================
+// Page
+// =====================================================================
 
 export default function AgentConnectionsPage() {
   const t = useTranslations("agentConnections");
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -168,49 +561,184 @@ export default function AgentConnectionsPage() {
     }
   }, []);
 
+  // 15s dataset poll — picks up online↔offline flips without manual reload.
   useEffect(() => {
     fetchConnections();
-    const interval = setInterval(fetchConnections, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const id = setInterval(fetchConnections, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
   }, [fetchConnections]);
 
-  const onlineCount = connections.filter((c) => c.effectiveStatus === "online").length;
+  // 1s "now" tick — drives the monospace HH:MM:SS uptime ticker. Kept as a
+  // single shared interval (not per-row) so 100 rows don't mean 100 timers.
+  // It's running unconditionally because the formatters are cheap and any
+  // online row needs it; if there are zero online rows, every formatter ignores
+  // the value, so the cost is a no-op re-render every second.
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), UPTIME_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Default selection: first connection (already sorted online-first by the
+  // service). Re-pin if the previously-selected connection disappears.
+  useEffect(() => {
+    if (connections.length === 0) {
+      if (selectedUuid !== null) setSelectedUuid(null);
+      return;
+    }
+    if (selectedUuid && connections.some((c) => c.uuid === selectedUuid)) return;
+    setSelectedUuid(connections[0].uuid);
+  }, [connections, selectedUuid]);
+
+  const onlineCount = useMemo(
+    () => connections.filter((c) => c.effectiveStatus === "online").length,
+    [connections],
+  );
+  const selected = useMemo(
+    () => connections.find((c) => c.uuid === selectedUuid) ?? null,
+    [connections, selectedUuid],
+  );
+
+  // Mobile drill-down state: any row tap on mobile sets selectedUuid AND opens
+  // the detail screen. We use a separate `mobileDetailOpen` so going back
+  // doesn't lose the selection (and so desktop, which always shows detail,
+  // is unaffected).
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   return (
-    <div className="bg-[#FAF8F4] p-4 md:px-8 md:py-6">
-      {/* Header */}
-      <div className="mb-4 md:mb-6">
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("title")}</h1>
-          {!loading && (
-            <Badge
-              variant="secondary"
-              className="border-0 bg-[#F0EDE8] text-[11px] font-medium text-[#6B6B6B]"
+    <div className="min-h-full bg-[#FAF8F4]">
+      {/* ===========================================================
+          MOBILE: drill-down detail view (renders on top when open).
+          ========================================================== */}
+      {mobileDetailOpen && selected && (
+        <div className="lg:hidden">
+          <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[#EFEBE4] bg-[#FAF8F4] px-3 py-2.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMobileDetailOpen(false)}
+              className="h-9 gap-1 px-2 text-[15px] font-normal text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
             >
-              {t("summary", { online: onlineCount, total: connections.length })}
-            </Badge>
-          )}
-        </div>
-        <p className="mt-1 text-sm text-[#6B6B6B]">{t("subtitle")}</p>
-      </div>
-
-      {loading ? (
-        <p className="text-sm text-[#6B6B6B]">{t("loading")}</p>
-      ) : connections.length === 0 ? (
-        <Card className="items-center gap-3 rounded-xl border-[#E5E2DC] p-8 text-center shadow-none md:p-12">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
-            <RadioTower className="h-6 w-6 text-[#C67A52]" />
+              <ChevronLeft className="h-5 w-5" />
+              {t("mobileBack")}
+            </Button>
           </div>
-          <h2 className="text-base font-semibold text-[#2C2C2C]">{t("empty.title")}</h2>
-          <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">{t("empty.body")}</p>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {connections.map((connection) => (
-            <ConnectionCard key={connection.uuid} connection={connection} />
-          ))}
+          <div className="pt-4">
+            <DetailContent connection={selected} nowMs={nowMs} variant="mobile" />
+          </div>
         </div>
       )}
+
+      {/* ===========================================================
+          MOBILE list + DESKTOP master-detail.
+          The mobile list is hidden when the drill-down is open.
+          The desktop layout (lg+) is always rendered — it ignores the
+          mobile-only `mobileDetailOpen` flag.
+          ========================================================== */}
+      <div
+        className={`${
+          mobileDetailOpen ? "hidden lg:flex" : "flex"
+        } min-h-full flex-col gap-6 px-4 py-5 md:px-8 md:py-6 lg:gap-6 lg:px-8 lg:py-7`}
+      >
+        {/* Header */}
+        <header className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+          <div className="flex flex-col gap-1.5">
+            <h1 className="text-[22px] font-semibold text-[#2C2C2C] lg:text-[24px]">
+              {t("title")}
+            </h1>
+            <p className="max-w-[640px] text-[13px] leading-relaxed text-[#6B6B6B]">
+              {t("subtitle")}
+            </p>
+          </div>
+          {!loading && connections.length > 0 && (
+            <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E0D8] bg-white px-3.5 py-1.5">
+              <StatusDot online={onlineCount > 0} size="md" />
+              <span className="text-[13px] font-medium text-[#2C2C2C]">
+                {t("summary", { online: onlineCount, total: connections.length })}
+              </span>
+            </div>
+          )}
+        </header>
+
+        {/* Body */}
+        {loading ? (
+          <p className="text-sm text-[#6B6B6B]">{t("loading")}</p>
+        ) : connections.length === 0 ? (
+          <Card className="items-center gap-3 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
+              <RadioTower className="h-6 w-6 text-[#C67A52]" />
+            </div>
+            <h2 className="text-base font-semibold text-[#2C2C2C]">
+              {t("empty.title")}
+            </h2>
+            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
+              {t("empty.body")}
+            </p>
+          </Card>
+        ) : (
+          <>
+            {/* MOBILE: stacked card list (< lg) */}
+            <div className="flex flex-col gap-3 lg:hidden">
+              {connections.map((connection) => (
+                <MobileCard
+                  key={connection.uuid}
+                  connection={connection}
+                  nowMs={nowMs}
+                  onSelect={() => {
+                    setSelectedUuid(connection.uuid);
+                    setMobileDetailOpen(true);
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* DESKTOP: master-detail (lg+) */}
+            <div className="hidden flex-1 gap-5 lg:flex">
+              {/* Connection rail */}
+              <Card className="flex w-[340px] shrink-0 flex-col gap-0 overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+                <div className="flex items-center justify-between px-4 py-4">
+                  <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-[#9A9A9A]">
+                    {t("railHeader")}
+                  </span>
+                  <span className="font-mono text-[11px] font-medium text-[#9A9A9A]">
+                    {connections.length}
+                  </span>
+                </div>
+                <div className="h-px w-full bg-[#EFEBE4]" />
+                <div className="flex flex-col">
+                  {connections.map((connection, idx) => (
+                    <div key={connection.uuid}>
+                      <RailRow
+                        connection={connection}
+                        selected={selectedUuid === connection.uuid}
+                        onSelect={() => setSelectedUuid(connection.uuid)}
+                        nowMs={nowMs}
+                      />
+                      {idx < connections.length - 1 && (
+                        <div className="h-px w-full bg-[#F2EEE7]" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Detail panel */}
+              <Card className="flex flex-1 flex-col overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+                {selected ? (
+                  <DetailContent
+                    connection={selected}
+                    nowMs={nowMs}
+                    variant="desktop"
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center p-12 text-[13px] text-[#9A9A9A]">
+                    {t("selectPrompt")}
+                  </div>
+                )}
+              </Card>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
