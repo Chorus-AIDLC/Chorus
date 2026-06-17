@@ -507,8 +507,6 @@
     "inputType": "输入类型",
     "creatorType": "创建者类型",
     "containerSummary": "容器摘要",
-    "documents": "文档",
-    "tasks": "任务",
     "inputs": "输入",
     "discussion": "讨论",
     "reviewInfo": "审核信息",
@@ -900,9 +898,6 @@
     "skipReasonPlaceholder": "例如：有明确复现步骤的bug修复",
     "skipReasonRequired": "请提供跳过原因",
     "elaborationRequiredHint": "完成或跳过需求澄清后才能创建方案",
-    "questionCount": "{count} 个问题",
-    "navCounter": "{current} / {total}",
-    "somethingElse": "其他答案",
     "category": {
       "functional": "功能性",
       "nonFunctional": "非功能性",
@@ -1379,12 +1374,17 @@
     "execLoading": "正在加载执行状态...",
     "execElapsedLabel": "已运行时长",
     "execSession": "Idea：{idea}",
-    "execTaskUnknown": "未知任务",
     "execEmptyTitle": "暂无运行中的任务",
-    "execEmptyBody": "该连接当前没有正在运行或排队的任务。守护进程接到分派的工作后，会在此处显示。",
+    "execEmptyBody": "该连接当前没有正在处理或排队的工作。派发的工作会在 daemon 接手时显示在这里。",
     "empty": {
       "title": "暂无智能体连接",
       "body": "启动一个守护进程以将智能体连接到 Chorus。在终端运行 `chorus daemon`，或启用 OpenClaw 插件，连接成功后即可在此页面看到。"
-    }
+    },
+    "execEntityUnknown": "未知资源",
+    "entityTask": "任务",
+    "entityIdea": "想法",
+    "entityProposal": "提案",
+    "entityDocument": "文档",
+    "entityUnknown": "资源"
   }
 }

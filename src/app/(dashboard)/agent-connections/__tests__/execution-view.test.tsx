@@ -70,7 +70,6 @@ vi.mock("@/lib/logger-client", () => ({
 }));
 
 import AgentConnectionsPage from "@/app/(dashboard)/agent-connections/page";
-import { RealtimeProvider } from "@/contexts/realtime-context";
 
 // ===== EventSource stub (drives SSE) =====
 interface CapturedEventSource {
@@ -121,13 +120,14 @@ function execView(overrides: Record<string, unknown> & { uuid: string }) {
   return {
     agentUuid: "agent-1",
     connectionUuid: CONN_UUID,
-    taskUuid: "task-" + overrides.uuid,
+    entityType: "task",
+    entityUuid: "task-" + overrides.uuid,
     rootIdeaUuid: null,
     status: "running",
     startedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
-    taskTitle: "Task " + overrides.uuid,
+    entityTitle: "Task " + overrides.uuid,
     projectUuid: "proj-1",
     rootIdeaTitle: null,
     ...overrides,
@@ -165,11 +165,11 @@ afterEach(() => {
 });
 
 async function renderPage() {
-  const utils = render(
-    <RealtimeProvider>
-      <AgentConnectionsPage />
-    </RealtimeProvider>,
-  );
+  // The page provides its OWN RealtimeProvider (the BLOCKER fix), so render it
+  // directly — no test-supplied wrapper. This verifies the real shipped wiring:
+  // a global page that mounts its own provider and therefore receives live
+  // execution events. (A test-supplied provider would mask a missing one.)
+  const utils = render(<AgentConnectionsPage />);
   await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
   await act(async () => {
     await Promise.resolve();

@@ -2,9 +2,10 @@
 // Daemon execution-state ingest + first-paint read.
 //
 // POST — the daemon uploads a full execution snapshot for ONE of its
-// connections (the WakeQueue's running/queued keys mapped to task/root-idea
-// uuids). The server reconciles the connection's DaemonTaskExecution rows to the
-// snapshot and pushes an `execution:{connectionUuid}` SSE event.
+// connections (the WakeQueue's running/queued keys mapped to the wake-triggering
+// resource: task/idea/proposal/document). The server reconciles the connection's
+// DaemonExecution rows to the snapshot and pushes an `execution:{connectionUuid}`
+// SSE event.
 //
 // GET — the Agent Connections detail pane reads a single connection's current
 // running/queued set for first paint, before any SSE event arrives.
@@ -23,22 +24,26 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import {
   ACTIVE_EXECUTION_STATUSES,
+  EXECUTION_ENTITY_TYPES,
   reconcileSnapshot,
   publishExecutionChange,
   connectionBelongsToAgent,
   connectionVisibleToCaller,
   getExecutionsForConnection,
-  validateExecutionEntities,
+  filterValidExecutionEntities,
   type SnapshotExecution,
 } from "@/services/daemon-execution.service";
 
-// Request body schema. `status` is constrained to the two active values a daemon
-// can report — `ended` is a server-only terminal state set by reconcile, never
-// accepted from the wire. `startedAt`/`rootIdeaUuid` are nullable/optional
-// (a queued task has no start time; a quick task has no root idea). `startedAt`
-// is coerced from an ISO-8601 string to a Date.
+// Request body schema. `entityType` is the wake-triggering resource kind
+// (task | idea | proposal | document) and `entityUuid` its uuid. `status` is
+// constrained to the two active values a daemon can report — `ended` is a
+// server-only terminal state set by reconcile, never accepted from the wire.
+// `startedAt`/`rootIdeaUuid` are nullable/optional (a queued resource has no
+// start time; a wake with no idea ancestor has no root idea). `startedAt` is
+// coerced from an ISO-8601 string to a Date.
 const snapshotEntrySchema = z.object({
-  taskUuid: z.string().min(1),
+  entityType: z.enum([...EXECUTION_ENTITY_TYPES]),
+  entityUuid: z.string().min(1),
   rootIdeaUuid: z.string().min(1).nullish(),
   status: z.enum([...ACTIVE_EXECUTION_STATUSES]),
   startedAt: z.coerce.date().nullish(),
@@ -82,24 +87,26 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.notFound("Connection");
   }
 
-  // Multi-tenancy fence on the snapshot body: every referenced task/root-idea
-  // must resolve within the caller's company before it is persisted.
-  const entitiesValid = await validateExecutionEntities(
+  // Multi-tenancy fence on the snapshot body, best-effort: keep only entries
+  // whose referenced entity resolves within the caller's company; a dead/foreign
+  // reference is DROPPED rather than rejecting the whole snapshot (so one deleted
+  // resource still in the daemon's registry can't wedge the connection's updates,
+  // including ending other finished rows). A non-resolving rootIdeaUuid is nulled.
+  const validEntries = await filterValidExecutionEntities(
     auth.companyUuid,
     executions as SnapshotExecution[],
   );
-  if (!entitiesValid) {
-    return errors.badRequest("Snapshot references unknown task or root idea");
-  }
 
-  // Snapshot is authoritative: reconcile this connection's rows to the snapshot
-  // (upsert reported tasks; end any active row absent from it), stamping
-  // company/agent from the authenticated context (never trusted from the body).
+  // Snapshot is authoritative: reconcile this connection's rows to the filtered
+  // snapshot (upsert reported resources; end any active row absent from it),
+  // stamping company/agent from the authenticated context (never trusted from the
+  // body). Dropped entries are absent from what reconcile sees, so any prior row
+  // for them ends via the absent-from-snapshot rule.
   const reconciled = await reconcileSnapshot(
     auth.companyUuid,
     auth.actorUuid,
     connectionUuid,
-    executions as SnapshotExecution[],
+    validEntries,
   );
 
   // Push the connection's new active set to subscribed UIs. Fire-and-forget —

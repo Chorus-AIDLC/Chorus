@@ -50,8 +50,8 @@ describe("createExecutionUploadHooks snapshot upload", () => {
   it("POSTs the connectionUuid + snapshot to /api/daemon/execution-state with Bearer creds", async () => {
     const { posts, fetchImpl } = fakeServer();
     const snapshot = [
-      { taskUuid: "task-1", rootIdeaUuid: "root-1", status: "running", startedAt: "2026-06-16T00:00:00.000Z" },
-      { taskUuid: "task-2", rootIdeaUuid: null, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "running", startedAt: "2026-06-16T00:00:00.000Z" },
+      { entityType: "idea", entityUuid: "idea-2", rootIdeaUuid: null, status: "queued", startedAt: null },
     ];
     const hooks = createExecutionUploadHooks({
       url: "https://chorus.example/",
@@ -83,7 +83,7 @@ describe("createExecutionUploadHooks snapshot upload", () => {
       url: "https://c",
       apiKey: "k",
       getConnectionUuid: () => null, // handshake hasn't reported it yet
-      getSnapshot: () => [{ taskUuid: "t", rootIdeaUuid: null, status: "queued", startedAt: null }],
+      getSnapshot: () => [{ entityType: "task", entityUuid: "t", rootIdeaUuid: null, status: "queued", startedAt: null }],
       logger: { ...silent, warn: (m) => warns.push(m) },
       fetchImpl,
     });
@@ -202,7 +202,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     // Enqueue: marks the task queued and emits a snapshot.
     waker.markQueued(TASK_NOTIF, "idea:root-1");
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { taskUuid: "task-1", rootIdeaUuid: "root-1", status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "queued", startedAt: null },
     ]);
     expect(changes).toHaveLength(1);
 
@@ -220,7 +220,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     await waker2.wake(TASK_NOTIF, "idea:root-1");
 
     expect(snapshotDuringRun).toHaveLength(1);
-    expect(snapshotDuringRun[0]).toMatchObject({ taskUuid: "task-1", rootIdeaUuid: "root-1", status: "running" });
+    expect(snapshotDuringRun[0]).toMatchObject({ entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "running" });
     expect(snapshotDuringRun[0].startedAt).toBeTruthy();
     expect(Number.isNaN(Date.parse(snapshotDuringRun[0].startedAt))).toBe(false);
 
@@ -253,15 +253,31 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     expect(waker.buildExecutionSnapshot()).toEqual([]);
   });
 
-  it("a non-task notification is not tracked (no execution row to attribute)", async () => {
+  it("an IDEA wake (@-mention/elaboration under an idea) IS tracked as an idea resource", async () => {
+    // This is the core fix: previously only entityType==="task" was recorded, so
+    // @mentioning an agent under an idea woke + ran Claude but produced ZERO
+    // execution rows → empty UI. Now every recognized wake resource is tracked.
     const changes = [];
     const hooks = { ...createNoopUploadHooks(), onExecutionChange: () => changes.push("c") };
-    const ideaNotif = { ...TASK_NOTIF, entityType: "idea", entityUuid: "idea-7", action: "idea_claimed" };
+    const ideaNotif = { ...TASK_NOTIF, entityType: "idea", entityUuid: "idea-7", action: "mentioned" };
     const { waker } = makeWaker(hooks);
 
     waker.markQueued(ideaNotif, "idea:idea-7");
+    expect(waker.buildExecutionSnapshot()).toEqual([
+      { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", status: "queued", startedAt: null },
+    ]);
+    expect(changes).toEqual(["c"]); // tracked → snapshot emitted
+  });
+
+  it("a notification with an UNRECOGNIZED entityType is not tracked (nothing to attribute)", async () => {
+    const changes = [];
+    const hooks = { ...createNoopUploadHooks(), onExecutionChange: () => changes.push("c") };
+    const commentNotif = { ...TASK_NOTIF, entityType: "comment", entityUuid: "c-1", action: "mentioned" };
+    const { waker } = makeWaker(hooks);
+
+    waker.markQueued(commentNotif, "entity:comment:c-1");
     expect(waker.buildExecutionSnapshot()).toEqual([]);
-    expect(changes).toEqual([]); // nothing tracked → no snapshot emitted
+    expect(changes).toEqual([]);
   });
 
   it("a hook that throws never breaks the wake (emit is non-throwing)", async () => {
@@ -279,7 +295,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const { waker } = makeWaker(hooks);
     waker.markQueued(TASK_NOTIF, "entity:task:task-1");
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { taskUuid: "task-1", rootIdeaUuid: null, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, status: "queued", startedAt: null },
     ]);
   });
 });

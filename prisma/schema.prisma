@@ -76,7 +76,7 @@ model Agent {
   apiKeys  ApiKey[]
   sessions AgentSession[]
   daemonConnections DaemonConnection[]
-  daemonTaskExecutions DaemonTaskExecution[]
+  daemonExecutions DaemonExecution[]
 
   @@index([companyUuid])
   @@index([ownerUuid])
@@ -424,14 +424,20 @@ model DaemonConnection {
   @@index([lastSeenAt])
 }
 
-// Daemon task execution state — one row per (connection, task) the daemon is
-// running or has queued. Fed by the snapshot-reconcile ingest path; rows are
-// retained as history (status -> "ended") rather than deleted, so a connection
-// that goes offline still leaves a queryable trail. References DaemonConnection
-// and Task by uuid (relationMode = "prisma"); only the `agent` relation is
-// modeled with a DB-level back-relation so the cascade convention matches
+// Daemon execution state — one row per (connection, resource) the daemon is
+// running or has queued. The "resource" is whatever entity the wake-triggering
+// notification pointed at: a task, an idea (e.g. an @-mention or elaboration
+// under an idea), a proposal, or a document. Every wake the daemon performs is
+// reported, so the UI can show "this daemon is processing <resource>" regardless
+// of which resource caused it — not only task dispatches.
+//
+// Fed by the snapshot-reconcile ingest path; rows are retained as history
+// (status -> "ended") rather than deleted, so a connection that goes offline
+// still leaves a queryable trail. References DaemonConnection and the target
+// entity by uuid (relationMode = "prisma"); only the `agent` relation is modeled
+// with a DB-level back-relation so the cascade convention matches
 // DaemonConnection/ApiKey (delete an agent -> its execution rows go too).
-model DaemonTaskExecution {
+model DaemonExecution {
   id             Int       @id @default(autoincrement())
   uuid           String    @unique @default(uuid())
   companyUuid    String
@@ -440,9 +446,12 @@ model DaemonTaskExecution {
   // → DaemonConnection.uuid (weak ref, no DB FK — the row outlives the
   //   connection as history).
   connectionUuid String
-  // → Task.uuid (weak ref).
-  taskUuid       String
-  // → Idea.uuid; null for a quick task with no root-idea lineage.
+  // The wake-triggering resource: entityType is "task" | "idea" | "proposal" |
+  // "document"; entityUuid is that entity's uuid (weak ref, no DB FK).
+  entityType     String
+  entityUuid     String
+  // → Idea.uuid; the root-idea lineage anchor for grouping/labeling. Null when
+  //   the wake has no idea ancestor (e.g. a standalone/quick task).
   rootIdeaUuid   String?
 
   status         String    // running | queued | ended
@@ -451,9 +460,9 @@ model DaemonTaskExecution {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  // A task appears at most once per connection: re-dispatch updates the
+  // A resource appears at most once per connection: re-dispatch updates the
   // existing row (queued -> running -> ended) rather than inserting a duplicate.
-  @@unique([connectionUuid, taskUuid])
+  @@unique([connectionUuid, entityType, entityUuid])
   @@index([connectionUuid, status])
   @@index([companyUuid, agentUuid])
 }

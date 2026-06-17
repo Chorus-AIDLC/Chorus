@@ -47,6 +47,27 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// The page wraps itself in a RealtimeProvider (so its execution pane gets live
+// updates). The provider calls useRouter and opens an EventSource — neither
+// exists in jsdom — so stub both. This file exercises the CONNECTION LIST, not
+// live execution, so a no-op EventSource is sufficient.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
+class NoopEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = NoopEventSource.OPEN;
+  constructor(public url: string) {}
+  close() {
+    this.readyState = NoopEventSource.CLOSED;
+  }
+}
+
 import AgentConnectionsPage from "@/app/(dashboard)/agent-connections/page";
 
 // ===== Helpers =====
@@ -93,6 +114,8 @@ function respondWith(connections: Conn[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).EventSource = NoopEventSource;
   vi.useFakeTimers({ shouldAdvanceTime: true });
   // Pin "now" a few minutes after the fixture timestamps so uptime is non-zero.
   vi.setSystemTime(new Date("2026-06-16T12:05:00.000Z"));

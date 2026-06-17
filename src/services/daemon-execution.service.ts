@@ -1,13 +1,19 @@
 // src/services/daemon-execution.service.ts
-// Daemon Task Execution Service — persistence + reconciliation for the
-// running/queued tasks a daemon connection reports, plus the owner/self-scoped
-// read projection the Agent Connections page consumes.
+// Daemon Execution Service — persistence + reconciliation for the running/queued
+// RESOURCES a daemon connection reports, plus the owner/self-scoped read
+// projection the Agent Connections page consumes.
+//
+// A "resource" is whatever entity the wake-triggering notification pointed at:
+// a task, an idea (e.g. an @-mention or elaboration under an idea), a proposal,
+// or a document. EVERY wake the daemon performs is reported — not only task
+// dispatches — so the UI can show "this daemon is processing <resource>"
+// regardless of which resource caused the work.
 //
 // This sits on top of `daemon-connection.service` (the DaemonConnection registry
 // and its exported STALE_THRESHOLD_MS) and does NOT re-model connections or
-// re-derive the staleness rule. `DaemonTaskExecution` references a
-// `DaemonConnection` by `connectionUuid` (weak ref, no DB FK — the execution row
-// outlives the connection as history).
+// re-derive the staleness rule. `DaemonExecution` references a `DaemonConnection`
+// by `connectionUuid` (weak ref, no DB FK — the execution row outlives the
+// connection as history).
 //
 // Two reconcile entry points converge on one rule: a `running`/`queued` row that
 // is no longer justified — absent from the latest snapshot (ingest path) or its
@@ -25,27 +31,39 @@ export { STALE_THRESHOLD_MS };
 
 // ===== Types =====
 
-// The active (non-terminal) statuses a daemon reports for a task. `ended` is the
-// terminal/history state and is never reported by a snapshot — it is only ever
-// written by the reconcile logic (absent-from-snapshot or offline).
+// The active (non-terminal) statuses a daemon reports for a resource. `ended` is
+// the terminal/history state and is never reported by a snapshot — it is only
+// ever written by the reconcile logic (absent-from-snapshot or offline).
 export const ACTIVE_EXECUTION_STATUSES = ["running", "queued"] as const;
 export type ActiveExecutionStatus = (typeof ACTIVE_EXECUTION_STATUSES)[number];
 export const ENDED_EXECUTION_STATUS = "ended" as const;
 
+// The wake-triggering resource kinds a daemon can report. Mirrors the Chorus
+// notification `entityType` space for wake actions. A non-conforming value is
+// rejected at the route's zod boundary, so the service can assume validity.
+export const EXECUTION_ENTITY_TYPES = [
+  "task",
+  "idea",
+  "proposal",
+  "document",
+] as const;
+export type ExecutionEntityType = (typeof EXECUTION_ENTITY_TYPES)[number];
+
 /**
- * One entry of an ingested snapshot — the daemon's report for a single task it is
- * currently running or has queued on a connection. `startedAt` is the daemon's
- * self-reported run start (display-only); null while merely queued.
+ * One entry of an ingested snapshot — the daemon's report for a single resource
+ * it is currently running or has queued on a connection. `startedAt` is the
+ * daemon's self-reported run start (display-only); null while merely queued.
  */
 export interface SnapshotExecution {
-  taskUuid: string;
+  entityType: ExecutionEntityType;
+  entityUuid: string;
   rootIdeaUuid?: string | null;
   status: ActiveExecutionStatus; // "running" | "queued" — never "ended"
   startedAt?: Date | null;
 }
 
 /**
- * Read projection of a `DaemonTaskExecution` row returned to callers of the read
+ * Read projection of a `DaemonExecution` row returned to callers of the read
  * API. Timestamps are ISO-8601 strings so the client renders elapsed/started
  * without re-touching Date objects across the wire.
  */
@@ -53,18 +71,21 @@ export interface ExecutionView {
   uuid: string;
   agentUuid: string;
   connectionUuid: string;
-  taskUuid: string;
+  entityType: string; // task | idea | proposal | document
+  entityUuid: string;
   rootIdeaUuid: string | null;
   status: string; // running | queued | ended
   startedAt: string | null; // ISO-8601
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601
   // Display enrichment, resolved on the read/publish path so the detail pane can
-  // render a task title + a deep link without an extra round-trip per row. Null
-  // when the referenced entity no longer resolves (e.g. a deleted task) — the UI
-  // falls back to a localized placeholder. `projectUuid` is the task's project,
-  // needed to build the `/projects/{projectUuid}/tasks/{taskUuid}` link.
-  taskTitle: string | null;
+  // render a resource title + a deep link without an extra round-trip per row.
+  // `entityTitle` is the target resource's own title; null when it no longer
+  // resolves (e.g. a deleted entity) — the UI falls back to a localized
+  // placeholder. `projectUuid` is the resource's project when it has one (task /
+  // idea / proposal / document all carry one), needed to build the deep link.
+  // `rootIdeaTitle` is the lineage anchor's title for the session label.
+  entityTitle: string | null;
   projectUuid: string | null;
   rootIdeaTitle: string | null;
 }
@@ -85,14 +106,15 @@ export interface ExecutionEvent {
   executions: ExecutionView[];
 }
 
-// Subset of the DaemonTaskExecution row the mapper reads. Kept structural (not
-// the Prisma generated type) so the mapper is trivially unit-testable with plain
+// Subset of the DaemonExecution row the mapper reads. Kept structural (not the
+// Prisma generated type) so the mapper is trivially unit-testable with plain
 // fixtures — mirrors the daemon-connection service's DaemonConnectionRow pattern.
-interface DaemonTaskExecutionRow {
+interface DaemonExecutionRow {
   uuid: string;
   agentUuid: string;
   connectionUuid: string;
-  taskUuid: string;
+  entityType: string;
+  entityUuid: string;
   rootIdeaUuid: string | null;
   status: string;
   startedAt: Date | null;
@@ -100,80 +122,164 @@ interface DaemonTaskExecutionRow {
   updatedAt: Date;
 }
 
-// Display enrichment looked up alongside the execution rows (task title +
-// project for the link, root-idea title for the session label). Resolved in a
-// batch by `enrichExecutionViews`, then folded into each view by the mapper.
+// Display enrichment looked up alongside the execution rows. Keyed by
+// `${entityType}:${entityUuid}` so different resource kinds never collide. Each
+// entry carries the resource's own title + an optional projectUuid (for the
+// link). The root-idea title is looked up separately for the session label.
+// Resolved in a batch by `enrichExecutionViews`, then folded in by the mapper.
 interface ExecutionEnrichment {
-  task: Map<string, { title: string; projectUuid: string }>;
+  entity: Map<string, { title: string; projectUuid: string | null }>;
   idea: Map<string, { title: string }>;
 }
 
 const EMPTY_ENRICHMENT: ExecutionEnrichment = {
-  task: new Map(),
+  entity: new Map(),
   idea: new Map(),
 };
+
+function entityKey(entityType: string, entityUuid: string): string {
+  return `${entityType}:${entityUuid}`;
+}
 
 // ===== Helpers =====
 
 function toExecutionView(
-  row: DaemonTaskExecutionRow,
+  row: DaemonExecutionRow,
   enrichment: ExecutionEnrichment = EMPTY_ENRICHMENT,
 ): ExecutionView {
-  const task = enrichment.task.get(row.taskUuid) ?? null;
+  const entity = enrichment.entity.get(entityKey(row.entityType, row.entityUuid)) ?? null;
   const idea = row.rootIdeaUuid ? enrichment.idea.get(row.rootIdeaUuid) ?? null : null;
   return {
     uuid: row.uuid,
     agentUuid: row.agentUuid,
     connectionUuid: row.connectionUuid,
-    taskUuid: row.taskUuid,
+    entityType: row.entityType,
+    entityUuid: row.entityUuid,
     rootIdeaUuid: row.rootIdeaUuid,
     status: row.status,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    taskTitle: task?.title ?? null,
-    projectUuid: task?.projectUuid ?? null,
+    entityTitle: entity?.title ?? null,
+    projectUuid: entity?.projectUuid ?? null,
     rootIdeaTitle: idea?.title ?? null,
   };
 }
 
+// Group a set of entity uuids by their entityType, deduplicated, so each
+// resource table is queried once. Only the recognized EXECUTION_ENTITY_TYPES are
+// returned (an unknown type contributes nothing and degrades to a null title).
+function groupEntityUuidsByType(
+  rows: { entityType: string; entityUuid: string }[],
+): Record<ExecutionEntityType, string[]> {
+  const acc: Record<ExecutionEntityType, Set<string>> = {
+    task: new Set(),
+    idea: new Set(),
+    proposal: new Set(),
+    document: new Set(),
+  };
+  for (const r of rows) {
+    if ((EXECUTION_ENTITY_TYPES as readonly string[]).includes(r.entityType)) {
+      acc[r.entityType as ExecutionEntityType].add(r.entityUuid);
+    }
+  }
+  return {
+    task: [...acc.task],
+    idea: [...acc.idea],
+    proposal: [...acc.proposal],
+    document: [...acc.document],
+  };
+}
+
 /**
- * Batch-resolve the display enrichment for a set of execution rows: the title +
- * project of every referenced task (for the row label and deep link) and the
- * title of every referenced root idea (for the session label). Two queries total
- * regardless of row count, both companyUuid-scoped. A task/idea that no longer
- * resolves is simply absent from the map, and the mapper falls back to null so a
- * deleted entity degrades to a localized placeholder rather than throwing.
+ * Batch-resolve the display enrichment for a set of execution rows: per resource
+ * kind, the title + (when applicable) project of every referenced entity, plus
+ * the title of every referenced root idea (for the session label). At most one
+ * query per distinct entity kind + one for ideas, all companyUuid-scoped. An
+ * entity that no longer resolves is simply absent from the map, and the mapper
+ * falls back to null so a deleted resource degrades to a localized placeholder
+ * rather than throwing.
+ *
+ * projectUuid mapping by kind:
+ *  - task → Task.projectUuid (deep link to the task)
+ *  - idea → Idea.projectUuid (deep link to the idea / its panel)
+ *  - proposal → Proposal.projectUuid
+ *  - document → Document.projectUuid
  */
 async function enrichExecutionViews(
   companyUuid: string,
-  rows: DaemonTaskExecutionRow[],
+  rows: DaemonExecutionRow[],
 ): Promise<ExecutionEnrichment> {
-  const taskUuids = [...new Set(rows.map((r) => r.taskUuid))];
-  const ideaUuids = [
+  const byType = groupEntityUuidsByType(rows);
+
+  const entityMap = new Map<string, { title: string; projectUuid: string | null }>();
+  const ideaMap = new Map<string, { title: string }>();
+
+  if (byType.task.length > 0) {
+    const tasks = await prisma.task.findMany({
+      where: { companyUuid, uuid: { in: byType.task } },
+      select: { uuid: true, title: true, projectUuid: true },
+    });
+    for (const t of tasks) {
+      entityMap.set(entityKey("task", t.uuid), { title: t.title, projectUuid: t.projectUuid });
+    }
+  }
+
+  if (byType.idea.length > 0) {
+    const ideas = await prisma.idea.findMany({
+      where: { companyUuid, uuid: { in: byType.idea } },
+      select: { uuid: true, title: true, projectUuid: true },
+    });
+    for (const i of ideas) {
+      entityMap.set(entityKey("idea", i.uuid), { title: i.title, projectUuid: i.projectUuid });
+    }
+  }
+
+  if (byType.proposal.length > 0) {
+    const proposals = await prisma.proposal.findMany({
+      where: { companyUuid, uuid: { in: byType.proposal } },
+      select: { uuid: true, title: true, projectUuid: true },
+    });
+    for (const p of proposals) {
+      entityMap.set(entityKey("proposal", p.uuid), {
+        title: p.title,
+        projectUuid: p.projectUuid,
+      });
+    }
+  }
+
+  if (byType.document.length > 0) {
+    const documents = await prisma.document.findMany({
+      where: { companyUuid, uuid: { in: byType.document } },
+      select: { uuid: true, title: true, projectUuid: true },
+    });
+    for (const d of documents) {
+      entityMap.set(entityKey("document", d.uuid), {
+        title: d.title,
+        projectUuid: d.projectUuid,
+      });
+    }
+  }
+
+  // Root-idea titles for the session label. Reuse any idea already fetched above
+  // (an idea-kind row whose entity IS the root idea), then fetch the remainder.
+  const rootIdeaUuids = [
     ...new Set(
       rows
         .map((r) => r.rootIdeaUuid)
         .filter((u): u is string => typeof u === "string" && u.length > 0),
     ),
   ];
-
-  const taskMap = new Map<string, { title: string; projectUuid: string }>();
-  const ideaMap = new Map<string, { title: string }>();
-
-  if (taskUuids.length > 0) {
-    const tasks = await prisma.task.findMany({
-      where: { companyUuid, uuid: { in: taskUuids } },
-      select: { uuid: true, title: true, projectUuid: true },
-    });
-    for (const t of tasks) {
-      taskMap.set(t.uuid, { title: t.title, projectUuid: t.projectUuid });
-    }
+  const missingIdeaUuids = rootIdeaUuids.filter(
+    (u) => !entityMap.has(entityKey("idea", u)),
+  );
+  for (const u of rootIdeaUuids) {
+    const already = entityMap.get(entityKey("idea", u));
+    if (already) ideaMap.set(u, { title: already.title });
   }
-
-  if (ideaUuids.length > 0) {
+  if (missingIdeaUuids.length > 0) {
     const ideas = await prisma.idea.findMany({
-      where: { companyUuid, uuid: { in: ideaUuids } },
+      where: { companyUuid, uuid: { in: missingIdeaUuids } },
       select: { uuid: true, title: true },
     });
     for (const i of ideas) {
@@ -181,7 +287,7 @@ async function enrichExecutionViews(
     }
   }
 
-  return { task: taskMap, idea: ideaMap };
+  return { entity: entityMap, idea: ideaMap };
 }
 
 // ===== Reconcile (ingest path) =====
@@ -191,9 +297,9 @@ async function enrichExecutionViews(
  *
  * The `executions` array is treated as the COMPLETE current state for
  * `connectionUuid`:
- *  - each reported task is upserted to its reported `running`/`queued` status
- *    (keyed on the unique `(connectionUuid, taskUuid)`), and
- *  - every existing `running`/`queued` row for that connection whose task is
+ *  - each reported resource is upserted to its reported `running`/`queued`
+ *    status (keyed on the unique `(connectionUuid, entityType, entityUuid)`), and
+ *  - every existing `running`/`queued` row for that connection whose resource is
  *    NOT in the snapshot transitions to `ended`.
  *
  * This makes the operation idempotent (re-applying the same snapshot yields the
@@ -214,34 +320,52 @@ export async function reconcileSnapshot(
   connectionUuid: string,
   executions: SnapshotExecution[],
 ): Promise<number> {
-  // 1. End every running/queued row for this connection whose task is absent
-  //    from the snapshot. Done first so a task that moved off the snapshot is
-  //    terminal before (and independent of) the upserts below.
-  const reportedTaskUuids = executions.map((e) => e.taskUuid);
-  const ended = await prisma.daemonTaskExecution.updateMany({
+  // 1. End every running/queued row for this connection whose resource is absent
+  //    from the snapshot. Identify the kept rows by (entityType, entityUuid) and
+  //    end the rest. Done first so a resource that moved off the snapshot is
+  //    terminal before (and independent of) the upserts below. A row is "kept"
+  //    only when BOTH its type and uuid match a reported entry — so a uuid that
+  //    appears under a different type is not accidentally preserved.
+  const keptKeys = new Set(executions.map((e) => entityKey(e.entityType, e.entityUuid)));
+  const activeRows = await prisma.daemonExecution.findMany({
     where: {
       companyUuid,
       connectionUuid,
       status: { in: [...ACTIVE_EXECUTION_STATUSES] },
-      taskUuid: { notIn: reportedTaskUuids },
     },
-    data: { status: ENDED_EXECUTION_STATUS },
+    select: { id: true, entityType: true, entityUuid: true },
   });
+  const endIds = activeRows
+    .filter((r) => !keptKeys.has(entityKey(r.entityType, r.entityUuid)))
+    .map((r) => r.id);
+  let endedCount = 0;
+  if (endIds.length > 0) {
+    const ended = await prisma.daemonExecution.updateMany({
+      where: { id: { in: endIds } },
+      data: { status: ENDED_EXECUTION_STATUS },
+    });
+    endedCount = ended.count;
+  }
 
-  // 2. Upsert each reported task to its reported status. The unique
-  //    (connectionUuid, taskUuid) guarantees a task appears at most once per
-  //    connection — re-dispatch updates the existing row (queued → running →
-  //    ended) rather than inserting a duplicate.
+  // 2. Upsert each reported resource to its reported status. The unique
+  //    (connectionUuid, entityType, entityUuid) guarantees a resource appears at
+  //    most once per connection — re-dispatch updates the existing row
+  //    (queued → running → ended) rather than inserting a duplicate.
   for (const exec of executions) {
-    await prisma.daemonTaskExecution.upsert({
+    await prisma.daemonExecution.upsert({
       where: {
-        connectionUuid_taskUuid: { connectionUuid, taskUuid: exec.taskUuid },
+        connectionUuid_entityType_entityUuid: {
+          connectionUuid,
+          entityType: exec.entityType,
+          entityUuid: exec.entityUuid,
+        },
       },
       create: {
         companyUuid,
         agentUuid,
         connectionUuid,
-        taskUuid: exec.taskUuid,
+        entityType: exec.entityType,
+        entityUuid: exec.entityUuid,
         rootIdeaUuid: exec.rootIdeaUuid ?? null,
         status: exec.status,
         startedAt: exec.startedAt ?? null,
@@ -257,7 +381,7 @@ export async function reconcileSnapshot(
     });
   }
 
-  return ended.count + executions.length;
+  return endedCount + executions.length;
 }
 
 // ===== Offline reconcile (disconnect / stale path) =====
@@ -281,7 +405,7 @@ export async function reconcileOffline(
   connectionUuid: string,
 ): Promise<number> {
   try {
-    const result = await prisma.daemonTaskExecution.updateMany({
+    const result = await prisma.daemonExecution.updateMany({
       where: {
         companyUuid,
         connectionUuid,
@@ -333,8 +457,8 @@ export async function reconcileOffline(
  */
 async function filterRowsByLiveConnection(
   companyUuid: string,
-  rows: DaemonTaskExecutionRow[],
-): Promise<DaemonTaskExecutionRow[]> {
+  rows: DaemonExecutionRow[],
+): Promise<DaemonExecutionRow[]> {
   if (rows.length === 0) return rows;
   const connectionUuids = [...new Set(rows.map((r) => r.connectionUuid))];
   const connections = await prisma.daemonConnection.findMany({
@@ -379,7 +503,7 @@ export async function getVisibleExecutions(
       ? { agentUuid: auth.actorUuid }
       : { agent: { ownerUuid: auth.actorUuid } };
 
-  const rows = await prisma.daemonTaskExecution.findMany({
+  const rows = await prisma.daemonExecution.findMany({
     where: {
       companyUuid: auth.companyUuid,
       status: { in: [...ACTIVE_EXECUTION_STATUSES] },
@@ -404,7 +528,7 @@ export async function getExecutionsForConnection(
   companyUuid: string,
   connectionUuid: string,
 ): Promise<ExecutionView[]> {
-  const rows = await prisma.daemonTaskExecution.findMany({
+  const rows = await prisma.daemonExecution.findMany({
     where: {
       companyUuid,
       connectionUuid,
@@ -417,9 +541,9 @@ export async function getExecutionsForConnection(
 }
 
 /**
- * Order the projected views running-first (so the actively-executing task leads
- * the detail pane), then by `updatedAt` desc. Sorts a copy; does not mutate the
- * input.
+ * Order the projected views running-first (so the actively-executing resource
+ * leads the detail pane), then by `updatedAt` desc. Sorts a copy; does not mutate
+ * the input.
  */
 function sortExecutionViews(views: ExecutionView[]): ExecutionView[] {
   return [...views].sort((a, b) => {
@@ -517,23 +641,71 @@ export async function listVisibleConnectionUuids(
 }
 
 /**
- * Validate that every `taskUuid` (and every non-null `rootIdeaUuid`) referenced
- * by a snapshot belongs to `companyUuid`. Returns `true` when all referenced
- * entities resolve within the company, `false` if any is missing or in another
- * company. An empty snapshot is trivially valid (`true`).
+ * Best-effort multi-tenancy filter on a snapshot body: return only the entries
+ * whose referenced entity (and, when present, root idea) resolves within
+ * `companyUuid`. An entry referencing an entity that does not exist or lives in
+ * another company is DROPPED — not a reason to reject the whole snapshot.
  *
- * This is the multi-tenancy fence on the snapshot body: even though the
- * connection is already proven to belong to the authenticated agent, the daemon
- * still reports raw task/root-idea uuids that must be confined to the same
- * company before they are persisted onto execution rows. Deduplicates uuids so a
- * task referenced twice is counted once. A READ that does NOT swallow — a query
- * failure propagates to the route as a 500.
+ * Why filter rather than all-or-nothing reject: the snapshot is authoritative
+ * for the connection, so a single dead reference (e.g. a task deleted while the
+ * daemon still has it in its registry) must not wedge the entire connection's
+ * updates — including the part that would legitimately end other finished rows.
+ * Dropping the dead entry lets the rest reconcile normally; the dropped entry,
+ * being absent from what reconcile sees, is simply not persisted (and any prior
+ * row for it ends via the absent-from-snapshot rule).
+ *
+ * A non-null `rootIdeaUuid` that does not resolve in-company is treated as a soft
+ * miss: the entry is kept but its `rootIdeaUuid` is nulled (the row still belongs
+ * to a valid entity; only its grouping anchor is unknown). companyUuid-scoped
+ * reads that do NOT swallow — a query failure propagates to the route as a 500.
  */
-export async function validateExecutionEntities(
+export async function filterValidExecutionEntities(
   companyUuid: string,
   executions: SnapshotExecution[],
-): Promise<boolean> {
-  const taskUuids = [...new Set(executions.map((e) => e.taskUuid))];
+): Promise<SnapshotExecution[]> {
+  if (executions.length === 0) return [];
+
+  const byType = groupEntityUuidsByType(executions);
+
+  // Resolve the existing entity uuids per kind, in-company.
+  const existing: Record<ExecutionEntityType, Set<string>> = {
+    task: new Set(),
+    idea: new Set(),
+    proposal: new Set(),
+    document: new Set(),
+  };
+
+  if (byType.task.length > 0) {
+    const found = await prisma.task.findMany({
+      where: { companyUuid, uuid: { in: byType.task } },
+      select: { uuid: true },
+    });
+    existing.task = new Set(found.map((r) => r.uuid));
+  }
+  if (byType.idea.length > 0) {
+    const found = await prisma.idea.findMany({
+      where: { companyUuid, uuid: { in: byType.idea } },
+      select: { uuid: true },
+    });
+    existing.idea = new Set(found.map((r) => r.uuid));
+  }
+  if (byType.proposal.length > 0) {
+    const found = await prisma.proposal.findMany({
+      where: { companyUuid, uuid: { in: byType.proposal } },
+      select: { uuid: true },
+    });
+    existing.proposal = new Set(found.map((r) => r.uuid));
+  }
+  if (byType.document.length > 0) {
+    const found = await prisma.document.findMany({
+      where: { companyUuid, uuid: { in: byType.document } },
+      select: { uuid: true },
+    });
+    existing.document = new Set(found.map((r) => r.uuid));
+  }
+
+  // Root-idea anchors that resolve in-company (kept entries with a non-resolving
+  // anchor have it nulled rather than being dropped).
   const rootIdeaUuids = [
     ...new Set(
       executions
@@ -541,22 +713,25 @@ export async function validateExecutionEntities(
         .filter((u): u is string => typeof u === "string" && u.length > 0),
     ),
   ];
-
-  if (taskUuids.length > 0) {
-    const taskCount = await prisma.task.count({
-      where: { companyUuid, uuid: { in: taskUuids } },
-    });
-    if (taskCount !== taskUuids.length) return false;
-  }
-
+  const validRootIdeas = new Set<string>();
   if (rootIdeaUuids.length > 0) {
-    const ideaCount = await prisma.idea.count({
+    const found = await prisma.idea.findMany({
       where: { companyUuid, uuid: { in: rootIdeaUuids } },
+      select: { uuid: true },
     });
-    if (ideaCount !== rootIdeaUuids.length) return false;
+    for (const r of found) validRootIdeas.add(r.uuid);
   }
 
-  return true;
+  const kept: SnapshotExecution[] = [];
+  for (const e of executions) {
+    const type = e.entityType as ExecutionEntityType;
+    if (!(EXECUTION_ENTITY_TYPES as readonly string[]).includes(e.entityType)) continue;
+    if (!existing[type].has(e.entityUuid)) continue; // dead/foreign entity → drop
+    const rootIdeaUuid =
+      e.rootIdeaUuid && validRootIdeas.has(e.rootIdeaUuid) ? e.rootIdeaUuid : null;
+    kept.push({ ...e, rootIdeaUuid });
+  }
+  return kept;
 }
 
 // ===== SSE event publish =====

@@ -44,6 +44,7 @@ import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import {
+  RealtimeProvider,
   useExecutionSubscription,
   type ExecutionView,
 } from "@/contexts/realtime-context";
@@ -287,11 +288,54 @@ function StatTile({ label, value, mono }: { label: string; value: string; mono?:
 // Execution view — running + queued tasks for the selected connection
 // =====================================================================
 
-// One execution row: a task title that deep-links to the task, an optional
-// root-idea session badge, and (for running rows only) a live HH:MM:SS elapsed
-// indicator off `startedAt`. Queued rows show a static "waiting" hint, never a
-// timer. A row whose task no longer resolves (deleted) falls back to a localized
-// placeholder title and renders as plain text (no link).
+// Build the in-app deep link for an execution's target resource, or null when it
+// can't be linked (no projectUuid resolved, or an unknown entity type). Each
+// resource kind routes to its canonical project-scoped surface.
+function execHref(exec: ExecutionView): string | null {
+  if (!exec.projectUuid) return null;
+  switch (exec.entityType) {
+    case "task":
+      return `/projects/${exec.projectUuid}/tasks/${exec.entityUuid}`;
+    case "idea":
+      return `/projects/${exec.projectUuid}/ideas/${exec.entityUuid}`;
+    case "proposal":
+      return `/projects/${exec.projectUuid}/proposals/${exec.entityUuid}`;
+    case "document":
+      return `/projects/${exec.projectUuid}/documents/${exec.entityUuid}`;
+    default:
+      return null;
+  }
+}
+
+// Localized label for the resource kind, shown as a small badge so a user can
+// tell at a glance whether the daemon is on a task, an idea, etc.
+function useEntityTypeLabel() {
+  const t = useTranslations("agentConnections");
+  return useCallback(
+    (entityType: string) => {
+      switch (entityType) {
+        case "task":
+          return t("entityTask");
+        case "idea":
+          return t("entityIdea");
+        case "proposal":
+          return t("entityProposal");
+        case "document":
+          return t("entityDocument");
+        default:
+          return t("entityUnknown");
+      }
+    },
+    [t],
+  );
+}
+
+// One execution row: the target resource's title (deep-linked per resource kind),
+// a small resource-kind badge, an optional root-idea session badge, and (for
+// running rows only) a live HH:MM:SS elapsed indicator off `startedAt`. Queued
+// rows show a static "waiting" hint, never a timer. A row whose resource no
+// longer resolves (deleted) falls back to a localized placeholder title and
+// renders as plain text (no link).
 function ExecutionRow({
   exec,
   nowMs,
@@ -301,13 +345,11 @@ function ExecutionRow({
 }) {
   const t = useTranslations("agentConnections");
   const formatElapsed = useElapsedMono();
+  const entityTypeLabel = useEntityTypeLabel();
   const running = exec.status === "running";
 
-  const title = exec.taskTitle?.trim() || t("execTaskUnknown");
-  const canLink = Boolean(exec.projectUuid);
-  const taskHref = canLink
-    ? `/projects/${exec.projectUuid}/tasks/${exec.taskUuid}`
-    : null;
+  const title = exec.entityTitle?.trim() || t("execEntityUnknown");
+  const href = execHref(exec);
 
   return (
     <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
@@ -326,19 +368,27 @@ function ExecutionRow({
         )}
       </span>
       <div className="min-w-0 flex-1">
-        {taskHref ? (
-          <Link
-            href={taskHref}
-            className="group inline-flex max-w-full items-center gap-1.5 truncate text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]"
+        <div className="flex items-center gap-1.5">
+          <Badge
+            variant="secondary"
+            className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
           >
-            <span className="truncate">{title}</span>
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
-          </Link>
-        ) : (
-          <span className="block truncate text-[14px] font-medium text-[#9A9A9A]">
-            {title}
-          </span>
-        )}
+            {entityTypeLabel(exec.entityType)}
+          </Badge>
+          {href ? (
+            <Link
+              href={href}
+              className="group inline-flex min-w-0 items-center gap-1.5 truncate text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]"
+            >
+              <span className="truncate">{title}</span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
+            </Link>
+          ) : (
+            <span className="block truncate text-[14px] font-medium text-[#9A9A9A]">
+              {title}
+            </span>
+          )}
+        </div>
         {exec.rootIdeaTitle && (
           <div className="mt-1 flex items-center gap-1.5">
             <Sparkles className="h-3 w-3 shrink-0 text-[#9A8C7E]" aria-hidden />
@@ -761,7 +811,16 @@ function DetailContent({
 // Page
 // =====================================================================
 
-export default function AgentConnectionsPage() {
+// The page content is wrapped in a RealtimeProvider by the default export below.
+// This is REQUIRED for live execution updates: the dashboard layout only mounts
+// a RealtimeProvider for project-scoped pages (/projects/{uuid}/…), so a global
+// page like /agent-connections would otherwise have no provider — and
+// `useExecutionSubscription` (used by ExecutionPane) would silently no-op,
+// freezing the detail pane at its first-paint state. Wrapping here is
+// self-contained (no projectUuid needed): the provider opens the company-wide
+// /api/events SSE stream, which is the stream that forwards execution:{uuid}
+// events to the browser.
+function AgentConnectionsPageContent() {
   const t = useTranslations("agentConnections");
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -979,5 +1038,18 @@ export default function AgentConnectionsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// Default export: wrap the page in a RealtimeProvider (no projectUuid → opens the
+// company-wide /api/events stream) so ExecutionPane's execution:{connectionUuid}
+// subscription actually receives live updates. Without this, the layout leaves
+// this global page provider-less and live updates never fire (the detail pane
+// would be frozen at first-paint until reload).
+export default function AgentConnectionsPage() {
+  return (
+    <RealtimeProvider>
+      <AgentConnectionsPageContent />
+    </RealtimeProvider>
   );
 }

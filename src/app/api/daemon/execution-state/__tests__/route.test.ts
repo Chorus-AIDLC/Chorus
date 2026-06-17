@@ -8,22 +8,24 @@ const mockPublishExecutionChange = vi.fn();
 const mockConnectionBelongsToAgent = vi.fn();
 const mockConnectionVisibleToCaller = vi.fn();
 const mockGetExecutionsForConnection = vi.fn();
-const mockValidateExecutionEntities = vi.fn();
+const mockFilterValidExecutionEntities = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
 }));
 
 // Mock the service: the route is the unit under test. ACTIVE_EXECUTION_STATUSES
-// is re-exported for the route's zod enum, so the mock must provide it verbatim.
+// and EXECUTION_ENTITY_TYPES are re-exported for the route's zod enums, so the
+// mock must provide them verbatim.
 vi.mock("@/services/daemon-execution.service", () => ({
   ACTIVE_EXECUTION_STATUSES: ["running", "queued"],
+  EXECUTION_ENTITY_TYPES: ["task", "idea", "proposal", "document"],
   reconcileSnapshot: (...args: unknown[]) => mockReconcileSnapshot(...args),
   publishExecutionChange: (...args: unknown[]) => mockPublishExecutionChange(...args),
   connectionBelongsToAgent: (...args: unknown[]) => mockConnectionBelongsToAgent(...args),
   connectionVisibleToCaller: (...args: unknown[]) => mockConnectionVisibleToCaller(...args),
   getExecutionsForConnection: (...args: unknown[]) => mockGetExecutionsForConnection(...args),
-  validateExecutionEntities: (...args: unknown[]) => mockValidateExecutionEntities(...args),
+  filterValidExecutionEntities: (...args: unknown[]) => mockFilterValidExecutionEntities(...args),
 }));
 
 import { POST, GET } from "@/app/api/daemon/execution-state/route";
@@ -53,19 +55,22 @@ function getRequest(query = ""): NextRequest {
   return new NextRequest(new URL(url));
 }
 
-const validBody = {
-  connectionUuid,
-  executions: [
-    { taskUuid: t1, rootIdeaUuid: null, status: "running", startedAt: "2026-06-15T03:00:00.000Z" },
-  ],
+const validEntry = {
+  entityType: "task",
+  entityUuid: t1,
+  rootIdeaUuid: null,
+  status: "running",
+  startedAt: "2026-06-15T03:00:00.000Z",
 };
+const validBody = { connectionUuid, executions: [validEntry] };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetAuthContext.mockResolvedValue(agentAuth);
   mockConnectionBelongsToAgent.mockResolvedValue(true);
   mockConnectionVisibleToCaller.mockResolvedValue(true);
-  mockValidateExecutionEntities.mockResolvedValue(true);
+  // Default: the best-effort filter keeps whatever it was given (entries valid).
+  mockFilterValidExecutionEntities.mockImplementation(async (_c: unknown, execs: unknown) => execs);
   mockReconcileSnapshot.mockResolvedValue(1);
   mockPublishExecutionChange.mockResolvedValue(undefined);
   mockGetExecutionsForConnection.mockResolvedValue([]);
@@ -102,7 +107,8 @@ describe("POST /api/daemon/execution-state", () => {
     expect(a).toBe(agentUuid);
     expect(conn).toBe(connectionUuid);
     expect(execs).toHaveLength(1);
-    expect(execs[0].taskUuid).toBe(t1);
+    expect(execs[0].entityType).toBe("task");
+    expect(execs[0].entityUuid).toBe(t1);
     // startedAt was coerced from the ISO string to a Date by the zod schema.
     expect(execs[0].startedAt).toBeInstanceOf(Date);
 
@@ -122,7 +128,7 @@ describe("POST /api/daemon/execution-state", () => {
     expect(body.success).toBe(false);
     expect(body.error.code).toBe("NOT_FOUND");
     // The negative path touches no execution rows and publishes nothing.
-    expect(mockValidateExecutionEntities).not.toHaveBeenCalled();
+    expect(mockFilterValidExecutionEntities).not.toHaveBeenCalled();
     expect(mockReconcileSnapshot).not.toHaveBeenCalled();
     expect(mockPublishExecutionChange).not.toHaveBeenCalled();
   });
@@ -137,14 +143,28 @@ describe("POST /api/daemon/execution-state", () => {
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
 
-  it("rejects an unknown task/root-idea in the body with 400 and does not reconcile", async () => {
-    mockValidateExecutionEntities.mockResolvedValue(false);
+  it("best-effort: a dead/unknown entity is DROPPED by the filter, the rest still reconcile (no 400)", async () => {
+    // The filter drops the dead reference and returns only the surviving entries;
+    // the route reconciles whatever the filter kept rather than rejecting the
+    // whole snapshot — so one deleted resource can't wedge the connection.
+    const kept = [{ entityType: "task", entityUuid: t1, rootIdeaUuid: null, status: "running" }];
+    mockFilterValidExecutionEntities.mockResolvedValue(kept);
 
     const res = await POST(postRequest(validBody), emptyCtx);
 
-    expect(res.status).toBe(400);
-    expect(mockReconcileSnapshot).not.toHaveBeenCalled();
-    expect(mockPublishExecutionChange).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    // reconcile receives the FILTERED list, not the raw body.
+    const [, , , execs] = mockReconcileSnapshot.mock.calls[0];
+    expect(execs).toEqual(kept);
+    expect(mockPublishExecutionChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("an all-dead snapshot filters to [] and still reconciles (ends prior rows for those entities)", async () => {
+    mockFilterValidExecutionEntities.mockResolvedValue([]);
+    mockReconcileSnapshot.mockResolvedValue(1);
+    const res = await POST(postRequest(validBody), emptyCtx);
+    expect(res.status).toBe(200);
+    expect(mockReconcileSnapshot).toHaveBeenCalledWith(companyUuid, agentUuid, connectionUuid, []);
   });
 
   it("rejects a malformed body (missing connectionUuid) with a validation error", async () => {
@@ -155,7 +175,16 @@ describe("POST /api/daemon/execution-state", () => {
 
   it("rejects a body whose status is the server-only 'ended' value", async () => {
     const res = await POST(
-      postRequest({ connectionUuid, executions: [{ taskUuid: t1, status: "ended" }] }),
+      postRequest({ connectionUuid, executions: [{ entityType: "task", entityUuid: t1, status: "ended" }] }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockReconcileSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body whose entityType is outside the recognized set", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, executions: [{ entityType: "comment", entityUuid: t1, status: "running" }] }),
       emptyCtx,
     );
     expect(res.status).toBe(422);
@@ -188,7 +217,7 @@ describe("GET /api/daemon/execution-state (first-paint read)", () => {
   });
 
   it("returns the connection's active execution set, owner/self scoped", async () => {
-    const rows = [{ uuid: "exec-1", taskUuid: t1, status: "running" }];
+    const rows = [{ uuid: "exec-1", entityType: "task", entityUuid: t1, status: "running" }];
     mockGetExecutionsForConnection.mockResolvedValue(rows);
 
     const res = await GET(getRequest(`connectionUuid=${connectionUuid}`), emptyCtx);

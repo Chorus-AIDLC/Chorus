@@ -268,7 +268,7 @@ describe("GET /api/events (execution-state SSE)", () => {
     const handler = execCall![1] as (e: Record<string, unknown>) => void;
 
     const before = chunks.length;
-    handler({ companyUuid, connectionUuid: connA, executions: [{ taskUuid: "t1" }] });
+    handler({ companyUuid, connectionUuid: connA, executions: [{ entityType: "task", entityUuid: "t1" }] });
     await flush();
     expect(chunks.length).toBe(before + 1);
     const last = chunks[chunks.length - 1];

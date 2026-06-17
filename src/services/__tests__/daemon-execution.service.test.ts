@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => ({
-  daemonTaskExecution: {
+  daemonExecution: {
     upsert: vi.fn(),
     updateMany: vi.fn(),
     findMany: vi.fn(),
@@ -12,11 +12,15 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
   },
   task: {
-    count: vi.fn(),
     findMany: vi.fn(),
   },
   idea: {
-    count: vi.fn(),
+    findMany: vi.fn(),
+  },
+  proposal: {
+    findMany: vi.fn(),
+  },
+  document: {
     findMany: vi.fn(),
   },
 }));
@@ -30,15 +34,16 @@ const mockLogger = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
-// The service now imports the EventBus (for publishExecutionChange). Mock it so
-// the unit test does not pull the real event-bus → redis → logger.child() chain
-// and can assert the publish emit shape directly.
+// The service imports the EventBus (for publishExecutionChange). Mock it so the
+// unit test does not pull the real event-bus → redis → logger.child() chain and
+// can assert the publish emit shape directly.
 const mockEventBus = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 
 import {
   ACTIVE_EXECUTION_STATUSES,
   ENDED_EXECUTION_STATUS,
+  EXECUTION_ENTITY_TYPES,
   STALE_THRESHOLD_MS,
   reconcileSnapshot,
   reconcileOffline,
@@ -47,7 +52,7 @@ import {
   connectionBelongsToAgent,
   connectionVisibleToCaller,
   listVisibleConnectionUuids,
-  validateExecutionEntities,
+  filterValidExecutionEntities,
   publishExecutionChange,
   executionEventName,
   type SnapshotExecution,
@@ -61,20 +66,26 @@ const ownerUuid = "owner-0000-0000-0000-000000000001";
 const connectionUuid = "conn-0000-0000-0000-000000000001";
 const t1 = "task-0000-0000-0000-000000000001";
 const t2 = "task-0000-0000-0000-000000000002";
+const idea1 = "idea-0000-0000-0000-000000000001";
+
+// Build the active-rows result the reconcile's "end absent" query reads. Each
+// row needs id + entityType + entityUuid (the select shape reconcileSnapshot uses).
+function activeRow(id: number, entityType: string, entityUuid: string) {
+  return { id, entityType, entityUuid };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
-  // Default: updateMany reports 0 rows affected, upsert resolves a stub row.
-  mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 0 });
-  mockPrisma.daemonTaskExecution.upsert.mockResolvedValue({});
-  mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+  mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 0 });
+  mockPrisma.daemonExecution.upsert.mockResolvedValue({});
+  mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
   mockPrisma.daemonConnection.count.mockResolvedValue(0);
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
-  mockPrisma.task.count.mockResolvedValue(0);
   mockPrisma.task.findMany.mockResolvedValue([]);
-  mockPrisma.idea.count.mockResolvedValue(0);
   mockPrisma.idea.findMany.mockResolvedValue([]);
+  mockPrisma.proposal.findMany.mockResolvedValue([]);
+  mockPrisma.document.findMany.mockResolvedValue([]);
 });
 
 // ===== Constants =====
@@ -87,44 +98,52 @@ describe("constants", () => {
     expect(ENDED_EXECUTION_STATUS).toBe("ended");
   });
 
+  it("EXECUTION_ENTITY_TYPES cover task/idea/proposal/document (every wake resource)", () => {
+    expect([...EXECUTION_ENTITY_TYPES].sort()).toEqual(
+      ["document", "idea", "proposal", "task"].sort(),
+    );
+  });
+
   it("re-exports the registry's STALE_THRESHOLD_MS (no second constant)", () => {
-    // The offline rule reuses the connection registry's threshold rather than
-    // defining an execution-specific one.
     expect(STALE_THRESHOLD_MS).toBe(90_000);
   });
 });
 
 // ===== reconcileSnapshot =====
 describe("reconcileSnapshot", () => {
-  it("ends running/queued rows absent from the snapshot, then upserts reported tasks", async () => {
-    mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 1 });
+  it("ends active rows absent from the snapshot, then upserts the reported resource", async () => {
+    // Connection had task t1 (absent now) + task t2 (still reported). t1 ends.
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      activeRow(11, "task", t1),
+      activeRow(12, "task", t2),
+    ]);
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
     const executions: SnapshotExecution[] = [
-      { taskUuid: t2, rootIdeaUuid: null, status: "running", startedAt: new Date() },
+      { entityType: "task", entityUuid: t2, rootIdeaUuid: null, status: "running", startedAt: new Date() },
     ];
 
     const reconciled = await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
 
-    // The absent-row end is the first call.
-    const endArg = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    expect(endArg.where).toEqual({
-      companyUuid,
-      connectionUuid,
-      status: { in: ["running", "queued"] },
-      taskUuid: { notIn: [t2] }, // only the reported task is spared
-    });
+    // The "end absent" updateMany targets exactly the ids NOT kept (t1's row).
+    const endArg = mockPrisma.daemonExecution.updateMany.mock.calls[0][0];
+    expect(endArg.where).toEqual({ id: { in: [11] } });
     expect(endArg.data).toEqual({ status: "ended" });
 
-    // Then each reported task is upserted on the (connectionUuid, taskUuid) key.
-    expect(mockPrisma.daemonTaskExecution.upsert).toHaveBeenCalledTimes(1);
-    const upArg = mockPrisma.daemonTaskExecution.upsert.mock.calls[0][0];
+    // Then the reported resource is upserted on the (connection, type, uuid) key.
+    expect(mockPrisma.daemonExecution.upsert).toHaveBeenCalledTimes(1);
+    const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
     expect(upArg.where).toEqual({
-      connectionUuid_taskUuid: { connectionUuid, taskUuid: t2 },
+      connectionUuid_entityType_entityUuid: {
+        connectionUuid,
+        entityType: "task",
+        entityUuid: t2,
+      },
     });
+    expect(upArg.create.entityType).toBe("task");
+    expect(upArg.create.entityUuid).toBe(t2);
     expect(upArg.create.status).toBe("running");
     expect(upArg.create.companyUuid).toBe(companyUuid);
     expect(upArg.create.agentUuid).toBe(agentUuid);
-    expect(upArg.update.status).toBe("running");
-    // companyUuid/agentUuid re-affirmed from authenticated context on update.
     expect(upArg.update.companyUuid).toBe(companyUuid);
     expect(upArg.update.agentUuid).toBe(agentUuid);
 
@@ -132,97 +151,116 @@ describe("reconcileSnapshot", () => {
     expect(reconciled).toBe(1 + 1);
   });
 
-  it("Scenario: a task absent from the new snapshot is ended while the reported one is upserted", async () => {
-    // C had T1 running + T2 queued; new snapshot reports only T2 as running.
-    // T1 (absent) must end; T2 must be upserted to running.
-    mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 1 });
-    const executions: SnapshotExecution[] = [{ taskUuid: t2, status: "running" }];
-
+  it("records a NON-TASK resource (idea wake): an idea @-mention is upserted as entityType idea", async () => {
+    const executions: SnapshotExecution[] = [
+      { entityType: "idea", entityUuid: idea1, rootIdeaUuid: idea1, status: "running", startedAt: new Date() },
+    ];
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
-
-    const endArg = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    // T1 is not in the snapshot's notIn-spared set, so it falls into the end query.
-    expect(endArg.where.taskUuid).toEqual({ notIn: [t2] });
-    expect(endArg.data.status).toBe("ended");
-
-    const upArg = mockPrisma.daemonTaskExecution.upsert.mock.calls[0][0];
-    expect(upArg.where.connectionUuid_taskUuid.taskUuid).toBe(t2);
-    expect(upArg.update.status).toBe("running");
+    const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
+    expect(upArg.where.connectionUuid_entityType_entityUuid).toEqual({
+      connectionUuid,
+      entityType: "idea",
+      entityUuid: idea1,
+    });
+    expect(upArg.create.entityType).toBe("idea");
+    expect(upArg.create.entityUuid).toBe(idea1);
   });
 
-  it("upserts every reported task on its (connectionUuid, taskUuid) unique key (at most one row per task)", async () => {
+  it("a uuid that appears under a DIFFERENT type is not accidentally kept (type+uuid identity)", async () => {
+    // Active row is (task, X); the snapshot reports (idea, X) — same uuid, other
+    // type. The task row must END (not be spared) and a new idea row upserted.
+    const sharedUuid = "shared-uuid-0000-0000-0000-00000000aaaa";
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([activeRow(20, "task", sharedUuid)]);
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
+      { entityType: "idea", entityUuid: sharedUuid, status: "running" },
+    ]);
+    const endArg = mockPrisma.daemonExecution.updateMany.mock.calls[0][0];
+    expect(endArg.where).toEqual({ id: { in: [20] } }); // the (task, X) row ends
+  });
+
+  it("upserts every reported resource on its unique key (at most one row per resource)", async () => {
     const executions: SnapshotExecution[] = [
-      { taskUuid: t1, status: "running", startedAt: new Date() },
-      { taskUuid: t2, status: "queued" },
+      { entityType: "task", entityUuid: t1, status: "running", startedAt: new Date() },
+      { entityType: "idea", entityUuid: idea1, status: "queued" },
     ];
 
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
 
-    expect(mockPrisma.daemonTaskExecution.upsert).toHaveBeenCalledTimes(2);
-    const keys = mockPrisma.daemonTaskExecution.upsert.mock.calls.map(
-      (c) => c[0].where.connectionUuid_taskUuid,
+    expect(mockPrisma.daemonExecution.upsert).toHaveBeenCalledTimes(2);
+    const keys = mockPrisma.daemonExecution.upsert.mock.calls.map(
+      (c) => c[0].where.connectionUuid_entityType_entityUuid,
     );
     expect(keys).toEqual([
-      { connectionUuid, taskUuid: t1 },
-      { connectionUuid, taskUuid: t2 },
+      { connectionUuid, entityType: "task", entityUuid: t1 },
+      { connectionUuid, entityType: "idea", entityUuid: idea1 },
     ]);
-    // A queued row carries null startedAt; a running row carries its startedAt.
-    const queuedUpsert = mockPrisma.daemonTaskExecution.upsert.mock.calls[1][0];
+    const queuedUpsert = mockPrisma.daemonExecution.upsert.mock.calls[1][0];
     expect(queuedUpsert.create.status).toBe("queued");
     expect(queuedUpsert.create.startedAt).toBeNull();
   });
 
-  it("coerces missing rootIdeaUuid/startedAt to null (quick task with no root idea)", async () => {
+  it("coerces missing rootIdeaUuid/startedAt to null", async () => {
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
-      { taskUuid: t1, status: "queued" },
+      { entityType: "task", entityUuid: t1, status: "queued" },
     ]);
-    const upArg = mockPrisma.daemonTaskExecution.upsert.mock.calls[0][0];
+    const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
     expect(upArg.create.rootIdeaUuid).toBeNull();
     expect(upArg.create.startedAt).toBeNull();
     expect(upArg.update.rootIdeaUuid).toBeNull();
   });
 
-  it("an empty snapshot ends ALL of the connection's active rows (notIn: [])", async () => {
-    mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 3 });
+  it("an empty snapshot ends ALL of the connection's active rows", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      activeRow(1, "task", t1),
+      activeRow(2, "idea", idea1),
+      activeRow(3, "task", t2),
+    ]);
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 3 });
     const reconciled = await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, []);
-    const endArg = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    expect(endArg.where.taskUuid).toEqual({ notIn: [] });
-    expect(mockPrisma.daemonTaskExecution.upsert).not.toHaveBeenCalled();
+    const endArg = mockPrisma.daemonExecution.updateMany.mock.calls[0][0];
+    expect(endArg.where).toEqual({ id: { in: [1, 2, 3] } });
+    expect(mockPrisma.daemonExecution.upsert).not.toHaveBeenCalled();
     expect(reconciled).toBe(3);
   });
 
-  it("is idempotent: re-applying the identical snapshot issues the same write shape", async () => {
-    // The reconcile is deterministic in its query shape — the same snapshot
-    // produces the same end-query (same notIn set) and the same upserts, so the
-    // persisted running/queued set is unchanged on the second apply.
+  it("does NOT issue an end query when no active rows need ending (all kept)", async () => {
+    // The only active row is the one being reported, so nothing ends.
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([activeRow(5, "task", t1)]);
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
+      { entityType: "task", entityUuid: t1, status: "running" },
+    ]);
+    expect(mockPrisma.daemonExecution.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonExecution.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("is idempotent: re-applying the identical snapshot issues the same upsert shape", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]); // nothing to end
     const executions: SnapshotExecution[] = [
-      { taskUuid: t1, status: "running", startedAt: new Date("2026-06-15T03:00:00Z") },
-      { taskUuid: t2, status: "queued" },
+      { entityType: "task", entityUuid: t1, status: "running", startedAt: new Date("2026-06-15T03:00:00Z") },
+      { entityType: "idea", entityUuid: idea1, status: "queued" },
     ];
 
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
-    const firstEnd = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    const firstUpserts = mockPrisma.daemonTaskExecution.upsert.mock.calls.map((c) => c[0]);
+    const firstUpserts = mockPrisma.daemonExecution.upsert.mock.calls.map((c) => c[0]);
 
     vi.clearAllMocks();
-    mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 0 });
-    mockPrisma.daemonTaskExecution.upsert.mockResolvedValue({});
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.daemonExecution.upsert.mockResolvedValue({});
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
 
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
-    const secondEnd = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    const secondUpserts = mockPrisma.daemonTaskExecution.upsert.mock.calls.map((c) => c[0]);
+    const secondUpserts = mockPrisma.daemonExecution.upsert.mock.calls.map((c) => c[0]);
 
-    expect(secondEnd).toEqual(firstEnd);
     expect(secondUpserts).toEqual(firstUpserts);
-    // Second apply: the same statuses are written, so the active set is unchanged.
     expect(secondUpserts.map((u) => u.update.status)).toEqual(["running", "queued"]);
   });
 
   it("never writes the 'ended' status on an upsert — ended is only ever set by reconcile", async () => {
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
-      { taskUuid: t1, status: "running" },
+      { entityType: "task", entityUuid: t1, status: "running" },
     ]);
-    const upArg = mockPrisma.daemonTaskExecution.upsert.mock.calls[0][0];
+    const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
     expect(upArg.create.status).not.toBe("ended");
     expect(upArg.update.status).not.toBe("ended");
   });
@@ -231,13 +269,12 @@ describe("reconcileSnapshot", () => {
 // ===== reconcileOffline =====
 describe("reconcileOffline", () => {
   it("transitions the connection's running/queued rows to ended (retained, not deleted), companyUuid-scoped", async () => {
-    mockPrisma.daemonTaskExecution.updateMany.mockResolvedValue({ count: 2 });
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 2 });
 
     const count = await reconcileOffline(companyUuid, connectionUuid);
 
-    expect(mockPrisma.daemonTaskExecution.updateMany).toHaveBeenCalledTimes(1);
-    const arg = mockPrisma.daemonTaskExecution.updateMany.mock.calls[0][0];
-    // Only active rows for this connection in this company are touched.
+    expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledTimes(1);
+    const arg = mockPrisma.daemonExecution.updateMany.mock.calls[0][0];
     expect(arg.where).toEqual({
       companyUuid,
       connectionUuid,
@@ -249,21 +286,22 @@ describe("reconcileOffline", () => {
   });
 
   it("swallows + logs a persistence error and returns 0 (never throws into stream teardown)", async () => {
-    mockPrisma.daemonTaskExecution.updateMany.mockRejectedValue(new Error("db down"));
+    mockPrisma.daemonExecution.updateMany.mockRejectedValue(new Error("db down"));
     const count = await reconcileOffline(companyUuid, connectionUuid);
     expect(count).toBe(0);
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
   });
 });
 
-// ===== getVisibleExecutions (visibility scoping) =====
+// ===== getVisibleExecutions (visibility scoping + enrichment) =====
 describe("getVisibleExecutions", () => {
   function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     return {
       uuid: "exec-1",
       agentUuid,
       connectionUuid,
-      taskUuid: t1,
+      entityType: "task",
+      entityUuid: t1,
       rootIdeaUuid: null,
       status: "running",
       startedAt: new Date("2026-06-15T03:00:00.000Z"),
@@ -273,29 +311,22 @@ describe("getVisibleExecutions", () => {
     };
   }
 
-  // By default the rows' connection is effectively ONLINE (fresh heartbeat) so
-  // the read-time staleness gate keeps them. Staleness/offline is exercised in
-  // dedicated tests below. Date.now() (not faked here) drives the freshness check.
   beforeEach(() => {
+    // Default: rows' connection is effectively ONLINE so the staleness gate keeps them.
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
       { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
     ]);
   });
 
-  it("USER caller: owner-scoped via agent.ownerUuid, companyUuid-scoped, active only", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
-    // Enrichment: the row's task resolves to a title + project.
+  it("USER caller: owner-scoped via agent.ownerUuid, companyUuid-scoped, active only; enriches a task row", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     mockPrisma.task.findMany.mockResolvedValue([
       { uuid: t1, title: "Build the thing", projectUuid: "proj-1" },
     ]);
 
-    const result = await getVisibleExecutions({
-      type: "user",
-      companyUuid,
-      actorUuid: ownerUuid,
-    });
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
 
-    expect(mockPrisma.daemonTaskExecution.findMany.mock.calls[0][0]).toEqual({
+    expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
       where: {
         companyUuid,
         status: { in: ["running", "queued"] },
@@ -307,89 +338,95 @@ describe("getVisibleExecutions", () => {
       uuid: "exec-1",
       agentUuid,
       connectionUuid,
-      taskUuid: t1,
+      entityType: "task",
+      entityUuid: t1,
       rootIdeaUuid: null,
       status: "running",
       startedAt: "2026-06-15T03:00:00.000Z",
       createdAt: "2026-06-15T03:00:00.000Z",
       updatedAt: "2026-06-15T03:30:00.000Z",
-      taskTitle: "Build the thing",
+      entityTitle: "Build the thing",
       projectUuid: "proj-1",
       rootIdeaTitle: null,
     });
   });
 
-  it("enriches rows with task title/project + root-idea title (batched), null when an entity does not resolve", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([
-      makeRow({ uuid: "with-idea", taskUuid: t1, rootIdeaUuid: "idea-1" }),
-      makeRow({ uuid: "no-task", taskUuid: t2, rootIdeaUuid: null, updatedAt: new Date("2026-06-15T02:00:00Z") }),
+  it("enriches an IDEA-kind row from the idea table (title + project), with its root-idea label", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({ uuid: "idea-row", entityType: "idea", entityUuid: idea1, rootIdeaUuid: idea1 }),
     ]);
-    // Only t1 resolves; t2 is a deleted task → falls back to null.
-    mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: t1, title: "Task One", projectUuid: "proj-9" },
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: idea1, title: "Daemon dispatch idea", projectUuid: "proj-idea" },
     ]);
-    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-1", title: "Root Idea" }]);
 
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
 
-    // Task lookup is batched + companyUuid-scoped over the distinct task uuids.
-    const taskArg = mockPrisma.task.findMany.mock.calls[0][0];
-    expect(taskArg.where.companyUuid).toBe(companyUuid);
-    expect(taskArg.where.uuid.in.slice().sort()).toEqual([t1, t2].sort());
-    // Idea lookup is batched over distinct non-null root-idea uuids.
-    expect(mockPrisma.idea.findMany.mock.calls[0][0].where).toEqual({
-      companyUuid,
-      uuid: { in: ["idea-1"] },
-    });
+    // idea lookup is batched + companyUuid-scoped; the task table is not queried.
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    const ideaArg = mockPrisma.idea.findMany.mock.calls[0][0];
+    expect(ideaArg.where.companyUuid).toBe(companyUuid);
+    const row = result[0];
+    expect(row.entityType).toBe("idea");
+    expect(row.entityTitle).toBe("Daemon dispatch idea");
+    expect(row.projectUuid).toBe("proj-idea");
+    // rootIdeaUuid === entityUuid here, so the session label reuses the same title.
+    expect(row.rootIdeaTitle).toBe("Daemon dispatch idea");
+  });
 
-    const withIdea = result.find((r) => r.uuid === "with-idea")!;
-    expect(withIdea.taskTitle).toBe("Task One");
-    expect(withIdea.projectUuid).toBe("proj-9");
-    expect(withIdea.rootIdeaTitle).toBe("Root Idea");
-    const noTask = result.find((r) => r.uuid === "no-task")!;
-    expect(noTask.taskTitle).toBeNull();
-    expect(noTask.projectUuid).toBeNull();
-    expect(noTask.rootIdeaTitle).toBeNull();
+  it("enriches a PROPOSAL-kind row from the proposal table", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({ uuid: "prop-row", entityType: "proposal", entityUuid: "prop-1", rootIdeaUuid: null }),
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-1", title: "A proposal", projectUuid: "proj-p" },
+    ]);
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
+    expect(result[0].entityTitle).toBe("A proposal");
+    expect(result[0].projectUuid).toBe("proj-p");
+  });
+
+  it("a deleted entity degrades to null title/project rather than throwing", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({ uuid: "ghost", entityType: "task", entityUuid: t2 }),
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([]); // t2 no longer resolves
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
+    expect(result[0].entityTitle).toBeNull();
+    expect(result[0].projectUuid).toBeNull();
   });
 
   it("super_admin caller is owner-scoped too (only the agent relation, not the company at large)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await getVisibleExecutions({ type: "super_admin", companyUuid, actorUuid: ownerUuid });
-    const arg = mockPrisma.daemonTaskExecution.findMany.mock.calls[0][0];
+    const arg = mockPrisma.daemonExecution.findMany.mock.calls[0][0];
     expect(arg.where.agent).toEqual({ ownerUuid });
     expect(arg.where.agentUuid).toBeUndefined();
   });
 
   it("AGENT-KEY caller: self-scoped via agentUuid (not the owner relation), companyUuid-scoped", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
-
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     await getVisibleExecutions({ type: "agent", companyUuid, actorUuid: agentUuid });
-
-    expect(mockPrisma.daemonTaskExecution.findMany.mock.calls[0][0]).toEqual({
-      where: {
-        companyUuid,
-        status: { in: ["running", "queued"] },
-        agentUuid,
-      },
+    expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
+      where: { companyUuid, status: { in: ["running", "queued"] }, agentUuid },
     });
   });
 
   it("the where clause always carries the caller's companyUuid (visibility never crosses companies)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await getVisibleExecutions({ type: "user", companyUuid: otherCompanyUuid, actorUuid: ownerUuid });
-    const arg = mockPrisma.daemonTaskExecution.findMany.mock.calls[0][0];
+    const arg = mockPrisma.daemonExecution.findMany.mock.calls[0][0];
     expect(arg.where.companyUuid).toBe(otherCompanyUuid);
   });
 
   it("returns an empty array when there are genuinely no rows", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await expect(
       getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid }),
     ).resolves.toEqual([]);
   });
 
   it("PROPAGATES a query error (does NOT swallow to [] like the write functions)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockRejectedValue(new Error("db down"));
+    mockPrisma.daemonExecution.findMany.mockRejectedValue(new Error("db down"));
     await expect(
       getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid }),
     ).rejects.toThrow("db down");
@@ -397,7 +434,7 @@ describe("getVisibleExecutions", () => {
   });
 
   it("sorts running-first then updatedAt desc", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
       makeRow({ uuid: "queued-new", status: "queued", updatedAt: new Date("2026-06-15T05:00:00Z") }),
       makeRow({ uuid: "running-old", status: "running", updatedAt: new Date("2026-06-15T03:00:00Z") }),
       makeRow({ uuid: "running-new", status: "running", updatedAt: new Date("2026-06-15T04:00:00Z") }),
@@ -408,22 +445,17 @@ describe("getVisibleExecutions", () => {
 
   // ===== Read-time staleness gate (offline rule, no clean abort) =====
 
-  it("EXCLUDES rows whose connection is stale (lastSeenAt older than STALE_THRESHOLD_MS) even if the row says running", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
-    // Connection's last heartbeat is just past the staleness window → offline.
+  it("EXCLUDES rows whose connection is stale (lastSeenAt older than STALE_THRESHOLD_MS)", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
-      {
-        uuid: connectionUuid,
-        status: "online",
-        lastSeenAt: new Date(Date.now() - (STALE_THRESHOLD_MS + 5_000)),
-      },
+      { uuid: connectionUuid, status: "online", lastSeenAt: new Date(Date.now() - (STALE_THRESHOLD_MS + 5_000)) },
     ]);
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(result).toEqual([]);
   });
 
   it("EXCLUDES rows whose connection status is offline (clean disconnect), regardless of lastSeenAt", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
       { uuid: connectionUuid, status: "offline", lastSeenAt: new Date() },
     ]);
@@ -432,8 +464,8 @@ describe("getVisibleExecutions", () => {
   });
 
   it("EXCLUDES rows whose connection no longer exists (deleted connection cannot be online)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
-    mockPrisma.daemonConnection.findMany.mockResolvedValue([]); // connection gone
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(result).toEqual([]);
   });
@@ -441,7 +473,7 @@ describe("getVisibleExecutions", () => {
   it("KEEPS rows of a live connection and DROPS rows of a stale sibling in the same read (mixed)", async () => {
     const liveConn = "conn-live";
     const staleConn = "conn-stale";
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
       makeRow({ uuid: "live-row", connectionUuid: liveConn }),
       makeRow({ uuid: "stale-row", connectionUuid: staleConn }),
     ]);
@@ -449,16 +481,16 @@ describe("getVisibleExecutions", () => {
       { uuid: liveConn, status: "online", lastSeenAt: new Date() },
       { uuid: staleConn, status: "online", lastSeenAt: new Date(Date.now() - (STALE_THRESHOLD_MS + 1)) },
     ]);
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1, title: "T1", projectUuid: "p1" }]);
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(result.map((r) => r.uuid)).toEqual(["live-row"]);
-    // The staleness lookup is companyUuid-scoped over the distinct connection uuids.
     const connArg = mockPrisma.daemonConnection.findMany.mock.calls[0][0];
     expect(connArg.where.companyUuid).toBe(companyUuid);
     expect(connArg.where.uuid.in.slice().sort()).toEqual([liveConn, staleConn].sort());
   });
 
   it("does NOT query connections when there are no active rows (cheap empty path)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
   });
@@ -467,31 +499,27 @@ describe("getVisibleExecutions", () => {
 // ===== getExecutionsForConnection =====
 describe("getExecutionsForConnection", () => {
   it("filters by companyUuid + connectionUuid + active status", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await getExecutionsForConnection(companyUuid, connectionUuid);
-    expect(mockPrisma.daemonTaskExecution.findMany.mock.calls[0][0]).toEqual({
-      where: {
-        companyUuid,
-        connectionUuid,
-        status: { in: ["running", "queued"] },
-      },
+    expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
+      where: { companyUuid, connectionUuid, status: { in: ["running", "queued"] } },
     });
   });
 
   it("PROPAGATES a query error (read path surfaces the error)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockRejectedValue(new Error("db down"));
+    mockPrisma.daemonExecution.findMany.mockRejectedValue(new Error("db down"));
     await expect(getExecutionsForConnection(companyUuid, connectionUuid)).rejects.toThrow("db down");
   });
 
   function makeRow() {
     return {
-      uuid: "exec-1", agentUuid, connectionUuid, taskUuid: t1, rootIdeaUuid: null,
+      uuid: "exec-1", agentUuid, connectionUuid, entityType: "task", entityUuid: t1, rootIdeaUuid: null,
       status: "running", startedAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
     };
   }
 
   it("returns the active rows when the connection is effectively ONLINE (fresh heartbeat)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
       { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
     ]);
@@ -501,7 +529,7 @@ describe("getExecutionsForConnection", () => {
   });
 
   it("returns an EMPTY active set when the connection is stale/offline (offline rule, no clean abort)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([makeRow()]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
       { uuid: connectionUuid, status: "online", lastSeenAt: new Date(Date.now() - (STALE_THRESHOLD_MS + 1)) },
     ]);
@@ -523,16 +551,12 @@ describe("connectionBelongsToAgent", () => {
 
   it("returns false when the connection is not owned / not in the company", async () => {
     mockPrisma.daemonConnection.count.mockResolvedValue(0);
-    await expect(
-      connectionBelongsToAgent(companyUuid, agentUuid, connectionUuid),
-    ).resolves.toBe(false);
+    await expect(connectionBelongsToAgent(companyUuid, agentUuid, connectionUuid)).resolves.toBe(false);
   });
 
   it("PROPAGATES a query error (fence is a read, does not swallow to 'not found')", async () => {
     mockPrisma.daemonConnection.count.mockRejectedValue(new Error("db down"));
-    await expect(
-      connectionBelongsToAgent(companyUuid, agentUuid, connectionUuid),
-    ).rejects.toThrow("db down");
+    await expect(connectionBelongsToAgent(companyUuid, agentUuid, connectionUuid)).rejects.toThrow("db down");
   });
 });
 
@@ -552,10 +576,7 @@ describe("connectionVisibleToCaller", () => {
 
   it("USER caller: owner-scoped via agent.ownerUuid", async () => {
     mockPrisma.daemonConnection.count.mockResolvedValue(1);
-    await connectionVisibleToCaller(
-      { type: "user", companyUuid, actorUuid: ownerUuid },
-      connectionUuid,
-    );
+    await connectionVisibleToCaller({ type: "user", companyUuid, actorUuid: ownerUuid }, connectionUuid);
     expect(mockPrisma.daemonConnection.count.mock.calls[0][0]).toEqual({
       where: { uuid: connectionUuid, companyUuid, agent: { ownerUuid } },
     });
@@ -572,15 +593,8 @@ describe("connectionVisibleToCaller", () => {
 // ===== listVisibleConnectionUuids (SSE subscription scoping) =====
 describe("listVisibleConnectionUuids", () => {
   it("AGENT-KEY caller: self-scoped by agentUuid, companyUuid-scoped, returns uuids", async () => {
-    mockPrisma.daemonConnection.findMany.mockResolvedValue([
-      { uuid: "c1" },
-      { uuid: "c2" },
-    ]);
-    const result = await listVisibleConnectionUuids({
-      type: "agent",
-      companyUuid,
-      actorUuid: agentUuid,
-    });
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([{ uuid: "c1" }, { uuid: "c2" }]);
+    const result = await listVisibleConnectionUuids({ type: "agent", companyUuid, actorUuid: agentUuid });
     expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0]).toEqual({
       where: { companyUuid, agentUuid },
       select: { uuid: true },
@@ -612,89 +626,93 @@ describe("listVisibleConnectionUuids", () => {
   });
 });
 
-// ===== validateExecutionEntities (multi-tenancy body fence) =====
-describe("validateExecutionEntities", () => {
-  it("an empty snapshot is trivially valid and touches no count query", async () => {
-    await expect(validateExecutionEntities(companyUuid, [])).resolves.toBe(true);
-    expect(mockPrisma.task.count).not.toHaveBeenCalled();
-    expect(mockPrisma.idea.count).not.toHaveBeenCalled();
+// ===== filterValidExecutionEntities (best-effort multi-tenancy body filter) =====
+describe("filterValidExecutionEntities", () => {
+  it("an empty snapshot yields an empty list and touches no query", async () => {
+    await expect(filterValidExecutionEntities(companyUuid, [])).resolves.toEqual([]);
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
   });
 
-  it("validates distinct task uuids against the company (dedup)", async () => {
-    // t1 appears twice; the count query must use the deduplicated set.
-    mockPrisma.task.count.mockResolvedValue(2);
-    const ok = await validateExecutionEntities(companyUuid, [
-      { taskUuid: t1, status: "running" },
-      { taskUuid: t1, status: "running" },
-      { taskUuid: t2, status: "queued" },
+  it("KEEPS entries whose entity resolves in-company; queries are per-type + companyUuid-scoped + deduped", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }, { uuid: t2 }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "task", entityUuid: t1, status: "running" },
+      { entityType: "task", entityUuid: t1, status: "running" }, // dup
+      { entityType: "task", entityUuid: t2, status: "queued" },
     ]);
-    const arg = mockPrisma.task.count.mock.calls[0][0];
+    const arg = mockPrisma.task.findMany.mock.calls[0][0];
     expect(arg.where.companyUuid).toBe(companyUuid);
     expect(arg.where.uuid.in.slice().sort()).toEqual([t1, t2].sort());
-    expect(arg.where.uuid.in).toHaveLength(2);
-    expect(ok).toBe(true);
+    // Both distinct tasks resolve, so all three entries (incl. the dup) are kept.
+    expect(kept).toHaveLength(3);
   });
 
-  it("rejects when a task uuid does not resolve in the company", async () => {
-    mockPrisma.task.count.mockResolvedValue(1); // only 1 of 2 found
-    const ok = await validateExecutionEntities(companyUuid, [
-      { taskUuid: t1, status: "running" },
-      { taskUuid: t2, status: "queued" },
+  it("DROPS an entry whose entity does not resolve in-company (instead of rejecting the whole snapshot)", async () => {
+    // t1 resolves, t2 does not → t2 entry is dropped, t1 entry kept.
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "task", entityUuid: t1, status: "running" },
+      { entityType: "task", entityUuid: t2, status: "queued" },
     ]);
-    expect(ok).toBe(false);
+    expect(kept).toEqual([{ entityType: "task", entityUuid: t1, rootIdeaUuid: null, status: "running" }]);
   });
 
-  it("validates non-null root-idea uuids against the company too", async () => {
-    mockPrisma.task.count.mockResolvedValue(1);
-    mockPrisma.idea.count.mockResolvedValue(1);
-    const ok = await validateExecutionEntities(companyUuid, [
-      { taskUuid: t1, rootIdeaUuid: "idea-1", status: "running" },
+  it("resolves DIFFERENT entity kinds against their own tables (idea/proposal/document)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: idea1 }]);
+    mockPrisma.proposal.findMany.mockResolvedValue([{ uuid: "prop-1" }]);
+    mockPrisma.document.findMany.mockResolvedValue([]); // doc deleted → dropped
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "idea", entityUuid: idea1, status: "running" },
+      { entityType: "proposal", entityUuid: "prop-1", status: "queued" },
+      { entityType: "document", entityUuid: "doc-x", status: "running" },
     ]);
-    expect(mockPrisma.idea.count.mock.calls[0][0]).toEqual({
-      where: { companyUuid, uuid: { in: ["idea-1"] } },
-    });
-    expect(ok).toBe(true);
+    expect(kept.map((e) => `${e.entityType}:${e.entityUuid}`).sort()).toEqual(
+      [`idea:${idea1}`, "proposal:prop-1"].sort(),
+    );
   });
 
-  it("ignores null root-idea uuids (a quick task) — no idea count query", async () => {
-    mockPrisma.task.count.mockResolvedValue(1);
-    const ok = await validateExecutionEntities(companyUuid, [
-      { taskUuid: t1, rootIdeaUuid: null, status: "queued" },
+  it("NULLS a non-resolving rootIdeaUuid but KEEPS the entry (valid entity, unknown anchor)", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }]);
+    mockPrisma.idea.findMany.mockResolvedValue([]); // the root idea doesn't resolve
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "task", entityUuid: t1, rootIdeaUuid: "idea-x", status: "running" },
     ]);
-    expect(mockPrisma.idea.count).not.toHaveBeenCalled();
-    expect(ok).toBe(true);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].rootIdeaUuid).toBeNull();
   });
 
-  it("rejects when a root-idea uuid does not resolve in the company", async () => {
-    mockPrisma.task.count.mockResolvedValue(1);
-    mockPrisma.idea.count.mockResolvedValue(0); // idea not found
-    const ok = await validateExecutionEntities(companyUuid, [
-      { taskUuid: t1, rootIdeaUuid: "idea-x", status: "running" },
+  it("KEEPS a resolving rootIdeaUuid", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: idea1 }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "task", entityUuid: t1, rootIdeaUuid: idea1, status: "running" },
     ]);
-    expect(ok).toBe(false);
+    expect(kept[0].rootIdeaUuid).toBe(idea1);
   });
 });
 
 // ===== publishExecutionChange (SSE event publish) =====
 describe("publishExecutionChange", () => {
   it("emits execution:{connectionUuid} carrying the current active set + companyUuid", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
       {
         uuid: "exec-1",
         agentUuid,
         connectionUuid,
-        taskUuid: t1,
-        rootIdeaUuid: null,
+        entityType: "idea",
+        entityUuid: idea1,
+        rootIdeaUuid: idea1,
         status: "running",
         startedAt: new Date("2026-06-15T03:00:00.000Z"),
         createdAt: new Date("2026-06-15T03:00:00.000Z"),
         updatedAt: new Date("2026-06-15T03:00:00.000Z"),
       },
     ]);
-    // The connection is live so the row survives the read-time staleness gate.
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
       { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
     ]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: idea1, title: "An idea", projectUuid: "p" }]);
 
     await publishExecutionChange(companyUuid, connectionUuid);
 
@@ -705,18 +723,19 @@ describe("publishExecutionChange", () => {
     expect(payload.companyUuid).toBe(companyUuid);
     expect(payload.connectionUuid).toBe(connectionUuid);
     expect(payload.executions).toHaveLength(1);
-    expect(payload.executions[0].taskUuid).toBe(t1);
+    expect(payload.executions[0].entityType).toBe("idea");
+    expect(payload.executions[0].entityUuid).toBe(idea1);
   });
 
   it("emits an empty active set on the offline path (re-reads post-reconcile state)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await publishExecutionChange(companyUuid, connectionUuid);
     const [, payload] = mockEventBus.emit.mock.calls[0];
     expect(payload.executions).toEqual([]);
   });
 
   it("swallows + logs a read failure and does NOT emit (never throws into teardown)", async () => {
-    mockPrisma.daemonTaskExecution.findMany.mockRejectedValue(new Error("db down"));
+    mockPrisma.daemonExecution.findMany.mockRejectedValue(new Error("db down"));
     await expect(publishExecutionChange(companyUuid, connectionUuid)).resolves.toBeUndefined();
     expect(mockEventBus.emit).not.toHaveBeenCalled();
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
