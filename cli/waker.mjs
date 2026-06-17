@@ -98,7 +98,8 @@ export class Waker {
    * router at enqueue time (before the wake runs), so the server sees the resource
    * waiting even while it sits behind a same-root wake. The rootIdeaUuid passed here is
    * the one already derived from `key` (idea:<root>) — no extra lineage call.
-   * A non-task notification is ignored (nothing to attribute). Never throws.
+   * A notification with no reportable resource (missing fields, or an entityType
+   * outside the recognized task/idea/proposal/document set) is ignored. Never throws.
    * @param {{ entityType?: string, entityUuid?: string }} notification
    * @param {string} key  The serialization key from keyFor (idea:<root> | entity:…).
    */
