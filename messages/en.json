@@ -1385,5 +1385,11 @@
     "entityProposal": "Proposal",
     "entityDocument": "Document",
     "entityUnknown": "Resource"
+  },
+  "mention": {
+    "online": "Online",
+    "offline": "Offline",
+    "activeCount": "{count} active",
+    "idle": "Idle"
   }
 }

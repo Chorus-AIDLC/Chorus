@@ -21,6 +21,14 @@ const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch } = vi
     comment: {
       findUnique: vi.fn(),
     },
+    // Agent-liveness enrichment (searchMentionables): online via connections,
+    // activeCount via execution groupBy.
+    daemonConnection: {
+      findMany: vi.fn(),
+    },
+    daemonExecution: {
+      groupBy: vi.fn(),
+    },
   },
   mockGetActorName: vi.fn().mockResolvedValue("Test Actor"),
   mockGetPreferences: vi.fn().mockResolvedValue({ mentioned: true }),
@@ -52,6 +60,10 @@ const SOURCE_UUID = "66666666-6666-6666-6666-666666666666";
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetPreferences.mockResolvedValue({ mentioned: true });
+  // Default liveness enrichment to "no connections / no executions" so existing
+  // searchMentionables tests (which return agents) don't hit undefined mocks.
+  mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+  mockPrisma.daemonExecution.groupBy.mockResolvedValue([]);
 });
 
 describe("createMentions", () => {
@@ -328,5 +340,140 @@ describe("searchMentionables", () => {
         take: 50,
       })
     );
+  });
+});
+
+describe("searchMentionables — agent liveness enrichment", () => {
+  const FRESH = new Date(); // within STALE_THRESHOLD_MS
+  const STALE = new Date(Date.now() - 10 * 60_000); // 10 min ago → stale
+
+  it("marks an agent online iff it has an effectively-online connection, and reports activeCount (search branch)", async () => {
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "AliceBot", roles: ["pm_agent"] },
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { agentUuid: AGENT_UUID, status: "online", lastSeenAt: FRESH },
+    ]);
+    mockPrisma.daemonExecution.groupBy.mockResolvedValue([
+      { agentUuid: AGENT_UUID, _count: { _all: 3 } },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "alice",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+    });
+
+    const agent = results.find((r) => r.type === "agent")!;
+    expect(agent.online).toBe(true);
+    expect(agent.activeCount).toBe(3);
+
+    // Both liveness queries are companyUuid-scoped over the agent uuid set.
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { companyUuid: COMPANY_UUID, agentUuid: { in: [AGENT_UUID] } },
+      })
+    );
+    const gb = mockPrisma.daemonExecution.groupBy.mock.calls[0][0];
+    expect(gb.by).toEqual(["agentUuid"]);
+    expect(gb.where.companyUuid).toBe(COMPANY_UUID);
+    expect(gb.where.agentUuid).toEqual({ in: [AGENT_UUID] });
+    expect(gb.where.status).toEqual({ in: ["running", "queued"] });
+  });
+
+  it("enriches agents in the EMPTY-query branch too (the popup-just-opened case)", async () => {
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "MyBot", roles: ["developer_agent"] },
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { agentUuid: AGENT_UUID, status: "online", lastSeenAt: FRESH },
+    ]);
+    mockPrisma.daemonExecution.groupBy.mockResolvedValue([
+      { agentUuid: AGENT_UUID, _count: { _all: 1 } },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].online).toBe(true);
+    expect(results[0].activeCount).toBe(1);
+    // Liveness WAS resolved even though the user-search branch never ran.
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a stale connection as offline and forces activeCount to 0 (coherent with online)", async () => {
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "StaleBot", roles: [] },
+    ]);
+    // Only connection is stale → not effectively online.
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { agentUuid: AGENT_UUID, status: "online", lastSeenAt: STALE },
+    ]);
+    // Even if execution rows exist, an offline agent must report 0.
+    mockPrisma.daemonExecution.groupBy.mockResolvedValue([
+      { agentUuid: AGENT_UUID, _count: { _all: 5 } },
+    ]);
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "stale",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+    });
+
+    const agent = results.find((r) => r.type === "agent")!;
+    expect(agent.online).toBe(false);
+    expect(agent.activeCount).toBe(0);
+  });
+
+  it("reports online with activeCount 0 when the agent has a live connection but no active executions", async () => {
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: AGENT_UUID, name: "IdleBot", roles: [] },
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { agentUuid: AGENT_UUID, status: "online", lastSeenAt: FRESH },
+    ]);
+    mockPrisma.daemonExecution.groupBy.mockResolvedValue([]); // no active rows
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "idle",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+    });
+
+    const agent = results.find((r) => r.type === "agent")!;
+    expect(agent.online).toBe(true);
+    expect(agent.activeCount).toBe(0);
+  });
+
+  it("does NOT enrich user candidates and issues NO liveness query when there are no agents", async () => {
+    mockPrisma.user.findMany.mockResolvedValue([
+      { uuid: USER_UUID, name: "Alice", email: "alice@example.com", avatarUrl: null },
+    ]);
+    mockPrisma.agent.findMany.mockResolvedValue([]); // no agents match
+
+    const results = await searchMentionables({
+      companyUuid: COMPANY_UUID,
+      query: "alice",
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+    });
+
+    const user = results.find((r) => r.type === "user")!;
+    expect(user.online).toBeUndefined();
+    expect(user.activeCount).toBeUndefined();
+    // Cheap empty path: zero agent candidates ⇒ no liveness/count query at all.
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonExecution.groupBy).not.toHaveBeenCalled();
   });
 });

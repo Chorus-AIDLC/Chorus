@@ -5,6 +5,11 @@
 import { prisma } from "@/lib/prisma";
 import { getActorName } from "@/lib/uuid-resolver";
 import * as notificationService from "@/services/notification.service";
+// Reuse the daemon-connection registry's single liveness threshold and the
+// execution service's active-status set — do NOT restate either rule here, so
+// producer and consumer cannot drift.
+import { STALE_THRESHOLD_MS } from "@/services/daemon-connection.service";
+import { ACTIVE_EXECUTION_STATUSES } from "@/services/daemon-execution.service";
 
 // ===== Constants =====
 
@@ -28,6 +33,13 @@ export interface Mentionable {
   email?: string | null;
   avatarUrl?: string | null;
   roles?: string[];
+  // Agent liveness, populated for `type: "agent"` candidates only (users never
+  // carry these). `online` is true iff the agent has at least one effectively-
+  // online daemon connection; `activeCount` is the number of running/queued
+  // daemon executions for that agent and is coherent with `online` (an offline
+  // agent reports 0). See enrichAgentLiveness.
+  online?: boolean;
+  activeCount?: number;
 }
 
 export interface CreateMentionsParams {
@@ -205,6 +217,76 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;
 
 /**
+ * Enrich agent candidates in place with daemon liveness: `online` + `activeCount`.
+ *
+ * Resolves both in BATCH over the given agent uuids (two queries total, both
+ * companyUuid-scoped — never one query per candidate). When there are no agent
+ * candidates it issues NO query at all. Users are never passed in / never enriched.
+ *
+ * - `online`: an agent is online iff it has at least one effectively-online
+ *   `DaemonConnection`, applying the daemon-connection registry's exact rule
+ *   (`status === "online"` AND `now - lastSeenAt <= STALE_THRESHOLD_MS`). The
+ *   constant is imported, not restated, so the rule cannot drift.
+ * - `activeCount`: the number of `running`/`queued` `DaemonExecution` rows for the
+ *   agent. It is kept COHERENT with `online`: an agent that is not online reports
+ *   `0`, so the count never contradicts the dot. (We zero it out for non-online
+ *   agents rather than trusting raw rows that may belong to a stale connection.)
+ *
+ * Mutates the `online`/`activeCount` fields of the agent entries in `results`.
+ */
+async function enrichAgentLiveness(
+  companyUuid: string,
+  results: Mentionable[]
+): Promise<void> {
+  const agentUuids = results
+    .filter((r) => r.type === "agent")
+    .map((r) => r.uuid);
+  // Cheap empty path: no agents → no liveness/count queries at all.
+  if (agentUuids.length === 0) return;
+
+  const now = Date.now();
+
+  // 1. Online set — one batched, companyUuid-scoped connection query. An agent is
+  //    online iff ANY of its connections is effectively online (registry rule).
+  const connections = await prisma.daemonConnection.findMany({
+    where: { companyUuid, agentUuid: { in: agentUuids } },
+    select: { agentUuid: true, status: true, lastSeenAt: true },
+  });
+  const onlineAgentUuids = new Set<string>();
+  for (const c of connections) {
+    const fresh = now - c.lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
+    if (c.status === "online" && fresh) {
+      onlineAgentUuids.add(c.agentUuid);
+    }
+  }
+
+  // 2. Active counts — one batched, companyUuid-scoped aggregate over running/
+  //    queued executions, grouped by agent.
+  const grouped = await prisma.daemonExecution.groupBy({
+    by: ["agentUuid"],
+    where: {
+      companyUuid,
+      agentUuid: { in: agentUuids },
+      status: { in: [...ACTIVE_EXECUTION_STATUSES] },
+    },
+    _count: { _all: true },
+  });
+  const countByAgent = new Map<string, number>();
+  for (const g of grouped) {
+    countByAgent.set(g.agentUuid, g._count._all);
+  }
+
+  // 3. Fold into the agent entries. activeCount is coherent with online: a
+  //    non-online agent reports 0 regardless of any stale-connection rows.
+  for (const r of results) {
+    if (r.type !== "agent") continue;
+    const online = onlineAgentUuids.has(r.uuid);
+    r.online = online;
+    r.activeCount = online ? countByAgent.get(r.uuid) ?? 0 : 0;
+  }
+}
+
+/**
  * Search for mentionable users and agents within a company.
  * Permission scoping:
  * - User caller: all company users + own agents (agents with ownerUuid = actorUuid)
@@ -253,6 +335,8 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       }
     }
 
+    // Enrich the (agent-only) empty-query results with liveness before returning.
+    await enrichAgentLiveness(companyUuid, results);
     return results;
   }
   // Search users (all company users are mentionable)
@@ -318,7 +402,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     });
   }
 
-  return results.slice(0, effectiveLimit);
+  const sliced = results.slice(0, effectiveLimit);
+  // Enrich only the agents that survive the slice (liveness queries are scoped to
+  // what we actually return).
+  await enrichAgentLiveness(companyUuid, sliced);
+  return sliced;
 }
 
 /**

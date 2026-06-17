@@ -11,8 +11,20 @@ import React, {
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { isImeComposing } from "@/lib/ime";
+
+// Localized strings the (module-level, hook-less) popup renderer needs. Built in
+// the component via useTranslations and threaded through as plain strings.
+interface MentionPopupLabels {
+  online: string;
+  offline: string;
+  /** Status text for an online agent with no active work. */
+  idle: string;
+  /** Active-task count text for an online agent, e.g. "3 active". */
+  activeCount: (n: number) => string;
+}
 
 // Extend Mention to support custom `mentionType` attribute (user | agent)
 const CustomMention = Mention.extend({
@@ -39,6 +51,10 @@ interface Mentionable {
   name: string;
   email?: string;
   roles?: string[];
+  // Agent liveness (agents only; see mention.service.ts). `online` drives the
+  // status dot; `activeCount` drives the count badge (shown only when > 0).
+  online?: boolean;
+  activeCount?: number;
 }
 
 export interface MentionEditorProps {
@@ -181,13 +197,16 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
 
 // ── Imperative suggestion popup rendering ──────────────────────
 
-function createSuggestionPopupRenderer(
+// Exported for unit testing the row DOM (dot / count badge / roles-removed /
+// user-row-unchanged) without booting a full Tiptap editor + suggestion flow.
+export function createSuggestionPopupRenderer(
   items: Mentionable[],
   isLoading: boolean,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   command: (attrs: any) => void,
   keyDownRef: React.MutableRefObject<KeyDownHandler | null>,
-  container: HTMLDivElement
+  container: HTMLDivElement,
+  labels: MentionPopupLabels
 ) {
   container.innerHTML = "";
 
@@ -232,8 +251,14 @@ function createSuggestionPopupRenderer(
       }`;
       btn.onclick = () => doCommand(item);
 
+      // Avatar wrapped in a relative container so the agent presence dot can sit
+      // at the bottom-right corner of the avatar (the conventional presence-dot
+      // position), rather than on a separate status line.
+      const avatarWrap = document.createElement("div");
+      avatarWrap.className = "relative shrink-0";
+
       const avatar = document.createElement("div");
-      avatar.className = `flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+      avatar.className = `flex h-6 w-6 items-center justify-center rounded-full ${
         item.type === "agent"
           ? "bg-[#C67A52] text-white"
           : "bg-[#E5E0D8] text-[#6B6B6B]"
@@ -242,6 +267,19 @@ function createSuggestionPopupRenderer(
         item.type === "agent"
           ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>'
           : '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+      avatarWrap.appendChild(avatar);
+
+      // Online presence dot at the avatar's bottom-right, online agents only.
+      // The white ring (border) lifts it off the avatar fill. Offline agents
+      // show no dot (the "Idle / N active" text line below carries the rest of
+      // the state, and a sea of grey corner dots would be noise).
+      if (item.type === "agent" && item.online) {
+        const dot = document.createElement("span");
+        dot.className =
+          "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#22C55E] ring-2 ring-white";
+        dot.title = labels.online;
+        avatarWrap.appendChild(dot);
+      }
 
       const info = document.createElement("div");
       info.className = "min-w-0 flex-1";
@@ -258,14 +296,26 @@ function createSuggestionPopupRenderer(
         info.appendChild(emailEl);
       }
 
-      if (item.type === "agent" && item.roles && item.roles.length > 0) {
-        const rolesEl = document.createElement("div");
-        rolesEl.className = "truncate text-[10px] text-[#9A9A9A]";
-        rolesEl.textContent = item.roles.join(", ");
-        info.appendChild(rolesEl);
+      // Agent status line (replaces the old roles line). For an ONLINE agent we
+      // always show an explicit status — never a blank line: the active-task
+      // count when busy ("▶ N", green), or a muted "Idle" when it has no
+      // running/queued work. Offline agents show nothing here (the absent
+      // presence dot already conveys offline). User rows get no status line.
+      if (item.type === "agent" && item.online) {
+        const count = item.activeCount ?? 0;
+        const statusEl = document.createElement("div");
+        if (count > 0) {
+          statusEl.className =
+            "mt-0.5 truncate text-[10px] font-medium text-[#15803D]";
+          statusEl.textContent = `▶ ${labels.activeCount(count)}`;
+        } else {
+          statusEl.className = "mt-0.5 truncate text-[10px] text-[#9A9A9A]";
+          statusEl.textContent = labels.idle;
+        }
+        info.appendChild(statusEl);
       }
 
-      btn.appendChild(avatar);
+      btn.appendChild(avatarWrap);
       btn.appendChild(info);
       list.appendChild(btn);
     });
@@ -315,6 +365,23 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     const [, forceUpdate] = useState(0);
     const isInternalUpdate = useRef(false);
 
+    // Localized labels for the popup's agent-liveness UI. Kept in a ref so the
+    // module-level renderer (called from Tiptap's long-lived suggestion
+    // callbacks) always reads current strings without a stale closure.
+    const t = useTranslations("mention");
+    const labelsRef = useRef<MentionPopupLabels>({
+      online: "",
+      offline: "",
+      idle: "",
+      activeCount: () => "",
+    });
+    labelsRef.current = {
+      online: t("online"),
+      offline: t("offline"),
+      idle: t("idle"),
+      activeCount: (n: number) => t("activeCount", { count: n }),
+    };
+
     // Fetch mentionables from API
     const fetchMentionables = useCallback(async (query: string) => {
       suggestionLoadingRef.current = true;
@@ -348,7 +415,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           suggestionLoadingRef.current,
           currentCommandRef.current,
           keyDownRef,
-          popupRef.current
+          popupRef.current,
+          labelsRef.current
         );
       }
     });
@@ -425,7 +493,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                     suggestionLoadingRef.current,
                     props.command,
                     keyDownRef,
-                    popup
+                    popup,
+                    labelsRef.current
                   );
                 },
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -455,7 +524,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                       suggestionLoadingRef.current,
                       props.command,
                       keyDownRef,
-                      popupRef.current
+                      popupRef.current,
+                      labelsRef.current
                     );
                   }
                 },

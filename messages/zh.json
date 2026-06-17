@@ -1386,5 +1386,11 @@
     "entityProposal": "提案",
     "entityDocument": "文档",
     "entityUnknown": "资源"
+  },
+  "mention": {
+    "online": "在线",
+    "offline": "离线",
+    "activeCount": "进行中 {count}",
+    "idle": "空闲"
   }
 }

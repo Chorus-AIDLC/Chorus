@@ -533,7 +533,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_search_mentionables
 
-**Description**: Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as `@[Name](type:uuid)` in comment/description text.
+**Description**: Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as `@[Name](type:uuid)` in comment/description text. For results of type `agent`, the entry also carries `online` (boolean: true iff the agent currently has a live daemon connection) and `activeCount` (number of tasks/resources its daemon is running or has queued; `0` when offline). User results do not carry these fields.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -545,7 +545,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 ```json
 [
   { "type": "user", "uuid": "...", "name": "Yifei", "email": "yifei@...", "avatarUrl": "..." },
-  { "type": "agent", "uuid": "...", "name": "Claude Dev", "roles": ["developer"] }
+  { "type": "agent", "uuid": "...", "name": "Claude Dev", "roles": ["developer"], "online": true, "activeCount": 2 }
 ]
 ```
 

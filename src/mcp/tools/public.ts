@@ -734,7 +734,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_search_mentionables",
     {
-      description: "Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment/description text.",
+      description: "Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment/description text. For results of type \"agent\" the entry also carries `online` (boolean: true iff the agent currently has a live daemon connection) and `activeCount` (number of tasks/resources its daemon is running or has queued; 0 when offline). User results do not carry these fields.",
       inputSchema: z.object({
         query: z.string().describe("Name or keyword to search"),
         limit: z.number().optional().default(10).describe("Max results to return (default 10)"),
