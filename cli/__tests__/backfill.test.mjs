@@ -95,7 +95,11 @@ describe("backfill → router integration (shared seen set)", () => {
     const seen = new Set();
     const enqueued = [];
     const mcpClient = { callTool: vi.fn(async () => ({ notifications })) };
-    const waker = { keyFor: vi.fn(async () => "idea:root-1"), wake: vi.fn(async () => {}) };
+    const waker = {
+      keyFor: vi.fn(async () => ({ key: "idea:root-1", rootIdeaUuid: "root-1", directIdeaUuid: "root-1" })),
+      markQueued: vi.fn(),
+      wake: vi.fn(async () => {}),
+    };
     const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
     const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger: silent });
     const backfill = createBackfill({ mcpClient, dispatch: (e) => router.dispatch(e), seen, logger: silent });

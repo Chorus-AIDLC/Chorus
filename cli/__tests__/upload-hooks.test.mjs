@@ -166,31 +166,40 @@ describe("createNoopUploadHooks", () => {
 
 // ===== Waker snapshot from real lifecycle =====
 
+// A canonical lowercase UUID for the deterministic session id (direct idea).
+const DIRECT_IDEA = "11111111-1111-4111-8111-111111111111";
+
 function makeWaker(hooks, overrides = {}) {
   const spawner =
     overrides.spawner ??
     {
-      wake: vi.fn(async ({ onMessage }) => {
-        onMessage?.({ type: "system", session_id: "sid" });
-        return { sessionId: "sid", exitCode: 0, isNew: true };
+      wake: vi.fn(async ({ sessionId, onMessage }) => {
+        onMessage?.({ type: "system", session_id: sessionId });
+        return { sessionId, exitCode: 0, isNew: true };
       }),
     };
-  const sessionMap = {
-    resolve: vi.fn(() => ({ sessionId: null, isNew: true })),
-    record: vi.fn(),
-  };
-  const lineage = overrides.lineage ?? { rootIdeaFor: vi.fn(async () => "root-1") };
+  const lineage =
+    overrides.lineage ??
+    { resolve: vi.fn(async () => ({ rootIdeaUuid: "root-1", directIdeaUuid: DIRECT_IDEA })) };
   const writeMcpConfigFn = vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() }));
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage,
-    sessionMap,
     spawner,
+    cwd: "/work/dir",
     hooks,
     logger: silent,
     writeMcpConfigFn,
+    // Disk probe stubbed → always "new"; these tests don't exercise resume.
+    isNewSessionFn: () => true,
   });
   return { waker, spawner };
+}
+
+// Attribution object as keyFor would produce it, for a given resolved root idea.
+// The wake/markQueued calls below thread this so the snapshot reports the root.
+function attrib(rootIdeaUuid, directIdeaUuid = DIRECT_IDEA) {
+  return { key: `idea:${directIdeaUuid}`, rootIdeaUuid, directIdeaUuid };
 }
 
 describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
@@ -200,7 +209,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const { waker } = makeWaker(hooks);
 
     // Enqueue: marks the task queued and emits a snapshot.
-    waker.markQueued(TASK_NOTIF, "idea:root-1");
+    waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
     expect(waker.buildExecutionSnapshot()).toEqual([
       { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "queued", startedAt: null },
     ]);
@@ -210,14 +219,14 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     let snapshotDuringRun;
     const { waker: waker2 } = makeWaker(hooks, {
       spawner: {
-        wake: vi.fn(async () => {
+        wake: vi.fn(async ({ sessionId }) => {
           snapshotDuringRun = waker2.buildExecutionSnapshot();
-          return { sessionId: "sid", exitCode: 0, isNew: true };
+          return { sessionId, exitCode: 0, isNew: true };
         }),
       },
     });
-    waker2.markQueued(TASK_NOTIF, "idea:root-1");
-    await waker2.wake(TASK_NOTIF, "idea:root-1");
+    waker2.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
+    await waker2.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
 
     expect(snapshotDuringRun).toHaveLength(1);
     expect(snapshotDuringRun[0]).toMatchObject({ entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "running" });
@@ -233,8 +242,8 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const hooks = { ...createNoopUploadHooks(), onExecutionChange: () => changes.push(Date.now()) };
     const { waker } = makeWaker(hooks);
 
-    waker.markQueued(TASK_NOTIF, "idea:root-1"); // enqueue → 1
-    await waker.wake(TASK_NOTIF, "idea:root-1"); // start → +1, finish → +1
+    waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1")); // enqueue → 1
+    await waker.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1")); // start → +1, finish → +1
 
     expect(changes.length).toBe(3);
   });
@@ -246,8 +255,8 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
       spawner: { wake: vi.fn(async () => { throw new Error("spawn boom"); }) },
     });
 
-    waker.markQueued(TASK_NOTIF, "idea:root-1");
-    await expect(waker.wake(TASK_NOTIF, "idea:root-1")).resolves.toBeUndefined();
+    waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
+    await expect(waker.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"))).resolves.toBeUndefined();
     // queued + running + finish = 3 changes; task removed after finish.
     expect(changes.length).toBe(3);
     expect(waker.buildExecutionSnapshot()).toEqual([]);
@@ -262,7 +271,8 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const ideaNotif = { ...TASK_NOTIF, entityType: "idea", entityUuid: "idea-7", action: "mentioned" };
     const { waker } = makeWaker(hooks);
 
-    waker.markQueued(ideaNotif, "idea:idea-7");
+    // Idea wake: direct == root == idea-7 (a top-level idea); attribution carries the root.
+    waker.markQueued(ideaNotif, "idea:idea-7", { key: "idea:idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7" });
     expect(waker.buildExecutionSnapshot()).toEqual([
       { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", status: "queued", startedAt: null },
     ]);
@@ -275,7 +285,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const commentNotif = { ...TASK_NOTIF, entityType: "comment", entityUuid: "c-1", action: "mentioned" };
     const { waker } = makeWaker(hooks);
 
-    waker.markQueued(commentNotif, "entity:comment:c-1");
+    waker.markQueued(commentNotif, "entity:comment:c-1", { key: "entity:comment:c-1", rootIdeaUuid: null, directIdeaUuid: null });
     expect(waker.buildExecutionSnapshot()).toEqual([]);
     expect(changes).toEqual([]);
   });
@@ -286,14 +296,14 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
       onExecutionChange: () => { throw new Error("hook boom"); },
     };
     const { waker } = makeWaker(hooks);
-    expect(() => waker.markQueued(TASK_NOTIF, "idea:root-1")).not.toThrow();
-    await expect(waker.wake(TASK_NOTIF, "idea:root-1")).resolves.toBeUndefined();
+    expect(() => waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"))).not.toThrow();
+    await expect(waker.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"))).resolves.toBeUndefined();
   });
 
-  it("entity:task key (no idea ancestor) yields a null rootIdeaUuid in the snapshot", () => {
+  it("per-entity fallback (no idea ancestor) yields a null rootIdeaUuid in the snapshot", () => {
     const hooks = createNoopUploadHooks();
     const { waker } = makeWaker(hooks);
-    waker.markQueued(TASK_NOTIF, "entity:task:task-1");
+    waker.markQueued(TASK_NOTIF, "entity:task:task-1", { key: "entity:task:task-1", rootIdeaUuid: null, directIdeaUuid: null });
     expect(waker.buildExecutionSnapshot()).toEqual([
       { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, status: "queued", startedAt: null },
     ]);

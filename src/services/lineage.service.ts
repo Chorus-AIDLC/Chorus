@@ -2,8 +2,13 @@
 // Server-side "entity → root idea" resolution. Single source of truth for
 // attributing any entity (task / document / proposal / idea) up the Chorus
 // lineage to the topmost idea of its forest. This replaces the daemon's
-// client-side multi-hop walk (cli/lineage.mjs): the daemon now prefers calling
-// the chorus_resolve_root_idea MCP tool, which delegates here.
+// client-side multi-hop walk (cli/lineage.mjs): the daemon resolves each
+// notification by calling the standalone REST endpoint
+// GET /api/entities/{type}/{uuid}/root-idea, which delegates here.
+//
+// The result also carries `directIdeaUuid` — the FIRST idea node on the lineage
+// (the entity's directly-attached idea, vs. `rootIdeaUuid` = the topmost). The CLI
+// daemon anchors its Claude `--session-id` on the direct idea.
 //
 // Data model (prisma/schema.prisma):
 //   • Task.proposalUuid      String?  (nullable; quick tasks have none)
@@ -46,6 +51,15 @@ export interface LineageNode {
 export interface ResolveRootIdeaResult {
   /** Root idea uuid, or null when there is no idea ancestor (a success, not an error). */
   rootIdeaUuid: string | null;
+  /**
+   * Direct idea uuid — the FIRST idea node on `lineage` (child→root), i.e. the idea the
+   * input entity attaches to directly: a task/document's proposal input idea
+   * (`inputUuids[0]`), or, for an idea input, that idea itself (NOT its root). Null in the
+   * same "no idea ancestor" cases as `rootIdeaUuid`. When `lineage` has exactly one idea
+   * node, `directIdeaUuid === rootIdeaUuid`. Derived from the lineage already computed — no
+   * extra query/traversal. The CLI daemon uses this as its Claude `--session-id` anchor.
+   */
+  directIdeaUuid: string | null;
   /** The resolved path, ordered from the input entity to the root idea. */
   lineage: LineageNode[];
   /** Explains the outcome so callers can log a clear attribution trail. */
@@ -71,6 +85,26 @@ export async function resolveRootIdea(
   entityType: LineageEntityType,
   entityUuid: string
 ): Promise<ResolveRootIdeaResult> {
+  const result = await resolveRootIdeaInner(companyUuid, entityType, entityUuid);
+  // Derive directIdeaUuid once, at the boundary, from the lineage the inner resolver
+  // already built — the FIRST idea node (child→root). No extra query/traversal, and it
+  // stays correct for every return path (including future ones) without per-branch edits.
+  // When there is no idea node it is null, matching rootIdeaUuid's null cases; when there
+  // is exactly one idea node it equals rootIdeaUuid.
+  const directIdeaUuid = result.lineage.find((n) => n.type === "idea")?.uuid ?? null;
+  return { ...result, directIdeaUuid };
+}
+
+/**
+ * Inner resolver: produces every field of ResolveRootIdeaResult EXCEPT directIdeaUuid,
+ * which the public wrapper derives from `lineage`. Returns the field typed as optional so
+ * the branches need not set it; the wrapper always fills it in.
+ */
+async function resolveRootIdeaInner(
+  companyUuid: string,
+  entityType: LineageEntityType,
+  entityUuid: string
+): Promise<Omit<ResolveRootIdeaResult, "directIdeaUuid">> {
   switch (entityType) {
     case "idea":
       return resolveFromIdea(companyUuid, entityUuid);
@@ -90,7 +124,7 @@ export async function resolveRootIdea(
 async function resolveFromIdea(
   companyUuid: string,
   ideaUuid: string
-): Promise<ResolveRootIdeaResult> {
+): Promise<Omit<ResolveRootIdeaResult, "directIdeaUuid">> {
   const lineage: LineageNode[] = [];
   const root = await walkToRoot(companyUuid, ideaUuid, lineage);
   if (root === null) {
@@ -102,7 +136,7 @@ async function resolveFromIdea(
 async function resolveFromTask(
   companyUuid: string,
   taskUuid: string
-): Promise<ResolveRootIdeaResult> {
+): Promise<Omit<ResolveRootIdeaResult, "directIdeaUuid">> {
   const task = await getTaskByUuid(companyUuid, taskUuid);
   if (!task) {
     return { rootIdeaUuid: null, lineage: [], resolvedVia: "not_found" };
@@ -117,7 +151,7 @@ async function resolveFromTask(
 async function resolveFromDocument(
   companyUuid: string,
   documentUuid: string
-): Promise<ResolveRootIdeaResult> {
+): Promise<Omit<ResolveRootIdeaResult, "directIdeaUuid">> {
   const doc = await getDocumentByUuid(companyUuid, documentUuid);
   if (!doc) {
     return { rootIdeaUuid: null, lineage: [], resolvedVia: "not_found" };
@@ -139,7 +173,7 @@ async function resolveFromProposal(
   proposalUuid: string,
   successVia: "proposal" | "via_proposal" | "via_document_proposal",
   head?: LineageNode
-): Promise<ResolveRootIdeaResult> {
+): Promise<Omit<ResolveRootIdeaResult, "directIdeaUuid">> {
   const lineage: LineageNode[] = head ? [head] : [];
   const proposal = await getProposalByUuid(companyUuid, proposalUuid);
   if (!proposal) {

@@ -83,69 +83,106 @@ describe("buildPrompt", () => {
   });
 });
 
+// A canonical lowercase UUID used as the direct idea (= deterministic session id).
+const DIRECT_IDEA = "11111111-1111-4111-8111-111111111111";
+const ROOT_IDEA = "99999999-9999-4999-8999-999999999999";
+
 function makeWaker(overrides = {}) {
   const spawner = overrides.spawner ?? {
-    wake: vi.fn(async ({ onMessage }) => {
-      onMessage?.({ type: "system", session_id: "new-sid" });
-      return { sessionId: "new-sid", exitCode: 0, isNew: true };
+    wake: vi.fn(async ({ sessionId, onMessage }) => {
+      onMessage?.({ type: "system", session_id: sessionId });
+      return { sessionId, exitCode: 0, isNew: true };
     }),
   };
-  const sessionMap =
-    overrides.sessionMap ??
-    {
-      resolve: vi.fn(() => ({ sessionId: null, isNew: true })),
-      record: vi.fn(),
-    };
-  const lineage = overrides.lineage ?? { rootIdeaFor: vi.fn(async () => "root-1") };
+  // Lineage now resolves BOTH ids in one call. Default: direct ≠ root.
+  const lineage =
+    overrides.lineage ??
+    { resolve: vi.fn(async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA })) };
   const hooks = overrides.hooks ?? createNoopUploadHooks();
   const writeMcpConfigFn =
     overrides.writeMcpConfigFn ?? vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() }));
+  // Disk probe is injected so tests control new-vs-resume without touching the FS.
+  const isNewSessionFn = overrides.isNewSessionFn ?? vi.fn(() => true);
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage,
-    sessionMap,
     spawner,
+    cwd: overrides.cwd ?? "/work/dir",
     hooks,
     logger: silent,
     writeMcpConfigFn,
+    isNewSessionFn,
   });
-  return { waker, spawner, sessionMap, lineage, hooks, writeMcpConfigFn };
+  return { waker, spawner, lineage, hooks, writeMcpConfigFn, isNewSessionFn };
 }
 
 describe("Waker.wake full loop", () => {
-  it("resolves key, builds mcp-config, spawns, records session, cleans up", async () => {
-    const { waker, spawner, sessionMap, writeMcpConfigFn } = makeWaker();
+  it("keyFor anchors on the DIRECT idea and returns both ids", async () => {
+    const { waker } = makeWaker();
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    expect(resolved).toEqual({
+      key: `idea:${DIRECT_IDEA}`,
+      rootIdeaUuid: ROOT_IDEA,
+      directIdeaUuid: DIRECT_IDEA,
+    });
+  });
+
+  it("spawns with the direct idea as session id, --session-id (new) when no transcript, cleans up", async () => {
+    const { waker, spawner, writeMcpConfigFn, isNewSessionFn } = makeWaker();
     const cfg = { path: "/tmp/m.json", cleanup: vi.fn() };
     writeMcpConfigFn.mockReturnValue(cfg);
 
-    const key = await waker.keyFor(TASK_NOTIF);
-    expect(key).toBe("idea:root-1");
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
 
-    await waker.wake(TASK_NOTIF, key);
-
-    // spawner got the prompt + null sessionId (new) + mcp config path
     const spawnArgs = spawner.wake.mock.calls[0][0];
     expect(spawnArgs.prompt).toContain("task-1");
-    expect(spawnArgs.sessionId).toBeNull();
+    expect(spawnArgs.sessionId).toBe(DIRECT_IDEA); // deterministic = direct idea uuid
+    expect(spawnArgs.isNew).toBe(true); // no transcript on disk → new session
+    expect(spawnArgs.cwd).toBe("/work/dir"); // same cwd threaded for probe + spawn
     expect(spawnArgs.mcpConfigPath).toBe("/tmp/m.json");
-    // new session id recorded for the key
-    expect(sessionMap.record).toHaveBeenCalledWith("idea:root-1", "new-sid");
+    // probe used the SAME cwd as the spawn
+    expect(isNewSessionFn).toHaveBeenCalledWith(DIRECT_IDEA, "/work/dir");
     // temp config cleaned up
     expect(cfg.cleanup).toHaveBeenCalled();
   });
 
-  it("passes --resume sessionId for an existing root", async () => {
-    const { waker, spawner } = makeWaker({
-      sessionMap: { resolve: () => ({ sessionId: "existing-sid", isNew: false }), record: vi.fn() },
-    });
-    await waker.wake(TASK_NOTIF, "idea:root-1");
-    expect(spawner.wake.mock.calls[0][0].sessionId).toBe("existing-sid");
+  it("passes isNew=false (resume) when the transcript already exists on disk", async () => {
+    const { waker, spawner } = makeWaker({ isNewSessionFn: vi.fn(() => false) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(spawner.wake.mock.calls[0][0].isNew).toBe(false);
+    expect(spawner.wake.mock.calls[0][0].sessionId).toBe(DIRECT_IDEA);
   });
 
-  it("falls back to a per-entity key when there's no idea ancestor", async () => {
-    const { waker } = makeWaker({ lineage: { rootIdeaFor: async () => null } });
-    const key = await waker.keyFor(TASK_NOTIF);
-    expect(key).toBe("entity:task:task-1");
+  it("falls back to a per-entity key when there's no direct idea", async () => {
+    const { waker } = makeWaker({
+      lineage: { resolve: async () => ({ rootIdeaUuid: null, directIdeaUuid: null }) },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    expect(resolved.key).toBe("entity:task:task-1");
+    expect(resolved.directIdeaUuid).toBeNull();
+  });
+
+  it("STILL spawns for a no-idea entity (quick task), anchoring on the entity's OWN uuid", async () => {
+    // Regression guard: a task_assigned for a quick task (no proposal → no idea
+    // ancestor) is the daemon's headline use case. It must still wake Claude — the
+    // session is anchored on the entity's own uuid (deterministic + resumable),
+    // NOT dropped because directIdeaUuid is null.
+    const QUICK_TASK = "22222222-2222-4222-8222-222222222222"; // entityUuid IS a uuid
+    const { waker, spawner } = makeWaker({
+      lineage: { resolve: async () => ({ rootIdeaUuid: null, directIdeaUuid: null }) },
+    });
+    const notif = { ...TASK_NOTIF, entityType: "task", entityUuid: QUICK_TASK };
+    const resolved = await waker.keyFor(notif);
+    expect(resolved.key).toBe(`entity:task:${QUICK_TASK}`); // per-entity serialization
+    await waker.wake(notif, resolved.key, resolved);
+
+    expect(spawner.wake).toHaveBeenCalledTimes(1); // it DID spawn
+    const args = spawner.wake.mock.calls[0][0];
+    expect(args.sessionId).toBe(QUICK_TASK); // anchored on the entity's own uuid
+    // snapshot still reports null root (no idea ancestor) — not the entity uuid
+    expect(resolved.rootIdeaUuid).toBeNull();
   });
 
   it("a spawn failure is logged and does NOT throw", async () => {
@@ -154,7 +191,8 @@ describe("Waker.wake full loop", () => {
       spawner: { wake: vi.fn(async () => { throw new Error("spawn exploded"); }) },
     });
     waker.logger = { ...silent, warn: (m) => warns.push(m) };
-    await expect(waker.wake(TASK_NOTIF, "idea:root-1")).resolves.toBeUndefined();
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await expect(waker.wake(TASK_NOTIF, resolved.key, resolved)).resolves.toBeUndefined();
     expect(warns.join("")).toMatch(/wake failed/);
   });
 
@@ -163,31 +201,54 @@ describe("Waker.wake full loop", () => {
     const { waker } = makeWaker({
       hooks: { onSessionStart, onConnect: async () => {}, onTranscriptMessage: async () => {} },
     });
-    await waker.wake(TASK_NOTIF, "idea:root-1");
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
     expect(onSessionStart).toHaveBeenCalledWith(
-      expect.objectContaining({ rootIdeaKey: "idea:root-1", isNew: true })
+      expect.objectContaining({ rootIdeaKey: `idea:${DIRECT_IDEA}`, sessionId: DIRECT_IDEA, isNew: true })
     );
   });
 
-  it("does NOT record a session id when the wake exits non-zero (no phantom --resume)", async () => {
-    const record = vi.fn();
+  it("logs a non-zero exit visibly (no-silent-errors), still no throw", async () => {
+    const warns = [];
     const { waker } = makeWaker({
-      sessionMap: { resolve: () => ({ sessionId: null, isNew: true }), record },
-      // exitCode null (e.g. claude missing) — must not be recorded
-      spawner: { wake: vi.fn(async () => ({ sessionId: "phantom", exitCode: null, isNew: true })) },
+      spawner: { wake: vi.fn(async ({ sessionId }) => ({ sessionId, exitCode: 2, isNew: true })) },
     });
-    await waker.wake(TASK_NOTIF, "idea:root-1");
-    expect(record).not.toHaveBeenCalled();
+    waker.logger = { ...silent, warn: (m) => warns.push(m) };
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(warns.join("")).toMatch(/exited non-zero/);
   });
 
-  it("records the session id only on a clean (exit 0) wake", async () => {
-    const record = vi.fn();
+  it("execution snapshot reports the RESOLVED ROOT idea, NOT the direct-idea key (two-id contract)", async () => {
+    // The BLOCKER regression guard: with direct ≠ root, the snapshot's rootIdeaUuid
+    // must be the server-resolved root, never the direct idea carried by the key.
+    let snapshotDuringRun;
     const { waker } = makeWaker({
-      sessionMap: { resolve: () => ({ sessionId: null, isNew: true }), record },
-      spawner: { wake: vi.fn(async () => ({ sessionId: "real-sid", exitCode: 0, isNew: true })) },
+      spawner: {
+        wake: vi.fn(async ({ sessionId }) => {
+          snapshotDuringRun = waker.buildExecutionSnapshot();
+          return { sessionId, exitCode: 0, isNew: true };
+        }),
+      },
     });
-    await waker.wake(TASK_NOTIF, "idea:root-1");
-    expect(record).toHaveBeenCalledWith("idea:root-1", "real-sid");
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    expect(resolved.directIdeaUuid).not.toBe(resolved.rootIdeaUuid); // precondition
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(snapshotDuringRun).toHaveLength(1);
+    expect(snapshotDuringRun[0].rootIdeaUuid).toBe(ROOT_IDEA); // resolved root, not DIRECT_IDEA
+    expect(snapshotDuringRun[0].rootIdeaUuid).not.toBe(DIRECT_IDEA);
+    expect(snapshotDuringRun[0].entityUuid).toBe("task-1");
+  });
+
+  it("markQueued reports the resolved root idea (not sliced from the key)", async () => {
+    const { waker } = makeWaker();
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    waker.markQueued(TASK_NOTIF, resolved.key, resolved);
+    const snap = waker.buildExecutionSnapshot();
+    expect(snap).toHaveLength(1);
+    expect(snap[0].rootIdeaUuid).toBe(ROOT_IDEA);
+    expect(snap[0].status).toBe("queued");
   });
 });
 
@@ -205,11 +266,13 @@ describe("EventRouter dispatch", () => {
     return { router, mcpClient };
   }
 
-  it("routes a task_assigned notification onto the queue under its root-idea key", async () => {
+  it("routes a task_assigned notification onto the queue under its direct-idea key", async () => {
     const enqueued = [];
     const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
+    const attribution = { key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA };
     const waker = {
-      keyFor: vi.fn(async () => "idea:root-1"),
+      keyFor: vi.fn(async () => attribution),
+      markQueued: vi.fn(),
       wake: vi.fn(async () => {}),
     };
     const { router } = makeRouter([TASK_NOTIF], waker, queue);
@@ -218,10 +281,12 @@ describe("EventRouter dispatch", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0].key).toBe("idea:root-1");
-    // running the enqueued task calls waker.wake with the notification + key
+    expect(enqueued[0].key).toBe(`idea:${DIRECT_IDEA}`);
+    // markQueued got the resolved attribution (so the snapshot can report the root)
+    expect(waker.markQueued).toHaveBeenCalledWith(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attribution);
+    // running the enqueued task calls waker.wake with the notification + key + attribution
     await enqueued[0].task();
-    expect(waker.wake).toHaveBeenCalledWith(TASK_NOTIF, "idea:root-1");
+    expect(waker.wake).toHaveBeenCalledWith(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attribution);
   });
 
   it("ignores non-new_notification events and non-wake actions", async () => {
@@ -239,7 +304,11 @@ describe("EventRouter dispatch", () => {
   it("de-dupes a notification already handled (shared seen set) — no double wake on reconnect", async () => {
     const enqueued = [];
     const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
-    const waker = { keyFor: vi.fn(async () => "idea:root-1"), wake: vi.fn(async () => {}) };
+    const waker = {
+      keyFor: vi.fn(async () => ({ key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA })),
+      markQueued: vi.fn(),
+      wake: vi.fn(async () => {}),
+    };
     const seen = new Set();
     const { router } = makeRouter([TASK_NOTIF], waker, queue, seen);
 
@@ -252,20 +321,24 @@ describe("EventRouter dispatch", () => {
     expect(seen.has("notif-1")).toBe(true);
   });
 
-  it("two same-root notifications do not spawn concurrently (serialized via the real queue)", async () => {
+  it("two same-direct-idea notifications do not spawn concurrently (serialized via the real queue)", async () => {
     const queue = new WakeQueue({ logger: silent });
     let concurrent = 0;
     let maxConcurrent = 0;
     const spawner = {
-      wake: vi.fn(async () => {
+      wake: vi.fn(async ({ sessionId }) => {
         concurrent++;
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise((r) => setTimeout(r, 5));
         concurrent--;
-        return { sessionId: "sid", exitCode: 0, isNew: true };
+        return { sessionId, exitCode: 0, isNew: true };
       }),
     };
-    const { waker } = makeWaker({ spawner, lineage: { rootIdeaFor: async () => "root-1" } });
+    // Both notifications resolve to the SAME direct idea → same key → serialized.
+    const { waker } = makeWaker({
+      spawner,
+      lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
+    });
     const notifA = { ...TASK_NOTIF, uuid: "a" };
     const notifB = { ...TASK_NOTIF, uuid: "b" };
     const { router } = makeRouter([notifA, notifB], waker, queue);
@@ -275,6 +348,6 @@ describe("EventRouter dispatch", () => {
     await new Promise((r) => setTimeout(r, 40));
 
     expect(spawner.wake).toHaveBeenCalledTimes(2);
-    expect(maxConcurrent).toBe(1); // same root → never concurrent
+    expect(maxConcurrent).toBe(1); // same direct idea → never concurrent
   });
 });

@@ -54,6 +54,50 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     expect(fetchImpl.calls[0].url).toBe(`${BASE}/api/entities/task/t1/root-idea`);
   });
 
+  it("resolve() returns BOTH the root and the direct idea from one call", async () => {
+    const fetchImpl = fakeFetch(() =>
+      rootIdeaData({
+        rootIdeaUuid: "root-idea",
+        directIdeaUuid: "direct-idea",
+        lineage: [],
+        resolvedVia: "via_proposal",
+      })
+    );
+    const r = makeResolver(fetchImpl);
+    const res = await r.resolve({ entityType: "task", entityUuid: "t1" });
+
+    expect(res).toEqual({ rootIdeaUuid: "root-idea", directIdeaUuid: "direct-idea" });
+    expect(fetchImpl.calls).toHaveLength(1);
+  });
+
+  it("resolve() treats a missing directIdeaUuid (older server) as null without failing root", async () => {
+    const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: "root-idea", lineage: [] }));
+    const r = makeResolver(fetchImpl);
+    const res = await r.resolve({ entityType: "task", entityUuid: "t1" });
+
+    expect(res).toEqual({ rootIdeaUuid: "root-idea", directIdeaUuid: null });
+  });
+
+  it("resolve() returns both null on failure (caller falls back to a per-entity key)", async () => {
+    const fetchImpl = fakeFetch(() => jsonResponse({ success: false }, { ok: false, status: 500 }));
+    const r = makeResolver(fetchImpl);
+    expect(await r.resolve({ entityType: "task", entityUuid: "t" })).toEqual({
+      rootIdeaUuid: null,
+      directIdeaUuid: null,
+    });
+  });
+
+  it("resolve() caches both ids within a run (one request per entity)", async () => {
+    const fetchImpl = fakeFetch(() =>
+      rootIdeaData({ rootIdeaUuid: "r", directIdeaUuid: "d" })
+    );
+    const r = makeResolver(fetchImpl);
+    await r.resolve({ entityType: "idea", entityUuid: "solo" });
+    const second = await r.resolve({ entityType: "idea", entityUuid: "solo" });
+    expect(second).toEqual({ rootIdeaUuid: "r", directIdeaUuid: "d" });
+    expect(fetchImpl.calls).toHaveLength(1); // served from cache
+  });
+
   it("sends the Bearer agent key", async () => {
     const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: "x" }));
     const r = new LineageResolver({ url: BASE, apiKey: "cho_secret", logger: silent, fetchImpl });
@@ -146,6 +190,6 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     );
     const r = makeResolver(fetchImpl, { ...silent, info: (m) => infos.push(m) });
     await r.rootIdeaFor({ entityType: "idea", entityUuid: "x" });
-    expect(infos.some((m) => /lineage: idea:x → r \(root_idea\)/.test(m))).toBe(true);
+    expect(infos.some((m) => /lineage: idea:x → root r, direct none \(root_idea\)/.test(m))).toBe(true);
   });
 });

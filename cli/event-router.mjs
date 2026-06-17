@@ -14,7 +14,7 @@ export class EventRouter {
   /**
    * @param {{
    *   mcpClient: { callTool: (name: string, args?: Record<string, unknown>) => Promise<any> },
-   *   waker: { keyFor: (n: any) => Promise<string>, wake: (n: any, key: string) => Promise<void>, markQueued?: (n: any, key: string) => void },
+   *   waker: { keyFor: (n: any) => Promise<{ key: string, rootIdeaUuid: string|null, directIdeaUuid: string|null }>, wake: (n: any, key: string, attribution?: any) => Promise<void>, markQueued?: (n: any, key: string, attribution?: any) => void },
    *   queue: { enqueue: (key: string, task: () => Promise<void>) => void },
    *   wakeActions: Set<string>,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
@@ -78,23 +78,29 @@ export class EventRouter {
       return;
     }
 
-    // Resolve the serialization key, then enqueue. keyFor may hit the network
-    // (lineage), so do it before enqueue; the wake itself runs on the queue.
+    // Resolve the serialization key + idea attribution, then enqueue. keyFor may
+    // hit the network (lineage), so do it before enqueue; the wake itself runs on
+    // the queue. `attribution` carries both the direct idea (session anchor, in the
+    // key) and the resolved root idea (for the snapshot) — threaded explicitly so
+    // the snapshot's root is never derived from the direct-idea key.
     let key;
+    let attribution;
     try {
-      key = await this.waker.keyFor(n);
+      const resolved = await this.waker.keyFor(n);
+      key = resolved.key;
+      attribution = resolved;
     } catch (err) {
       this.logger.warn(`[Chorus] could not resolve wake key for ${notificationUuid}: ${err}`);
       return;
     }
     // Mark the task queued (emits a snapshot) BEFORE enqueue, so the server
-    // sees it waiting even while it sits behind a same-root wake. Optional +
+    // sees it waiting even while it sits behind a same-direct-idea wake. Optional +
     // non-throwing so a missing/failed hook never breaks routing.
     try {
-      this.waker.markQueued?.(n, key);
+      this.waker.markQueued?.(n, key, attribution);
     } catch (err) {
       this.logger.warn(`[Chorus] markQueued failed for ${notificationUuid}: ${err}`);
     }
-    this.queue.enqueue(key, () => this.waker.wake(n, key));
+    this.queue.enqueue(key, () => this.waker.wake(n, key, attribution));
   }
 }

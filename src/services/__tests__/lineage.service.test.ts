@@ -411,6 +411,115 @@ describe("lineage.service / resolveRootIdea", () => {
     });
   });
 
+  // ===== directIdeaUuid (the daemon's session-id anchor) =====
+  describe("directIdeaUuid", () => {
+    it("task via proposal: direct = inputUuids[0]'s idea (first idea node), root = topmost", async () => {
+      installGraph({
+        ideas: [
+          { uuid: "i-root", title: "Root", parentUuid: null },
+          { uuid: "i-child", title: "Child", parentUuid: "i-root" },
+        ],
+        proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-child"] }],
+        tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+      });
+
+      const res = await resolveRootIdea(COMPANY, "task", "t1");
+
+      expect(res.directIdeaUuid).toBe("i-child"); // first idea node on lineage
+      expect(res.rootIdeaUuid).toBe("i-root"); // last idea node
+      expect(res.directIdeaUuid).not.toBe(res.rootIdeaUuid);
+    });
+
+    it("idea input with ancestors: direct = the idea itself, NOT its root", async () => {
+      installGraph({
+        ideas: [
+          { uuid: "i-root", title: "Root", parentUuid: null },
+          { uuid: "i-mid", title: "Mid", parentUuid: "i-root" },
+          { uuid: "i-leaf", title: "Leaf", parentUuid: "i-mid" },
+        ],
+      });
+
+      const res = await resolveRootIdea(COMPANY, "idea", "i-leaf");
+
+      expect(res.directIdeaUuid).toBe("i-leaf");
+      expect(res.rootIdeaUuid).toBe("i-root");
+    });
+
+    it("top-level idea: direct equals root (single idea node on lineage)", async () => {
+      installGraph({ ideas: [{ uuid: "i-solo", title: "Solo", parentUuid: null }] });
+
+      const res = await resolveRootIdea(COMPANY, "idea", "i-solo");
+
+      expect(res.directIdeaUuid).toBe("i-solo");
+      expect(res.directIdeaUuid).toBe(res.rootIdeaUuid);
+    });
+
+    it("document via proposal: direct = the proposal's input idea", async () => {
+      installGraph({
+        ideas: [
+          { uuid: "i-root", title: "Root", parentUuid: null },
+          { uuid: "i-child", title: "Child", parentUuid: "i-root" },
+        ],
+        proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-child"] }],
+        documents: [{ uuid: "d1", title: "Spec", proposalUuid: "p1" }],
+      });
+
+      const res = await resolveRootIdea(COMPANY, "document", "d1");
+
+      expect(res.directIdeaUuid).toBe("i-child");
+      expect(res.rootIdeaUuid).toBe("i-root");
+    });
+
+    it("multi-idea proposal: direct = inputUuids[0]'s idea (primary line first idea node)", async () => {
+      installGraph({
+        ideas: [
+          { uuid: "i-root-a", title: "RootA", parentUuid: null },
+          { uuid: "i-a", title: "A", parentUuid: "i-root-a" },
+          { uuid: "i-root-b", title: "RootB", parentUuid: null },
+          { uuid: "i-b", title: "B", parentUuid: "i-root-b" },
+        ],
+        proposals: [
+          { uuid: "p-merge", title: "Merge", inputType: "idea", inputUuids: ["i-a", "i-b"] },
+        ],
+        tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p-merge" }],
+      });
+
+      const res = await resolveRootIdea(COMPANY, "task", "t1");
+
+      expect(res.directIdeaUuid).toBe("i-a"); // primary line's direct idea
+      expect(res.rootIdeaUuid).toBe("i-root-a");
+    });
+
+    it.each([
+      ["quick task no proposal", "task", "t-quick"],
+      ["standalone document", "document", "d-solo"],
+      ["missing entity", "task", "t-ghost"],
+    ] as const)("null in the same no-idea-ancestor case: %s", async (_label, type, uuid) => {
+      installGraph({
+        tasks: [{ uuid: "t-quick", title: "Quick", proposalUuid: null }],
+        documents: [{ uuid: "d-solo", title: "Note", proposalUuid: null }],
+      });
+
+      const res = await resolveRootIdea(COMPANY, type, uuid);
+
+      expect(res.directIdeaUuid).toBeNull();
+      expect(res.rootIdeaUuid).toBeNull(); // direct is null exactly when root is
+    });
+
+    it("document-derived proposal (no idea input): direct is null, matching root", async () => {
+      installGraph({
+        proposals: [
+          { uuid: "p-doc", title: "PDoc", inputType: "document", inputUuids: ["d-src"] },
+        ],
+      });
+
+      const res = await resolveRootIdea(COMPANY, "proposal", "p-doc");
+
+      expect(res.directIdeaUuid).toBeNull();
+      expect(res.rootIdeaUuid).toBeNull();
+    });
+  });
+
   // ===== defensive default =====
   it("an unknown entityType → null/not_found (no throw)", async () => {
     installGraph({});

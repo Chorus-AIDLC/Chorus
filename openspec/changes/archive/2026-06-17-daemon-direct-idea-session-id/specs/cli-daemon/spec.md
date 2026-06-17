@@ -1,35 +1,4 @@
-# cli-daemon Specification
-
-## Purpose
-TBD - created by archiving change add-chorus-cli-daemon. Update Purpose after archive.
-## Requirements
-### Requirement: Daemon subcommand and notification subscription
-
-The CLI SHALL provide a `chorus daemon` subcommand that runs a long-lived client process. On start it SHALL resolve credentials (see cli-auth), open a Server-Sent Events subscription to the remote Chorus notification stream (`/api/events/notifications`) authenticated with the `cho_` API key, and remain running until terminated. Adding the `daemon` and `login` subcommands SHALL NOT change the behavior of invoking the CLI with no subcommand (which continues to launch the Chorus server).
-
-#### Scenario: Daemon connects and subscribes
-
-- **WHEN** the user runs `chorus daemon` with resolvable credentials
-- **THEN** the process authenticates, opens the notification SSE subscription, logs the connected agent identity, and stays running
-
-#### Scenario: Bare CLI still launches the server
-
-- **WHEN** the user runs `chorus` with no subcommand (or the existing server flags)
-- **THEN** the Chorus server launches exactly as before, with no daemon behavior triggered
-
-### Requirement: Task-dispatch wake of local headless Claude Code
-
-On receiving a relevant notification (at minimum `task_assigned`), the daemon SHALL spawn a local headless Claude Code subprocess (`claude -p` with `--output-format stream-json` and the Chorus MCP server configured via `--mcp-config`) to act on the dispatched work. The daemon SHALL feed the prompt to the subprocess over stdin rather than as a command-line argument. Each wake SHALL be non-blocking with respect to the notification subscription, and a failure of one wake SHALL be logged visibly without terminating the daemon.
-
-#### Scenario: Task assignment wakes Claude Code
-
-- **WHEN** the subscribed agent receives a `task_assigned` notification
-- **THEN** the daemon spawns a headless `claude -p` subprocess wired to the Chorus MCP server, passing the task context prompt over stdin, and the subprocess can act via `chorus_*` MCP tools
-
-#### Scenario: One failed wake does not kill the daemon
-
-- **WHEN** a spawned subprocess fails to start or exits with an error
-- **THEN** the daemon logs the failure visibly and continues processing subsequent notifications
+## MODIFIED Requirements
 
 ### Requirement: Lineage-anchored session continuity
 
@@ -68,13 +37,9 @@ SHALL NOT be assumed for other agent CLIs.
 Before spawning, the daemon SHALL validate that the session id is a well-formed,
 lowercase UUID; if it is not, the daemon SHALL log the failure visibly and SHALL NOT
 spawn (no silent error). When the endpoint returns no direct idea (a `null`
-`directIdeaUuid`) — e.g. a quick task with no proposal, a standalone document, or a
-non-idea proposal — or the call fails for any reason, the daemon SHALL still wake by
-anchoring the session on the dispatched **entity's own uuid** (and serializing under a
-per-entity key). The entity uuid is itself a deterministic Chorus uuid, so such a
-session remains human-resumable and same-entity wakes continue it; a wake SHALL NOT be
-dropped merely because the entity has no idea ancestor. Resolution results MAY be cached
-per run so the same entity is not resolved twice within one daemon run.
+`directIdeaUuid`) or the call fails for any reason, the daemon SHALL fall back to a
+per-entity session key. Resolution results MAY be cached per run so the same entity is
+not resolved twice within one daemon run.
 
 #### Scenario: Session id equals the direct idea uuid
 
@@ -136,70 +101,17 @@ per run so the same entity is not resolved twice within one daemon run.
 - **WHEN** the resolved session id is not a well-formed UUID
 - **THEN** the daemon logs the failure visibly and does not spawn a subprocess
 
-#### Scenario: No direct idea still wakes, anchored on the entity's own uuid
+#### Scenario: No direct idea degrades to a per-entity key
 
-- **WHEN** the resolution endpoint returns a `null` `directIdeaUuid` (e.g. a quick task
-  with no proposal), is unreachable, returns a non-2xx status, or returns a malformed body
-- **THEN** the daemon still spawns Claude, anchoring the session on the dispatched
-  entity's own uuid and serializing under a per-entity key, without crashing and without
-  dropping the wake
+- **WHEN** the resolution endpoint returns a `null` `directIdeaUuid`, is unreachable,
+  returns a non-2xx status, or returns a malformed body
+- **THEN** the daemon anchors the session on a per-entity key, without crashing
 
-### Requirement: Cross-platform headless spawn
+## REMOVED Requirements
 
-The daemon's subprocess spawning SHALL work on Linux, macOS, and Windows without relying on a shell. It SHALL resolve the real `claude` executable path (including the Windows `claude.cmd` shim) and spawn it directly without `shell:true`. It SHALL write the MCP configuration file to the OS temporary directory (`os.tmpdir()`), not a hardcoded path. It SHALL parse the subprocess's newline-delimited JSON output line by line, tolerating Windows `\r\n` line endings.
+### Requirement: Per-root-idea wake serialization
 
-#### Scenario: Windows spawn resolves the .cmd shim without a shell
-
-- **WHEN** the daemon runs on Windows where `claude` is installed as `claude.cmd`
-- **THEN** it resolves and spawns the real `claude.cmd` path directly without `shell:true`, and the prompt is delivered over stdin
-
-#### Scenario: Stream-json output parses across platforms
-
-- **WHEN** the subprocess emits newline-delimited JSON with `\r\n` line endings on Windows
-- **THEN** the daemon strips the trailing carriage return and parses each line as JSON without error
-
-### Requirement: Reconnect with backfill
-
-When the notification subscription drops and reconnects, the daemon SHALL fetch notifications that arrived while it was disconnected and re-fire any wakes that were missed, so a dispatch that occurred during a brief disconnection is not silently lost.
-
-#### Scenario: Missed dispatch is recovered on reconnect
-
-- **WHEN** the subscription drops, a `task_assigned` notification is created during the gap, and the subscription then reconnects
-- **THEN** the daemon backfills the unhandled notification and wakes Claude Code for it
-
-### Requirement: Reserved upload hooks for observability
-
-The daemon SHALL define connection-register, session-register, and transcript-report hook points as no-op stubs in this change, so a future observability layer can report daemon connections, sessions, and live transcript messages to the server without modifying the wake path. This change SHALL NOT itself send connection, session, or transcript data to the server.
-
-#### Scenario: Hooks exist as no-ops
-
-- **WHEN** the daemon connects, starts a session, and receives subprocess transcript messages
-- **THEN** the corresponding hook points are invoked but perform no server upload in this change
-
-### Requirement: The daemon SHALL self-report client metadata when opening the notification stream
-
-The chorus CLI daemon SHALL append self-report query parameters when it opens its
-SSE subscription to `/api/events/notifications`. The appended parameters SHALL be
-`clientType=claude_code`, `clientVersion` set to the chorus CLI package version,
-`host` set to the machine hostname, and `startedAt` set to the daemon process
-start time in ISO-8601. The `clientType` SHALL be `claude_code`
-(not a generic `daemon`) because the CLI drives a local Claude Code subprocess.
-This SHALL NOT change the authentication mechanism (the Bearer `cho_` API key
-header is unchanged) and SHALL NOT alter the daemon's reconnect or backfill
-behavior.
-
-#### Scenario: The daemon appends self-report params on connect
-
-- **WHEN** the chorus CLI daemon opens its notification SSE subscription
-- **THEN** the request URL MUST include `clientType=claude_code` together with the
-  CLI's `clientVersion`, the machine `host`, and the process `startedAt`
-- **AND** the `Authorization: Bearer <cho_ key>` header MUST be sent exactly as before
-
-#### Scenario: Reconnect re-sends the self-report params
-
-- **GIVEN** the daemon's SSE subscription drops and the backoff reconnect fires
-- **WHEN** the daemon re-opens the notification stream
-- **THEN** the reconnect request URL MUST again include the same self-report query parameters
+## ADDED Requirements
 
 ### Requirement: Per-direct-idea wake serialization
 
@@ -231,4 +143,3 @@ subsequent wakes for the same direct idea.
 - **WHEN** a queued wake for a direct idea fails or its subprocess errors
 - **THEN** the failure is logged and the next queued wake for that same direct idea
   still proceeds
-

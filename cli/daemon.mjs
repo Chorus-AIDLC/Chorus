@@ -1,9 +1,12 @@
 // cli/daemon.mjs
 // `chorus daemon` — the assembled client daemon. Wires together:
 //   CredentialResolver → ChorusClient (MCP) + SseListener (+ reconnect backfill)
-//     → EventRouter → WakeQueue → Waker (LineageResolver + SessionMap + ClaudeSpawner)
+//     → EventRouter → WakeQueue → Waker (LineageResolver + ClaudeSpawner)
 // On a task_assigned (and other wake actions) it spawns a local headless Claude
-// Code, serialized per root idea, that acts via the chorus_* MCP tools.
+// Code, serialized per DIRECT idea, that acts via the chorus_* MCP tools. The
+// Claude session id is the dispatched entity's direct idea uuid (deterministic,
+// so a human can `claude --resume <idea-uuid>`); new-vs-resume is decided by
+// probing the on-disk transcript — there is no persisted session-id map.
 //
 // Connection / session / transcript reporting to the server is intentionally
 // NOT done here — the no-op UploadHooks reserve those seams for the derived
@@ -17,7 +20,6 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { SessionMap } from "./session-map.mjs";
 import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
 import { createExecutionUploadHooks } from "./upload-hooks.mjs";
 import { WAKE_ACTIONS } from "./prompts.mjs";
@@ -42,7 +44,7 @@ function defaultLogger() {
  *   fetchImpl?: typeof fetch,
  *   sseListener?: any,
  *   spawner?: any,
- *   sessionMap?: any,
+ *   cwd?: string,
  *   hooks?: any,
  *   makeSseListener?: (opts: any) => any,
  *   maxConcurrency?: number,
@@ -60,7 +62,6 @@ export function buildDaemon(creds, deps = {}) {
   const lineage =
     deps.lineage ??
     new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
-  const sessionMap = deps.sessionMap ?? new SessionMap({ logger });
   const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
   const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });
 
@@ -93,7 +94,9 @@ export function buildDaemon(creds, deps = {}) {
   // One dedup set shared by the router (live SSE path) and the reconnect
   // backfill, so a notification handled live is never re-woken on reconnect.
   const seen = new Set();
-  waker = new Waker({ creds, lineage, sessionMap, spawner, hooks, logger });
+  // cwd: the daemon spawns all wakes in one working directory; the waker uses it
+  // BOTH to probe the transcript (new-vs-resume) and to spawn, so they never diverge.
+  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger });
   const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
 
   // Reconnect backfill re-dispatches notifications missed during a gap, through
@@ -126,7 +129,6 @@ export function buildDaemon(creds, deps = {}) {
   return {
     mcpClient,
     lineage,
-    sessionMap,
     spawner,
     queue,
     waker,

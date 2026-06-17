@@ -10,8 +10,15 @@ import {
   buildArgs,
   parseNdjsonChunk,
   resolveSpawnCommand,
+  isValidSessionId,
+  escapeCwd,
+  transcriptPath,
+  isNewSession,
 } from "../claude-spawner.mjs";
 import { writeMcpConfig, buildMcpConfig } from "../mcp-config.mjs";
+
+// A canonical lowercase UUID — the daemon passes a Chorus idea uuid as session id.
+const SID = "11111111-1111-4111-8111-111111111111";
 
 /** A fake child process: stdin captures writes; stdout/stderr are emitters. */
 function makeFakeChild() {
@@ -72,6 +79,56 @@ describe("buildArgs", () => {
   });
 });
 
+describe("isValidSessionId", () => {
+  it("accepts a canonical lowercase UUID", () => {
+    expect(isValidSessionId("11111111-1111-4111-8111-111111111111")).toBe(true);
+  });
+  it("rejects uppercase, malformed, empty, and non-strings", () => {
+    expect(isValidSessionId("11111111-1111-4111-8111-11111111111X")).toBe(false);
+    expect(isValidSessionId("11111111111141118111111111111111")).toBe(false); // no dashes
+    expect(isValidSessionId("ABCDEF01-1111-4111-8111-111111111111")).toBe(false); // uppercase
+    expect(isValidSessionId("")).toBe(false);
+    expect(isValidSessionId(null)).toBe(false);
+    expect(isValidSessionId(undefined)).toBe(false);
+  });
+});
+
+describe("escapeCwd (verified Claude Code transcript-dir rule)", () => {
+  it("POSIX: replaces both / and . with - (verified on disk)", () => {
+    expect(escapeCwd("/home/ubuntu/dev/ai-pm", "linux")).toBe("-home-ubuntu-dev-ai-pm");
+    // a leading-dot segment yields the verified double dash
+    expect(escapeCwd("/home/ubuntu/.claude-mem/observer", "linux")).toBe(
+      "-home-ubuntu--claude-mem-observer"
+    );
+  });
+  it("Windows: also escapes backslashes and the drive colon (best-effort)", () => {
+    expect(escapeCwd("C:\\Users\\me\\dev\\ai-pm", "win32")).toBe("C--Users-me-dev-ai-pm");
+  });
+});
+
+describe("transcriptPath / isNewSession", () => {
+  it("builds <configDir>/projects/<cwd-escaped>/<id>.jsonl, honoring CLAUDE_CONFIG_DIR", () => {
+    const p = transcriptPath(SID, "/home/u/dev/ai-pm", {
+      env: { CLAUDE_CONFIG_DIR: "/custom/cfg" },
+      platform: "linux",
+    });
+    expect(p).toBe(`/custom/cfg/projects/-home-u-dev-ai-pm/${SID}.jsonl`);
+  });
+
+  it("falls back to <home>/.claude when CLAUDE_CONFIG_DIR is unset", () => {
+    const p = transcriptPath(SID, "/w", { env: {}, platform: "linux", home: "/home/u" });
+    expect(p).toBe(`/home/u/.claude/projects/-w/${SID}.jsonl`);
+  });
+
+  it("isNewSession: true when the transcript is absent, false when present", () => {
+    const cwd = "/w";
+    const expected = transcriptPath(SID, cwd, { env: {}, platform: "linux", home: "/home/u" });
+    const deps = { env: {}, platform: "linux", home: "/home/u" };
+    expect(isNewSession(SID, cwd, { ...deps, exists: (p) => p !== expected })).toBe(true);
+    expect(isNewSession(SID, cwd, { ...deps, exists: (p) => p === expected })).toBe(false);
+  });
+});
+
 describe("resolveClaudePath", () => {
   it("finds plain `claude` on a unix PATH", () => {
     const path = resolveClaudePath({
@@ -125,25 +182,24 @@ describe("parseNdjsonChunk", () => {
 });
 
 describe("ClaudeSpawner.wake", () => {
-  it("feeds prompt over stdin (not argv) and resolves with the generated session id", async () => {
+  it("feeds prompt over stdin (not argv) and resolves with the supplied session id", async () => {
     const child = makeFakeChild();
     const spawnImpl = vi.fn(() => child);
     const spawner = new ClaudeSpawner({
       claudePath: "/usr/bin/claude",
       spawnImpl,
       logger: silent,
-      genId: () => "fixed-sid",
     });
 
     const longPrompt = "X".repeat(50_000); // would blow the Windows cmdline if argv
-    const p = spawner.wake({ prompt: longPrompt, mcpConfigPath: "/tmp/m.json" });
+    const p = spawner.wake({ prompt: longPrompt, sessionId: SID, isNew: true, mcpConfigPath: "/tmp/m.json" });
 
     // Emit a stream-json line carrying a session_id, then close cleanly.
-    child.stdout.emit("data", '{"type":"system","session_id":"fixed-sid"}\n');
+    child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
     child.emit("close", 0);
 
     const result = await p;
-    expect(result).toEqual({ sessionId: "fixed-sid", exitCode: 0, isNew: true });
+    expect(result).toEqual({ sessionId: SID, exitCode: 0, isNew: true });
 
     // argv: no prompt; spawned without shell
     const [path, args, opts] = spawnImpl.mock.calls[0];
@@ -162,21 +218,35 @@ describe("ClaudeSpawner.wake", () => {
     const spawner = new ClaudeSpawner({ claudePath: "/c", spawnImpl, logger: silent });
     const onMessage = vi.fn();
 
-    const p = spawner.wake({ prompt: "go", sessionId: "root-sid", onMessage });
-    child.stdout.emit("data", '{"type":"assistant","session_id":"root-sid"}\n');
+    const p = spawner.wake({ prompt: "go", sessionId: SID, isNew: false, onMessage });
+    child.stdout.emit("data", `{"type":"assistant","session_id":"${SID}"}\n`);
     child.emit("close", 0);
     const result = await p;
 
     expect(spawnImpl.mock.calls[0][1]).toContain("--resume");
     expect(result.isNew).toBe(false);
-    expect(result.sessionId).toBe("root-sid");
-    expect(onMessage).toHaveBeenCalledWith({ type: "assistant", session_id: "root-sid" });
+    expect(result.sessionId).toBe(SID);
+    expect(onMessage).toHaveBeenCalledWith({ type: "assistant", session_id: SID });
+  });
+
+  it("REFUSES to spawn (visible log, no subprocess) when the session id is not a valid UUID", async () => {
+    const errs = [];
+    const spawnImpl = vi.fn();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/c",
+      spawnImpl,
+      logger: { ...silent, error: (m) => errs.push(m) },
+    });
+    const result = await spawner.wake({ prompt: "x", sessionId: "not-a-uuid", isNew: true });
+    expect(spawnImpl).not.toHaveBeenCalled(); // never spawned
+    expect(result.exitCode).toBeNull();
+    expect(errs.join("")).toMatch(/not a valid lowercase UUID/);
   });
 
   it("does NOT throw and resolves with exitCode null when claude is missing", async () => {
     const spawner = new ClaudeSpawner({ claudePath: null, spawnImpl: () => { throw new Error("should not spawn"); }, logger: silent });
     // claudePath null + resolveClaudePath finds nothing → returns without spawning
-    const result = await spawner.wake({ prompt: "x" });
+    const result = await spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
     expect(result.exitCode).toBeNull();
   });
 
@@ -187,9 +257,8 @@ describe("ClaudeSpawner.wake", () => {
       claudePath: "/c",
       spawnImpl: () => child,
       logger: { ...silent, warn: (m) => warns.push(m) },
-      genId: () => "s",
     });
-    const p = spawner.wake({ prompt: "x" });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
     child.emit("close", 2);
     const result = await p;
     expect(result.exitCode).toBe(2);
@@ -203,9 +272,8 @@ describe("ClaudeSpawner.wake", () => {
       claudePath: "/c",
       spawnImpl: () => child,
       logger: { ...silent, error: (m) => errs.push(m) },
-      genId: () => "s",
     });
-    const p = spawner.wake({ prompt: "x" });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
     child.emit("error", new Error("ENOENT"));
     const result = await p;
     expect(result.exitCode).toBeNull();
@@ -281,14 +349,13 @@ describe("ClaudeSpawner Windows .cmd integration", () => {
       claudePath: "C:\\npm\\claude.cmd",
       spawnImpl,
       logger: { info() {}, warn() {}, error() {} },
-      genId: () => "sid",
     });
     // Override platform detection used by resolveSpawnCommand via env: the
     // spawner calls resolveSpawnCommand(path, args) with process.platform, so on
     // this Linux host the .cmd is NOT rewritten. Assert the POSIX path instead:
     // command === the .cmd path, argv === args (documents host behavior). The
     // pure resolveSpawnCommand tests above cover the win32 rewrite deterministically.
-    const p = spawner.wake({ prompt: "hi", mcpConfigPath: "/m.json" });
+    const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true, mcpConfigPath: "/m.json" });
     child.emit("close", 0);
     await p;
     const [command, argv] = spawnImpl.mock.calls[0];
@@ -306,9 +373,8 @@ describe("ClaudeSpawner stdin EPIPE resilience", () => {
       claudePath: "/usr/bin/claude",
       spawnImpl: () => child,
       logger: { info() {}, warn: (m) => warns.push(m), error() {} },
-      genId: () => "sid",
     });
-    const p = spawner.wake({ prompt: "x" });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
     // Simulate claude exiting before reading stdin → writable emits EPIPE.
     child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
     child.emit("close", 1);

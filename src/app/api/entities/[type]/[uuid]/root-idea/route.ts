@@ -44,6 +44,8 @@ export const GET = withErrorHandler<{ type: string; uuid: string }>(
 
     const result = await resolveRootIdea(auth.companyUuid, type, uuid);
     // A null rootIdeaUuid is a successful "no idea ancestor" result, not an error.
+    // `result` is passed through verbatim, so `directIdeaUuid` (the daemon's session-id
+    // anchor — the first idea node on `lineage`) is part of the response contract too.
     return success(result);
   }
 );

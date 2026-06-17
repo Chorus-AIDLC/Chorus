@@ -39,6 +39,7 @@ describe("GET /api/entities/[type]/[uuid]/root-idea", () => {
   it("resolves and returns the service result in a success envelope", async () => {
     const data = {
       rootIdeaUuid: "root-1",
+      directIdeaUuid: "child-1",
       lineage: [{ type: "task", uuid: "t1", title: "T1" }],
       resolvedVia: "via_proposal",
     };
@@ -50,6 +51,8 @@ describe("GET /api/entities/[type]/[uuid]/root-idea", () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.data).toEqual(data);
+    // directIdeaUuid is part of the response contract (the daemon's session-id anchor).
+    expect(body.data.directIdeaUuid).toBe("child-1");
     expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "task", "t1");
   });
 

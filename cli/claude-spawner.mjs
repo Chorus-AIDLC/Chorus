@@ -17,11 +17,75 @@
 // single-line edit.
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
-import { win32 as pathWin32, posix as pathPosix } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+
+/** Matches a canonical lowercase UUID (any version). Chorus idea uuids are v4. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * True iff `id` is a well-formed, lowercase UUID. The daemon anchors the Claude
+ * session id on a Chorus idea uuid (already lowercase v4); we validate before
+ * spawn as a cheap guardrail so a malformed id surfaces visibly instead of
+ * failing opaquely inside claude (no-silent-errors).
+ * @param {unknown} id
+ * @returns {boolean}
+ */
+export function isValidSessionId(id) {
+  return typeof id === "string" && UUID_RE.test(id);
+}
+
+/**
+ * Claude Code's transcript directory for a working directory. Verified against the
+ * live install: claude escapes the ABSOLUTE cwd by replacing both `/` and `.` with
+ * `-` (e.g. `/home/u/dev/ai-pm` → `-home-u-dev-ai-pm`,
+ * `/home/u/.cfg/x` → `-home-u--cfg-x`). On Windows the separators/drive differ, so
+ * we escape backslashes and colons too; the rule there is best-effort and must be
+ * re-verified against a Windows claude before claiming Windows resume support.
+ * @param {string} cwd  Absolute working directory.
+ * @param {NodeJS.Platform} [platform]
+ * @returns {string}
+ */
+export function escapeCwd(cwd, platform = process.platform) {
+  // Replace path separators and dots with `-`. On POSIX that's `/` and `.`; on
+  // Windows also `\` and the drive-colon. Collapsing both `/` and `.` is what
+  // produces the verified double-dash on a leading-dot segment.
+  const re = platform === "win32" ? /[\\/.:]/g : /[/.]/g;
+  return cwd.replace(re, "-");
+}
+
+/**
+ * The on-disk transcript path for a session id under a given cwd:
+ *   <configDir>/projects/<cwd-escaped>/<sessionId>.jsonl
+ * `<configDir>` honors CLAUDE_CONFIG_DIR (falling back to ~/.claude), matching
+ * Claude Code. Used to decide --session-id (absent) vs --resume (present).
+ * @param {string} sessionId @param {string} cwd
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string }} [deps]
+ * @returns {string}
+ */
+export function transcriptPath(sessionId, cwd, deps = {}) {
+  const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  const configDir = env.CLAUDE_CONFIG_DIR || pathJoin(deps.home ?? homedir(), ".claude");
+  return pathJoin(configDir, "projects", escapeCwd(cwd, platform), `${sessionId}.jsonl`);
+}
+
+/**
+ * Decide whether a wake for `sessionId` in `cwd` is a NEW session (`--session-id`)
+ * or a RESUME (`--resume`), by probing whether the transcript file already exists.
+ * The disk is the source of truth `claude --resume` itself consults, so the probe
+ * is stateless and survives daemon restarts. This layout is Claude Code-specific.
+ * @param {string} sessionId @param {string} cwd
+ * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string, exists?: (p: string) => boolean }} [deps]
+ * @returns {boolean}  true → new session; false → resume an existing one.
+ */
+export function isNewSession(sessionId, cwd, deps = {}) {
+  const exists = deps.exists ?? existsSync;
+  return !exists(transcriptPath(sessionId, cwd, deps));
+}
 
 /**
  * Resolve the real `claude` executable path WITHOUT a shell. On Windows the bin
@@ -170,7 +234,6 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
  * @property {string} [claudePath]   Resolved claude path (resolved lazily if omitted).
  * @property {(o: object) => { stdin: any, stdout: any, stderr: any, on: Function, kill?: Function }} [spawnImpl]
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
- * @property {() => string} [genId]  Session-id generator (override in tests).
  * @property {PermissionMode} [permissionMode]  How much the woken Claude may do (default "chorus").
  */
 
@@ -180,7 +243,6 @@ export class ClaudeSpawner {
     this.claudePath = opts.claudePath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
-    this.genId = opts.genId ?? randomUUID;
     this.permissionMode = opts.permissionMode ?? "chorus";
   }
 
@@ -189,13 +251,29 @@ export class ClaudeSpawner {
    * is written to stdin (never argv) — this is what keeps long prompts off the
    * Windows command line and out of shell escaping/injection.
    *
-   * @param {{ prompt: string, sessionId?: string|null, mcpConfigPath?: string,
+   * The session id is supplied by the caller (the daemon passes the dispatched
+   * entity's DIRECT idea uuid, so the session is human-resumable by idea uuid) and
+   * MUST be a well-formed lowercase UUID — an invalid id is refused with a visible
+   * log and NO spawn (no-silent-errors). `isNew` (decided by the caller via a disk
+   * probe — see isNewSession) selects --session-id (new) vs --resume (continue).
+   * `cwd` is the spawn working directory; it MUST match the cwd the caller probed,
+   * since claude scopes transcripts (and --resume) to it.
+   *
+   * @param {{ prompt: string, sessionId: string, isNew: boolean, mcpConfigPath?: string,
    *           cwd?: string, onMessage?: (obj: any) => void }} params
    * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
    */
-  async wake({ prompt, sessionId = null, mcpConfigPath, cwd, onMessage }) {
-    const isNew = !sessionId;
-    const id = sessionId ?? this.genId();
+  async wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage }) {
+    const id = sessionId;
+
+    // Pre-validate the session id BEFORE locating claude or spawning: a malformed
+    // id (not a lowercase UUID) is refused visibly with no subprocess started.
+    if (!isValidSessionId(id)) {
+      this.logger.error(
+        `[Chorus] refusing to spawn: session id is not a valid lowercase UUID: ${id}`
+      );
+      return { sessionId: typeof id === "string" ? id : "", exitCode: null, isNew: Boolean(isNew) };
+    }
 
     const claudePath = this.claudePath ?? resolveClaudePath();
     if (!claudePath) {
