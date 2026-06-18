@@ -225,12 +225,21 @@ function ResumeButton({ exec }: { exec: ExecutionView }) {
 //                  or a static "auto-recovers" hint (reason=crash).
 // A row whose resource no longer resolves (deleted) falls back to a localized
 // placeholder title and renders as plain text (no link).
+//
+// `layout` controls the geometry only — the status/controls logic is identical:
+//  - "inline" (default): the title and the trailing controls share one flex row.
+//    Used by the wide "View all" modal + connection view, where the row has room.
+//  - "stacked": the title gets the full row width (relaxed from a hard truncate to
+//    a two-line clamp) and the controls drop to a second line beneath it, so they
+//    never squeeze the title. Used by the narrow sidebar popover.
 export function ExecutionRow({
   exec,
   nowMs,
+  layout = "inline",
 }: {
   exec: ExecutionView;
   nowMs: number;
+  layout?: "inline" | "stacked";
 }) {
   const t = useTranslations("agentConnections");
   const formatElapsed = useElapsedMono();
@@ -238,88 +247,133 @@ export function ExecutionRow({
   const running = exec.status === "running";
   const interrupted = exec.status === "interrupted";
   const interruptedByUser = interrupted && exec.interruptedReason === "user";
+  const stacked = layout === "stacked";
 
   const title = exec.entityTitle?.trim() || t("execEntityUnknown");
   const href = execHref(exec);
 
-  return (
-    <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
-      <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          running ? "bg-[#C67A5214]" : interrupted ? "bg-[#FEF3C7]" : "bg-[#F0EDE8]"
-        }`}
-        aria-hidden
-      >
-        {running ? (
-          // Decorative spin gated behind motion-safe so reduced-motion users see
-          // a static icon (same reduced-motion regime as the online pulse dot).
-          <Loader2 className="h-4 w-4 text-[#C67A52] motion-safe:animate-spin" />
-        ) : interrupted ? (
-          <PauseCircle className="h-4 w-4 text-[#B45309]" />
-        ) : (
-          <Clock3 className="h-4 w-4 text-[#9A9A9A]" />
-        )}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <Badge
-            variant="secondary"
-            className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+  // Title clamp differs by layout: inline hard-truncates to one line (the modal has
+  // width to spare and wants uniform row height); stacked relaxes to two lines so a
+  // long title is readable in the narrow popover.
+  const titleClamp = stacked ? "line-clamp-2" : "truncate";
+
+  const iconTile = (
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+        running ? "bg-[#C67A5214]" : interrupted ? "bg-[#FEF3C7]" : "bg-[#F0EDE8]"
+      }`}
+      aria-hidden
+    >
+      {running ? (
+        // Decorative spin gated behind motion-safe so reduced-motion users see
+        // a static icon (same reduced-motion regime as the online pulse dot).
+        <Loader2 className="h-4 w-4 text-[#C67A52] motion-safe:animate-spin" />
+      ) : interrupted ? (
+        <PauseCircle className="h-4 w-4 text-[#B45309]" />
+      ) : (
+        <Clock3 className="h-4 w-4 text-[#9A9A9A]" />
+      )}
+    </span>
+  );
+
+  const body = (
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-1.5">
+        <Badge
+          variant="secondary"
+          className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+        >
+          {entityTypeLabel(exec.entityType)}
+        </Badge>
+        {href ? (
+          <Link
+            href={href}
+            className={`group inline-flex min-w-0 items-center gap-1.5 ${titleClamp} text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]`}
           >
-            {entityTypeLabel(exec.entityType)}
-          </Badge>
-          {href ? (
-            <Link
-              href={href}
-              className="group inline-flex min-w-0 items-center gap-1.5 truncate text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]"
-            >
-              <span className="truncate">{title}</span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
-            </Link>
-          ) : (
-            <span className="block truncate text-[14px] font-medium text-[#9A9A9A]">
-              {title}
-            </span>
-          )}
-        </div>
-        {exec.rootIdeaTitle && (
-          <div className="mt-1 flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 shrink-0 text-[#9A8C7E]" aria-hidden />
-            <span className="truncate text-[11px] text-[#9A8C7E]">
-              {t("execSession", { idea: exec.rootIdeaTitle })}
-            </span>
-          </div>
+            <span className={titleClamp}>{title}</span>
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
+          </Link>
+        ) : (
+          <span
+            className={`block ${titleClamp} text-[14px] font-medium text-[#9A9A9A]`}
+          >
+            {title}
+          </span>
         )}
       </div>
-      {running ? (
-        <div className="flex shrink-0 items-center gap-2">
-          {exec.startedAt && (
-            <span
-              className="font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
-              title={t("execElapsedLabel")}
-            >
-              {formatElapsed(exec.startedAt, nowMs)}
-            </span>
-          )}
-          <InterruptButton exec={exec} />
+      {exec.rootIdeaTitle && (
+        <div className="mt-1 flex items-center gap-1.5">
+          <Sparkles className="h-3 w-3 shrink-0 text-[#9A8C7E]" aria-hidden />
+          <span className={`${stacked ? "" : "truncate"} text-[11px] text-[#9A8C7E]`}>
+            {t("execSession", { idea: exec.rootIdeaTitle })}
+          </span>
         </div>
-      ) : interrupted ? (
-        <div className="flex shrink-0 items-center gap-2">
-          <Badge
-            variant="secondary"
-            className="shrink-0 gap-1 border-0 bg-[#FEF3C7] px-2 py-0.5 text-[10px] font-medium text-[#B45309]"
-          >
-            <PauseCircle className="h-3 w-3" aria-hidden />
-            {interruptedByUser ? t("execInterruptedUser") : t("execInterruptedCrash")}
-          </Badge>
-          {interruptedByUser ? (
-            <ResumeButton exec={exec} />
-          ) : (
-            <span className="text-[11px] font-medium text-[#9A8C7E]">
-              {t("execCrashAutoRecovers")}
-            </span>
-          )}
+      )}
+    </div>
+  );
+
+  // Status/controls content — IDENTICAL across layouts; only its position changes.
+  // running → elapsed + Interrupt; interrupted → badge + Resume/auto-recovers;
+  // queued → "waiting". Kept as a fragment so both the inline trailing wrapper and
+  // the stacked second row reuse the exact same control nodes.
+  const controls = running ? (
+    <>
+      {exec.startedAt && (
+        <span
+          className="font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
+          title={t("execElapsedLabel")}
+        >
+          {formatElapsed(exec.startedAt, nowMs)}
+        </span>
+      )}
+      <InterruptButton exec={exec} />
+    </>
+  ) : interrupted ? (
+    <>
+      <Badge
+        variant="secondary"
+        className="shrink-0 gap-1 border-0 bg-[#FEF3C7] px-2 py-0.5 text-[10px] font-medium text-[#B45309]"
+      >
+        <PauseCircle className="h-3 w-3" aria-hidden />
+        {interruptedByUser ? t("execInterruptedUser") : t("execInterruptedCrash")}
+      </Badge>
+      {interruptedByUser ? (
+        <ResumeButton exec={exec} />
+      ) : (
+        <span className="text-[11px] font-medium text-[#9A8C7E]">
+          {t("execCrashAutoRecovers")}
+        </span>
+      )}
+    </>
+  ) : (
+    <span className="text-[11px] font-medium text-[#9A9A9A]">
+      {t("execWaiting")}
+    </span>
+  );
+
+  // Stacked: icon + body on row 1 (top-aligned so a 2-line title doesn't shift the
+  // icon), controls on row 2 indented to align under the body (pl-11 = 32px icon +
+  // 12px gap). No shrink-0 on the controls row — they have the full width.
+  if (stacked) {
+    return (
+      <li className="flex flex-col gap-2 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
+        <div className="flex items-start gap-3">
+          {iconTile}
+          {body}
         </div>
+        <div className="flex flex-wrap items-center gap-2 pl-11">{controls}</div>
+      </li>
+    );
+  }
+
+  // Inline (default): icon + body + trailing controls on one row. running/interrupted
+  // wrap the controls in a shrink-0 flex group; queued is a single shrink-0 hint.
+  return (
+    <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
+      {iconTile}
+      {body}
+      {running || interrupted ? (
+        <div className="flex shrink-0 items-center gap-2">{controls}</div>
       ) : (
         <span className="shrink-0 text-[11px] font-medium text-[#9A9A9A]">
           {t("execWaiting")}
