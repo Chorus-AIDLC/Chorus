@@ -128,7 +128,6 @@
   },
   "nav": {
     "projects": "Projects",
-    "agentConnections": "Agent Connections",
     "settings": "Settings",
     "overview": "Overview",
     "documents": "Documents",
@@ -1383,6 +1382,8 @@
       "title": "No agent connections yet",
       "body": "Start a daemon to connect an agent to Chorus. Run `chorus daemon` from your terminal, or enable the OpenClaw plugin, then this page will show it here."
     },
+    "loadErrorTitle": "Couldn't load connections",
+    "loadErrorBody": "We couldn't reach the connection service. This is a loading problem, not an empty list — your agents may still be online. Retrying automatically.",
     "execEntityUnknown": "Unknown resource",
     "entityTask": "Task",
     "entityIdea": "Idea",
@@ -1402,6 +1403,16 @@
     "resumeAria": "Resume this interrupted execution",
     "resumeSuccess": "Resume requested for \"{title}\".",
     "resumeError": "Failed to request resume. Please try again."
+  },
+  "agentPresence": {
+    "online": "online",
+    "loading": "Checking agents…",
+    "unavailable": "Agents unavailable",
+    "pillAria": "Online agents — open details",
+    "popoverTitle": "Online agents",
+    "popoverEmpty": "No agents are online right now.",
+    "connectionIdle": "Idle — no running or queued work.",
+    "viewAll": "View all"
   },
   "mention": {
     "online": "Online",

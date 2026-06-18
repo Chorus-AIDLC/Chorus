@@ -1,13 +1,29 @@
 // @vitest-environment jsdom
+//
+// Modal-relocation test for the Agent Connections view (was the standalone page).
+//
+// The former `/agent-connections` page is gone — its master-detail view now lives
+// in the "View all" modal, hosted in the dashboard shell and opened from the
+// sidebar popover's "View all" button (which calls setModalOpen(true) on the
+// shared AgentPresenceProvider). These tests render a REAL AgentPresenceProvider
+// (the production data spine: one /api/agent-connections poll + one
+// /api/daemon/executions aggregate fetch + one /api/events SSE) wrapping a tiny
+// "View all" trigger and the AgentConnectionsModal, and assert:
+//   - the modal opens on the trigger (the popover→View all→modal path) and shows
+//     the same connection-list data the former page did,
+//   - master-detail defaults to the first connection without flashing the prompt,
+//   - agent name is primary identity, client type a secondary badge,
+//   - uptime ticks for online connections and is absent for offline,
+//   - the mobile drill-down opens/closes and self-closes when its connection drops.
+
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, within, act } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// next-intl: resolve real strings from the locale JSON (so a missing key shows
-// as the dotted key path and fails the assertion), with ICU-ish `{param}`
-// interpolation for keys like `summary` / `uptimeMonoDays`.
+// next-intl: resolve real en strings (a missing key surfaces as its dotted path
+// and fails the assertion), with `{param}` interpolation for keys like `summary`.
 vi.mock("next-intl", async () => {
-  const en = (await import("../../../../../messages/en.json")).default as Record<
+  const en = (await import("../../../../messages/en.json")).default as Record<
     string,
     unknown
   >;
@@ -47,14 +63,23 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-// The page wraps itself in a RealtimeProvider (so its execution pane gets live
-// updates). The provider calls useRouter and opens an EventSource — neither
-// exists in jsdom — so stub both. This file exercises the CONNECTION LIST, not
-// live execution, so a no-op EventSource is sufficient.
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+import { Button } from "@/components/ui/button";
+import {
+  AgentPresenceProvider,
+  useAgentPresence,
+} from "@/contexts/agent-presence-context";
+import { AgentConnectionsModal } from "@/components/agent-presence";
 
+// A stand-in for the sidebar popover's "View all" affordance — it only calls
+// setModalOpen(true) on the shared provider, exactly as the real popover does.
+function ViewAllTrigger() {
+  const { setModalOpen } = useAgentPresence();
+  return (
+    <Button onClick={() => setModalOpen(true)}>view-all-trigger</Button>
+  );
+}
+
+// ===== EventSource stub =====
 class NoopEventSource {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -68,10 +93,7 @@ class NoopEventSource {
   }
 }
 
-import AgentConnectionsPage from "@/app/(dashboard)/agent-connections/page";
-
-// ===== Helpers =====
-
+// ===== Fixtures =====
 type Conn = {
   uuid: string;
   agentUuid: string;
@@ -105,10 +127,20 @@ function conn(overrides: Partial<Conn> & { uuid: string }): Conn {
   };
 }
 
-function respondWith(connections: Conn[]) {
-  mockAuthFetch.mockResolvedValue({
-    ok: true,
-    json: async () => ({ success: true, data: { connections } }),
+// Route authFetch by URL: connection list vs. aggregate executions read.
+function respondWith(connections: Conn[], executions: unknown[] = []) {
+  mockAuthFetch.mockImplementation((url: string) => {
+    if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, data: { executions } }),
+      });
+    }
+    // Default: the connection list.
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({ success: true, data: { connections } }),
+    });
   });
 }
 
@@ -125,24 +157,43 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function renderPage() {
-  const utils = render(<AgentConnectionsPage />);
-  // Let the initial fetch + state settle.
+// Render the provider + the View-all trigger + the modal (the shell wiring), let
+// the initial provider fetches settle, then open the modal via the trigger.
+async function renderAndOpenModal() {
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const utils = render(
+    <AgentPresenceProvider>
+      <ViewAllTrigger />
+      <AgentConnectionsModal />
+    </AgentPresenceProvider>,
+  );
   await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
   await act(async () => {
     await Promise.resolve();
   });
-  return utils;
+  // The modal is closed until the (popover) "View all" trigger fires.
+  await user.click(screen.getByText("view-all-trigger"));
+  return { user, ...utils };
 }
 
-describe("AgentConnectionsPage", () => {
+describe("Agent Connections modal — opening + connection list", () => {
+  it("opens the modal from the 'View all' trigger (no standalone page navigation)", async () => {
+    respondWith([conn({ uuid: "1", agentName: "Alpha" })]);
+    await renderAndOpenModal();
+    // The modal title (Agent Connections) appears once opened.
+    await waitFor(() =>
+      expect(screen.getAllByText("Agent Connections").length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("Alpha").length).toBeGreaterThan(0);
+  });
+
   it("empty dataset renders the empty state, not a broken list", async () => {
     respondWith([]);
-    await renderPage();
+    await renderAndOpenModal();
     await waitFor(() =>
       expect(screen.queryByText("No agent connections yet")).toBeTruthy(),
     );
-    // No "select a connection" prompt and no rail header when there's nothing.
+    // No rail header when there's nothing.
     expect(screen.queryByText("CONNECTIONS")).toBeNull();
   });
 
@@ -151,18 +202,15 @@ describe("AgentConnectionsPage", () => {
       conn({ uuid: "1", agentName: "Alpha" }),
       conn({ uuid: "2", agentName: "Bravo" }),
     ]);
-    await renderPage();
+    await renderAndOpenModal();
 
-    // The desktop detail pane shows the first connection on first paint.
     await waitFor(() => expect(screen.getAllByText("Alpha").length).toBeGreaterThan(0));
-    // selectPrompt ("Select a connection …") must never appear when a default exists.
     expect(screen.queryByText(/Select a connection/)).toBeNull();
   });
 
   it("renders agentName as primary and demotes client type to a badge; null name → fallback", async () => {
     respondWith([conn({ uuid: "1", agentName: null, clientType: "openclaw" })]);
-    await renderPage();
-    // Fallback label appears (primary identity), and the client type label shows too.
+    await renderAndOpenModal();
     await waitFor(() =>
       expect(screen.getAllByText("Unknown agent").length).toBeGreaterThan(0),
     );
@@ -171,7 +219,7 @@ describe("AgentConnectionsPage", () => {
 
   it("shows a ticking monospace uptime for online connections only", async () => {
     respondWith([conn({ uuid: "1", effectiveStatus: "online" })]);
-    await renderPage();
+    await renderAndOpenModal();
     // 5 minutes after connectedAt → 00:05:00
     await waitFor(() => expect(screen.getAllByText("00:05:00").length).toBeGreaterThan(0));
     // Advance the 1s ticker → uptime should advance to 00:05:01.
@@ -183,23 +231,18 @@ describe("AgentConnectionsPage", () => {
 
   it("offline connection shows no uptime value at all", async () => {
     respondWith([conn({ uuid: "1", effectiveStatus: "offline", status: "offline" })]);
-    await renderPage();
+    await renderAndOpenModal();
     await waitFor(() => expect(screen.getAllByText(/Agent 1/).length).toBeGreaterThan(0));
     // No HH:MM:SS uptime anywhere for an offline connection.
     expect(screen.queryByText(/^\d{2}:\d{2}:\d{2}$/)).toBeNull();
   });
 
-  // The mobile drill-down is gated by React state (mobileDetailOpen), not just a
-  // CSS breakpoint, so its open/close is testable in jsdom even though both
-  // compositions are present in the DOM. The "Back" affordance only renders
-  // while the drill-down is open, so it is a reliable open/closed signal.
   it("mobile drill-down opens on card tap and closes on back", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     respondWith([
       conn({ uuid: "1", agentName: "Alpha" }),
       conn({ uuid: "2", agentName: "Bravo" }),
     ]);
-    await renderPage();
+    const { user } = await renderAndOpenModal();
 
     expect(screen.queryByRole("button", { name: /Connections/i })).toBeNull();
 
@@ -219,12 +262,11 @@ describe("AgentConnectionsPage", () => {
   });
 
   it("closes the mobile drill-down if the open connection disappears from a poll", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     respondWith([
       conn({ uuid: "1", agentName: "Alpha" }),
       conn({ uuid: "2", agentName: "Bravo" }),
     ]);
-    await renderPage();
+    const { user } = await renderAndOpenModal();
 
     // Drill into Bravo.
     const bravoCard = screen.getAllByText("Bravo")[0].closest("button");
@@ -233,8 +275,8 @@ describe("AgentConnectionsPage", () => {
       expect(screen.queryByRole("button", { name: /Connections/i })).toBeTruthy(),
     );
 
-    // Next poll drops Bravo — the guard must close the drill-down rather than
-    // silently swapping the open detail to a different agent.
+    // Next provider poll drops Bravo — the guard must close the drill-down rather
+    // than silently swapping the open detail to a different agent.
     respondWith([conn({ uuid: "1", agentName: "Alpha" })]);
     await act(async () => {
       vi.advanceTimersByTime(15_000);

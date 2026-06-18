@@ -14,7 +14,6 @@ import {
   CheckSquare,
   Activity,
   FolderKanban,
-  RadioTower,
   Settings,
   LogOut,
   Menu,
@@ -22,6 +21,9 @@ import {
 import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
+import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -244,10 +246,13 @@ export default function DashboardLayout({
     { href: `/projects/${projectUuid}/activity`, label: t("nav.activity"), icon: Activity },
   ];
 
-  // Global navigation items
+  // Global navigation items.
+  // Note: the former /agent-connections page + its RadioTower nav item were
+  // removed — that view now lives in the "View all" modal opened from the
+  // sidebar presence pill (the former path is redirected to the dashboard in
+  // middleware). See AgentConnectionsModal mounted in the shell below.
   const globalNavItems = [
     { href: "/projects", label: t("nav.projects"), icon: FolderKanban },
-    { href: "/agent-connections", label: t("nav.agentConnections"), icon: RadioTower },
     { href: "/settings", label: t("nav.settings"), icon: Settings },
   ];
 
@@ -434,6 +439,14 @@ export default function DashboardLayout({
         </nav>
       </div>
 
+      {/* Agent Presence pill — resident rail affordance (online-agent count +
+          click popover). Reads from the shell-level AgentPresenceProvider; sits
+          just above the user-profile block in both the desktop rail and the
+          mobile drawer. */}
+      <div className="px-6 pb-2">
+        <AgentPresencePill mobile={mobile} />
+      </div>
+
       {/* User Profile */}
       <div className="p-6">
         <div className="flex items-center gap-2">
@@ -465,6 +478,16 @@ export default function DashboardLayout({
 
   return (
     <NotificationProvider>
+    {/* AgentPresenceProvider is the single shell-level data spine for the
+        sidebar presence pill + popover + modal. Mounted ONCE here, wrapping the
+        whole shell (sidebar + main), so it survives route changes (does not
+        remount per navigation) and is independent of the per-route, project-
+        scoped RealtimeProvider branches below. */}
+    <AgentPresenceProvider>
+    {/* "View all" modal — mounted once in the shell, open-state bound to the
+        provider's modalOpen/setModalOpen. The sidebar popover's "View all"
+        button opens it via setModalOpen(true); there is no standalone route. */}
+    <AgentConnectionsModal />
     <div className="flex min-h-screen bg-background">
       {/* Mobile Header - visible below md */}
       <header className="fixed top-0 left-0 right-0 z-30 border-b border-border bg-card md:hidden">
@@ -520,6 +543,7 @@ export default function DashboardLayout({
         <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
       )}
     </div>
+    </AgentPresenceProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
   );

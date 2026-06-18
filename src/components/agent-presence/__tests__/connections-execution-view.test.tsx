@@ -1,31 +1,34 @@
 // @vitest-environment jsdom
 //
-// Execution-view integration test for the Agent Connections detail pane (T4).
+// Execution-view integration test for the relocated Agent Connections detail
+// pane (now inside the "View all" modal, sourced from AgentPresenceProvider).
 //
-// Covers the spec requirement "The Agent Connections detail pane SHALL display
-// the connection's running and queued tasks" end to end on the client side:
-//   - first paint renders the running + queued lists from the read API
-//     (GET /api/daemon/execution-state) BEFORE any SSE event,
-//   - running rows show a live elapsed indicator + root-idea session + task link,
-//     queued rows show no timer,
-//   - a localized empty state renders when there is neither, and
-//   - an `execution` SSE event (driven through a REAL RealtimeProvider + a mock
-//     EventSource) updates the pane live — a task starting/finishing, and the
-//     offline → empty active set.
+// Covers the spec requirement that the detail pane shows the selected
+// connection's running/queued/interrupted executions, PARTITIONED to the correct
+// connection, on FIRST PAINT — equivalent to the former per-connection
+// execution-state fetch, now sourced from the aggregate provider
+// (GET /api/daemon/executions) before any SSE event. Also covers:
+//   - running rows show a live elapsed indicator + root-idea session + entity link,
+//   - queued rows show no timer (a "Waiting" hint),
+//   - a localized empty state when there is neither,
+//   - live updates via an `execution` SSE event through the REAL provider's
+//     EventSource (a task starting, and offline → empty active set), and
+//   - the interrupt (子3) + resume controls retained at parity with the former
+//     page: a running row's Interrupt confirm-then-POST, a user-interrupted row's
+//     Resume POST, a crash-interrupted row's no-resume hint, and that an
+//     interrupted row keeps showing (not the empty state).
 //
-// Test seam: the page calls authFetch (mocked, routed by URL) for both the
-// connection list and the per-connection execution read; SSE input is a mock
-// EventSource the test drives via onmessage, exactly like the realtime-context
-// test. No production seam is added.
+// The view is rendered directly inside a real AgentPresenceProvider (the modal's
+// Dialog host is covered separately in connections-modal.test.tsx). authFetch is
+// mocked + routed by URL; SSE is a mock EventSource the test drives via onmessage,
+// exactly like the realtime-context / former page test. No production seam added.
 
-import React from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 
-// next-intl: resolve real en strings so a missing key surfaces as its dotted
-// path and fails the assertion (mirrors the sibling page test).
+// next-intl: resolve real en strings so a missing key surfaces as its dotted path.
 vi.mock("next-intl", async () => {
-  const en = (await import("../../../../../messages/en.json")).default as Record<
+  const en = (await import("../../../../messages/en.json")).default as Record<
     string,
     unknown
   >;
@@ -77,8 +80,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import AgentConnectionsPage from "@/app/(dashboard)/agent-connections/page";
-import { fireEvent } from "@testing-library/react";
+import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { AgentConnectionsView } from "@/components/agent-presence";
 
 // ===== EventSource stub (drives SSE) =====
 interface CapturedEventSource {
@@ -143,19 +146,27 @@ function execView(overrides: Record<string, unknown> & { uuid: string }) {
   };
 }
 
-// Route authFetch by URL: connection list vs. per-connection execution read.
-function routeFetch(executions: unknown[]) {
+// Route authFetch by URL: connection list vs. aggregate executions read. The
+// provider fetches GET /api/daemon/executions once on mount for first-paint
+// state (the aggregate equivalent of the former per-connection fetch).
+function routeFetch(executions: unknown[], connections = [connection]) {
   mockAuthFetch.mockImplementation((url: string) => {
-    if (typeof url === "string" && url.startsWith("/api/daemon/execution-state")) {
+    if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
       return Promise.resolve({
         ok: true,
         json: async () => ({ success: true, data: { executions } }),
       });
     }
+    if (typeof url === "string" && url.startsWith("/api/daemon/control")) {
+      return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+    }
+    if (typeof url === "string" && url.startsWith("/api/daemon/resume")) {
+      return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+    }
     // Default: the connection list.
     return Promise.resolve({
       ok: true,
-      json: async () => ({ success: true, data: { connections: [connection] } }),
+      json: async () => ({ success: true, data: { connections } }),
     });
   });
 }
@@ -173,12 +184,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function renderPage() {
-  // The page provides its OWN RealtimeProvider (the BLOCKER fix), so render it
-  // directly — no test-supplied wrapper. This verifies the real shipped wiring:
-  // a global page that mounts its own provider and therefore receives live
-  // execution events. (A test-supplied provider would mask a missing one.)
-  const utils = render(<AgentConnectionsPage />);
+// Render the view inside a real provider — the provider does the
+// /api/agent-connections poll + /api/daemon/executions aggregate fetch + opens
+// the SSE stream, exactly as the shell does in production.
+async function renderView() {
+  const utils = render(
+    <AgentPresenceProvider>
+      <AgentConnectionsView />
+    </AgentPresenceProvider>,
+  );
   await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
   await act(async () => {
     await Promise.resolve();
@@ -186,22 +200,22 @@ async function renderPage() {
   return utils;
 }
 
-// Push an execution SSE event through the live RealtimeProvider's EventSource.
-function pushExecutionEvent(executions: unknown[]) {
+// Push an execution SSE event through the live provider's EventSource.
+function pushExecutionEvent(executions: unknown[], connectionUuid = CONN_UUID) {
   act(() => {
     lastEventSource?.onmessage?.({
       data: JSON.stringify({
         type: "execution",
         companyUuid: "company-1",
-        connectionUuid: CONN_UUID,
+        connectionUuid,
         executions,
       }),
     } as MessageEvent);
   });
 }
 
-describe("Agent Connections execution view", () => {
-  it("first paint renders running + queued lists from the read API (before any SSE event)", async () => {
+describe("Agent Connections modal — execution view (first-paint partition)", () => {
+  it("first paint renders running + queued from the aggregate provider, partitioned to the connection (before any SSE event)", async () => {
     routeFetch([
       execView({
         uuid: "run",
@@ -212,9 +226,10 @@ describe("Agent Connections execution view", () => {
       }),
       execView({ uuid: "q1", status: "queued", startedAt: null }),
     ]);
-    await renderPage();
+    await renderView();
 
-    // Running task title + its root-idea session + a live elapsed indicator.
+    // Running task title + its root-idea session + a live elapsed indicator,
+    // present on first paint (no SSE event pushed yet).
     await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
     expect(screen.getAllByText(/Ship the daemon/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("00:05:00").length).toBeGreaterThan(0);
@@ -228,14 +243,37 @@ describe("Agent Connections execution view", () => {
       .getAllByRole("link")
       .find((a) => a.getAttribute("href") === "/projects/proj-1/tasks/task-run");
     expect(link).toBeTruthy();
+  });
 
-    // The old "coming soon" placeholder is gone.
-    expect(screen.queryByText(/Sessions & Transcript/)).toBeNull();
+  it("partitions executions to the correct connection — another connection's rows do not leak into this detail", async () => {
+    // Two connections; the aggregate carries one execution for each. The detail
+    // pane defaults to the first connection (online-first ordering preserved),
+    // so it must show only conn-1's row, never conn-2's.
+    const connection2 = { ...connection, uuid: "conn-2", agentName: "Bravo" };
+    routeFetch(
+      [
+        execView({ uuid: "mine", status: "running", startedAt: NOW }),
+        execView({
+          uuid: "theirs",
+          status: "running",
+          startedAt: NOW,
+          connectionUuid: "conn-2",
+          entityUuid: "task-theirs",
+          entityTitle: "Task theirs",
+        }),
+      ],
+      [connection, connection2],
+    );
+    await renderView();
+
+    await waitFor(() => expect(screen.getAllByText("Task mine").length).toBeGreaterThan(0));
+    // conn-2's execution must NOT appear in conn-1's detail pane.
+    expect(screen.queryByText("Task theirs")).toBeNull();
   });
 
   it("the elapsed indicator ticks every second for a running row", async () => {
     routeFetch([execView({ uuid: "run", status: "running", startedAt: NOW })]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("00:05:00").length).toBeGreaterThan(0));
     await act(async () => {
       vi.advanceTimersByTime(1000);
@@ -245,26 +283,55 @@ describe("Agent Connections execution view", () => {
 
   it("renders a localized empty state when there is no running or queued task", async () => {
     routeFetch([]);
-    await renderPage();
+    await renderView();
+    await waitFor(() => expect(screen.getAllByText("Nothing running").length).toBeGreaterThan(0));
+  });
+
+  it("shows a loading state (not the empty 'Nothing running') while connections settled but executions are still pending", async () => {
+    // Connections resolve immediately; the executions aggregate HANGS — this is
+    // the first-paint window where a busy connection would otherwise flash a
+    // false "Nothing running". The pane must show the loading state instead.
+    let resolveExec: ((v: unknown) => void) | null = null;
+    mockAuthFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
+        return new Promise((resolve) => {
+          resolveExec = resolve;
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, data: { connections: [connection] } }),
+      });
+    });
+
+    await renderView();
+    await waitFor(() =>
+      expect(screen.getAllByText("Loading execution state...").length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText("Nothing running")).toBeNull();
+
+    // Once the aggregate settles empty, it flips to the real empty state.
+    await act(async () => {
+      resolveExec?.({ ok: true, json: async () => ({ success: true, data: { executions: [] } }) });
+      await Promise.resolve();
+    });
     await waitFor(() => expect(screen.getAllByText("Nothing running").length).toBeGreaterThan(0));
   });
 
   it("updates live when an execution SSE event arrives (task starts)", async () => {
     routeFetch([]); // first paint: empty
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Nothing running").length).toBeGreaterThan(0));
 
     // A task starts → execution event → the running row appears without a refetch.
-    pushExecutionEvent([
-      execView({ uuid: "live", status: "running", startedAt: NOW }),
-    ]);
+    pushExecutionEvent([execView({ uuid: "live", status: "running", startedAt: NOW })]);
     await waitFor(() => expect(screen.getAllByText("Task live").length).toBeGreaterThan(0));
     expect(screen.queryByText("Nothing running")).toBeNull();
   });
 
   it("clears the active view when the connection goes offline (empty execution event)", async () => {
     routeFetch([execView({ uuid: "run", status: "running", startedAt: NOW })]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
 
     // Offline reconcile publishes an empty active set → the pane clears to empty.
@@ -274,28 +341,45 @@ describe("Agent Connections execution view", () => {
   });
 });
 
+describe("Agent Connections modal — error vs empty (no silent error)", () => {
+  it("renders a DISTINCT error state (not the 'no connections' empty) when the first connections fetch fails", async () => {
+    // Both endpoints fail on the first (and only) load — status flips to "error"
+    // with no cached connections. The modal MUST show the load-error card, never
+    // the "No agent connections yet" empty card.
+    mockAuthFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
+        return Promise.resolve({ ok: false, json: async () => ({ success: false }) });
+      }
+      // Connection list fails.
+      return Promise.resolve({ ok: false, json: async () => ({ success: false }) });
+    });
+
+    await renderView();
+    await waitFor(() =>
+      expect(screen.getAllByText("Couldn't load connections").length).toBeGreaterThan(0),
+    );
+    // The empty state must NOT be shown — a fetch failure is not "zero connections".
+    expect(screen.queryByText("No agent connections yet")).toBeNull();
+  });
+});
+
 // =====================================================================
 // Interrupt control (子3 — daemon-interrupt-resume)
 // =====================================================================
-describe("Agent Connections interrupt control", () => {
+describe("Agent Connections modal — interrupt control", () => {
   it("running rows show an Interrupt control; queued rows do not", async () => {
     routeFetch([
       execView({ uuid: "run", status: "running", startedAt: NOW }),
       execView({ uuid: "q1", status: "queued", startedAt: null }),
     ]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
 
-    // The running row carries an Interrupt button; the queued row does not.
-    // (Only one running execution is present, so a button means the running row.)
     const interruptButtons = screen.getAllByRole("button", {
       name: "Interrupt this running execution",
     });
     expect(interruptButtons.length).toBeGreaterThan(0);
-
-    // The queued row's "Waiting" hint renders without an adjacent interrupt
-    // control — there is exactly one running execution, so the interrupt-button
-    // count equals the rendered running-row count (no queued-row buttons).
+    // Exactly one running execution → button count equals running-row count.
     const runningRowCount = screen.getAllByText("Task run").length;
     expect(interruptButtons.length).toBe(runningRowCount);
   });
@@ -304,10 +388,9 @@ describe("Agent Connections interrupt control", () => {
     routeFetch([
       execView({ uuid: "run", status: "running", startedAt: NOW, entityType: "task" }),
     ]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
 
-    // Open the confirm dialog (first composition's button) and confirm.
     fireEvent.click(
       screen.getAllByRole("button", { name: "Interrupt this running execution" })[0],
     );
@@ -345,7 +428,7 @@ describe("Agent Connections interrupt control", () => {
           json: async () => ({ success: false, error: "Not authorized to control this connection" }),
         });
       }
-      if (typeof url === "string" && url.startsWith("/api/daemon/execution-state")) {
+      if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -359,7 +442,7 @@ describe("Agent Connections interrupt control", () => {
         json: async () => ({ success: true, data: { connections: [connection] } }),
       });
     });
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
 
     fireEvent.click(
@@ -385,7 +468,7 @@ describe("Agent Connections interrupt control", () => {
 // =====================================================================
 // Resume control + interrupted rows (子3 — daemon-interrupt-resume)
 // =====================================================================
-describe("Agent Connections interrupted rows + resume control", () => {
+describe("Agent Connections modal — interrupted rows + resume control", () => {
   it("a user-interrupted row shows a Resume control; clicking it POSTs /api/daemon/resume", async () => {
     routeFetch([
       execView({
@@ -396,7 +479,7 @@ describe("Agent Connections interrupted rows + resume control", () => {
         entityType: "task",
       }),
     ]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task int").length).toBeGreaterThan(0));
 
     // A Resume control is offered (not an Interrupt control — the row is stopped).
@@ -433,10 +516,9 @@ describe("Agent Connections interrupted rows + resume control", () => {
         startedAt: null,
       }),
     ]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task crash").length).toBeGreaterThan(0));
 
-    // No Resume control for a crash; the "auto-recovers" hint renders instead.
     expect(
       screen.queryAllByRole("button", { name: "Resume this interrupted execution" }).length,
     ).toBe(0);
@@ -447,7 +529,7 @@ describe("Agent Connections interrupted rows + resume control", () => {
     routeFetch([
       execView({ uuid: "int", status: "interrupted", interruptedReason: "user", startedAt: null }),
     ]);
-    await renderPage();
+    await renderView();
     await waitFor(() => expect(screen.getAllByText("Task int").length).toBeGreaterThan(0));
     expect(screen.queryByText("Nothing running")).toBeNull();
   });

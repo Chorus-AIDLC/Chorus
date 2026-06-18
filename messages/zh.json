@@ -128,7 +128,6 @@
   },
   "nav": {
     "projects": "项目",
-    "agentConnections": "智能体连接",
     "settings": "设置",
     "overview": "概览",
     "documents": "文档",
@@ -1384,6 +1383,8 @@
       "title": "暂无智能体连接",
       "body": "启动一个守护进程以将智能体连接到 Chorus。在终端运行 `chorus daemon`，或启用 OpenClaw 插件，连接成功后即可在此页面看到。"
     },
+    "loadErrorTitle": "无法加载连接",
+    "loadErrorBody": "无法连接到连接服务。这是加载失败，并非列表为空——你的智能体可能仍在线。正在自动重试。",
     "execEntityUnknown": "未知资源",
     "entityTask": "任务",
     "entityIdea": "想法",
@@ -1403,6 +1404,16 @@
     "resumeAria": "恢复这个已打断的执行",
     "resumeSuccess": "已请求恢复「{title}」。",
     "resumeError": "请求恢复失败，请重试。"
+  },
+  "agentPresence": {
+    "online": "在线",
+    "loading": "正在检查智能体…",
+    "unavailable": "智能体不可用",
+    "pillAria": "在线智能体 — 打开详情",
+    "popoverTitle": "在线智能体",
+    "popoverEmpty": "当前没有在线的智能体。",
+    "connectionIdle": "空闲 — 没有正在运行或排队的工作。",
+    "viewAll": "查看全部"
   },
   "mention": {
     "online": "在线",
