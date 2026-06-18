@@ -105,6 +105,7 @@ vi.mock("@/contexts/agent-presence-context", () => ({
 }));
 
 import { AgentPresencePill } from "../agent-presence-pill";
+import { ExecutionRow } from "@/components/agent-presence";
 
 const TRIGGER_LABEL = "Online agents — open details";
 
@@ -344,5 +345,99 @@ describe("AgentPresencePill — popover content", () => {
     expect(
       await screen.findByText("No agents are online right now."),
     ).toBeTruthy();
+  });
+});
+
+describe("AgentPresencePill — widened popover + stacked task rows", () => {
+  beforeEach(() => {
+    mockPresence.mockReset();
+  });
+
+  // AC1: the popover is widened from the old w-[300px] to a viewport-clamped
+  // ~400px so titles get room and it never overflows a phone.
+  it("popover content is widened to a viewport-clamped ~400px (not the old 300px)", async () => {
+    setPresence({
+      status: "ok",
+      onlineCount: 1,
+      connections: [makeConnection()],
+      executionsByConnection: {},
+    });
+
+    const user = userEvent.setup();
+    render(<AgentPresencePill />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+    // The popover empty-connection line proves the portal content has mounted.
+    await screen.findByText("Idle — no running or queued work.");
+
+    // PopoverContent renders in a portal; find it by its viewport-clamped width.
+    const content = document.querySelector('[class*="min(92vw,400px)"]');
+    expect(content).not.toBeNull();
+    // The old fixed narrow width must be gone.
+    expect(document.querySelector('[class*="w-[300px]"]')).toBeNull();
+  });
+
+  // AC3: a running row in the popover keeps the elapsed timer + Interrupt control
+  // but stacks them on a second line (flex-col <li>) so the title isn't crowded;
+  // the title relaxes from a hard truncate to a two-line clamp.
+  it("running row in the popover stacks controls on a second line and keeps Interrupt + elapsed", async () => {
+    const conn = makeConnection({ uuid: "conn-1", agentName: "Builder Bot" });
+    setPresence({
+      status: "ok",
+      onlineCount: 1,
+      connections: [conn],
+      executionsByConnection: {
+        "conn-1": [
+          makeExecution({
+            uuid: "run-1",
+            status: "running",
+            entityTitle: "A very long running task title that used to truncate",
+          }),
+        ],
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<AgentPresencePill />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+
+    // Interrupt control is still present in the popover (controls retained).
+    const interruptBtn = await screen.findByRole("button", {
+      name: "Interrupt this running execution",
+    });
+    expect(interruptBtn).toBeTruthy();
+
+    // The row <li> uses the stacked (flex-col) layout, not the inline flex row.
+    const row = interruptBtn.closest("li");
+    expect(row).not.toBeNull();
+    expect(row?.className).toContain("flex-col");
+
+    // The title relaxes to a two-line clamp (readable) rather than a hard truncate.
+    const titleEl = screen.getByText(
+      "A very long running task title that used to truncate",
+    );
+    expect(titleEl.className).toContain("line-clamp-2");
+    expect(titleEl.className).not.toContain("truncate");
+  });
+
+  // AC2 (consumer side): the modal/connection-view keep the default inline
+  // single-line layout — ExecutionRow's default must be inline. We assert the
+  // default-rendered row is NOT flex-col by rendering ExecutionRow directly.
+  it("ExecutionRow defaults to the inline single-line layout (modal unchanged)", () => {
+    const exec = makeExecution({
+      uuid: "run-2",
+      status: "running",
+      entityTitle: "Inline task",
+    });
+    // Default layout (no prop) = inline. Render the row inside a <ul> for valid DOM.
+    const { container } = render(
+      <ul>
+        <ExecutionRow exec={exec} nowMs={Date.parse(exec.startedAt as string) + 5000} />
+      </ul>,
+    );
+    const row = container.querySelector("li");
+    expect(row).not.toBeNull();
+    // Inline rows are a centered flex row, never flex-col.
+    expect(row?.className).toContain("items-center");
+    expect(row?.className).not.toContain("flex-col");
   });
 });

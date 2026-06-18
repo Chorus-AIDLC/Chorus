@@ -109,7 +109,12 @@ function PopoverBody({
                     count={running.length}
                   >
                     {running.map((exec) => (
-                      <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+                      <ExecutionRow
+                        key={exec.uuid}
+                        exec={exec}
+                        nowMs={nowMs}
+                        layout="stacked"
+                      />
                     ))}
                   </ExecutionSection>
                 )}
@@ -120,7 +125,12 @@ function PopoverBody({
                     count={queued.length}
                   >
                     {queued.map((exec) => (
-                      <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+                      <ExecutionRow
+                        key={exec.uuid}
+                        exec={exec}
+                        nowMs={nowMs}
+                        layout="stacked"
+                      />
                     ))}
                   </ExecutionSection>
                 )}
@@ -233,7 +243,7 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
         align="start"
         side="top"
         sideOffset={8}
-        className="max-h-[60vh] w-[300px] overflow-y-auto p-3"
+        className="max-h-[60vh] w-[min(92vw,400px)] overflow-y-auto p-3"
       >
         <PopoverContentInner
           onlineConnections={onlineConnections}
