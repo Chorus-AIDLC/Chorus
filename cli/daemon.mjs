@@ -23,6 +23,9 @@ import { LineageResolver } from "./lineage.mjs";
 import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
 import { createExecutionUploadHooks } from "./upload-hooks.mjs";
 import { WAKE_ACTIONS } from "./prompts.mjs";
+import { createInterruptReporter } from "./interrupt-reporter.mjs";
+import { createControlHandler } from "./control-handler.mjs";
+import { resolveSigintTimeoutMs } from "./daemon-config.mjs";
 
 function defaultLogger() {
   return {
@@ -49,11 +52,33 @@ function defaultLogger() {
  *   makeSseListener?: (opts: any) => any,
  *   maxConcurrency?: number,
  *   permissionMode?: "chorus"|"yolo",
+ *   reportInterrupt?: (entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>,
+ *   sigintTimeoutMs?: number,
  * }} [deps]
  */
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
   const permissionMode = deps.permissionMode ?? "chorus";
+  // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
+  // the layered resolver; falls back to the resolver's default here when not given,
+  // so a daemon built directly (integration tests) still gets a sane value.
+  const sigintTimeoutMs = deps.sigintTimeoutMs ?? resolveSigintTimeoutMs();
+  // Interrupt reporter (子3): REST POST with the daemon's Bearer key (zero new deps),
+  // injectable for tests. The waker calls it on an interrupted/crashed exit.
+  // connectionState holds the connection uuid learned from the SSE handshake;
+  // declared here so the reporter (which needs it to address the execution row)
+  // can read it lazily. It is assigned by onConnectionId below.
+  /** @type {{ connectionUuid: string|null }} */
+  const connectionState = { connectionUuid: null };
+  const reportInterrupt =
+    deps.reportInterrupt ??
+    createInterruptReporter({
+      url: creds.url,
+      apiKey: creds.apiKey,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      logger,
+      fetchImpl: deps.fetchImpl,
+    });
 
   const mcpClient =
     deps.mcpClient ?? new ChorusClient({ url: creds.url, apiKey: creds.apiKey, logger });
@@ -65,13 +90,11 @@ export function buildDaemon(creds, deps = {}) {
   const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
   const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });
 
-  // The connection this daemon registered as. Learned from the SSE handshake's
-  // `connection_registered` event (threaded via the listener's onConnectionId).
-  // Held in a mutable box so the upload hooks (created before the listener) can
-  // read the latest value after the handshake. `waker` is assigned just below;
-  // the snapshot closure reads it lazily so the hooks can predate it.
-  /** @type {{ connectionUuid: string|null }} */
-  const connectionState = { connectionUuid: null };
+  // `connectionState` (declared above, next to the reporter) is the mutable box the
+  // SSE handshake fills with this daemon's `connection_registered` uuid; the upload
+  // hooks, the reporter, and the control handler all read it lazily so construction
+  // order doesn't matter. `waker` is assigned just below; the snapshot closure reads
+  // it lazily so the hooks can predate it.
   /** @type {Waker|undefined} */
   let waker;
 
@@ -96,8 +119,34 @@ export function buildDaemon(creds, deps = {}) {
   const seen = new Set();
   // cwd: the daemon spawns all wakes in one working directory; the waker uses it
   // BOTH to probe the transcript (new-vs-resume) and to spawn, so they never diverge.
-  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger });
+  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt });
   const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
+
+  // Reverse control channel (子3): the control handler verifies a control event
+  // against this daemon's own connectionUuid + the running child for the target
+  // entity (q1=a double-check), then interrupts the subprocess. It reads the
+  // connectionUuid lazily from the same mutable box the SSE handshake fills, so it
+  // works regardless of construction order.
+  // Resume re-dispatch (子3): a `command:"resume"` control event re-runs the wake
+  // for the target entity. It reuses the SAME router/queue path as a normal wake,
+  // so serialization-per-direct-idea holds and the spawner's on-disk transcript
+  // probe naturally selects `claude --resume` (the session already exists). The
+  // synthetic event mirrors the `new_notification` shape the router expects; we
+  // fetch the real notification detail lazily inside the router via MCP, so a
+  // minimal `{ action: "resource_resumed", entityType, entityUuid }` is enough to
+  // re-key and re-spawn. Because resume rides the control channel (not a persisted
+  // notification), there is no notificationUuid — the router tolerates a synthetic
+  // resume dispatch via the dedicated entrypoint below.
+  const redispatchResume = (entityType, entityUuid) => {
+    router.dispatchResume?.({ entityType, entityUuid });
+  };
+  const onControl = createControlHandler({
+    waker,
+    getConnectionUuid: () => connectionState.connectionUuid,
+    sigintTimeoutMs,
+    redispatchResume,
+    logger,
+  });
 
   // Reconnect backfill re-dispatches notifications missed during a gap, through
   // the SAME router/queue (so serialization holds) and the SAME seen set (so
@@ -122,6 +171,9 @@ export function buildDaemon(creds, deps = {}) {
         connectionState.connectionUuid = connectionUuid;
         logger.info(`[Chorus] registered as connection ${connectionUuid}`);
       },
+      // Reverse control channel: a `type:"control"` event is forked here, NEVER to
+      // onEvent/router/queue — so it can never spawn a wake (子3).
+      onControl,
       onReconnect: backfill,
       logger,
     });
@@ -149,7 +201,7 @@ export function buildDaemon(creds, deps = {}) {
  * Entry point for `chorus daemon`. Resolves credentials, validates them
  * (echoing the agent identity), and runs the daemon until terminated.
  *
- * @param {{ url?: string, apiKey?: string, yolo?: boolean }} flags
+ * @param {{ url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: number|string }} flags
  * @param {{
  *   resolve?: typeof resolveCredentials,
  *   validate?: typeof validateAndFetchIdentity,
@@ -172,6 +224,10 @@ export async function runDaemon(flags = {}, deps = {}) {
   // --yolo flag or CHORUS_YOLO env → full autonomy; default → chorus-only.
   const yolo = flags.yolo === true || env.CHORUS_YOLO === "1" || env.CHORUS_YOLO === "true";
   const permissionMode = yolo ? "yolo" : "chorus";
+
+  // SIGINT-escalation window for the interrupt killer (子3) — layered:
+  //   --sigint-timeout flag > CHORUS_DAEMON_SIGINT_TIMEOUT env > ~/.chorus/daemon.json > 10000.
+  const sigintTimeoutMs = resolveSigintTimeoutMs({ sigintTimeout: flags.sigintTimeout }, { env });
 
   let creds;
   try {
@@ -212,7 +268,11 @@ export async function runDaemon(flags = {}, deps = {}) {
     errLog("[Chorus] WARNING: `claude` not found on PATH — wakes will fail until it is installed.");
   }
 
-  const daemon = build(creds, { logger: { info: log, warn: errLog, error: errLog }, permissionMode });
+  const daemon = build(creds, {
+    logger: { info: log, warn: errLog, error: errLog },
+    permissionMode,
+    sigintTimeoutMs,
+  });
 
   // Graceful shutdown on signals.
   const shutdown = () => {

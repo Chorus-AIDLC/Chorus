@@ -56,6 +56,11 @@ const PROCESS_STARTED_AT = new Date();
  *   server reports which DaemonConnection this stream registered as (the first
  *   `connection_registered` data event). The daemon uses this connectionUuid to
  *   attribute its execution-state snapshots.
+ * @property {(event: Record<string, unknown>) => void} [onControl]  Called for a
+ *   `type:"control"` data event (the reverse control channel — 子3). This is NOT a
+ *   wake: the control event is forked here BEFORE `onEvent`, so the router / WakeQueue
+ *   never sees it and it can never spawn a new Claude. The handler verifies the target
+ *   connection + entity and interrupts the running subprocess (see control-handler.mjs).
  * @property {() => Promise<void>} [onReconnect]  Called after a reconnect so the
  *   caller can back-fill notifications missed during the gap.
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
@@ -71,6 +76,7 @@ export class SseListener {
     this.apiKey = opts.apiKey;
     this.onEvent = opts.onEvent;
     this.onConnectionId = opts.onConnectionId ?? (() => {});
+    this.onControl = opts.onControl ?? (() => {});
     this.onReconnect = opts.onReconnect ?? (async () => {});
     /** @type {string|null} The connection this stream registered as (once reported). */
     this.connectionUuid = null;
@@ -212,6 +218,18 @@ export class SseListener {
             this.onConnectionId(event.connectionUuid);
           } catch (err) {
             this.logger.warn(`[Chorus] onConnectionId callback error: ${err}`);
+          }
+          continue;
+        }
+        // Reverse control channel (子3): a `type:"control"` event is NOT a wake. Fork
+        // it to onControl and `continue` — it MUST NEVER fall through to onEvent (the
+        // router / WakeQueue), or an interrupt would be mistaken for a wake and could
+        // spawn a new Claude. This is the structural guarantee the spec requires.
+        if (event && event.type === "control") {
+          try {
+            this.onControl(event);
+          } catch (err) {
+            this.logger.warn(`[Chorus] onControl callback error: ${err}`);
           }
           continue;
         }

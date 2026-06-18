@@ -111,6 +111,62 @@ describe("SseListener parsing", () => {
     listener.disconnect();
   });
 
+  it("forks a type:control event to onControl and NEVER to onEvent (子3 — zero wakes)", async () => {
+    const events = [];
+    const controls = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        ": connected\n\n",
+        'data: {"type":"connection_registered","connectionUuid":"conn-7"}\n\n',
+        'data: {"type":"control","command":"interrupt","targetConnectionUuid":"conn-7","entityType":"task","entityUuid":"task-1"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"n1"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      onControl: (e) => controls.push(e),
+      logger: silentLogger,
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The control event went to onControl ONLY.
+    expect(controls).toEqual([
+      { type: "control", command: "interrupt", targetConnectionUuid: "conn-7", entityType: "task", entityUuid: "task-1" },
+    ]);
+    // onEvent saw the real notification but NEVER the control event (no wake path).
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "n1" }]);
+    listener.disconnect();
+  });
+
+  it("a throwing onControl callback does not crash the stream", async () => {
+    const warns = [];
+    const events = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        'data: {"type":"control","command":"interrupt","targetConnectionUuid":"c","entityType":"task","entityUuid":"t"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"after"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      onControl: () => { throw new Error("handler boom"); },
+      logger: { ...silentLogger, warn: (m) => warns.push(m) },
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+    // The next event still flows despite the throwing control handler.
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "after" }]);
+    expect(warns.join("")).toMatch(/onControl callback error/);
+    listener.disconnect();
+  });
+
   it("tolerates malformed data line without throwing", async () => {
     const events = [];
     const warns = [];

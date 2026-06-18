@@ -69,7 +69,16 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+const mockToast = { success: vi.fn(), error: vi.fn() };
+vi.mock("sonner", () => ({
+  toast: {
+    success: (...args: unknown[]) => mockToast.success(...args),
+    error: (...args: unknown[]) => mockToast.error(...args),
+  },
+}));
+
 import AgentConnectionsPage from "@/app/(dashboard)/agent-connections/page";
+import { fireEvent } from "@testing-library/react";
 
 // ===== EventSource stub (drives SSE) =====
 interface CapturedEventSource {
@@ -262,5 +271,184 @@ describe("Agent Connections execution view", () => {
     pushExecutionEvent([]);
     await waitFor(() => expect(screen.getAllByText("Nothing running").length).toBeGreaterThan(0));
     expect(screen.queryByText("Task run")).toBeNull();
+  });
+});
+
+// =====================================================================
+// Interrupt control (子3 — daemon-interrupt-resume)
+// =====================================================================
+describe("Agent Connections interrupt control", () => {
+  it("running rows show an Interrupt control; queued rows do not", async () => {
+    routeFetch([
+      execView({ uuid: "run", status: "running", startedAt: NOW }),
+      execView({ uuid: "q1", status: "queued", startedAt: null }),
+    ]);
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
+
+    // The running row carries an Interrupt button; the queued row does not.
+    // (Only one running execution is present, so a button means the running row.)
+    const interruptButtons = screen.getAllByRole("button", {
+      name: "Interrupt this running execution",
+    });
+    expect(interruptButtons.length).toBeGreaterThan(0);
+
+    // The queued row's "Waiting" hint renders without an adjacent interrupt
+    // control — there is exactly one running execution, so the interrupt-button
+    // count equals the rendered running-row count (no queued-row buttons).
+    const runningRowCount = screen.getAllByText("Task run").length;
+    expect(interruptButtons.length).toBe(runningRowCount);
+  });
+
+  it("confirming Interrupt POSTs the control command with the right connection + entity", async () => {
+    routeFetch([
+      execView({ uuid: "run", status: "running", startedAt: NOW, entityType: "task" }),
+    ]);
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
+
+    // Open the confirm dialog (first composition's button) and confirm.
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Interrupt this running execution" })[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Interrupt this execution?")).toBeTruthy(),
+    );
+
+    const confirm = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent === "Interrupt" && !b.getAttribute("aria-label"));
+    expect(confirm).toBeTruthy();
+    fireEvent.click(confirm!);
+
+    await waitFor(() => {
+      const controlCall = mockAuthFetch.mock.calls.find(
+        (c) => c[0] === "/api/daemon/control",
+      );
+      expect(controlCall).toBeTruthy();
+      const body = JSON.parse((controlCall![1] as RequestInit).body as string);
+      expect(body).toEqual({
+        command: "interrupt",
+        targetConnectionUuid: CONN_UUID,
+        entityType: "task",
+        entityUuid: "task-run",
+      });
+    });
+    await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
+  });
+
+  it("surfaces an error toast when the control POST fails", async () => {
+    mockAuthFetch.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.startsWith("/api/daemon/control")) {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ success: false, error: "Not authorized to control this connection" }),
+        });
+      }
+      if (typeof url === "string" && url.startsWith("/api/daemon/execution-state")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: { executions: [execView({ uuid: "run", status: "running", startedAt: NOW })] },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, data: { connections: [connection] } }),
+      });
+    });
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Interrupt this running execution" })[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Interrupt this execution?")).toBeTruthy(),
+    );
+    const confirm = screen
+      .getAllByRole("button")
+      .find((b) => b.textContent === "Interrupt" && !b.getAttribute("aria-label"));
+    fireEvent.click(confirm!);
+
+    // Server's precise error message is preferred over the generic fallback.
+    await waitFor(() =>
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "Not authorized to control this connection",
+      ),
+    );
+  });
+});
+
+// =====================================================================
+// Resume control + interrupted rows (子3 — daemon-interrupt-resume)
+// =====================================================================
+describe("Agent Connections interrupted rows + resume control", () => {
+  it("a user-interrupted row shows a Resume control; clicking it POSTs /api/daemon/resume", async () => {
+    routeFetch([
+      execView({
+        uuid: "int",
+        status: "interrupted",
+        interruptedReason: "user",
+        startedAt: null,
+        entityType: "task",
+      }),
+    ]);
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task int").length).toBeGreaterThan(0));
+
+    // A Resume control is offered (not an Interrupt control — the row is stopped).
+    const resumeButtons = screen.getAllByRole("button", {
+      name: "Resume this interrupted execution",
+    });
+    expect(resumeButtons.length).toBeGreaterThan(0);
+    expect(
+      screen.queryAllByRole("button", { name: "Interrupt this running execution" }).length,
+    ).toBe(0);
+
+    // Clicking it (no confirm dialog — resume is non-destructive) POSTs to the
+    // daemon resume endpoint with the connection + entity.
+    fireEvent.click(resumeButtons[0]);
+    await waitFor(() => {
+      const resumeCall = mockAuthFetch.mock.calls.find((c) => c[0] === "/api/daemon/resume");
+      expect(resumeCall).toBeTruthy();
+      const body = JSON.parse((resumeCall![1] as RequestInit).body as string);
+      expect(body).toEqual({
+        connectionUuid: CONN_UUID,
+        entityType: "task",
+        entityUuid: "task-int",
+      });
+    });
+    await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
+  });
+
+  it("a crash-interrupted row shows NO Resume control (it auto-recovers)", async () => {
+    routeFetch([
+      execView({
+        uuid: "crash",
+        status: "interrupted",
+        interruptedReason: "crash",
+        startedAt: null,
+      }),
+    ]);
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task crash").length).toBeGreaterThan(0));
+
+    // No Resume control for a crash; the "auto-recovers" hint renders instead.
+    expect(
+      screen.queryAllByRole("button", { name: "Resume this interrupted execution" }).length,
+    ).toBe(0);
+    expect(screen.getAllByText("Auto-recovers").length).toBeGreaterThan(0);
+  });
+
+  it("an interrupted row keeps showing (not the empty state)", async () => {
+    routeFetch([
+      execView({ uuid: "int", status: "interrupted", interruptedReason: "user", startedAt: null }),
+    ]);
+    await renderPage();
+    await waitFor(() => expect(screen.getAllByText("Task int").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Nothing running")).toBeNull();
   });
 });

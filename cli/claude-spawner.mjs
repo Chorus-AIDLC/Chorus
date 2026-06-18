@@ -235,6 +235,7 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
  * @property {(o: object) => { stdin: any, stdout: any, stderr: any, on: Function, kill?: Function }} [spawnImpl]
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
  * @property {PermissionMode} [permissionMode]  How much the woken Claude may do (default "chorus").
+ * @property {NodeJS.Platform} [platform]  Injectable for tests; gates `detached` (POSIX-only).
  */
 
 export class ClaudeSpawner {
@@ -244,6 +245,10 @@ export class ClaudeSpawner {
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
+    // POSIX spawns `detached: true` (process-group leader) so the interrupt path
+    // can group-kill the tree; Windows does not. Injectable so a POSIX test host
+    // can exercise the Windows branch and vice versa.
+    this.platform = opts.platform ?? process.platform;
   }
 
   /**
@@ -260,10 +265,15 @@ export class ClaudeSpawner {
    * since claude scopes transcripts (and --resume) to it.
    *
    * @param {{ prompt: string, sessionId: string, isNew: boolean, mcpConfigPath?: string,
-   *           cwd?: string, onMessage?: (obj: any) => void }} params
+   *           cwd?: string, onMessage?: (obj: any) => void,
+   *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
+   *   `onChild` (子3) hands the live ChildProcess to the caller the moment it spawns,
+   *   so the waker can store the handle in its execution registry for the interrupt
+   *   path BEFORE this promise resolves. It is invoked once, synchronously, only on a
+   *   successful spawn; a spawn failure never calls it.
    * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
    */
-  async wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage }) {
+  async wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }) {
     const id = sessionId;
 
     // Pre-validate the session id BEFORE locating claude or spawning: a malformed
@@ -288,6 +298,17 @@ export class ClaudeSpawner {
     // passes argv as an array — no shell injection surface either way.
     const { command, argv } = resolveSpawnCommand(claudePath, args);
 
+    // POSIX: spawn `detached: true` so the child becomes a PROCESS GROUP LEADER
+    // (its pgid === its pid). The interrupt path then signals the whole group via
+    // `process.kill(-pid, sig)` so a forceful kill reaches grandchildren Claude may
+    // have spawned (子3 — daemon-interrupt-resume). This changes ONLY the process
+    // group: stdin/stdout/stderr stay piped exactly as before (stdio is unchanged),
+    // so prompt delivery over stdin and NDJSON stdout parsing are unaffected. We do
+    // NOT call `subprocess.unref()` — the daemon must stay attached to read the
+    // stream and observe the exit. On Windows `detached` is NOT used: taskkill /T
+    // walks the tree by pid, and detached there only spawns a new console window.
+    const detached = (this.platform ?? process.platform) !== "win32";
+
     return new Promise((resolve) => {
       let child;
       try {
@@ -298,12 +319,24 @@ export class ClaudeSpawner {
           // with the script as an argv element. Avoids shell word-splitting /
           // injection; .cmd is handled explicitly via cmd.exe above.
           shell: false,
+          detached,
           windowsHide: true,
         });
       } catch (err) {
         this.logger.error(`[Chorus] failed to spawn claude: ${err}`);
         resolve({ sessionId: id, exitCode: null, isNew });
         return;
+      }
+
+      // Hand the live child to the caller (子3) so the waker can register the handle
+      // for the interrupt path before this promise resolves. Never let a throwing
+      // callback escape into the spawn path.
+      if (onChild) {
+        try {
+          onChild(child);
+        } catch (err) {
+          this.logger.warn(`[Chorus] onChild handler threw: ${err}`);
+        }
       }
 
       let stdoutBuf = "";

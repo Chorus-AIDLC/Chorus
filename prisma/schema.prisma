@@ -454,7 +454,22 @@ model DaemonExecution {
   //   the wake has no idea ancestor (e.g. a standalone/quick task).
   rootIdeaUuid   String?
 
-  status         String    // running | queued | ended
+  // running | queued | ended | interrupted
+  //   `interrupted` is a STICKY status: when a wake's subprocess is stopped (by a
+  //   user-requested interrupt or an unexpected crash) the row is marked
+  //   `interrupted` and snapshot-reconcile will NOT auto-downgrade it to `ended`
+  //   when the (now-gone) entity drops out of the daemon's next snapshot — so the
+  //   UI keeps showing an "interrupted, resumable" row. It is cleared only when a
+  //   resume re-dispatch transitions the entity back to running/queued.
+  status         String    // running | queued | ended | interrupted
+  // Discriminator for the `interrupted` status: `user` = an authorized
+  // user-requested interrupt (manually resumable); `crash` = an unexpected
+  // subprocess exit (auto-recovered via reconnect-backfill). Only set while
+  // status == interrupted; cleared to null on any transition out of it. This
+  // lives on the execution row (not Task) because the daemon executes idea /
+  // proposal / document wakes too — interruption is an execution-lifecycle fact,
+  // keyed by the same connection+entity the row already tracks.
+  interruptedReason String? // null | user | crash
   startedAt      DateTime? // set when/once the row is running; null while queued
 
   createdAt      DateTime  @default(now())

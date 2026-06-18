@@ -21,6 +21,9 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/event-bus", () => ({
   eventBus: mockEventBus,
+  // The route now also imports the per-connection control channel namer; provide
+  // the real string contract so the test asserts the exact `control:{uuid}` key.
+  controlEventName: (connectionUuid: string) => `control:${connectionUuid}`,
 }));
 
 vi.mock("@/services/daemon-connection.service", () => ({
@@ -138,6 +141,47 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     expect(chunks[chunks.length - 1]).toContain("mention");
   });
 
+  it("subscribes the per-connection control channel for a daemon connection and forwards control events", async () => {
+    const res = await GET(makeRequest("clientType=openclaw"));
+    const { chunks } = await startStream(res);
+
+    // The control channel is keyed per connection (`control:{conn.uuid}`), NOT
+    // per agent — so an interrupt reaches only the daemon stream holding the
+    // subprocess.
+    const onCall = mockEventBus.on.mock.calls.find(
+      (c) => String(c[0]) === `control:${connectionUuid}`,
+    );
+    expect(onCall).toBeDefined();
+
+    const controlHandler = onCall![1] as (e: Record<string, unknown>) => void;
+    const before = chunks.length;
+    controlHandler({
+      type: "control",
+      command: "interrupt",
+      targetConnectionUuid: connectionUuid,
+      entityType: "task",
+      entityUuid: "task-1",
+    });
+    await flush();
+    expect(chunks.length).toBe(before + 1);
+    expect(chunks[chunks.length - 1]).toContain('"type":"control"');
+    expect(chunks[chunks.length - 1]).toContain('"command":"interrupt"');
+  });
+
+  it("tears down the per-connection control subscription on abort", async () => {
+    const ac = new AbortController();
+    const res = await GET(makeRequest("clientType=openclaw", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await Promise.resolve();
+
+    expect(mockEventBus.off).toHaveBeenCalledWith(
+      `control:${connectionUuid}`,
+      expect.any(Function),
+    );
+  });
+
   it("touches the connection on each heartbeat tick (daemon clientType)", async () => {
     vi.useFakeTimers();
     const res = await GET(makeRequest("clientType=openclaw"));
@@ -190,9 +234,19 @@ describe("GET /api/events/notifications (notification SSE)", () => {
       expect(chunks.join("")).toContain(": heartbeat");
       expect(mockTouchConnection).not.toHaveBeenCalled();
 
+      // No registry row (conn === null) → never subscribes a control channel.
+      const controlOn = mockEventBus.on.mock.calls.find((c) =>
+        String(c[0]).startsWith("control:"),
+      );
+      expect(controlOn).toBeUndefined();
+
       ac.abort();
       await Promise.resolve();
       expect(mockMarkDisconnected).not.toHaveBeenCalled();
+      const controlOff = mockEventBus.off.mock.calls.find((c) =>
+        String(c[0]).startsWith("control:"),
+      );
+      expect(controlOff).toBeUndefined();
     });
   });
 });

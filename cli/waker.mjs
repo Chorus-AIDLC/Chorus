@@ -33,6 +33,10 @@ export class Waker {
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
    *   writeMcpConfigFn?: typeof writeMcpConfig,
    *   isNewSessionFn?: typeof isNewSession,  Injectable for tests (disk probe).
+   *   reportInterrupt?: (entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>,
+   *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
+   *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
+   *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
    * }} opts
    */
   constructor(opts) {
@@ -47,6 +51,20 @@ export class Waker {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
     this.isNewSessionFn = opts.isNewSessionFn ?? isNewSession;
+    // Interrupt reporter (子3): default no-op-with-log so a Waker built without one
+    // (existing tests) keeps working; the daemon injects the REST reporter.
+    this.reportInterrupt =
+      opts.reportInterrupt ??
+      (async (entityType, entityUuid, reason) => {
+        this.logger.info(
+          `[Chorus] (no reporter wired) would report ${entityType}:${entityUuid} interrupted (reason=${reason})`
+        );
+      });
+    // Per-entity "interrupting" flags, set by the control handler the moment an
+    // authorized interrupt is verified for a running child (markInterrupting). The
+    // wake's exit path reads + clears it to decide reason=user vs reason=crash.
+    /** @type {Set<string>} */
+    this.interrupting = new Set();
 
     // Per-resource execution registry — the source of truth for the execution
     // snapshot uploaded to the server. Keyed by `${entityType}:${entityUuid}`
@@ -57,8 +75,24 @@ export class Waker {
     // is processing <resource>" for any wake. Each entry carries the rootIdeaUuid
     // the waker ALREADY resolved (reused, never re-walked) plus the daemon-side
     // status/startedAt.
-    /** @type {Map<string, { entityType: string, entityUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>} */
+    // The entry also holds the live `child` ChildProcess while RUNNING (子3) so the
+    // control handler can target it for an interrupt. `child` is null while queued.
+    // buildExecutionSnapshot() maps ONLY the serializable fields and NEVER emits
+    // `child` — the handle stays daemon-local and never leaks onto the wire.
+    /** @type {Map<string, { entityType: string, entityUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null, child: import("node:child_process").ChildProcess|null }>} */
     this.executions = new Map();
+  }
+
+  /**
+   * Mark a running entity as INTERRUPTING (子3) — called by the control handler the
+   * moment an authorized interrupt is verified, BEFORE the killer signals the child.
+   * The wake's exit path reads this flag to report reason="user" (vs "crash"). Keyed
+   * the same as the execution registry so a control event and a wake agree on the
+   * entity. Idempotent; never throws.
+   * @param {string} entityType @param {string} entityUuid
+   */
+  markInterrupting(entityType, entityUuid) {
+    this.interrupting.add(this.#execKey(entityType, entityUuid));
   }
 
   /** Recognized wake-triggering resource kinds the server's DaemonExecution accepts. */
@@ -134,6 +168,8 @@ export class Waker {
       rootIdeaUuid,
       status: "queued",
       startedAt: existing?.startedAt ?? null,
+      // Queued entries hold no live child yet — only the running entry does (子3).
+      child: null,
     });
     this.#emitExecutionChange();
   }
@@ -194,6 +230,8 @@ export class Waker {
       // Transition this resource to RUNNING with a start timestamp and emit a
       // fresh snapshot, so the server/UI sees it leave the queue and begin
       // executing. Report the server-resolved ROOT idea (not the direct-idea key).
+      // `child` starts null and is filled in by the spawner's onChild the moment the
+      // subprocess spawns (子3) — so the control handler can target it for interrupt.
       if (entity && execKey) {
         this.executions.set(execKey, {
           entityType: entity.entityType,
@@ -201,6 +239,7 @@ export class Waker {
           rootIdeaUuid,
           status: "running",
           startedAt: new Date().toISOString(),
+          child: null,
         });
         this.#emitExecutionChange();
       }
@@ -230,6 +269,13 @@ export class Waker {
         isNew,
         cwd: this.cwd,
         mcpConfigPath: cfg.path,
+        // Capture the live child into the running execution entry the instant it
+        // spawns (子3) so the control handler can interrupt it mid-wake. Guarded so
+        // a re-keyed/dropped entry never throws here.
+        onChild: (child) => {
+          const entry = execKey ? this.executions.get(execKey) : null;
+          if (entry && entry.status === "running") entry.child = child;
+        },
         onMessage: (message) => {
           if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
           // Fire-and-forget transcript hook (no-op in this change).
@@ -248,6 +294,27 @@ export class Waker {
         );
       }
 
+      // Interrupt-vs-crash reporting (子3, Tech Design "Interrupt vs crash
+      // reporting"). Decide from the per-entity "interrupting" flag the control
+      // handler may have set while the subprocess was running:
+      //   • interrupting flag set            → interrupted(reason="user")
+      //   • no flag AND non-zero/null exit    → interrupted(reason="crash")
+      //   • clean exit (code 0)               → nothing (unchanged)
+      // The interrupted state is entity-generic — it lives on the DaemonExecution
+      // row (keyed connection+entity), so the reporter records it for ANY recognized
+      // wake resource (task/idea/proposal/document), not only tasks.
+      if (entity && execKey) {
+        const wasInterrupting = this.interrupting.has(execKey);
+        const cleanExit = result && result.exitCode === 0;
+        if (wasInterrupting) {
+          await this.#report(entity, "user");
+        } else if (!cleanExit) {
+          // No interrupt requested but the subprocess did not exit cleanly (non-zero
+          // code, or null from a spawn/transport failure) → treat as a crash.
+          await this.#report(entity, "crash");
+        }
+      }
+
       this.logger.info(
         `[Chorus] wake complete for ${key} (action=${notification.action}, ` +
           `session=${result?.sessionId}, exit=${result?.exitCode})`
@@ -257,15 +324,37 @@ export class Waker {
     } finally {
       // Wake finished (cleanly or not): the resource leaves the active set. Drop
       // it and emit a fresh snapshot so the server ends its running/queued row.
-      // The server reconcile is snapshot-authoritative, so absence == ended.
-      if (execKey && this.executions.delete(execKey)) {
-        this.#emitExecutionChange();
+      // The server reconcile is snapshot-authoritative, so absence == ended. Also
+      // clear the per-entity interrupting flag so it can never leak into a later
+      // wake of the same entity.
+      if (execKey) {
+        this.interrupting.delete(execKey);
+        if (this.executions.delete(execKey)) {
+          this.#emitExecutionChange();
+        }
       }
       try {
         cfg?.cleanup?.();
       } catch {
         // best-effort
       }
+    }
+  }
+
+  /**
+   * Report an interrupted/crashed outcome via the injected reporter. Never throws
+   * into the wake path — a reporter failure is logged and swallowed (the reporter
+   * itself already swallows, this is belt-and-braces).
+   * @param {{ entityType: string, entityUuid: string }} entity
+   * @param {"user"|"crash"} reason
+   */
+  async #report(entity, reason) {
+    try {
+      await this.reportInterrupt(entity.entityType, entity.entityUuid, reason);
+    } catch (err) {
+      this.logger.warn(
+        `[Chorus] reportInterrupt failed for ${entity.entityType}:${entity.entityUuid} (${reason}): ${err}`
+      );
     }
   }
 }

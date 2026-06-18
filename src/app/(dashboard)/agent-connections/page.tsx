@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import Link from "next/link";
 import {
   Bot,
@@ -34,13 +35,27 @@ import {
   ExternalLink,
   ListChecks,
   Loader2,
+  OctagonX,
+  PauseCircle,
   Play,
   RadioTower,
+  RotateCcw,
   Sparkles,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import {
@@ -330,12 +345,190 @@ function useEntityTypeLabel() {
   );
 }
 
+// Interrupt control for a RUNNING execution row (子3 — daemon-interrupt-resume).
+//
+// Visibility: the Agent Connections page is already viewer-scoped — a user only
+// ever sees connections of agents they OWN, and an agent only sees its own (see
+// GET /api/agent-connections). So every row rendered here belongs to a
+// connection the viewer is authorized to control; the server re-checks
+// owner-or-`task:admin` on POST /api/daemon/control as defense in depth. We
+// therefore show Interrupt on every running row without a separate client-side
+// authz probe.
+//
+// Confirmation: a destructive stop, so it routes through a shadcn AlertDialog
+// (never a raw window.confirm / <dialog>). On confirm it fires ONE
+// POST /api/daemon/control { command:"interrupt", targetConnectionUuid,
+// entityType, entityUuid } — all already known from the 子2 execution row — and
+// returns without waiting for the kill (the daemon reports the resulting
+// `interrupted` task state asynchronously; the row simply drops out of the next
+// execution snapshot). Errors surface via a toast with a localized fallback.
+function InterruptButton({ exec }: { exec: ExecutionView }) {
+  const t = useTranslations("agentConnections");
+  const tc = useTranslations("common");
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  const title = exec.entityTitle?.trim() || t("execEntityUnknown");
+
+  const handleInterrupt = async () => {
+    setPending(true);
+    try {
+      const res = await authFetch("/api/daemon/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: "interrupt",
+          targetConnectionUuid: exec.connectionUuid,
+          entityType: exec.entityType,
+          entityUuid: exec.entityUuid,
+        }),
+      });
+      if (!res.ok) {
+        let message = t("interruptError");
+        try {
+          const json = await res.json();
+          if (json && typeof json.error === "string" && json.error) {
+            message = json.error;
+          }
+        } catch {
+          // Non-JSON error body — keep the localized fallback.
+        }
+        toast.error(message);
+        return;
+      }
+      toast.success(t("interruptSuccess", { title }));
+      setOpen(false);
+    } catch (error) {
+      clientLogger.error("Failed to request daemon interrupt:", error);
+      toast.error(t("interruptError"));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={t("interruptAria")}
+          className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#B45309] hover:bg-[#FEF3C7] hover:text-[#92400E]"
+        >
+          <OctagonX className="h-3.5 w-3.5" aria-hidden />
+          {t("interrupt")}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("interruptConfirmTitle")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("interruptConfirmBody", { title })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>{tc("cancel")}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={pending}
+            onClick={(e) => {
+              // Keep the dialog mounted while the request is in flight so the
+              // pending spinner shows; close happens on success above.
+              e.preventDefault();
+              void handleInterrupt();
+            }}
+          >
+            {pending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" aria-hidden />
+                {t("interrupting")}
+              </>
+            ) : (
+              t("interruptConfirmAction")
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// Resume control for a USER-interrupted execution row (子3 — daemon-interrupt-resume).
+// Shown ONLY when status === "interrupted" AND interruptedReason === "user": a crash
+// (reason === "crash") auto-recovers via the daemon's reconnect-backfill and is NOT
+// manually resumable (q7=a), so it shows a static "auto-recovers" hint instead (see
+// ExecutionRow). On click it POSTs /api/daemon/resume { targetConnectionUuid... };
+// the server records the transition + dispatches a `resume` control command, and the
+// row re-appears as running via the next execution snapshot. No confirm dialog —
+// resume is non-destructive, unlike interrupt.
+function ResumeButton({ exec }: { exec: ExecutionView }) {
+  const t = useTranslations("agentConnections");
+  const [pending, setPending] = useState(false);
+
+  const title = exec.entityTitle?.trim() || t("execEntityUnknown");
+
+  const handleResume = async () => {
+    setPending(true);
+    try {
+      const res = await authFetch("/api/daemon/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connectionUuid: exec.connectionUuid,
+          entityType: exec.entityType,
+          entityUuid: exec.entityUuid,
+        }),
+      });
+      if (!res.ok) {
+        let message = t("resumeError");
+        try {
+          const json = await res.json();
+          if (json && typeof json.error === "string" && json.error) {
+            message = json.error;
+          }
+        } catch {
+          // Non-JSON error body — keep the localized fallback.
+        }
+        toast.error(message);
+        return;
+      }
+      toast.success(t("resumeSuccess", { title }));
+    } catch (error) {
+      clientLogger.error("Failed to request daemon resume:", error);
+      toast.error(t("resumeError"));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={pending}
+      aria-label={t("resumeAria")}
+      onClick={() => void handleResume()}
+      className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#15803D] hover:bg-[#DCFCE7] hover:text-[#166534]"
+    >
+      {pending ? (
+        <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
+      ) : (
+        <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+      )}
+      {pending ? t("resuming") : t("resume")}
+    </Button>
+  );
+}
+
 // One execution row: the target resource's title (deep-linked per resource kind),
-// a small resource-kind badge, an optional root-idea session badge, and (for
-// running rows only) a live HH:MM:SS elapsed indicator off `startedAt`. Queued
-// rows show a static "waiting" hint, never a timer. A row whose resource no
-// longer resolves (deleted) falls back to a localized placeholder title and
-// renders as plain text (no link).
+// a small resource-kind badge, an optional root-idea session badge, and a
+// status-dependent trailing control:
+//  - running     → a live HH:MM:SS elapsed indicator + an Interrupt control,
+//  - queued      → a static "waiting" hint,
+//  - interrupted → an "interrupted" badge + either a Resume control (reason=user)
+//                  or a static "auto-recovers" hint (reason=crash).
+// A row whose resource no longer resolves (deleted) falls back to a localized
+// placeholder title and renders as plain text (no link).
 function ExecutionRow({
   exec,
   nowMs,
@@ -347,6 +540,8 @@ function ExecutionRow({
   const formatElapsed = useElapsedMono();
   const entityTypeLabel = useEntityTypeLabel();
   const running = exec.status === "running";
+  const interrupted = exec.status === "interrupted";
+  const interruptedByUser = interrupted && exec.interruptedReason === "user";
 
   const title = exec.entityTitle?.trim() || t("execEntityUnknown");
   const href = execHref(exec);
@@ -355,7 +550,7 @@ function ExecutionRow({
     <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          running ? "bg-[#C67A5214]" : "bg-[#F0EDE8]"
+          running ? "bg-[#C67A5214]" : interrupted ? "bg-[#FEF3C7]" : "bg-[#F0EDE8]"
         }`}
         aria-hidden
       >
@@ -363,6 +558,8 @@ function ExecutionRow({
           // Decorative spin gated behind motion-safe so reduced-motion users see
           // a static icon (same reduced-motion regime as the online pulse dot).
           <Loader2 className="h-4 w-4 text-[#C67A52] motion-safe:animate-spin" />
+        ) : interrupted ? (
+          <PauseCircle className="h-4 w-4 text-[#B45309]" />
         ) : (
           <Clock3 className="h-4 w-4 text-[#9A9A9A]" />
         )}
@@ -399,14 +596,34 @@ function ExecutionRow({
         )}
       </div>
       {running ? (
-        exec.startedAt ? (
-          <span
-            className="shrink-0 font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
-            title={t("execElapsedLabel")}
+        <div className="flex shrink-0 items-center gap-2">
+          {exec.startedAt && (
+            <span
+              className="font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
+              title={t("execElapsedLabel")}
+            >
+              {formatElapsed(exec.startedAt, nowMs)}
+            </span>
+          )}
+          <InterruptButton exec={exec} />
+        </div>
+      ) : interrupted ? (
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge
+            variant="secondary"
+            className="shrink-0 gap-1 border-0 bg-[#FEF3C7] px-2 py-0.5 text-[10px] font-medium text-[#B45309]"
           >
-            {formatElapsed(exec.startedAt, nowMs)}
-          </span>
-        ) : null
+            <PauseCircle className="h-3 w-3" aria-hidden />
+            {interruptedByUser ? t("execInterruptedUser") : t("execInterruptedCrash")}
+          </Badge>
+          {interruptedByUser ? (
+            <ResumeButton exec={exec} />
+          ) : (
+            <span className="text-[11px] font-medium text-[#9A8C7E]">
+              {t("execCrashAutoRecovers")}
+            </span>
+          )}
+        </div>
       ) : (
         <span className="shrink-0 text-[11px] font-medium text-[#9A9A9A]">
           {t("execWaiting")}
@@ -504,6 +721,12 @@ function ExecutionPane({
     () => executions.filter((e) => e.status === "queued"),
     [executions],
   );
+  // Sticky interrupted rows (子3): a stopped, resumable (or crash-auto-recovering)
+  // wake. Shown in its own section so it reads as standing state, not active work.
+  const interrupted = useMemo(
+    () => executions.filter((e) => e.status === "interrupted"),
+    [executions],
+  );
 
   return (
     <div className="flex h-full min-h-[180px] flex-col gap-4 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
@@ -519,7 +742,7 @@ function ExecutionPane({
           <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
           {t("execLoading")}
         </div>
-      ) : running.length === 0 && queued.length === 0 ? (
+      ) : running.length === 0 && queued.length === 0 && interrupted.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F0EDE8]">
             <Clock3 className="h-5 w-5 text-[#9A9A9A]" aria-hidden />
@@ -543,6 +766,17 @@ function ExecutionPane({
           {queued.length > 0 && (
             <ExecutionSection icon={ListChecks} label={t("execQueued")} count={queued.length}>
               {queued.map((exec) => (
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+              ))}
+            </ExecutionSection>
+          )}
+          {interrupted.length > 0 && (
+            <ExecutionSection
+              icon={PauseCircle}
+              label={t("execInterrupted")}
+              count={interrupted.length}
+            >
+              {interrupted.map((exec) => (
                 <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
               ))}
             </ExecutionSection>

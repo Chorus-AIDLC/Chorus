@@ -38,6 +38,30 @@ export const ACTIVE_EXECUTION_STATUSES = ["running", "queued"] as const;
 export type ActiveExecutionStatus = (typeof ACTIVE_EXECUTION_STATUSES)[number];
 export const ENDED_EXECUTION_STATUS = "ended" as const;
 
+// `interrupted` is a STICKY status (子3 — daemon-interrupt-resume): when a wake's
+// subprocess is stopped (user-requested interrupt or unexpected crash), the
+// execution row is marked `interrupted` (+ an `interruptedReason` discriminator).
+// Snapshot reconcile and offline reconcile deliberately do NOT touch an
+// `interrupted` row — the killed subprocess is gone, so it will be absent from the
+// daemon's next snapshot, and the absent-from-snapshot rule would otherwise flip it
+// to `ended` and hide the "interrupted, resumable" affordance. It stays
+// `interrupted` until a resume re-dispatches the entity (clearing it). This lives on
+// the execution row (NOT Task) because the daemon executes idea / proposal /
+// document wakes too — interruption is an execution-lifecycle fact keyed by the same
+// connection+entity the row already tracks, not a Task-domain state.
+export const INTERRUPTED_EXECUTION_STATUS = "interrupted" as const;
+// Interrupt reason discriminators (only meaningful while status == interrupted).
+export const INTERRUPT_REASONS = ["user", "crash"] as const;
+export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
+
+// Statuses the detail pane renders as a live/standing row: the two active statuses
+// PLUS the sticky `interrupted` status (so an interrupted, resumable row keeps
+// showing). `ended` history is still excluded from the read.
+export const DISPLAYABLE_EXECUTION_STATUSES = [
+  ...ACTIVE_EXECUTION_STATUSES,
+  INTERRUPTED_EXECUTION_STATUS,
+] as const;
+
 // The wake-triggering resource kinds a daemon can report. Mirrors the Chorus
 // notification `entityType` space for wake actions. A non-conforming value is
 // rejected at the route's zod boundary, so the service can assume validity.
@@ -74,7 +98,11 @@ export interface ExecutionView {
   entityType: string; // task | idea | proposal | document
   entityUuid: string;
   rootIdeaUuid: string | null;
-  status: string; // running | queued | ended
+  status: string; // running | queued | ended | interrupted
+  // Discriminator for the `interrupted` status: "user" | "crash" | null. Null for
+  // any non-interrupted row. The UI uses it to show a manual "Resume" affordance
+  // only for a user-interrupt (a crash auto-recovers via reconnect-backfill).
+  interruptedReason: string | null;
   startedAt: string | null; // ISO-8601
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601
@@ -117,6 +145,7 @@ interface DaemonExecutionRow {
   entityUuid: string;
   rootIdeaUuid: string | null;
   status: string;
+  interruptedReason: string | null;
   startedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -157,6 +186,7 @@ function toExecutionView(
     entityUuid: row.entityUuid,
     rootIdeaUuid: row.rootIdeaUuid,
     status: row.status,
+    interruptedReason: row.interruptedReason,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -377,6 +407,12 @@ export async function reconcileSnapshot(
         rootIdeaUuid: exec.rootIdeaUuid ?? null,
         status: exec.status,
         startedAt: exec.startedAt ?? null,
+        // A reported active status means the daemon is running/queuing this entity
+        // again — i.e. a resume re-dispatch superseded any prior `interrupted`
+        // state. Clear the sticky reason so the row is no longer shown as
+        // interrupted. (A non-resumed interrupted row is simply absent from the
+        // snapshot and is left untouched by the sweep above.)
+        interruptedReason: null,
       },
     });
   }
@@ -475,7 +511,40 @@ async function filterRowsByLiveConnection(
       )
       .map((c) => c.uuid),
   );
-  return rows.filter((r) => liveConnectionUuids.has(r.connectionUuid));
+  // A `running`/`queued` row is only meaningful while its connection is live (an
+  // offline daemon isn't actually running anything). But a STICKY `interrupted` row
+  // represents a stopped, human-resumable wake whose subprocess is already gone — it
+  // must keep showing even after the connection drops offline, so the user can come
+  // back and resume it. So keep interrupted rows regardless of connection liveness.
+  return rows.filter(
+    (r) =>
+      r.status === INTERRUPTED_EXECUTION_STATUS || liveConnectionUuids.has(r.connectionUuid),
+  );
+}
+
+/**
+ * Is `connectionUuid` an effectively-ONLINE daemon connection right now (within
+ * `companyUuid`)? Uses the same liveness verdict as the connection read API and
+ * `filterRowsByLiveConnection`: raw `status === "online"` AND `lastSeenAt` within
+ * `STALE_THRESHOLD_MS`. companyUuid-scoped; a READ that does NOT swallow.
+ *
+ * The resume route uses this to refuse a resume to an OFFLINE daemon: a `resume`
+ * control command is a transient SSE event (not a persisted notification), so if the
+ * daemon's stream is down the command is dropped and would never replay — leaving the
+ * row flipped to `running` but invisible (the live-connection filter hides a
+ * `running` row of an offline connection). Gating up front keeps the row `interrupted`
+ * (still resumable later) and returns a clear error instead of silently losing it.
+ */
+export async function isConnectionLive(
+  companyUuid: string,
+  connectionUuid: string,
+): Promise<boolean> {
+  const conn = await prisma.daemonConnection.findFirst({
+    where: { uuid: connectionUuid, companyUuid },
+    select: { status: true, lastSeenAt: true },
+  });
+  if (!conn) return false;
+  return conn.status === "online" && Date.now() - conn.lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
 }
 
 /**
@@ -506,7 +575,7 @@ export async function getVisibleExecutions(
   const rows = await prisma.daemonExecution.findMany({
     where: {
       companyUuid: auth.companyUuid,
-      status: { in: [...ACTIVE_EXECUTION_STATUSES] },
+      status: { in: [...DISPLAYABLE_EXECUTION_STATUSES] },
       ...scope,
     },
   });
@@ -532,7 +601,7 @@ export async function getExecutionsForConnection(
     where: {
       companyUuid,
       connectionUuid,
-      status: { in: [...ACTIVE_EXECUTION_STATUSES] },
+      status: { in: [...DISPLAYABLE_EXECUTION_STATUSES] },
     },
   });
   const live = await filterRowsByLiveConnection(companyUuid, rows);
@@ -732,6 +801,91 @@ export async function filterValidExecutionEntities(
     kept.push({ ...e, rootIdeaUuid });
   }
   return kept;
+}
+
+// ===== Interrupt / resume (子3) =====
+//
+// Interrupt and resume operate on the EXECUTION row (connection + entity), not on
+// the Task domain model — the daemon executes task / idea / proposal / document
+// wakes, so the interrupted state must be entity-generic. The kill itself happens
+// in the daemon (control channel → process-killer); these functions only record the
+// resulting state transition the daemon reports back.
+
+/** Outcome of `resumeExecution` so the route maps a precise status code. */
+export type ResumeExecutionResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "not_resumable"; status: string; interruptedReason: string | null };
+
+/**
+ * Mark a connection's execution row for `(entityType, entityUuid)` as `interrupted`
+ * with the given reason. Called (via the daemon's report-interrupt endpoint) after
+ * a wake's subprocess exits in an interrupted/crashed state:
+ *   - `user`  — an authorized user-requested interrupt (manually resumable), or
+ *   - `crash` — an unexpected exit (auto-recovered via reconnect-backfill).
+ *
+ * Scoped to companyUuid + connectionUuid (the route fences the connection's
+ * ownership first). Idempotent: re-reporting the same outcome is a no-op update.
+ * Returns true when a row was updated, false when no matching active row exists
+ * (e.g. the wake already ended) — the route maps false to 404. companyUuid-scoped;
+ * a query failure propagates (no swallow).
+ */
+export async function reportExecutionInterrupt(
+  companyUuid: string,
+  connectionUuid: string,
+  entityType: string,
+  entityUuid: string,
+  reason: InterruptReason,
+): Promise<boolean> {
+  const result = await prisma.daemonExecution.updateMany({
+    where: { companyUuid, connectionUuid, entityType, entityUuid },
+    data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason: reason },
+  });
+  return result.count > 0;
+}
+
+/**
+ * Resume a user-interrupted execution: the daemon re-dispatches the wake for the
+ * entity, so this transitions the sticky `interrupted` row back to `running` and
+ * clears `interruptedReason`. ONLY a row that is `interrupted` with
+ * `interruptedReason === "user"` is resumable — a `crash` is auto-recovered by the
+ * daemon's reconnect-backfill, never manually (q7=a). companyUuid + connectionUuid
+ * scoped (the route fences ownership first). Returns a discriminated result so the
+ * route maps not-found → 404 and not-resumable → 400. A query failure propagates.
+ *
+ * NOTE: the actual re-spawn of Claude is the daemon's job (it receives a resume
+ * dispatch and continues via `claude --resume`); this only records the row's
+ * transition so the UI reflects it immediately. The subsequent daemon snapshot
+ * re-affirms `running` and clears the reason via the reconcile upsert.
+ */
+export async function resumeExecution(
+  companyUuid: string,
+  connectionUuid: string,
+  entityType: string,
+  entityUuid: string,
+): Promise<ResumeExecutionResult> {
+  const row = await prisma.daemonExecution.findFirst({
+    where: { companyUuid, connectionUuid, entityType, entityUuid },
+    select: { id: true, status: true, interruptedReason: true },
+  });
+  if (!row) return { ok: false, reason: "not_found" };
+  if (row.status !== INTERRUPTED_EXECUTION_STATUS || row.interruptedReason !== "user") {
+    return {
+      ok: false,
+      reason: "not_resumable",
+      status: row.status,
+      interruptedReason: row.interruptedReason,
+    };
+  }
+  await prisma.daemonExecution.update({
+    where: { id: row.id },
+    data: {
+      status: "running",
+      interruptedReason: null,
+      startedAt: new Date(),
+    },
+  });
+  return { ok: true };
 }
 
 // ===== SSE event publish =====

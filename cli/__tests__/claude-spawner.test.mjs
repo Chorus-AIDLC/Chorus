@@ -281,6 +281,100 @@ describe("ClaudeSpawner.wake", () => {
   });
 });
 
+// 子3 — daemon-interrupt-resume: detached POSIX spawn (process-group leader) so the
+// interrupt path can group-kill the tree, plus the onChild handle hand-off. These
+// MUST NOT regress stdin prompt delivery or stream-json parsing.
+describe("ClaudeSpawner.wake — detached spawn + onChild (子3)", () => {
+  it("spawns POSIX children detached:true (process-group leader) without regressing stdin/stdout", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const onMessage = vi.fn();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      platform: "linux", // POSIX
+    });
+
+    const p = spawner.wake({ prompt: "PROMPT", sessionId: SID, isNew: true, mcpConfigPath: "/m.json", onMessage });
+    // stream-json still parses line by line, prompt still goes over stdin.
+    child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
+    child.emit("close", 0);
+    const result = await p;
+
+    const opts = spawnImpl.mock.calls[0][2];
+    expect(opts.detached).toBe(true); // POSIX → group leader
+    expect(opts.stdio).toEqual(["pipe", "pipe", "pipe"]); // IO unchanged
+    expect(opts.shell).toBe(false);
+    // No IO regression:
+    expect(child.stdin.writes.join("")).toBe("PROMPT"); // prompt over stdin
+    expect(child.stdin.end).toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith({ type: "system", session_id: SID }); // NDJSON parsed
+    expect(result).toEqual({ sessionId: SID, exitCode: 0, isNew: true });
+  });
+
+  it("does NOT set detached on Windows (taskkill walks the tree by pid)", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "C:/claude.exe",
+      spawnImpl,
+      logger: silent,
+      platform: "win32",
+    });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
+    child.emit("close", 0);
+    await p;
+    expect(spawnImpl.mock.calls[0][2].detached).toBe(false);
+  });
+
+  it("hands the live child to onChild the moment it spawns (before the promise resolves)", async () => {
+    const child = makeFakeChild();
+    child.pid = 4242;
+    const spawnImpl = vi.fn(() => child);
+    const onChild = vi.fn();
+    const spawner = new ClaudeSpawner({ claudePath: "/c", spawnImpl, logger: silent, platform: "linux" });
+
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true, onChild });
+    // onChild fired synchronously at spawn time — before close.
+    expect(onChild).toHaveBeenCalledTimes(1);
+    expect(onChild.mock.calls[0][0]).toBe(child);
+    expect(onChild.mock.calls[0][0].pid).toBe(4242);
+    child.emit("close", 0);
+    await p;
+  });
+
+  it("a throwing onChild handler is swallowed (never breaks the spawn path)", async () => {
+    const child = makeFakeChild();
+    const warns = [];
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "/c",
+      spawnImpl,
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      platform: "linux",
+    });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true, onChild: () => { throw new Error("boom"); } });
+    child.emit("close", 0);
+    const result = await p;
+    expect(result.exitCode).toBe(0); // spawn still completed cleanly
+    expect(warns.join("")).toMatch(/onChild handler threw/);
+  });
+
+  it("does NOT call onChild when the spawn itself throws", async () => {
+    const onChild = vi.fn();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/c",
+      spawnImpl: () => { throw new Error("spawn failed"); },
+      logger: silent,
+      platform: "linux",
+    });
+    const result = await spawner.wake({ prompt: "x", sessionId: SID, isNew: true, onChild });
+    expect(onChild).not.toHaveBeenCalled();
+    expect(result.exitCode).toBeNull();
+  });
+});
+
 describe("mcp-config", () => {
   it("buildMcpConfig wires the chorus http server with Bearer auth", () => {
     const cfg = buildMcpConfig({ url: "https://chorus.example/", apiKey: "cho_x" });

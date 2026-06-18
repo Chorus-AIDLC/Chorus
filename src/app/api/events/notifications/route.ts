@@ -3,7 +3,7 @@
 // Auth via cookie (EventSource automatically sends cookies)
 
 import { getAuthContext } from "@/lib/auth";
-import { eventBus } from "@/lib/event-bus";
+import { eventBus, controlEventName } from "@/lib/event-bus";
 import {
   parseSelfReport,
   registerConnection,
@@ -67,6 +67,22 @@ export async function GET(request: NextRequest) {
 
       eventBus.on(`notification:${userKey}`, handler);
 
+      // Subscribe the per-connection reverse-control handler (子3) — only for a
+      // real daemon connection (conn non-null). The control event is keyed per
+      // connection (`control:{conn.uuid}`) so an interrupt reaches only the one
+      // daemon stream holding the subprocess, never every connection of the agent.
+      // It is forwarded verbatim as a `type:"control"` SSE data event the daemon's
+      // listener forks to its control handler — NOT a wake, NOT a Notification.
+      // Browser clients have no `conn`, so they never subscribe and never receive it.
+      const controlHandler = conn
+        ? (event: Record<string, unknown>) => {
+            send(`data: ${JSON.stringify(event)}\n\n`);
+          }
+        : null;
+      if (conn && controlHandler) {
+        eventBus.on(controlEventName(conn.uuid), controlHandler);
+      }
+
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
@@ -78,6 +94,11 @@ export async function GET(request: NextRequest) {
       // Cleanup on abort (client disconnect)
       request.signal.addEventListener("abort", () => {
         eventBus.off(`notification:${userKey}`, handler);
+        // Tear down the per-connection control subscription alongside the
+        // notification handler (only present for a real daemon connection).
+        if (conn && controlHandler) {
+          eventBus.off(controlEventName(conn.uuid), controlHandler);
+        }
         clearInterval(heartbeat);
         try {
           controller.close();

@@ -31,6 +31,41 @@ export interface PresenceEvent {
   timestamp: number;
 }
 
+/**
+ * Reverse server→daemon control command (子3 — daemon-interrupt-resume).
+ *
+ * Published on the per-connection `control:{connectionUuid}` channel and delivered
+ * to the targeted daemon on its existing notification SSE stream. This is purely
+ * ADDITIVE to the notification/presence/change/execution events — it does NOT
+ * alter any of them and rides the same Redis fan-out so a multi-instance
+ * deployment delivers it from whichever instance holds that daemon's stream.
+ *
+ * Critically this is NOT a wake: it is delivered as a distinct SSE `type:"control"`
+ * the daemon's listener forks to a control handler, never to the WakeQueue, and it
+ * is never persisted as a Notification nor a member of the daemon's WAKE_ACTIONS.
+ *
+ * `targetConnectionUuid` is carried in the payload as a defense-in-depth re-check
+ * on the daemon side (the routing key already scopes delivery per connection), and
+ * `{entityType, entityUuid}` lets the daemon self-check it actually holds that
+ * entity's running subprocess before acting.
+ */
+export interface ControlEvent {
+  type: "control";
+  command: "interrupt" | "resume";
+  targetConnectionUuid: string;
+  entityType: "task" | "idea" | "proposal" | "document";
+  entityUuid: string;
+}
+
+/**
+ * EventBus channel name for a daemon connection's reverse control commands.
+ * Keyed per connection (NOT per agent) so an interrupt reaches only the one daemon
+ * stream holding the subprocess, never every connection of the agent.
+ */
+export function controlEventName(connectionUuid: string): string {
+  return `control:${connectionUuid}`;
+}
+
 // Single Redis channel for all events (ElastiCache Serverless doesn't support PSUBSCRIBE)
 const REDIS_CHANNEL = "chorus:events";
 

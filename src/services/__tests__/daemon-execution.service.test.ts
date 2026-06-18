@@ -6,10 +6,13 @@ const mockPrisma = vi.hoisted(() => ({
     upsert: vi.fn(),
     updateMany: vi.fn(),
     findMany: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
   },
   daemonConnection: {
     count: vi.fn(),
     findMany: vi.fn(),
+    findFirst: vi.fn(),
   },
   task: {
     findMany: vi.fn(),
@@ -55,6 +58,11 @@ import {
   filterValidExecutionEntities,
   publishExecutionChange,
   executionEventName,
+  reportExecutionInterrupt,
+  resumeExecution,
+  isConnectionLive,
+  INTERRUPTED_EXECUTION_STATUS,
+  DISPLAYABLE_EXECUTION_STATUSES,
   type SnapshotExecution,
 } from "@/services/daemon-execution.service";
 
@@ -82,6 +90,7 @@ beforeEach(() => {
   mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
   mockPrisma.daemonConnection.count.mockResolvedValue(0);
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+  mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
   mockPrisma.task.findMany.mockResolvedValue([]);
   mockPrisma.idea.findMany.mockResolvedValue([]);
   mockPrisma.proposal.findMany.mockResolvedValue([]);
@@ -304,6 +313,7 @@ describe("getVisibleExecutions", () => {
       entityUuid: t1,
       rootIdeaUuid: null,
       status: "running",
+      interruptedReason: null,
       startedAt: new Date("2026-06-15T03:00:00.000Z"),
       createdAt: new Date("2026-06-15T03:00:00.000Z"),
       updatedAt: new Date("2026-06-15T03:30:00.000Z"),
@@ -329,7 +339,7 @@ describe("getVisibleExecutions", () => {
     expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
       where: {
         companyUuid,
-        status: { in: ["running", "queued"] },
+        status: { in: ["running", "queued", "interrupted"] },
         agent: { ownerUuid },
       },
     });
@@ -342,6 +352,7 @@ describe("getVisibleExecutions", () => {
       entityUuid: t1,
       rootIdeaUuid: null,
       status: "running",
+      interruptedReason: null,
       startedAt: "2026-06-15T03:00:00.000Z",
       createdAt: "2026-06-15T03:00:00.000Z",
       updatedAt: "2026-06-15T03:30:00.000Z",
@@ -407,7 +418,9 @@ describe("getVisibleExecutions", () => {
     mockPrisma.daemonExecution.findMany.mockResolvedValue([makeRow()]);
     await getVisibleExecutions({ type: "agent", companyUuid, actorUuid: agentUuid });
     expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
-      where: { companyUuid, status: { in: ["running", "queued"] }, agentUuid },
+      // The read includes the sticky `interrupted` status (子3) so an
+      // interrupted/resumable row keeps showing — not just the two active statuses.
+      where: { companyUuid, status: { in: ["running", "queued", "interrupted"] }, agentUuid },
     });
   });
 
@@ -498,11 +511,15 @@ describe("getVisibleExecutions", () => {
 
 // ===== getExecutionsForConnection =====
 describe("getExecutionsForConnection", () => {
-  it("filters by companyUuid + connectionUuid + active status", async () => {
+  it("filters by companyUuid + connectionUuid + displayable status (active + sticky interrupted)", async () => {
     mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
     await getExecutionsForConnection(companyUuid, connectionUuid);
     expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0]).toEqual({
-      where: { companyUuid, connectionUuid, status: { in: ["running", "queued"] } },
+      where: {
+        companyUuid,
+        connectionUuid,
+        status: { in: ["running", "queued", "interrupted"] },
+      },
     });
   });
 
@@ -739,5 +756,141 @@ describe("publishExecutionChange", () => {
     await expect(publishExecutionChange(companyUuid, connectionUuid)).resolves.toBeUndefined();
     expect(mockEventBus.emit).not.toHaveBeenCalled();
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===== Interrupt / resume (子3) — entity-generic, on the execution row =====
+describe("reportExecutionInterrupt", () => {
+  it("marks the connection+entity row interrupted with the given reason", async () => {
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
+    const ok = await reportExecutionInterrupt(companyUuid, connectionUuid, "task", t1, "user");
+    expect(ok).toBe(true);
+    expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1 },
+      data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason: "user" },
+    });
+  });
+
+  it("records reason=crash too", async () => {
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
+    await reportExecutionInterrupt(companyUuid, connectionUuid, "idea", "idea-9", "crash");
+    expect(mockPrisma.daemonExecution.updateMany.mock.calls[0][0].data).toEqual({
+      status: INTERRUPTED_EXECUTION_STATUS,
+      interruptedReason: "crash",
+    });
+  });
+
+  it("returns false when no matching row exists (wake already ended)", async () => {
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 0 });
+    const ok = await reportExecutionInterrupt(companyUuid, connectionUuid, "task", t1, "user");
+    expect(ok).toBe(false);
+  });
+});
+
+describe("resumeExecution", () => {
+  it("transitions a user-interrupted row back to running and clears the reason", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({
+      id: 7,
+      status: "interrupted",
+      interruptedReason: "user",
+    });
+    mockPrisma.daemonExecution.update.mockResolvedValue({});
+    const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+    expect(res).toEqual({ ok: true });
+    const arg = mockPrisma.daemonExecution.update.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: 7 });
+    expect(arg.data.status).toBe("running");
+    expect(arg.data.interruptedReason).toBeNull();
+    expect(arg.data.startedAt).toBeInstanceOf(Date);
+  });
+
+  it("rejects a crash-interrupted row as not-resumable (no update)", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({
+      id: 8,
+      status: "interrupted",
+      interruptedReason: "crash",
+    });
+    const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+    expect(res).toMatchObject({ ok: false, reason: "not_resumable", interruptedReason: "crash" });
+    expect(mockPrisma.daemonExecution.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-interrupted (running) row as not-resumable", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({
+      id: 9,
+      status: "running",
+      interruptedReason: null,
+    });
+    const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+    expect(res).toMatchObject({ ok: false, reason: "not_resumable", status: "running" });
+    expect(mockPrisma.daemonExecution.update).not.toHaveBeenCalled();
+  });
+
+  it("returns not_found when no row exists for the connection+entity", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);
+    const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+    expect(res).toEqual({ ok: false, reason: "not_found" });
+  });
+});
+
+describe("DISPLAYABLE_EXECUTION_STATUSES", () => {
+  it("is the two active statuses plus the sticky interrupted status", () => {
+    expect([...DISPLAYABLE_EXECUTION_STATUSES]).toEqual(["running", "queued", "interrupted"]);
+  });
+});
+
+describe("reconcileSnapshot does not end an interrupted row (sticky)", () => {
+  it("the absent-from-snapshot sweep only targets running/queued rows", async () => {
+    // The sweep query filters status to the ACTIVE set — an interrupted row is never
+    // selected for ending even though it is absent from the snapshot.
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.daemonExecution.upsert.mockResolvedValue({});
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, []);
+    expect(mockPrisma.daemonExecution.findMany.mock.calls[0][0].where.status).toEqual({
+      in: [...ACTIVE_EXECUTION_STATUSES],
+    });
+  });
+
+  it("a re-dispatched (resumed) entity clears interruptedReason on upsert update", async () => {
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([]);
+    mockPrisma.daemonExecution.upsert.mockResolvedValue({});
+    const snap: SnapshotExecution[] = [
+      { entityType: "task", entityUuid: t1, rootIdeaUuid: null, status: "running", startedAt: new Date() },
+    ];
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, snap);
+    expect(mockPrisma.daemonExecution.upsert.mock.calls[0][0].update.interruptedReason).toBeNull();
+  });
+});
+
+// ===== isConnectionLive (resume gate) =====
+describe("isConnectionLive", () => {
+  it("true for an online connection seen within the staleness threshold", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "online",
+      lastSeenAt: new Date(),
+    });
+    expect(await isConnectionLive(companyUuid, connectionUuid)).toBe(true);
+  });
+
+  it("false when the connection does not exist in-company", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    expect(await isConnectionLive(companyUuid, connectionUuid)).toBe(false);
+  });
+
+  it("false for a stale lastSeenAt even if status is online", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "online",
+      lastSeenAt: new Date(Date.now() - STALE_THRESHOLD_MS - 1000),
+    });
+    expect(await isConnectionLive(companyUuid, connectionUuid)).toBe(false);
+  });
+
+  it("false when status is not online", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "offline",
+      lastSeenAt: new Date(),
+    });
+    expect(await isConnectionLive(companyUuid, connectionUuid)).toBe(false);
   });
 });

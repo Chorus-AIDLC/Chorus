@@ -78,11 +78,47 @@ export class EventRouter {
       return;
     }
 
-    // Resolve the serialization key + idea attribution, then enqueue. keyFor may
-    // hit the network (lineage), so do it before enqueue; the wake itself runs on
-    // the queue. `attribution` carries both the direct idea (session anchor, in the
-    // key) and the resolved root idea (for the snapshot) — threaded explicitly so
-    // the snapshot's root is never derived from the direct-idea key.
+    await this.#resolveAndEnqueue(n, notificationUuid);
+  }
+
+  /**
+   * Re-dispatch a RESUME (子3 — daemon-interrupt-resume): the reverse control
+   * channel delivered a `command:"resume"` for an entity, so re-run its wake. Unlike
+   * a notification this is NOT fetched from the unread list and has no
+   * notificationUuid — it is a synthetic, entity-generic `resource_resumed` wake.
+   * It flows through the SAME keyFor → markQueued → enqueue path as any wake, so the
+   * per-direct-idea serialization holds and the spawner's on-disk transcript probe
+   * naturally selects `claude --resume <directIdeaUuid>` (the session already
+   * exists). Synchronous + non-throwing, mirroring `dispatch`.
+   * @param {{ entityType?: string, entityUuid?: string }} target
+   */
+  dispatchResume(target) {
+    const entityType = target?.entityType;
+    const entityUuid = target?.entityUuid;
+    if (typeof entityType !== "string" || typeof entityUuid !== "string" || !entityUuid) {
+      this.logger.warn("[Chorus] resume dispatch missing entityType/entityUuid, skipping");
+      return;
+    }
+    const n = { action: "resource_resumed", entityType, entityUuid };
+    this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
+      this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);
+    });
+  }
+
+  /**
+   * Resolve a wake's serialization key + idea attribution, mark it queued, and
+   * enqueue it on the per-direct-idea queue. Shared by the notification path
+   * (`#fetchAndRoute`) and the resume re-dispatch (`dispatchResume`). `label` is a
+   * human-readable id for logs (a notificationUuid, or a synthetic resume label).
+   * keyFor may hit the network (lineage), so it runs before enqueue; the wake itself
+   * runs on the queue. `attribution` carries both the direct idea (session anchor, in
+   * the key) and the resolved root idea (for the snapshot), threaded explicitly so
+   * the snapshot's root is never derived from the direct-idea key.
+   * @param {any} n  A notification (or synthetic resume) with at least action +
+   *                 entityType + entityUuid.
+   * @param {string} label
+   */
+  async #resolveAndEnqueue(n, label) {
     let key;
     let attribution;
     try {
@@ -90,16 +126,16 @@ export class EventRouter {
       key = resolved.key;
       attribution = resolved;
     } catch (err) {
-      this.logger.warn(`[Chorus] could not resolve wake key for ${notificationUuid}: ${err}`);
+      this.logger.warn(`[Chorus] could not resolve wake key for ${label}: ${err}`);
       return;
     }
-    // Mark the task queued (emits a snapshot) BEFORE enqueue, so the server
+    // Mark the resource queued (emits a snapshot) BEFORE enqueue, so the server
     // sees it waiting even while it sits behind a same-direct-idea wake. Optional +
     // non-throwing so a missing/failed hook never breaks routing.
     try {
       this.waker.markQueued?.(n, key, attribution);
     } catch (err) {
-      this.logger.warn(`[Chorus] markQueued failed for ${notificationUuid}: ${err}`);
+      this.logger.warn(`[Chorus] markQueued failed for ${label}: ${err}`);
     }
     this.queue.enqueue(key, () => this.waker.wake(n, key, attribution));
   }

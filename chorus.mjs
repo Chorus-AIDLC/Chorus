@@ -26,7 +26,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SUBCOMMANDS = new Set(["daemon", "login"]);
 
-/** Parse `--url` / `--api-key` (and `=` forms) + boolean `--yolo` out of an arg list. */
+/**
+ * Parse `--url` / `--api-key` / `--sigint-timeout` (and `=` forms) + boolean
+ * `--yolo` out of an arg list.
+ */
 function parseClientFlags(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
@@ -36,6 +39,8 @@ function parseClientFlags(argv) {
     else if (a === "--api-key") out.apiKey = argv[i + 1];
     else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
     else if (a === "--yolo") out.yolo = true;
+    else if (a === "--sigint-timeout") out.sigintTimeout = argv[i + 1];
+    else if (a.startsWith("--sigint-timeout=")) out.sigintTimeout = a.slice("--sigint-timeout=".length);
   }
   return out;
 }
@@ -148,6 +153,9 @@ DAEMON / LOGIN (client mode)
   --yolo                   Give the woken Claude FULL permissions             (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes,
                            any command). Default is Chorus-MCP-tools-only.
+  --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill   (env: CHORUS_DAEMON_SIGINT_TIMEOUT)
+                           when an interrupt is received (default: 10000).
+                           Also configurable via ~/.chorus/daemon.json sigintTimeoutMs.
 
   Credential resolution order: flags > CHORUS_URL/CHORUS_API_KEY env >
   ~/.chorus/daemon.json (from 'chorus login') > Claude Code plugin config.

@@ -57,6 +57,22 @@ describe("buildPrompt", () => {
     }
   });
 
+  it("resource_resumed is an entity-generic wake action with a continue prompt (子3)", () => {
+    expect(WAKE_ACTIONS.has("resource_resumed")).toBe(true);
+    // Resume is entity-generic and arrives off the control channel as a synthetic
+    // dispatch carrying only entityType + entityUuid (no title/project/actor).
+    const p = buildPrompt({ action: "resource_resumed", entityType: "task", entityUuid: "task-1" });
+    expect(p).not.toBeNull();
+    expect(p).toContain("task-1"); // the entity uuid
+    expect(p).toContain("RESUMED"); // tells the agent it's a resume
+    expect(p.toLowerCase()).toContain("continue where you left off");
+    expect(p).toContain("chorus_get_task");
+    // Works for a non-task entity too (idea), since interrupted state is generic.
+    const pi = buildPrompt({ action: "resource_resumed", entityType: "idea", entityUuid: "idea-7" });
+    expect(pi).not.toBeNull();
+    expect(pi).toContain("idea-7");
+  });
+
   it("WAKE_ACTIONS covers the agent-relevant server notifications and excludes the noisy ones", () => {
     for (const a of [
       "task_assigned",
@@ -103,6 +119,8 @@ function makeWaker(overrides = {}) {
     overrides.writeMcpConfigFn ?? vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() }));
   // Disk probe is injected so tests control new-vs-resume without touching the FS.
   const isNewSessionFn = overrides.isNewSessionFn ?? vi.fn(() => true);
+  // Interrupt reporter (子3): injected spy so tests assert user-vs-crash reporting.
+  const reportInterrupt = overrides.reportInterrupt ?? vi.fn(async () => {});
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage,
@@ -112,8 +130,9 @@ function makeWaker(overrides = {}) {
     logger: silent,
     writeMcpConfigFn,
     isNewSessionFn,
+    reportInterrupt,
   });
-  return { waker, spawner, lineage, hooks, writeMcpConfigFn, isNewSessionFn };
+  return { waker, spawner, lineage, hooks, writeMcpConfigFn, isNewSessionFn, reportInterrupt };
 }
 
 describe("Waker.wake full loop", () => {
@@ -249,6 +268,125 @@ describe("Waker.wake full loop", () => {
     expect(snap).toHaveLength(1);
     expect(snap[0].rootIdeaUuid).toBe(ROOT_IDEA);
     expect(snap[0].status).toBe("queued");
+  });
+});
+
+describe("Waker interrupt / crash reporting (子3)", () => {
+  // A child double the spawner hands to onChild.
+  const FAKE_CHILD = { pid: 5555 };
+
+  /** A spawner that registers the child (onChild) then resolves with `exitCode`. */
+  function spawnerWith(exitCode, { duringRun } = {}) {
+    return {
+      wake: vi.fn(async ({ sessionId, onChild, onMessage }) => {
+        onChild?.(FAKE_CHILD);
+        onMessage?.({ type: "system", session_id: sessionId });
+        if (duringRun) duringRun();
+        return { sessionId, exitCode, isNew: true };
+      }),
+    };
+  }
+
+  it("stores the live child in the running execution entry, but the snapshot EXCLUDES it", async () => {
+    let entryDuringRun;
+    let snapshotDuringRun;
+    const { waker } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          entryDuringRun = waker.executions.get("task:task-1");
+          snapshotDuringRun = waker.buildExecutionSnapshot();
+          return { sessionId, exitCode: 0, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    // Registry entry holds the live child handle for the interrupt path...
+    expect(entryDuringRun.child).toBe(FAKE_CHILD);
+    expect(entryDuringRun.status).toBe("running");
+    // ...but the uploaded snapshot maps only serializable fields — NO child.
+    expect(snapshotDuringRun).toHaveLength(1);
+    expect(snapshotDuringRun[0]).not.toHaveProperty("child");
+    expect(Object.keys(snapshotDuringRun[0]).sort()).toEqual(
+      ["entityType", "entityUuid", "rootIdeaUuid", "startedAt", "status"].sort()
+    );
+  });
+
+  it("reports interrupted(reason=user) when the control handler marked the entity interrupting", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      // Simulate the control handler setting the flag mid-run, then a graceful exit.
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.markInterrupting("task", "task-1");
+          return { sessionId, exitCode: 0, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(reportInterrupt).toHaveBeenCalledTimes(1);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "user");
+    // The interrupting flag is cleared after the wake (never leaks to the next one).
+    expect(waker.interrupting.has("task:task-1")).toBe(false);
+  });
+
+  it("reports interrupted(reason=crash) on an unexpected non-zero exit with NO interrupt flag", async () => {
+    const { waker, reportInterrupt } = makeWaker({ spawner: spawnerWith(2) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+  });
+
+  it("reports crash on a null exit (spawn/transport failure) with no interrupt flag", async () => {
+    const { waker, reportInterrupt } = makeWaker({ spawner: spawnerWith(null) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+  });
+
+  it("does NOT report anything on a clean exit (code 0, no interrupt)", async () => {
+    const { waker, reportInterrupt } = makeWaker({ spawner: spawnerWith(0) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).not.toHaveBeenCalled();
+  });
+
+  it("a user interrupt on a non-zero exit still reports user (interrupt flag wins over crash)", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.markInterrupting("task", "task-1"); // interrupt requested
+          return { sessionId, exitCode: 137, isNew: true }; // killed (SIGKILL → 137)
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledTimes(1);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "user");
+  });
+
+  it("a reporter that throws does NOT crash the wake (logged, swallowed)", async () => {
+    const warns = [];
+    const { waker } = makeWaker({
+      spawner: spawnerWith(2),
+      reportInterrupt: vi.fn(async () => { throw new Error("report blew up"); }),
+    });
+    waker.logger = { ...silent, warn: (m) => warns.push(m) };
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await expect(waker.wake(TASK_NOTIF, resolved.key, resolved)).resolves.toBeUndefined();
+    expect(warns.join("")).toMatch(/reportInterrupt failed/);
+  });
+
+  it("markInterrupting is keyed the same as the execution registry", async () => {
+    const { waker } = makeWaker();
+    waker.markInterrupting("task", "task-1");
+    expect(waker.interrupting.has("task:task-1")).toBe(true);
   });
 });
 

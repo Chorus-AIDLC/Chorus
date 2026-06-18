@@ -85,6 +85,22 @@ export function buildPrompt(n) {
         `projectUuid: ${n.projectUuid}). Use chorus_get_task and chorus_get_comments to see the ` +
         `verification feedback, then fix the issues.\n${mentionGuidance(n, "task")}`
       );
+    case "resource_resumed":
+      // A user resumed a previously-interrupted wake (子3 — daemon-interrupt-resume).
+      // Resume is entity-generic (task / idea / proposal / document) and arrives as a
+      // synthetic dispatch off the reverse CONTROL channel — NOT a persisted
+      // notification — so it carries only entityType + entityUuid (no actor / title /
+      // project). Because the direct-idea transcript already exists on disk, the
+      // daemon's isNewSession probe selects `claude --resume <directIdeaUuid>`
+      // automatically, so the woken Claude continues the SAME session where it left
+      // off. It intentionally has no @mention (a self-resume has no actor to address).
+      return (
+        `[Chorus] Your work on this ${n.entityType} was RESUMED after an interrupt ` +
+        `(${n.entityType}Uuid: ${n.entityUuid}). Continue where you left off — re-check the ` +
+        `current state with the appropriate chorus_get_* tool (e.g. chorus_get_task / ` +
+        `chorus_get_idea) plus chorus_get_comments for any new feedback, then resume the work ` +
+        `you had started.`
+      );
     case "task_verified":
       return (
         `[Chorus] Task '${n.entityTitle}' was verified and is now done (taskUuid: ${n.entityUuid}, ` +
@@ -122,4 +138,9 @@ export const WAKE_ACTIONS = new Set([
   "idea_claimed",
   "task_reopened",
   "task_verified",
+  // 子3 — daemon-interrupt-resume: a user-resumed wake re-dispatches through the
+  // wake path so the daemon continues the session via `--resume`. Entity-generic
+  // (task / idea / proposal / document); arrives via the reverse CONTROL channel as
+  // a synthetic dispatch, NOT a persisted notification.
+  "resource_resumed",
 ]);
