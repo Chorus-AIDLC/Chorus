@@ -1407,6 +1407,7 @@
   },
   "agentPresence": {
     "online": "在线",
+    "onlineUnit": "{count, plural, other {智能体在线}}",
     "loading": "正在检查智能体…",
     "unavailable": "智能体不可用",
     "pillAria": "在线智能体 — 打开详情",

@@ -52,13 +52,18 @@ function PillDot({
     return (
       <span
         aria-hidden
-        className="inline-flex h-2 w-2 rounded-full bg-[#D97706] opacity-80"
+        className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-[#D97706] opacity-90"
       />
     );
   }
   // online → pulsing green; idle + loading → flat grey (loading additionally
-  // mutes the surrounding text so the two stay distinguishable).
-  return <StatusDot online={state === "online"} size="sm" />;
+  // mutes the surrounding text so the two stay distinguishable). `md` matches the
+  // capsule's larger scale and the modal/rail dot vocabulary.
+  return (
+    <span className="shrink-0">
+      <StatusDot online={state === "online"} size="md" />
+    </span>
+  );
 }
 
 // The list of online connections + their running/queued executions, rendered
@@ -134,6 +139,25 @@ function PopoverBody({
   );
 }
 
+// Per-state capsule skin. The presence pill is a full-width warm "capsule" that
+// coheres with the rail (not a bare ghost button). Boldness lives in exactly one
+// place — the count glyph — so the surface around it stays quiet. Each state is
+// visually distinct (no silent error): online tints the count green, error
+// shifts the whole capsule amber, loading/idle stay neutral-muted.
+const CAPSULE_SKIN: Record<
+  "loading" | "error" | "idle" | "online",
+  string
+> = {
+  // Warm neutral surface + hairline border; subtle hover lift toward the brand
+  // terracotta wash used elsewhere in the rail.
+  online:
+    "border-[#E7E1D7] bg-[#FCFBF8] hover:bg-[#FBF4EF] hover:border-[#E2D6C9]",
+  idle: "border-[#EAE5DC] bg-[#FAF8F4] hover:bg-[#F6F2EC]",
+  loading: "border-[#EAE5DC] bg-[#FAF8F4]",
+  // Error reskins the capsule amber so a failed poll can never read as "0 online".
+  error: "border-[#EBD9C4] bg-[#FFF9F2] hover:bg-[#FEF3E4]",
+};
+
 // The presence pill. `mobile` widens the type scale a touch to match the
 // profile block's mobile-drawer sizing (the only other resident rail element
 // that tunes by `mobile`).
@@ -142,8 +166,8 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
   const { status, onlineCount, connections, executionsByConnection, setModalOpen } =
     useAgentPresence();
 
-  const textSize = mobile ? "text-[13px]" : "text-[11px]";
-  const countSize = mobile ? "text-[15px]" : "text-[13px]";
+  const countSize = mobile ? "text-[17px]" : "text-[15px]";
+  const unitSize = mobile ? "text-[12.5px]" : "text-[11.5px]";
 
   // Derive the single rendered state from (status, onlineCount). Loading and
   // error are owned by the provider's poll lifecycle; idle vs online is purely
@@ -157,27 +181,34 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
           ? "online"
           : "idle";
 
-  // The pill's text. Error must NEVER read as "0 online" (no silent error);
-  // loading is a muted placeholder with no count flash; idle and online both
-  // show the localized "{count} online" with the count as the emphasized glyph.
-  let label: React.ReactNode;
+  // The capsule body. Error must NEVER read as "0 online" (no silent error);
+  // loading is a muted placeholder with no count flash; idle and online show the
+  // emphasized count glyph + a pluralized "agent(s) online" unit.
+  let body: React.ReactNode;
   if (status === "error") {
-    label = (
-      <span className="truncate text-[#B45309]" title={t("unavailable")}>
+    body = (
+      <span className={`truncate font-medium text-[#B45309] ${unitSize}`}>
         {t("unavailable")}
       </span>
     );
   } else if (status === "loading") {
-    label = (
-      <span className="truncate text-muted-foreground/60">{t("loading")}</span>
+    body = (
+      <span className={`truncate text-muted-foreground/70 ${unitSize}`}>
+        {t("loading")}
+      </span>
     );
   } else {
-    label = (
-      <span className="truncate text-muted-foreground">
-        <span className={`font-semibold tabular-nums text-foreground ${countSize}`}>
+    const onlineTint = onlineCount > 0 ? "text-[#15803D]" : "text-foreground/80";
+    body = (
+      <span className={`flex min-w-0 items-baseline gap-1.5 truncate ${unitSize}`}>
+        <span
+          className={`font-semibold leading-none tabular-nums ${onlineTint} ${countSize}`}
+        >
           {onlineCount}
-        </span>{" "}
-        {t("online")}
+        </span>
+        <span className="truncate text-muted-foreground">
+          {t("onlineUnit", { count: onlineCount })}
+        </span>
       </span>
     );
   }
@@ -191,12 +222,11 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
-          size="sm"
           aria-label={t("pillAria")}
-          className={`w-full justify-start gap-2 rounded-lg px-2.5 ${mobile ? "h-9" : "h-8"} text-muted-foreground hover:text-foreground ${textSize}`}
+          className={`group h-auto w-full justify-start gap-2.5 rounded-xl border px-3 ${mobile ? "py-2.5" : "py-2"} shadow-[0_1px_2px_rgba(44,44,44,0.03)] transition-colors ${CAPSULE_SKIN[dotState]}`}
         >
           <PillDot state={dotState} />
-          {label}
+          {body}
         </Button>
       </PopoverTrigger>
       <PopoverContent

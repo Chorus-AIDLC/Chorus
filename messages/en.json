@@ -1406,6 +1406,7 @@
   },
   "agentPresence": {
     "online": "online",
+    "onlineUnit": "{count, plural, one {agent online} other {agents online}}",
     "loading": "Checking agents…",
     "unavailable": "Agents unavailable",
     "pillAria": "Online agents — open details",

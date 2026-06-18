@@ -439,17 +439,18 @@ export default function DashboardLayout({
         </nav>
       </div>
 
-      {/* Agent Presence pill — resident rail affordance (online-agent count +
-          click popover). Reads from the shell-level AgentPresenceProvider; sits
-          just above the user-profile block in both the desktop rail and the
-          mobile drawer. */}
-      <div className="px-6 pb-2">
+      {/* Bottom-pinned rail footer: the agent-presence pill sits directly above
+          the user-profile block. Grouped into ONE flex child so the rail's
+          justify-between pins the whole footer to the bottom-left (with two
+          children — nav + footer — the pill no longer floats mid-rail). */}
+      <div className="mt-auto flex flex-col gap-1 px-4 pb-4">
+        {/* Agent Presence pill — resident rail affordance (online-agent count +
+            click popover). Reads from the shell-level AgentPresenceProvider. */}
         <AgentPresencePill mobile={mobile} />
-      </div>
 
-      {/* User Profile */}
-      <div className="p-6">
-        <div className="flex items-center gap-2">
+        {/* User Profile */}
+        <div className="px-2 pt-1">
+          <div className="flex items-center gap-2">
           <div className={`flex items-center justify-center rounded-full bg-primary font-medium text-primary-foreground ${mobile ? "h-10 w-10 text-base" : "h-9 w-9 text-sm"}`}>
             {user?.name?.charAt(0) || "U"}
           </div>
@@ -470,6 +471,7 @@ export default function DashboardLayout({
           >
             <LogOut className="h-4 w-4" />
           </Button>
+          </div>
         </div>
       </div>
     </>

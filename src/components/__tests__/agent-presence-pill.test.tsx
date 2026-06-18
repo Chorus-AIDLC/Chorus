@@ -52,12 +52,31 @@ vi.mock("next-intl", async () => {
     }
     return typeof node === "string" ? node : fullKey;
   }
+  // Minimal ICU `plural` evaluation so the mock matches real next-intl behavior
+  // for the pluralized unit string (en `one`/`other`). Handles the single-arg
+  // form `{name, plural, one {…} other {…}}` with `#` → value substitution.
+  function evalPlural(s: string, params: Record<string, string | number>): string {
+    // Greedy `(.+)` + single trailing `\}` so the last branch keeps its own
+    // closing brace (a lazy `.+?\}\}` would eat it and break the `other` match).
+    return s.replace(
+      /\{(\w+),\s*plural,\s*(.+)\}/g,
+      (_full, argName: string, branches: string) => {
+        const value = Number(params[argName]);
+        const cat = value === 1 ? "one" : "other";
+        const re = new RegExp(`${cat}\\s*\\{([^}]*)\\}`);
+        const other = /other\s*\{([^}]*)\}/.exec(branches);
+        const chosen = re.exec(branches) ?? other;
+        return (chosen ? chosen[1] : "").replace(/#/g, String(value));
+      },
+    );
+  }
   return {
     useTranslations:
       (namespace = "") =>
       (key: string, params?: Record<string, string | number>) => {
         let s = resolve(namespace, key);
         if (params) {
+          if (s.includes(", plural,")) s = evalPlural(s, params);
           for (const [k, v] of Object.entries(params)) {
             s = s.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
           }
@@ -143,15 +162,15 @@ describe("AgentPresencePill — three presence states", () => {
     mockPresence.mockReset();
   });
 
-  it("idle (0 online): visible, shows '0 online', no error text", () => {
+  it("idle (0 online): visible, shows the full '0 agents online' unit, no error text", () => {
     setPresence({ status: "ok", onlineCount: 0, connections: [] });
     render(<AgentPresencePill />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
-    // The count glyph "0" is present and the word "online" is shown.
+    // The count glyph "0" + the spelled-out plural unit (not a bare "online").
     expect(text).toContain("0");
-    expect(text).toContain("online");
+    expect(text).toContain("agents online");
     // It must NOT read as the error state.
     expect(text).not.toContain("Agents unavailable");
     // Pill stays mounted/visible regardless of count.
@@ -185,7 +204,7 @@ describe("AgentPresencePill — three presence states", () => {
     expect(text).not.toMatch(/\d/);
   });
 
-  it("online (count > 0): emphasizes the count and renders the pulsing-green dot", () => {
+  it("online (count > 0): emphasizes the count, shows the plural unit, and renders the pulsing-green dot", () => {
     setPresence({
       status: "ok",
       onlineCount: 3,
@@ -195,11 +214,28 @@ describe("AgentPresencePill — three presence states", () => {
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
+    // Count glyph + the plural unit "agents online" (3 → plural form).
     expect(text).toContain("3");
-    expect(text).toContain("online");
+    expect(text).toContain("agents online");
     // The pulsing-green dot reuses motion-safe:animate-ping (static under
     // reduced motion). The error/idle dots never carry it.
     expect(container.querySelector(".motion-safe\\:animate-ping")).not.toBeNull();
+  });
+
+  it("online (count === 1): uses the SINGULAR unit 'agent online'", () => {
+    setPresence({
+      status: "ok",
+      onlineCount: 1,
+      connections: [makeConnection()],
+    });
+    render(<AgentPresencePill />);
+
+    const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
+    const text = trigger.textContent ?? "";
+    expect(text).toContain("1");
+    // Singular unit — not "agents online".
+    expect(text).toContain("agent online");
+    expect(text).not.toContain("agents online");
   });
 
   it("idle / error dots do NOT animate (no motion-safe:animate-ping)", () => {
