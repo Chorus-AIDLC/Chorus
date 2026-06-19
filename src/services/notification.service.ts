@@ -4,6 +4,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import { maybeCreateTurnForWakeNotification } from "@/services/notification-turn";
 
 // ===== Type Definitions =====
 
@@ -21,6 +22,11 @@ export interface NotificationCreateParams {
   actorType: string;
   actorUuid: string;
   actorName: string;
+  // Free-text instruction body for a `human_instruction` wake notification (子2 UI
+  // send box). Persisted as a write-once denormalized copy on the row; the canonical
+  // copy lives on the created `DaemonSessionTurn.promptText`. Null for every
+  // non-instruction notification.
+  instructionText?: string | null;
 }
 
 export interface NotificationListParams {
@@ -51,6 +57,14 @@ export interface NotificationResponse {
   readAt: string | null;
   archivedAt: string | null;
   createdAt: string;
+  // Write-once denormalized copy of a `human_instruction` turn's free-text body
+  // (子1 — daemon-session-conversation). Present (non-null) ONLY for an agent-recipient
+  // `human_instruction` notification; null for every other action. The CANONICAL source
+  // is `DaemonSessionTurn.promptText` — this copy is transport-only, so the daemon reads
+  // the instruction in the `chorus_get_notifications` call it already makes (zero extra
+  // fetch). Surfaced here in the read projection so the daemon's event-router can thread
+  // it into the wake prompt.
+  instructionText: string | null;
 }
 
 export interface NotificationPreferenceFields {
@@ -105,6 +119,7 @@ function formatNotification(n: {
   readAt: Date | null;
   archivedAt: Date | null;
   createdAt: Date;
+  instructionText?: string | null;
 }): NotificationResponse {
   return {
     uuid: n.uuid,
@@ -123,6 +138,8 @@ function formatNotification(n: {
     readAt: n.readAt?.toISOString() ?? null,
     archivedAt: n.archivedAt?.toISOString() ?? null,
     createdAt: n.createdAt.toISOString(),
+    // Denormalized human_instruction body (子1) — null for every non-instruction action.
+    instructionText: n.instructionText ?? null,
   };
 }
 
@@ -149,6 +166,9 @@ export async function create(
       actorType: params.actorType,
       actorUuid: params.actorUuid,
       actorName: params.actorName,
+      // Write-once denormalized copy of a human_instruction turn's prompt; null for
+      // every other notification. The canonical copy is the turn's promptText.
+      instructionText: params.instructionText ?? null,
     },
   });
 
@@ -170,6 +190,13 @@ export async function create(
     entityUuid: params.entityUuid,
     projectUuid: params.projectUuid,
   });
+
+  // After the notification row exists, record the matching DaemonSessionTurn for a
+  // wake-triggering notification destined for a daemon agent. This is the single
+  // chokepoint where every wake notification is born, so human and autonomous wakes
+  // are handled symmetrically. The bridge is failure-isolated (logs + swallows): a
+  // turn-creation failure MUST NOT abort or block this already-created notification.
+  await maybeCreateTurnForWakeNotification(params);
 
   return formatNotification(notification);
 }
@@ -198,6 +225,8 @@ export async function createBatch(
           actorType: params.actorType,
           actorUuid: params.actorUuid,
           actorName: params.actorName,
+          // Write-once denormalized copy (null for every non-instruction notification).
+          instructionText: params.instructionText ?? null,
         },
       })
     )
@@ -232,6 +261,16 @@ export async function createBatch(
       entityUuid: matchParams?.entityUuid,
       projectUuid: matchParams?.projectUuid,
     });
+  }
+
+  // After all notification rows exist, record a DaemonSessionTurn for each
+  // wake-triggering notification destined for a daemon agent (symmetric with create()).
+  // Each attempt is failure-isolated inside the bridge: a turn-creation failure logs
+  // and is swallowed, never aborting the notifications that were already created. Run
+  // sequentially so per-session monotonic turn `seq` allocation is not raced when one
+  // batch carries multiple wakes for the same agent session.
+  for (const params of notifications) {
+    await maybeCreateTurnForWakeNotification(params);
   }
 
   return created.map(formatNotification);

@@ -52,7 +52,11 @@ describe("buildPrompt", () => {
 
   it("builds a non-null prompt for every action in WAKE_ACTIONS (no dead/missing entries)", () => {
     for (const action of WAKE_ACTIONS) {
-      const p = buildPrompt({ ...TASK_NOTIF, action });
+      // human_instruction is a wake action only when it carries a free-text body — its
+      // actionable payload IS the instruction, so supply one for the coverage check
+      // (an empty-body human_instruction legitimately returns null; see its own test).
+      const extra = action === "human_instruction" ? { instructionText: "please rebase onto main" } : {};
+      const p = buildPrompt({ ...TASK_NOTIF, action, ...extra });
       expect(p, `WAKE_ACTIONS has "${action}" but buildPrompt returns null for it`).not.toBeNull();
     }
   });

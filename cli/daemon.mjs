@@ -21,9 +21,14 @@ import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
-import { createExecutionUploadHooks } from "./upload-hooks.mjs";
+import {
+  createExecutionUploadHooks,
+  createTranscriptUploadHooks,
+  mergeUploadHooks,
+} from "./upload-hooks.mjs";
 import { WAKE_ACTIONS } from "./prompts.mjs";
 import { createInterruptReporter } from "./interrupt-reporter.mjs";
+import { createTurnReporter } from "./turn-reporter.mjs";
 import { createControlHandler } from "./control-handler.mjs";
 import { resolveSigintTimeoutMs } from "./daemon-config.mjs";
 
@@ -53,6 +58,7 @@ function defaultLogger() {
  *   maxConcurrency?: number,
  *   permissionMode?: "chorus"|"yolo",
  *   reportInterrupt?: (entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>,
+ *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>,
  *   sigintTimeoutMs?: number,
  * }} [deps]
  */
@@ -73,6 +79,20 @@ export function buildDaemon(creds, deps = {}) {
   const reportInterrupt =
     deps.reportInterrupt ??
     createInterruptReporter({
+      url: creds.url,
+      apiKey: creds.apiKey,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      logger,
+      fetchImpl: deps.fetchImpl,
+    });
+  // Turn-lifecycle reporter (子1 — daemon-session-conversation): REST POST with the
+  // daemon's Bearer key (zero new deps), injectable for tests. The waker calls it on a
+  // wake's spawn (→ running) and exit (→ ended) to advance the server-side
+  // DaemonSessionTurn the notification chokepoint created. Reads the connectionUuid
+  // lazily from the same box the SSE handshake fills.
+  const advanceTurn =
+    deps.advanceTurn ??
+    createTurnReporter({
       url: creds.url,
       apiKey: creds.apiKey,
       getConnectionUuid: () => connectionState.connectionUuid,
@@ -103,23 +123,41 @@ export function buildDaemon(creds, deps = {}) {
   // per-task registry (which reuses the already-resolved root-idea lineage).
   // Fire-and-forget; failures logged + non-fatal (see upload-hooks.mjs). The
   // hooks share the daemon's existing creds + zero new deps (global fetch).
+  // Transcript upload hooks (子1 — daemon-session-conversation): the waker's
+  // stream-json consumer (onMessage) and pre-spawn (onSessionStart) feed these,
+  // which keep only user/assistant text and batch-POST it to /api/daemon/transcript
+  // for the current turn (resolved server-side by the session business key the waker
+  // already anchors on). Same zero-dep, fire-and-forget, warn-not-throw contract as
+  // the execution hooks; no connectionUuid needed (the agent key + sessionId suffice).
+  // The two hook sets are MERGED into the single object the waker takes:
+  // onSessionStart/onTranscriptMessage fan out to the transcript hooks,
+  // onExecutionChange to the execution hooks.
   const hooks =
     deps.hooks ??
-    createExecutionUploadHooks({
-      url: creds.url,
-      apiKey: creds.apiKey,
-      getConnectionUuid: () => connectionState.connectionUuid,
-      getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
-      logger,
-      fetchImpl: deps.fetchImpl,
-    });
+    mergeUploadHooks(
+      createExecutionUploadHooks({
+        url: creds.url,
+        apiKey: creds.apiKey,
+        getConnectionUuid: () => connectionState.connectionUuid,
+        getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
+        logger,
+        fetchImpl: deps.fetchImpl,
+      }),
+      createTranscriptUploadHooks({
+        url: creds.url,
+        apiKey: creds.apiKey,
+        logger,
+        fetchImpl: deps.fetchImpl,
+      }),
+      { logger }
+    );
 
   // One dedup set shared by the router (live SSE path) and the reconnect
   // backfill, so a notification handled live is never re-woken on reconnect.
   const seen = new Set();
   // cwd: the daemon spawns all wakes in one working directory; the waker uses it
   // BOTH to probe the transcript (new-vs-resume) and to spawn, so they never diverge.
-  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt });
+  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt, advanceTurn });
   const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
 
   // Reverse control channel (子3): the control handler verifies a control event
@@ -157,6 +195,16 @@ export function buildDaemon(creds, deps = {}) {
     dispatch: (event) => router.dispatch(event),
     seen,
     logger,
+    // 子1 — pending-turn backfill: re-derive unstarted turns from the turn table (NOT
+    // notifications) for this connection's origin-pinned sessions, so a lost delivery
+    // ping never loses an instruction. Shares the same router (dispatchPendingTurn) +
+    // seen set so a turn handled live (or by an earlier backfill) is not re-run. Reads
+    // the connectionUuid lazily from the SSE-handshake box.
+    url: creds.url,
+    apiKey: creds.apiKey,
+    getConnectionUuid: () => connectionState.connectionUuid,
+    dispatchPendingTurn: (turn) => router.dispatchPendingTurn?.(turn),
+    fetchImpl: deps.fetchImpl,
   });
 
   const sseListener =

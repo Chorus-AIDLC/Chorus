@@ -23,6 +23,16 @@ const mockEventBus = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 
+// Mock the wake-notification → DaemonSessionTurn bridge so this suite stays focused on
+// the notification chokepoint itself (the bridge's own action→trigger / instruction /
+// failure-isolation behavior is exhaustively covered in notification-turn.test.ts).
+// Mocking it also keeps the daemon-session / connection / lineage chains out of this
+// unit test. We still assert the chokepoint INVOKES it for each created notification.
+const mockMaybeCreateTurn = vi.hoisted(() => vi.fn());
+vi.mock("@/services/notification-turn", () => ({
+  maybeCreateTurnForWakeNotification: mockMaybeCreateTurn,
+}));
+
 import {
   create,
   createBatch,
@@ -72,6 +82,9 @@ function makeNotifRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The bridge resolves to null by default (no turn created) — its real behavior is
+  // tested separately; here we only care that the chokepoint calls it.
+  mockMaybeCreateTurn.mockResolvedValue(null);
 });
 
 // ===== create =====
@@ -90,6 +103,89 @@ describe("create", () => {
       `notification:user:${recipientUuid}`,
       expect.objectContaining({ type: "new_notification", unreadCount: 5 })
     );
+  });
+
+  it("should persist instructionText (write-once denormalized copy) and pass it to the turn bridge", async () => {
+    const params = makeNotifParams({
+      recipientType: "agent",
+      recipientUuid: "agent-0000-0000-0000-000000000099",
+      action: "human_instruction",
+      instructionText: "Please refactor the auth module",
+    });
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(params));
+    mockPrisma.notification.count.mockResolvedValue(1);
+
+    await create(params);
+
+    // The denormalized copy is written onto the notification row.
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          instructionText: "Please refactor the auth module",
+        }),
+      })
+    );
+    // The chokepoint invokes the bridge with the full params (incl. instructionText).
+    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "human_instruction",
+        instructionText: "Please refactor the auth module",
+      })
+    );
+  });
+
+  it("should default instructionText to null when absent", async () => {
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    await create(makeNotifParams());
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ instructionText: null }),
+      })
+    );
+  });
+
+  it("should invoke the turn bridge once after creating the notification", async () => {
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    await create(makeNotifParams());
+
+    expect(mockMaybeCreateTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces instructionText in the READ projection so the daemon reads it with no extra fetch (子1)", async () => {
+    // The daemon's event-router reads n.instructionText from the chorus_get_notifications
+    // result — so the formatted projection MUST carry it through.
+    mockPrisma.notification.create.mockResolvedValue(
+      makeNotifRecord({ action: "human_instruction", instructionText: "Please rebase onto main" }),
+    );
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    const result = await create(makeNotifParams());
+    expect(result.instructionText).toBe("Please rebase onto main");
+  });
+
+  it("defaults the projected instructionText to null for a non-instruction notification", async () => {
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord()); // no instructionText column
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    const result = await create(makeNotifParams());
+    expect(result.instructionText).toBeNull();
+  });
+
+  it("should still return the notification when the turn bridge resolves (failure-isolated)", async () => {
+    // The bridge never throws (it logs+swallows internally), but assert create() does
+    // not depend on the bridge's outcome: the notification is returned regardless.
+    mockMaybeCreateTurn.mockResolvedValue(null);
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    const result = await create(makeNotifParams());
+
+    expect(result.uuid).toBe(notifUuid);
   });
 });
 
@@ -128,6 +224,49 @@ describe("createBatch", () => {
 
     // Same recipient => one emit
     expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("should invoke the turn bridge once per notification param (not deduped)", async () => {
+    const recipient2 = "agent-0000-0000-0000-000000000002";
+    const params1 = makeNotifParams({ recipientType: "agent", action: "task_assigned" });
+    const params2 = makeNotifParams({
+      recipientType: "agent",
+      recipientUuid: recipient2,
+      action: "mentioned",
+    });
+    mockPrisma.notification.create
+      .mockResolvedValueOnce(makeNotifRecord(params1))
+      .mockResolvedValueOnce(makeNotifRecord(params2));
+    mockPrisma.notification.count.mockResolvedValue(1);
+
+    await createBatch([params1, params2]);
+
+    // One bridge call per param (the bridge itself decides whether a turn is created).
+    expect(mockMaybeCreateTurn).toHaveBeenCalledTimes(2);
+    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "task_assigned" })
+    );
+    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "mentioned" })
+    );
+  });
+
+  it("should persist instructionText per notification in the batch", async () => {
+    const params = makeNotifParams({
+      recipientType: "agent",
+      action: "human_instruction",
+      instructionText: "do the thing",
+    });
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(params));
+    mockPrisma.notification.count.mockResolvedValue(1);
+
+    await createBatch([params]);
+
+    expect(mockPrisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ instructionText: "do the thing" }),
+      })
+    );
   });
 });
 

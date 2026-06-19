@@ -37,6 +37,13 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
+   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>,
+   *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
+   *     on spawn (→ running) and on subprocess exit (→ ended) to advance the server-side
+   *     DaemonSessionTurn the notification chokepoint created (status `pending`). The
+   *     server resolves the turn by the session business key (`sessionId`) and stamps
+   *     the weak executionUuid link from entityType/entityUuid. Defaults to a no-op that
+   *     logs — the daemon wires the REST reporter (turn-reporter.mjs).
    * }} opts
    */
   constructor(opts) {
@@ -58,6 +65,17 @@ export class Waker {
       (async (entityType, entityUuid, reason) => {
         this.logger.info(
           `[Chorus] (no reporter wired) would report ${entityType}:${entityUuid} interrupted (reason=${reason})`
+        );
+      });
+    // Turn-lifecycle reporter (子1): default no-op-with-log so a Waker built without one
+    // (existing tests) keeps working; the daemon injects the REST reporter
+    // (turn-reporter.mjs). Advances the server-side turn pending→running on spawn and
+    // running→ended on subprocess exit, identified by the session business key.
+    this.advanceTurn =
+      opts.advanceTurn ??
+      (async ({ sessionId, status }) => {
+        this.logger.info(
+          `[Chorus] (no turn reporter wired) would advance turn for session ${sessionId} → ${status}`
         );
       });
     // Per-entity "interrupting" flags, set by the control handler the moment an
@@ -259,6 +277,17 @@ export class Waker {
 
       await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew });
 
+      // Turn lifecycle (子1): the server created a `pending` turn for this wake at the
+      // notification chokepoint, keyed on the same session business key the daemon
+      // anchors the Claude session on (`sessionId` = directIdeaUuid, or the entity uuid
+      // for an ad-hoc session). Advance it pending→running the moment the subprocess
+      // spawns (in onChild — guaranteed to fire only on a successful spawn), and
+      // running→ended after it exits. `turnAdvancedToRunning` gates the ended report so
+      // a spawn that never started (onChild never fired) does not attempt an illegal
+      // pending→ended transition. There is no separate turn registry — the turn is
+      // identified server-side by `sessionId`, which the waker already has here.
+      let turnAdvancedToRunning = false;
+
       // Track the session id the stream reports so the transcript hook can use
       // it even before spawner.wake() returns. (Do NOT reference the awaited
       // `result` inside onMessage — it's in the temporal dead zone there.)
@@ -271,14 +300,25 @@ export class Waker {
         mcpConfigPath: cfg.path,
         // Capture the live child into the running execution entry the instant it
         // spawns (子3) so the control handler can interrupt it mid-wake. Guarded so
-        // a re-keyed/dropped entry never throws here.
+        // a re-keyed/dropped entry never throws here. ALSO advance the server turn
+        // pending→running here (子1) — same hook keying, no parallel registry — since
+        // this is the precise moment the subprocess actually started.
         onChild: (child) => {
           const entry = execKey ? this.executions.get(execKey) : null;
           if (entry && entry.status === "running") entry.child = child;
+          if (sessionId) {
+            turnAdvancedToRunning = true;
+            // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
+            // turn-report error never crashes the spawn callback (no-silent-errors).
+            this.#advanceTurn(sessionId, "running", entity).catch(() => {});
+          }
         },
         onMessage: (message) => {
           if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
-          // Fire-and-forget transcript hook (no-op in this change).
+          // Fire-and-forget transcript hook (子1): keeps only user/assistant text and
+          // batch-POSTs to /api/daemon/transcript for the current turn. Warn-not-throw
+          // inside the hook; the trailing .catch is belt-and-braces so a rejected hook
+          // promise can never surface as an unhandled rejection in the wake path.
           this.hooks
             ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message })
             .catch(() => {});
@@ -292,6 +332,15 @@ export class Waker {
         this.logger.warn(
           `[Chorus] wake for ${key} exited non-zero (${result.exitCode})`
         );
+      }
+
+      // Turn lifecycle (子1): the subprocess has exited — advance the server turn
+      // running→ended, regardless of exit code (a turn ends whether the run was clean,
+      // crashed, or interrupted). Only when it actually reached `running` (a never-
+      // spawned wake left the turn `pending`; a pending→ended skip is rejected server-
+      // side as invalid_transition). Swallow-safe; never throws into the wake path.
+      if (sessionId && turnAdvancedToRunning) {
+        await this.#advanceTurn(sessionId, "ended", entity);
       }
 
       // Interrupt-vs-crash reporting (子3, Tech Design "Interrupt vs crash
@@ -354,6 +403,31 @@ export class Waker {
     } catch (err) {
       this.logger.warn(
         `[Chorus] reportInterrupt failed for ${entity.entityType}:${entity.entityUuid} (${reason}): ${err}`
+      );
+    }
+  }
+
+  /**
+   * Advance the server-side DaemonSessionTurn for this wake (子1) via the injected
+   * reporter. Identified server-side by the session business key (`sessionId`); the
+   * optional `entity` ({ entityType, entityUuid }) lets the server stamp the weak
+   * executionUuid link from the live execution row. Never throws into the wake path —
+   * a reporter failure is logged and swallowed (the REST reporter already swallows;
+   * this is belt-and-braces, matching #report).
+   * @param {string} sessionId @param {"running"|"ended"} status
+   * @param {{ entityType: string, entityUuid: string }|null} entity
+   */
+  async #advanceTurn(sessionId, status, entity) {
+    try {
+      await this.advanceTurn({
+        sessionId,
+        status,
+        entityType: entity?.entityType ?? null,
+        entityUuid: entity?.entityUuid ?? null,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[Chorus] advanceTurn failed for session ${sessionId} → ${status}: ${err}`
       );
     }
   }

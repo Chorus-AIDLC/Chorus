@@ -16,6 +16,11 @@
  * @property {string} actorType
  * @property {string} actorUuid
  * @property {string} actorName
+ * @property {string} [instructionText]  Free-text body of a `human_instruction` wake
+ *   (子1 — daemon-session-conversation). The server denormalizes the canonical turn
+ *   promptText onto the wake notification so the daemon reads it in the
+ *   `chorus_get_notifications` call it already makes (zero extra fetch); the
+ *   event-router threads it here. Present only for the `human_instruction` action.
  */
 
 /** @param {NotificationDetail} n @param {string} entityType */
@@ -107,6 +112,41 @@ export function buildPrompt(n) {
         `projectUuid: ${n.projectUuid}). Use chorus_get_unblocked_tasks (projectUuid: "${n.projectUuid}") ` +
         `to see whether this unblocked any tasks that are now ready to start.`
       );
+    case "human_instruction": {
+      // A human typed a free-text instruction for this daemon's session (子1 — the 子2
+      // UI send box, or a backfilled pending instruction). The canonical text lives on
+      // the server-side turn's promptText and is denormalized onto the wake
+      // notification as `instructionText`, so the daemon reads it WITHOUT an extra
+      // fetch and the event-router threads it here. The instruction is delivered on the
+      // session the daemon is already running (idea-anchored or the entity itself), so
+      // continuation is naturally `claude --resume` of that session. If the body is
+      // empty/missing there is nothing to act on — skip (no prompt) rather than spawn a
+      // contentless wake.
+      const instruction =
+        typeof n.instructionText === "string" ? n.instructionText.trim() : "";
+      if (!instruction) return null;
+      // Optional entity context: a human_instruction may be attached to an entity
+      // (task/idea/proposal/document) or be a bare session instruction. Include the
+      // entity hint only when present so the agent knows what it relates to.
+      const entityHint =
+        n.entityType && n.entityUuid
+          ? ` (regarding ${n.entityType} ${n.entityUuid}` +
+            (n.projectUuid ? `, projectUuid: ${n.projectUuid}` : "") +
+            `)`
+          : "";
+      const actorHint =
+        n.actorName && n.actorType && n.actorUuid
+          ? `\nWhen you have addressed it, reply with a comment @mentioning the requester: ` +
+            `@[${n.actorName}](${n.actorType}:${n.actorUuid})`
+          : "";
+      return (
+        `[Chorus] New instruction from a human${entityHint}:\n\n` +
+        `${instruction}\n\n` +
+        `Continue this session and act on the instruction above using the appropriate ` +
+        `chorus_* tools. Re-check the current state first (e.g. chorus_get_task / ` +
+        `chorus_get_idea / chorus_get_comments) if you need context.${actorHint}`
+      );
+    }
     default:
       return null;
   }
@@ -143,4 +183,11 @@ export const WAKE_ACTIONS = new Set([
   // (task / idea / proposal / document); arrives via the reverse CONTROL channel as
   // a synthetic dispatch, NOT a persisted notification.
   "resource_resumed",
+  // 子1 — daemon-session-conversation: a human-typed instruction for the daemon's
+  // session. Arrives as a persisted notification (recipient = the daemon agent)
+  // carrying the free-text body in `instructionText`; the event-router threads that
+  // body into buildPrompt. NOTE: buildPrompt's human_instruction branch returns null
+  // when the body is empty/missing (nothing to act on) — so this action is a wake
+  // action only when it actually carries instruction text.
+  "human_instruction",
 ]);
