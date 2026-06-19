@@ -534,3 +534,72 @@ describe("Agent Connections modal — interrupted rows + resume control", () => 
     expect(screen.queryByText("Nothing running")).toBeNull();
   });
 });
+
+// =====================================================================
+// Responsive row layout (continuation of b5bdcfa — the popover fix).
+//
+// b5bdcfa added a `stacked` ExecutionRow variant but wired it only into the
+// sidebar popover. The detail view now forwards its own `variant` to the rows:
+// the wide desktop master-detail pane stays "inline" (room to spare); the narrow
+// mobile drill-down uses "stacked" so a running row's title is no longer squeezed
+// by the elapsed timer + Interrupt/Resume controls.
+//
+// jsdom doesn't evaluate the `lg:` media queries, so the desktop master-detail
+// pane is always in the DOM and the mobile drill-down renders only after a card
+// tap. We therefore assert against the row geometry classes directly:
+//   - inline rows are a centered flex row (`items-center`, never `flex-col`),
+//   - stacked rows are `flex-col` with a two-line-clamped title.
+// =====================================================================
+describe("Agent Connections modal — responsive execution-row layout", () => {
+  it("desktop master-detail pane renders execution rows inline (unchanged)", async () => {
+    routeFetch([execView({ uuid: "run", status: "running", startedAt: NOW })]);
+    const { container } = await renderView();
+    await waitFor(() => expect(screen.getAllByText("Task run").length).toBeGreaterThan(0));
+
+    // On first paint the mobile drill-down is closed, so the only execution rows
+    // in the DOM belong to the always-present desktop pane — all must be inline.
+    const rows = container.querySelectorAll("li");
+    expect(rows.length).toBeGreaterThan(0);
+    rows.forEach((row) => {
+      expect(row.className).toContain("items-center");
+      expect(row.className).not.toContain("flex-col");
+    });
+  });
+
+  it("mobile drill-down renders execution rows stacked (title gets full width)", async () => {
+    routeFetch([
+      execView({
+        uuid: "run",
+        status: "running",
+        startedAt: NOW,
+        entityTitle: "A very long running task title that used to truncate",
+      }),
+    ]);
+    const { container } = await renderView();
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("A very long running task title that used to truncate").length,
+      ).toBeGreaterThan(0),
+    );
+
+    // Drill into the connection on mobile: the only `.lg:hidden` subtree on first
+    // paint is the mobile card list (the drill-down wrapper isn't mounted yet).
+    const mobileCard = container.querySelector(".lg\\:hidden button");
+    expect(mobileCard).not.toBeNull();
+    fireEvent.click(mobileCard!);
+
+    // The mobile detail pane now renders ExecutionRow with layout="stacked": a
+    // flex-col <li> whose title relaxes to a two-line clamp.
+    await waitFor(() =>
+      expect(container.querySelectorAll("li.flex-col").length).toBeGreaterThan(0),
+    );
+    const stackedRow = container.querySelector("li.flex-col");
+    expect(stackedRow?.textContent).toContain(
+      "A very long running task title that used to truncate",
+    );
+    // The Interrupt control survives the layout change (controls retained).
+    expect(
+      screen.getAllByRole("button", { name: "Interrupt this running execution" }).length,
+    ).toBeGreaterThan(0);
+  });
+});

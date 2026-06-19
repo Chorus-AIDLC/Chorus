@@ -103,6 +103,7 @@ function ExecutionPane({
   executions,
   nowMs,
   executionsLoaded,
+  rowLayout = "inline",
 }: {
   executions: ExecutionView[];
   nowMs: number;
@@ -111,6 +112,11 @@ function ExecutionPane({
   // connection has no rows yet, show a loading state rather than the "Nothing
   // running" empty state (which would be a false negative for a busy connection).
   executionsLoaded: boolean;
+  // Geometry of the execution rows, forwarded from the detail variant: the wide
+  // desktop master-detail pane uses "inline" (room to spare), the narrow mobile
+  // drill-down uses "stacked" so a running row's title is not squeezed by the
+  // elapsed timer + Interrupt/Resume controls (same fix the sidebar popover got).
+  rowLayout?: "inline" | "stacked";
 }) {
   const t = useTranslations("agentConnections");
 
@@ -172,14 +178,14 @@ function ExecutionPane({
           {running.length > 0 && (
             <ExecutionSection icon={Play} label={t("execRunning")} count={running.length}>
               {running.map((exec) => (
-                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} layout={rowLayout} />
               ))}
             </ExecutionSection>
           )}
           {queued.length > 0 && (
             <ExecutionSection icon={ListChecks} label={t("execQueued")} count={queued.length}>
               {queued.map((exec) => (
-                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} layout={rowLayout} />
               ))}
             </ExecutionSection>
           )}
@@ -190,7 +196,7 @@ function ExecutionPane({
               count={interrupted.length}
             >
               {interrupted.map((exec) => (
-                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} />
+                <ExecutionRow key={exec.uuid} exec={exec} nowMs={nowMs} layout={rowLayout} />
               ))}
             </ExecutionSection>
           )}
@@ -402,6 +408,7 @@ function DetailContent({
               executions={executions}
               nowMs={nowMs}
               executionsLoaded={executionsLoaded}
+              rowLayout="inline"
             />
           </div>
         </div>
@@ -453,6 +460,7 @@ function DetailContent({
         executions={executions}
         nowMs={nowMs}
         executionsLoaded={executionsLoaded}
+        rowLayout="stacked"
       />
     </div>
   );
