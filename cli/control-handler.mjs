@@ -40,6 +40,16 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   sigintTimeoutMs?: number,                           Layered-resolved escalation window.
  *   redispatchResume?: (entityType: string, entityUuid: string) => void,  Re-run a wake
  *                                            for a resumed entity (子3); injected by the daemon.
+ *   deliverTurn?: (turnUuid?: string) => void, Dispatch a PRECISE pending turn by uuid
+ *                                            (子2 — origin-only live delivery). On a
+ *                                            `deliver_turn` control event (after the Check-1
+ *                                            connection match) the handler invokes this with
+ *                                            the event's `turnUuid` so ONLY that one new
+ *                                            pending `human_instruction` turn runs — not a
+ *                                            connection-wide sweep that would also drag every
+ *                                            other still-pending turn along. Injected by the
+ *                                            daemon (`backfill.pendingTurnsOnly`); the
+ *                                            arg-less form (reconnect) still sweeps all.
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} deps
  * @returns {(event: any) => void}  The onControl callback (synchronous, non-throwing).
@@ -50,6 +60,7 @@ export function createControlHandler(deps) {
   const killer = deps.killer ?? killProcessTree;
   const sigintTimeoutMs = deps.sigintTimeoutMs;
   const redispatchResume = deps.redispatchResume;
+  const deliverTurn = deps.deliverTurn;
   const logger = deps.logger ?? NOOP_LOGGER;
 
   /** Registry key for a resource — MUST match waker.#execKey. */
@@ -58,8 +69,10 @@ export function createControlHandler(deps) {
   /**
    * Handle one control event. Synchronous + non-throwing: it performs the
    * double-check and kicks off the (async) kill fire-and-forget, returning
-   * immediately so the SSE consumer never blocks. Only `command:"interrupt"` is
-   * acted on; any other/unknown command is ignored + logged (forward-compatible).
+   * immediately so the SSE consumer never blocks. `interrupt` (kill), `resume`
+   * (re-dispatch wake), and `deliver_turn` (origin-only live delivery — trigger the
+   * pending-turns sweep) are acted on; any other/unknown command is ignored + logged
+   * (forward-compatible).
    * @param {{ type?: string, command?: string, targetConnectionUuid?: string, entityType?: string, entityUuid?: string }} event
    */
   return function onControl(event) {
@@ -68,7 +81,11 @@ export function createControlHandler(deps) {
         logger.warn(`[Chorus] control-handler received non-control event; ignoring`);
         return;
       }
-      if (event.command !== "interrupt" && event.command !== "resume") {
+      if (
+        event.command !== "interrupt" &&
+        event.command !== "resume" &&
+        event.command !== "deliver_turn"
+      ) {
         // Forward-compatible: the wire enum may grow.
         logger.warn(`[Chorus] control command "${event.command}" not supported; ignoring`);
         return;
@@ -84,6 +101,29 @@ export function createControlHandler(deps) {
           `[Chorus] control: ignoring ${command} for connection ${targetConnectionUuid} ` +
             `(this daemon is ${myConnectionUuid ?? "<unregistered>"})`
         );
+        return;
+      }
+
+      // --- deliver_turn: origin-only live delivery (子2). The session's origin connection
+      //     (THIS one — Check 1 passed) was pinged that a SPECIFIC new pending
+      //     `human_instruction` turn (`event.turnUuid`) awaits. Dispatch ONLY that turn — not
+      //     a connection-wide sweep, which would also drag every other still-pending turn of
+      //     this connection along (the multi-wake bug). No entity is carried on the wire (the
+      //     turn is read by uuid), and there is NO running-child requirement (mirrors
+      //     `resume`); the read resolves the text from the persisted turn. Idempotent with
+      //     reconnect backfill via the shared `seen` set (key turn:{uuid}). A `deliver_turn`
+      //     missing `turnUuid` (older server) falls back to the full sweep so it still runs. ---
+      if (command === "deliver_turn") {
+        const turnUuid = typeof event.turnUuid === "string" ? event.turnUuid : undefined;
+        logger.info(
+          `[Chorus] control: deliver_turn for connection ${targetConnectionUuid} ` +
+            (turnUuid ? `(turn ${turnUuid})` : "(no turnUuid — full sweep fallback)"),
+        );
+        try {
+          deliverTurn?.(turnUuid);
+        } catch (err) {
+          logger.warn(`[Chorus] control: deliver_turn failed: ${err}`);
+        }
         return;
       }
 

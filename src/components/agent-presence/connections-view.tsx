@@ -36,7 +36,7 @@
 // mounted (i.e. while the modal is open), so the closed-modal steady state has no
 // interval running.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   ChevronLeft,
@@ -51,11 +51,14 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/auth-client";
+import { clientLogger } from "@/lib/logger-client";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import {
   ExecutionRow,
   ExecutionSection,
   IdentityBlock,
+  SendInstructionBox,
   StatusBadge,
   StatusDot,
   useClientTypeLabel,
@@ -64,6 +67,7 @@ import {
   useUptimeMono,
   type ConnectionView,
   type ExecutionView,
+  type SessionTarget,
 } from "@/components/agent-presence";
 
 // =====================================================================
@@ -344,12 +348,19 @@ function DetailContent({
   nowMs,
   variant,
   executionsLoaded,
+  sessions,
+  onlineConnections,
 }: {
   connection: ConnectionView;
   executions: ExecutionView[];
   nowMs: number;
   variant: "desktop" | "mobile";
   executionsLoaded: boolean;
+  // The caller's visible daemon sessions (with `originOnline`) + the online
+  // connections of THIS connection's agent — both fed straight into the send dock
+  // so it gates the direct/ad-hoc paths without its own fetch.
+  sessions: SessionTarget[];
+  onlineConnections: ConnectionView[];
 }) {
   const t = useTranslations("agentConnections");
   const formatRelative = useRelativeTime();
@@ -411,6 +422,15 @@ function DetailContent({
               rowLayout="inline"
             />
           </div>
+          {/* Transmit dock — the human send side (子2). Sits beneath the
+              execution state as the deck's "compose + dispatch" surface; gated
+              on the selected session's origin being online. */}
+          <SendInstructionBox
+            connection={connection}
+            sessions={sessions}
+            onlineConnections={onlineConnections}
+            layout="inline"
+          />
         </div>
       </div>
     );
@@ -462,6 +482,14 @@ function DetailContent({
         executionsLoaded={executionsLoaded}
         rowLayout="stacked"
       />
+      {/* Transmit dock (mobile drill-down) — stacked layout so the compose
+          footer + Send drop beneath the textarea on the narrow screen. */}
+      <SendInstructionBox
+        connection={connection}
+        sessions={sessions}
+        onlineConnections={onlineConnections}
+        layout="stacked"
+      />
     </div>
   );
 }
@@ -484,6 +512,32 @@ export function AgentConnectionsView() {
     executionsLoaded,
   } = useAgentPresence();
   const nowMs = useNowTick();
+
+  // Daemon-session targeting list for the send dock (子2). Fetched here (the
+  // presence provider carries connections + executions, not sessions) on the same
+  // cadence as the view is mounted: an immediate fetch plus a 15s refresh so a
+  // session's `originOnline` flag re-settles after a daemon connects/disconnects,
+  // matching the connection poll's self-healing cadence. A failed fetch leaves the
+  // last-known list rather than zeroing it (no silent error — logged) so the dock
+  // never flips to "no online connection" on a transient blip.
+  const [sessions, setSessions] = useState<SessionTarget[]>([]);
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/daemon-sessions");
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.success) {
+        setSessions(json.data.sessions ?? []);
+      }
+    } catch (error) {
+      clientLogger.error("Failed to fetch daemon sessions:", error);
+    }
+  }, []);
+  useEffect(() => {
+    fetchSessions();
+    const id = setInterval(fetchSessions, 15_000);
+    return () => clearInterval(id);
+  }, [fetchSessions]);
 
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
 
@@ -520,6 +574,21 @@ export function AgentConnectionsView() {
   const selectedExecutions = selectedId
     ? executionsByConnection[selectedId] ?? []
     : [];
+
+  // The online connections that belong to the SELECTED connection's agent — the
+  // candidate set for the ad-hoc session picker (the picker never lists another
+  // agent's connections; the server re-verifies ownership + online on POST).
+  const selectedAgentOnlineConnections = useMemo(
+    () =>
+      selected
+        ? connections.filter(
+            (c) =>
+              c.agentUuid === selected.agentUuid &&
+              c.effectiveStatus === "online",
+          )
+        : [],
+    [connections, selected],
+  );
 
   // Mobile drill-down state: any row tap on mobile sets selectedUuid AND opens
   // the detail screen. We use a separate `mobileDetailOpen` so going back
@@ -567,6 +636,8 @@ export function AgentConnectionsView() {
               nowMs={nowMs}
               variant="mobile"
               executionsLoaded={executionsLoaded}
+              sessions={sessions}
+              onlineConnections={selectedAgentOnlineConnections}
             />
           </div>
         </div>
@@ -688,6 +759,8 @@ export function AgentConnectionsView() {
                     nowMs={nowMs}
                     variant="desktop"
                     executionsLoaded={executionsLoaded}
+                    sessions={sessions}
+                    onlineConnections={selectedAgentOnlineConnections}
                   />
                 ) : (
                   <div className="flex flex-1 items-center justify-center p-12 text-[13px] text-[#9A9A9A]">

@@ -19,6 +19,12 @@
 //      fetch — zero new deps), each re-dispatched through `router.dispatchPendingTurn`.
 //
 // De-dupes against the shared `seen` set so a reconnect storm doesn't double-wake.
+//
+// The returned `backfill` function also exposes `backfill.pendingTurnsOnly` — the
+// connection-scoped pending-turns sweep ALONE — so the LIVE `deliver_turn` control ping
+// (子2 — origin-only live delivery) can reuse the EXACT same sweep without re-running the
+// notification source. Live ping and reconnect backfill therefore converge on one sweep +
+// one `seen` set, so a turn runs at most once regardless of which path observes it first.
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -100,11 +106,19 @@ export function createBackfill(opts) {
 
   /**
    * Re-derive this connection's UNSTARTED (pending) turns from the turn table (子1)
-   * and re-dispatch each through the router. No-op (silently skipped) when the
+   * and re-dispatch them through the router. No-op (silently skipped) when the
    * pending-turn wiring is absent or the connectionUuid is not known yet. Never throws
    * into the reconnect path — a failure is logged and swallowed.
+   *
+   * `onlyTurnUuid` (子2 — origin-only live delivery): when set, dispatch ONLY the turn
+   * with that uuid out of the fetched set, so a live `deliver_turn` ping runs PRECISELY
+   * the turn it announced and never drags the connection's other still-pending turns
+   * along. When omitted (the reconnect path), dispatch ALL pending turns — the lost-ping
+   * safety net that recovers everything missed during a gap.
+   *
+   * @param {string} [onlyTurnUuid]
    */
-  async function backfillPendingTurns() {
+  async function backfillPendingTurns(onlyTurnUuid) {
     if (!url || !apiKey || !getConnectionUuid || !dispatchPendingTurn) {
       // Pending-turn backfill not wired (e.g. notification-only callers / older tests).
       return;
@@ -148,6 +162,10 @@ export function createBackfill(opts) {
     let redispatched = 0;
     for (const t of turns) {
       if (!t || typeof t.turnUuid !== "string") continue;
+      // Live `deliver_turn` precision: when a specific turnUuid was announced, dispatch
+      // ONLY it — skip every other pending turn of the connection (they are recovered by
+      // the arg-less reconnect sweep, not by a single-turn live ping).
+      if (onlyTurnUuid && t.turnUuid !== onlyTurnUuid) continue;
       // The router (dispatchPendingTurn) is the single owner of marking-seen (keyed
       // `turn:<uuid>`), exactly like the notification path — so do NOT mark here.
       if (seen.has(`turn:${t.turnUuid}`)) continue;
@@ -155,15 +173,28 @@ export function createBackfill(opts) {
       dispatchPendingTurn(t);
     }
     if (redispatched > 0) {
-      logger.info(`[Chorus] backfill re-derived ${redispatched} pending turn(s) from the turn table`);
+      const scope = onlyTurnUuid ? `turn ${onlyTurnUuid}` : `${redispatched} pending turn(s)`;
+      logger.info(`[Chorus] backfill re-derived ${scope} from the turn table`);
     }
   }
 
-  return async function backfill() {
+  async function backfill() {
     // Run both sources. Each swallows its own errors so one failing source never
     // aborts the other (a notification-fetch failure must not lose pending turns, and
     // vice versa).
     await backfillNotifications();
     await backfillPendingTurns();
-  };
+  }
+
+  // Expose the CONNECTION-SCOPED pending-turns sweep on its own so the LIVE
+  // `deliver_turn` control ping (子2 — origin-only live delivery) reuses the EXACT same
+  // sweep the reconnect path runs — no second sweep, no second code path. The control
+  // handler triggers `backfill.pendingTurnsOnly()`; it shares the same `seen` set +
+  // `dispatchPendingTurn`, so a turn delivered live and also re-derived on reconnect runs
+  // at most once. Non-throwing (the inner sweep swallows + logs its own errors). The live
+  // `deliver_turn` ping passes the precise `turnUuid` so ONLY that turn runs; an arg-less
+  // call (reconnect) sweeps all pending.
+  /** @type {(onlyTurnUuid?: string) => Promise<void>} */
+  backfill.pendingTurnsOnly = backfillPendingTurns;
+  return backfill;
 }

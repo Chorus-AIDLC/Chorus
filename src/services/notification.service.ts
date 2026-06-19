@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { maybeCreateTurnForWakeNotification } from "@/services/notification-turn";
+import type { TurnView } from "@/services/daemon-session.service";
 
 // ===== Type Definitions =====
 
@@ -146,11 +147,20 @@ function formatNotification(n: {
 // ===== Service Methods =====
 
 /**
- * Create a single notification and emit SSE event
+ * Create a single notification, emit its SSE event, and run the wake-turn chokepoint —
+ * returning BOTH the notification and the `DaemonSessionTurn` the chokepoint created (or
+ * `null` when none was created: a non-wake action, a human recipient, or no online origin).
+ *
+ * This is the canonical body shared by `create`. The send path (`daemon-instruction`
+ * service) calls THIS variant so it receives the EXACT turn the chokepoint just created,
+ * rather than reading the session's most-recent turn back by `seq desc` — which would race
+ * a concurrent autonomous wake landing a higher-seq turn in the same window and mislabel the
+ * response. Persisted state is unaffected either way; this only guarantees the returned turn
+ * is the one this call created.
  */
-export async function create(
+export async function createReturningTurn(
   params: NotificationCreateParams
-): Promise<NotificationResponse> {
+): Promise<{ notification: NotificationResponse; turn: TurnView | null }> {
   const notification = await prisma.notification.create({
     data: {
       companyUuid: params.companyUuid,
@@ -195,10 +205,22 @@ export async function create(
   // wake-triggering notification destined for a daemon agent. This is the single
   // chokepoint where every wake notification is born, so human and autonomous wakes
   // are handled symmetrically. The bridge is failure-isolated (logs + swallows): a
-  // turn-creation failure MUST NOT abort or block this already-created notification.
-  await maybeCreateTurnForWakeNotification(params);
+  // turn-creation failure MUST NOT abort or block this already-created notification. We
+  // surface its return so the send path gets the exact turn created (no seq read-back).
+  const turn = await maybeCreateTurnForWakeNotification(params);
 
-  return formatNotification(notification);
+  return { notification: formatNotification(notification), turn };
+}
+
+/**
+ * Create a single notification and emit SSE event. Thin wrapper over
+ * `createReturningTurn` for the many callers that only need the notification.
+ */
+export async function create(
+  params: NotificationCreateParams
+): Promise<NotificationResponse> {
+  const { notification } = await createReturningTurn(params);
+  return notification;
 }
 
 /**

@@ -35,10 +35,31 @@ import { eventBus, controlEventName, type ControlEvent } from "@/lib/event-bus";
 //                   channel as interrupt rather than a task-level notification —
 //                   symmetric with interrupt, and works for idea/proposal/document
 //                   wakes too, not just tasks.
+//   - `deliver_turn` — (子2 — origin-only live delivery) ping the session's ORIGIN
+//                   connection that a specific new `pending` `human_instruction` turn
+//                   awaits, so the live wake reaches ONLY that one daemon (never the
+//                   agent-wide notification fan-out) and runs ONLY that one turn. It
+//                   carries `targetConnectionUuid` + `turnUuid` on the wire — NO
+//                   `entityType`/`entityUuid` and NO instruction text: the daemon reads
+//                   the turn (and its text) by uuid from the persisted turn. Targeting
+//                   the precise turn (not a connection-wide sweep) is what stops a fresh
+//                   send from dragging every other still-`pending` turn along with it.
+//                   An ad-hoc session's `sessionId` is a non-lineage key that does not
+//                   fit CONTROL_ENTITY_TYPES, which is the whole reason `deliver_turn`
+//                   is entity-less.
 // The route's zod enum is derived from this so an unknown command is rejected at the
 // boundary.
-export const CONTROL_COMMANDS = ["interrupt", "resume"] as const;
+export const CONTROL_COMMANDS = ["interrupt", "resume", "deliver_turn"] as const;
 export type ControlCommand = (typeof CONTROL_COMMANDS)[number];
+
+/**
+ * The entity-bearing control verbs (`interrupt`/`resume`): they target a specific
+ * running/resumable resource, so they carry `entityType`/`entityUuid`. `deliver_turn`
+ * is deliberately NOT in this set — it is connection-only.
+ */
+export const ENTITY_BEARING_CONTROL_COMMANDS = ["interrupt", "resume"] as const;
+export type EntityBearingControlCommand =
+  (typeof ENTITY_BEARING_CONTROL_COMMANDS)[number];
 
 // The entity kinds a control command can target — mirrors the execution registry's
 // resource space (the wake-triggering resource the daemon is running).
@@ -149,20 +170,46 @@ export async function authorizeConnectionControl(params: {
  * channel exists; the current notification-stream transport keys purely by
  * connection uuid. It is intentionally NOT spread into the wire payload (the
  * daemon's stream is already company-scoped by its auth).
+ *
+ * The params are a discriminated union on `command`:
+ *  - `interrupt`/`resume` carry `entityType`/`entityUuid` (they target a specific
+ *    running/resumable resource), and the wire event carries them too.
+ *  - `deliver_turn` carries `targetConnectionUuid` + the precise `turnUuid` to run; the
+ *    wire event omits the entity fields entirely (the daemon reads the turn by uuid).
  */
-export function dispatchControl(params: {
-  companyUuid: string;
-  targetConnectionUuid: string;
-  command: ControlCommand;
-  entityType: ControlEntityType;
-  entityUuid: string;
-}): void {
-  const event: ControlEvent = {
-    type: "control",
-    command: params.command,
-    targetConnectionUuid: params.targetConnectionUuid,
-    entityType: params.entityType,
-    entityUuid: params.entityUuid,
-  };
+export type DispatchControlParams =
+  | {
+      companyUuid: string;
+      targetConnectionUuid: string;
+      command: EntityBearingControlCommand;
+      entityType: ControlEntityType;
+      entityUuid: string;
+    }
+  | {
+      companyUuid: string;
+      targetConnectionUuid: string;
+      command: "deliver_turn";
+      turnUuid: string;
+    };
+
+export function dispatchControl(params: DispatchControlParams): void {
+  // `deliver_turn` is connection-only on entity, but carries the PRECISE turnUuid so the
+  // daemon runs only that one turn (not a connection-wide sweep that would also drag
+  // every other still-pending turn of the connection along).
+  const event: ControlEvent =
+    params.command === "deliver_turn"
+      ? {
+          type: "control",
+          command: "deliver_turn",
+          targetConnectionUuid: params.targetConnectionUuid,
+          turnUuid: params.turnUuid,
+        }
+      : {
+          type: "control",
+          command: params.command,
+          targetConnectionUuid: params.targetConnectionUuid,
+          entityType: params.entityType,
+          entityUuid: params.entityUuid,
+        };
   eventBus.emit(controlEventName(params.targetConnectionUuid), event);
 }

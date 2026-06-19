@@ -12,11 +12,11 @@ vi.mock("@/lib/auth", () => ({
   hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 
-// Mock the control service: the route is the unit under test. CONTROL_COMMANDS /
-// CONTROL_ENTITY_TYPES feed the route's zod enums, so the mock must provide them
-// verbatim.
+// Mock the control service: the route is the unit under test. CONTROL_ENTITY_TYPES feeds
+// the route's zod enum for the entity-bearing commands, so the mock must provide it
+// verbatim. (CONTROL_COMMANDS is no longer imported by the route — the discriminated zod
+// body hard-codes the per-command literals.)
 vi.mock("@/services/daemon-control.service", () => ({
-  CONTROL_COMMANDS: ["interrupt", "resume"],
   CONTROL_ENTITY_TYPES: ["task", "idea", "proposal", "document"],
   resolveConnectionOwner: (...args: unknown[]) => mockResolveConnectionOwner(...args),
   dispatchControl: (...args: unknown[]) => mockDispatchControl(...args),
@@ -222,6 +222,55 @@ describe("POST /api/daemon/control — authz matrix (q2=a)", () => {
     const res = await POST(postRequest(validBody), emptyCtx);
 
     expect(res.status).toBe(403);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+});
+
+// The deliver_turn body (子2 — origin-only live delivery): connection-only, NO entity.
+const deliverTurnBody = {
+  command: "deliver_turn",
+  targetConnectionUuid: connectionUuid,
+};
+
+describe("POST /api/daemon/control — deliver_turn is NOT a public verb (子2, service-internal)", () => {
+  it("rejects a bare deliver_turn POST at the schema boundary (422, nothing published)", async () => {
+    const res = await POST(postRequest(deliverTurnBody), emptyCtx);
+    const body = await res.json();
+
+    // deliver_turn is now SERVICE-INTERNAL: the send path emits it directly via
+    // dispatchControl with the precise turnUuid it just created; an external HTTP caller
+    // has no turnUuid to supply, so the public endpoint no longer accepts the verb — it is
+    // rejected at the schema boundary (422), nothing published.
+    expect(res.status).toBe(422);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
+  it("rejects deliver_turn even WITH entityType/entityUuid (still not a public verb — 422)", async () => {
+    const res = await POST(
+      postRequest({ ...deliverTurnBody, entityType: "task", entityUuid: t1 }),
+      emptyCtx,
+    );
+    // Even with entity fields it is not a public verb — rejected at the boundary.
+    expect(res.status).toBe(422);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
+  it("rejects deliver_turn even WITH a turnUuid (still not a public verb — 422, nothing published)", async () => {
+    const res = await POST(
+      postRequest({ ...deliverTurnBody, turnUuid: "turn-0000-0000-0000-00000000dead" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
+  it("entity-bearing commands STILL require entityType/entityUuid (interrupt missing entity → 422)", async () => {
+    const res = await POST(
+      postRequest({ command: "interrupt", targetConnectionUuid: connectionUuid }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
     expect(mockDispatchControl).not.toHaveBeenCalled();
   });
 });

@@ -194,3 +194,116 @@ describe("control-handler double-check (q1=a)", () => {
     expect(killer).not.toHaveBeenCalled();
   });
 });
+
+// ===== deliver_turn (子2 — origin-only live delivery, precise turn) =====
+// The deliver_turn branch is connection-targeted + turn-precise: after Check 1 (connection
+// match) it dispatches ONLY the announced turn (event.turnUuid) — never a connection-wide
+// sweep. No entity on the wire, no running-child requirement (mirrors resume), non-throwing
+// into the SSE loop. A deliver_turn missing turnUuid (older server) falls back to a full sweep.
+const TURN_UUID = "turn-0000-0000-0000-00000000dead";
+describe("control-handler deliver_turn (子2 — origin-only live delivery)", () => {
+  function deliverEvent(overrides = {}) {
+    // NOTE: connection-targeted + turn-precise — carries turnUuid, NO entityType/entityUuid
+    // (the daemon reads the turn, and its text, by uuid from the persisted turn).
+    return {
+      type: "control",
+      command: "deliver_turn",
+      targetConnectionUuid: CONN,
+      turnUuid: TURN_UUID,
+      ...overrides,
+    };
+  }
+
+  it("connection MATCH → dispatches ONLY the announced turn (by turnUuid), once, no kill/entity", () => {
+    const waker = makeWaker([]); // no running child needed (mirrors resume)
+    const killer = vi.fn(async () => {});
+    const deliverTurn = vi.fn();
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      deliverTurn,
+      logger: silent,
+    });
+
+    onControl(deliverEvent());
+
+    expect(deliverTurn).toHaveBeenCalledTimes(1);
+    // The PRECISE turnUuid is forwarded so ONLY that turn runs — not a connection-wide
+    // sweep that would drag every other still-pending turn along (the multi-wake bug).
+    expect(deliverTurn.mock.calls[0]).toEqual([TURN_UUID]);
+    expect(killer).not.toHaveBeenCalled();
+    expect(waker.markInterrupting).not.toHaveBeenCalled();
+  });
+
+  it("a deliver_turn WITHOUT turnUuid (older server) falls back to a full sweep (deliverTurn(undefined))", () => {
+    const deliverTurn = vi.fn();
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      deliverTurn,
+      logger: silent,
+    });
+
+    onControl(deliverEvent({ turnUuid: undefined }));
+
+    expect(deliverTurn).toHaveBeenCalledTimes(1);
+    // No precise turn → arg-less sweep (recovers all pending — the lost-ping safety net).
+    expect(deliverTurn.mock.calls[0]).toEqual([undefined]);
+  });
+
+  it("connection MISMATCH (Check 1) → logged no-op, does NOT sweep", () => {
+    const infos = [];
+    const deliverTurn = vi.fn();
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      deliverTurn,
+      logger: { ...silent, info: (m) => infos.push(m) },
+    });
+
+    onControl(deliverEvent({ targetConnectionUuid: "some-other-connection" }));
+
+    expect(deliverTurn).not.toHaveBeenCalled();
+    expect(infos.join("")).toMatch(/ignoring deliver_turn/i);
+  });
+
+  it("ignores deliver_turn before the daemon has registered a connectionUuid (no sweep)", () => {
+    const deliverTurn = vi.fn();
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => null, // handshake not complete
+      deliverTurn,
+      logger: silent,
+    });
+
+    onControl(deliverEvent());
+    expect(deliverTurn).not.toHaveBeenCalled();
+  });
+
+  it("never throws if the injected sweep throws (non-throwing into the SSE loop), logs it", () => {
+    const warns = [];
+    const deliverTurn = vi.fn(() => {
+      throw new Error("sweep blew up");
+    });
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      deliverTurn,
+      logger: { ...silent, warn: (m) => warns.push(m) },
+    });
+
+    expect(() => onControl(deliverEvent())).not.toThrow();
+    expect(deliverTurn).toHaveBeenCalledTimes(1);
+    expect(warns.join("")).toMatch(/deliver_turn failed/i);
+  });
+
+  it("tolerates a missing deliverTurn dep (no sweep wired) without throwing", () => {
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      logger: silent,
+    });
+    expect(() => onControl(deliverEvent())).not.toThrow();
+  });
+});

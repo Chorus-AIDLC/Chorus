@@ -23,5 +23,6 @@ export {
 export { StatusDot, StatusBadge } from "./status";
 export { IdentityBlock } from "./identity-block";
 export { ExecutionRow, ExecutionSection } from "./execution-row";
+export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";
 export { AgentConnectionsModal } from "./connections-modal";

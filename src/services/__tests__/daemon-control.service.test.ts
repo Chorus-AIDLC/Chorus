@@ -46,8 +46,8 @@ beforeEach(() => {
 });
 
 describe("daemon-control.service constants", () => {
-  it("accepts the `interrupt` and `resume` control verbs (both ride the reverse channel)", () => {
-    expect([...CONTROL_COMMANDS]).toEqual(["interrupt", "resume"]);
+  it("accepts the `interrupt`, `resume`, and `deliver_turn` control verbs (all ride the reverse channel)", () => {
+    expect([...CONTROL_COMMANDS]).toEqual(["interrupt", "resume", "deliver_turn"]);
   });
 
   it("targets the execution registry's resource space", () => {
@@ -262,5 +262,62 @@ describe("dispatchControl resume", () => {
     const [channel, event] = mockEventBus.emit.mock.calls[0];
     expect(channel).toBe(controlEventName(connectionUuid));
     expect(event).toMatchObject({ type: "control", command: "resume", entityType: "task", entityUuid: t1 });
+  });
+});
+
+// ===== dispatchControl deliver_turn (子2 — origin-only live delivery, precise turn) =====
+describe("dispatchControl deliver_turn (connection-targeted, precise turnUuid, no entity)", () => {
+  const turnUuid = "turn-0000-0000-0000-00000000dead";
+
+  it("emits exactly once on the per-connection channel targeting ONLY the origin connection, carrying the precise turnUuid", () => {
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "deliver_turn",
+      turnUuid,
+    });
+
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    const [channel, payload] = mockEventBus.emit.mock.calls[0];
+    // Keyed per connection so ONLY the origin daemon stream receives it — never the
+    // agent-wide notification fan-out, never another connection of the same agent.
+    expect(channel).toBe(controlEventName(connectionUuid));
+    expect(channel).toBe(`control:${connectionUuid}`);
+    // The wire carries the PRECISE turnUuid so the daemon runs ONLY that turn (not a
+    // connection-wide sweep that would drag every other still-pending turn along).
+    expect(payload).toEqual({
+      type: "control",
+      command: "deliver_turn",
+      targetConnectionUuid: connectionUuid,
+      turnUuid,
+    });
+  });
+
+  it("carries NO entityType/entityUuid and NO instruction text on the wire", () => {
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "deliver_turn",
+      turnUuid,
+    });
+    const [, payload] = mockEventBus.emit.mock.calls[0];
+    // The daemon reads the turn (and its text) by uuid; no entity, no text on the wire.
+    expect(payload).not.toHaveProperty("entityType");
+    expect(payload).not.toHaveProperty("entityUuid");
+    expect(payload).not.toHaveProperty("instructionText");
+    expect(payload).not.toHaveProperty("promptText");
+    // And, like every control command, it does not leak companyUuid onto the wire.
+    expect(payload).not.toHaveProperty("companyUuid");
+  });
+
+  it("NEVER persists a Notification row (control is off the wake path)", () => {
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "deliver_turn",
+      turnUuid,
+    });
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    expect(mockPrisma.notification.createMany).not.toHaveBeenCalled();
   });
 });

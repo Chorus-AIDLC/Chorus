@@ -178,11 +178,21 @@ export function buildDaemon(creds, deps = {}) {
   const redispatchResume = (entityType, entityUuid) => {
     router.dispatchResume?.({ entityType, entityUuid });
   };
+  // Origin-only live delivery (子2 — daemon-instruction-injection): a `deliver_turn`
+  // control event means the server pinged THIS connection that a SPECIFIC new pending
+  // `human_instruction` turn (`turnUuid`) awaits. The control handler forwards that uuid
+  // to the connection-scoped pending-turns sweep (exposed as `backfill.pendingTurnsOnly`)
+  // so ONLY that one turn is dispatched — never a connection-wide sweep that would also
+  // run every other still-pending turn. It shares the same `seen` set as reconnect
+  // backfill (a turn runs at most once). Read lazily so it tolerates the construction
+  // order (backfill is assigned just after).
+  const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
   const onControl = createControlHandler({
     waker,
     getConnectionUuid: () => connectionState.connectionUuid,
     sigintTimeoutMs,
     redispatchResume,
+    deliverTurn,
     logger,
   });
 
@@ -190,6 +200,8 @@ export function buildDaemon(creds, deps = {}) {
   // the SAME router/queue (so serialization holds) and the SAME seen set (so
   // already-handled notifications are skipped). The router marks seen at
   // dispatch; backfill's own pre-check is a cheap early-out.
+  // `deliverTurn` (defined above) closes over `backfill` but only invokes it lazily,
+  // so a `const` initialized here is safe despite the earlier lexical reference.
   const backfill = createBackfill({
     mcpClient,
     dispatch: (event) => router.dispatch(event),

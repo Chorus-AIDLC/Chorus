@@ -27,18 +27,23 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext, hasPermission } from "@/lib/auth";
 import type { AgentAuthContext, SuperAdminAuthContext } from "@/types/auth";
 import {
-  CONTROL_COMMANDS,
   CONTROL_ENTITY_TYPES,
   resolveConnectionOwner,
   dispatchControl,
+  type DispatchControlParams,
 } from "@/services/daemon-control.service";
 
-// Request body schema. `command` is the strict enum derived from CONTROL_COMMANDS
-// (`interrupt` | `resume`) — an unknown command is rejected at this boundary with a
-// 422 and nothing is published. `entityType` is the targeted resource kind;
-// `targetConnectionUuid`/`entityUuid` are non-empty strings.
+// Request body schema. This PUBLIC endpoint accepts ONLY the entity-bearing control
+// verbs (`interrupt`/`resume`, 子3): they target a specific running/resumable resource,
+// so they carry `entityType` (CONTROL_ENTITY_TYPES) + a non-empty `entityUuid`. An unknown
+// command — or a missing entity field — is rejected here with a 422 and nothing published.
+//
+// `deliver_turn` (子2 — origin-only live delivery) is deliberately NOT accepted over HTTP:
+// it is a SERVICE-INTERNAL ping the send path emits directly via `dispatchControl` after
+// it has created the turn and knows the precise `turnUuid`. An external HTTP caller has no
+// turnUuid to supply, so exposing it here would only admit a malformed, turn-less command.
 const bodySchema = z.object({
-  command: z.enum([...CONTROL_COMMANDS]),
+  command: z.enum(["interrupt", "resume"]),
   targetConnectionUuid: z.string().min(1),
   entityType: z.enum([...CONTROL_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
@@ -62,7 +67,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!parsed.success) {
     return errors.validationError(parsed.error.flatten());
   }
-  const { command, targetConnectionUuid, entityType, entityUuid } = parsed.data;
+  const body = parsed.data;
+  const { targetConnectionUuid } = body;
 
   // Authz (q2=a): resolve the target connection's owner within the caller's company
   // (absent → 404 non-disclosure, never confirming another company's/owner's
@@ -85,15 +91,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   // Authorized: publish exactly once through the dispatch seam (the only publish
-  // path) and return without waiting for the kill — the daemon reports the
-  // resulting task state asynchronously.
+  // path) and return without waiting for the daemon to act — the daemon reports the
+  // resulting state asynchronously. The validated body IS the entity-bearing dispatch
+  // shape (interrupt/resume only — deliver_turn is service-internal, never accepted here),
+  // so it threads through verbatim with the authenticated company.
   dispatchControl({
     companyUuid: auth.companyUuid,
     targetConnectionUuid,
-    command,
-    entityType,
-    entityUuid,
-  });
+    command: body.command,
+    entityType: body.entityType,
+    entityUuid: body.entityUuid,
+  } satisfies DispatchControlParams);
 
   return success({ dispatched: true });
 });

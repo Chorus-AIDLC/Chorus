@@ -48,13 +48,28 @@ export interface PresenceEvent {
  * on the daemon side (the routing key already scopes delivery per connection), and
  * `{entityType, entityUuid}` lets the daemon self-check it actually holds that
  * entity's running subprocess before acting.
+ *
+ * `entityType`/`entityUuid` are OPTIONAL because `deliver_turn` (子2 — origin-only
+ * live delivery of a `human_instruction`) carries ONLY `targetConnectionUuid` +
+ * `turnUuid`: the daemon dispatches PRECISELY that one turn (not a connection-wide
+ * sweep), and an ad-hoc session's `sessionId` is a non-lineage key that would not fit
+ * the fixed CONTROL_ENTITY_TYPES union `interrupt`/`resume` use. `interrupt`/`resume`
+ * still carry both entity fields (the dispatch path / route only omit them for
+ * `deliver_turn`).
+ *
+ * `turnUuid` is the precise target of a `deliver_turn` ping (子2 — the freshly-created
+ * `human_instruction` turn's uuid). The daemon runs ONLY that turn, so a fresh send no
+ * longer drags every other still-`pending` turn of the connection along with it. It is
+ * present ONLY for `deliver_turn`; the connection-wide reconnect-backfill sweep (the
+ * lost-ping safety net) needs no turnUuid and is unaffected.
  */
 export interface ControlEvent {
   type: "control";
-  command: "interrupt" | "resume";
+  command: "interrupt" | "resume" | "deliver_turn";
   targetConnectionUuid: string;
-  entityType: "task" | "idea" | "proposal" | "document";
-  entityUuid: string;
+  entityType?: "task" | "idea" | "proposal" | "document";
+  entityUuid?: string;
+  turnUuid?: string;
 }
 
 /**
