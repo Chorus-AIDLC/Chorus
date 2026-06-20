@@ -10,6 +10,28 @@
   font-size: inherit;
 }
 
+/*
+ * Daemon transcript ScrollArea — contain wide markdown blocks on mobile.
+ *
+ * Radix `ScrollArea.Viewport` injects a content wrapper styled inline
+ * `min-width:100%; display:table`. A `display:table` box sizes to its content's
+ * max-content width, so a wide transcript block (a markdown TABLE, a long code
+ * block) makes that wrapper — and every descendant — grow past the viewport.
+ * The `min-w-0` chain in the transcript markup cannot shrink anything under an
+ * unbounded `display:table` ancestor, so the block was clipped by the viewport's
+ * `overflow-x:hidden` and read as "wider than the screen" on mobile. Forcing the
+ * injected child to `display:block` re-bounds it to the viewport width, which lets
+ * the `min-w-0` chain bite and lets Streamdown's own `overflow-x:auto` table
+ * wrapper scroll within its own region. Scoped to the daemon transcript via the
+ * `daemon-transcript-scroll` class set on that one ScrollArea (see
+ * components/agent-presence/chat/transcript-view.tsx) so the shared
+ * ui/scroll-area component — and every other ScrollArea — is unaffected.
+ */
+.daemon-transcript-scroll [data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+  min-width: 0 !important;
+}
+
 @custom-variant dark (&:is(.dark *));
 @source "../../../node_modules/streamdown/dist/*.js";
 @source "../../../node_modules/@streamdown/mermaid/dist/*.js";

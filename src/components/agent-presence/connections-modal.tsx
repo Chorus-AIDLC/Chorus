@@ -35,11 +35,16 @@ export function AgentConnectionsModal() {
   return (
     <Dialog open={modalOpen} onOpenChange={setModalOpen}>
       <DialogContent
-        // Wide, tall, padding-free shell: the chat view owns its own layout, padding,
-        // and the (rare) mobile drill-down. The body is height-constrained so the
-        // two-pane transcript ScrollArea scrolls WITHIN the dialog rather than
-        // pushing the dialog past the viewport.
-        className="flex h-[92vh] max-h-[92vh] w-[min(96vw,1100px)] max-w-[min(96vw,1100px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,1100px)]"
+        // Padding-free shell: the chat view owns its own layout, padding, and the
+        // mobile drill-down. The body is height-constrained so the transcript
+        // ScrollArea scrolls WITHIN the dialog rather than pushing it past the viewport.
+        //
+        // MOBILE (< sm): the modal fills the screen edge-to-edge (`h-dvh w-screen`,
+        // no rounding/border) so the conversation reads like a native chat screen —
+        // the transcript fills the middle and the reply input sits at the very bottom
+        // of the viewport. `dvh` (not `vh`) so the mobile URL bar can't push the input
+        // off-screen. DESKTOP (sm+): the floating, height-capped card is restored.
+        className="flex h-dvh max-h-dvh w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 sm:h-[92vh] sm:max-h-[92vh] sm:w-[min(96vw,1100px)] sm:max-w-[min(96vw,1100px)] sm:rounded-lg sm:border"
       >
         {/* The view renders its own visible heading + subtitle; this hidden
             title + description satisfy the Radix Dialog accessibility

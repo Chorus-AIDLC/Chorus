@@ -615,10 +615,15 @@ export function DaemonChat() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#FAF8F4]">
-      {/* MOBILE drill-down detail */}
+      {/* MOBILE drill-down detail — a full-height flex column so the transcript
+          ScrollArea fills the middle and the reply input lands at the very bottom of
+          the (fullscreen on mobile) modal, not floating in a fixed-height box with
+          dead space below it. The back-button header is a non-shrinking row; the
+          content takes the remaining height (`min-h-0 flex-1`) and owns its own
+          internal scroll. */}
       {mobileDetailOpen && (
-        <div className="lg:hidden">
-          <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[#EFEBE4] bg-[#FAF8F4] px-3 py-2.5">
+        <div className="flex h-full min-h-0 flex-col lg:hidden">
+          <div className="flex shrink-0 items-center gap-1 border-b border-[#EFEBE4] bg-[#FAF8F4] px-3 py-2.5">
             <Button
               variant="ghost"
               size="sm"
@@ -629,7 +634,7 @@ export function DaemonChat() {
               {t("mobileBack")}
             </Button>
           </div>
-          <div className="h-[70vh]">{mobileDrillContent}</div>
+          <div className="min-h-0 flex-1">{mobileDrillContent}</div>
         </div>
       )}
 

@@ -158,7 +158,7 @@ export function TurnBand({
         {/* Messages — a quiet top-to-bottom transcript. A turn whose messages were
             trimmed by the rolling window (or that hasn't produced any yet) shows a
             calm placeholder rather than an empty gap (no silent empty). */}
-        <div className="mt-3 flex flex-col gap-3">
+        <div className="mt-3 flex min-w-0 flex-col gap-3">
           {turn.messages.length > 0 ? (
             turn.messages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />

@@ -48,7 +48,10 @@ export function Message({
   const clock = formatClock(message.createdAt);
 
   return (
-    <div className="flex flex-col gap-1">
+    // `min-w-0` lets this message shrink below a wide child's min-content width
+    // (e.g. a wide markdown table) instead of forcing the transcript column —
+    // and on mobile the dialog — to scroll horizontally as a whole.
+    <div className="flex min-w-0 flex-col gap-1">
       <div className="flex items-baseline gap-2">
         <span
           className={`text-[11px] font-semibold uppercase tracking-wide ${
@@ -76,7 +79,18 @@ export function Message({
         // transcript reads like the rest of the app, not a flat wall of text.
         // `prose prose-sm max-w-none` scopes typography to the compact transcript
         // size, matching the idea/comment renderers.
-        <div className="prose prose-sm max-w-none break-words text-[13px] leading-relaxed text-[#2C2C2C]">
+        //
+        // Width discipline (SCOPED here — the shared MarkdownContent /
+        // streamdown-plugins layer is left untouched so Ideas / Comments /
+        // Documents are not regressed): a wide block (table / code / long URL /
+        // image) must NOT widen the transcript column or the mobile dialog. We
+        // (a) let the wrapper shrink (`min-w-0` + `max-w-full`) so it can never
+        // exceed its track, and (b) constrain Streamdown's rendered descendants
+        // via scoped arbitrary variants — `table`/`pre` become their own
+        // horizontal-scroll regions (`block overflow-x-auto max-w-full`,
+        // layout preserved), inline code & links wrap anywhere instead of
+        // forcing a min-content width, and images cap at the available width.
+        <div className="prose prose-sm w-full min-w-0 max-w-full break-words text-[13px] leading-relaxed text-[#2C2C2C] [&_a]:break-all [&_code]:[overflow-wrap:anywhere] [&_img]:h-auto [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
           <MarkdownContent>{message.text}</MarkdownContent>
         </div>
       )}

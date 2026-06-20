@@ -264,8 +264,28 @@ export function TranscriptView({
           {t("transcriptLoading")}
         </div>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-5 px-6 py-5">
+        // `daemon-transcript-scroll`: Radix `ScrollArea.Viewport` injects a content
+        // wrapper styled inline `display:table; min-width:100%`. A `display:table`
+        // box sizes to its content's max-content width, so a wide transcript block
+        // (a markdown TABLE, a long code block) makes that wrapper — and every
+        // descendant — grow past the viewport; the `min-w-0` chain below cannot
+        // shrink anything under an unbounded `display:table` ancestor, so the block
+        // is clipped by the viewport's `overflow-x:hidden` and reads as "wider than
+        // the screen" on mobile. A scoped rule in globals.css overrides that injected
+        // child to `display:block` (keyed by this class, NOT by editing the shared
+        // ui/scroll-area component), which re-bounds it to the viewport width, lets
+        // the `min-w-0` chain bite, and lets Streamdown's own `overflow-x:auto`
+        // table wrapper scroll within its own region. Verified by live mobile-viewport
+        // DOM measurement (a 3000px-wide table: the pane no longer overflows; the
+        // table scrolls inside its own region).
+        <ScrollArea className="daemon-transcript-scroll min-h-0 w-full flex-1">
+          {/* `min-w-0` keeps this column from expanding to a wide child's
+              min-content width (e.g. a wide transcript table) — paired with the
+              `display:block` override on the Radix viewport child (see the
+              `daemon-transcript-scroll` rule in globals.css); without that override
+              this alone is insufficient, since the viewport child is `display:table`
+              and sizes to content regardless of `min-w-0`. */}
+          <div className="flex w-full min-w-0 flex-col gap-5 px-6 py-5">
             {/* Privacy note — once per pane: the transcript is daemon-self-reported. */}
             <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A9A9A]">
               <Lock className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
