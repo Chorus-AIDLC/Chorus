@@ -32,6 +32,10 @@ function resolveNotificationType(action: string, targetType: string): string | n
     // elaboration events (target type is always "idea")
     "idea:elaboration_started": "elaboration_requested",
     "idea:elaboration_answered": "elaboration_answered",
+    // Human verified the elaboration → wake the Idea's assigned daemon agent to
+    // write the proposal. Recipient is the agent (resolved in resolveRecipients);
+    // deliberately NOT in PREF_FIELD_MAP so the agent wake is never preference-gated.
+    "idea:elaboration_verified": "elaboration_verified",
     // elaboration_followup is no longer emitted (the validate/follow-up
     // mechanism was removed); mapping retained for legacy activity rows.
     "idea:elaboration_followup": "elaboration_requested",
@@ -368,6 +372,24 @@ async function resolveRecipients(
       return ansRecipients;
     }
 
+    case "elaboration_verified": {
+      // Human verified the elaboration → wake ONLY the Idea's assigned daemon agent
+      // to write the proposal. This is an agent-only wake: the recipient list
+      // deliberately excludes the human creator (and any human), so it never
+      // surfaces in a human's notification bell. If the Idea has no assigned agent
+      // (or the assignee is a human), return [] — there is no daemon to wake — which
+      // the chokepoint already treats as a no-op (no silent error: the activity is
+      // still recorded, there is simply no wake recipient).
+      const verifiedIdea = await prisma.idea.findUnique({
+        where: { uuid: targetUuid },
+        select: { assigneeType: true, assigneeUuid: true },
+      });
+      if (verifiedIdea?.assigneeType === "agent" && verifiedIdea.assigneeUuid) {
+        return [{ type: "agent", uuid: verifiedIdea.assigneeUuid }];
+      }
+      return [];
+    }
+
     case "comment_added": {
       // Notify entity assignee + creator, but EXCLUDE the comment author
       const recipients: Recipient[] = [];
@@ -493,6 +515,8 @@ function buildMessage(
       return `${actorName} requested elaboration on idea "${entityTitle}"`;
     case "elaboration_answered":
       return `${actorName} answered elaboration questions for idea "${entityTitle}"`;
+    case "elaboration_verified":
+      return `${actorName} verified elaboration for idea "${entityTitle}" — write the proposal`;
     case "report_created":
       return `${actorName} generated a new report on idea "${entityTitle}"`;
     default:

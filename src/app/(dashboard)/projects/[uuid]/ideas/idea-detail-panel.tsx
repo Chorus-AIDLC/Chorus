@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, FileText, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
+import { X, Bot, User, CheckCircle2, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,9 +31,10 @@ import { ContentWithMentions } from "@/components/mention-renderer";
 import { AssignIdeaModal } from "./assign-idea-modal";
 import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog";
 import { ElaborationPanel } from "@/components/elaboration-panel";
-import { getElaborationAction, skipElaborationAction } from "./[ideaUuid]/elaboration-actions";
+import { getElaborationAction, skipElaborationAction, verifyElaborationAction } from "./[ideaUuid]/elaboration-actions";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
+import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import { formatDateTime } from "@/lib/format-date";
@@ -175,6 +175,11 @@ export function IdeaDetailPanel({
   const [isSkipping, setIsSkipping] = useState(false);
   const [skipError, setSkipError] = useState<string | null>(null);
 
+  // Verify elaboration state
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verified, setVerified] = useState(false);
+
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(idea.title);
@@ -197,9 +202,14 @@ export function IdeaDetailPanel({
 
   const canAssign = idea.status !== "elaborated";
   const elaborationResolved = idea.elaborationStatus === "resolved";
-  const canCreateProposal =
-    (idea.status === "elaborating" || idea.status === "elaborated") &&
-    elaborationResolved;
+  // Shared enable-predicate (also used by the dashboard idea-tracker panel) so
+  // the two surfaces never drift. Computed from the elaboration data already
+  // loaded into this panel — no extra fetch.
+  const canVerify = canVerifyElaboration({
+    ideaStatus: idea.status,
+    elaborationStatus: idea.elaborationStatus,
+    elaboration,
+  });
   const canSkipElaboration =
     idea.status === "elaborating" &&
     (!idea.elaborationStatus || idea.elaborationStatus !== "resolved") &&
@@ -273,6 +283,26 @@ export function IdeaDetailPanel({
       onDeleted?.();
       onClose();
       router.refresh();
+    }
+  };
+
+  const handleVerify = async () => {
+    setIsVerifying(true);
+    setVerifyError(null);
+
+    const result = await verifyElaborationAction(idea.uuid);
+
+    setIsVerifying(false);
+
+    if (result.success) {
+      // The Idea is now `elaborated`; its derived display status becomes
+      // `planning` and the assigned daemon agent is woken (or backfilled when
+      // offline) to write the proposal. We can't tell agent liveness apart
+      // client-side, so we surface a single queued hint that covers both.
+      setVerified(true);
+      router.refresh();
+    } else {
+      setVerifyError(result.error || t("elaboration.verifyFailed"));
     }
   };
 
@@ -564,7 +594,7 @@ export function IdeaDetailPanel({
                   </Button>
                 )}
                 {/* Middle area: help text or action buttons */}
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
                   {canSkipElaboration && (
                     <Button
                       variant="outline"
@@ -579,15 +609,38 @@ export function IdeaDetailPanel({
                       {t("elaboration.skipButton")}
                     </Button>
                   )}
-                  {canCreateProposal && (
-                    <Link href={`/projects/${projectUuid}/proposals/new?ideaUuid=${idea.uuid}`}>
-                      <Button className="bg-[#C67A52] hover:bg-[#B56A42] text-white">
-                        <FileText className="mr-2 h-4 w-4" />
-                        {t("proposals.createProposal")}
-                      </Button>
-                    </Link>
+                  {/* Verify Elaborate — the human "elaboration is confirmed, the
+                      agent should write the proposal" action. Replaces the old
+                      idea-panel "Create Proposal" button. No manual
+                      create-proposal fallback is offered here. */}
+                  {canVerify && !verified && (
+                    <Button
+                      className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                      onClick={handleVerify}
+                      disabled={isVerifying}
+                    >
+                      {isVerifying ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {t("elaboration.verifying")}
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          {t("elaboration.verifyButton")}
+                        </>
+                      )}
+                    </Button>
                   )}
-                  {idea.status === "elaborating" && !elaborationResolved && !canSkipElaboration && (
+                  {verified && (
+                    <span className="text-[11px] text-[#00796B]">
+                      {t("elaboration.verifiedQueuedHint")}
+                    </span>
+                  )}
+                  {verifyError && (
+                    <span className="text-[11px] text-destructive">{verifyError}</span>
+                  )}
+                  {idea.status === "elaborating" && !elaborationResolved && !canVerify && !verified && !canSkipElaboration && (
                     <span className="text-[11px] text-[#9A9A9A]">
                       {t("elaboration.elaborationRequiredHint")}
                     </span>

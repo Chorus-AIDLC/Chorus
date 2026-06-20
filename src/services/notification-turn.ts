@@ -52,12 +52,16 @@ const turnLogger = logger.child({ module: "notification-turn" });
 //   - `human_instruction` is the UI-sent instruction (子2): the chokepoint receives a
 //     Notification with that action and the free-text body in `instructionText`.
 //
-// The `DaemonSessionTurn.trigger` enum is the NARROW 5-value taxonomy
-// (task_assigned | mentioned | elaboration | resume | human_instruction). This table
-// collapses each wake action into its canonical trigger category so every
-// wake-triggering notification yields exactly one turn:
+// The `DaemonSessionTurn.trigger` enum is the NARROW 6-value taxonomy
+// (task_assigned | mentioned | elaboration | elaboration_verified | resume |
+// human_instruction). This table collapses each wake action into its canonical
+// trigger category so every wake-triggering notification yields exactly one turn:
 //   - @mention                                   → mentioned
 //   - elaboration request / answer               → elaboration
+//   - elaboration verified (human-verify wake)   → elaboration_verified (distinct from
+//                                                  the "answer the questions" elaboration
+//                                                  trigger — this one means "write the
+//                                                  proposal")
 //   - human-typed instruction                    → human_instruction
 //   - every other autonomous dispatch (task
 //     assignment, task reopen/verify unblock,
@@ -73,6 +77,10 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
   // Elaboration round opened / answered on an idea.
   elaboration_requested: "elaboration",
   elaboration_answered: "elaboration",
+  // Human verified the elaboration → wake the assigned daemon agent to WRITE THE
+  // PROPOSAL. Distinct from the elaboration request/answer triggers ("answer the
+  // questions") so the daemon prompt can tell the two intents apart.
+  elaboration_verified: "elaboration_verified",
   // Human-typed instruction (子2 UI send box). Canonical text on the turn; the
   // notification carries a denormalized copy in `instructionText`.
   human_instruction: "human_instruction",

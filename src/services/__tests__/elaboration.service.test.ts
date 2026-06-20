@@ -36,6 +36,7 @@ import {
   startElaboration,
   answerElaboration,
   resolveElaboration,
+  verifyElaboration,
   skipElaboration,
   getElaboration,
 } from "@/services/elaboration.service";
@@ -761,6 +762,144 @@ describe("resolveElaboration", () => {
         actorType: "agent",
       })
     ).rejects.toThrow("Idea not found");
+  });
+});
+
+describe("verifyElaboration", () => {
+  const USER_ACTOR = "user-9999-9999-9999-999999999999";
+
+  // verifyElaboration ends by calling getElaboration, which reads
+  // idea.findFirst + elaborationRound.findMany. The mocks below cover both the
+  // verify precondition reads and that final reload.
+  it("resolves the Idea for a user actor who is NOT the assignee (status=elaborated, elaborationStatus=resolved)", async () => {
+    const answeredRound = makeRound({ status: "answered", validatedAt: now });
+    // Idea is assigned to the daemon AGENT; the verifying actor is a different
+    // human user. verifyElaboration must NOT require actor === assignee.
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeUuid: ACTOR_UUID, elaborationStatus: "validating" })
+    );
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([answeredRound]);
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    const result = await verifyElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      actorUuid: USER_ACTOR, // not the assignee
+      actorType: "user",
+    });
+
+    // Same Idea-level state transition as resolveElaboration; no per-round mutation.
+    expect(mockPrisma.elaborationRound.update).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID },
+        data: { status: "elaborated", elaborationStatus: "resolved" },
+      })
+    );
+    expect(mockEventBus.emitChange).toHaveBeenCalled();
+    expect(result.ideaUuid).toBe(IDEA_UUID);
+    expect(Array.isArray(result.rounds)).toBe(true);
+  });
+
+  it("logs an `elaboration_verified` activity (distinct from `elaboration_resolved`)", async () => {
+    const answeredRound = makeRound({ status: "answered", validatedAt: now });
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([answeredRound]);
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await verifyElaboration({
+      companyUuid: COMPANY_UUID,
+      ideaUuid: IDEA_UUID,
+      actorUuid: USER_ACTOR,
+      actorType: "user",
+    });
+
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "elaboration_verified",
+        targetType: "idea",
+        targetUuid: IDEA_UUID,
+        value: expect.objectContaining({ totalRounds: 1 }),
+      })
+    );
+    // It must NOT use the agent path's action.
+    const loggedActions = mockCreateActivity.mock.calls.map((c) => c[0]?.action);
+    expect(loggedActions).not.toContain("elaboration_resolved");
+  });
+
+  it("treats a legacy `validated` round as answered (resolves fine)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([
+      makeRound({ status: "validated", validatedAt: now }),
+    ]);
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      verifyElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: USER_ACTOR,
+        actorType: "user",
+      })
+    ).resolves.toBeDefined();
+    expect(mockPrisma.idea.update).toHaveBeenCalled();
+  });
+
+  it("rejects when a round is still `pending_answers` and leaves the Idea unchanged", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([
+      makeRound({ status: "answered" }),
+      makeRound({ uuid: "round-2", status: "pending_answers" }),
+    ]);
+
+    await expect(
+      verifyElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: USER_ACTOR,
+        actorType: "user",
+      })
+    ).rejects.toThrow("unanswered questions");
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the Idea has zero rounds and leaves the Idea unchanged", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([]);
+
+    await expect(
+      verifyElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: USER_ACTOR,
+        actorType: "user",
+      })
+    ).rejects.toThrow("no elaboration rounds");
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("company-scopes the Idea lookup: an Idea in another company is not found and not disclosed", async () => {
+    // findFirst is scoped by { uuid, companyUuid } — a cross-company Idea returns null.
+    mockPrisma.idea.findFirst.mockResolvedValue(null);
+
+    await expect(
+      verifyElaboration({
+        companyUuid: "other-company-uuid",
+        ideaUuid: IDEA_UUID,
+        actorUuid: USER_ACTOR,
+        actorType: "user",
+      })
+    ).rejects.toThrow("Idea not found");
+
+    // The Idea lookup must have been company-scoped (no disclosure across tenants).
+    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID, companyUuid: "other-company-uuid" },
+      })
+    );
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 });
 

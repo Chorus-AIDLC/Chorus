@@ -421,6 +421,24 @@ describe("notification-listener", () => {
       }
     });
 
+    it("should map idea:elaboration_verified to elaboration_verified", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "pm-agent",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call[0].action).toBe("elaboration_verified");
+    });
+
     it("should map comment_added for all entity types", async () => {
       const types = ["task", "idea", "proposal", "document"];
       for (const targetType of types) {
@@ -958,6 +976,101 @@ describe("notification-listener", () => {
       expect(ownerEntries).toHaveLength(1);
       // 2 agents + 1 dedupped shared owner = 3 entries total.
       expect(call).toHaveLength(3);
+    });
+  });
+
+  describe("elaboration_verified (human-verify → agent wake)", () => {
+    it("should target ONLY the Idea's assigned agent (the daemon), not the human creator", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "My Idea" });
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent",
+          assigneeUuid: "pm-agent",
+        });
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      // Exactly one recipient: the assigned agent.
+      expect(call).toHaveLength(1);
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe("pm-agent");
+      expect(call[0].action).toBe("elaboration_verified");
+    });
+
+    it("should NOT surface in any human's notification bell (no user recipient is produced)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "pm-agent",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.every((n: any) => n.recipientType !== "user")).toBe(true);
+      // The human creator/verifier must never receive this wake.
+      expect(call.every((n: any) => n.recipientUuid !== "user-creator")).toBe(true);
+      expect(call.every((n: any) => n.recipientUuid !== "user-verifier")).toBe(true);
+    });
+
+    it("should produce NO notification when the Idea has no agent assignee (nothing to wake)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: null,
+        assigneeUuid: null,
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("should produce NO notification when the Idea's assignee is a human (only daemons can be woken)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "user",
+        assigneeUuid: "human-assignee",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("should bypass PREF_FIELD_MAP — getPreferences is never consulted (the agent wake is not preference-gated)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "pm-agent",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.getPreferences).not.toHaveBeenCalled();
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
     });
   });
 

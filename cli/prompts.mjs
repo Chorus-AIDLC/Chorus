@@ -65,6 +65,18 @@ export function buildPrompt(n) {
         `answers, then either resolve the elaboration (chorus_pm_validate_elaboration) and proceed to a proposal, ` +
         `or open another round (chorus_pm_start_elaboration) if gaps remain.\n${mentionGuidance(n, "idea")}`
       );
+    case "elaboration_verified":
+      // A human clicked "Verify Elaborate" (add-elaboration-verify-wake). This is NOT a
+      // request to answer questions — the elaboration is DONE and the idea is now
+      // `elaborated`. The agent's job on this wake is to WRITE THE PROPOSAL via the
+      // existing proposal flow, anchored to the idea's same session that ran elaboration.
+      return (
+        `[Chorus] Elaboration for idea '${n.entityTitle}' was VERIFIED by a human ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). The idea is now elaborated — do NOT ` +
+        `answer elaboration questions. Proceed to WRITE THE PROPOSAL: gather context with chorus_get_idea and ` +
+        `chorus_get_elaboration, then author the proposal via the existing proposal flow ` +
+        `(chorus_pm_create_proposal / the proposal skill).\n${mentionGuidance(n, "idea")}`
+      );
     case "proposal_rejected":
       return (
         `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, ` +
@@ -173,6 +185,13 @@ export const WAKE_ACTIONS = new Set([
   "mentioned",
   "elaboration_requested",
   "elaboration_answered",
+  // add-elaboration-verify-wake: a human clicked "Verify Elaborate" — the elaboration is
+  // resolved and the idea is `elaborated`. This wakes the assigned daemon PM agent to WRITE
+  // THE PROPOSAL (distinct from elaboration_requested/answered, which mean "answer
+  // questions"). Arrives as a persisted notification (recipient = the idea's assigned agent),
+  // idea-rooted like the other elaboration wakes, so the session anchor/resume contract is
+  // unchanged. See buildPrompt's `elaboration_verified` case for the write-proposal prompt.
+  "elaboration_verified",
   "proposal_rejected",
   "proposal_approved",
   "idea_claimed",

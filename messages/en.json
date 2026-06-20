@@ -896,6 +896,10 @@
     "skipReasonPlaceholder": "e.g., Bug fix with clear reproduction steps",
     "skipReasonRequired": "Please provide a reason",
     "elaborationRequiredHint": "Complete or skip elaboration to create a proposal",
+    "verifyButton": "Verify Elaborate",
+    "verifying": "Verifying...",
+    "verifyFailed": "Failed to verify elaboration",
+    "verifiedQueuedHint": "Verified — the agent will write the proposal when it's available.",
     "category": {
       "functional": "Functional",
       "nonFunctional": "Non-functional",

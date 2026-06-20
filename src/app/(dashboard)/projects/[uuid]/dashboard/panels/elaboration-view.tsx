@@ -1,13 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Bot, Loader2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ElaborationPanel } from "@/components/elaboration-panel";
-import { getElaborationAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
-import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { MarkdownContent } from "@/components/markdown-content";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
@@ -17,37 +14,16 @@ import { AssigneeSection } from "./assignee-section";
 
 interface ElaborationViewProps {
   idea: IdeaResponse;
+  // Elaboration data is loaded once at the panel level and shared with the
+  // footer's "Verify Elaborate" gate — no separate fetch here.
+  elaboration: ElaborationResponse | null;
+  isLoading: boolean;
   onRefresh: () => Promise<void> | void;
 }
 
-export function ElaborationView({ idea, onRefresh }: ElaborationViewProps) {
+export function ElaborationView({ idea, elaboration, isLoading, onRefresh }: ElaborationViewProps) {
   const t = useTranslations("ideaTracker");
   const tCommon = useTranslations("common");
-
-  const [elaboration, setElaboration] = useState<ElaborationResponse | null>(
-    null
-  );
-  const [isLoading, setIsLoading] = useState(true);
-
-  const loadElaboration = useCallback(async () => {
-    const result = await getElaborationAction(idea.uuid);
-    if (result.success && result.data) {
-      setElaboration(result.data);
-    }
-    setIsLoading(false);
-  }, [idea.uuid]);
-
-  useEffect(() => {
-    loadElaboration();
-  }, [loadElaboration]);
-
-  // Subscribe to SSE events to refresh elaboration when idea changes
-  useRealtimeEntityTypeEvent("idea", loadElaboration);
-
-  const handleRefresh = async () => {
-    await loadElaboration();
-    await onRefresh();
-  };
 
   if (isLoading) {
     return (
@@ -70,7 +46,7 @@ export function ElaborationView({ idea, onRefresh }: ElaborationViewProps) {
           <ElaborationPanel
             ideaUuid={idea.uuid}
             elaboration={elaboration}
-            onRefresh={handleRefresh}
+            onRefresh={onRefresh}
           />
         </div>
       ) : idea.status === "open" ? (

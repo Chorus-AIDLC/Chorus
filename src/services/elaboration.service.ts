@@ -333,6 +333,83 @@ export async function resolveElaboration({
   return getElaboration({ companyUuid, ideaUuid });
 }
 
+// ===== Verify Elaboration (human-callable) =====
+
+/**
+ * Human-callable elaboration resolution path. Additive to — and does NOT
+ * replace — the agent-only `resolveElaboration` (surfaced as the
+ * `chorus_pm_validate_elaboration` MCP tool).
+ *
+ * Enforces the SAME structural precondition as `resolveElaboration` (the Idea
+ * has at least one round and no round is in `pending_answers`) and performs the
+ * SAME state transition (`status → elaborated`, `elaborationStatus →
+ * resolved`). CRITICAL DIFFERENCE: it does NOT require the actor to be the
+ * Idea's assignee — the human verifier is never the assignee (the daemon agent
+ * is). The Idea lookup is scoped by `companyUuid`. Logs activity with action
+ * `elaboration_verified` (distinct from the agent path's `elaboration_resolved`)
+ * so the downstream wake can tell "human verified → write proposal" apart from
+ * "agent self-validated."
+ */
+export async function verifyElaboration({
+  companyUuid,
+  ideaUuid,
+  actorUuid,
+  actorType,
+}: {
+  companyUuid: string;
+  ideaUuid: string;
+  actorUuid: string;
+  actorType: string;
+}): Promise<ElaborationResponse> {
+  // Scope the Idea by company. Unlike resolveElaboration, the actor is NOT
+  // required to be the assignee — the human verifier is a company user, not
+  // the assigned daemon agent.
+  const idea = await prisma.idea.findFirst({
+    where: { uuid: ideaUuid, companyUuid },
+  });
+  if (!idea) throw new Error("Idea not found");
+
+  // Same structural precondition as resolveElaboration: at least one round and
+  // every round answered (a round counts as answered once it leaves
+  // `pending_answers`; legacy `validated` rounds count the same as `answered`).
+  const rounds = await prisma.elaborationRound.findMany({
+    where: { ideaUuid, companyUuid },
+  });
+  if (rounds.length === 0) {
+    throw new Error("Cannot resolve: the Idea has no elaboration rounds");
+  }
+  const unanswered = rounds.filter((r) => r.status === "pending_answers");
+  if (unanswered.length > 0) {
+    throw new Error(
+      `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`
+    );
+  }
+
+  // Same state transition as resolveElaboration (Idea-level; round statuses
+  // untouched).
+  await prisma.idea.update({
+    where: { uuid: ideaUuid },
+    data: { status: "elaborated", elaborationStatus: "resolved" },
+  });
+
+  await activityService.createActivity({
+    companyUuid,
+    projectUuid: idea.projectUuid,
+    targetType: "idea",
+    targetUuid: ideaUuid,
+    actorType,
+    actorUuid,
+    action: "elaboration_verified",
+    value: {
+      totalRounds: rounds.length,
+    },
+  });
+
+  eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+
+  return getElaboration({ companyUuid, ideaUuid });
+}
+
 // ===== Skip Elaboration =====
 
 export async function skipElaboration({

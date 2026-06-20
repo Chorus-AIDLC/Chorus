@@ -142,6 +142,13 @@ describe("triggerForAction / NOTIFICATION_ACTION_TO_TURN_TRIGGER", () => {
     expect(triggerForAction("elaboration_answered")).toBe("elaboration");
   });
 
+  it("maps the human-verify wake to the distinct elaboration_verified trigger (NOT elaboration)", () => {
+    expect(triggerForAction("elaboration_verified")).toBe("elaboration_verified");
+    // It must be its own trigger so the daemon prompt can tell "write the proposal"
+    // apart from "answer the questions" — never collapsed into "elaboration".
+    expect(triggerForAction("elaboration_verified")).not.toBe("elaboration");
+  });
+
   it("maps the human-typed instruction to the human_instruction trigger", () => {
     expect(triggerForAction("human_instruction")).toBe("human_instruction");
   });
@@ -177,11 +184,12 @@ describe("triggerForAction / NOTIFICATION_ACTION_TO_TURN_TRIGGER", () => {
     expect(triggerForAction("resource_resumed")).toBeNull();
   });
 
-  it("every mapped trigger value is a member of the 5-value turn-trigger taxonomy", () => {
+  it("every mapped trigger value is a member of the 6-value turn-trigger taxonomy", () => {
     const allowed = new Set([
       "task_assigned",
       "mentioned",
       "elaboration",
+      "elaboration_verified",
       "resume",
       "human_instruction",
     ]);
@@ -198,6 +206,7 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
     { action: "mentioned", trigger: "mentioned" },
     { action: "elaboration_requested", trigger: "elaboration" },
     { action: "elaboration_answered", trigger: "elaboration" },
+    { action: "elaboration_verified", trigger: "elaboration_verified" },
     { action: "task_reopened", trigger: "task_assigned" },
     { action: "task_verified", trigger: "task_assigned" },
     { action: "idea_claimed", trigger: "task_assigned" },
@@ -252,6 +261,40 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "comment-1", directIdeaUuid: null }),
     );
+  });
+
+  it("idea-anchored elaboration_verified wake records a turn on the idea's session with the distinct trigger", async () => {
+    // The verify wake targets the idea itself (entityType "idea"); lineage resolves
+    // it to its own directIdeaUuid and the turn carries the distinct trigger so the
+    // daemon knows to write the proposal (not answer questions).
+    const result = await maybeCreateTurnForWakeNotification(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(mockResolveDirectIdeaUuid).toHaveBeenCalledWith(companyUuid, "idea", ideaUuid);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: connectionUuid }),
+    );
+    expect(mockCreatePendingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionUuid, trigger: "elaboration_verified", promptText: null }),
+    );
+    expect(result?.trigger).toBe("elaboration_verified");
+    expect(result?.status).toBe("pending");
+  });
+
+  it("creates NO live turn for an offline agent on an elaboration_verified wake (notification persists for backfill)", async () => {
+    // Mirrors the offline/backfill contract: no online connection ⇒ no turn now, but
+    // the (already-created) notification survives for reconnect-backfill. No error.
+    mockListConnectionsForAgent.mockResolvedValue([offlineConn()]);
+
+    const result = await maybeCreateTurnForWakeNotification(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(result).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
   it("picks the first online connection when several connections exist (origin-pinned)", async () => {

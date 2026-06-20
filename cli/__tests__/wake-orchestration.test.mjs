@@ -77,12 +77,38 @@ describe("buildPrompt", () => {
     expect(pi).toContain("idea-7");
   });
 
+  it("elaboration_verified wakes the agent to WRITE the proposal, not answer questions (add-elaboration-verify-wake)", () => {
+    expect(WAKE_ACTIONS.has("elaboration_verified")).toBe(true);
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "elaboration_verified",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("idea-9"); // the idea uuid
+    expect(p).toContain("proj-1"); // project uuid for context
+    expect(p).toContain("VERIFIED"); // tells the agent the elaboration was verified
+    expect(p).toContain("elaborated"); // idea is now elaborated
+    // It must direct proposal authoring via the existing proposal flow...
+    expect(p).toContain("chorus_pm_create_proposal");
+    expect(p).toContain("chorus_get_idea");
+    expect(p).toContain("chorus_get_elaboration");
+    expect(p.toLowerCase()).toContain("write the proposal");
+    // ...and must NOT instruct the agent to answer elaboration questions or open a round.
+    expect(p).not.toContain("chorus_pm_validate_elaboration");
+    expect(p).not.toContain("chorus_pm_start_elaboration");
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
+  });
+
   it("WAKE_ACTIONS covers the agent-relevant server notifications and excludes the noisy ones", () => {
     for (const a of [
       "task_assigned",
       "mentioned",
       "elaboration_requested",
       "elaboration_answered",
+      "elaboration_verified",
       "proposal_rejected",
       "proposal_approved",
       "idea_claimed",

@@ -897,6 +897,10 @@
     "skipReasonPlaceholder": "例如：有明确复现步骤的bug修复",
     "skipReasonRequired": "请提供跳过原因",
     "elaborationRequiredHint": "完成或跳过需求澄清后才能创建方案",
+    "verifyButton": "完成细化",
+    "verifying": "确认中...",
+    "verifyFailed": "确认细化失败",
+    "verifiedQueuedHint": "已确认 — 智能体上线后将撰写方案。",
     "category": {
       "functional": "功能性",
       "nonFunctional": "非功能性",

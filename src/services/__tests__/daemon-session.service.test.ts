@@ -165,10 +165,22 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("TURN_TRIGGERS covers the five wake kinds", () => {
+  it("TURN_TRIGGERS covers the six wake kinds (incl. the distinct elaboration_verified)", () => {
     expect([...TURN_TRIGGERS].sort()).toEqual(
-      ["elaboration", "human_instruction", "mentioned", "resume", "task_assigned"].sort(),
+      [
+        "elaboration",
+        "elaboration_verified",
+        "human_instruction",
+        "mentioned",
+        "resume",
+        "task_assigned",
+      ].sort(),
     );
+  });
+
+  it("TURN_TRIGGERS includes elaboration_verified as a member distinct from elaboration", () => {
+    expect(TURN_TRIGGERS).toContain("elaboration_verified");
+    expect(TURN_TRIGGERS).toContain("elaboration");
   });
 
   it("TURN_STATUSES are the strict forward lifecycle pending/running/ended", () => {

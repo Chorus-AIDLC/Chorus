@@ -527,7 +527,7 @@ model DaemonSessionTurn {
   sessionUuid   String
   session       DaemonSession             @relation(fields: [sessionUuid], references: [uuid], onDelete: Cascade)
   seq           Int // monotonic per session
-  trigger       String // task_assigned | mentioned | elaboration | resume | human_instruction
+  trigger       String // task_assigned | mentioned | elaboration | elaboration_verified | resume | human_instruction
   promptText    String? // free-text body for human_instruction; null otherwise (canonical source)
   status        String                    @default("pending") // pending | running | ended
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;

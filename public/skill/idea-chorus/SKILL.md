@@ -298,4 +298,5 @@ This is a soft heuristic, not a rule — use judgment. Cycle prevention is autom
 ## Next
 
 - Once elaboration is resolved, use the `proposal-chorus` skill (`<BASE_URL>/skill/proposal-chorus/SKILL.md`) to create a Proposal with document and task drafts
+- **Human "Verify Elaborate" handoff:** when a human clicks **Verify Elaborate** on the idea-detail panel, Chorus resolves the elaboration and wakes the Idea's assigned daemon agent to write the proposal — so the woken agent picks up this idea→proposal handoff automatically (no human-authored proposal needed).
 - For platform overview and shared tools, see the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`)
