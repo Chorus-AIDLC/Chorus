@@ -173,6 +173,135 @@ describe("ChorusSseListener", () => {
     listener.disconnect();
   });
 
+  it("forks connection_registered to onConnectionId and NOT to onEvent", async () => {
+    const events: unknown[] = [];
+    const connIds: string[] = [];
+    const payload = JSON.stringify({ type: "connection_registered", connectionUuid: "conn-42" });
+    vi.stubGlobal("fetch", vi.fn(async () => streamingResponse([`data: ${payload}\n\n`])));
+
+    const listener = new ChorusSseListener({
+      chorusUrl: "https://c.example.com",
+      apiKey: "cho_x",
+      logger: makeLogger(),
+      onEvent: (e) => events.push(e),
+      onConnectionId: (id) => connIds.push(id),
+      onReconnect: async () => {},
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(connIds).toEqual(["conn-42"]);
+    // connection_registered MUST NOT enter the wake path.
+    expect(events).toEqual([]);
+    listener.disconnect();
+  });
+
+  it("refreshes the connectionUuid on reconnect (new connection_registered overwrites)", async () => {
+    vi.useFakeTimers();
+    const connIds: string[] = [];
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call++;
+        const uuid = call === 1 ? "conn-old" : "conn-new";
+        // First stream ends (triggers reconnect); second stream gives a new uuid.
+        return streamingResponse([`data: ${JSON.stringify({ type: "connection_registered", connectionUuid: uuid })}\n\n`]);
+      }),
+    );
+
+    const listener = new ChorusSseListener({
+      chorusUrl: "https://c.example.com",
+      apiKey: "cho_x",
+      logger: makeLogger(),
+      onEvent: () => {},
+      onConnectionId: (id) => connIds.push(id),
+      onReconnect: async () => {},
+    });
+    await listener.connect(); // first stream → conn-old, then ends → schedule reconnect
+    await vi.advanceTimersByTimeAsync(0); // flush stream microtasks
+    await vi.advanceTimersByTimeAsync(1000); // backoff fires reconnect → conn-new
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(connIds).toEqual(["conn-old", "conn-new"]);
+    listener.disconnect();
+  });
+
+  it("forks a type:control event to onControl and NOT to onEvent (never a wake)", async () => {
+    const events: unknown[] = [];
+    const controls: unknown[] = [];
+    const payload = JSON.stringify({
+      type: "control",
+      command: "interrupt",
+      targetConnectionUuid: "conn-42",
+      entityType: "task",
+      entityUuid: "task-1",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => streamingResponse([`data: ${payload}\n\n`])));
+
+    const listener = new ChorusSseListener({
+      chorusUrl: "https://c.example.com",
+      apiKey: "cho_x",
+      logger: makeLogger(),
+      onEvent: (e) => events.push(e),
+      onControl: (e) => controls.push(e),
+      onReconnect: async () => {},
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(controls).toHaveLength(1);
+    expect((controls[0] as { command: string }).command).toBe("interrupt");
+    // The control event MUST NOT fall through to the wake path.
+    expect(events).toEqual([]);
+    listener.disconnect();
+  });
+
+  it("a control event forked while a new_notification arrives keeps the notification on onEvent", async () => {
+    const events: unknown[] = [];
+    const controls: unknown[] = [];
+    const control = JSON.stringify({ type: "control", command: "resume", targetConnectionUuid: "c", entityType: "idea", entityUuid: "i" });
+    const notif = JSON.stringify({ type: "new_notification", notificationUuid: "n1" });
+    vi.stubGlobal("fetch", vi.fn(async () => streamingResponse([`data: ${control}\n\n`, `data: ${notif}\n\n`])));
+
+    const listener = new ChorusSseListener({
+      chorusUrl: "https://c.example.com",
+      apiKey: "cho_x",
+      logger: makeLogger(),
+      onEvent: (e) => events.push(e),
+      onControl: (e) => controls.push(e),
+      onReconnect: async () => {},
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(controls).toHaveLength(1);
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "n1" }]);
+    listener.disconnect();
+  });
+
+  it("an onControl callback that throws is caught and warned (never crashes the stream)", async () => {
+    const logger = makeLogger();
+    const payload = JSON.stringify({ type: "control", command: "interrupt", targetConnectionUuid: "c" });
+    vi.stubGlobal("fetch", vi.fn(async () => streamingResponse([`data: ${payload}\n\n`])));
+
+    const listener = new ChorusSseListener({
+      chorusUrl: "https://c.example.com",
+      apiKey: "cho_x",
+      logger,
+      onEvent: () => {},
+      onControl: () => {
+        throw new Error("handler boom");
+      },
+      onReconnect: async () => {},
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("onControl callback error"));
+    listener.disconnect();
+  });
+
   it("re-sends the same self-report params on reconnect", async () => {
     vi.useFakeTimers();
     let call = 0;

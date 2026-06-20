@@ -314,17 +314,48 @@ Results are advisory — they do not hard-block approval or verification, but yo
 
 ---
 
-## SSE Event-Driven Model
+## SSE Event-Driven Model (Bidirectional Daemon Host)
 
-The OpenClaw Chorus plugin runs a background service that holds a **Server-Sent Events (SSE)** connection to the Chorus server and wakes the agent (via the plugin's in-process system-event bridge) when relevant events arrive. Instead of polling, the agent is notified the moment something needs its attention.
+The OpenClaw Chorus plugin runs a background service that holds a **Server-Sent Events (SSE)** connection to the Chorus server. It is a **fully bidirectional daemon host**, on a par with the Chorus CLI daemon: it is not just a receiver of notifications that wakes the agent — it also **registers a connection identity, reports its execution lifecycle back to the server, and accepts reverse control commands** (interrupt / resume / deliver an instruction turn) so a human in the Chorus UI can observe and steer an in-flight run. Instead of polling, the agent is notified the moment something needs its attention, and the server always has a live, controllable view of what this host is running.
 
-### How It Works
+### Inbound: notifications wake the agent
 
 1. The plugin connects to the Chorus SSE endpoint using the configured API Key
 2. When a notification event arrives, the plugin fetches the full notification details
 3. If `projectUuids` is configured, events from other projects are filtered out
-4. The plugin routes the event to the agent with context-rich instructions
+4. The plugin resolves the event's lineage and routes it to the agent (an in-process embedded-agent run) with context-rich instructions
 5. If `autoStart` is enabled, certain events (like `task_assigned`) auto-claim before waking the agent
+
+### Connection identity (`connection_registered`)
+
+Right after the SSE handshake, the server assigns this stream a **DaemonConnection** and reports its `connectionUuid` via a `connection_registered` data event. The plugin captures that uuid (refreshing it on every reconnect, so a recycled stream never carries a stale identity) and uses it as the single source of truth for "which connection am I." This identity is what makes the connection addressable: it appears in the Chorus **Agent Connections** UI, scopes the reverse control channel, and stamps every outbound report below.
+
+### Outbound: the daemon reports its lifecycle to the server
+
+While a woken run executes, the plugin reports back over the `/api/daemon/*` REST surface (host-agnostic, the same payload shapes the CLI daemon sends) so the connection's activity is observable in the UI in real time:
+
+| Report | What it conveys |
+|--------|-----------------|
+| **turn-advance** | Advances the wake's turn lifecycle (`running` → `ended`) so the UI knows when a turn starts and finishes |
+| **execution-state** | Publishes this connection's running/queued execution snapshot (entity, root idea, status, start time) — the live "what is this host doing" view |
+| **transcript** | Streams the finalized user/assistant text of the turn (only `{ role, text }` — no internals) so the run's transcript is visible in the UI |
+| **report-interrupt** | Records that a run ended as `interrupted` (reason `user` or `crash`) rather than completing |
+
+Reports are fire-and-forget and never crash the run: a network/non-2xx failure is logged with its cause and surfaced as a structured failure result, never silently swallowed.
+
+### Reverse control channel (interrupt / resume / deliver_turn)
+
+The server publishes control commands on a `control:{connectionUuid}` channel and forwards them as `type:"control"` SSE events. These are **forked away from the wake path** — a control event can never spawn a new agent run for itself. The plugin acts on a command only after a double-check: (1) the command's `targetConnectionUuid` matches this connection's own uuid (a stale/recycled uuid or another connection's command is ignored and logged), and (2) for `interrupt`, this host actually holds a running embedded-agent run for that entity.
+
+| Command | Effect |
+|---------|--------|
+| **interrupt** | Aborts the matching in-flight run (true mid-run stop via its AbortController), then reports `report-interrupt` |
+| **resume** | Re-dispatches the entity's wake to continue the **same** session (the synthetic "resume" wake; resolves lineage so it anchors on the same direct idea) |
+| **deliver_turn** | Runs a human instruction turn delivered into the conversation — precisely the one turn when a `turnUuid` is present (origin-only live delivery), or a full pending-turns sweep as a fallback for an older server |
+
+### Backfill on reconnect
+
+After an SSE gap, the plugin re-pulls (1) unread **notifications** missed during the gap and (2) this connection's unstarted **pending turns** from the turn table (the safety net for a `deliver_turn` ping lost while disconnected). The two sources share a seen-set, so a turn is run **at most once** across live delivery and backfill.
 
 ### Event Types
 

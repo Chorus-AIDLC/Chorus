@@ -56,6 +56,22 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('"count_update" ignored'));
   });
 
+  it("drops connection_registered SILENTLY (no wake, never logged as ignored)", () => {
+    const { router } = build({});
+    // Defense-in-depth: even if the listener fork were bypassed, the router must
+    // not treat connection_registered as an unhandled/ignored event.
+    router.dispatch({ type: "connection_registered", connectionUuid: "c1" } as unknown as SseNotificationEvent);
+    expect(wake).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("ignored"));
+  });
+
+  it("drops a type:control event SILENTLY (no wake, never logged as ignored)", () => {
+    const { router } = build({});
+    router.dispatch({ type: "control", command: "interrupt" } as unknown as SseNotificationEvent);
+    expect(wake).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("ignored"));
+  });
+
   it("warns and skips when notificationUuid is missing", () => {
     const { router } = build({});
     router.dispatch({ type: "new_notification" } as SseNotificationEvent);
@@ -127,5 +143,63 @@ describe("ChorusEventRouter.dispatch", () => {
     await flush();
     expect(wake).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Could not fetch notifications"));
+  });
+});
+
+describe("ChorusEventRouter — wake attribution (daemon parity)", () => {
+  let wake: ReturnType<typeof vi.fn>;
+  let logger: ReturnType<typeof makeLogger>;
+
+  beforeEach(() => {
+    wake = vi.fn();
+    logger = makeLogger();
+  });
+
+  function build(responses: Record<string, unknown>, lineage?: { resolve: ReturnType<typeof vi.fn> }) {
+    const mcpClient = makeMcpClient(responses) as never;
+    const router = new ChorusEventRouter({ mcpClient, wake, logger, lineage: lineage as never });
+    return { router };
+  }
+
+  it("resolves lineage and threads { entity*, rootIdeaUuid, directIdeaUuid } as the wake attribution", async () => {
+    const resolve = vi.fn(async () => ({ rootIdeaUuid: "root-1", directIdeaUuid: "direct-1" }));
+    const { router } = build(
+      { chorus_get_notifications: { notifications: [makeNotification()] } },
+      { resolve },
+    );
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+
+    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({ entityType: "task", entityUuid: "task-1" }));
+    const attribution = wake.mock.calls[0][2];
+    expect(attribution).toEqual({
+      entityType: "task",
+      entityUuid: "task-1",
+      rootIdeaUuid: "root-1",
+      directIdeaUuid: "direct-1",
+    });
+  });
+
+  it("falls back to entity-only attribution when lineage resolve throws (wake not lost)", async () => {
+    const resolve = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const { router } = build(
+      { chorus_get_notifications: { notifications: [makeNotification()] } },
+      { resolve },
+    );
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+
+    expect(wake).toHaveBeenCalledOnce();
+    expect(wake.mock.calls[0][2]).toEqual({ entityType: "task", entityUuid: "task-1" });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Lineage resolve failed"));
+  });
+
+  it("threads entity-only attribution when no lineage resolver is wired", async () => {
+    const { router } = build({ chorus_get_notifications: { notifications: [makeNotification()] } });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake.mock.calls[0][2]).toEqual({ entityType: "task", entityUuid: "task-1" });
   });
 });

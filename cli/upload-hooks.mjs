@@ -18,6 +18,14 @@
 //
 // `status` is constrained to "running"/"queued"; "ended" is a server-only
 // terminal state the daemon never reports (the server rejects it).
+//
+// Transport: both the transcript POST and the execution-state POST go through the SHARED
+// daemon REST client (`cli/daemon-rest-client.mjs`), which owns the request, Bearer auth,
+// and the no-silent-errors transport contract. These hooks keep only the host-side
+// concerns the client does not own — batching/debounce + content extraction for the
+// transcript, and the snapshot build + serialized fire-and-forget chaining for both.
+
+import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -217,13 +225,18 @@ export function extractTranscriptText(obj) {
  * @returns {UploadHooks}
  */
 export function createTranscriptUploadHooks(opts) {
-  const url = opts.url.replace(/\/$/, "");
-  const apiKey = opts.apiKey;
   const logger = opts.logger ?? NOOP_LOGGER;
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const batchDelayMs = opts.batchDelayMs ?? 50;
   const setTimeoutImpl = opts.setTimeoutImpl ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutImpl ?? clearTimeout;
+  // Transport via the shared client (transcript has no connectionUuid concern — the agent
+  // key + sessionId resolve the turn server-side, so getConnectionUuid is unused here).
+  const client = createDaemonRestClient({
+    url: opts.url,
+    apiKey: opts.apiKey,
+    fetchImpl: opts.fetchImpl,
+    logger,
+  });
 
   // The session this batch belongs to (set by onSessionStart, and re-affirmed by each
   // message's observed session id from the stream). Messages queued for one session
@@ -235,31 +248,14 @@ export function createTranscriptUploadHooks(opts) {
   // Serialize POSTs so an earlier batch can never land after a later one on the wire.
   let chain = Promise.resolve();
 
-  /** POST one batch for a session. Never throws. */
+  /** POST one batch for a session via the shared client. Never throws. */
   async function upload(sessionId, messages) {
     if (!sessionId || messages.length === 0) return;
-    const body = JSON.stringify({ sessionId, messages });
-
-    let response;
-    try {
-      response = await fetchImpl(`${url}/api/daemon/transcript`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body,
-      });
-    } catch (err) {
-      logger.warn(`[Chorus] transcript upload request failed: ${err}`);
-      return;
-    }
-    if (!response.ok) {
-      logger.warn(`[Chorus] transcript upload returned ${response.status}`);
-      return;
-    }
-    logger.info(`[Chorus] transcript uploaded (${messages.length} msg) for session ${sessionId}`);
+    // The client POSTs `{ sessionId, messages }` to /api/daemon/transcript with Bearer
+    // auth and logs "transcript upload request failed" / "transcript upload returned N"
+    // on failure (no-silent-errors) and "transcript uploaded (N msg) ..." on success. We
+    // swallow the structured result so a failed upload never breaks the wake path.
+    await client.transcript({ sessionId, messages });
   }
 
   /** Drain `pending` for `currentSessionId` into a serialized fire-and-forget POST. */
@@ -350,12 +346,19 @@ export function createTranscriptUploadHooks(opts) {
  * @returns {UploadHooks}
  */
 export function createExecutionUploadHooks(opts) {
-  const url = opts.url.replace(/\/$/, "");
-  const apiKey = opts.apiKey;
-  const getConnectionUuid = opts.getConnectionUuid;
   const getSnapshot = opts.getSnapshot;
   const logger = opts.logger ?? NOOP_LOGGER;
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  // Transport via the shared client. It owns the connectionUuid guard (silent skip while
+  // the SSE handshake hasn't reported it — a normal early state, not an error), the
+  // request, Bearer auth, and the failure logging ("execution-state upload request failed"
+  // / "execution-state upload returned N") + success log.
+  const client = createDaemonRestClient({
+    url: opts.url,
+    apiKey: opts.apiKey,
+    getConnectionUuid: opts.getConnectionUuid,
+    fetchImpl: opts.fetchImpl,
+    logger,
+  });
 
   // Serialize uploads so two rapid transitions can't reorder on the wire (a
   // later snapshot must not land before an earlier one). The snapshot is
@@ -365,36 +368,9 @@ export function createExecutionUploadHooks(opts) {
   // collapsed into the subsequent "finished" upload.
   let chain = Promise.resolve();
 
-  /** POST a captured snapshot. Never throws. */
+  /** POST a captured snapshot via the shared client. Never throws. */
   async function upload(executions) {
-    const connectionUuid = getConnectionUuid();
-    if (!connectionUuid) {
-      // No connectionUuid yet (SSE handshake hasn't reported it): nothing to
-      // attribute the snapshot to. Not an error — a normal early/edge state.
-      return;
-    }
-    const body = JSON.stringify({ connectionUuid, executions });
-
-    let response;
-    try {
-      response = await fetchImpl(`${url}/api/daemon/execution-state`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body,
-      });
-    } catch (err) {
-      logger.warn(`[Chorus] execution-state upload request failed: ${err}`);
-      return;
-    }
-    if (!response.ok) {
-      logger.warn(`[Chorus] execution-state upload returned ${response.status}`);
-      return;
-    }
-    logger.info(`[Chorus] execution-state uploaded (${executions.length} active)`);
+    await client.executionState({ executions });
   }
 
   return {

@@ -18,6 +18,13 @@
 //      `GET /api/daemon/pending-turns?connectionUuid=…` (Bearer agent key, global
 //      fetch — zero new deps), each re-dispatched through `router.dispatchPendingTurn`.
 //
+// The pending-turns READ goes through the SHARED daemon REST client
+// (`cli/daemon-rest-client.mjs`), which owns the `GET /api/daemon/pending-turns` request,
+// Bearer auth, the connectionUuid guard, and the no-silent-errors handling (network error
+// / non-2xx / bad JSON / missing turns array are all logged with cause and surfaced).
+// This module keeps only the backfill-domain concerns: the notification source, the
+// `onlyTurnUuid` precision filter, the `seen` dedup, and re-dispatch.
+//
 // De-dupes against the shared `seen` set so a reconnect storm doesn't double-wake.
 //
 // The returned `backfill` function also exposes `backfill.pendingTurnsOnly` — the
@@ -25,6 +32,8 @@
 // (子2 — origin-only live delivery) can reuse the EXACT same sweep without re-running the
 // notification source. Live ping and reconnect backfill therefore converge on one sweep +
 // one `seen` set, so a turn runs at most once regardless of which path observes it first.
+
+import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -59,11 +68,17 @@ export function createBackfill(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
   const limit = opts.limit ?? 50;
   // 子1 pending-turn backfill wiring (optional).
-  const url = opts.url ? opts.url.replace(/\/$/, "") : null;
+  const url = opts.url ?? null;
   const apiKey = opts.apiKey ?? null;
   const getConnectionUuid = opts.getConnectionUuid ?? null;
   const dispatchPendingTurn = opts.dispatchPendingTurn ?? null;
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  // The pending-turns READ is delegated to the shared client. Built only when the
+  // pending-turn backfill is wired (url + apiKey + getConnectionUuid present); otherwise
+  // backfillPendingTurns is an early no-op (notification-only callers / older tests).
+  const pendingTurnsClient =
+    url && apiKey && getConnectionUuid
+      ? createDaemonRestClient({ url, apiKey, getConnectionUuid, fetchImpl: opts.fetchImpl, logger })
+      : null;
 
   /** Re-emit unread notifications missed during the gap (autonomous wakes). */
   async function backfillNotifications() {
@@ -119,45 +134,20 @@ export function createBackfill(opts) {
    * @param {string} [onlyTurnUuid]
    */
   async function backfillPendingTurns(onlyTurnUuid) {
-    if (!url || !apiKey || !getConnectionUuid || !dispatchPendingTurn) {
+    if (!pendingTurnsClient || !dispatchPendingTurn) {
       // Pending-turn backfill not wired (e.g. notification-only callers / older tests).
       return;
     }
-    const connectionUuid = getConnectionUuid();
-    if (!connectionUuid) {
-      // No connectionUuid yet (SSE handshake hasn't reported it): nothing to read
-      // against. Not an error — a normal early state on the very first connect.
+    // The shared client reads `GET /api/daemon/pending-turns?connectionUuid=…`, skipping
+    // (no log) while the connectionUuid is not known yet — a normal early state — and
+    // surfacing a network error / non-2xx / bad JSON / missing turns array with its cause
+    // (logged) as `result.ok === false`. We just consume the parsed turns; never throw.
+    const result = await pendingTurnsClient.readPendingTurns();
+    if (!result.ok || !result.data) {
+      // Either nothing to read yet (skipped) or a logged failure — nothing to dispatch.
       return;
     }
-
-    const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}`;
-    let response;
-    try {
-      response = await fetchImpl(endpoint, {
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-      });
-    } catch (err) {
-      logger.warn(`[Chorus] pending-turns backfill request failed: ${err}`);
-      return;
-    }
-    if (!response.ok) {
-      logger.warn(`[Chorus] pending-turns backfill returned ${response.status}`);
-      return;
-    }
-    let body;
-    try {
-      body = await response.json();
-    } catch (err) {
-      logger.warn(`[Chorus] pending-turns backfill: bad JSON: ${err}`);
-      return;
-    }
-    // API envelope: { success: true, data: { turns: [...] } }.
-    const data = body && typeof body === "object" ? body.data : undefined;
-    const turns = data && typeof data === "object" ? data.turns : undefined;
-    if (!Array.isArray(turns)) {
-      logger.warn("[Chorus] pending-turns backfill: no turns array in response");
-      return;
-    }
+    const turns = result.data.turns;
 
     let redispatched = 0;
     for (const t of turns) {

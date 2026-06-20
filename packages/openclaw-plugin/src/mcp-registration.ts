@@ -86,25 +86,12 @@ export async function ensureChorusMcpServer(
   const desired = buildDesiredEntry(cfg.chorusUrl!, cfg.apiKey!);
 
   try {
-    // `api.runtime` is permissively typed via the SDK shim; narrow to the
-    // config surface we use (current() + mutateConfigFile). At runtime the host
-    // provides the real `PluginRuntimeCore.config` API
-    // (../openclaw/src/plugins/runtime/types-core.ts:145).
-    const runtimeConfig = (
-      api.runtime as
-        | {
-            config?: {
-              current?: () => { mcp?: { servers?: Record<string, unknown> } } | undefined;
-              mutateConfigFile?: (params: {
-                afterWrite: { mode: "auto" };
-                mutate: (draft: {
-                  mcp?: { servers?: Record<string, unknown> };
-                }) => void;
-              }) => Promise<unknown>;
-            };
-          }
-        | undefined
-    )?.config;
+    // `api.runtime` is now typed (`OpenClawPluginRuntime`) via the SDK shim; its
+    // `config` slice mirrors the real `PluginRuntimeCore.config` API
+    // (../openclaw/src/plugins/runtime/types-core.ts:145) — `current()` reads the
+    // live snapshot, `mutateConfigFile(...)` writes the `mcp.servers.chorus`
+    // entry. No `unknown` cast needed.
+    const runtimeConfig = api.runtime?.config;
 
     if (!runtimeConfig?.mutateConfigFile) {
       logger.error(

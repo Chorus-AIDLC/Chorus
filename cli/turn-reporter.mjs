@@ -14,11 +14,15 @@
 // turn. The optional `entityType`/`entityUuid` let the server stamp the weak
 // executionUuid link from the live execution row.
 //
-// Transport: a plain REST POST to `/api/daemon/turn-advance` with the daemon's existing
-// Bearer agent key — the SAME zero-dep pattern as cli/interrupt-reporter.mjs and
-// cli/upload-hooks.mjs (global fetch, Node 18+). It adds NO new npm dependency
-// (CLAUDE.md pitfall #9) and no shell-out. It is fire-and-forget and NEVER throws into
-// the wake path: a failure is LOGGED (memory: no-silent-errors) and swallowed.
+// Transport: the SHARED daemon REST client (`cli/daemon-rest-client.mjs`) owns the actual
+// `POST /api/daemon/turn-advance` request, its Bearer auth, and the no-silent-errors
+// transport contract — this module is the thin domain wrapper that validates the
+// status/sessionId and maps the wake's call into the client's `turnAdvance` payload. It
+// adds NO new npm dependency (CLAUDE.md pitfall #9) and no shell-out. It is
+// fire-and-forget and NEVER throws into the wake path: a failure is LOGGED by the shared
+// client (memory: no-silent-errors) and the returned result is swallowed.
+
+import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -42,11 +46,17 @@ export const TURN_STATUSES = new Set(["pending", "running", "ended"]);
  * @returns {(params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
-  const url = opts.url.replace(/\/$/, "");
-  const apiKey = opts.apiKey;
-  const getConnectionUuid = opts.getConnectionUuid ?? (() => null);
   const logger = opts.logger ?? NOOP_LOGGER;
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  // The shared client owns the request, Bearer auth, the connectionUuid guard, and the
+  // surface-not-swallow transport contract. This wrapper keeps only the turn-domain
+  // validation (status / sessionId) that is NOT the client's concern.
+  const client = createDaemonRestClient({
+    url: opts.url,
+    apiKey: opts.apiKey,
+    getConnectionUuid: opts.getConnectionUuid ?? (() => null),
+    fetchImpl: opts.fetchImpl,
+    logger,
+  });
 
   return async function advanceTurn({ sessionId, status, entityType, entityUuid }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
@@ -55,47 +65,11 @@ export function createTurnReporter(opts) {
       );
       return;
     }
-    const connectionUuid = getConnectionUuid();
-    if (!connectionUuid) {
-      // The server resolves the turn against a connection the agent owns; without our
-      // registered connection uuid there is nothing to address. Skip (logged) — this
-      // can only happen before the SSE handshake completed.
-      logger.warn(
-        `[Chorus] cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`,
-      );
-      return;
-    }
-
-    const body = {
-      connectionUuid,
-      sessionId,
-      status,
-      // entityType/entityUuid are optional — only sent when the wake has a recognized
-      // execution entity, so the server can resolve the weak executionUuid link.
-      ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
-    };
-
-    let response;
-    try {
-      response = await fetchImpl(`${url}/api/daemon/turn-advance`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      logger.warn(`[Chorus] turn-advance request failed for session ${sessionId} → ${status}: ${err}`);
-      return;
-    }
-    if (!response.ok) {
-      logger.warn(
-        `[Chorus] turn-advance returned ${response.status} for session ${sessionId} → ${status}`,
-      );
-      return;
-    }
-    logger.info(`[Chorus] advanced turn for session ${sessionId} → ${status}`);
+    // The client resolves the connectionUuid lazily, validates it (logging
+    // "no connection uuid yet" when absent), POSTs the exact server payload — sending
+    // entityType/entityUuid only when both are present — and logs the failure cause on a
+    // network error / non-2xx. We swallow the structured result so a failed report can
+    // never crash the wake path.
+    await client.turnAdvance({ sessionId, status, entityType, entityUuid });
   };
 }

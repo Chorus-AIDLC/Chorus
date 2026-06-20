@@ -13,11 +13,15 @@
 // for ANY recognized entity kind (not just tasks) and carries the daemon's own
 // `connectionUuid` so the server can target the right execution row.
 //
-// Transport: a plain REST POST to `/api/daemon/report-interrupt` with the daemon's
-// existing Bearer agent key — the SAME zero-dep pattern as cli/lineage.mjs and
-// cli/upload-hooks.mjs (global fetch, Node 18+). It adds NO new npm dependency
-// (CLAUDE.md pitfall #9) and no shell-out. It is fire-and-forget and NEVER throws
-// into the wake path: a failure is LOGGED (memory: no-silent-errors) and swallowed.
+// Transport: the SHARED daemon REST client (`cli/daemon-rest-client.mjs`) owns the actual
+// `POST /api/daemon/report-interrupt` request, its Bearer auth, and the no-silent-errors
+// transport contract — this module is the thin domain wrapper that validates the
+// entity/reason and maps the call into the client's `reportInterrupt` payload. It adds NO
+// new npm dependency (CLAUDE.md pitfall #9) and no shell-out. It is fire-and-forget and
+// NEVER throws into the wake path: a failure is LOGGED by the shared client (memory:
+// no-silent-errors) and the returned result is swallowed.
+
+import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -55,11 +59,17 @@ const REPORTABLE_ENTITY_TYPES = new Set([
  * @returns {(entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>}
  */
 export function createInterruptReporter(opts) {
-  const url = opts.url.replace(/\/$/, "");
-  const apiKey = opts.apiKey;
-  const getConnectionUuid = opts.getConnectionUuid ?? (() => null);
   const logger = opts.logger ?? NOOP_LOGGER;
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  // The shared client owns the request, Bearer auth, the connectionUuid guard, and the
+  // surface-not-swallow transport contract. This wrapper keeps only the interrupt-domain
+  // validation (entity kind / reason) that is NOT the client's concern.
+  const client = createDaemonRestClient({
+    url: opts.url,
+    apiKey: opts.apiKey,
+    getConnectionUuid: opts.getConnectionUuid ?? (() => null),
+    fetchImpl: opts.fetchImpl,
+    logger,
+  });
 
   return async function reportInterrupt(entityType, entityUuid, reason) {
     if (!REPORTABLE_ENTITY_TYPES.has(entityType) || !entityUuid || !INTERRUPT_REASONS.has(reason)) {
@@ -68,39 +78,10 @@ export function createInterruptReporter(opts) {
       );
       return;
     }
-    const connectionUuid = getConnectionUuid();
-    if (!connectionUuid) {
-      // The server targets the execution row by connection + entity; without our
-      // registered connection uuid there is nothing to address. Skip (logged) —
-      // this can only happen before the SSE handshake completed.
-      logger.warn(
-        `[Chorus] cannot report interrupt for ${entityType}:${entityUuid} — no connection uuid yet`,
-      );
-      return;
-    }
-
-    const endpoint = `${url}/api/daemon/report-interrupt`;
-    let response;
-    try {
-      response = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ connectionUuid, entityType, entityUuid, reason }),
-      });
-    } catch (err) {
-      logger.warn(`[Chorus] report-interrupt request failed for ${entityType}:${entityUuid}: ${err}`);
-      return;
-    }
-    if (!response.ok) {
-      logger.warn(
-        `[Chorus] report-interrupt returned ${response.status} for ${entityType}:${entityUuid} (reason=${reason})`,
-      );
-      return;
-    }
-    logger.info(`[Chorus] reported ${entityType}:${entityUuid} interrupted (reason=${reason})`);
+    // The client resolves the connectionUuid lazily, validates it (logging
+    // "no connection uuid yet" when absent), POSTs the exact server payload, and logs the
+    // failure cause on a network error / non-2xx. We swallow the structured result so a
+    // failed report can never crash the wake path.
+    await client.reportInterrupt({ entityType, entityUuid, reason });
   };
 }

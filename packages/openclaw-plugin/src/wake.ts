@@ -1,4 +1,8 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import type {
+  OpenClawPluginApi,
+  OpenClawRuntimeAgent,
+} from "openclaw/plugin-sdk/plugin-entry";
+import type { WakeRunContext } from "./daemon-client.js";
 
 /**
  * Wake mechanism for the Chorus plugin.
@@ -142,34 +146,21 @@ export function resolveModelRef(
 }
 
 /**
- * Narrowed view of the `api.runtime.agent` surface we use to run a turn. Only
- * the members this plugin touches are typed; the host provides the full
- * `PluginRuntimeCore.agent` at runtime (types-core.ts:180-221).
+ * Resolve the `api.runtime.agent` surface we use to run a turn, returning null
+ * when the host does not expose it (narrow registration modes / older hosts).
+ *
+ * `api.runtime` is now typed (`OpenClawPluginRuntime`) via the SDK shim — the
+ * `agent` slice mirrors `PluginRuntimeCore.agent` (types-core.ts:180-221). We
+ * still runtime-check each function we call (the declared type is a structural
+ * promise the host fulfills; a real host that drops a member must degrade
+ * gracefully, not throw).
  */
-interface SessionEntryLike {
-  sessionId: string;
-  sessionFile?: string;
-}
-interface RuntimeAgentSlice {
-  runEmbeddedAgent: (params: Record<string, unknown>) => Promise<unknown>;
-  resolveAgentDir: (cfg: unknown, agentId: string) => string;
-  resolveAgentWorkspaceDir: (cfg: unknown, agentId: string) => string;
-  resolveAgentTimeoutMs: (opts: { cfg?: unknown }) => number;
-  session: {
-    getSessionEntry: (options: { sessionKey: string; agentId?: string }) => SessionEntryLike | undefined;
-    resolveSessionFilePath: (
-      sessionId: string,
-      entry?: { sessionFile?: string },
-      opts?: { agentId?: string },
-    ) => string;
-  };
-}
-
-function getRuntimeAgent(api: OpenClawPluginApi): RuntimeAgentSlice | null {
-  const agent = (api.runtime as { agent?: Partial<RuntimeAgentSlice> } | undefined)?.agent;
+function getRuntimeAgent(api: OpenClawPluginApi): OpenClawRuntimeAgent | null {
+  const agent = api.runtime?.agent as Partial<OpenClawRuntimeAgent> | undefined;
   if (
     !agent ||
     typeof agent.runEmbeddedAgent !== "function" ||
+    typeof agent.resolveAgentDir !== "function" ||
     typeof agent.resolveAgentWorkspaceDir !== "function" ||
     typeof agent.resolveAgentTimeoutMs !== "function" ||
     typeof agent.session?.getSessionEntry !== "function" ||
@@ -177,7 +168,7 @@ function getRuntimeAgent(api: OpenClawPluginApi): RuntimeAgentSlice | null {
   ) {
     return null;
   }
-  return agent as RuntimeAgentSlice;
+  return agent as OpenClawRuntimeAgent;
 }
 
 /**
@@ -189,6 +180,58 @@ let wakeCounter = 0;
 function nextRunId(contextKey: string): string {
   wakeCounter += 1;
   return `chorus-wake-${wakeCounter}-${contextKey}`;
+}
+
+/**
+ * Resolve the host run context the daemon client needs to run a wake via
+ * `runEmbeddedAgent` — the main-agent session key + agent id + workspace/timeout +
+ * model override + the typed `runtime.agent` surface. Returns null when the wake must
+ * be DROPPED (no resolvable session key, or the host does not expose the agent
+ * runtime / a required session helper). This is the SINGLE place that reaches into
+ * `api.config` / `api.runtime`, so the daemon client stays host-API-agnostic and
+ * unit-testable with a plain context object.
+ *
+ * NOTE: this resolves only the host-derived knobs (the agent's main-session lane,
+ * workspace, model). The per-wake session ANCHOR (the Chorus business key →
+ * deterministic sessionKey → getSessionEntry) is owned by the daemon client, so a
+ * resume continues the same session regardless of when the context was resolved.
+ */
+export function resolveWakeRunContext(
+  api: OpenClawPluginApi,
+  logger: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): WakeRunContext | null {
+  const sessionKey = resolveSessionKey(api);
+  if (!sessionKey) {
+    logger.warn("[Chorus] Wake run-context unavailable — could not resolve a main agent session key.");
+    return null;
+  }
+  const agent = getRuntimeAgent(api);
+  if (!agent) {
+    logger.warn(
+      "[Chorus] Wake run-context unavailable — api.runtime.agent.runEmbeddedAgent (or a required session helper) is not exposed on this host.",
+    );
+    return null;
+  }
+  const cfg = api.config;
+  const agentId = resolveAgentId(api);
+  let workspaceDir: string;
+  let agentDir: string | undefined;
+  let timeoutMs: number;
+  try {
+    workspaceDir = agent.resolveAgentWorkspaceDir(cfg, agentId);
+    agentDir = agent.resolveAgentDir(cfg, agentId);
+    timeoutMs = agent.resolveAgentTimeoutMs({ cfg });
+  } catch (err) {
+    logger.warn(`[Chorus] Wake run-context unavailable — workspace/timeout resolution failed: ${err}`);
+    return null;
+  }
+  const modelRef = resolveModelRef(api);
+  if (!modelRef) {
+    logger.warn(
+      "[Chorus] No agents.defaults.model configured — wake turns will use the host default model, which may be unavailable.",
+    );
+  }
+  return { agent, sessionKey, agentId, config: cfg, workspaceDir, agentDir, timeoutMs, modelRef };
 }
 
 /**
