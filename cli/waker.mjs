@@ -114,7 +114,19 @@ export class Waker {
   }
 
   /** Recognized wake-triggering resource kinds the server's DaemonExecution accepts. */
-  static #EXECUTION_ENTITY_TYPES = new Set(["task", "idea", "proposal", "document"]);
+  // `daemon_session` is the ad-hoc conversation's own execution entity (子3 follow-up):
+  // an ad-hoc human_instruction wake has no task/idea/proposal/document behind it, so
+  // its running/interrupted state is reported against the DaemonSession itself, keyed by
+  // the session BUSINESS id (`sessionId`) — which is ALSO the Claude `--resume` anchor for
+  // an ad-hoc session, so the execution entity, the per-session UI match key, and the
+  // resume anchor are one and the same value (no identity divergence).
+  static #EXECUTION_ENTITY_TYPES = new Set([
+    "task",
+    "idea",
+    "proposal",
+    "document",
+    "daemon_session",
+  ]);
 
   /**
    * Extract the resource an execution row keys on for this notification — its

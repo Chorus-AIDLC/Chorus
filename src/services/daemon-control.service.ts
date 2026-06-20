@@ -62,12 +62,16 @@ export type EntityBearingControlCommand =
   (typeof ENTITY_BEARING_CONTROL_COMMANDS)[number];
 
 // The entity kinds a control command can target — mirrors the execution registry's
-// resource space (the wake-triggering resource the daemon is running).
+// resource space (the wake-triggering resource the daemon is running). `daemon_session`
+// is the ad-hoc conversation itself: an ad-hoc human_instruction wake has no
+// task/idea/proposal/document behind it, so its execution row (and thus its
+// interrupt/resume target) is keyed on the conversation, by the session BUSINESS id.
 export const CONTROL_ENTITY_TYPES = [
   "task",
   "idea",
   "proposal",
   "document",
+  "daemon_session",
 ] as const;
 export type ControlEntityType = (typeof CONTROL_ENTITY_TYPES)[number];
 

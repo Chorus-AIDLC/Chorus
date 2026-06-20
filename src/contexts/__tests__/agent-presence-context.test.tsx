@@ -19,7 +19,11 @@ import {
   computeOnlineCount,
   groupExecutionsByConnection,
   mergeExecutionEvent,
+  buildEventsUrl,
+  routeTranscriptEvent,
   type ExecutionsByConnection,
+  type TranscriptEvent,
+  type TranscriptSubscriber,
 } from "@/contexts/agent-presence-context";
 import type { ConnectionView, ExecutionView } from "@/components/agent-presence";
 
@@ -98,6 +102,38 @@ function exec(
     entityTitle: `Task ${uuid}`,
     projectUuid: "project-1",
     rootIdeaTitle: null,
+  };
+}
+
+function transcriptEvent(over: Partial<TranscriptEvent> = {}): TranscriptEvent {
+  return {
+    type: "transcript",
+    companyUuid: "company-1",
+    sessionUuid: "sess-1",
+    trigger: "transcript_appended",
+    turn: {
+      uuid: "turn-1",
+      sessionUuid: "sess-1",
+      seq: 1,
+      trigger: "task_assigned",
+      promptText: null,
+      status: "running",
+      executionUuid: null,
+      startedAt: null,
+      endedAt: null,
+      createdAt: "2026-06-18T00:00:00.000Z",
+    },
+    messages: [
+      {
+        uuid: "m1",
+        turnUuid: "turn-1",
+        role: "assistant",
+        text: "live line",
+        seq: 1,
+        createdAt: "2026-06-18T00:00:00.000Z",
+      },
+    ],
+    ...over,
   };
 }
 
@@ -201,6 +237,41 @@ describe("mergeExecutionEvent", () => {
     const next = mergeExecutionEvent(prev, { connectionUuid: "conn-a", executions: [] });
     expect(next["conn-a"]).toBeUndefined();
     expect(next["conn-b"]).toHaveLength(1);
+  });
+});
+
+describe("buildEventsUrl", () => {
+  it("is the bare company-wide stream when no session is open", () => {
+    expect(buildEventsUrl(null)).toBe("/api/events");
+    expect(buildEventsUrl("")).toBe("/api/events");
+  });
+  it("carries ?sessionUuid= when a conversation is open", () => {
+    expect(buildEventsUrl("sess-1")).toBe("/api/events?sessionUuid=sess-1");
+  });
+  it("URL-encodes the session uuid defensively", () => {
+    expect(buildEventsUrl("a b")).toBe("/api/events?sessionUuid=a%20b");
+  });
+});
+
+describe("routeTranscriptEvent", () => {
+  it("fans a transcript event out to every subscriber and returns true (handled)", () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    const subs = new Set<TranscriptSubscriber>([a, b]);
+    const ev = transcriptEvent() as unknown as Record<string, unknown>;
+    const handled = routeTranscriptEvent(ev, subs);
+    expect(handled).toBe(true);
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(a.mock.calls[0][0]).toMatchObject({ type: "transcript", trigger: "transcript_appended" });
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+  it("ignores non-transcript events (returns false, no subscriber called)", () => {
+    const a = vi.fn();
+    const subs = new Set<TranscriptSubscriber>([a]);
+    expect(routeTranscriptEvent({ type: "execution" }, subs)).toBe(false);
+    expect(routeTranscriptEvent({ type: "presence" }, subs)).toBe(false);
+    expect(routeTranscriptEvent({}, subs)).toBe(false);
+    expect(a).not.toHaveBeenCalled();
   });
 });
 
@@ -510,5 +581,116 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
 
     expect(eventSourceConstructions).toBe(constructionsAfterMount + 1);
     expect(execCall).toBe(execCallsAfterMount + 1);
+  });
+});
+
+describe("AgentPresenceProvider — transcript routing + setOpenSession reconnect", () => {
+  it("fans a type:transcript SSE event out to subscribeTranscript callbacks", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const received: TranscriptEvent[] = [];
+    let unsub: (() => void) | undefined;
+    act(() => {
+      unsub = result.current.subscribeTranscript((e) => received.push(e));
+    });
+
+    act(() => {
+      dispatchSse(transcriptEvent({ trigger: "transcript_appended" }) as unknown as Record<string, unknown>);
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0].trigger).toBe("transcript_appended");
+    expect(received[0].messages).toHaveLength(1);
+
+    // After unsubscribe, no further events are delivered (and the stream is NOT
+    // reconnected just for a subscribe/unsubscribe — that touches only the ref).
+    const constructionsBefore = eventSourceConstructions;
+    act(() => unsub?.());
+    act(() => {
+      dispatchSse(transcriptEvent() as unknown as Record<string, unknown>);
+    });
+    expect(received).toHaveLength(1);
+    expect(eventSourceConstructions).toBe(constructionsBefore);
+  });
+
+  it("a transcript event does NOT merge into executionsByConnection", async () => {
+    routeAuthFetch({});
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      dispatchSse(transcriptEvent() as unknown as Record<string, unknown>);
+    });
+    expect(result.current.executionsByConnection).toEqual({});
+  });
+
+  it("setOpenSession(uuid) reconnects the stream with ?sessionUuid=, and null reconnects to the bare stream", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // First paint: bare company-wide stream.
+    expect(result.current.openSession).toBeNull();
+    expect(lastEventSource?.url).toBe("/api/events");
+    const afterMount = eventSourceConstructions;
+
+    // Open a conversation → the SSE effect re-runs and reconnects with ?sessionUuid=.
+    await act(async () => {
+      result.current.setOpenSession("sess-9");
+      await Promise.resolve();
+    });
+    expect(result.current.openSession).toBe("sess-9");
+    expect(lastEventSource?.url).toBe("/api/events?sessionUuid=sess-9");
+    expect(eventSourceConstructions).toBe(afterMount + 1);
+
+    // Close it → reconnect back to the bare stream (no transcript channel).
+    await act(async () => {
+      result.current.setOpenSession(null);
+      await Promise.resolve();
+    });
+    expect(result.current.openSession).toBeNull();
+    expect(lastEventSource?.url).toBe("/api/events");
+    expect(eventSourceConstructions).toBe(afterMount + 2);
+  });
+
+  it("preserves the execution-merge across a setOpenSession reconnect", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Switch conversations (forces a reconnect)...
+    await act(async () => {
+      result.current.setOpenSession("sess-9");
+      await Promise.resolve();
+    });
+    // ...then an execution event on the NEW stream still merges (behavior preserved).
+    act(() => {
+      dispatchSse({
+        type: "execution",
+        companyUuid: "company-1",
+        connectionUuid: "c1",
+        executions: [exec("e1", "c1", "running")],
+      });
+    });
+    expect(result.current.executionsByConnection["c1"]).toHaveLength(1);
   });
 });

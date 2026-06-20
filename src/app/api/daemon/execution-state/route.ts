@@ -35,7 +35,9 @@ import {
 } from "@/services/daemon-execution.service";
 
 // Request body schema. `entityType` is the wake-triggering resource kind
-// (task | idea | proposal | document) and `entityUuid` its uuid. `status` is
+// (task | idea | proposal | document | daemon_session — the ad-hoc conversation
+// wake; the enum derives from EXECUTION_ENTITY_TYPES so it stays in sync) and
+// `entityUuid` its uuid. `status` is
 // constrained to the two active values a daemon can report — `ended` is a
 // server-only terminal state set by reconcile, never accepted from the wire.
 // `startedAt`/`rootIdeaUuid` are nullable/optional (a queued resource has no

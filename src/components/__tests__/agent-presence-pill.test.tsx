@@ -152,6 +152,9 @@ function setPresence(over: Partial<AgentPresenceValue>) {
     executionsLoaded: true,
     modalOpen: false,
     setModalOpen: vi.fn(),
+    openSession: null,
+    setOpenSession: vi.fn(),
+    subscribeTranscript: vi.fn(() => () => {}),
     ...over,
   };
   mockPresence.mockReturnValue(value);

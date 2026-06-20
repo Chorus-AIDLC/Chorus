@@ -43,41 +43,31 @@ const INSTRUCTION_NOTIF = {
   instructionText: "Please add a retry with backoff to the uploader.",
 };
 
-describe("event-router human_instruction threading", () => {
-  it("reads instructionText from the already-fetched notification (single fetch) and threads it to wake", async () => {
+describe("event-router human_instruction is NOT woken from the notification path", () => {
+  // Regression: a human_instruction used to be woken here AND via the deliver_turn /
+  // pending-turn paths (keyed turn:{uuid}) → the same instruction ran twice under two
+  // different dedup keys. The notification path now defers human_instruction entirely;
+  // its live delivery is the origin-only deliver_turn ping and its recovery is the
+  // pending-turn backfill.
+  it("does NOT enqueue/wake on a human_instruction new_notification (deferred to turn-keyed paths)", async () => {
     const { enqueued, mcpClient, waker, router } = wire([INSTRUCTION_NOTIF]);
     router.dispatch({ type: "new_notification", notificationUuid: "ni-1" });
     await new Promise((res) => setTimeout(res, 0));
 
-    // Exactly ONE fetch (the list it already makes) — no extra round-trip.
+    // The list is still fetched (it's the router's normal first step), but the action
+    // is recognized as human_instruction and dropped here — no wake, no enqueue.
     expect(mcpClient.callTool).toHaveBeenCalledTimes(1);
-    expect(mcpClient.callTool).toHaveBeenCalledWith("chorus_get_notifications", {
-      status: "unread",
-      limit: 50,
-      autoMarkRead: false,
-    });
-
-    // It enqueued the wake; run the enqueued task to drive waker.wake (the queue is a
-    // spy that records tasks without auto-running them).
-    expect(enqueued).toHaveLength(1);
-    await enqueued[0].task();
-
-    // The notification (carrying instructionText) was threaded to wake unchanged.
-    expect(waker.wake).toHaveBeenCalledTimes(1);
-    const threadedNotif = waker.wake.mock.calls[0][0];
-    expect(threadedNotif.instructionText).toBe(
-      "Please add a retry with backoff to the uploader.",
-    );
-    // And buildPrompt over that threaded notification emits the instruction body.
-    const prompt = buildPrompt(threadedNotif);
-    expect(prompt).toContain("Please add a retry with backoff to the uploader.");
-    expect(prompt).toContain("instruction from a human");
+    expect(enqueued).toHaveLength(0);
+    expect(waker.keyFor).not.toHaveBeenCalled();
+    expect(waker.markQueued).not.toHaveBeenCalled();
+    expect(waker.wake).not.toHaveBeenCalled();
   });
 
-  it("skips a human_instruction with no instructionText (no contentless wake), logged", async () => {
-    const warns = [];
-    const noBody = { ...INSTRUCTION_NOTIF, instructionText: "" };
-    const mcpClient = { callTool: vi.fn(async () => ({ notifications: [noBody] })) };
+  it("logs the deferral visibly (no silent drop)", async () => {
+    const infos = [];
+    const mcpClient = {
+      callTool: vi.fn(async () => ({ notifications: [INSTRUCTION_NOTIF] })),
+    };
     const enqueued = [];
     const waker = { keyFor: vi.fn(), markQueued: vi.fn(), wake: vi.fn(async () => {}) };
     const router = new EventRouter({
@@ -86,14 +76,22 @@ describe("event-router human_instruction threading", () => {
       queue: { enqueue: (k, t) => enqueued.push({ k, t }) },
       wakeActions: WAKE_ACTIONS,
       seen: new Set(),
-      logger: { ...silent, warn: (m) => warns.push(m) },
+      logger: { ...silent, info: (m) => infos.push(m) },
     });
     router.dispatch({ type: "new_notification", notificationUuid: "ni-1" });
     await new Promise((res) => setTimeout(res, 0));
 
-    expect(waker.wake).not.toHaveBeenCalled();
     expect(enqueued).toHaveLength(0);
-    expect(warns.join("")).toMatch(/carries no instructionText/);
+    expect(infos.join("")).toMatch(/deliver_turn \/ pending-turn backfill/);
+  });
+
+  it("buildPrompt still renders the human_instruction body (delivery path unchanged)", () => {
+    // The prompt builder is shared by the deliver_turn / pending-turn dispatch, so the
+    // instruction body still reaches Claude — this asserts the body wiring is intact
+    // even though the NOTIFICATION path no longer wakes it.
+    const prompt = buildPrompt(INSTRUCTION_NOTIF);
+    expect(prompt).toContain("Please add a retry with backoff to the uploader.");
+    expect(prompt).toContain("instruction from a human");
   });
 });
 
@@ -141,8 +139,8 @@ describe("event-router dispatchPendingTurn (backfill re-derivation)", () => {
     expect(attribution.directIdeaUuid).toBe(DIRECT_IDEA);
   });
 
-  it("anchors an ad-hoc (no direct idea) pending turn on the entity key", () => {
-    const { enqueued, router } = wirePending();
+  it("anchors an ad-hoc (no direct idea) pending turn on the daemon_session entity key", () => {
+    const { enqueued, waker, router } = wirePending();
     const adHocSession = "33333333-3333-4333-8333-333333333333";
     router.dispatchPendingTurn({
       turnUuid: "turn-2",
@@ -152,7 +150,13 @@ describe("event-router dispatchPendingTurn (backfill re-derivation)", () => {
       promptText: "do the thing",
     });
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0].key).toBe(`entity:task:${adHocSession}`);
+    // The serialization lane is keyed on the conversation (daemon_session), and the
+    // execution entity reported to the server is daemon_session:<sessionId> — NOT
+    // task:<sessionId> (which the server would drop as a non-existent Task).
+    expect(enqueued[0].key).toBe(`entity:daemon_session:${adHocSession}`);
+    const [n] = waker.markQueued.mock.calls[0];
+    expect(n.entityType).toBe("daemon_session");
+    expect(n.entityUuid).toBe(adHocSession);
   });
 
   it("dedupes a pending turn already handled (shared seen set, keyed turn:<uuid>)", () => {

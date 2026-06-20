@@ -1,27 +1,29 @@
 // @vitest-environment jsdom
 //
-// Modal-relocation test for the Agent Connections view (was the standalone page).
+// Modal test for the chat-style daemon UI (子3) — the "View all" modal body is now
+// `DaemonChat`, a two-pane conversation surface (agent-first list + per-conversation
+// transcript), not the connections master-detail.
 //
-// The former `/agent-connections` page is gone — its master-detail view now lives
-// in the "View all" modal, hosted in the dashboard shell and opened from the
-// sidebar popover's "View all" button (which calls setModalOpen(true) on the
-// shared AgentPresenceProvider). These tests render a REAL AgentPresenceProvider
-// (the production data spine: one /api/agent-connections poll + one
-// /api/daemon/executions aggregate fetch + one /api/events SSE) wrapping a tiny
-// "View all" trigger and the AgentConnectionsModal, and assert:
-//   - the modal opens on the trigger (the popover→View all→modal path) and shows
-//     the same connection-list data the former page did,
-//   - master-detail defaults to the first connection without flashing the prompt,
-//   - agent name is primary identity, client type a secondary badge,
-//   - uptime ticks for online connections and is absent for offline,
-//   - the mobile drill-down opens/closes and self-closes when its connection drops.
+// These tests render a REAL AgentPresenceProvider (the production data spine: one
+// /api/agent-connections poll + one /api/daemon/executions aggregate fetch + one
+// /api/events SSE) wrapping a tiny "View all" trigger and the AgentConnectionsModal,
+// and assert the chat-surface behaviors:
+//   - the modal opens on the trigger (popover→View all→modal path) and shows the
+//     chat title + the agent selector seeded with the connection's agent,
+//   - the conversation list renders the agent's sessions (newest-first), and the
+//     most-recent agent is default-selected so the modal never opens empty,
+//   - selecting a conversation fetches /api/daemon-sessions/[uuid] and renders its
+//     turn bands with the wake-trigger labels + messages,
+//   - the calm empty state shows when there are no conversations,
+//   - a list-load failure renders the distinct error card, never a silent empty.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// next-intl: resolve real en strings (a missing key surfaces as its dotted path
-// and fails the assertion), with `{param}` interpolation for keys like `summary`.
+// next-intl: resolve real en strings (a missing key surfaces as its dotted path and
+// fails the assertion), with `{param}` interpolation + a tiny ICU-plural shim for
+// the keys this surface uses (agentSessionCount / turnLabel etc.).
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
     string,
@@ -45,6 +47,16 @@ vi.mock("next-intl", async () => {
       (key: string, params?: Record<string, string | number>) => {
         let s = resolve(namespace, key);
         if (params) {
+          // Minimal ICU plural: `{x, plural, one {# a} other {# b}}` → pick branch
+          // by the `count`-ish param, substitute `#`.
+          s = s.replace(
+            /\{(\w+),\s*plural,\s*(?:one\s*\{([^}]*)\}\s*)?other\s*\{([^}]*)\}\}/g,
+            (_m, name: string, one: string | undefined, other: string) => {
+              const n = Number(params[name] ?? 0);
+              const branch = n === 1 && one !== undefined ? one : other;
+              return branch.replace(/#/g, String(n));
+            },
+          );
           for (const [k, v] of Object.entries(params)) {
             s = s.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
           }
@@ -74,9 +86,7 @@ import { AgentConnectionsModal } from "@/components/agent-presence";
 // setModalOpen(true) on the shared provider, exactly as the real popover does.
 function ViewAllTrigger() {
   const { setModalOpen } = useAgentPresence();
-  return (
-    <Button onClick={() => setModalOpen(true)}>view-all-trigger</Button>
-  );
+  return <Button onClick={() => setModalOpen(true)}>view-all-trigger</Button>;
 }
 
 // ===== EventSource stub =====
@@ -127,14 +137,76 @@ function conn(overrides: Partial<Conn> & { uuid: string }): Conn {
   };
 }
 
-// Route authFetch by URL: connection list vs. aggregate executions read.
-function respondWith(connections: Conn[], executions: unknown[] = []) {
+type Session = {
+  uuid: string;
+  agentUuid: string;
+  sessionId: string;
+  directIdeaUuid: string | null;
+  originConnectionUuid: string;
+  status: string;
+  title: string | null;
+  lastTurnAt: string;
+  originOnline: boolean;
+  firstInstruction: string | null;
+  ideaTitle: string | null;
+};
+
+function session(overrides: Partial<Session> & { uuid: string }): Session {
+  return {
+    agentUuid: "agent-1",
+    sessionId: "sid-" + overrides.uuid,
+    directIdeaUuid: null,
+    originConnectionUuid: "1",
+    status: "active",
+    title: null,
+    lastTurnAt: "2026-06-16T12:00:00.000Z",
+    originOnline: true,
+    firstInstruction: null,
+    ideaTitle: null,
+    ...overrides,
+  };
+}
+
+// Route authFetch by URL: connection list, executions aggregate, session list, and
+// the per-session transcript detail.
+function respondWith(opts: {
+  connections?: Conn[];
+  executions?: unknown[];
+  sessions?: Session[];
+  sessionsOk?: boolean;
+  detail?: Record<string, unknown> | null;
+}) {
+  const {
+    connections = [],
+    executions = [],
+    sessions = [],
+    sessionsOk = true,
+    detail = null,
+  } = opts;
   mockAuthFetch.mockImplementation((url: string) => {
-    if (typeof url === "string" && url.startsWith("/api/daemon/executions")) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ success: true, data: { executions } }),
-      });
+    if (typeof url === "string") {
+      if (url.startsWith("/api/daemon/executions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: { executions } }),
+        });
+      }
+      // A specific session detail: /api/daemon-sessions/<uuid>
+      if (/^\/api\/daemon-sessions\/[^/?]+$/.test(url)) {
+        if (!detail) {
+          return Promise.resolve({ ok: false, json: async () => ({ success: false }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: detail }),
+        });
+      }
+      if (url.startsWith("/api/daemon-sessions")) {
+        return Promise.resolve({
+          ok: sessionsOk,
+          json: async () => ({ success: sessionsOk, data: { sessions } }),
+        });
+      }
     }
     // Default: the connection list.
     return Promise.resolve({
@@ -148,8 +220,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).EventSource = NoopEventSource;
+  // jsdom lacks scrollIntoView (used by the transcript auto-scroll).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window.HTMLElement.prototype as any).scrollIntoView = vi.fn();
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  // Pin "now" a few minutes after the fixture timestamps so uptime is non-zero.
   vi.setSystemTime(new Date("2026-06-16T12:05:00.000Z"));
 });
 
@@ -157,8 +231,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Render the provider + the View-all trigger + the modal (the shell wiring), let
-// the initial provider fetches settle, then open the modal via the trigger.
 async function renderAndOpenModal() {
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   const utils = render(
@@ -171,119 +243,366 @@ async function renderAndOpenModal() {
   await act(async () => {
     await Promise.resolve();
   });
-  // The modal is closed until the (popover) "View all" trigger fires.
   await user.click(screen.getByText("view-all-trigger"));
   return { user, ...utils };
 }
 
-describe("Agent Connections modal — opening + connection list", () => {
-  it("opens the modal from the 'View all' trigger (no standalone page navigation)", async () => {
-    respondWith([conn({ uuid: "1", agentName: "Alpha" })]);
-    await renderAndOpenModal();
-    // The modal title (Agent Connections) appears once opened.
-    await waitFor(() =>
-      expect(screen.getAllByText("Agent Connections").length).toBeGreaterThan(0),
-    );
-    expect(screen.getAllByText("Alpha").length).toBeGreaterThan(0);
-  });
-
-  it("empty dataset renders the empty state, not a broken list", async () => {
-    respondWith([]);
-    await renderAndOpenModal();
-    await waitFor(() =>
-      expect(screen.queryByText("No agent connections yet")).toBeTruthy(),
-    );
-    // No rail header when there's nothing.
-    expect(screen.queryByText("CONNECTIONS")).toBeNull();
-  });
-
-  it("default-selects the first connection's detail without flashing the select prompt", async () => {
-    respondWith([
-      conn({ uuid: "1", agentName: "Alpha" }),
-      conn({ uuid: "2", agentName: "Bravo" }),
-    ]);
-    await renderAndOpenModal();
-
-    await waitFor(() => expect(screen.getAllByText("Alpha").length).toBeGreaterThan(0));
-    expect(screen.queryByText(/Select a connection/)).toBeNull();
-  });
-
-  it("renders agentName as primary and demotes client type to a badge; null name → fallback", async () => {
-    respondWith([conn({ uuid: "1", agentName: null, clientType: "openclaw" })]);
-    await renderAndOpenModal();
-    await waitFor(() =>
-      expect(screen.getAllByText("Unknown agent").length).toBeGreaterThan(0),
-    );
-    expect(screen.getAllByText("OpenClaw").length).toBeGreaterThan(0);
-  });
-
-  it("shows a ticking monospace uptime for online connections only", async () => {
-    respondWith([conn({ uuid: "1", effectiveStatus: "online" })]);
-    await renderAndOpenModal();
-    // 5 minutes after connectedAt → 00:05:00
-    await waitFor(() => expect(screen.getAllByText("00:05:00").length).toBeGreaterThan(0));
-    // Advance the 1s ticker → uptime should advance to 00:05:01.
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
+describe("Daemon chat modal — opening + conversation list", () => {
+  it("opens the modal and shows the chat title", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1", title: "Build the thing" })],
     });
-    await waitFor(() => expect(screen.getAllByText("00:05:01").length).toBeGreaterThan(0));
-  });
-
-  it("offline connection shows no uptime value at all", async () => {
-    respondWith([conn({ uuid: "1", effectiveStatus: "offline", status: "offline" })]);
     await renderAndOpenModal();
-    await waitFor(() => expect(screen.getAllByText(/Agent 1/).length).toBeGreaterThan(0));
-    // No HH:MM:SS uptime anywhere for an offline connection.
-    expect(screen.queryByText(/^\d{2}:\d{2}:\d{2}$/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.getAllByText("Conversations").length).toBeGreaterThan(0),
+    );
+    // The agent's conversation appears in the list.
+    await waitFor(() =>
+      expect(screen.getAllByText("Build the thing").length).toBeGreaterThan(0),
+    );
   });
 
-  it("mobile drill-down opens on card tap and closes on back", async () => {
-    respondWith([
-      conn({ uuid: "1", agentName: "Alpha" }),
-      conn({ uuid: "2", agentName: "Bravo" }),
-    ]);
+  it("default-selects the most-recent agent so the modal never opens empty", async () => {
+    respondWith({
+      connections: [
+        conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" }),
+        conn({ uuid: "2", agentUuid: "agent-2", agentName: "Bravo" }),
+      ],
+      sessions: [
+        session({
+          uuid: "s-old",
+          agentUuid: "agent-1",
+          title: "Older Alpha chat",
+          originConnectionUuid: "1",
+          lastTurnAt: "2026-06-16T10:00:00.000Z",
+        }),
+        session({
+          uuid: "s-new",
+          agentUuid: "agent-2",
+          title: "Newer Bravo chat",
+          originConnectionUuid: "2",
+          lastTurnAt: "2026-06-16T11:59:00.000Z",
+        }),
+      ],
+    });
+    await renderAndOpenModal();
+    // agent-2 (Bravo) has the most recent lastTurnAt → its conversation is shown.
+    await waitFor(() =>
+      expect(screen.getAllByText("Newer Bravo chat").length).toBeGreaterThan(0),
+    );
+    // Alpha's older chat is not in the (Bravo-filtered) list.
+    expect(screen.queryByText("Older Alpha chat")).toBeNull();
+  });
+
+  it("no history but an online agent → defaults to the new-conversation composer (not a dead end)", async () => {
+    // A connected agent with no conversations must land in a composer, not a passive
+    // card: the right pane IS the new-conversation form so the user can start talking
+    // immediately. The dead-end card is reserved for the no-agent-at-all case below.
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [],
+    });
+    await renderAndOpenModal();
+    // The composer pane is shown (title + the live ad-hoc "Start session" submit),
+    // and the dead-end "No conversations yet" card is NOT.
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Start session" }).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("New conversation").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No conversations yet")).toBeNull();
+  });
+
+  it("calm dead-end card only when there is no agent connected AND no history", async () => {
+    // No connections and no sessions → nothing to talk to, so the calm "connect a
+    // daemon" card is the right call (no composer to offer).
+    respondWith({
+      connections: [],
+      sessions: [],
+    });
+    await renderAndOpenModal();
+    await waitFor(() =>
+      expect(screen.queryByText("No conversations yet")).toBeTruthy(),
+    );
+    expect(screen.queryAllByRole("button", { name: "Start session" }).length).toBe(0);
+  });
+
+  it("names an ad-hoc conversation by its first human instruction (not type+uuid)", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({
+          uuid: "s1",
+          agentUuid: "agent-1",
+          directIdeaUuid: null,
+          firstInstruction: "Refactor the uploader to add retries",
+          originConnectionUuid: "1",
+        }),
+      ],
+    });
+    await renderAndOpenModal();
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("Refactor the uploader to add retries").length,
+      ).toBeGreaterThan(0),
+    );
+    // The old type+uuid fallback name is gone.
+    expect(screen.queryByText(/Conversation s1|Conversation sid-/)).toBeNull();
+  });
+
+  it("names an idea-anchored conversation by its idea title + an Idea badge", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({
+          uuid: "s1",
+          agentUuid: "agent-1",
+          directIdeaUuid: "idea-123",
+          ideaTitle: "Realtime presence pill",
+          originConnectionUuid: "1",
+        }),
+      ],
+    });
+    await renderAndOpenModal();
+    await waitFor(() =>
+      expect(screen.getAllByText("Realtime presence pill").length).toBeGreaterThan(0),
+    );
+    // The resource badge is shown for an idea-anchored conversation.
+    expect(screen.getAllByText("Idea").length).toBeGreaterThan(0);
+  });
+
+  it("distinct error card on a list-load failure (no silent empty)", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [],
+      sessionsOk: false,
+    });
+    await renderAndOpenModal();
+    await waitFor(() =>
+      expect(screen.queryByText("Couldn't load this conversation")).toBeTruthy(),
+    );
+  });
+
+  it("selecting a conversation renders its turn bands with trigger labels + messages", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({
+          uuid: "s1",
+          agentUuid: "agent-1",
+          title: "Ship login",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: {
+        session: {
+          uuid: "s1",
+          agentUuid: "agent-1",
+          sessionId: "sid-s1",
+          directIdeaUuid: null,
+          originConnectionUuid: "1",
+          status: "active",
+          title: "Ship login",
+          lastTurnAt: "2026-06-16T12:00:00.000Z",
+          createdAt: "2026-06-16T11:00:00.000Z",
+          updatedAt: "2026-06-16T12:00:00.000Z",
+        },
+        turns: [
+          {
+            uuid: "t1",
+            sessionUuid: "s1",
+            seq: 1,
+            trigger: "task_assigned",
+            promptText: null,
+            status: "ended",
+            executionUuid: null,
+            startedAt: null,
+            endedAt: null,
+            createdAt: "2026-06-16T11:01:00.000Z",
+            messages: [
+              {
+                uuid: "m1",
+                turnUuid: "t1",
+                role: "assistant",
+                text: "Working on the login flow.",
+                seq: 1,
+                createdAt: "2026-06-16T11:01:30.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    });
     const { user } = await renderAndOpenModal();
 
-    expect(screen.queryByRole("button", { name: /Connections/i })).toBeNull();
-
-    // Tapping the mobile card for Bravo opens the drill-down.
-    const bravoCard = screen.getAllByText("Bravo")[0].closest("button");
-    expect(bravoCard).toBeTruthy();
-    await user.click(bravoCard as HTMLElement);
+    // Click the conversation row.
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Connections/i })).toBeTruthy(),
+      expect(screen.getAllByText("Ship login").length).toBeGreaterThan(0),
     );
+    const row = screen.getAllByText("Ship login")[0].closest("button");
+    expect(row).toBeTruthy();
+    await user.click(row as HTMLElement);
 
-    // Back closes it.
-    await user.click(screen.getByRole("button", { name: /Connections/i }));
+    // The transcript renders the turn band's wake-trigger label + the message text.
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Connections/i })).toBeNull(),
+      expect(screen.getAllByText("Task").length).toBeGreaterThan(0),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("Working on the login flow.").length,
+      ).toBeGreaterThan(0),
     );
   });
 
-  it("closes the mobile drill-down if the open connection disappears from a poll", async () => {
-    respondWith([
-      conn({ uuid: "1", agentName: "Alpha" }),
-      conn({ uuid: "2", agentName: "Bravo" }),
-    ]);
-    const { user } = await renderAndOpenModal();
-
-    // Drill into Bravo.
-    const bravoCard = screen.getAllByText("Bravo")[0].closest("button");
-    await user.click(bravoCard as HTMLElement);
+  it("a 'New conversation' affordance is always present, even with existing history", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({ uuid: "s1", agentUuid: "agent-1", title: "Existing chat", originConnectionUuid: "1" }),
+      ],
+    });
+    await renderAndOpenModal();
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Connections/i })).toBeTruthy(),
+      expect(screen.getAllByText("Existing chat").length).toBeGreaterThan(0),
     );
+    // The "New conversation" button is offered in the list (chat-app convention),
+    // and with nothing selected the right pane already IS the composer.
+    expect(screen.getAllByText("New conversation").length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Start session" }).length,
+      ).toBeGreaterThan(0),
+    );
+  });
 
-    // Next provider poll drops Bravo — the guard must close the drill-down rather
-    // than silently swapping the open detail to a different agent.
-    respondWith([conn({ uuid: "1", agentName: "Alpha" })]);
-    await act(async () => {
-      vi.advanceTimersByTime(15_000);
-      await Promise.resolve();
+  // ===== Open-conversation footer (post-feedback redesign) =====
+  // The footer of an OPEN conversation is a PLAIN reply composer (no
+  // new-conversation / agent / connection targeting — those live in the left list)
+  // plus the live Interrupt/Resume control for the conversation's in-flight work.
+
+  const detailFor = (overrides: {
+    turnStatus?: string;
+    executionUuid?: string | null;
+  }) => ({
+    session: {
+      uuid: "s1",
+      agentUuid: "agent-1",
+      sessionId: "sid-s1",
+      directIdeaUuid: null,
+      originConnectionUuid: "1",
+      status: "active",
+      title: "Ship login",
+      lastTurnAt: "2026-06-16T12:00:00.000Z",
+      createdAt: "2026-06-16T11:00:00.000Z",
+      updatedAt: "2026-06-16T12:00:00.000Z",
+    },
+    turns: [
+      {
+        uuid: "t1",
+        sessionUuid: "s1",
+        seq: 1,
+        trigger: "human_instruction",
+        promptText: "do the thing",
+        status: overrides.turnStatus ?? "running",
+        executionUuid: overrides.executionUuid ?? null,
+        startedAt: "2026-06-16T11:01:00.000Z",
+        endedAt: null,
+        createdAt: "2026-06-16T11:01:00.000Z",
+        messages: [],
+      },
+    ],
+  });
+
+  async function openShipLogin(opts: {
+    executions?: unknown[];
+    turnStatus?: string;
+    executionUuid?: string | null;
+  }) {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      executions: opts.executions ?? [],
+      sessions: [
+        session({ uuid: "s1", agentUuid: "agent-1", title: "Ship login", originConnectionUuid: "1" }),
+      ],
+      detail: detailFor(opts),
+    });
+    const { user } = await renderAndOpenModal();
+    await waitFor(() =>
+      expect(screen.getAllByText("Ship login").length).toBeGreaterThan(0),
+    );
+    await user.click(screen.getAllByText("Ship login")[0].closest("button") as HTMLElement);
+    return user;
+  }
+
+  it("open conversation footer is a PLAIN reply box — no target/connection picker", async () => {
+    await openShipLogin({ turnStatus: "ended" });
+    // The simple reply composer renders (its localized placeholder + a bare "Send").
+    await waitFor(() =>
+      expect(
+        screen.getAllByPlaceholderText("Reply in this conversation…").length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByRole("button", { name: "Send" }).length).toBeGreaterThan(0);
+    // None of the new-conversation machinery leaks into the open-conversation footer.
+    expect(screen.queryByRole("combobox", { name: "Conversation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start session" })).toBeNull();
+    expect(screen.queryByText("Start a new session")).toBeNull();
+  });
+
+  // A daemon_session execution fixture for the open conversation, keyed by the
+  // conversation's BUSINESS id (sessionId) — what the daemon reports + the server
+  // validates against.
+  const adHocExec = (over: Partial<Record<string, unknown>> = {}) => ({
+    uuid: "exec-1",
+    agentUuid: "agent-1",
+    connectionUuid: "1",
+    entityType: "daemon_session",
+    entityUuid: "sid-s1", // = session("s1").sessionId
+    rootIdeaUuid: null,
+    status: "running",
+    interruptedReason: null,
+    startedAt: "2026-06-16T11:01:00.000Z",
+    createdAt: "2026-06-16T11:01:00.000Z",
+    updatedAt: "2026-06-16T11:01:00.000Z",
+    entityTitle: "Ship login",
+    projectUuid: null,
+    rootIdeaTitle: null,
+    ...over,
+  });
+
+  it("surfaces the Interrupt control from THIS conversation's running daemon_session execution", async () => {
+    // The execution is matched to the conversation by daemon_session:<sessionId> — NOT
+    // the unreliable per-turn executionUuid link (here null) — so Interrupt appears.
+    await openShipLogin({ turnStatus: "running", executionUuid: null, executions: [adHocExec()] });
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /interrupt/i }).length).toBeGreaterThan(0),
+    );
+  });
+
+  it("surfaces the Resume control for a user-interrupted conversation execution", async () => {
+    await openShipLogin({
+      turnStatus: "ended",
+      executions: [adHocExec({ status: "interrupted", interruptedReason: "user" })],
     });
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Connections/i })).toBeNull(),
+      expect(screen.getAllByRole("button", { name: /resume/i }).length).toBeGreaterThan(0),
     );
+  });
+
+  it("does NOT show another conversation's execution in this conversation's footer (per-session scope)", async () => {
+    // An execution for a DIFFERENT ad-hoc session on the same connection must not leak
+    // into the open conversation's footer (point: cards only in their own conversation).
+    await openShipLogin({
+      turnStatus: "running",
+      executions: [adHocExec({ entityUuid: "sid-OTHER" })],
+    });
+    await waitFor(() =>
+      expect(
+        screen.getAllByPlaceholderText("Reply in this conversation…").length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
   });
 });

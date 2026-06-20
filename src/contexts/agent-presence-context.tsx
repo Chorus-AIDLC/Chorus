@@ -65,8 +65,22 @@ import type {
   ExecutionView,
 } from "@/components/agent-presence";
 import type { ExecutionEvent } from "@/contexts/realtime-context";
+import type { TranscriptEvent as TranscriptEventBase } from "@/services/daemon-session.service";
 
 const POLL_INTERVAL_MS = 15_000;
+
+// SSE-tagged transcript event: the backend `TranscriptEvent` plus the `type`
+// discriminator the SSE route adds so the client can route it (mirrors how
+// `realtime-context` tags the execution event with `type: "execution"`). Carries the
+// affected `turn` and, on the `transcript_appended` trigger, the appended message tail
+// (`messages`) — so a subscriber patches the open conversation without a follow-up read.
+export interface TranscriptEvent extends TranscriptEventBase {
+  type: "transcript";
+}
+
+// A consumer (the chat container) subscribes to the open session's live transcript
+// events with this callback shape — mirrors realtime-context's execution subscriber.
+export type TranscriptSubscriber = (event: TranscriptEvent) => void;
 
 export type AgentPresenceStatus = "loading" | "ok" | "error";
 
@@ -87,6 +101,18 @@ export interface AgentPresenceValue {
   executionsLoaded: boolean;
   modalOpen: boolean;
   setModalOpen: (open: boolean) => void;
+  // The currently-open conversation (the chat sets this). When it changes, the
+  // provider reconnects its `/api/events` EventSource with `?sessionUuid=<uuid>` so the
+  // server subscribes that one session's `transcript:{sessionUuid}` channel; `null`
+  // means no conversation is open and no transcript channel is subscribed.
+  openSession: string | null;
+  setOpenSession: (sessionUuid: string | null) => void;
+  // Subscribe to the open conversation's live transcript events
+  // (`turn_created` / `turn_status_changed` / `transcript_appended`). Returns an
+  // unsubscribe fn. The provider only forwards events for the session it is currently
+  // subscribed to (it sets the SSE `?sessionUuid=`), so a subscriber receives only the
+  // open conversation's events. Mirrors realtime-context's `subscribeExecution`.
+  subscribeTranscript: (cb: TranscriptSubscriber) => () => void;
 }
 
 const AgentPresenceContext = createContext<AgentPresenceValue | null>(null);
@@ -138,6 +164,41 @@ export function mergeExecutionEvent(
   return next;
 }
 
+/**
+ * Build the provider's `/api/events` URL for the current open session. With no open
+ * session it is the bare company-wide stream (`/api/events`); with one open it carries
+ * `?sessionUuid=<uuid>` so the server subscribes that one transcript channel. Pure (no
+ * side effects) so the reconnect-URL behavior is unit-testable independent of React /
+ * EventSource. The sessionUuid is URL-encoded defensively even though uuids are
+ * already URL-safe. Returns the bare stream for a null/empty session.
+ */
+export function buildEventsUrl(openSession: string | null): string {
+  if (!openSession) return "/api/events";
+  return `/api/events?sessionUuid=${encodeURIComponent(openSession)}`;
+}
+
+/**
+ * Decide whether an arbitrary parsed SSE message is a transcript event for the open
+ * session, and if so fan it out to every transcript subscriber. Returns `true` when it
+ * routed a transcript event (so the caller knows it was handled), `false` otherwise
+ * (the caller falls through to other event types). Pure w.r.t. its inputs — it only
+ * invokes the supplied subscriber callbacks — so it is unit-testable like
+ * `mergeExecutionEvent` (the test passes a parsed object + a spy set and asserts the
+ * spies are/aren't called). It deliberately does NOT re-check the open session against
+ * the event's `sessionUuid`: the server already scopes the subscription to exactly the
+ * `?sessionUuid=` it was asked for, so any `type:"transcript"` event arriving on this
+ * stream is for the open session. Multi-tenancy was fenced server-side.
+ */
+export function routeTranscriptEvent(
+  parsed: { type?: unknown } & Record<string, unknown>,
+  subscribers: Iterable<TranscriptSubscriber>,
+): boolean {
+  if (parsed.type !== "transcript") return false;
+  const event = parsed as unknown as TranscriptEvent;
+  for (const cb of subscribers) cb(event);
+  return true;
+}
+
 // ===== Provider =====
 
 export function AgentPresenceProvider({ children }: { children: ReactNode }) {
@@ -147,6 +208,17 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     useState<ExecutionsByConnection>({});
   const [executionsLoaded, setExecutionsLoaded] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  // The open conversation. Changing it reconnects the SSE stream with a new
+  // `?sessionUuid=` (see the SSE effect). `null` = no conversation open / no transcript
+  // channel subscribed.
+  const [openSession, setOpenSession] = useState<string | null>(null);
+
+  // Live-transcript subscribers (the chat container). Held in a ref — a Set so multiple
+  // mounts can coexist and unsubscribe independently — mirroring realtime-context's
+  // execution-subscriber pattern. Fanned out from the SSE `onmessage` handler via the
+  // pure `routeTranscriptEvent`. Kept in a ref (not state) so adding/removing a
+  // subscriber never re-runs the SSE effect / reconnects the stream.
+  const transcriptSubscribersRef = useRef<Set<TranscriptSubscriber>>(new Set());
 
   // Per-connection write generation. Every SSE merge bumps a connection's
   // generation; the aggregate poll captures the generation map BEFORE it issues
@@ -249,11 +321,14 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
 
     function connect() {
       disconnect();
-      // No `projectUuid` — this is the company-wide stream that forwards every
-      // visible connection's `execution:{connectionUuid}` events.
-      es = new EventSource("/api/events");
+      // No `projectUuid` — this is the company-wide stream that forwards every visible
+      // connection's `execution:{connectionUuid}` events. When a conversation is open it
+      // ALSO carries `?sessionUuid=<uuid>` so the server subscribes that one session's
+      // `transcript:{sessionUuid}` channel; the URL is rebuilt from `openSession` on
+      // every (re)connect so a conversation switch reconnects to the new channel.
+      es = new EventSource(buildEventsUrl(openSession));
       es.onmessage = (msg) => {
-        let parsed: Record<string, unknown> | null = null;
+        let parsed: (Record<string, unknown> & { type?: unknown }) | null = null;
         try {
           parsed = JSON.parse(msg.data);
         } catch {
@@ -261,7 +336,11 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (!parsed) return;
-        // Only execution events are of interest here; everything else (change /
+        // Transcript events for the open conversation are fanned out to subscribers
+        // (the chat container). The server only subscribes the `?sessionUuid=` it was
+        // asked for, so any transcript event here is for the open session.
+        if (routeTranscriptEvent(parsed, transcriptSubscribersRef.current)) return;
+        // Execution events merge into the by-connection map; everything else (change /
         // presence) is the page-scoped provider's concern.
         if (parsed.type === "execution") {
           const event = parsed as unknown as ExecutionEvent;
@@ -310,12 +389,29 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       disconnect();
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [fetchExecutions]);
+    // `openSession` is a dep so a conversation switch tears down and reconnects the
+    // stream with the new `?sessionUuid=`. The full effect re-runs, so the
+    // execution-merge `onmessage`, the `visibilitychange` reconnect, and the
+    // on-reconnect aggregate re-fetch are all re-established intact across the switch
+    // (the periodic poll loop is a separate effect and is unaffected). Reconnecting on
+    // switch is deliberate and low-frequency (a user action), as the Tech Design notes.
+  }, [fetchExecutions, openSession]);
 
   const onlineCount = useMemo(
     () => computeOnlineCount(connections),
     [connections],
   );
+
+  // Subscribe to the open conversation's live transcript events. Adds the callback to
+  // the ref-held Set and returns an unsubscribe fn (mirrors realtime-context's
+  // `subscribeExecution`). Stable identity (empty deps) since it only touches the ref —
+  // subscribing/unsubscribing never reconnects the stream.
+  const subscribeTranscript = useCallback((cb: TranscriptSubscriber) => {
+    transcriptSubscribersRef.current.add(cb);
+    return () => {
+      transcriptSubscribersRef.current.delete(cb);
+    };
+  }, []);
 
   const value = useMemo<AgentPresenceValue>(
     () => ({
@@ -326,6 +422,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       executionsLoaded,
       modalOpen,
       setModalOpen,
+      openSession,
+      setOpenSession,
+      subscribeTranscript,
     }),
     [
       status,
@@ -334,6 +433,8 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       executionsByConnection,
       executionsLoaded,
       modalOpen,
+      openSession,
+      subscribeTranscript,
     ],
   );
 

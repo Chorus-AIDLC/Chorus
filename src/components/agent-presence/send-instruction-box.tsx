@@ -46,6 +46,7 @@ import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { useClientTypeLabel } from "./hooks";
 import type { ConnectionView } from "./types";
+import type { SessionView } from "@/services/daemon-session.service";
 
 // Mirror of the server-side `MAX_INSTRUCTION_CHARS` (daemon-instruction.service.ts)
 // so the UI can gate over-length text and render a truthful char counter without a
@@ -64,6 +65,10 @@ export interface SessionTarget {
   title: string | null;
   lastTurnAt: string;
   originOnline: boolean;
+  // Naming enrichment (see SessionTargetView): the opening human instruction (ad-hoc
+  // name) and the anchoring idea's title (idea-anchored name + badge). Both nullable.
+  firstInstruction: string | null;
+  ideaTitle: string | null;
 }
 
 // =====================================================================
@@ -97,35 +102,22 @@ function ComposeField({
   sendLabel: string;
   layout: "inline" | "stacked";
 }) {
-  const t = useTranslations("agentConnections");
-  const trimmedLength = value.trim().length;
-  const overLimit = trimmedLength > MAX_INSTRUCTION_CHARS;
-  const empty = trimmedLength === 0;
-  // The Send control is inert when hard-disabled, mid-flight, empty, or over the
-  // cap. Empty/over-length are the client mirror of the server's 400 guard.
-  const sendDisabled = disabled || pending || empty || overLimit;
+  const empty = value.trim().length === 0;
+  // The Send control is inert only when hard-disabled, mid-flight, or empty. There is
+  // no client-side char cap UI — the server cap stays authoritative and a rejected
+  // over-length send surfaces its server reason via toast (rare; the cap is generous).
+  const sendDisabled = disabled || pending || empty;
 
-  // Cmd/Ctrl+Enter sends (plain Enter inserts a newline so multi-line
-  // instructions are natural). IME composition MUST early-return so a CJK/JP/KR
-  // candidate-confirm Enter never fires the send (CLAUDE.md IME rule).
+  // Plain Enter sends (chat convention); Shift+Enter inserts a newline for multi-line
+  // instructions. IME composition MUST early-return so a CJK/JP/KR candidate-confirm
+  // Enter never fires the send (CLAUDE.md IME rule).
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isImeComposing(e)) return;
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!sendDisabled) onSend();
     }
   };
-
-  const counter = (
-    <span
-      className={`font-mono text-[11px] tabular-nums ${
-        overLimit ? "font-semibold text-[#B45309]" : "text-[#9A9A9A]"
-      }`}
-      aria-live="polite"
-    >
-      {t("instructionCounter", { count: trimmedLength, max: MAX_INSTRUCTION_CHARS })}
-    </span>
-  );
 
   const sendButton = (
     <Button
@@ -145,25 +137,17 @@ function ComposeField({
     </Button>
   );
 
-  // The disabled reason (hard gate) takes precedence; otherwise show the
-  // over-length warning inline so the user knows why Send is inert.
-  const reason = disabled
-    ? disabledReason
-    : overLimit
-      ? t("instructionTooLong")
-      : null;
-
-  const footerLeft = (
+  // Only a hard-disabled reason (no online origin) is shown — it must be visible
+  // (not just a tooltip) so the gate is never silent. Otherwise the footer is empty.
+  const footerLeft = disabled ? (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      {reason ? (
-        <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
-          <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0">{reason}</span>
-        </span>
-      ) : (
-        <span className="text-[12px] text-[#9A9A9A]">{t("instructionHint")}</span>
-      )}
+      <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
+        <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0">{disabledReason}</span>
+      </span>
     </div>
+  ) : (
+    <div className="min-w-0 flex-1" />
   );
 
   return (
@@ -175,27 +159,90 @@ function ComposeField({
         disabled={disabled || pending}
         placeholder={placeholder}
         rows={3}
-        aria-invalid={overLimit || undefined}
         className="min-h-[76px] resize-none rounded-xl border-[#E5E0D8] bg-white text-[14px] text-[#2C2C2C] placeholder:text-[#9A9A9A] focus-visible:border-[#C67A52] focus-visible:ring-[#C67A52]/30"
       />
       {layout === "stacked" ? (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            {footerLeft}
-            {counter}
-          </div>
+          {disabled && footerLeft}
           {sendButton}
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
           {footerLeft}
-          <div className="flex shrink-0 items-center gap-3">
-            {counter}
-            {sendButton}
-          </div>
+          {sendButton}
         </div>
       )}
     </div>
+  );
+}
+
+// =====================================================================
+// ConversationReplyBox — the SIMPLE composer for an already-open conversation
+// (子3 chat UI). Inside a conversation, "new conversation" + agent + connection
+// targeting all live on the LEFT (the conversation list), so the footer here is
+// just a plain "reply to THIS conversation" box: a Textarea + Send that posts to
+// the open session's `/instruction` endpoint. No target picker, no ad-hoc
+// connection picker — those are not decisions to re-make mid-conversation.
+//
+// Gating: sending is allowed only while the session's origin daemon is online
+// (the server re-checks and 409s otherwise); when offline the box is disabled
+// with the localized read-only reason, never silently inert.
+// =====================================================================
+
+export function ConversationReplyBox({
+  sessionUuid,
+  originOnline,
+  layout = "inline",
+}: {
+  // The open conversation's uuid — replies POST to its `/instruction` endpoint.
+  sessionUuid: string;
+  // Whether the session's origin daemon is online right now (the send gate; the
+  // server re-checks on POST).
+  originOnline: boolean;
+  layout?: "inline" | "stacked";
+}) {
+  const t = useTranslations("agentConnections");
+  const tc = useTranslations("daemonChat");
+  const [value, setValue] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const send = async () => {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_INSTRUCTION_CHARS) return;
+    setPending(true);
+    try {
+      const res = await authFetch(`/api/daemon-sessions/${sessionUuid}/instruction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructionText: trimmed }),
+      });
+      if (!res.ok) {
+        toast.error(await extractError(res, t("instructionError")));
+        return;
+      }
+      // No success toast: the sent turn appears in the transcript live (SSE), so a
+      // toast would be redundant noise. Errors still toast (no silent failure).
+      setValue("");
+    } catch (error) {
+      clientLogger.error("Failed to send daemon instruction:", error);
+      toast.error(t("instructionError"));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <ComposeField
+      value={value}
+      onChange={setValue}
+      onSend={send}
+      pending={pending}
+      disabled={!originOnline}
+      disabledReason={!originOnline ? tc("originOfflineNote") : null}
+      placeholder={tc("replyPlaceholder")}
+      sendLabel={t("send")}
+      layout={layout}
+    />
   );
 }
 
@@ -206,16 +253,24 @@ function ComposeField({
 // still has at least one online connection to dispatch to.
 // =====================================================================
 
-function AdHocSendForm({
+export function AdHocSendForm({
   agentUuid,
   onlineConnections,
   layout,
+  hideHeader = false,
+  onStarted,
 }: {
   agentUuid: string;
   // Online connections of the SELECTED agent only (the picker never lists another
   // agent's connections — the server re-verifies ownership + online on POST).
   onlineConnections: ConnectionView[];
   layout: "inline" | "stacked";
+  // When the surrounding pane already carries its own heading (e.g. the chat's
+  // new-conversation pane), suppress the inner title/body so it isn't doubled.
+  hideHeader?: boolean;
+  // Called with the freshly-created session after a successful start, so the
+  // caller (the chat) can auto-select the new conversation and refresh its list.
+  onStarted?: (session: SessionView) => void;
 }) {
   const t = useTranslations("agentConnections");
   const clientTypeLabel = useClientTypeLabel();
@@ -243,8 +298,20 @@ function AdHocSendForm({
         toast.error(await extractError(res, t("instructionError")));
         return;
       }
+      // Surface the created session so the caller can auto-select the new
+      // conversation. Tolerate a fieldless body (the toast still fires).
+      let createdSession: SessionView | null = null;
+      try {
+        const json = await res.json();
+        if (json?.success && json.data?.session) {
+          createdSession = json.data.session as SessionView;
+        }
+      } catch {
+        // Non-JSON success body — nothing to auto-select, not an error.
+      }
       toast.success(t("adHocSessionStarted"));
       setValue("");
+      if (createdSession) onStarted?.(createdSession);
     } catch (error) {
       clientLogger.error("Failed to start ad-hoc daemon session:", error);
       toast.error(t("instructionError"));
@@ -255,14 +322,16 @@ function AdHocSendForm({
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#E5E0D8] bg-white p-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-[13px] font-semibold text-[#2C2C2C]">
-          {t("adHocTitle")}
-        </span>
-        <span className="text-[12px] leading-relaxed text-[#9A9A9A]">
-          {t("adHocBody")}
-        </span>
-      </div>
+      {!hideHeader && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[13px] font-semibold text-[#2C2C2C]">
+            {t("adHocTitle")}
+          </span>
+          <span className="text-[12px] leading-relaxed text-[#9A9A9A]">
+            {t("adHocBody")}
+          </span>
+        </div>
+      )}
       <div className="flex flex-col gap-1.5">
         <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
           {t("pickConnection")}

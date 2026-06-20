@@ -17,6 +17,7 @@ import {
   Clock3,
   ExternalLink,
   Loader2,
+  MessageSquare,
   OctagonX,
   PauseCircle,
   Play,
@@ -249,7 +250,16 @@ export function ExecutionRow({
   const interruptedByUser = interrupted && exec.interruptedReason === "user";
   const stacked = layout === "stacked";
 
-  const title = exec.entityTitle?.trim() || t("execEntityUnknown");
+  // An ad-hoc conversation (`daemon_session`) has NO backing resource — it IS the
+  // work. So it does NOT get a resource badge + a (necessarily absent) resource title
+  // that degrades to "Unknown resource"; it reads as a single "Conversation" label,
+  // using the session's own title when it has one. Every OTHER kind (task/idea/…) keeps
+  // the badge + resource-title treatment, falling back to "Unknown" only for a genuinely
+  // deleted resource.
+  const isConversation = exec.entityType === "daemon_session";
+  const title = isConversation
+    ? exec.entityTitle?.trim() || t("execConversation")
+    : exec.entityTitle?.trim() || t("execEntityUnknown");
   const href = execHref(exec);
 
   // Title clamp differs by layout: inline hard-truncates to one line (the modal has
@@ -279,12 +289,19 @@ export function ExecutionRow({
   const body = (
     <div className="min-w-0 flex-1">
       <div className="flex items-center gap-1.5">
-        <Badge
-          variant="secondary"
-          className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
-        >
-          {entityTypeLabel(exec.entityType)}
-        </Badge>
+        {/* A conversation carries no resource badge (it has no backing resource); a
+            small chat glyph leads its title instead. Every other kind keeps its
+            resource-type badge. */}
+        {isConversation ? (
+          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" aria-hidden />
+        ) : (
+          <Badge
+            variant="secondary"
+            className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+          >
+            {entityTypeLabel(exec.entityType)}
+          </Badge>
+        )}
         {href ? (
           <Link
             href={href}
@@ -295,7 +312,9 @@ export function ExecutionRow({
           </Link>
         ) : (
           <span
-            className={`block ${titleClamp} text-[14px] font-medium text-[#9A9A9A]`}
+            className={`block ${titleClamp} text-[14px] font-medium ${
+              isConversation ? "text-[#2C2C2C]" : "text-[#9A9A9A]"
+            }`}
           >
             {title}
           </span>

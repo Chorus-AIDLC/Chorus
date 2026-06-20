@@ -18,6 +18,7 @@ const mockMarkDisconnected = vi.fn();
 const mockReconcileOffline = vi.fn();
 const mockPublishExecutionChange = vi.fn();
 const mockListVisibleConnectionUuids = vi.fn();
+const mockIsSessionVisibleToCaller = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -44,6 +45,16 @@ vi.mock("@/services/daemon-execution.service", () => ({
   publishExecutionChange: (...args: unknown[]) => mockPublishExecutionChange(...args),
   listVisibleConnectionUuids: (...args: unknown[]) => mockListVisibleConnectionUuids(...args),
   executionEventName: (connectionUuid: string) => `execution:${connectionUuid}`,
+}));
+
+// The route now also accepts `?sessionUuid=` and subscribes that session's
+// `transcript:{sessionUuid}` channel — but ONLY after the visibility gate passes. Mock
+// the session service so this stays a unit test; `transcriptEventName` keeps the real
+// `transcript:{uuid}` channel-name convention so the subscription assertions exercise
+// the actual channel string.
+vi.mock("@/services/daemon-session.service", () => ({
+  isSessionVisibleToCaller: (...args: unknown[]) => mockIsSessionVisibleToCaller(...args),
+  transcriptEventName: (sessionUuid: string) => `transcript:${sessionUuid}`,
 }));
 
 import { GET } from "@/app/api/events/route";
@@ -105,6 +116,8 @@ beforeEach(() => {
   mockListVisibleConnectionUuids.mockResolvedValue([]);
   mockReconcileOffline.mockResolvedValue(0);
   mockPublishExecutionChange.mockResolvedValue(undefined);
+  // Default: the requested session (when one is given) is visible to the caller.
+  mockIsSessionVisibleToCaller.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -315,5 +328,100 @@ describe("GET /api/events (execution-state SSE)", () => {
 
     expect(mockReconcileOffline).toHaveBeenCalledWith(companyUuid, connectionUuid);
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
+  });
+});
+
+describe("GET /api/events (transcript SSE — open-session subscription)", () => {
+  const sessionUuid = "sess-aaaa";
+
+  it("subscribes no transcript channel when no ?sessionUuid is given", async () => {
+    const res = await GET(makeRequest("clientType=claude_code"));
+    await startStream(res);
+    // The visibility gate is never consulted, and no transcript channel is bound.
+    expect(mockIsSessionVisibleToCaller).not.toHaveBeenCalled();
+    const channels = mockEventBus.on.mock.calls.map((c) => c[0]);
+    expect(channels.some((ch) => typeof ch === "string" && ch.startsWith("transcript:"))).toBe(
+      false,
+    );
+  });
+
+  it("subscribes transcript:{sessionUuid} ONLY after the visibility gate passes", async () => {
+    mockIsSessionVisibleToCaller.mockResolvedValue(true);
+    const res = await GET(makeRequest(`sessionUuid=${sessionUuid}&clientType=claude_code`));
+    await startStream(res);
+
+    // Gate consulted with the caller's auth + the requested session.
+    expect(mockIsSessionVisibleToCaller).toHaveBeenCalledWith(agentAuth, sessionUuid);
+    const channels = mockEventBus.on.mock.calls.map((c) => c[0]);
+    expect(channels).toContain(`transcript:${sessionUuid}`);
+  });
+
+  it("VISIBILITY GATE: a non-visible session is silently NOT subscribed (never confirmed)", async () => {
+    mockIsSessionVisibleToCaller.mockResolvedValue(false);
+    const res = await GET(makeRequest(`sessionUuid=${sessionUuid}&clientType=claude_code`));
+    const { chunks } = await startStream(res);
+
+    expect(mockIsSessionVisibleToCaller).toHaveBeenCalledWith(agentAuth, sessionUuid);
+    // No transcript channel was bound...
+    const channels = mockEventBus.on.mock.calls.map((c) => c[0]);
+    expect(channels.some((ch) => typeof ch === "string" && ch.startsWith("transcript:"))).toBe(
+      false,
+    );
+    // ...and the stream gave no signal that the session exists (non-disclosure): it
+    // opened normally with just the connection confirmation.
+    expect(chunks.join("")).toContain(": connected");
+  });
+
+  it("forwards a same-company transcript event tagged type:transcript", async () => {
+    mockIsSessionVisibleToCaller.mockResolvedValue(true);
+    const res = await GET(makeRequest(`sessionUuid=${sessionUuid}&clientType=claude_code`));
+    const { chunks } = await startStream(res);
+
+    const tCall = mockEventBus.on.mock.calls.find((c) => c[0] === `transcript:${sessionUuid}`);
+    expect(tCall).toBeDefined();
+    const handler = tCall![1] as (e: Record<string, unknown>) => void;
+
+    const before = chunks.length;
+    handler({
+      companyUuid,
+      sessionUuid,
+      trigger: "transcript_appended",
+      turn: { uuid: "turn-1" },
+      messages: [{ uuid: "m1", turnUuid: "turn-1", role: "assistant", text: "hi", seq: 1 }],
+    });
+    await flush();
+    expect(chunks.length).toBe(before + 1);
+    const last = chunks[chunks.length - 1];
+    expect(last).toContain('"type":"transcript"');
+    expect(last).toContain(sessionUuid);
+    // The appended message tail rides on the wire.
+    expect(last).toContain('"messages"');
+  });
+
+  it("drops transcript events from a different company (multi-tenancy)", async () => {
+    mockIsSessionVisibleToCaller.mockResolvedValue(true);
+    const res = await GET(makeRequest(`sessionUuid=${sessionUuid}&clientType=claude_code`));
+    const { chunks } = await startStream(res);
+    const handler = mockEventBus.on.mock.calls.find(
+      (c) => c[0] === `transcript:${sessionUuid}`,
+    )![1] as (e: Record<string, unknown>) => void;
+
+    const before = chunks.length;
+    handler({ companyUuid: "other-company", sessionUuid, trigger: "turn_created", turn: {}, messages: [] });
+    await flush();
+    expect(chunks.length).toBe(before);
+  });
+
+  it("unsubscribes the transcript channel on abort (teardown)", async () => {
+    mockIsSessionVisibleToCaller.mockResolvedValue(true);
+    const ac = new AbortController();
+    const res = await GET(makeRequest(`sessionUuid=${sessionUuid}&clientType=claude_code`, ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await Promise.resolve();
+
+    const offChannels = mockEventBus.off.mock.calls.map((c) => c[0]);
+    expect(offChannels).toContain(`transcript:${sessionUuid}`);
   });
 });

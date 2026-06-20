@@ -156,6 +156,20 @@ export interface SessionTargetView extends SessionView {
    * so the UI gates the send control without a second round-trip.
    */
   originOnline: boolean;
+  /**
+   * The conversation's opening human instruction — the `promptText` of its earliest
+   * `human_instruction` turn — used to NAME an ad-hoc conversation (a chat is titled by
+   * what the human first said, not by a uuid). Null when the session has no
+   * human_instruction turn yet (e.g. an idea conversation woken only by autonomous
+   * triggers), in which case the UI falls back to the idea/ad-hoc label.
+   */
+  firstInstruction: string | null;
+  /**
+   * The title of the session's anchoring idea (`directIdeaUuid`), batch-resolved
+   * in-company — used to NAME an idea-anchored conversation (a resource badge + this
+   * title). Null for an ad-hoc session, or when the idea no longer resolves.
+   */
+  ideaTitle: string | null;
 }
 
 // ===== Helpers =====
@@ -514,8 +528,49 @@ export async function getVisibleSessionsWithOrigin(
       .map((c) => c.uuid),
   );
 
+  // Naming enrichment (one batched query each, regardless of session count):
+  //  - firstInstruction: the earliest `human_instruction` turn's promptText per session,
+  //    so an ad-hoc conversation is named by what the human first said.
+  //  - ideaTitle: the anchoring idea's title, so an idea-anchored conversation is named
+  //    by its resource (badge + title) instead of a uuid.
+  const sessionUuids = sessions.map((s) => s.uuid);
+  const ideaUuids = [
+    ...new Set(sessions.map((s) => s.directIdeaUuid).filter((u): u is string => !!u)),
+  ];
+
+  const firstInstructionBySession = new Map<string, string>();
+  if (sessionUuids.length > 0) {
+    // The earliest human_instruction turn per session. Ordered by (sessionUuid, seq) so
+    // the FIRST row seen for each session is its opening instruction; later rows skip.
+    const instructionTurns = await prisma.daemonSessionTurn.findMany({
+      where: {
+        sessionUuid: { in: sessionUuids },
+        trigger: "human_instruction",
+        promptText: { not: null },
+      },
+      select: { sessionUuid: true, promptText: true, seq: true },
+      orderBy: [{ sessionUuid: "asc" }, { seq: "asc" }],
+    });
+    for (const turn of instructionTurns) {
+      if (!firstInstructionBySession.has(turn.sessionUuid) && turn.promptText) {
+        firstInstructionBySession.set(turn.sessionUuid, turn.promptText);
+      }
+    }
+  }
+
+  const ideaTitleByUuid = new Map<string, string>();
+  if (ideaUuids.length > 0) {
+    const ideas = await prisma.idea.findMany({
+      where: { companyUuid: auth.companyUuid, uuid: { in: ideaUuids } },
+      select: { uuid: true, title: true },
+    });
+    for (const idea of ideas) ideaTitleByUuid.set(idea.uuid, idea.title);
+  }
+
   return sessions.map((s) => ({
     ...s,
     originOnline: onlineConnectionUuids.has(s.originConnectionUuid),
+    firstInstruction: firstInstructionBySession.get(s.uuid) ?? null,
+    ideaTitle: s.directIdeaUuid ? ideaTitleByUuid.get(s.directIdeaUuid) ?? null : null,
   }));
 }

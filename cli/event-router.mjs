@@ -78,19 +78,19 @@ export class EventRouter {
       return;
     }
 
-    // 子1 — daemon-session-conversation: a `human_instruction` wake carries the human's
-    // free-text body denormalized onto the notification as `instructionText` (the server
-    // sets it at the notification chokepoint; the canonical copy is the turn's
-    // promptText). The daemon reads it from THIS already-fetched notification — NO extra
-    // round-trip — and threads it through to buildPrompt as the prompt body. For every
-    // other (autonomous) action `instructionText` is absent/null and ignored. Pass `n`
-    // through unchanged: it already carries `instructionText` from the notification list,
-    // so the field reaches keyFor → markQueued → wake → buildPrompt without a re-fetch.
-    if (n.action === "human_instruction" && !n.instructionText) {
-      // An instruction with no body is nothing to act on (buildPrompt would skip it).
-      // Surface it visibly rather than silently spawning a contentless wake.
-      this.logger.warn(
-        `[Chorus] human_instruction ${notificationUuid} carries no instructionText — skipping`
+    // 子2 — daemon-instruction-injection: a `human_instruction` is NOT woken from the
+    // notification path. Its live delivery is the origin-only `deliver_turn` control ping
+    // (precise `turnUuid` → pending-turns sweep), and its recovery is the reconnect
+    // pending-turn backfill — BOTH keyed on `turn:{uuid}` in the shared `seen` set. The
+    // `new_notification` SSE event ALSO arrives here (the action is in WAKE_ACTIONS so the
+    // reconnect notification backfill can re-derive autonomous wakes), but acting on it
+    // here would run the SAME instruction a SECOND time under a DIFFERENT dedup key
+    // (`notificationUuid` vs `turn:{uuid}`) — the double-execution bug — and would fan the
+    // wake out to EVERY connection of the agent rather than the session's origin. So the
+    // notification path explicitly defers `human_instruction` to the turn-keyed paths.
+    if (n.action === "human_instruction") {
+      this.logger.info(
+        `[Chorus] human_instruction ${notificationUuid} is delivered via deliver_turn / pending-turn backfill — not the notification path; ignoring here`
       );
       return;
     }
@@ -181,15 +181,24 @@ export class EventRouter {
     // lineage round-trip). The waker anchors the Claude session on
     // `directIdeaUuid ?? entityUuid`, and the per-direct-idea queue keys on the same —
     // so set entityUuid = sessionId so both align with the canonical session.
+    //
+    // Execution entity (子3 follow-up): an idea-anchored conversation reports its
+    // execution against the real idea (`idea:<directIdeaUuid>` — a valid entity); an
+    // AD-HOC conversation has no content entity, so it reports against the conversation
+    // itself (`daemon_session:<sessionId>`). Previously the ad-hoc branch reported
+    // `task:<sessionId>`, which the server DROPS (no Task with that uuid) — so the
+    // running/interrupt state never reached the UI. Because the ad-hoc anchor IS the
+    // sessionId, the execution entityUuid, the Claude `--resume` anchor, and the
+    // per-session UI match key are all the same value.
     const n = {
       action: "human_instruction",
       // The session business key IS the entity anchor here: directIdeaUuid for an
       // idea-anchored session, else the ad-hoc session id (the original entity uuid).
-      entityType: directIdeaUuid ? "idea" : "task",
-      entityUuid: sessionId,
+      entityType: directIdeaUuid ? "idea" : "daemon_session",
+      entityUuid: directIdeaUuid ? directIdeaUuid : sessionId,
       instructionText: instruction,
     };
-    const key = directIdeaUuid ? `idea:${directIdeaUuid}` : `entity:${n.entityType}:${sessionId}`;
+    const key = directIdeaUuid ? `idea:${directIdeaUuid}` : `entity:daemon_session:${sessionId}`;
     const attribution = { key, rootIdeaUuid: directIdeaUuid, directIdeaUuid };
 
     // Mark queued (snapshot) then enqueue on the same per-direct-idea lane as a live

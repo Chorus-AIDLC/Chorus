@@ -5,7 +5,13 @@ const mockPrisma = vi.hoisted(() => ({
   daemonSession: {
     findFirst: vi.fn(),
   },
+  daemonSessionTurn: {
+    findMany: vi.fn(),
+  },
   daemonConnection: {
+    findMany: vi.fn(),
+  },
+  idea: {
     findMany: vi.fn(),
   },
   agent: {
@@ -148,6 +154,10 @@ beforeEach(() => {
     originConnectionUuid: connectionUuid,
   });
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+  // Naming enrichment defaults: no instruction turns + no ideas resolved unless a test
+  // says otherwise (so originOnline-only tests don't need to wire them).
+  mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+  mockPrisma.idea.findMany.mockResolvedValue([]);
   mockPrisma.agent.count.mockResolvedValue(1);
   mockAssertContinuable.mockResolvedValue(connectionUuid);
   // createReturningTurn returns the notification + the EXACT turn the chokepoint created.
@@ -584,6 +594,51 @@ describe("getVisibleSessionsWithOrigin", () => {
     mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
     const out = await getVisibleSessionsWithOrigin(userAuth);
     expect(out[0].originOnline).toBe(false);
+  });
+
+  it("enriches naming: firstInstruction (earliest human_instruction) per session + ideaTitle for idea-anchored", async () => {
+    const adHocUuid = "sess-adhoc";
+    const ideaSessUuid = "sess-idea";
+    mockGetVisibleSessions.mockResolvedValue([
+      sessionView({ uuid: adHocUuid, sessionId: "sid-adhoc", directIdeaUuid: null }),
+      sessionView({ uuid: ideaSessUuid, sessionId: "idea-9", directIdeaUuid: "idea-9" }),
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
+    ]);
+    // Earliest-first; the FIRST row per session wins (a later turn on the ad-hoc session
+    // must NOT overwrite the opener).
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { sessionUuid: adHocUuid, seq: 1, promptText: "Refactor the uploader" },
+      { sessionUuid: adHocUuid, seq: 3, promptText: "a later message" },
+    ]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-9", title: "Presence pill" }]);
+
+    const out = await getVisibleSessionsWithOrigin(userAuth);
+    const adHoc = out.find((s) => s.uuid === adHocUuid)!;
+    const ideaSess = out.find((s) => s.uuid === ideaSessUuid)!;
+
+    expect(adHoc.firstInstruction).toBe("Refactor the uploader"); // opener, not the later one
+    expect(adHoc.ideaTitle).toBeNull(); // ad-hoc has no idea
+    expect(ideaSess.ideaTitle).toBe("Presence pill");
+
+    // Both enrichment queries are batched (one each), and the turn query filters to
+    // human_instruction with a non-null body.
+    expect(mockPrisma.daemonSessionTurn.findMany).toHaveBeenCalledTimes(1);
+    const turnWhere = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where;
+    expect(turnWhere.trigger).toBe("human_instruction");
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.idea.findMany.mock.calls[0][0].where.uuid.in).toEqual(["idea-9"]);
+  });
+
+  it("skips the idea query entirely when no session is idea-anchored", async () => {
+    mockGetVisibleSessions.mockResolvedValue([
+      sessionView({ uuid: "s1", sessionId: "sid-1", directIdeaUuid: null }),
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    const out = await getVisibleSessionsWithOrigin(userAuth);
+    expect(out[0].ideaTitle).toBeNull();
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
   });
 
   it("returns NO turn/transcript bodies — only session metadata + originOnline", async () => {

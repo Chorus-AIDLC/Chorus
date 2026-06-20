@@ -50,8 +50,14 @@ describe("daemon-control.service constants", () => {
     expect([...CONTROL_COMMANDS]).toEqual(["interrupt", "resume", "deliver_turn"]);
   });
 
-  it("targets the execution registry's resource space", () => {
-    expect([...CONTROL_ENTITY_TYPES]).toEqual(["task", "idea", "proposal", "document"]);
+  it("targets the execution registry's resource space (incl. daemon_session conversations)", () => {
+    expect([...CONTROL_ENTITY_TYPES]).toEqual([
+      "task",
+      "idea",
+      "proposal",
+      "document",
+      "daemon_session",
+    ]);
   });
 
   it("the control command is NOT a wake action (control is off the wake path)", async () => {

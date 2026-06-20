@@ -67,7 +67,10 @@ export interface ControlEvent {
   type: "control";
   command: "interrupt" | "resume" | "deliver_turn";
   targetConnectionUuid: string;
-  entityType?: "task" | "idea" | "proposal" | "document";
+  // `daemon_session` is the ad-hoc conversation itself (子3 follow-up): an interrupt/
+  // resume can target a running conversation that has no task/idea/proposal/document
+  // behind it, keyed by the session business id.
+  entityType?: "task" | "idea" | "proposal" | "document" | "daemon_session";
   entityUuid?: string;
   turnUuid?: string;
 }

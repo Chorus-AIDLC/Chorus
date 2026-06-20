@@ -115,6 +115,11 @@ export function useEntityTypeLabel() {
           return t("entityProposal");
         case "document":
           return t("entityDocument");
+        case "daemon_session":
+          // An ad-hoc (non-idea) wake reports its execution as a `daemon_session`.
+          // Label it as a conversation (not "Resource"); execHref returns null for
+          // it, so no broken deep link — the conversation lives in this modal.
+          return t("entityConversation");
         default:
           return t("entityUnknown");
       }

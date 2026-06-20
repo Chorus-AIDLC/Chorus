@@ -63,13 +63,16 @@ export const DISPLAYABLE_EXECUTION_STATUSES = [
 ] as const;
 
 // The wake-triggering resource kinds a daemon can report. Mirrors the Chorus
-// notification `entityType` space for wake actions. A non-conforming value is
+// notification `entityType` space for wake actions, PLUS `daemon_session` — the
+// ad-hoc (non-idea) conversation wake, whose execution row points at a
+// `DaemonSession` (NOT one of the four content tables). A non-conforming value is
 // rejected at the route's zod boundary, so the service can assume validity.
 export const EXECUTION_ENTITY_TYPES = [
   "task",
   "idea",
   "proposal",
   "document",
+  "daemon_session",
 ] as const;
 export type ExecutionEntityType = (typeof EXECUTION_ENTITY_TYPES)[number];
 
@@ -95,7 +98,7 @@ export interface ExecutionView {
   uuid: string;
   agentUuid: string;
   connectionUuid: string;
-  entityType: string; // task | idea | proposal | document
+  entityType: string; // task | idea | proposal | document | daemon_session
   entityUuid: string;
   rootIdeaUuid: string | null;
   status: string; // running | queued | ended | interrupted
@@ -170,6 +173,23 @@ function entityKey(entityType: string, entityUuid: string): string {
   return `${entityType}:${entityUuid}`;
 }
 
+// Max length of an ad-hoc conversation's derived name — mirrors the chat list's
+// `ADHOC_NAME_MAX` so the popover/footer and the sidebar list name a conversation
+// identically.
+const CONVERSATION_NAME_MAX = 60;
+
+// Derive a conversation's display name from its opening human instruction: collapse
+// whitespace to a single line and clamp, so a long first message stays a scannable
+// one-line title. Returns "" for a missing/blank instruction (caller falls back to a
+// localized "Conversation" label) — never a partial/garbled string.
+function conversationNameFromInstruction(promptText: string | undefined): string {
+  const flat = (promptText ?? "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  return flat.length > CONVERSATION_NAME_MAX
+    ? `${flat.slice(0, CONVERSATION_NAME_MAX).trimEnd()}…`
+    : flat;
+}
+
 // ===== Helpers =====
 
 function toExecutionView(
@@ -207,6 +227,7 @@ function groupEntityUuidsByType(
     idea: new Set(),
     proposal: new Set(),
     document: new Set(),
+    daemon_session: new Set(),
   };
   for (const r of rows) {
     if ((EXECUTION_ENTITY_TYPES as readonly string[]).includes(r.entityType)) {
@@ -218,6 +239,7 @@ function groupEntityUuidsByType(
     idea: [...acc.idea],
     proposal: [...acc.proposal],
     document: [...acc.document],
+    daemon_session: [...acc.daemon_session],
   };
 }
 
@@ -235,6 +257,9 @@ function groupEntityUuidsByType(
  *  - idea → Idea.projectUuid (deep link to the idea / its panel)
  *  - proposal → Proposal.projectUuid
  *  - document → Document.projectUuid
+ *  - daemon_session → DaemonSession.title, projectUuid: null (a conversation has no
+ *    project deep link — it lives in the chat modal; `execHref` returns null for the
+ *    type, so the row is labeled "Conversation" without a broken resource link)
  */
 async function enrichExecutionViews(
   companyUuid: string,
@@ -287,6 +312,51 @@ async function enrichExecutionViews(
       entityMap.set(entityKey("document", d.uuid), {
         title: d.title,
         projectUuid: d.projectUuid,
+      });
+    }
+  }
+
+  // An ad-hoc conversation row points at a DaemonSession, NOT one of the four content
+  // tables, and is keyed by the session BUSINESS id (`sessionId`) — the same value the
+  // daemon reports and uses as the Claude `--resume` anchor. Its display NAME mirrors the
+  // chat conversation list: the session's explicit `title` if set, else its FIRST human
+  // instruction (the opening message), so a conversation reads by what the human said —
+  // not a generic "Conversation". projectUuid is null (no project deep link; it lives in
+  // the chat modal). A session with neither degrades to "" (UI shows a localized label).
+  if (byType.daemon_session.length > 0) {
+    const sessions = await prisma.daemonSession.findMany({
+      where: { companyUuid, sessionId: { in: byType.daemon_session } },
+      select: { sessionId: true, uuid: true, title: true },
+    });
+    // Resolve each session's opening human_instruction (earliest seq) in one batched
+    // query, keyed by sessionUuid, so a title-less conversation is named by its first
+    // message exactly like the sidebar list.
+    const sessionUuids = sessions.map((s) => s.uuid);
+    const firstInstructionByUuid = new Map<string, string>();
+    if (sessionUuids.length > 0) {
+      const turns = await prisma.daemonSessionTurn.findMany({
+        where: {
+          sessionUuid: { in: sessionUuids },
+          trigger: "human_instruction",
+          promptText: { not: null },
+        },
+        select: { sessionUuid: true, promptText: true, seq: true },
+        orderBy: [{ sessionUuid: "asc" }, { seq: "asc" }],
+      });
+      for (const turn of turns) {
+        if (!firstInstructionByUuid.has(turn.sessionUuid) && turn.promptText) {
+          firstInstructionByUuid.set(turn.sessionUuid, turn.promptText);
+        }
+      }
+    }
+    for (const s of sessions) {
+      const name =
+        s.title?.trim() ||
+        conversationNameFromInstruction(firstInstructionByUuid.get(s.uuid)) ||
+        "";
+      entityMap.set(entityKey("daemon_session", s.sessionId), {
+        title: name,
+        projectUuid: null,
       });
     }
   }
@@ -742,6 +812,7 @@ export async function filterValidExecutionEntities(
     idea: new Set(),
     proposal: new Set(),
     document: new Set(),
+    daemon_session: new Set(),
   };
 
   if (byType.task.length > 0) {
@@ -771,6 +842,19 @@ export async function filterValidExecutionEntities(
       select: { uuid: true },
     });
     existing.document = new Set(found.map((r) => r.uuid));
+  }
+  // An ad-hoc conversation execution is validated against the DaemonSession table
+  // (company-scoped), NOT the four content tables. The daemon reports the conversation
+  // by its BUSINESS key (`sessionId` — the same value it uses as the Claude `--resume`
+  // anchor), so we match on `sessionId`, NOT the DaemonSession primary `uuid`. A reported
+  // daemon_session whose sessionId does not resolve in-company is dropped like any other
+  // dead reference — without wedging the rest of the snapshot.
+  if (byType.daemon_session.length > 0) {
+    const found = await prisma.daemonSession.findMany({
+      where: { companyUuid, sessionId: { in: byType.daemon_session } },
+      select: { sessionId: true },
+    });
+    existing.daemon_session = new Set(found.map((r) => r.sessionId));
   }
 
   // Root-idea anchors that resolve in-company (kept entries with a non-resolving

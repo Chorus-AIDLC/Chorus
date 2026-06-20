@@ -17,6 +17,11 @@ import {
   executionEventName,
   type ExecutionEvent,
 } from "@/services/daemon-execution.service";
+import {
+  isSessionVisibleToCaller,
+  transcriptEventName,
+  type TranscriptEvent,
+} from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +50,23 @@ export async function GET(request: NextRequest) {
   // connection poll + EventSource reconnect re-resolve this set). Resolved here so
   // a query failure surfaces as a 500 before the stream opens, never mid-stream.
   const visibleConnectionUuids = await listVisibleConnectionUuids(auth);
+
+  // Optional per-session transcript subscription. The chat surface reconnects this
+  // stream with `?sessionUuid=<uuid>` when a conversation opens (and without it when
+  // none is open). We resolve visibility HERE — before the stream opens — under the
+  // SAME owner/self + company fence the read route uses, so:
+  //   - a query failure surfaces as a 500 before the stream opens (never mid-stream),
+  //     mirroring how `listVisibleConnectionUuids` is resolved above; and
+  //   - a session the caller cannot see is SILENTLY not subscribed (we never confirm
+  //     it exists — non-disclosure). When `sessionUuid` is absent, no transcript
+  //     channel is subscribed at all.
+  // Only the channel name is kept; if `transcriptChannel` is null no transcript
+  // handler is bound, so a non-visible / absent session forwards no transcript events.
+  const requestedSessionUuid = request.nextUrl.searchParams.get("sessionUuid");
+  const transcriptChannel =
+    requestedSessionUuid && (await isSessionVisibleToCaller(auth, requestedSessionUuid))
+      ? transcriptEventName(requestedSessionUuid)
+      : null;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -101,6 +123,23 @@ export async function GET(request: NextRequest) {
         eventBus.on(channel, executionHandler);
       }
 
+      // Subscribe the OPEN conversation's transcript channel (when one was requested
+      // AND verified visible above). Each event is forwarded tagged `type:
+      // "transcript"` — the discriminator the client routes on alongside change /
+      // presence / execution. The companyUuid is re-checked defensively even though
+      // visibility was already fenced at subscribe time, mirroring the
+      // change/presence/execution multi-tenancy fence (an event from another company is
+      // dropped, never forwarded). The payload carries the affected `turn` plus, on the
+      // `transcript_appended` trigger, the appended message tail — so the client patches
+      // the open turn without a follow-up read.
+      const transcriptHandler = (event: TranscriptEvent) => {
+        if (event.companyUuid !== auth.companyUuid) return;
+        send(`data: ${JSON.stringify({ type: "transcript", ...event })}\n\n`);
+      };
+      if (transcriptChannel) {
+        eventBus.on(transcriptChannel, transcriptHandler);
+      }
+
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
@@ -115,6 +154,9 @@ export async function GET(request: NextRequest) {
         eventBus.off("presence", presenceHandler);
         for (const channel of executionChannels) {
           eventBus.off(channel, executionHandler);
+        }
+        if (transcriptChannel) {
+          eventBus.off(transcriptChannel, transcriptHandler);
         }
         clearInterval(heartbeat);
         try {

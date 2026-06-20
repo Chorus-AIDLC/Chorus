@@ -26,6 +26,12 @@ const mockPrisma = vi.hoisted(() => ({
   document: {
     findMany: vi.fn(),
   },
+  daemonSession: {
+    findMany: vi.fn(),
+  },
+  daemonSessionTurn: {
+    findMany: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -95,6 +101,8 @@ beforeEach(() => {
   mockPrisma.idea.findMany.mockResolvedValue([]);
   mockPrisma.proposal.findMany.mockResolvedValue([]);
   mockPrisma.document.findMany.mockResolvedValue([]);
+  mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+  mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
 });
 
 // ===== Constants =====
@@ -107,9 +115,9 @@ describe("constants", () => {
     expect(ENDED_EXECUTION_STATUS).toBe("ended");
   });
 
-  it("EXECUTION_ENTITY_TYPES cover task/idea/proposal/document (every wake resource)", () => {
+  it("EXECUTION_ENTITY_TYPES cover task/idea/proposal/document + daemon_session (ad-hoc conversation)", () => {
     expect([...EXECUTION_ENTITY_TYPES].sort()).toEqual(
-      ["document", "idea", "proposal", "task"].sort(),
+      ["daemon_session", "document", "idea", "proposal", "task"].sort(),
     );
   });
 
@@ -403,6 +411,73 @@ describe("getVisibleExecutions", () => {
     mockPrisma.task.findMany.mockResolvedValue([]); // t2 no longer resolves
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(result[0].entityTitle).toBeNull();
+    expect(result[0].projectUuid).toBeNull();
+  });
+
+  it("enriches a DAEMON_SESSION-kind row from the DaemonSession table by sessionId (title, projectUuid null)", async () => {
+    // The execution's entityUuid is the conversation's BUSINESS id (sessionId) — the
+    // same value the daemon reports + uses as the Claude --resume anchor — so the
+    // DaemonSession lookup keys on sessionId, not the row's primary uuid.
+    const sessionId = "sess-0000-0000-0000-000000000009";
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({
+        uuid: "conv-row",
+        entityType: "daemon_session",
+        entityUuid: sessionId,
+        rootIdeaUuid: null,
+      }),
+    ]);
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { sessionId, uuid: "sess-uuid-9", title: "Ad-hoc conversation" },
+    ]);
+
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
+
+    // Validated against the DaemonSession table (by sessionId) — NOT the content tables.
+    expect(mockPrisma.daemonSession.findMany).toHaveBeenCalledTimes(1);
+    const sessionWhere = mockPrisma.daemonSession.findMany.mock.calls[0][0].where;
+    expect(sessionWhere.companyUuid).toBe(companyUuid);
+    expect(sessionWhere.sessionId).toEqual({ in: [sessionId] });
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(result[0].entityType).toBe("daemon_session");
+    // An explicit session title wins.
+    expect(result[0].entityTitle).toBe("Ad-hoc conversation");
+    // No project deep link for a conversation row.
+    expect(result[0].projectUuid).toBeNull();
+  });
+
+  it("names a title-less daemon_session by its FIRST human instruction (like the chat list)", async () => {
+    const sessionId = "sess-0000-0000-0000-000000000010";
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({ uuid: "conv-row-2", entityType: "daemon_session", entityUuid: sessionId, rootIdeaUuid: null }),
+    ]);
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { sessionId, uuid: "sess-uuid-10", title: null },
+    ]);
+    // Earliest-first; the opener wins over a later message, whitespace is collapsed.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { sessionUuid: "sess-uuid-10", seq: 1, promptText: "  Refactor the\n uploader  " },
+      { sessionUuid: "sess-uuid-10", seq: 2, promptText: "a later message" },
+    ]);
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
+    expect(result[0].entityTitle).toBe("Refactor the uploader");
+    expect(result[0].projectUuid).toBeNull();
+    // The turn query filtered to human_instruction with a non-null body.
+    const turnWhere = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where;
+    expect(turnWhere.trigger).toBe("human_instruction");
+  });
+
+  it("a daemon_session with no title AND no instruction degrades to an empty title", async () => {
+    const sessionId = "sess-0000-0000-0000-000000000011";
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      makeRow({ uuid: "conv-row-3", entityType: "daemon_session", entityUuid: sessionId, rootIdeaUuid: null }),
+    ]);
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { sessionId, uuid: "sess-uuid-11", title: null },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]); // no instruction yet
+    const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
+    expect(result[0].entityTitle).toBe("");
     expect(result[0].projectUuid).toBeNull();
   });
 
@@ -706,6 +781,58 @@ describe("filterValidExecutionEntities", () => {
       { entityType: "task", entityUuid: t1, rootIdeaUuid: idea1, status: "running" },
     ]);
     expect(kept[0].rootIdeaUuid).toBe(idea1);
+  });
+
+  it("KEEPS a daemon_session entry validated against the DaemonSession table by sessionId (NOT a content table)", async () => {
+    // entityUuid is the conversation's business sessionId (= the daemon's anchor), so the
+    // validation keys on DaemonSession.sessionId, not its primary uuid.
+    const sessionId = "sess-0000-0000-0000-000000000011";
+    mockPrisma.daemonSession.findMany.mockResolvedValue([{ sessionId }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "daemon_session", entityUuid: sessionId, status: "running" },
+    ]);
+    // Validated against DaemonSession by sessionId, company-scoped — not the content tables.
+    const sessionWhere = mockPrisma.daemonSession.findMany.mock.calls[0][0].where;
+    expect(sessionWhere.companyUuid).toBe(companyUuid);
+    expect(sessionWhere.sessionId).toEqual({ in: [sessionId] });
+    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
+    expect(kept).toEqual([
+      { entityType: "daemon_session", entityUuid: sessionId, rootIdeaUuid: null, status: "running" },
+    ]);
+  });
+
+  it("DROPS a non-existent daemon_session without wedging the rest of the snapshot", async () => {
+    const goodSession = "sess-0000-0000-0000-000000000012";
+    const ghostSession = "sess-0000-0000-0000-000000000013";
+    // Only goodSession resolves; ghostSession does not → ghost dropped, the rest kept.
+    mockPrisma.daemonSession.findMany.mockResolvedValue([{ sessionId: goodSession }]);
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "daemon_session", entityUuid: goodSession, status: "running" },
+      { entityType: "daemon_session", entityUuid: ghostSession, status: "queued" },
+      { entityType: "task", entityUuid: t1, status: "running" }, // unaffected
+    ]);
+    expect(kept.map((e) => `${e.entityType}:${e.entityUuid}`).sort()).toEqual(
+      [`daemon_session:${goodSession}`, `task:${t1}`].sort(),
+    );
+  });
+
+  it("existing entity kinds are UNAFFECTED when a daemon_session entry is also present", async () => {
+    const sessionId = "sess-0000-0000-0000-000000000014";
+    mockPrisma.daemonSession.findMany.mockResolvedValue([{ sessionId }]);
+    mockPrisma.task.findMany.mockResolvedValue([{ uuid: t1 }]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: idea1 }]);
+    const kept = await filterValidExecutionEntities(companyUuid, [
+      { entityType: "task", entityUuid: t1, status: "running" },
+      { entityType: "idea", entityUuid: idea1, status: "queued" },
+      { entityType: "daemon_session", entityUuid: sessionId, status: "running" },
+    ]);
+    // All three kinds validated against their OWN tables and kept.
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonSession.findMany).toHaveBeenCalledTimes(1);
+    expect(kept).toHaveLength(3);
   });
 });
 
