@@ -68,6 +68,22 @@ describe("createInterruptReporter", () => {
     });
   });
 
+  it("reports a daemon_session interrupt (ad-hoc conversation Interrupt→Resume)", async () => {
+    // Regression: daemon_session was missing from REPORTABLE_ENTITY_TYPES, so the daemon
+    // refused to report it → the execution row never went sticky interrupted+user and
+    // Resume could never fire for an ad-hoc conversation.
+    const fetchImpl = okFetch();
+    const report = makeReporter({ fetchImpl });
+    await report("daemon_session", "sid-1", "user");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      connectionUuid: "conn-1",
+      entityType: "daemon_session",
+      entityUuid: "sid-1",
+      reason: "user",
+    });
+  });
+
   it("refuses an unknown entity kind without POSTing", async () => {
     const warns = [];
     const fetchImpl = okFetch();

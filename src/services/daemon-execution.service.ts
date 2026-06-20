@@ -23,6 +23,10 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { STALE_THRESHOLD_MS } from "@/services/daemon-connection.service";
+import {
+  conversationNameFromInstruction,
+  getFirstInstructionBySessionUuid,
+} from "@/services/daemon-session-naming";
 
 // Re-export so callers that need the offline threshold import it from the
 // execution service without reaching for a second constant — there is exactly
@@ -173,23 +177,6 @@ function entityKey(entityType: string, entityUuid: string): string {
   return `${entityType}:${entityUuid}`;
 }
 
-// Max length of an ad-hoc conversation's derived name — mirrors the chat list's
-// `ADHOC_NAME_MAX` so the popover/footer and the sidebar list name a conversation
-// identically.
-const CONVERSATION_NAME_MAX = 60;
-
-// Derive a conversation's display name from its opening human instruction: collapse
-// whitespace to a single line and clamp, so a long first message stays a scannable
-// one-line title. Returns "" for a missing/blank instruction (caller falls back to a
-// localized "Conversation" label) — never a partial/garbled string.
-function conversationNameFromInstruction(promptText: string | undefined): string {
-  const flat = (promptText ?? "").replace(/\s+/g, " ").trim();
-  if (!flat) return "";
-  return flat.length > CONVERSATION_NAME_MAX
-    ? `${flat.slice(0, CONVERSATION_NAME_MAX).trimEnd()}…`
-    : flat;
-}
-
 // ===== Helpers =====
 
 function toExecutionView(
@@ -328,27 +315,12 @@ async function enrichExecutionViews(
       where: { companyUuid, sessionId: { in: byType.daemon_session } },
       select: { sessionId: true, uuid: true, title: true },
     });
-    // Resolve each session's opening human_instruction (earliest seq) in one batched
-    // query, keyed by sessionUuid, so a title-less conversation is named by its first
-    // message exactly like the sidebar list.
-    const sessionUuids = sessions.map((s) => s.uuid);
-    const firstInstructionByUuid = new Map<string, string>();
-    if (sessionUuids.length > 0) {
-      const turns = await prisma.daemonSessionTurn.findMany({
-        where: {
-          sessionUuid: { in: sessionUuids },
-          trigger: "human_instruction",
-          promptText: { not: null },
-        },
-        select: { sessionUuid: true, promptText: true, seq: true },
-        orderBy: [{ sessionUuid: "asc" }, { seq: "asc" }],
-      });
-      for (const turn of turns) {
-        if (!firstInstructionByUuid.has(turn.sessionUuid) && turn.promptText) {
-          firstInstructionByUuid.set(turn.sessionUuid, turn.promptText);
-        }
-      }
-    }
+    // Resolve each session's opening human_instruction (the shared single-sourced
+    // batched query), so a title-less conversation is named by its first message exactly
+    // like the sidebar list.
+    const firstInstructionByUuid = await getFirstInstructionBySessionUuid(
+      sessions.map((s) => s.uuid),
+    );
     for (const s of sessions) {
       const name =
         s.title?.trim() ||

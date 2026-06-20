@@ -9,7 +9,10 @@
 // untouched) so React reliably re-renders.
 
 import { describe, expect, it } from "vitest";
-import { applyTranscriptEvent } from "@/components/agent-presence/chat/daemon-chat";
+import {
+  applyTranscriptEvent,
+  mergeTurnPage,
+} from "@/components/agent-presence/chat/daemon-chat";
 import type {
   TranscriptMessageView,
   TurnWithMessagesView,
@@ -138,6 +141,30 @@ describe("applyTranscriptEvent", () => {
     expect(next[1].messages.map((m) => m.uuid)).toEqual(["m9"]);
   });
 
+  it("inserts a materialized OLDER turn at its seq position (not blindly at the end)", () => {
+    // The loaded window is seq 5-6; an event for seq 3 (a turn older than the page, e.g.
+    // a status change for a trimmed/out-of-window turn) must land BEFORE them, preserving
+    // ascending order that loadEarlier's `turns[0].seq` cursor + the newest-turn header rely on.
+    const prev = [turn({ uuid: "t5", seq: 5 }), turn({ uuid: "t6", seq: 6 })];
+    const next = applyTranscriptEvent(prev, {
+      trigger: "turn_status_changed",
+      turn: turn({ uuid: "t3", seq: 3, status: "ended" }),
+      messages: [],
+    });
+    expect(next.map((t) => t.uuid)).toEqual(["t3", "t5", "t6"]);
+    expect(next.map((t) => t.seq)).toEqual([3, 5, 6]);
+  });
+
+  it("turn_created inserts by seq when out of order (newest invariant holds)", () => {
+    const prev = [turn({ uuid: "t2", seq: 2 }), turn({ uuid: "t4", seq: 4 })];
+    const next = applyTranscriptEvent(prev, {
+      trigger: "turn_created",
+      turn: turn({ uuid: "t3", seq: 3 }),
+      messages: [],
+    });
+    expect(next.map((t) => t.seq)).toEqual([2, 3, 4]);
+  });
+
   it("returns a new array and does not mutate the input (so React re-renders)", () => {
     const prev = [turn({ uuid: "t1", messages: [msg({ uuid: "m1" })] })];
     const snapshotLen = prev[0].messages.length;
@@ -150,5 +177,34 @@ describe("applyTranscriptEvent", () => {
     expect(next[0]).not.toBe(prev[0]);
     // Original input untouched.
     expect(prev[0].messages).toHaveLength(snapshotLen);
+  });
+});
+
+describe("mergeTurnPage", () => {
+  it("unions two pages by uuid, sorted ascending by seq", () => {
+    const earlier = [turn({ uuid: "t1", seq: 1 }), turn({ uuid: "t2", seq: 2 })];
+    const current = [turn({ uuid: "t3", seq: 3 }), turn({ uuid: "t4", seq: 4 })];
+    const merged = mergeTurnPage(earlier, current);
+    expect(merged.map((t) => t.seq)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps a live turn that accrued during the fetch (no blind replace loses it)", () => {
+    // `existing` holds a live turn (t5) that arrived while the page GET was in flight;
+    // the fetched page is t3-t4. The merge must retain t5.
+    const live = [turn({ uuid: "t5", seq: 5, status: "running" })];
+    const page = [turn({ uuid: "t3", seq: 3 }), turn({ uuid: "t4", seq: 4 })];
+    const merged = mergeTurnPage(live, page);
+    expect(merged.map((t) => t.uuid)).toEqual(["t3", "t4", "t5"]);
+    expect(merged.find((t) => t.uuid === "t5")?.status).toBe("running");
+  });
+
+  it("on a uuid in both, takes the incoming turn fields + unions message tails", () => {
+    const existing = [turn({ uuid: "t1", seq: 1, status: "running", messages: [msg({ uuid: "m1" })] })];
+    const incoming = [turn({ uuid: "t1", seq: 1, status: "ended", messages: [msg({ uuid: "m2", seq: 2 })] })];
+    const merged = mergeTurnPage(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].status).toBe("ended"); // incoming fields win
+    // Both sides' messages are preserved (prev first, then new).
+    expect(merged[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
   });
 });

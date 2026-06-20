@@ -208,7 +208,10 @@ export function ConversationReplyBox({
 
   const send = async () => {
     const trimmed = value.trim();
-    if (trimmed.length === 0 || trimmed.length > MAX_INSTRUCTION_CHARS) return;
+    // Only an empty send is short-circuited (the Send button is already disabled then).
+    // An over-length send is NOT blocked client-side: it goes to the server, whose 400
+    // reason surfaces via the extractError toast below — never a silent dead button.
+    if (trimmed.length === 0) return;
     setPending(true);
     try {
       const res = await authFetch(`/api/daemon-sessions/${sessionUuid}/instruction`, {
@@ -284,7 +287,9 @@ export function AdHocSendForm({
 
   const send = async () => {
     const trimmed = value.trim();
-    if (!connectionUuid || trimmed.length === 0 || trimmed.length > MAX_INSTRUCTION_CHARS) {
+    // Block only no-connection / empty (both already disable Send); over-length goes to
+    // the server so its 400 reason toasts (no silent dead button).
+    if (!connectionUuid || trimmed.length === 0) {
       return;
     }
     setPending(true);
@@ -424,7 +429,9 @@ export function SendInstructionBox({
 
   const sendToSession = async (session: SessionTarget) => {
     const trimmed = value.trim();
-    if (trimmed.length === 0 || trimmed.length > MAX_INSTRUCTION_CHARS) return;
+    // Empty short-circuits (Send is disabled then); over-length goes to the server so
+    // its 400 reason toasts rather than dead-ending silently.
+    if (trimmed.length === 0) return;
     setPending(true);
     try {
       const res = await authFetch(`/api/daemon-sessions/${session.uuid}/instruction`, {

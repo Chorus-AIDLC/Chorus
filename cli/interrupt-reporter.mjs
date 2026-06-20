@@ -24,8 +24,18 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 /** Interrupt reason values the server's report-interrupt endpoint accepts. */
 export const INTERRUPT_REASONS = new Set(["user", "crash"]);
 
-/** Entity kinds the server's DaemonExecution (and report-interrupt) accept. */
-const REPORTABLE_ENTITY_TYPES = new Set(["task", "idea", "proposal", "document"]);
+/** Entity kinds the server's DaemonExecution (and report-interrupt) accept. Includes
+ *  `daemon_session` — an ad-hoc conversation is its own execution entity, so its
+ *  interrupted/resumable state must be reportable too (else ad-hoc Interrupt→Resume is
+ *  broken: the row would never go sticky `interrupted`+`user` and Resume could never
+ *  fire). Mirrors the server's CONTROL_ENTITY_TYPES. */
+const REPORTABLE_ENTITY_TYPES = new Set([
+  "task",
+  "idea",
+  "proposal",
+  "document",
+  "daemon_session",
+]);
 
 /**
  * Build a `reportInterrupt(entityType, entityUuid, reason)` function the waker

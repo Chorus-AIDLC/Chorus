@@ -81,6 +81,16 @@ export type TranscriptRole = (typeof TRANSCRIPT_ROLES)[number];
 // constant so the bound is single-sourced and adjustable without touching call sites.
 export const MAX_TRANSCRIPT_MESSAGES_PER_SESSION = 200;
 
+// Conversation-naming helpers live in the dependency-light `daemon-session-naming`
+// leaf module (so the execution service can reuse them without dragging in the
+// notification/mention import graph). Re-exported here for callers that already import
+// from this service.
+export {
+  CONVERSATION_NAME_MAX,
+  conversationNameFromInstruction,
+  getFirstInstructionBySessionUuid,
+} from "@/services/daemon-session-naming";
+
 // ===== Types =====
 
 /**

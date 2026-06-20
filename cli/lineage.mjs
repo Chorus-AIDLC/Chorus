@@ -63,6 +63,14 @@ export class LineageResolver {
       this.logger.warn("[Chorus] lineage: event missing entityType/entityUuid");
       return { rootIdeaUuid: null, directIdeaUuid: null };
     }
+    // An ad-hoc conversation (`daemon_session`) has NO idea ancestor by definition, and
+    // the root-idea endpoint does not accept it (it would 400). Short-circuit to the
+    // null attribution the caller would fall back to anyway — avoiding a guaranteed-failing
+    // round-trip + a spurious warn on every ad-hoc resume. The caller then anchors the
+    // Claude session on the entity uuid (= the ad-hoc sessionId), which is exactly right.
+    if (entityType === "daemon_session") {
+      return { rootIdeaUuid: null, directIdeaUuid: null };
+    }
     const cacheKey = `${entityType}:${entityUuid}`;
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;

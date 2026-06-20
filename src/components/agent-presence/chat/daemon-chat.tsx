@@ -56,12 +56,70 @@ import { executionsForSession, sessionExecStatus } from "./session-execution";
 
 const PAGE_SIZE = 12;
 
+// Max length of an ad-hoc conversation's derived name (its opening instruction, clamped)
+// — module scope (not re-created per render) and matching the server's
+// CONVERSATION_NAME_MAX so the list/popover/footer name a conversation identically.
+const ADHOC_NAME_MAX = 60;
+
+// Clamp an opening instruction to a scannable one-line conversation name (collapse
+// whitespace + truncate). Mirrors the server's `conversationNameFromInstruction`.
+function clampInstructionName(opener: string): string {
+  const flat = opener.replace(/\s+/g, " ").trim();
+  return flat.length > ADHOC_NAME_MAX
+    ? `${flat.slice(0, ADHOC_NAME_MAX).trimEnd()}…`
+    : flat;
+}
+
 // Apply one live transcript event to the open conversation's turns. Pure (returns a
 // new array) so it is trivially testable and React detects the change:
 //  - turn_created  → append the new band (idempotent: replace if it already exists)
 //  - turn_status_changed → patch that band's status/timestamps in place
 //  - transcript_appended → append the event's message tail to the affected turn,
 //    de-duped by message uuid (so a re-delivered event doesn't double-render)
+// Insert a turn into an ascending-by-`seq` array at its correct position (NOT blindly
+// appended). The transcript is rendered + paginated assuming ascending seq — `loadEarlier`
+// uses `turns[0].seq` as the older-page cursor and the transcript header/auto-scroll use
+// `turns[turns.length - 1]` as the newest turn — so a materialized turn with a lower seq
+// than the loaded window must land in order, not at the end. Returns a NEW array.
+function insertTurnBySeq(
+  turns: TurnWithMessagesView[],
+  incoming: TurnWithMessagesView,
+): TurnWithMessagesView[] {
+  // Newest-turn fast path (the overwhelmingly common live case: a brand-new turn).
+  if (turns.length === 0 || incoming.seq > turns[turns.length - 1].seq) {
+    return [...turns, incoming];
+  }
+  const at = turns.findIndex((tn) => tn.seq > incoming.seq);
+  const pos = at === -1 ? turns.length : at;
+  return [...turns.slice(0, pos), incoming, ...turns.slice(pos)];
+}
+
+// Union two turn lists by uuid, sorted ascending by `seq`. Used to (a) merge a freshly
+// fetched page with live turns accrued during the fetch, and (b) prepend an older page
+// without trusting array order. When the same turn appears in both, the INCOMING copy
+// wins (it is fresher — e.g. a live event carrying a newer message tail / status), EXCEPT
+// its messages are unioned by message-uuid so neither side's retained messages are lost.
+export function mergeTurnPage(
+  existing: TurnWithMessagesView[],
+  incoming: TurnWithMessagesView[],
+): TurnWithMessagesView[] {
+  const byUuid = new Map<string, TurnWithMessagesView>();
+  for (const t of existing) byUuid.set(t.uuid, t);
+  for (const t of incoming) {
+    const prev = byUuid.get(t.uuid);
+    if (!prev) {
+      byUuid.set(t.uuid, t);
+      continue;
+    }
+    // Same turn on both sides: take the incoming turn fields, union the message tails by
+    // uuid (preserving order: prev's first, then any incoming messages not already seen).
+    const seen = new Set(prev.messages.map((m) => m.uuid));
+    const extra = t.messages.filter((m) => !seen.has(m.uuid));
+    byUuid.set(t.uuid, { ...t, messages: [...prev.messages, ...extra] });
+  }
+  return [...byUuid.values()].sort((a, b) => a.seq - b.seq);
+}
+
 export function applyTranscriptEvent(
   turns: TurnWithMessagesView[],
   event: {
@@ -77,7 +135,7 @@ export function applyTranscriptEvent(
       ...(event.turn as TurnWithMessagesView),
       messages: [],
     };
-    if (idx === -1) return [...turns, incoming];
+    if (idx === -1) return insertTurnBySeq(turns, incoming);
     // Already present (raced with the initial fetch) — keep our messages, refresh
     // the turn fields.
     const next = [...turns];
@@ -87,14 +145,13 @@ export function applyTranscriptEvent(
 
   if (idx === -1) {
     // status-change / append for a turn we don't have yet (raced ahead of its
-    // create). Materialize it from the event so nothing is silently dropped.
-    return [
-      ...turns,
-      {
-        ...(event.turn as TurnWithMessagesView),
-        messages: event.messages ?? [],
-      },
-    ];
+    // create, OR an update to a turn outside the loaded window). Materialize it from
+    // the event at its correct seq position so nothing is silently dropped AND the
+    // ascending-by-seq invariant the pagination/scroll rely on is preserved.
+    return insertTurnBySeq(turns, {
+      ...(event.turn as TurnWithMessagesView),
+      messages: event.messages ?? [],
+    });
   }
 
   const next = [...turns];
@@ -196,6 +253,24 @@ export function DaemonChat() {
       ? pickedAgentUuid
       : mostRecentAgentUuid;
 
+  // PIN the agent once the data has SETTLED, so the visible agent does NOT silently
+  // switch out from under the user: `mostRecentAgentUuid` chases the 15s poll / SSE, so a
+  // turn arriving on ANOTHER agent's conversation would otherwise flip the selection and
+  // clear the open transcript mid-read. We wait for the first connections poll + session
+  // list to settle (`status`/`listStatus === "ok"`) before pinning, so the frozen default
+  // is computed from REAL data (not the empty-list fallback during first paint). After
+  // that the user can still re-pick via the Select.
+  useEffect(() => {
+    if (
+      !pickedAgentUuid &&
+      status === "ok" &&
+      listStatus === "ok" &&
+      mostRecentAgentUuid
+    ) {
+      setPickedAgentUuid(mostRecentAgentUuid);
+    }
+  }, [pickedAgentUuid, status, listStatus, mostRecentAgentUuid]);
+
   // ===== Conversation rows for the selected agent =====
   // Each conversation's status is derived from ITS OWN matching executions (idea
   // sessions → `idea:<directIdeaUuid>`, ad-hoc → `daemon_session:<sessionId>`), looked
@@ -215,7 +290,6 @@ export function DaemonChat() {
   // Accepts the optional naming fields so it works for both the list row (SessionTarget,
   // which carries them) and the detail pane (SessionView, which does not — it falls
   // through to the fallback, then the row title is used as the authoritative name).
-  const ADHOC_NAME_MAX = 60;
   const conversationName = useCallback(
     (s: {
       title: string | null;
@@ -230,13 +304,7 @@ export function DaemonChat() {
         return t("conversationIdea", { id: s.directIdeaUuid.slice(0, 8) });
       }
       const opener = s.firstInstruction?.trim();
-      if (opener) {
-        // Collapse newlines + clamp so a long opening message stays a one-line name.
-        const flat = opener.replace(/\s+/g, " ");
-        return flat.length > ADHOC_NAME_MAX
-          ? `${flat.slice(0, ADHOC_NAME_MAX).trimEnd()}…`
-          : flat;
-      }
+      if (opener) return clampInstructionName(opener);
       return t("conversationAdHoc", { id: s.sessionId.slice(0, 8) });
     },
     [t],
@@ -312,6 +380,10 @@ export function DaemonChat() {
     setDetailLoading(true);
     setDetailError(false);
     setHasMoreEarlier(false);
+    // Clear the previous session's turns synchronously on switch, so `turns` only ever
+    // accumulates the NEW session's live events during the fetch window (the subscribe
+    // effect is keyed on the same openUuid). The fetch then MERGES its page with those.
+    setTurns([]);
     (async () => {
       try {
         const res = await authFetch(`/api/daemon-sessions/${openUuid}`);
@@ -325,7 +397,11 @@ export function DaemonChat() {
         if (json.success) {
           const data = json.data as SessionDetailView;
           setDetail(data);
-          setTurns(data.turns ?? []);
+          // MERGE rather than blind-replace: a live turn_created / transcript_appended
+          // that arrived after the GET was issued but before it resolved is already in
+          // `prev` — replacing would drop it until the next reselect. Union by uuid
+          // (the live copy wins, as it may carry a fresher message tail), sorted by seq.
+          setTurns((prev) => mergeTurnPage(prev, data.turns ?? []));
           setHasMoreEarlier(Boolean(data.hasMore));
         } else {
           setDetailError(true);
@@ -340,10 +416,11 @@ export function DaemonChat() {
     })();
   }, [openUuid]);
 
-  // Load the page of turns OLDER than the earliest currently-loaded turn and PREPEND
-  // them (the cursor is `turns[0].seq`). De-dupes by uuid defensively so a raced live
-  // event or a re-click can't double-insert. Bound to the open session via `reqId`
-  // (a selection change supersedes an in-flight earlier-load).
+  // Load the page of turns OLDER than the earliest currently-loaded turn (cursor =
+  // `turns[0].seq`) and merge it in. `mergeTurnPage` unions by uuid + sorts by seq, so a
+  // raced live event, a re-click, or any ordering surprise can't double-insert or break
+  // the ascending invariant. Bound to the open session via `reqId` (a selection change
+  // supersedes an in-flight earlier-load).
   const loadEarlier = useCallback(async () => {
     if (!openUuid || loadingEarlier || turns.length === 0) return;
     const cursorSeq = turns[0].seq;
@@ -359,12 +436,7 @@ export function DaemonChat() {
       if (reqId !== detailReqRef.current) return;
       if (json.success) {
         const data = json.data as SessionDetailView;
-        const older = data.turns ?? [];
-        setTurns((prev) => {
-          const seen = new Set(prev.map((t) => t.uuid));
-          const fresh = older.filter((t) => !seen.has(t.uuid));
-          return [...fresh, ...prev];
-        });
+        setTurns((prev) => mergeTurnPage(data.turns ?? [], prev));
         setHasMoreEarlier(Boolean(data.hasMore));
       }
     } catch (error) {

@@ -20,17 +20,25 @@ import type { ExecutionView } from "../types";
 //   null        → idle (no live execution for this conversation)
 export type SessionExecStatus = "running" | "interrupted" | "error" | null;
 
-// Does this execution belong to the given conversation? An idea-anchored conversation
-// matches its idea (`idea:<directIdeaUuid>`); an ad-hoc conversation matches itself
-// (`daemon_session:<sessionId>`). NOTE: an idea conversation also matches the idea's
-// own autonomous wakes (task_assigned etc.) — acceptable, since that IS the
-// conversation's work on that idea.
+// Does this execution belong to the given conversation?
+//  - Ad-hoc conversation → matches its own `daemon_session:<sessionId>` execution.
+//  - Idea-anchored conversation → matches BOTH (a) a direct wake ON the idea
+//    (`idea:<directIdeaUuid>`), AND (b) an autonomous wake on a child resource of that
+//    idea (e.g. `task_assigned` → `task:<taskUuid>` with `rootIdeaUuid === directIdeaUuid`).
+//    A task wake IS the conversation's work on that idea, so it must surface the
+//    conversation's running/interrupt state — matching by `rootIdeaUuid` catches it
+//    (the prior `entityType === "idea"`-only predicate showed such a conversation idle).
 export function executionMatchesSession(
-  exec: Pick<ExecutionView, "entityType" | "entityUuid">,
+  exec: Pick<ExecutionView, "entityType" | "entityUuid" | "rootIdeaUuid">,
   session: { sessionId: string; directIdeaUuid: string | null },
 ): boolean {
   if (session.directIdeaUuid) {
-    return exec.entityType === "idea" && exec.entityUuid === session.directIdeaUuid;
+    // Direct wake on the idea itself, OR any wake whose root idea IS this conversation's
+    // idea (its child task/proposal/document wakes).
+    return (
+      (exec.entityType === "idea" && exec.entityUuid === session.directIdeaUuid) ||
+      exec.rootIdeaUuid === session.directIdeaUuid
+    );
   }
   return (
     exec.entityType === "daemon_session" && exec.entityUuid === session.sessionId

@@ -87,6 +87,19 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     });
   });
 
+  it("resolve() short-circuits daemon_session (no idea ancestor) WITHOUT a request", async () => {
+    // An ad-hoc conversation has no idea lineage and the root-idea endpoint rejects the
+    // type (400). Short-circuiting avoids a guaranteed-failing round-trip + spurious warn
+    // on every ad-hoc resume; the caller then anchors on the entity uuid (= sessionId).
+    const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: "x", directIdeaUuid: "y" }));
+    const r = makeResolver(fetchImpl);
+    expect(await r.resolve({ entityType: "daemon_session", entityUuid: "sid-1" })).toEqual({
+      rootIdeaUuid: null,
+      directIdeaUuid: null,
+    });
+    expect(fetchImpl.calls).toHaveLength(0); // no network for daemon_session
+  });
+
   it("resolve() caches both ids within a run (one request per entity)", async () => {
     const fetchImpl = fakeFetch(() =>
       rootIdeaData({ rootIdeaUuid: "r", directIdeaUuid: "d" })

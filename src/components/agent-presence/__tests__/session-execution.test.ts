@@ -39,9 +39,29 @@ describe("executionMatchesSession", () => {
   });
 
   it("matches an idea-anchored conversation by idea:<directIdeaUuid>", () => {
-    expect(executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-9" }), ideaSession)).toBe(true);
-    expect(executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-8" }), ideaSession)).toBe(false);
-    expect(executionMatchesSession(exec({ entityType: "daemon_session", entityUuid: "idea-9" }), ideaSession)).toBe(false);
+    expect(executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-9", rootIdeaUuid: null }), ideaSession)).toBe(true);
+    expect(executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-8", rootIdeaUuid: null }), ideaSession)).toBe(false);
+    // A daemon_session execution with neither matching uuid nor rootIdea does not match.
+    expect(executionMatchesSession(exec({ entityType: "daemon_session", entityUuid: "idea-9", rootIdeaUuid: null }), ideaSession)).toBe(false);
+  });
+
+  it("matches an idea-anchored conversation's AUTONOMOUS child wakes via rootIdeaUuid", () => {
+    // A task_assigned wake on the idea reports as task:<taskUuid> with rootIdeaUuid =
+    // the idea. It IS the conversation's work on that idea, so it must match (the old
+    // entityType==idea-only predicate showed such a conversation idle).
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-77", rootIdeaUuid: "idea-9" }),
+        ideaSession,
+      ),
+    ).toBe(true);
+    // A task whose root idea is a DIFFERENT idea does not match.
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-88", rootIdeaUuid: "idea-OTHER" }),
+        ideaSession,
+      ),
+    ).toBe(false);
   });
 });
 

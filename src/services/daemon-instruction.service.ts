@@ -45,6 +45,7 @@ import {
   // that error is caught + mapped to 409 at the route layer, so it is not referenced here.
   assertContinuable,
   getVisibleSessions,
+  getFirstInstructionBySessionUuid,
   STALE_THRESHOLD_MS,
   type SessionView,
   type TurnView,
@@ -528,44 +529,29 @@ export async function getVisibleSessionsWithOrigin(
       .map((c) => c.uuid),
   );
 
-  // Naming enrichment (one batched query each, regardless of session count):
-  //  - firstInstruction: the earliest `human_instruction` turn's promptText per session,
+  // Naming enrichment, both batched (one query each) and run IN PARALLEL since they are
+  // independent — halving the added latency on this 15s-polled endpoint:
+  //  - firstInstruction: the earliest `human_instruction` per session (shared helper),
   //    so an ad-hoc conversation is named by what the human first said.
   //  - ideaTitle: the anchoring idea's title, so an idea-anchored conversation is named
   //    by its resource (badge + title) instead of a uuid.
-  const sessionUuids = sessions.map((s) => s.uuid);
   const ideaUuids = [
     ...new Set(sessions.map((s) => s.directIdeaUuid).filter((u): u is string => !!u)),
   ];
-
-  const firstInstructionBySession = new Map<string, string>();
-  if (sessionUuids.length > 0) {
-    // The earliest human_instruction turn per session. Ordered by (sessionUuid, seq) so
-    // the FIRST row seen for each session is its opening instruction; later rows skip.
-    const instructionTurns = await prisma.daemonSessionTurn.findMany({
-      where: {
-        sessionUuid: { in: sessionUuids },
-        trigger: "human_instruction",
-        promptText: { not: null },
-      },
-      select: { sessionUuid: true, promptText: true, seq: true },
-      orderBy: [{ sessionUuid: "asc" }, { seq: "asc" }],
-    });
-    for (const turn of instructionTurns) {
-      if (!firstInstructionBySession.has(turn.sessionUuid) && turn.promptText) {
-        firstInstructionBySession.set(turn.sessionUuid, turn.promptText);
-      }
-    }
-  }
-
-  const ideaTitleByUuid = new Map<string, string>();
-  if (ideaUuids.length > 0) {
-    const ideas = await prisma.idea.findMany({
-      where: { companyUuid: auth.companyUuid, uuid: { in: ideaUuids } },
-      select: { uuid: true, title: true },
-    });
-    for (const idea of ideas) ideaTitleByUuid.set(idea.uuid, idea.title);
-  }
+  // Fire both independent reads, then await together (parallel, halved added latency).
+  const firstInstructionPromise = getFirstInstructionBySessionUuid(
+    sessions.map((s) => s.uuid),
+  );
+  const ideasPromise: Promise<{ uuid: string; title: string }[]> =
+    ideaUuids.length > 0
+      ? prisma.idea.findMany({
+          where: { companyUuid: auth.companyUuid, uuid: { in: ideaUuids } },
+          select: { uuid: true, title: true },
+        })
+      : Promise.resolve([]);
+  const firstInstructionBySession = await firstInstructionPromise;
+  const ideas = await ideasPromise;
+  const ideaTitleByUuid = new Map(ideas.map((i) => [i.uuid, i.title]));
 
   return sessions.map((s) => ({
     ...s,
