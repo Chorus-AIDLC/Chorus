@@ -208,3 +208,143 @@ describe("mergeTurnPage", () => {
     expect(merged[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
   });
 });
+
+// Message-level pagination scenarios (子 — composite-cursor extraction). These exercise
+// the SAME uuid-keyed `mergeTurnPage` / `applyTranscriptEvent` under the new pager's
+// realities: a single turn split across pages (partial bands), the synthetic `seq=0`
+// promptText slot (`uuid: "synthetic:{turnUuid}"`) returned in EVERY page that reaches
+// the turn, an empty placeholder band (a trimmed prompt-less turn → empty rendered
+// `messages[]`), and a live `transcript_appended` interleaved with a paged load. The
+// frontend functions are unchanged; these tests assert they already tolerate the new shape.
+describe("message-level pagination — partial-turn bands stitched across pages", () => {
+  it("stitches a partial-turn band across two load-earlier pages (newest page first)", () => {
+    // First paint returned only the NEWEST messages of a heavy turn t7 (m3, m4); the older
+    // load-earlier page returns the SAME turn's earlier messages (m1, m2). mergeTurnPage is
+    // called `(incomingOlder, prev)` in loadEarlier — the older page is the "existing" arg —
+    // so the band must end up with m1..m4 in ascending order, not duplicated.
+    const firstPaint = [turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m3", seq: 3 }), msg({ uuid: "m4", seq: 4 })] })];
+    const olderPage = [turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m1", seq: 1 }), msg({ uuid: "m2", seq: 2 })] })];
+    // loadEarlier merges as mergeTurnPage(olderPage, firstPaint): older is "existing", first paint "incoming".
+    const merged = mergeTurnPage(olderPage, firstPaint);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].uuid).toBe("t7");
+    // Older messages first (existing), then the newer page's messages appended — m1..m4.
+    expect(merged[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2", "m3", "m4"]);
+  });
+
+  it("does not duplicate a message that overlaps the two pages of the same turn", () => {
+    // A boundary message (m2) appears in BOTH pages (an overlapping fetch). It de-dupes by uuid.
+    const olderPage = [turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m1", seq: 1 }), msg({ uuid: "m2", seq: 2 })] })];
+    const newerPage = [turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m2", seq: 2 }), msg({ uuid: "m3", seq: 3 })] })];
+    const merged = mergeTurnPage(olderPage, newerPage);
+    expect(merged[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2", "m3"]);
+  });
+});
+
+describe("message-level pagination — synthetic seq=0 slot de-dupe", () => {
+  function syntheticMsg(turnUuid: string, text: string): TranscriptMessageView {
+    // Mirrors the server's projection: a promptText turn's slot is a RENDERED message with
+    // uuid `synthetic:{turnUuid}`, role user, seq 0, text = promptText.
+    return {
+      uuid: `synthetic:${turnUuid}`,
+      turnUuid,
+      role: "user",
+      text,
+      seq: 0,
+      createdAt: "2026-06-16T11:00:00.000Z",
+    };
+  }
+
+  it("de-dupes the synthetic promptText slot by uuid across an overlapping fetch", () => {
+    // A human_instruction turn t4's `seq=0` synthetic message is returned in BOTH the
+    // first-paint page and a load-earlier page that reaches the same turn. Merging must not
+    // render the prompt twice.
+    const synth = syntheticMsg("t4", "do the thing");
+    const firstPaint = [
+      turn({ uuid: "t4", seq: 4, trigger: "human_instruction", promptText: "do the thing", messages: [synth, msg({ uuid: "m1", seq: 1 })] }),
+    ];
+    const olderPage = [
+      turn({ uuid: "t4", seq: 4, trigger: "human_instruction", promptText: "do the thing", messages: [synth] }),
+    ];
+    const merged = mergeTurnPage(olderPage, firstPaint);
+    expect(merged).toHaveLength(1);
+    // The synthetic slot appears exactly once, ahead of the real seq>=1 message.
+    expect(merged[0].messages.map((m) => m.uuid)).toEqual(["synthetic:t4", "m1"]);
+    expect(merged[0].messages.filter((m) => m.uuid === "synthetic:t4")).toHaveLength(1);
+  });
+
+  it("a live transcript_appended carrying the synthetic slot again does not double-render it", () => {
+    const synth = syntheticMsg("t4", "do the thing");
+    const prev = [
+      turn({ uuid: "t4", seq: 4, trigger: "human_instruction", promptText: "do the thing", messages: [synth] }),
+    ];
+    const next = applyTranscriptEvent(prev, {
+      trigger: "transcript_appended",
+      turn: turn({ uuid: "t4", seq: 4 }),
+      // The append re-delivers the synthetic slot alongside a genuinely new real message.
+      messages: [synth, msg({ uuid: "m1", seq: 1, turnUuid: "t4" })],
+    });
+    expect(next[0].messages.map((m) => m.uuid)).toEqual(["synthetic:t4", "m1"]);
+  });
+});
+
+describe("message-level pagination — empty placeholder band", () => {
+  it("renders an empty-band (placeholder) turn without error and merges it by uuid", () => {
+    // A prompt-less turn whose real messages were all trimmed comes back as a band with an
+    // empty rendered messages[] (the server's placeholder-only slot). It must merge in
+    // order and not throw.
+    const firstPaint = [turn({ uuid: "t8", seq: 8, messages: [msg({ uuid: "m9", seq: 1 })] })];
+    const olderPage = [turn({ uuid: "t6", seq: 6, trigger: "agent_wake", promptText: null, messages: [] })];
+    const merged = mergeTurnPage(olderPage, firstPaint);
+    expect(merged.map((t) => t.uuid)).toEqual(["t6", "t8"]);
+    // The empty band survives with an empty rendered list — not dropped, no error.
+    expect(merged[0].messages).toEqual([]);
+  });
+
+  it("an empty-band turn arriving via applyTranscriptEvent renders without error", () => {
+    const prev = [turn({ uuid: "t8", seq: 8, messages: [msg({ uuid: "m9", seq: 1 })] })];
+    const next = applyTranscriptEvent(prev, {
+      trigger: "turn_created",
+      turn: turn({ uuid: "t9", seq: 9, trigger: "agent_wake", promptText: null }),
+      messages: [],
+    });
+    expect(next.map((t) => t.uuid)).toEqual(["t8", "t9"]);
+    expect(next[1].messages).toEqual([]);
+  });
+});
+
+describe("message-level pagination — live append during paging", () => {
+  it("a live transcript_appended during a load-earlier does not double-render the message", () => {
+    // Simulate the loadEarlier flow interleaved with a live SSE append on the NEWEST turn.
+    // 1) Initial window: t7 with m3,m4 (newest page).
+    let turns: TurnWithMessagesView[] = [
+      turn({ uuid: "t7", seq: 7, status: "running", messages: [msg({ uuid: "m3", seq: 3 }), msg({ uuid: "m4", seq: 4 })] }),
+    ];
+    // 2) A live append lands on t7 (m5) WHILE the older fetch is in flight.
+    turns = applyTranscriptEvent(turns, {
+      trigger: "transcript_appended",
+      turn: turn({ uuid: "t7", seq: 7 }),
+      messages: [msg({ uuid: "m5", seq: 5, turnUuid: "t7" })],
+    });
+    expect(turns[0].messages.map((m) => m.uuid)).toEqual(["m3", "m4", "m5"]);
+    // 3) The older page resolves with t7's earlier messages (m1, m2) — merge older-as-existing.
+    const olderPage = [turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m1", seq: 1 }), msg({ uuid: "m2", seq: 2 })] })];
+    turns = mergeTurnPage(olderPage, turns);
+    // The live m5 is retained, the older m1/m2 are stitched in, nothing double-rendered.
+    expect(turns).toHaveLength(1);
+    expect(turns[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+  });
+
+  it("a live append re-delivered after a paged load de-dupes by uuid (no double-render)", () => {
+    // The older page already carried m2; a redundant live append re-delivers m2. De-duped.
+    let turns: TurnWithMessagesView[] = [
+      turn({ uuid: "t7", seq: 7, messages: [msg({ uuid: "m1", seq: 1 }), msg({ uuid: "m2", seq: 2 })] }),
+    ];
+    turns = applyTranscriptEvent(turns, {
+      trigger: "transcript_appended",
+      turn: turn({ uuid: "t7", seq: 7 }),
+      messages: [msg({ uuid: "m2", seq: 2, turnUuid: "t7" })],
+    });
+    expect(turns[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
+  });
+});

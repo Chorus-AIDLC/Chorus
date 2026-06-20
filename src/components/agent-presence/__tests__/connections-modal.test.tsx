@@ -644,14 +644,15 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
   it("shows 'Load earlier' when hasMore, and clicking it prepends the older page", async () => {
     // Route: connections / executions / session list as usual, and the detail endpoint
     // returns the NEWEST page (hasMore:true) on the bare URL, the OLDER page on the
-    // `?beforeSeq=` cursor.
+    // composite `?beforeTurnSeq=&beforeMsgSeq=` cursor.
     mockAuthFetch.mockImplementation((url: string) => {
       if (typeof url === "string") {
         if (url.startsWith("/api/daemon/executions")) {
           return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { executions: [] } }) });
         }
-        // Older page (cursor present): turns seq 1-2, no more before them.
-        if (/\/api\/daemon-sessions\/[^/?]+\?beforeSeq=/.test(url)) {
+        // Older page (cursor present): turns seq 1-2, no more before them. The composite
+        // cursor reports the page's oldest slot as (oldestTurnSeq:1, oldestMsgSeq:0).
+        if (/\/api\/daemon-sessions\/[^/?]+\?beforeTurnSeq=/.test(url)) {
           return Promise.resolve({
             ok: true,
             json: async () => ({
@@ -663,12 +664,15 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
                   turn({ uuid: "t2", seq: 2, promptText: "second message" }),
                 ],
                 hasMore: false,
-                oldestSeq: 1,
+                oldestTurnSeq: 1,
+                oldestMsgSeq: 0,
               },
             }),
           });
         }
-        // Newest page (no cursor): turns seq 3-4, hasMore true (earlier turns exist).
+        // Newest page (no cursor): turns seq 3-4, hasMore true (earlier messages exist).
+        // These are promptText-only turns, so each turn's oldest slot is its synthetic
+        // (turn.seq, 0); the page's oldest is (oldestTurnSeq:3, oldestMsgSeq:0).
         if (/^\/api\/daemon-sessions\/[^/?]+$/.test(url)) {
           return Promise.resolve({
             ok: true,
@@ -681,7 +685,8 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
                   turn({ uuid: "t4", seq: 4, promptText: "LATEST message" }),
                 ],
                 hasMore: true,
-                oldestSeq: 3,
+                oldestTurnSeq: 3,
+                oldestMsgSeq: 0,
               },
             }),
           });
@@ -717,9 +722,12 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
     // The older page is prepended (the opening message now present), and the control
     // disappears (the older page reported hasMore:false).
     await waitFor(() => expect(screen.getAllByText("FIRST message").length).toBeGreaterThan(0));
-    // The cursor fetch used the oldest loaded seq (3) from the first page.
+    // The cursor fetch used the SERVER-RETURNED composite cursor (oldestTurnSeq:3,
+    // oldestMsgSeq:0) from the first page — NOT a seq derived from rendered turns.
     expect(
-      mockAuthFetch.mock.calls.some((c) => String(c[0]).includes("/api/daemon-sessions/s1?beforeSeq=3")),
+      mockAuthFetch.mock.calls.some((c) =>
+        String(c[0]).includes("/api/daemon-sessions/s1?beforeTurnSeq=3&beforeMsgSeq=0"),
+      ),
     ).toBe(true);
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /load earlier/i })).toBeNull(),
@@ -734,12 +742,58 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
         session: sessionDetail,
         turns: [turn({ uuid: "t1", seq: 1, promptText: "only message" })],
         hasMore: false,
-        oldestSeq: 1,
+        oldestTurnSeq: 1,
+        oldestMsgSeq: 0,
       },
     });
     const { user } = await renderAndOpenModal();
     await user.click((await screen.findAllByText("Short chat"))[0].closest("button") as HTMLElement);
     await waitFor(() => expect(screen.getAllByText("only message").length).toBeGreaterThan(0));
     expect(screen.queryByRole("button", { name: /load earlier/i })).toBeNull();
+  });
+
+  it("renders a human_instruction prompt exactly ONCE even when the server folds it in as a synthetic seq=0 message", async () => {
+    // FAITHFUL server shape: the message-level read returns a human_instruction turn
+    // whose promptText is ALSO present in messages[] as the synthetic seq=0 user
+    // message (uuid `synthetic:{turnUuid}`). TurnBand renders the promptText as its
+    // canonical paragraph AND maps messages[] — so without de-duping the synthetic
+    // entry the instruction would render twice. This asserts exactly one occurrence
+    // PER rendered pane (jsdom mounts both the desktop and hidden mobile pane, so the
+    // count is one-per-pane, not a single global node).
+    const PROMPT = "ship the daemon pagination fix";
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1", title: "Synthetic chat", originConnectionUuid: "1" })],
+      detail: {
+        session: sessionDetail,
+        turns: [
+          turn({
+            uuid: "t1",
+            seq: 1,
+            promptText: PROMPT,
+            messages: [
+              {
+                uuid: "synthetic:t1",
+                turnUuid: "t1",
+                role: "user",
+                text: PROMPT,
+                seq: 0,
+                createdAt: "2026-06-16T11:00:00.000Z",
+              },
+            ],
+          }),
+        ],
+        hasMore: false,
+        oldestTurnSeq: 1,
+        oldestMsgSeq: 0,
+      },
+    });
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText("Synthetic chat"))[0].closest("button") as HTMLElement);
+    await waitFor(() => expect(screen.getAllByText(PROMPT).length).toBeGreaterThan(0));
+    // Desktop pane + hidden mobile pane each render the band once → exactly 2 nodes,
+    // i.e. ONE per pane. If the synthetic message leaked into the bubble list it would
+    // be 4 (two per pane).
+    expect(screen.getAllByText(PROMPT).length).toBe(2);
   });
 });

@@ -77,10 +77,11 @@ function clampInstructionName(opener: string): string {
 //  - transcript_appended → append the event's message tail to the affected turn,
 //    de-duped by message uuid (so a re-delivered event doesn't double-render)
 // Insert a turn into an ascending-by-`seq` array at its correct position (NOT blindly
-// appended). The transcript is rendered + paginated assuming ascending seq — `loadEarlier`
-// uses `turns[0].seq` as the older-page cursor and the transcript header/auto-scroll use
-// `turns[turns.length - 1]` as the newest turn — so a materialized turn with a lower seq
-// than the loaded window must land in order, not at the end. Returns a NEW array.
+// appended). The transcript is rendered + paginated assuming ascending seq — the
+// transcript header/auto-scroll use `turns[turns.length - 1]` as the newest turn, and
+// `loadEarlier` walks back via the server-returned `(oldestTurnSeq, oldestMsgSeq)` cursor
+// over this ascending window — so a materialized turn with a lower seq than the loaded
+// window must land in order, not at the end. Returns a NEW array.
 function insertTurnBySeq(
   turns: TurnWithMessagesView[],
   incoming: TurnWithMessagesView,
@@ -350,10 +351,20 @@ export function DaemonChat() {
   const [turns, setTurns] = useState<TurnWithMessagesView[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
-  // Older-page pagination: whether earlier turns exist before the loaded window, and a
+  // Older-page pagination: whether earlier MESSAGES exist before the loaded window, and a
   // mid-flight flag for the "load earlier" fetch (separate from the first-paint load).
   const [hasMoreEarlier, setHasMoreEarlier] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  // The SERVER-RETURNED composite cursor for the next "load earlier" — the position of the
+  // OLDEST slot/message in the currently-loaded window. Tracked in state (NOT derived from
+  // `turns[0]`) because the message-level pager gives every turn a `(turn.seq, 0)` slot,
+  // and an empty placeholder band (a turn whose messages were all trimmed) has NO rendered
+  // message to read a `seq` from — only the server's reported `oldestTurnSeq` / `oldestMsgSeq`
+  // accounts for that slot, so it is the authoritative cursor.
+  const [oldestCursor, setOldestCursor] = useState<{
+    turnSeq: number;
+    msgSeq: number;
+  } | null>(null);
   // Guard against an out-of-order response overwriting a newer selection.
   const detailReqRef = useRef(0);
 
@@ -374,18 +385,21 @@ export function DaemonChat() {
       setTurns([]);
       setDetailError(false);
       setHasMoreEarlier(false);
+      setOldestCursor(null);
       return;
     }
     const reqId = ++detailReqRef.current;
     setDetailLoading(true);
     setDetailError(false);
     setHasMoreEarlier(false);
+    setOldestCursor(null);
     // Clear the previous session's turns synchronously on switch, so `turns` only ever
     // accumulates the NEW session's live events during the fetch window (the subscribe
     // effect is keyed on the same openUuid). The fetch then MERGES its page with those.
     setTurns([]);
     (async () => {
       try {
+        // First paint: NO cursor params — the message-level pager returns the newest page.
         const res = await authFetch(`/api/daemon-sessions/${openUuid}`);
         if (reqId !== detailReqRef.current) return; // superseded
         if (!res.ok) {
@@ -403,6 +417,13 @@ export function DaemonChat() {
           // (the live copy wins, as it may carry a fresher message tail), sorted by seq.
           setTurns((prev) => mergeTurnPage(prev, data.turns ?? []));
           setHasMoreEarlier(Boolean(data.hasMore));
+          // Track the SERVER-RETURNED composite cursor (the page's oldest slot/message)
+          // for the next "load earlier". Null when the page is empty (no older fetch).
+          setOldestCursor(
+            data.oldestTurnSeq !== null && data.oldestMsgSeq !== null
+              ? { turnSeq: data.oldestTurnSeq, msgSeq: data.oldestMsgSeq }
+              : null,
+          );
         } else {
           setDetailError(true);
         }
@@ -416,19 +437,23 @@ export function DaemonChat() {
     })();
   }, [openUuid]);
 
-  // Load the page of turns OLDER than the earliest currently-loaded turn (cursor =
-  // `turns[0].seq`) and merge it in. `mergeTurnPage` unions by uuid + sorts by seq, so a
-  // raced live event, a re-click, or any ordering surprise can't double-insert or break
-  // the ascending invariant. Bound to the open session via `reqId` (a selection change
-  // supersedes an in-flight earlier-load).
+  // Load the page of MESSAGES older than the loaded window and merge it in. The cursor is
+  // the SERVER-RETURNED composite `(oldestTurnSeq, oldestMsgSeq)` of the previous page —
+  // NOT derived from `turns[0]`, because the page's oldest position may be an empty
+  // placeholder band's `(turn.seq, 0)` slot that has no rendered message to read a seq
+  // from. Passed as `?beforeTurnSeq=&beforeMsgSeq=`. `mergeTurnPage` unions by uuid + sorts
+  // by seq, so a partial-turn band stitches into its prior band, a re-delivered synthetic
+  // `seq=0` slot de-dupes by its stable `synthetic:{turnUuid}` uuid, and a raced live event
+  // can't double-insert or break the ascending invariant. Bound to the open session via
+  // `reqId` (a selection change supersedes an in-flight earlier-load).
   const loadEarlier = useCallback(async () => {
-    if (!openUuid || loadingEarlier || turns.length === 0) return;
-    const cursorSeq = turns[0].seq;
+    if (!openUuid || loadingEarlier || !oldestCursor) return;
+    const { turnSeq, msgSeq } = oldestCursor;
     const reqId = detailReqRef.current; // same generation as the open session
     setLoadingEarlier(true);
     try {
       const res = await authFetch(
-        `/api/daemon-sessions/${openUuid}?beforeSeq=${cursorSeq}`,
+        `/api/daemon-sessions/${openUuid}?beforeTurnSeq=${turnSeq}&beforeMsgSeq=${msgSeq}`,
       );
       if (reqId !== detailReqRef.current) return; // selection changed mid-flight
       if (!res.ok) return; // transient — the "load earlier" control stays available
@@ -438,13 +463,22 @@ export function DaemonChat() {
         const data = json.data as SessionDetailView;
         setTurns((prev) => mergeTurnPage(data.turns ?? [], prev));
         setHasMoreEarlier(Boolean(data.hasMore));
+        // Advance the cursor to the newly-loaded page's oldest position. When the page
+        // is empty (nothing older), keep the previous cursor untouched (hasMore is false,
+        // so the control disappears anyway).
+        if (data.oldestTurnSeq !== null && data.oldestMsgSeq !== null) {
+          setOldestCursor({
+            turnSeq: data.oldestTurnSeq,
+            msgSeq: data.oldestMsgSeq,
+          });
+        }
       }
     } catch (error) {
       clientLogger.error("Failed to load earlier transcript turns:", error);
     } finally {
       setLoadingEarlier(false);
     }
-  }, [openUuid, loadingEarlier, turns]);
+  }, [openUuid, loadingEarlier, oldestCursor]);
 
   // Subscribe to the open conversation's live transcript events and patch turns.
   // The provider only forwards events for the `?sessionUuid=` it subscribed (the

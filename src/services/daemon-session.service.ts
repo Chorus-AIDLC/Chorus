@@ -639,120 +639,237 @@ export interface TurnWithMessagesView extends TurnView {
   messages: TranscriptMessageView[];
 }
 
-// Default page size for the transcript read — measured in TURNS (the structural unit
-// the chat renders as bands). A coding-agent session can be woken many times, so the
-// transcript is paged newest-first and "load earlier" walks backward by `seq`; per-
-// message volume is independently bounded by MAX_TRANSCRIPT_MESSAGES_PER_SESSION.
-export const DEFAULT_TRANSCRIPT_TURN_PAGE = 30;
+// Default page size for the transcript read — measured in MESSAGES (the unit a viewer
+// actually scrolls through), NOT turns. A single turn is one agent wake and can carry
+// many multi-KB user/assistant messages, so paging by turn makes the worst case "one
+// enormous turn"; paging by message bounds every page regardless of how heavy a turn
+// is. Smaller than the old 30-turn default because the unit is now a single message.
+// Per-message volume is independently bounded by MAX_TRANSCRIPT_MESSAGES_PER_SESSION.
+export const DEFAULT_TRANSCRIPT_MESSAGE_PAGE = 20;
 
 /**
  * Read projection for the single-session transcript route: the session plus a PAGE of
- * its ordered turns (each carrying its retained transcript messages), newest-first
- * windowed but returned in ascending `seq` order for top-to-bottom rendering. `hasMore`
- * is true when older turns exist before this page; `oldestSeq` is the `seq` of the
- * earliest turn in this page — the cursor a client passes as `beforeSeq` to load the
- * previous page. Both are null/false for an empty session.
+ * MESSAGES grouped into the (possibly partial) turn bands that own them, newest-first
+ * windowed but returned in ascending `(turn.seq, msg.seq)` order for top-to-bottom
+ * rendering. `hasMore` is true when older messages exist before this page; the next
+ * "load earlier" cursor is the position of the OLDEST message/slot in this page,
+ * carried as `oldestTurnSeq` + `oldestMsgSeq` (a composite cursor — the message-level
+ * generalization of the old single `oldestSeq`). An empty placeholder band (a turn
+ * whose messages were all trimmed) still yields a usable cursor via its `(turn.seq, 0)`
+ * slot, so the cursor is read from the page's oldest *slot*, not its oldest rendered
+ * message. Both seqs are null and `hasMore` is false for an empty session.
  */
 export interface SessionDetailView {
   session: SessionView;
   turns: TurnWithMessagesView[];
   hasMore: boolean;
-  oldestSeq: number | null;
+  oldestTurnSeq: number | null;
+  oldestMsgSeq: number | null;
+}
+
+// A single entry in the unified, MESSAGE-level paging stream. Every turn contributes a
+// positional slot at `(turn.seq, msgSeq = 0)` (see D3) so no turn band is ever dropped
+// by the message pager; real transcript messages contribute entries at `msgSeq >= 1`.
+// `rendered` is the message emitted into the turn band's rendered `messages[]` — the
+// real `TranscriptMessageView` for a real message, a SYNTHETIC promptText message for a
+// promptText-bearing turn's slot, and `null` for a placeholder slot (counted for
+// paging/cursor but contributing no rendered message). The synthetic/placeholder slot
+// is a read/projection-layer construct only: never persisted, no schema/role change.
+interface StreamEntry {
+  turnSeq: number;
+  msgSeq: number;
+  rendered: TranscriptMessageView | null;
 }
 
 /**
- * Read a single session WITH its turns-and-messages, applying the SAME owner/self +
- * companyUuid visibility fence as `getSessionTurns` / `getVisibleSessions`. The
- * session is first resolved under the caller's visibility scope; a session that does
- * not exist, lives in another company, or belongs to an agent the caller does not own
- * all yield the SAME `null` — so the read route returns one 404 in every negative case
- * without revealing another caller's session exists (non-disclosure, exactly like
- * `getSessionTurns`).
+ * Read a single session WITH a MESSAGE-level page of its turns-and-messages, applying
+ * the SAME owner/self + companyUuid visibility fence as `getSessionTurns` /
+ * `getVisibleSessions`. The session is first resolved under the caller's visibility
+ * scope; a session that does not exist, lives in another company, or belongs to an
+ * agent the caller does not own all yield the SAME `null` — so the read route returns
+ * one 404 in every negative case without revealing another caller's session exists
+ * (non-disclosure, exactly like `getSessionTurns`).
  *
- * On a visible session it loads the turns ordered by `seq`, then loads ALL their
- * transcript messages in ONE batched query (`where: { turnUuid: { in: [...] } }`,
- * ordered by `(turnUuid, seq)`) and folds the messages into their turns IN MEMORY —
- * no N+1, exactly one extra query regardless of turn count (and zero when the session
- * has no turns). The per-message projection reuses `toTranscriptMessageView` (the
- * ingest path's mapper) and the `TranscriptMessageView` shape — no new message type.
- * Messages trimmed by the rolling-window cap are simply absent; a turn whose messages
- * were all trimmed still appears with an empty `messages` array.
+ * Pagination is by MESSAGE, not turn (a single turn can carry many multi-KB messages,
+ * so a turn-window's worst case is "one enormous turn"). It builds a unified message
+ * stream where EVERY turn gets a positional slot at `(turn.seq, msgSeq = 0)`:
+ *  - a turn with non-empty `promptText` → the slot is a synthetic RENDERED message
+ *    (`role: "user"`, `text: promptText`, `uuid: "synthetic:" + turnUuid`), emitted
+ *    into the band's rendered `messages[]` ahead of the real `seq >= 1` messages;
+ *  - a prompt-less turn whose real messages were all trimmed by the rolling window →
+ *    the slot is a PLACEHOLDER counted for paging/cursor but NOT rendered (the band
+ *    materializes with an empty `messages[]`, matching the old turn-pager which never
+ *    dropped such a turn);
+ *  - a turn with real messages → the `(seq = 0)` placeholder reserves the position and
+ *    the rendered messages are the real ones.
+ * The stream is ordered `(turn.seq desc, msg.seq desc)`, the composite `before`
+ * predicate `turn.seq < T OR (turn.seq = T AND msg.seq < M)` is applied, `limit + 1`
+ * entries are taken (the extra one tells us `hasMore` without a count query), then the
+ * page is reversed to ascending and grouped back into `TurnWithMessagesView[]` (turn
+ * metadata via `toTurnView`; partial turns and empty placeholder bands are expected).
+ * Within the 200-message session cap the candidate turns' messages are loaded in ONE
+ * batched query and sliced in memory — N is bounded, so the composite-cursor +
+ * synthetic-fold logic stays in one place.
  *
- * Returns `null` when the session is not visible (the route maps to 404), or the
- * `{ session, turns }` detail when it is. A READ that does NOT swallow — a query
- * failure propagates so the route surfaces a 500 (never a degraded empty transcript).
+ * The next "load earlier" cursor is reported as `oldestTurnSeq` / `oldestMsgSeq` — the
+ * position of the page's OLDEST slot/message (so an empty placeholder band still yields
+ * a usable cursor). Returns `null` when the session is not visible (the route maps to
+ * 404), or the `{ session, turns, hasMore, oldestTurnSeq, oldestMsgSeq }` detail when
+ * it is. A READ that does NOT swallow — a query failure propagates so the route
+ * surfaces a 500 (never a degraded empty transcript).
  */
 export async function getSessionDetail(
   auth: { type: string; companyUuid: string; actorUuid: string },
   sessionUuid: string,
-  // Pagination (newest-first window over TURNS): `limit` caps how many turns this page
-  // returns (default DEFAULT_TRANSCRIPT_TURN_PAGE); `beforeSeq` loads the page of turns
-  // strictly OLDER than that seq (the "load earlier" cursor). Omitting `beforeSeq` loads
-  // the most recent page. A non-positive/oversized `limit` is clamped to a sane range.
-  opts: { limit?: number; beforeSeq?: number | null } = {},
+  // Pagination (newest-first window over MESSAGES): `limit` caps how many messages this
+  // page returns (default DEFAULT_TRANSCRIPT_MESSAGE_PAGE); the composite cursor
+  // `(beforeTurnSeq, beforeMsgSeq)` loads the messages strictly OLDER than that position
+  // under `turn.seq < T OR (turn.seq = T AND msg.seq < M)`. Omitting both loads the most
+  // recent page. A non-positive/oversized `limit` is clamped to a sane range.
+  opts: { limit?: number; beforeTurnSeq?: number | null; beforeMsgSeq?: number | null } = {},
 ): Promise<SessionDetailView | null> {
   const sessionRow = await prisma.daemonSession.findFirst({
     where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
   });
   if (!sessionRow) return null; // not visible → 404 non-disclosure
 
-  // Clamp the page size: at least 1, at most 200 turns per page (a hard ceiling so a
-  // hostile `limit` can't ask for an unbounded scan).
+  // Clamp the page size: at least 1, at most 200 messages per page (a hard ceiling so a
+  // hostile `limit` can't ask for an unbounded scan; also the session retention cap).
   const limit = Math.min(
-    Math.max(1, Math.floor(opts.limit ?? DEFAULT_TRANSCRIPT_TURN_PAGE)),
+    Math.max(1, Math.floor(opts.limit ?? DEFAULT_TRANSCRIPT_MESSAGE_PAGE)),
     200,
   );
-  const beforeSeq =
-    typeof opts.beforeSeq === "number" && Number.isFinite(opts.beforeSeq)
-      ? opts.beforeSeq
+  const beforeTurnSeq =
+    typeof opts.beforeTurnSeq === "number" && Number.isFinite(opts.beforeTurnSeq)
+      ? opts.beforeTurnSeq
+      : null;
+  const beforeMsgSeq =
+    typeof opts.beforeMsgSeq === "number" && Number.isFinite(opts.beforeMsgSeq)
+      ? opts.beforeMsgSeq
       : null;
 
-  // Fetch the NEWEST `limit` turns at or before the cursor: order by seq DESC, take
-  // `limit + 1` so the extra row tells us whether an OLDER page exists (hasMore) without
-  // a separate count query. Then reverse to ascending for top-to-bottom rendering.
-  const pageDesc = await prisma.daemonSessionTurn.findMany({
+  // Candidate turn window: every turn at or before the cursor turn (`seq <= beforeTurnSeq`),
+  // or all turns when no cursor. NOTE: only messages are trimmed by the rolling-window cap
+  // (`trimSessionTranscript` deletes DaemonTranscriptMessage rows) — turns are NOT, so this
+  // set grows with the session's wake count (one turn per wake). For the conversational
+  // session sizes this read serves that is acceptable: we load these turns' messages in one
+  // batched query and slice the composite window in memory (D4), bounded per page by `limit`.
+  // If a session's turn count ever grows large enough to matter, bound this with a `take`
+  // heuristic (limit + margin, widen on underflow) rather than scanning all turns.
+  // Ordered seq DESC so the slot/message stream is newest-first before windowing.
+  const candidateTurns = await prisma.daemonSessionTurn.findMany({
     where: {
       sessionUuid,
-      ...(beforeSeq !== null ? { seq: { lt: beforeSeq } } : {}),
+      ...(beforeTurnSeq !== null ? { seq: { lte: beforeTurnSeq } } : {}),
     },
     orderBy: { seq: "desc" },
-    take: limit + 1,
   });
-  const hasMore = pageDesc.length > limit;
-  const pageTurns = (hasMore ? pageDesc.slice(0, limit) : pageDesc).reverse(); // ascending
 
-  // Load this page's turns' messages in ONE batched query, then fold in memory — no
-  // N+1. An empty page needs no message query at all.
-  const turnUuids = pageTurns.map((t) => t.uuid);
+  // Load the candidate turns' real messages in ONE batched query, then fold in memory —
+  // no N+1. An empty candidate set needs no message query at all.
+  const candidateTurnUuids = candidateTurns.map((t) => t.uuid);
   const messages =
-    turnUuids.length > 0
+    candidateTurnUuids.length > 0
       ? await prisma.daemonTranscriptMessage.findMany({
-          where: { turnUuid: { in: turnUuids } },
+          where: { turnUuid: { in: candidateTurnUuids } },
           orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
         })
       : [];
 
-  // Bucket the messages by their turnUuid so each turn gets exactly its own messages
-  // in seq order (the query already ordered by (turnUuid, seq), so each bucket is in
-  // seq order as appended). A turn with no retained messages keeps an empty array.
-  const messagesByTurn = new Map<string, TranscriptMessageView[]>();
+  // Bucket real messages by their turnUuid (each bucket already in ascending seq order
+  // from the query). A turn with no retained messages simply has no bucket.
+  const realByTurn = new Map<string, TranscriptMessageView[]>();
   for (const m of messages) {
     const view = toTranscriptMessageView(m);
-    const bucket = messagesByTurn.get(view.turnUuid);
+    const bucket = realByTurn.get(view.turnUuid);
     if (bucket) bucket.push(view);
-    else messagesByTurn.set(view.turnUuid, [view]);
+    else realByTurn.set(view.turnUuid, [view]);
   }
 
-  const turnsWithMessages: TurnWithMessagesView[] = pageTurns.map((t) => ({
-    ...toTurnView(t),
-    messages: messagesByTurn.get(t.uuid) ?? [],
-  }));
+  // Build the unified `(turn.seq desc, msg.seq desc)` stream. For each candidate turn
+  // (already seq DESC) emit its real messages newest-first, then its `seq = 0` slot last
+  // (smallest msgSeq sorts last within a turn under DESC). The slot is rendered for a
+  // promptText turn, a placeholder otherwise — but ALWAYS present so every turn occupies
+  // exactly one cursor position and no band is dropped.
+  const stream: StreamEntry[] = [];
+  for (const t of candidateTurns) {
+    const reals = realByTurn.get(t.uuid) ?? [];
+    for (let i = reals.length - 1; i >= 0; i--) {
+      stream.push({ turnSeq: t.seq, msgSeq: reals[i].seq, rendered: reals[i] });
+    }
+    const promptText = t.promptText;
+    const hasPrompt = typeof promptText === "string" && promptText.length > 0;
+    stream.push({
+      turnSeq: t.seq,
+      msgSeq: 0,
+      rendered: hasPrompt
+        ? {
+            uuid: `synthetic:${t.uuid}`,
+            turnUuid: t.uuid,
+            role: "user",
+            text: promptText as string,
+            seq: 0,
+            createdAt: t.createdAt.toISOString(),
+          }
+        : null,
+    });
+  }
+
+  // Apply the composite `before` predicate: keep entries strictly older than the cursor
+  // under `turn.seq < T OR (turn.seq = T AND msg.seq < M)`. With no cursor every entry
+  // passes. The stream is already (turnSeq desc, msgSeq desc) by construction.
+  const windowed =
+    beforeTurnSeq !== null
+      ? stream.filter(
+          (e) =>
+            e.turnSeq < beforeTurnSeq ||
+            (e.turnSeq === beforeTurnSeq && e.msgSeq < (beforeMsgSeq ?? 0)),
+        )
+      : stream;
+
+  // Take `limit + 1` newest entries: the extra entry (if present) proves an OLDER page
+  // exists (hasMore) without a separate count query.
+  const hasMore = windowed.length > limit;
+  const pageDesc = hasMore ? windowed.slice(0, limit) : windowed;
+  const pageAsc = [...pageDesc].reverse(); // ascending (turnSeq asc, msgSeq asc)
+
+  // The next "load earlier" cursor = the page's OLDEST slot/message position (the last
+  // entry of the newest-first page, i.e. the first of the ascending page). Read from the
+  // SLOT, so an empty placeholder band still yields a usable cursor.
+  const oldest = pageDesc.length > 0 ? pageDesc[pageDesc.length - 1] : null;
+
+  // Group the page's entries back into their turns, preserving ascending order of first
+  // appearance. A turn's band carries only this page's RENDERED messages (real ones plus
+  // a rendered synthetic promptText); a placeholder-only slot yields an empty band.
+  const turnMeta = new Map<string, DaemonSessionTurnRow>();
+  for (const t of candidateTurns) turnMeta.set(t.uuid, t);
+  const turnSeqToUuid = new Map<number, string>();
+  for (const t of candidateTurns) turnSeqToUuid.set(t.seq, t.uuid);
+
+  const renderedByTurnSeq = new Map<number, TranscriptMessageView[]>();
+  const orderedTurnSeqs: number[] = [];
+  for (const e of pageAsc) {
+    if (!renderedByTurnSeq.has(e.turnSeq)) {
+      renderedByTurnSeq.set(e.turnSeq, []);
+      orderedTurnSeqs.push(e.turnSeq);
+    }
+    if (e.rendered) renderedByTurnSeq.get(e.turnSeq)!.push(e.rendered);
+  }
+
+  const turnsWithMessages: TurnWithMessagesView[] = orderedTurnSeqs.map((seq) => {
+    const uuid = turnSeqToUuid.get(seq)!;
+    return {
+      ...toTurnView(turnMeta.get(uuid)!),
+      messages: renderedByTurnSeq.get(seq) ?? [],
+    };
+  });
 
   return {
     session: toSessionView(sessionRow),
     turns: turnsWithMessages,
     hasMore,
-    oldestSeq: turnsWithMessages.length > 0 ? turnsWithMessages[0].seq : null,
+    oldestTurnSeq: oldest ? oldest.turnSeq : null,
+    oldestMsgSeq: oldest ? oldest.msgSeq : null,
   };
 }
 

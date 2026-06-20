@@ -64,7 +64,7 @@ import {
   SESSION_STATUSES,
   TRANSCRIPT_ROLES,
   MAX_TRANSCRIPT_MESSAGES_PER_SESSION,
-  DEFAULT_TRANSCRIPT_TURN_PAGE,
+  DEFAULT_TRANSCRIPT_MESSAGE_PAGE,
   STALE_THRESHOLD_MS,
   resolveOrCreateSession,
   resolveDirectIdeaUuid,
@@ -759,19 +759,26 @@ describe("isSessionVisibleToCaller", () => {
   });
 });
 
-// ===== getSessionDetail (turns WITH messages, batched fold, 404 non-disclosure) =====
+// ===== getSessionDetail (MESSAGE-level pagination, composite cursor, synthetic slot) =====
+//
+// The service loads the candidate turns (`daemonSessionTurn.findMany`, seq DESC, fenced
+// `seq <= beforeTurnSeq` when a cursor is given), then their real messages in ONE
+// batched query (`daemonTranscriptMessage.findMany`, ordered (turnUuid asc, seq asc)).
+// It builds a unified `(turn.seq desc, msg.seq desc)` stream where every turn gets a
+// `(seq = 0)` slot — a RENDERED synthetic `user` message for a promptText turn, a
+// PLACEHOLDER otherwise — applies the composite `before` predicate, takes `limit + 1`,
+// reverses to ascending, and groups into bands. So a test just supplies candidate turns
+// + their messages and asserts the page bands + hasMore + (oldestTurnSeq, oldestMsgSeq).
 describe("getSessionDetail", () => {
-  it("VISIBLE session: returns { session, turns } with each turn's messages folded by seq", async () => {
+  it("VISIBLE session: returns { session, turns } with each turn's real messages folded ascending by seq", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    // The page query orders seq DESC + takes a window; the service reverses it to
-    // ascending. The mock returns DESC (newest-first) as the real DB would, so the
-    // result is ascending [t1, t2].
+    // Candidate turns come back seq DESC (newest-first), as the real DB orders them.
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
       turnRow({ uuid: "t2", seq: 2 }),
       turnRow({ uuid: "t1", seq: 1 }),
     ]);
-    // The ONE batched message query returns messages for BOTH turns, ordered by
-    // (turnUuid, seq); the fold buckets each into its own turn in seq order.
+    // Real messages for BOTH turns, ordered (turnUuid asc, seq asc) as the query asks.
+    // (Default turns here are autonomous: promptText null → placeholder slots, not rendered.)
     mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
       transcriptMessageRow({ uuid: "m1", turnUuid: "t1", role: "user", text: "do X", seq: 1 }),
       transcriptMessageRow({ uuid: "m2", turnUuid: "t1", role: "assistant", text: "did X", seq: 2 }),
@@ -792,11 +799,14 @@ describe("getSessionDetail", () => {
     expect(result?.session.uuid).toBe(sessionUuid);
     // Returned ascending for top-to-bottom rendering, regardless of the DESC fetch.
     expect(result?.turns.map((t) => t.uuid)).toEqual(["t1", "t2"]);
-    // Pagination metadata: a single page that fit (no extra row) → no earlier page.
+    // Only 3 real messages total (< page size) → no earlier page.
     expect(result?.hasMore).toBe(false);
-    expect(result?.oldestSeq).toBe(1);
-    // Messages folded into the right turn, in seq order, using the existing
-    // TranscriptMessageView shape (uuid/turnUuid/role/text/seq/createdAt).
+    // Oldest message in the page = the placeholder slot of t1 (turnSeq 1, msgSeq 0),
+    // which sorts ahead of t1's real seq>=1 messages. The cursor is read from the SLOT.
+    expect(result?.oldestTurnSeq).toBe(1);
+    expect(result?.oldestMsgSeq).toBe(0);
+    // Real messages folded into the right turn, ascending by seq (placeholder slots emit
+    // nothing into the rendered list). TranscriptMessageView shape preserved.
     expect(result?.turns[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
     expect(result?.turns[0].messages[0]).toEqual({
       uuid: "m1",
@@ -809,9 +819,8 @@ describe("getSessionDetail", () => {
     expect(result?.turns[1].messages.map((m) => m.uuid)).toEqual(["m3"]);
   });
 
-  it("loads ALL of the PAGE's messages in ONE batched query (no N+1): where turnUuid in [...] over the page turns", async () => {
+  it("loads candidate turns' messages in ONE batched query (no N+1), keyed on the candidate turn uuids", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    // DESC fetch (newest-first); reversed to ascending t1,t2,t3 for the message query.
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
       turnRow({ uuid: "t3", seq: 3 }),
       turnRow({ uuid: "t2", seq: 2 }),
@@ -821,28 +830,277 @@ describe("getSessionDetail", () => {
 
     await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
 
-    // Exactly ONE message query regardless of turn count, keyed on the page's turn
-    // uuids (ascending), ordered by (turnUuid, seq).
+    // Exactly ONE message query regardless of turn count, keyed on the candidate turn
+    // uuids, ordered (turnUuid asc, seq asc).
     expect(mockPrisma.daemonTranscriptMessage.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.daemonTranscriptMessage.findMany.mock.calls[0][0]).toEqual({
-      where: { turnUuid: { in: ["t1", "t2", "t3"] } },
+      where: { turnUuid: { in: ["t3", "t2", "t1"] } },
       orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
     });
-    // The turn page query is seq DESC + windowed (take = limit + 1 to probe hasMore).
+    // Candidate turns are read seq DESC; with NO cursor there is no take cap (the page
+    // window is computed in memory over the message stream) and no seq filter.
     const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
     expect(turnArgs.orderBy).toEqual({ seq: "desc" });
-    expect(turnArgs.take).toBe(DEFAULT_TRANSCRIPT_TURN_PAGE + 1);
     expect(turnArgs.where).toEqual({ sessionUuid });
   });
 
-  it("a turn whose messages were all trimmed still appears WITH an empty messages array", async () => {
+  it("DEFAULT page size is DEFAULT_TRANSCRIPT_MESSAGE_PAGE (20) MESSAGES, not turns", async () => {
+    expect(DEFAULT_TRANSCRIPT_MESSAGE_PAGE).toBe(20);
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    // DESC fetch; reversed to ascending [t1, t2].
+    // One prompt-less turn with 25 real messages — more than the 20-message default.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
+    const msgs = Array.from({ length: 25 }, (_, i) =>
+      transcriptMessageRow({ uuid: `m${i + 1}`, turnUuid: "t1", seq: i + 1 }),
+    );
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue(msgs);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+    );
+
+    // The single turn is a PARTIAL band carrying only the newest 20 messages (seq 6..25);
+    // the placeholder slot (seq 0) plus the oldest 5 messages are older than the page.
+    expect(result?.turns).toHaveLength(1);
+    expect(result?.turns[0].messages).toHaveLength(20);
+    expect(result?.turns[0].messages[0].seq).toBe(6);
+    expect(result?.turns[0].messages[19].seq).toBe(25);
+    expect(result?.hasMore).toBe(true);
+    // The page's oldest message is seq 6 of turn 1 → the next composite cursor.
+    expect(result?.oldestTurnSeq).toBe(1);
+    expect(result?.oldestMsgSeq).toBe(6);
+  });
+
+  it("PAGE SIZE clamp: a non-positive or oversized limit is clamped to [1, 200] MESSAGES", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // 3 messages on one prompt-less turn; limit 0 clamps to 1 → only the newest message.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "m1", turnUuid: "t1", seq: 1 }),
+      transcriptMessageRow({ uuid: "m2", turnUuid: "t1", seq: 2 }),
+      transcriptMessageRow({ uuid: "m3", turnUuid: "t1", seq: 3 }),
+    ]);
+
+    const clampedLow = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 0 },
+    );
+    // limit clamped to 1 → exactly the single newest message (seq 3), hasMore true.
+    expect(clampedLow?.turns[0].messages.map((m) => m.seq)).toEqual([3]);
+    expect(clampedLow?.hasMore).toBe(true);
+
+    // limit 9999 clamps to 200 (a no-op ceiling here) → the whole conversation fits.
+    const clampedHigh = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 9999 },
+    );
+    expect(clampedHigh?.turns[0].messages.map((m) => m.seq)).toEqual([1, 2, 3]);
+    expect(clampedHigh?.hasMore).toBe(false);
+  });
+
+  it("COMPOSITE CURSOR: candidate turns fenced seq <= beforeTurnSeq; messages strictly older than (T, M)", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // The cursor turn (seq 3) is INCLUDED in the candidate set (its older messages may
+    // still belong before the cursor); the service filters the stream by the composite
+    // predicate in memory.
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
-      turnRow({ uuid: "t2", seq: 2 }), // its messages were trimmed by the rolling window
+      turnRow({ uuid: "t3", seq: 3 }),
+      turnRow({ uuid: "t2", seq: 2 }),
       turnRow({ uuid: "t1", seq: 1 }),
     ]);
-    // Only t1 has retained messages; t2's are gone.
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "t3m1", turnUuid: "t3", seq: 1 }),
+      transcriptMessageRow({ uuid: "t3m2", turnUuid: "t3", seq: 2 }),
+      transcriptMessageRow({ uuid: "t3m3", turnUuid: "t3", seq: 3 }),
+      transcriptMessageRow({ uuid: "t2m1", turnUuid: "t2", seq: 1 }),
+    ]);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 50, beforeTurnSeq: 3, beforeMsgSeq: 2 },
+    );
+
+    // Candidate turn query fenced `seq <= beforeTurnSeq` (the cursor turn itself stays in
+    // so its older messages can be returned).
+    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(turnArgs.where).toEqual({ sessionUuid, seq: { lte: 3 } });
+    // Only messages strictly older than (turnSeq 3, msgSeq 2): t3's seq 1 (and its slot
+    // seq 0), plus all of t2 and t1's slots. t3's seq 2 and 3 are at/after the cursor →
+    // excluded. So t3 keeps only t3m1.
+    expect(result?.turns.find((t) => t.uuid === "t3")?.messages.map((m) => m.uuid)).toEqual([
+      "t3m1",
+    ]);
+    // No t3m2/t3m3 anywhere in the result (not repeated, not skipped past).
+    const allUuids = result?.turns.flatMap((t) => t.messages.map((m) => m.uuid)) ?? [];
+    expect(allUuids).not.toContain("t3m2");
+    expect(allUuids).not.toContain("t3m3");
+    expect(allUuids).toContain("t2m1");
+  });
+
+  it("COMPOSITE CURSOR: load-earlier across a turn boundary mid-page neither repeats nor skips the boundary message", async () => {
+    // First page: limit 2 over a session of two prompt-less turns —
+    //   t2 has real seq 1; t1 has real seq 1,2.
+    // Stream (turnSeq desc, msgSeq desc): (2,1)t2m1, (2,0)slot2, (1,2)t1m2, (1,1)t1m1, (1,0)slot1.
+    // Page 1 (newest 2): (2,1)t2m1, (2,0)slot2 → cursor (oldestTurnSeq 2, oldestMsgSeq 0).
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t2", seq: 2 }),
+      turnRow({ uuid: "t1", seq: 1 }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "t1m1", turnUuid: "t1", seq: 1 }),
+      transcriptMessageRow({ uuid: "t1m2", turnUuid: "t1", seq: 2 }),
+      transcriptMessageRow({ uuid: "t2m1", turnUuid: "t2", seq: 1 }),
+    ]);
+
+    const page1 = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 2 },
+    );
+    expect(page1?.turns.find((t) => t.uuid === "t2")?.messages.map((m) => m.uuid)).toEqual([
+      "t2m1",
+    ]);
+    expect(page1?.hasMore).toBe(true);
+    expect(page1?.oldestTurnSeq).toBe(2);
+    expect(page1?.oldestMsgSeq).toBe(0);
+
+    // Page 2: feed the page-1 cursor back. Candidates are now seq <= 2 (DB would return
+    // t2,t1; the service windows by the composite predicate). The window keeps everything
+    // strictly older than (2,0): t1m2 (1,2), t1m1 (1,1), slot1 (1,0).
+    vi.clearAllMocks();
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t2", seq: 2 }),
+      turnRow({ uuid: "t1", seq: 1 }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "t1m1", turnUuid: "t1", seq: 1 }),
+      transcriptMessageRow({ uuid: "t1m2", turnUuid: "t1", seq: 2 }),
+      transcriptMessageRow({ uuid: "t2m1", turnUuid: "t2", seq: 1 }),
+    ]);
+
+    const page2 = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 2, beforeTurnSeq: page1!.oldestTurnSeq!, beforeMsgSeq: page1!.oldestMsgSeq! },
+    );
+
+    // t2m1 (on page 1) is NOT repeated; t1's seq 1,2 (the boundary messages) are returned
+    // exactly once, none skipped. With limit 2 the page is the newest 2 older entries:
+    // t1m2 (1,2) and t1m1 (1,1); slot1 (1,0) is the +1 → hasMore true.
+    const page2Uuids = page2?.turns.flatMap((t) => t.messages.map((m) => m.uuid)) ?? [];
+    expect(page2Uuids).not.toContain("t2m1");
+    expect(page2?.turns.find((t) => t.uuid === "t1")?.messages.map((m) => m.uuid)).toEqual([
+      "t1m1",
+      "t1m2",
+    ]);
+    expect(page2?.hasMore).toBe(true);
+    // Next cursor = oldest in page 2 = t1m1 at (1,1).
+    expect(page2?.oldestTurnSeq).toBe(1);
+    expect(page2?.oldestMsgSeq).toBe(1);
+
+    // Page 3: the placeholder slot of t1 (1,0) is the only remaining entry → empty band,
+    // hasMore false (conversation start).
+    vi.clearAllMocks();
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "t1m1", turnUuid: "t1", seq: 1 }),
+      transcriptMessageRow({ uuid: "t1m2", turnUuid: "t1", seq: 2 }),
+    ]);
+    const page3 = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 2, beforeTurnSeq: page2!.oldestTurnSeq!, beforeMsgSeq: page2!.oldestMsgSeq! },
+    );
+    // Only t1's (1,0) slot is strictly older than (1,1) → an empty band, start reached.
+    expect(page3?.turns.map((t) => t.uuid)).toEqual(["t1"]);
+    expect(page3?.turns[0].messages).toEqual([]);
+    expect(page3?.hasMore).toBe(false);
+    expect(page3?.oldestTurnSeq).toBe(1);
+    expect(page3?.oldestMsgSeq).toBe(0);
+  });
+
+  it("SYNTHETIC PROMPT: a prompt-only human_instruction turn surfaces as a synthetic seq=0 user message", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // A human_instruction turn with promptText but NO stored transcript messages.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t1", seq: 1, trigger: "human_instruction", promptText: "please refactor X" }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+    );
+
+    expect(result?.turns).toHaveLength(1);
+    const band = result!.turns[0];
+    // The band's ONLY message is the synthetic seq=0, role=user message carrying the prompt,
+    // with the stable `synthetic:{turnUuid}` uuid and the turn's createdAt.
+    expect(band.messages).toHaveLength(1);
+    expect(band.messages[0]).toEqual({
+      uuid: "synthetic:t1",
+      turnUuid: "t1",
+      role: "user",
+      text: "please refactor X",
+      seq: 0,
+      createdAt: "2026-06-15T03:00:00.000Z",
+    });
+    // The synthetic slot is the page's oldest position (cursor read from the slot).
+    expect(result?.oldestTurnSeq).toBe(1);
+    expect(result?.oldestMsgSeq).toBe(0);
+    expect(result?.hasMore).toBe(false);
+  });
+
+  it("SYNTHETIC ORDERING: the synthetic prompt sorts AHEAD of the turn's real (seq>=1) messages", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t1", seq: 1, trigger: "human_instruction", promptText: "do the thing" }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "m1", turnUuid: "t1", role: "assistant", text: "working", seq: 1 }),
+      transcriptMessageRow({ uuid: "m2", turnUuid: "t1", role: "assistant", text: "done", seq: 2 }),
+    ]);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+    );
+
+    // Synthetic prompt first, then the real messages ascending by seq.
+    expect(result?.turns[0].messages.map((m) => m.uuid)).toEqual(["synthetic:t1", "m1", "m2"]);
+    expect(result?.turns[0].messages[0].seq).toBe(0);
+    expect(result?.turns[0].messages[0].role).toBe("user");
+  });
+
+  it("SYNTHETIC: NOT persisted — no create/update is ever issued for the synthetic slot (read/projection only)", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t1", seq: 1, trigger: "human_instruction", promptText: "ephemeral" }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
+
+    // The synthetic message exists only in the projection — never written to the DB.
+    expect(mockPrisma.daemonTranscriptMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.create).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("EMPTY BAND: a prompt-less turn whose messages were all trimmed is STILL returned (empty band), occupying ONE cursor position", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // t2 is prompt-less (agent_wake) and its messages were ALL trimmed by the rolling
+    // window; t1 still has a message. Both must appear; neither is dropped.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t2", seq: 2, trigger: "task_assigned", promptText: null }),
+      turnRow({ uuid: "t1", seq: 1, trigger: "task_assigned", promptText: null }),
+    ]);
     mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
       transcriptMessageRow({ uuid: "m1", turnUuid: "t1", seq: 1 }),
     ]);
@@ -852,12 +1110,80 @@ describe("getSessionDetail", () => {
       sessionUuid,
     );
 
-    expect(result?.turns).toHaveLength(2);
-    expect(result?.turns[0].messages.map((m) => m.uuid)).toEqual(["m1"]);
-    expect(result?.turns[1].messages).toEqual([]); // still a turn, just no transcript
+    // Both turns present; t2 is an EMPTY band (its placeholder slot reserved the spot).
+    expect(result?.turns.map((t) => t.uuid)).toEqual(["t1", "t2"]);
+    expect(result?.turns.find((t) => t.uuid === "t2")?.messages).toEqual([]);
+    expect(result?.turns.find((t) => t.uuid === "t1")?.messages.map((m) => m.uuid)).toEqual([
+      "m1",
+    ]);
+    // The whole conversation is 3 stream entries (t2 slot, t1 m1, t1 slot) < page size.
+    expect(result?.hasMore).toBe(false);
   });
 
-  it("a visible session with ZERO turns returns empty turns AND issues NO message query", async () => {
+  it("EMPTY BAND: paging does NOT stall on a message-less prompt-less turn — its slot consumes exactly one position", async () => {
+    // Two prompt-less, message-less turns. With limit 1, page 1 is t2's slot only; the
+    // load-earlier cursor (2,0) must advance PAST it to t1's slot, not re-yield t2.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t2", seq: 2, promptText: null }),
+      turnRow({ uuid: "t1", seq: 1, promptText: null }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    const page1 = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 1 },
+    );
+    // Page 1 = t2's empty band; t1's slot is the +1 probe → hasMore true.
+    expect(page1?.turns.map((t) => t.uuid)).toEqual(["t2"]);
+    expect(page1?.turns[0].messages).toEqual([]);
+    expect(page1?.hasMore).toBe(true);
+    expect(page1?.oldestTurnSeq).toBe(2);
+    expect(page1?.oldestMsgSeq).toBe(0);
+
+    // Page 2 with the page-1 cursor: strictly older than (2,0) is only t1's slot (1,0).
+    // Paging ADVANCED — it did not loop back on t2.
+    vi.clearAllMocks();
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t2", seq: 2, promptText: null }),
+      turnRow({ uuid: "t1", seq: 1, promptText: null }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+    const page2 = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 1, beforeTurnSeq: page1!.oldestTurnSeq!, beforeMsgSeq: page1!.oldestMsgSeq! },
+    );
+    expect(page2?.turns.map((t) => t.uuid)).toEqual(["t1"]);
+    expect(page2?.turns[0].messages).toEqual([]);
+    expect(page2?.hasMore).toBe(false); // conversation start reached
+    expect(page2?.oldestTurnSeq).toBe(1);
+    expect(page2?.oldestMsgSeq).toBe(0);
+  });
+
+  it("HAS-MORE false at conversation START: paged back to the oldest retained entry", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // The whole conversation: one prompt-less turn with 2 messages → 3 stream entries.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
+      transcriptMessageRow({ uuid: "m1", turnUuid: "t1", seq: 1 }),
+      transcriptMessageRow({ uuid: "m2", turnUuid: "t1", seq: 2 }),
+    ]);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 50 },
+    );
+    expect(result?.hasMore).toBe(false);
+    // Oldest position = the turn's placeholder slot (1, 0).
+    expect(result?.oldestTurnSeq).toBe(1);
+    expect(result?.oldestMsgSeq).toBe(0);
+  });
+
+  it("a visible session with ZERO turns returns empty turns, NO message query, null composite cursor", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
 
@@ -867,65 +1193,11 @@ describe("getSessionDetail", () => {
     );
 
     expect(result?.turns).toEqual([]);
-    // No turns → no turnUuids → the batched message query is skipped entirely.
+    // No candidate turns → no turnUuids → the batched message query is skipped entirely.
     expect(mockPrisma.daemonTranscriptMessage.findMany).not.toHaveBeenCalled();
     expect(result?.hasMore).toBe(false);
-    expect(result?.oldestSeq).toBeNull();
-  });
-
-  it("PAGINATION: a full page + an extra probe row → hasMore true, the probe row is dropped", async () => {
-    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    // limit=2 asks for take=3; the DB returns 3 (newest-first) → an older page exists.
-    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
-      turnRow({ uuid: "t5", seq: 5 }),
-      turnRow({ uuid: "t4", seq: 4 }),
-      turnRow({ uuid: "t3", seq: 3 }), // the +1 probe row — dropped from the page
-    ]);
-    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
-
-    const result = await getSessionDetail(
-      { type: "user", companyUuid, actorUuid: ownerUuid },
-      sessionUuid,
-      { limit: 2 },
-    );
-
-    // Only the page (2 turns) is returned, ascending; the probe row is dropped.
-    expect(result?.turns.map((t) => t.uuid)).toEqual(["t4", "t5"]);
-    expect(result?.hasMore).toBe(true);
-    // oldestSeq = the earliest turn in the page → the next `beforeSeq` cursor.
-    expect(result?.oldestSeq).toBe(4);
-    // The message query keyed only on the PAGE's turns (probe row excluded).
-    expect(mockPrisma.daemonTranscriptMessage.findMany.mock.calls[0][0].where).toEqual({
-      turnUuid: { in: ["t4", "t5"] },
-    });
-  });
-
-  it("PAGINATION: beforeSeq loads turns STRICTLY older than the cursor", async () => {
-    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
-    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
-
-    await getSessionDetail(
-      { type: "user", companyUuid, actorUuid: ownerUuid },
-      sessionUuid,
-      { limit: 2, beforeSeq: 4 },
-    );
-
-    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
-    expect(turnArgs.where).toEqual({ sessionUuid, seq: { lt: 4 } });
-    expect(turnArgs.take).toBe(3); // limit 2 + 1 probe
-  });
-
-  it("PAGINATION: a non-positive or oversized limit is clamped to 1..200", async () => {
-    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
-    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
-    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
-
-    await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid, { limit: 0 });
-    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].take).toBe(2); // clamped to 1 (+1)
-
-    await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid, { limit: 9999 });
-    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[1][0].take).toBe(201); // clamped to 200 (+1)
+    expect(result?.oldestTurnSeq).toBeNull();
+    expect(result?.oldestMsgSeq).toBeNull();
   });
 
   it("AGENT-KEY caller: resolves the session under self-scope (agentUuid)", async () => {

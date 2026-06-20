@@ -25,7 +25,8 @@ const detail = {
   session: { uuid: sessionUuid, sessionId: "sid", directIdeaUuid: null },
   turns: [],
   hasMore: false,
-  oldestSeq: null,
+  oldestTurnSeq: null,
+  oldestMsgSeq: null,
 };
 
 function req(query = ""): NextRequest {
@@ -60,24 +61,47 @@ describe("GET /api/daemon-sessions/[sessionUuid]", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body).toEqual({ success: true, data: detail, meta: undefined });
-    // No query params → beforeSeq null, no limit forwarded.
+    // No query params → both cursor params null, no limit forwarded.
     expect(mockGetSessionDetail).toHaveBeenCalledWith(userAuth, sessionUuid, {
-      beforeSeq: null,
+      beforeTurnSeq: null,
+      beforeMsgSeq: null,
     });
   });
 
-  it("parses ?beforeSeq + ?limit and forwards them to the service", async () => {
-    await GET(req("?beforeSeq=12&limit=10"), ctx);
+  it("parses the composite ?beforeTurnSeq + ?beforeMsgSeq + ?limit and forwards them", async () => {
+    await GET(req("?beforeTurnSeq=12&beforeMsgSeq=3&limit=10"), ctx);
     expect(mockGetSessionDetail).toHaveBeenCalledWith(userAuth, sessionUuid, {
-      beforeSeq: 12,
+      beforeTurnSeq: 12,
+      beforeMsgSeq: 3,
       limit: 10,
     });
   });
 
-  it("ignores a non-numeric beforeSeq (falls back to the newest page)", async () => {
-    await GET(req("?beforeSeq=abc"), ctx);
+  it("forwards a turn-seq cursor with msgSeq null when only ?beforeTurnSeq is given", async () => {
+    // The service treats a null beforeMsgSeq as 0 within the equal-turn branch — a
+    // turn-only cursor walks back to that turn's slot. The route just parses.
+    await GET(req("?beforeTurnSeq=7"), ctx);
     expect(mockGetSessionDetail).toHaveBeenCalledWith(userAuth, sessionUuid, {
-      beforeSeq: null,
+      beforeTurnSeq: 7,
+      beforeMsgSeq: null,
+    });
+  });
+
+  it("ignores non-numeric cursor params (falls back to the newest page)", async () => {
+    await GET(req("?beforeTurnSeq=abc&beforeMsgSeq=xyz"), ctx);
+    expect(mockGetSessionDetail).toHaveBeenCalledWith(userAuth, sessionUuid, {
+      beforeTurnSeq: null,
+      beforeMsgSeq: null,
+    });
+  });
+
+  it("no longer reads the legacy ?beforeSeq turn cursor", async () => {
+    // The old turn-level cursor is removed; a stray ?beforeSeq is ignored entirely and
+    // the call falls back to the newest page (both composite params null).
+    await GET(req("?beforeSeq=99"), ctx);
+    expect(mockGetSessionDetail).toHaveBeenCalledWith(userAuth, sessionUuid, {
+      beforeTurnSeq: null,
+      beforeMsgSeq: null,
     });
   });
 });

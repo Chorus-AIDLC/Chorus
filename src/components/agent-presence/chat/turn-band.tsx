@@ -80,6 +80,13 @@ export function TurnBand({
         ? t("turnStatusPending")
         : t("turnStatusEnded");
 
+  // Drop the synthetic promptText slot (uuid `synthetic:{turnUuid}`) the message-level
+  // read folds in for pagination — the prompt is already rendered as its canonical
+  // paragraph above, and the `synthetic:` prefix is disjoint from real message uuids.
+  const visibleMessages = turn.messages.filter(
+    (m) => !m.uuid.startsWith("synthetic:"),
+  );
+
   // Deep link for an entity-bearing turn, via the reused canonical href builder.
   const href = linkedExecution ? execHref(linkedExecution) : null;
   // Idea-anchored executions get an "Open idea" affordance; the rest "Open task"
@@ -157,10 +164,17 @@ export function TurnBand({
 
         {/* Messages — a quiet top-to-bottom transcript. A turn whose messages were
             trimmed by the rolling window (or that hasn't produced any yet) shows a
-            calm placeholder rather than an empty gap (no silent empty). */}
+            calm placeholder rather than an empty gap (no silent empty).
+
+            The message-level read folds a human_instruction's promptText in as a
+            synthetic `seq = 0` message (uuid `synthetic:{turnUuid}`) so the prompt
+            occupies a pagination slot — but the prompt is ALREADY rendered above as
+            its canonical paragraph, so we drop that synthetic entry here to avoid
+            rendering the instruction twice. Live `transcript_appended` events never
+            carry it, so skipping it keeps the GET and live render paths identical. */}
         <div className="mt-3 flex min-w-0 flex-col gap-3">
-          {turn.messages.length > 0 ? (
-            turn.messages.map((m) => (
+          {visibleMessages.length > 0 ? (
+            visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
           ) : (
