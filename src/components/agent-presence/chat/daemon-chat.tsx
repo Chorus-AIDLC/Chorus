@@ -282,6 +282,10 @@ export function DaemonChat() {
   const [turns, setTurns] = useState<TurnWithMessagesView[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
+  // Older-page pagination: whether earlier turns exist before the loaded window, and a
+  // mid-flight flag for the "load earlier" fetch (separate from the first-paint load).
+  const [hasMoreEarlier, setHasMoreEarlier] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Guard against an out-of-order response overwriting a newer selection.
   const detailReqRef = useRef(0);
 
@@ -294,17 +298,20 @@ export function DaemonChat() {
     return () => setOpenSession(null);
   }, [openUuid, setOpenSession]);
 
-  // Fetch the transcript detail on selection.
+  // Fetch the LATEST page of the transcript on selection (newest-first window). Older
+  // turns are pulled on demand via `loadEarlier` below.
   useEffect(() => {
     if (!openUuid) {
       setDetail(null);
       setTurns([]);
       setDetailError(false);
+      setHasMoreEarlier(false);
       return;
     }
     const reqId = ++detailReqRef.current;
     setDetailLoading(true);
     setDetailError(false);
+    setHasMoreEarlier(false);
     (async () => {
       try {
         const res = await authFetch(`/api/daemon-sessions/${openUuid}`);
@@ -319,6 +326,7 @@ export function DaemonChat() {
           const data = json.data as SessionDetailView;
           setDetail(data);
           setTurns(data.turns ?? []);
+          setHasMoreEarlier(Boolean(data.hasMore));
         } else {
           setDetailError(true);
         }
@@ -331,6 +339,40 @@ export function DaemonChat() {
       }
     })();
   }, [openUuid]);
+
+  // Load the page of turns OLDER than the earliest currently-loaded turn and PREPEND
+  // them (the cursor is `turns[0].seq`). De-dupes by uuid defensively so a raced live
+  // event or a re-click can't double-insert. Bound to the open session via `reqId`
+  // (a selection change supersedes an in-flight earlier-load).
+  const loadEarlier = useCallback(async () => {
+    if (!openUuid || loadingEarlier || turns.length === 0) return;
+    const cursorSeq = turns[0].seq;
+    const reqId = detailReqRef.current; // same generation as the open session
+    setLoadingEarlier(true);
+    try {
+      const res = await authFetch(
+        `/api/daemon-sessions/${openUuid}?beforeSeq=${cursorSeq}`,
+      );
+      if (reqId !== detailReqRef.current) return; // selection changed mid-flight
+      if (!res.ok) return; // transient — the "load earlier" control stays available
+      const json = await res.json();
+      if (reqId !== detailReqRef.current) return;
+      if (json.success) {
+        const data = json.data as SessionDetailView;
+        const older = data.turns ?? [];
+        setTurns((prev) => {
+          const seen = new Set(prev.map((t) => t.uuid));
+          const fresh = older.filter((t) => !seen.has(t.uuid));
+          return [...fresh, ...prev];
+        });
+        setHasMoreEarlier(Boolean(data.hasMore));
+      }
+    } catch (error) {
+      clientLogger.error("Failed to load earlier transcript turns:", error);
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [openUuid, loadingEarlier, turns]);
 
   // Subscribe to the open conversation's live transcript events and patch turns.
   // The provider only forwards events for the `?sessionUuid=` it subscribed (the
@@ -478,6 +520,9 @@ export function DaemonChat() {
       originOnline={originOnline}
       sessionExecutions={sessionExecutions}
       executionsByUuid={executionsByUuid}
+      hasMoreEarlier={hasMoreEarlier}
+      loadingEarlier={loadingEarlier}
+      onLoadEarlier={loadEarlier}
     />
   );
 

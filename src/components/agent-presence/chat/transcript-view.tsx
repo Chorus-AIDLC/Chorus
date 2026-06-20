@@ -25,8 +25,9 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronDown, Info, Lock, WifiOff } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Loader2, Lock, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -93,6 +94,13 @@ export function TranscriptView({
   sessionExecutions,
   // Matched by `turn.executionUuid` so an entity-bearing turn can show its deep link.
   executionsByUuid,
+  // Older-page pagination: `hasMoreEarlier` shows a "load earlier" affordance at the
+  // TOP of the transcript; `onLoadEarlier` fetches+prepends the previous page; while
+  // `loadingEarlier` the control shows a spinner. The newest page loads first, so a
+  // long coding-agent history never renders all at once.
+  hasMoreEarlier,
+  loadingEarlier,
+  onLoadEarlier,
 }: {
   session: SessionView | null;
   turns: TurnWithMessagesView[];
@@ -103,6 +111,9 @@ export function TranscriptView({
   originOnline: boolean;
   sessionExecutions: ExecutionView[];
   executionsByUuid: Map<string, ExecutionView>;
+  hasMoreEarlier: boolean;
+  loadingEarlier: boolean;
+  onLoadEarlier: () => void;
 }) {
   const t = useTranslations("daemonChat");
   const nowMs = useNowTick();
@@ -260,6 +271,27 @@ export function TranscriptView({
               <Lock className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
               <span>{t("privacyNote")}</span>
             </p>
+            {/* Load-earlier — at the TOP so older turns prepend above the loaded window.
+                The newest page renders first; a long history is never loaded all at
+                once. Hidden once there is nothing earlier to fetch. */}
+            {hasMoreEarlier && (
+              <div className="flex justify-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLoadEarlier}
+                  disabled={loadingEarlier}
+                  className="h-8 gap-1.5 rounded-lg text-[12px] font-medium text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
+                >
+                  {loadingEarlier ? (
+                    <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
+                  ) : (
+                    <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {loadingEarlier ? t("loadingEarlier") : t("loadEarlier")}
+                </Button>
+              </div>
+            )}
             {turns.map((turn) => (
               <TurnBand
                 key={turn.uuid}

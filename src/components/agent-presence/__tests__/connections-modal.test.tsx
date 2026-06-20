@@ -223,6 +223,13 @@ beforeEach(() => {
   // jsdom lacks scrollIntoView (used by the transcript auto-scroll).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window.HTMLElement.prototype as any).scrollIntoView = vi.fn();
+  // jsdom lacks ResizeObserver (Radix ScrollArea instantiates one in a layout effect).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-06-16T12:05:00.000Z"));
 });
@@ -604,5 +611,135 @@ describe("Daemon chat modal — opening + conversation list", () => {
       ).toBeGreaterThan(0),
     );
     expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
+  });
+});
+
+describe("Daemon chat modal — transcript pagination (load earlier)", () => {
+  // A turn fixture for the detail payload.
+  const turn = (over: Record<string, unknown>) => ({
+    sessionUuid: "s1",
+    trigger: "human_instruction",
+    promptText: null,
+    status: "ended",
+    executionUuid: null,
+    startedAt: null,
+    endedAt: null,
+    createdAt: "2026-06-16T11:00:00.000Z",
+    messages: [],
+    ...over,
+  });
+  const sessionDetail = {
+    uuid: "s1",
+    agentUuid: "agent-1",
+    sessionId: "sid-s1",
+    directIdeaUuid: null,
+    originConnectionUuid: "1",
+    status: "active",
+    title: "Long chat",
+    lastTurnAt: "2026-06-16T12:00:00.000Z",
+    createdAt: "2026-06-16T11:00:00.000Z",
+    updatedAt: "2026-06-16T12:00:00.000Z",
+  };
+
+  it("shows 'Load earlier' when hasMore, and clicking it prepends the older page", async () => {
+    // Route: connections / executions / session list as usual, and the detail endpoint
+    // returns the NEWEST page (hasMore:true) on the bare URL, the OLDER page on the
+    // `?beforeSeq=` cursor.
+    mockAuthFetch.mockImplementation((url: string) => {
+      if (typeof url === "string") {
+        if (url.startsWith("/api/daemon/executions")) {
+          return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { executions: [] } }) });
+        }
+        // Older page (cursor present): turns seq 1-2, no more before them.
+        if (/\/api\/daemon-sessions\/[^/?]+\?beforeSeq=/.test(url)) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: {
+                session: sessionDetail,
+                turns: [
+                  turn({ uuid: "t1", seq: 1, promptText: "FIRST message" }),
+                  turn({ uuid: "t2", seq: 2, promptText: "second message" }),
+                ],
+                hasMore: false,
+                oldestSeq: 1,
+              },
+            }),
+          });
+        }
+        // Newest page (no cursor): turns seq 3-4, hasMore true (earlier turns exist).
+        if (/^\/api\/daemon-sessions\/[^/?]+$/.test(url)) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: {
+                session: sessionDetail,
+                turns: [
+                  turn({ uuid: "t3", seq: 3, promptText: "third message" }),
+                  turn({ uuid: "t4", seq: 4, promptText: "LATEST message" }),
+                ],
+                hasMore: true,
+                oldestSeq: 3,
+              },
+            }),
+          });
+        }
+        if (url.startsWith("/api/daemon-sessions")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: { sessions: [session({ uuid: "s1", agentUuid: "agent-1", title: "Long chat", originConnectionUuid: "1" })] },
+            }),
+          });
+        }
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, data: { connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })] } }),
+      });
+    });
+
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText("Long chat"))[0].closest("button") as HTMLElement);
+
+    // Newest page rendered first.
+    await waitFor(() => expect(screen.getAllByText("LATEST message").length).toBeGreaterThan(0));
+    expect(screen.queryByText("FIRST message")).toBeNull();
+
+    // The "Load earlier" affordance is shown because hasMore was true. (Both the
+    // desktop pane and the hidden mobile pane render in jsdom, so there may be >1.)
+    const loadEarlier = await screen.findAllByRole("button", { name: /load earlier/i });
+    await user.click(loadEarlier[0]);
+
+    // The older page is prepended (the opening message now present), and the control
+    // disappears (the older page reported hasMore:false).
+    await waitFor(() => expect(screen.getAllByText("FIRST message").length).toBeGreaterThan(0));
+    // The cursor fetch used the oldest loaded seq (3) from the first page.
+    expect(
+      mockAuthFetch.mock.calls.some((c) => String(c[0]).includes("/api/daemon-sessions/s1?beforeSeq=3")),
+    ).toBe(true);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /load earlier/i })).toBeNull(),
+    );
+  });
+
+  it("does NOT show 'Load earlier' when the first page already has everything (hasMore false)", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1", title: "Short chat", originConnectionUuid: "1" })],
+      detail: {
+        session: sessionDetail,
+        turns: [turn({ uuid: "t1", seq: 1, promptText: "only message" })],
+        hasMore: false,
+        oldestSeq: 1,
+      },
+    });
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText("Short chat"))[0].closest("button") as HTMLElement);
+    await waitFor(() => expect(screen.getAllByText("only message").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("button", { name: /load earlier/i })).toBeNull();
   });
 });

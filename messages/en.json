@@ -1437,6 +1437,8 @@
     "agentSessionCount": "{count, plural, one {# conversation} other {# conversations}}",
     "listHeader": "CONVERSATIONS",
     "loadMore": "Load more",
+    "loadEarlier": "Load earlier messages",
+    "loadingEarlier": "Loading earlier…",
     "loading": "Loading conversations…",
     "transcriptLoading": "Loading transcript…",
     "mobileBack": "Conversations",

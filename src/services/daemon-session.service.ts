@@ -628,14 +628,25 @@ export interface TurnWithMessagesView extends TurnView {
   messages: TranscriptMessageView[];
 }
 
+// Default page size for the transcript read — measured in TURNS (the structural unit
+// the chat renders as bands). A coding-agent session can be woken many times, so the
+// transcript is paged newest-first and "load earlier" walks backward by `seq`; per-
+// message volume is independently bounded by MAX_TRANSCRIPT_MESSAGES_PER_SESSION.
+export const DEFAULT_TRANSCRIPT_TURN_PAGE = 30;
+
 /**
- * Read projection for the single-session transcript route: the session plus its
- * ordered turns, each turn carrying its retained transcript messages. Mirrors the
- * `{ session, turns }` contract the read route returns.
+ * Read projection for the single-session transcript route: the session plus a PAGE of
+ * its ordered turns (each carrying its retained transcript messages), newest-first
+ * windowed but returned in ascending `seq` order for top-to-bottom rendering. `hasMore`
+ * is true when older turns exist before this page; `oldestSeq` is the `seq` of the
+ * earliest turn in this page — the cursor a client passes as `beforeSeq` to load the
+ * previous page. Both are null/false for an empty session.
  */
 export interface SessionDetailView {
   session: SessionView;
   turns: TurnWithMessagesView[];
+  hasMore: boolean;
+  oldestSeq: number | null;
 }
 
 /**
@@ -663,20 +674,45 @@ export interface SessionDetailView {
 export async function getSessionDetail(
   auth: { type: string; companyUuid: string; actorUuid: string },
   sessionUuid: string,
+  // Pagination (newest-first window over TURNS): `limit` caps how many turns this page
+  // returns (default DEFAULT_TRANSCRIPT_TURN_PAGE); `beforeSeq` loads the page of turns
+  // strictly OLDER than that seq (the "load earlier" cursor). Omitting `beforeSeq` loads
+  // the most recent page. A non-positive/oversized `limit` is clamped to a sane range.
+  opts: { limit?: number; beforeSeq?: number | null } = {},
 ): Promise<SessionDetailView | null> {
   const sessionRow = await prisma.daemonSession.findFirst({
     where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
   });
   if (!sessionRow) return null; // not visible → 404 non-disclosure
 
-  const turns = await prisma.daemonSessionTurn.findMany({
-    where: { sessionUuid },
-    orderBy: { seq: "asc" },
-  });
+  // Clamp the page size: at least 1, at most 200 turns per page (a hard ceiling so a
+  // hostile `limit` can't ask for an unbounded scan).
+  const limit = Math.min(
+    Math.max(1, Math.floor(opts.limit ?? DEFAULT_TRANSCRIPT_TURN_PAGE)),
+    200,
+  );
+  const beforeSeq =
+    typeof opts.beforeSeq === "number" && Number.isFinite(opts.beforeSeq)
+      ? opts.beforeSeq
+      : null;
 
-  // Load every turn's messages in ONE batched query, then fold in memory — no N+1.
-  // A session with zero turns needs no message query at all.
-  const turnUuids = turns.map((t) => t.uuid);
+  // Fetch the NEWEST `limit` turns at or before the cursor: order by seq DESC, take
+  // `limit + 1` so the extra row tells us whether an OLDER page exists (hasMore) without
+  // a separate count query. Then reverse to ascending for top-to-bottom rendering.
+  const pageDesc = await prisma.daemonSessionTurn.findMany({
+    where: {
+      sessionUuid,
+      ...(beforeSeq !== null ? { seq: { lt: beforeSeq } } : {}),
+    },
+    orderBy: { seq: "desc" },
+    take: limit + 1,
+  });
+  const hasMore = pageDesc.length > limit;
+  const pageTurns = (hasMore ? pageDesc.slice(0, limit) : pageDesc).reverse(); // ascending
+
+  // Load this page's turns' messages in ONE batched query, then fold in memory — no
+  // N+1. An empty page needs no message query at all.
+  const turnUuids = pageTurns.map((t) => t.uuid);
   const messages =
     turnUuids.length > 0
       ? await prisma.daemonTranscriptMessage.findMany({
@@ -696,12 +732,17 @@ export async function getSessionDetail(
     else messagesByTurn.set(view.turnUuid, [view]);
   }
 
-  const turnsWithMessages: TurnWithMessagesView[] = turns.map((t) => ({
+  const turnsWithMessages: TurnWithMessagesView[] = pageTurns.map((t) => ({
     ...toTurnView(t),
     messages: messagesByTurn.get(t.uuid) ?? [],
   }));
 
-  return { session: toSessionView(sessionRow), turns: turnsWithMessages };
+  return {
+    session: toSessionView(sessionRow),
+    turns: turnsWithMessages,
+    hasMore,
+    oldestSeq: turnsWithMessages.length > 0 ? turnsWithMessages[0].seq : null,
+  };
 }
 
 // ===== Continuation pinning =====

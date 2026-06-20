@@ -64,6 +64,7 @@ import {
   SESSION_STATUSES,
   TRANSCRIPT_ROLES,
   MAX_TRANSCRIPT_MESSAGES_PER_SESSION,
+  DEFAULT_TRANSCRIPT_TURN_PAGE,
   STALE_THRESHOLD_MS,
   resolveOrCreateSession,
   resolveDirectIdeaUuid,
@@ -750,9 +751,12 @@ describe("isSessionVisibleToCaller", () => {
 describe("getSessionDetail", () => {
   it("VISIBLE session: returns { session, turns } with each turn's messages folded by seq", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // The page query orders seq DESC + takes a window; the service reverses it to
+    // ascending. The mock returns DESC (newest-first) as the real DB would, so the
+    // result is ascending [t1, t2].
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
-      turnRow({ uuid: "t1", seq: 1 }),
       turnRow({ uuid: "t2", seq: 2 }),
+      turnRow({ uuid: "t1", seq: 1 }),
     ]);
     // The ONE batched message query returns messages for BOTH turns, ordered by
     // (turnUuid, seq); the fold buckets each into its own turn in seq order.
@@ -774,7 +778,11 @@ describe("getSessionDetail", () => {
       agent: { ownerUuid },
     });
     expect(result?.session.uuid).toBe(sessionUuid);
+    // Returned ascending for top-to-bottom rendering, regardless of the DESC fetch.
     expect(result?.turns.map((t) => t.uuid)).toEqual(["t1", "t2"]);
+    // Pagination metadata: a single page that fit (no extra row) → no earlier page.
+    expect(result?.hasMore).toBe(false);
+    expect(result?.oldestSeq).toBe(1);
     // Messages folded into the right turn, in seq order, using the existing
     // TranscriptMessageView shape (uuid/turnUuid/role/text/seq/createdAt).
     expect(result?.turns[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
@@ -789,31 +797,38 @@ describe("getSessionDetail", () => {
     expect(result?.turns[1].messages.map((m) => m.uuid)).toEqual(["m3"]);
   });
 
-  it("loads ALL messages in ONE batched query (no N+1): where turnUuid in [...] over every turn", async () => {
+  it("loads ALL of the PAGE's messages in ONE batched query (no N+1): where turnUuid in [...] over the page turns", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // DESC fetch (newest-first); reversed to ascending t1,t2,t3 for the message query.
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
-      turnRow({ uuid: "t1", seq: 1 }),
-      turnRow({ uuid: "t2", seq: 2 }),
       turnRow({ uuid: "t3", seq: 3 }),
+      turnRow({ uuid: "t2", seq: 2 }),
+      turnRow({ uuid: "t1", seq: 1 }),
     ]);
     mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
 
     await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
 
-    // Exactly ONE message query regardless of turn count, keyed on every turn uuid,
-    // ordered by (turnUuid, seq).
+    // Exactly ONE message query regardless of turn count, keyed on the page's turn
+    // uuids (ascending), ordered by (turnUuid, seq).
     expect(mockPrisma.daemonTranscriptMessage.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.daemonTranscriptMessage.findMany.mock.calls[0][0]).toEqual({
       where: { turnUuid: { in: ["t1", "t2", "t3"] } },
       orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
     });
+    // The turn page query is seq DESC + windowed (take = limit + 1 to probe hasMore).
+    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(turnArgs.orderBy).toEqual({ seq: "desc" });
+    expect(turnArgs.take).toBe(DEFAULT_TRANSCRIPT_TURN_PAGE + 1);
+    expect(turnArgs.where).toEqual({ sessionUuid });
   });
 
   it("a turn whose messages were all trimmed still appears WITH an empty messages array", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // DESC fetch; reversed to ascending [t1, t2].
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
-      turnRow({ uuid: "t1", seq: 1 }),
       turnRow({ uuid: "t2", seq: 2 }), // its messages were trimmed by the rolling window
+      turnRow({ uuid: "t1", seq: 1 }),
     ]);
     // Only t1 has retained messages; t2's are gone.
     mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([
@@ -842,6 +857,63 @@ describe("getSessionDetail", () => {
     expect(result?.turns).toEqual([]);
     // No turns → no turnUuids → the batched message query is skipped entirely.
     expect(mockPrisma.daemonTranscriptMessage.findMany).not.toHaveBeenCalled();
+    expect(result?.hasMore).toBe(false);
+    expect(result?.oldestSeq).toBeNull();
+  });
+
+  it("PAGINATION: a full page + an extra probe row → hasMore true, the probe row is dropped", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // limit=2 asks for take=3; the DB returns 3 (newest-first) → an older page exists.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t5", seq: 5 }),
+      turnRow({ uuid: "t4", seq: 4 }),
+      turnRow({ uuid: "t3", seq: 3 }), // the +1 probe row — dropped from the page
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    const result = await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 2 },
+    );
+
+    // Only the page (2 turns) is returned, ascending; the probe row is dropped.
+    expect(result?.turns.map((t) => t.uuid)).toEqual(["t4", "t5"]);
+    expect(result?.hasMore).toBe(true);
+    // oldestSeq = the earliest turn in the page → the next `beforeSeq` cursor.
+    expect(result?.oldestSeq).toBe(4);
+    // The message query keyed only on the PAGE's turns (probe row excluded).
+    expect(mockPrisma.daemonTranscriptMessage.findMany.mock.calls[0][0].where).toEqual({
+      turnUuid: { in: ["t4", "t5"] },
+    });
+  });
+
+  it("PAGINATION: beforeSeq loads turns STRICTLY older than the cursor", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "t1", seq: 1 })]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    await getSessionDetail(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      sessionUuid,
+      { limit: 2, beforeSeq: 4 },
+    );
+
+    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(turnArgs.where).toEqual({ sessionUuid, seq: { lt: 4 } });
+    expect(turnArgs.take).toBe(3); // limit 2 + 1 probe
+  });
+
+  it("PAGINATION: a non-positive or oversized limit is clamped to 1..200", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+
+    await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid, { limit: 0 });
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].take).toBe(2); // clamped to 1 (+1)
+
+    await getSessionDetail({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid, { limit: 9999 });
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[1][0].take).toBe(201); // clamped to 200 (+1)
   });
 
   it("AGENT-KEY caller: resolves the session under self-scope (agentUuid)", async () => {
