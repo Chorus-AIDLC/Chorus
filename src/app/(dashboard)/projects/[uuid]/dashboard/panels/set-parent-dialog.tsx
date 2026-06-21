@@ -21,7 +21,6 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { setIdeaParentAction, getProjectIdeasForPickerAction } from "./actions";
 import { clientLogger } from "@/lib/logger-client";
@@ -121,7 +120,12 @@ export function SetParentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 pt-1">
+        {/* min-w-0: DialogContent is display:grid and grid items default to
+            min-width:auto, which refuses to shrink below content width. Without
+            this the long-title rows below would stretch this wrapper (and the
+            whole dialog) past sm:max-w-lg, defeating the candidate-row truncate
+            and the CommandList overflow-x-hidden. */}
+        <div className="min-w-0 space-y-3 pt-1">
           {isLoading ? (
             <div className="flex h-40 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-[#9A9A9A]" />
@@ -130,41 +134,49 @@ export function SetParentDialog({
             <div className="rounded-md border border-[#E5E0D8]">
               <Command>
                 <CommandInput placeholder={t("searchPlaceholder")} />
+                {/* CommandList is already the scroll container
+                    (max-h-[300px] overflow-y-auto). Do NOT nest a Radix
+                    ScrollArea here: with only a max-height and no definite
+                    height its size-full viewport collapses and never scrolls,
+                    and the wrapping overflow-hidden CommandGroup then clips any
+                    candidate past the cap, making most parents unreachable. */}
                 <CommandList>
                   <CommandEmpty>{t("noCandidates")}</CommandEmpty>
                   <CommandGroup>
-                    <ScrollArea className="max-h-[280px]">
-                      {candidates.map((idea) => {
-                        const isBlocked = blocked.has(idea.uuid);
-                        const isCurrent = idea.uuid === currentParentUuid;
-                        return (
-                          <CommandItem
-                            key={idea.uuid}
-                            value={idea.title}
-                            disabled={isBlocked}
-                            onSelect={() => {
-                              if (isBlocked) return;
-                              apply(idea.uuid);
-                            }}
-                            className={cn(
-                              "flex items-center justify-between gap-2",
-                              isBlocked && "opacity-55",
-                              isCurrent && "bg-[#C67A52]/10",
-                            )}
-                          >
-                            <span className="truncate text-[13px] text-[#2C2C2A]">
-                              {idea.title}
+                    {candidates.map((idea) => {
+                      const isBlocked = blocked.has(idea.uuid);
+                      const isCurrent = idea.uuid === currentParentUuid;
+                      return (
+                        <CommandItem
+                          key={idea.uuid}
+                          value={idea.title}
+                          disabled={isBlocked}
+                          onSelect={() => {
+                            if (isBlocked) return;
+                            apply(idea.uuid);
+                          }}
+                          className={cn(
+                            // min-w-0 lets the title span shrink so its
+                            // `truncate` can ellipsize; without it the flex
+                            // item's default min-width:auto refuses to shrink
+                            // and a long title overflows the dialog.
+                            "flex min-w-0 items-center justify-between gap-2",
+                            isBlocked && "opacity-55",
+                            isCurrent && "bg-[#C67A52]/10",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-[#2C2C2A]">
+                            {idea.title}
+                          </span>
+                          {isBlocked && (
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#B0654A]">
+                              <Ban className="h-3 w-3" />
+                              {t("cycleBlocked")}
                             </span>
-                            {isBlocked && (
-                              <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#B0654A]">
-                                <Ban className="h-3 w-3" />
-                                {t("cycleBlocked")}
-                              </span>
-                            )}
-                          </CommandItem>
-                        );
-                      })}
-                    </ScrollArea>
+                          )}
+                        </CommandItem>
+                      );
+                    })}
                   </CommandGroup>
                 </CommandList>
               </Command>

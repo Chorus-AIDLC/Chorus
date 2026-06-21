@@ -64,19 +64,30 @@ export function IdeaLineageTree({ ideas, onIdeaClick }: IdeaLineageTreeProps) {
 
   return (
     <div className="overflow-hidden rounded-lg bg-white">
-      {rows.map((row, idx) => (
-        <div key={row.idea.uuid}>
-          {idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA]" />}
-          <PresenceIndicator entityType="idea" entityUuid={row.idea.uuid} badgeInside>
-            <IdeaCard
-              idea={row.idea}
-              onClick={onIdeaClick}
-              depth={row.depth}
-              showConnector={row.showConnector}
-            />
-          </PresenceIndicator>
-        </div>
-      ))}
+      {rows.map((row, idx) => {
+        // A depth-0 row after the first one starts a new top-level tree
+        // (buildForest is DFS-ordered, so every depth===0 marks a fresh root).
+        // Separate unrelated trees with a larger vertical gap so each lineage
+        // tree reads as one group; keep the tight hairline for in-tree rows.
+        const isTreeBoundary = idx > 0 && row.depth === 0;
+        return (
+          <div key={row.idea.uuid}>
+            {isTreeBoundary ? (
+              <div className="h-2.5" data-testid="lineage-tree-gap" aria-hidden />
+            ) : (
+              idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA]" />
+            )}
+            <PresenceIndicator entityType="idea" entityUuid={row.idea.uuid} badgeInside>
+              <IdeaCard
+                idea={row.idea}
+                onClick={onIdeaClick}
+                depth={row.depth}
+                showConnector={row.showConnector}
+              />
+            </PresenceIndicator>
+          </div>
+        );
+      })}
     </div>
   );
 }

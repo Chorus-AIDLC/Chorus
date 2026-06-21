@@ -768,7 +768,9 @@ export function IdeaDetailPanel({
                           >
                             <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
                             <span className="shrink-0 text-[12px] text-[#888780]">{tLineage("derivedFrom")}</span>
-                            <span className="truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
+                            {/* min-w-0 flex-1 so a long parent title truncates
+                                instead of stretching the breadcrumb past the panel. */}
+                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
                           </button>
                         ) : (
                           <p className="px-1 text-[12px] text-[#A8A498]">{tLineage("noParent")}</p>
