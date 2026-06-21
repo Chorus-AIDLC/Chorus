@@ -1,5 +1,6 @@
 // Shared Server Component for /dashboard and /dashboard/[ideaUuid]
 
+import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 import { getDashboardData } from "./dashboard-data";
 import { ProjectSettingsModal } from "./project-settings-modal";
@@ -29,13 +30,21 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
         </div>
       </div>
       <div className="min-h-0 flex-1">
-        <IdeaTracker
-          projectUuid={projectUuid}
-          currentUserUuid={currentUserUuid}
-          initialTrackerData={trackerData}
-          initialStatsData={{ stats, recentActivities: activities }}
-          initialSelectedIdeaUuid={initialSelectedIdeaUuid}
-        />
+        {/* IdeaTracker reads useSearchParams() (via usePanelUrl) so the idea
+            side-panel selection tracks the URL on soft navigation. Next 15
+            requires a Suspense boundary above any useSearchParams() consumer,
+            else the whole route opts into client-side rendering (+ build
+            warning). The fallback fills the same flex cell so the static header
+            above streams with no layout jump. */}
+        <Suspense fallback={<div className="h-full" />}>
+          <IdeaTracker
+            projectUuid={projectUuid}
+            currentUserUuid={currentUserUuid}
+            initialTrackerData={trackerData}
+            initialStatsData={{ stats, recentActivities: activities }}
+            initialSelectedIdeaUuid={initialSelectedIdeaUuid}
+          />
+        </Suspense>
       </div>
     </div>
   );
