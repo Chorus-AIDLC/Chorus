@@ -55,6 +55,7 @@ import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import {
+  DaemonConnectCta,
   ExecutionRow,
   ExecutionSection,
   IdentityBlock,
@@ -692,16 +693,20 @@ export function AgentConnectionsView() {
             </p>
           </Card>
         ) : connections.length === 0 ? (
-          <Card className="items-center gap-3 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
+          <Card className="items-center gap-4 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
               <RadioTower className="h-6 w-6 text-[#C67A52]" />
             </div>
             <h3 className="text-base font-semibold text-[#2C2C2C]">
               {t("empty.title")}
             </h3>
-            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
-              {t("empty.body")}
-            </p>
+            {/* The hand-written "run chorus daemon" sentence is replaced by the
+                shared daemon-connect CTA so this surface stays consistent with
+                the pill popover + onboarding completion screen and the command
+                can never drift. */}
+            <div className="w-full max-w-md text-left">
+              <DaemonConnectCta variant="prominent" />
+            </div>
           </Card>
         ) : (
           <>

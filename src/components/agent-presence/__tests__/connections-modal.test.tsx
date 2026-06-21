@@ -341,6 +341,13 @@ describe("Daemon chat modal — opening + conversation list", () => {
       expect(screen.queryByText("No conversations yet")).toBeTruthy(),
     );
     expect(screen.queryAllByRole("button", { name: "Start session" }).length).toBe(0);
+    // The dead-end card now carries the shared daemon-connect CTA so this surface
+    // matches the pill popover + onboarding completion screen: the npx start
+    // command (verbatim from the single constant) plus a copy control.
+    expect(screen.getByText("npx @chorus-aidlc/chorus daemon")).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { name: "Copy" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("names an ad-hoc conversation by its first human instruction (not type+uuid)", async () => {

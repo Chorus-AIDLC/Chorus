@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import {
+  DaemonConnectCta,
   ExecutionRow,
   ExecutionSection,
   IdentityBlock,
@@ -81,10 +82,12 @@ function PopoverBody({
   const t = useTranslations("agentPresence");
   const ta = useTranslations("agentConnections");
 
+  // 0-online empty state: no longer a dead-end "nobody online" sentence — show
+  // the daemon-connect CTA (compact) so the user knows HOW to bring an agent
+  // online. Not dismissible: once a daemon connects, this branch is replaced by
+  // the live connection list below, so the CTA disappears on its own.
   if (onlineConnections.length === 0) {
-    return (
-      <p className="px-1 py-2 text-[13px] text-[#9A9A9A]">{t("popoverEmpty")}</p>
-    );
+    return <DaemonConnectCta variant="compact" />;
   }
 
   return (

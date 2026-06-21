@@ -53,6 +53,7 @@ import {
 import { TranscriptView } from "./transcript-view";
 import { NewConversationPane } from "./new-conversation-pane";
 import { executionsForSession, sessionExecStatus } from "./session-execution";
+import { DaemonConnectCta } from "../daemon-connect-cta";
 
 const PAGE_SIZE = 12;
 
@@ -716,7 +717,7 @@ export function DaemonChat() {
         ) : noAgentsAtAll ? (
           // The ONLY remaining dead-end: no agent connected AND no history — there is
           // nothing to talk to, so a calm "connect a daemon" card (no composer).
-          <Card className="items-center gap-3 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
+          <Card className="items-center gap-4 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
               <MessagesSquare className="h-6 w-6 text-[#C67A52]" />
             </div>
@@ -726,6 +727,12 @@ export function DaemonChat() {
             <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
               {t("noAgents.body")}
             </p>
+            {/* Actionable CTA for the only remaining dead-end (no connected agent
+                AND no history): the shared daemon-connect block, consistent with
+                the pill popover + onboarding completion screen. */}
+            <div className="w-full max-w-md text-left">
+              <DaemonConnectCta variant="prominent" />
+            </div>
           </Card>
         ) : (
           <>

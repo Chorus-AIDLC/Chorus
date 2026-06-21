@@ -1383,8 +1383,7 @@
     "execEmptyTitle": "Nothing running",
     "execEmptyBody": "This connection has no running or queued work right now. Dispatched work will appear here as the daemon picks it up.",
     "empty": {
-      "title": "No agent connections yet",
-      "body": "Start a daemon to connect an agent to Chorus. Run `chorus daemon` from your terminal, or enable the OpenClaw plugin, then this page will show it here."
+      "title": "No agent connections yet"
     },
     "loadErrorTitle": "Couldn't load connections",
     "loadErrorBody": "We couldn't reach the connection service. This is a loading problem, not an empty list — your agents may still be online. Retrying automatically.",
@@ -1503,9 +1502,17 @@
     "unavailable": "Agents unavailable",
     "pillAria": "Online agents — open details",
     "popoverTitle": "Online agents",
-    "popoverEmpty": "No agents are online right now.",
     "connectionIdle": "Idle — no running or queued work.",
     "viewAll": "View all"
+  },
+  "daemonConnectCta": {
+    "headline": "Next step: keep your agent online",
+    "body": "Run a long-lived daemon so your agent stays online and picks up dispatched work.",
+    "bodyLong": "Installing a plugin sets up a one-shot connection — it doesn't keep an agent online. Run a long-lived daemon in your terminal so your agent stays connected and automatically receives dispatched work.",
+    "loginNote": "First time? Sign in once with {command}.",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "learnMore": "Learn more about connecting an agent"
   },
   "mention": {
     "online": "Online",

@@ -29,6 +29,9 @@ import type {
   ConnectionView,
   ExecutionView,
 } from "@/components/agent-presence";
+// Real en strings for asserting CTA prose by value (kept in sync with the
+// next-intl mock below, which resolves from the same file).
+import enMessages from "../../../messages/en.json";
 
 // next-intl: resolve real en strings (mirrors the sibling agent-connections tests).
 vi.mock("next-intl", async () => {
@@ -333,7 +336,7 @@ describe("AgentPresencePill — popover content", () => {
     expect(setModalOpen).toHaveBeenCalledWith(true);
   });
 
-  it("popover renders empty-state when no connections are online", async () => {
+  it("popover 0-online empty state shows the daemon-connect CTA (command + copy), not a dead-end sentence", async () => {
     setPresence({
       status: "ok",
       onlineCount: 0,
@@ -345,8 +348,18 @@ describe("AgentPresencePill — popover content", () => {
     render(<AgentPresencePill />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
 
+    // The dead-end "No agents are online right now." statement is replaced by an
+    // actionable CTA: the npx start command (verbatim from the single constant)
+    // plus a copy control. Asserting the command text guards against the literal
+    // being moved into i18n by mistake.
     expect(
-      await screen.findByText("No agents are online right now."),
+      await screen.findByText("npx @chorus-aidlc/chorus daemon"),
+    ).toBeTruthy();
+    // The compact CTA body prose resolves from the shared daemonConnectCta
+    // namespace (a renamed/missing key would surface as its dotted path).
+    expect(screen.getByText(enMessages.daemonConnectCta.body)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: enMessages.daemonConnectCta.copy }),
     ).toBeTruthy();
   });
 });

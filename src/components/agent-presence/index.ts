@@ -26,3 +26,10 @@ export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";
 export { AgentConnectionsModal } from "./connections-modal";
+export {
+  DaemonConnectCta,
+  type DaemonConnectCtaVariant,
+  DAEMON_NPX_PACKAGE,
+  DAEMON_START_COMMAND,
+  DAEMON_LOGIN_COMMAND,
+} from "./daemon-connect-cta";

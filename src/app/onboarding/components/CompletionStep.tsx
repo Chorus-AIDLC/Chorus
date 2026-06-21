@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CheckCircle2, FolderKanban, Settings } from "lucide-react";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
+import { DaemonConnectCta } from "@/components/agent-presence";
 
 interface CompletionStepProps {
   createdAgent: {
@@ -90,6 +91,12 @@ export function CompletionStep({ createdAgent }: CompletionStepProps) {
           </CardContent>
         </Card>
       )}
+
+      {/* Next step: keep the agent online. Installing a plugin only configures a
+          one-shot connection — a resident agent that auto-receives dispatched
+          work needs a long-lived `chorus daemon`. This is the discoverability
+          nudge the completion screen was missing. */}
+      <DaemonConnectCta variant="prominent" />
 
       {/* Action buttons */}
       <div className="flex w-full max-w-xs flex-col gap-3">

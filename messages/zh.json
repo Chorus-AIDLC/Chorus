@@ -1384,8 +1384,7 @@
     "execEmptyTitle": "暂无运行中的任务",
     "execEmptyBody": "该连接当前没有正在处理或排队的工作。派发的工作会在 daemon 接手时显示在这里。",
     "empty": {
-      "title": "暂无智能体连接",
-      "body": "启动一个守护进程以将智能体连接到 Chorus。在终端运行 `chorus daemon`，或启用 OpenClaw 插件，连接成功后即可在此页面看到。"
+      "title": "暂无智能体连接"
     },
     "loadErrorTitle": "无法加载连接",
     "loadErrorBody": "无法连接到连接服务。这是加载失败，并非列表为空——你的智能体可能仍在线。正在自动重试。",
@@ -1504,9 +1503,17 @@
     "unavailable": "智能体不可用",
     "pillAria": "在线智能体 — 打开详情",
     "popoverTitle": "在线智能体",
-    "popoverEmpty": "当前没有在线的智能体。",
     "connectionIdle": "空闲 — 没有正在运行或排队的工作。",
     "viewAll": "查看全部"
+  },
+  "daemonConnectCta": {
+    "headline": "下一步：让你的智能体保持在线",
+    "body": "运行一个常驻守护进程，让你的智能体保持在线并自动接收派发的工作。",
+    "bodyLong": "安装插件只是建立一次性连接，并不能让智能体常驻在线。在终端运行一个常驻守护进程，智能体才会保持连接并自动接收派发的工作。",
+    "loginNote": "首次使用？先用 {command} 登录一次。",
+    "copy": "复制",
+    "copied": "已复制！",
+    "learnMore": "了解如何连接智能体"
   },
   "mention": {
     "online": "在线",
