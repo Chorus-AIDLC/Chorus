@@ -9,6 +9,7 @@ import { registerAdminTools } from "./tools/admin";
 import { registerSessionTools } from "./tools/session";
 import { enableToolCallLogging } from "./tools/tool-logger";
 import { enablePresence } from "./tools/presence";
+import { registerCouncilTools } from "./tools/council";
 import type { AgentAuthContext } from "@/types/auth";
 
 // MCP Server factory function
@@ -27,6 +28,7 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
   // Public tools — available to every authenticated agent (no permission gating)
   registerPublicTools(server, auth);
   registerSessionTools(server, auth);
+  registerCouncilTools(server, auth); // sovereign multi-model deliberation, no permission gate
 
   // Permission-gated tools. Each register function calls registerPermissionedTool
   // per tool, which checks auth.permissions.includes(required) before registering.
