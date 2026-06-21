@@ -25,7 +25,7 @@ interface FlatRow {
  * - A `visited` set guards against any cyclic data so rendering always
  *   terminates (the server prevents cycles, but the UI must never hang).
  */
-function buildForest(ideas: IdeaCardItem[]): FlatRow[] {
+function buildForest(ideas: IdeaCardItem[]): FlatRow[][] {
   const byUuid = new Map(ideas.map((i) => [i.uuid, i]));
   const childrenByParent = new Map<string, IdeaCardItem[]>();
   const roots: IdeaCardItem[] = [];
@@ -41,53 +41,63 @@ function buildForest(ideas: IdeaCardItem[]): FlatRow[] {
     }
   }
 
-  const rows: FlatRow[] = [];
+  // Each top-level root becomes its own group (a list of DFS-ordered rows). A
+  // `visited` set guards against cyclic data so rendering always terminates.
+  const groups: FlatRow[][] = [];
   const visited = new Set<string>();
-  const walk = (idea: IdeaCardItem, depth: number) => {
+  const walk = (idea: IdeaCardItem, depth: number, into: FlatRow[]) => {
     if (visited.has(idea.uuid)) return;
     visited.add(idea.uuid);
-    rows.push({ idea, depth, showConnector: depth > 0 });
+    into.push({ idea, depth, showConnector: depth > 0 });
     for (const child of childrenByParent.get(idea.uuid) ?? []) {
-      walk(child, depth + 1);
+      walk(child, depth + 1, into);
     }
   };
-  for (const root of roots) walk(root, 0);
-  // Any idea not reached (defensive against cyclic data) is appended as a root.
-  for (const idea of ideas) {
-    if (!visited.has(idea.uuid)) rows.push({ idea, depth: 0, showConnector: false });
+  for (const root of roots) {
+    const group: FlatRow[] = [];
+    walk(root, 0, group);
+    if (group.length > 0) groups.push(group);
   }
-  return rows;
+  // Any idea not reached (defensive against cyclic data) becomes its own group.
+  for (const idea of ideas) {
+    if (!visited.has(idea.uuid)) {
+      visited.add(idea.uuid);
+      groups.push([{ idea, depth: 0, showConnector: false }]);
+    }
+  }
+  return groups;
 }
 
 export function IdeaLineageTree({ ideas, onIdeaClick }: IdeaLineageTreeProps) {
-  const rows = useMemo(() => buildForest(ideas), [ideas]);
+  const groups = useMemo(() => buildForest(ideas), [ideas]);
 
+  // Each top-level lineage tree is its own white block; the space-y gaps between
+  // blocks reveal the page background (#FAF8F4), so groups read as distinct
+  // cards rather than one continuous white list.
   return (
-    <div className="overflow-hidden rounded-lg bg-white">
-      {rows.map((row, idx) => {
-        // A depth-0 row after the first one starts a new top-level tree
-        // (buildForest is DFS-ordered, so every depth===0 marks a fresh root).
-        // Separate unrelated trees with a larger vertical gap so each lineage
-        // tree reads as one group; keep the tight hairline for in-tree rows.
-        const isTreeBoundary = idx > 0 && row.depth === 0;
-        return (
-          <div key={row.idea.uuid}>
-            {isTreeBoundary ? (
-              <div className="h-2.5" data-testid="lineage-tree-gap" aria-hidden />
-            ) : (
-              idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA]" />
-            )}
-            <PresenceIndicator entityType="idea" entityUuid={row.idea.uuid} badgeInside>
-              <IdeaCard
-                idea={row.idea}
-                onClick={onIdeaClick}
-                depth={row.depth}
-                showConnector={row.showConnector}
-              />
-            </PresenceIndicator>
-          </div>
-        );
-      })}
+    <div className="space-y-2.5">
+      {groups.map((group) => (
+        <div
+          key={group[0].idea.uuid}
+          data-testid="lineage-tree-group"
+          className="overflow-hidden rounded-lg bg-white"
+        >
+          {group.map((row, idx) => (
+            <div key={row.idea.uuid}>
+              {/* Tight hairline between rows inside the same tree. */}
+              {idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA]" />}
+              <PresenceIndicator entityType="idea" entityUuid={row.idea.uuid} badgeInside>
+                <IdeaCard
+                  idea={row.idea}
+                  onClick={onIdeaClick}
+                  depth={row.depth}
+                  showConnector={row.showConnector}
+                />
+              </PresenceIndicator>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

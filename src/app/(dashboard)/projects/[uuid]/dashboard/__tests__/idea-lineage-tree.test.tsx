@@ -57,15 +57,25 @@ const TWO_TREES: IdeaCardItem[] = [
 ];
 
 describe("IdeaLineageTree grouping", () => {
-  it("inserts a group gap only at the second top-level tree boundary", () => {
+  it("renders one white block per top-level tree (gaps reveal the page bg)", () => {
     const { container, getAllByTestId } = render(<IdeaLineageTree ideas={TWO_TREES} />);
 
-    // Exactly one group gap — between tree-1's subtree and tree-2's root,
-    // NOT between r1 and its child c1.
-    const gaps = container.querySelectorAll('[data-testid="lineage-tree-gap"]');
-    expect(gaps.length).toBe(1);
+    // Two top-level trees → exactly two white-block groups.
+    const groups = container.querySelectorAll('[data-testid="lineage-tree-group"]');
+    expect(groups.length).toBe(2);
+    // Each group is a white rounded block; the outer wrapper uses space-y so the
+    // page background shows through the gaps (no single white container).
+    groups.forEach((g) => {
+      expect(g.className).toContain("bg-white");
+      expect(g.className).toContain("rounded-lg");
+    });
+    expect((groups[0].parentElement as HTMLElement).className).toContain("space-y-2.5");
 
-    // DFS order is preserved: r1, c1, r2.
+    // Tree-1's block holds both r1 and its child c1; tree-2's block holds r2 only.
+    expect(groups[0].querySelectorAll('[data-testid="idea-card"]').length).toBe(2);
+    expect(groups[1].querySelectorAll('[data-testid="idea-card"]').length).toBe(1);
+
+    // DFS order is preserved across blocks: r1, c1, r2.
     const cards = getAllByTestId("idea-card");
     expect(cards.map((c) => c.getAttribute("data-uuid"))).toEqual(["r1", "c1", "r2"]);
 
@@ -76,34 +86,35 @@ describe("IdeaLineageTree grouping", () => {
     expect(byUuid["r2"].getAttribute("data-depth")).toBe("0");
   });
 
-  it("uses the tight hairline (no gap) inside a single tree", () => {
-    // One tree: root + two children — no top-level boundary after the first row,
-    // so there must be zero group gaps.
+  it("keeps a single tree in one block with tight hairlines between its rows", () => {
+    // One tree: root + two children — a single white block, no extra blocks.
     const oneTree: IdeaCardItem[] = [
       idea({ uuid: "root", childCount: 2 }),
       idea({ uuid: "a", parentUuid: "root" }),
       idea({ uuid: "b", parentUuid: "root" }),
     ];
     const { container } = render(<IdeaLineageTree ideas={oneTree} />);
-    expect(container.querySelectorAll('[data-testid="lineage-tree-gap"]').length).toBe(0);
+    expect(container.querySelectorAll('[data-testid="lineage-tree-group"]').length).toBe(1);
     // In-tree separators (hairlines) are present between the 3 rows.
     expect(container.querySelectorAll(".bg-\\[\\#F0EEEA\\]").length).toBeGreaterThan(0);
   });
 
-  it("adds no separators or gaps for a single root", () => {
+  it("renders a single block with no hairline for a lone root", () => {
     const { container } = render(<IdeaLineageTree ideas={[idea({ uuid: "solo" })]} />);
-    expect(container.querySelectorAll('[data-testid="lineage-tree-gap"]').length).toBe(0);
+    expect(container.querySelectorAll('[data-testid="lineage-tree-group"]').length).toBe(1);
     expect(container.querySelectorAll(".bg-\\[\\#F0EEEA\\]").length).toBe(0);
   });
 
-  it("inserts a gap between every pair of unrelated top-level roots", () => {
+  it("renders one block per unrelated top-level root", () => {
     const threeRoots: IdeaCardItem[] = [
       idea({ uuid: "x" }),
       idea({ uuid: "y" }),
       idea({ uuid: "z" }),
     ];
     const { container } = render(<IdeaLineageTree ideas={threeRoots} />);
-    // Roots after the first each get a gap → 2 gaps for 3 roots.
-    expect(container.querySelectorAll('[data-testid="lineage-tree-gap"]').length).toBe(2);
+    // 3 unrelated roots → 3 separate white blocks.
+    expect(container.querySelectorAll('[data-testid="lineage-tree-group"]').length).toBe(3);
+    // No in-tree hairlines (each block has a single row).
+    expect(container.querySelectorAll(".bg-\\[\\#F0EEEA\\]").length).toBe(0);
   });
 });
