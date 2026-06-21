@@ -3,6 +3,15 @@
 // event-router wake messages. The spawned Claude is headless and acts only
 // through the chorus_* MCP tools — these prompts tell it what happened and
 // which tools to use.
+//
+// HEADLESS GUARD (add-daemon-headless-interaction-guard): a daemon-woken session
+// has NO human at the terminal, so it must never call AskUserQuestion or any
+// blocking terminal prompt — that would hang or be silently dropped. buildPrompt
+// prepends HEADLESS_PREAMBLE (below) to EVERY non-null wake body so the rule rides
+// every turn, new or --resume (the daemon rebuilds the prompt on each wake, so a
+// per-turn prefix persists across resumes without touching the spawn argv — there
+// is deliberately no --append-system-prompt; see claude-spawner.mjs). The preamble
+// also names the CHORUS_DAEMON_HEADLESS=1 env signal the spawner sets.
 
 /**
  * @typedef {Object} NotificationDetail
@@ -32,12 +41,64 @@ function mentionGuidance(n, entityType) {
 }
 
 /**
+ * Shared headless preamble prepended to EVERY wake prompt (add-daemon-headless-
+ * interaction-guard). A daemon-woken session is a headless `claude -p` run with no
+ * human at the terminal, so AskUserQuestion (and any blocking terminal prompt) reaches
+ * no one — it hangs or is dropped, stalling the agent or forcing a unilateral decision.
+ * This block tells the agent that fact and routes every human-decision point through
+ * Chorus's async channels instead.
+ *
+ * Wording note: the re-routing guidance names `chorus_add_comment` and describes the
+ * elaboration panel in prose ON PURPOSE — it must NOT embed the literal
+ * `chorus_pm_start_elaboration` / `chorus_pm_validate_elaboration` tool names, because
+ * this preamble rides EVERY wake including `elaboration_verified` (write-the-proposal),
+ * whose contract is that it never mentions the answer-questions tools. Keep it that way.
+ *
+ * Kept compact: it is paid on every wake, so each line costs tokens per wake.
+ */
+export const HEADLESS_PREAMBLE = [
+  "[Headless daemon session] You are a headless `claude -p` session woken by the Chorus",
+  "daemon. There is NO human at the terminal, and the environment variable",
+  "CHORUS_DAEMON_HEADLESS=1 is set.",
+  "",
+  "Do NOT call AskUserQuestion or any interactive / blocking terminal prompt — it reaches",
+  "no one and will hang or be silently dropped. Whenever you would ask the human something,",
+  "route it through Chorus instead: post a comment with chorus_add_comment and @mention the",
+  "requester, and/or open an elaboration round the human answers in the Chorus UI panel.",
+  "",
+  "A few examples (not exhaustive): when a skill says to present elaboration questions via",
+  "AskUserQuestion, open an elaboration round and @mention the requester in a comment so they",
+  "answer in the UI; when a skill says to ask permission before skipping a step, do not skip",
+  "silently — record the reason in a Chorus comment; when a skill offers to write a report,",
+  "create it directly or skip it, never prompt for it.",
+  "",
+  "After you post something that needs a human decision, END THE TURN and leave the work",
+  "pending — do not poll or wait for a synchronous reply. The human's later comment or",
+  "elaboration answer wakes a fresh turn that continues the work.",
+].join("\n");
+
+/**
  * Build the wake prompt for a notification, or null if the action has no
- * wake (caller ignores those). Mirrors the OpenClaw event-router handlers.
+ * wake (caller ignores those). Prepends HEADLESS_PREAMBLE to every non-null body
+ * (a null body — unknown action / empty human_instruction — stays null so the router
+ * still skips it and no contentless subprocess is spawned). The per-action body is
+ * produced by buildPromptBody below.
  * @param {NotificationDetail} n
  * @returns {string | null}
  */
 export function buildPrompt(n) {
+  const body = buildPromptBody(n);
+  if (body == null) return null;
+  return `${HEADLESS_PREAMBLE}\n\n${body}`;
+}
+
+/**
+ * The per-action wake body (without the headless preamble). Mirrors the OpenClaw
+ * event-router handlers; returns null for actions that have no wake.
+ * @param {NotificationDetail} n
+ * @returns {string | null}
+ */
+function buildPromptBody(n) {
   switch (n.action) {
     case "task_assigned":
       return (

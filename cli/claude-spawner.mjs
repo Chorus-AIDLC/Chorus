@@ -15,6 +15,12 @@
 //
 // The flag list lives in ONE place (buildArgs) so a CLI flag change is a
 // single-line edit.
+//
+// HEADLESS SIGNAL (add-daemon-headless-interaction-guard): wake() spawns the child
+// with CHORUS_DAEMON_HEADLESS=1 merged over the inherited env — a machine-checkable
+// marker that this is a daemon-woken, no-human-at-the-terminal run. buildArgs is
+// deliberately NOT changed (no --append-system-prompt): the headless behavior rule is
+// carried per-turn by the wake-prompt preamble in prompts.mjs, not at the system level.
 
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
@@ -315,6 +321,14 @@ export class ClaudeSpawner {
         child = this.spawnImpl(command, argv, {
           cwd: cwd ?? process.cwd(),
           stdio: ["pipe", "pipe", "pipe"],
+          // Mark the child as a headless daemon-woken session (add-daemon-headless-
+          // interaction-guard). Merged OVER the inherited env so PATH, the Bedrock /
+          // credential vars, CLAUDE_CONFIG_DIR, etc. all survive — only this one var is
+          // added. It is a machine-checkable signal (the wake prompt also states it in
+          // text); this change only LAYS IT DOWN — no code here reads it back. Set
+          // unconditionally: the spawner only ever runs headless daemon wakes, so both
+          // "chorus" and "yolo" permission modes get it.
+          env: { ...process.env, CHORUS_DAEMON_HEADLESS: "1" },
           // No shell:true — command is either the real executable or cmd.exe
           // with the script as an argv element. Avoids shell word-splitting /
           // injection; .cmd is handled explicitly via cmd.exe above.

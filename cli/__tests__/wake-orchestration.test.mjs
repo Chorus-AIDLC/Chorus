@@ -3,11 +3,13 @@
 // failure isolation, and the no-op upload hooks (cli-daemon spec
 // "Task-dispatch wake" + "Reserved upload hooks").
 import { describe, it, expect, vi } from "vitest";
-import { buildPrompt, WAKE_ACTIONS } from "../prompts.mjs";
+import { buildPrompt, WAKE_ACTIONS, HEADLESS_PREAMBLE } from "../prompts.mjs";
 import { createNoopUploadHooks } from "../upload-hooks.mjs";
 import { Waker } from "../waker.mjs";
 import { EventRouter } from "../event-router.mjs";
 import { WakeQueue } from "../wake-queue.mjs";
+import { ClaudeSpawner } from "../claude-spawner.mjs";
+import { EventEmitter } from "node:events";
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -126,6 +128,63 @@ describe("buildPrompt", () => {
     ]) {
       expect(WAKE_ACTIONS.has(a), `expected ${a} NOT to wake`).toBe(false);
     }
+  });
+});
+
+// add-daemon-headless-interaction-guard: every wake prompt carries the headless preamble
+// so a daemon-woken (no-human-at-terminal) session never calls AskUserQuestion and routes
+// human-decision points through Chorus instead.
+describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
+  it("the preamble declares headlessness, the env signal, the AskUserQuestion prohibition, the Chorus route, and the async hand-off", () => {
+    // (1) identity + no-human + env signal
+    expect(HEADLESS_PREAMBLE).toContain("headless");
+    expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("no human at the terminal");
+    expect(HEADLESS_PREAMBLE).toContain("CHORUS_DAEMON_HEADLESS=1");
+    // (2) prohibition — literal tool name
+    expect(HEADLESS_PREAMBLE).toContain("AskUserQuestion");
+    // (3) general route-through-Chorus rule
+    expect(HEADLESS_PREAMBLE).toContain("chorus_add_comment");
+    expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("elaboration");
+    // (5) async hand-off — post then end the turn, don't block
+    expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("end the turn");
+    expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("pending");
+  });
+
+  it("does NOT embed the answer-questions tool names — keeps the elaboration_verified contract intact even though it rides every wake", () => {
+    // The preamble is prepended to EVERY wake, including elaboration_verified
+    // (write-the-proposal), whose contract forbids the answer-questions tools. Routing
+    // guidance therefore uses chorus_add_comment + prose, not these literals.
+    expect(HEADLESS_PREAMBLE).not.toContain("chorus_pm_start_elaboration");
+    expect(HEADLESS_PREAMBLE).not.toContain("chorus_pm_validate_elaboration");
+  });
+
+  it("every WAKE_ACTIONS prompt is prefixed with the preamble while preserving the per-action body + @mention guidance", () => {
+    for (const action of WAKE_ACTIONS) {
+      const extra = action === "human_instruction" ? { instructionText: "please rebase onto main" } : {};
+      const p = buildPrompt({ ...TASK_NOTIF, action, ...extra });
+      expect(p, `WAKE_ACTIONS "${action}" must produce a prompt`).not.toBeNull();
+      // preamble first, original body after it
+      expect(p.startsWith(HEADLESS_PREAMBLE), `"${action}" prompt must start with the preamble`).toBe(true);
+      expect(p).toContain("AskUserQuestion");
+      expect(p.toLowerCase()).toContain("end the turn");
+      // the per-action body still follows the preamble (e.g. the [Chorus] marker)
+      expect(p.slice(HEADLESS_PREAMBLE.length)).toContain("[Chorus]");
+    }
+  });
+
+  it("preserves the per-action @mention guidance after the preamble (task_assigned)", () => {
+    const p = buildPrompt(TASK_NOTIF);
+    expect(p.startsWith(HEADLESS_PREAMBLE)).toBe(true);
+    expect(p).toContain("chorus_claim_task"); // body intact
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance intact
+  });
+
+  it("a null body stays null after the wrapper — no preamble-only prompt is produced", () => {
+    // unknown action
+    expect(buildPrompt({ ...TASK_NOTIF, action: "count_update" })).toBeNull();
+    // empty human_instruction (no body to act on)
+    expect(buildPrompt({ ...TASK_NOTIF, action: "human_instruction", instructionText: "   " })).toBeNull();
+    expect(buildPrompt({ ...TASK_NOTIF, action: "human_instruction" })).toBeNull();
   });
 });
 
@@ -517,5 +576,94 @@ describe("EventRouter dispatch", () => {
 
     expect(spawner.wake).toHaveBeenCalledTimes(2);
     expect(maxConcurrent).toBe(1); // same direct idea → never concurrent
+  });
+});
+
+// add-daemon-headless-interaction-guard — integration checkpoint: the convergence of
+// BOTH changes (preamble in prompts.mjs + env signal in claude-spawner.mjs) on the real
+// wake chain. Uses the REAL ClaudeSpawner (not the mocked one above) wired to a fake
+// child, driven by a real Waker, so we assert the whole flow in one place:
+// notification → buildPrompt(preamble+body) → spawn with CHORUS_DAEMON_HEADLESS=1 →
+// prompt over stdin → NDJSON parsed → clean exit.
+describe("headless guard — end-to-end wake flow (real Waker + real ClaudeSpawner)", () => {
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    const stdin = new EventEmitter();
+    stdin.writes = [];
+    stdin.write = (c) => stdin.writes.push(String(c));
+    stdin.end = vi.fn();
+    child.stdin = stdin;
+    child.stdout = new EventEmitter();
+    child.stdout.setEncoding = () => {};
+    child.stderr = new EventEmitter();
+    child.stderr.setEncoding = () => {};
+    return child;
+  }
+
+  it("preamble+body reaches stdin AND CHORUS_DAEMON_HEADLESS=1 reaches the spawn env, in one flow", async () => {
+    const child = makeFakeChild();
+    // Drive the child reactively the moment it's spawned: Waker.wake awaits several
+    // steps (lineage, writeMcpConfig, onSessionStart) BEFORE spawning, so emitting
+    // synchronously from the test body would fire before any listener is attached.
+    const spawnImpl = vi.fn(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", `{"type":"system","session_id":"${DIRECT_IDEA}"}\n`);
+        child.emit("close", 0);
+      });
+      return child;
+    });
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      platform: "linux",
+    });
+    const waker = new Waker({
+      creds: { url: "https://c", apiKey: "cho_x" },
+      lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
+      spawner, // the REAL spawner
+      cwd: "/work/dir",
+      hooks: createNoopUploadHooks(),
+      logger: silent,
+      writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
+      isNewSessionFn: vi.fn(() => true),
+    });
+
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
+    const [, argv, opts] = spawnImpl.mock.calls[0];
+    // env signal present (task 2)
+    expect(opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
+    // argv carries the session id, never the prompt
+    expect(argv).toContain("--session-id");
+    expect(argv).toContain(DIRECT_IDEA);
+    // the prompt that reached stdin is preamble + the task_assigned body (task 1)
+    const stdinPrompt = child.stdin.writes.join("");
+    expect(stdinPrompt.startsWith(HEADLESS_PREAMBLE)).toBe(true);
+    expect(stdinPrompt).toContain("AskUserQuestion"); // headless guard text
+    expect(stdinPrompt).toContain("task-1"); // per-action body intact
+    expect(stdinPrompt).toContain("chorus_claim_task");
+    expect(child.stdin.end).toHaveBeenCalled();
+  });
+
+  it("a null-prompt action (count_update) never spawns a subprocess", async () => {
+    const spawnImpl = vi.fn();
+    const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl, logger: silent, platform: "linux" });
+    const waker = new Waker({
+      creds: { url: "https://c", apiKey: "cho_x" },
+      lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
+      spawner,
+      cwd: "/work/dir",
+      hooks: createNoopUploadHooks(),
+      logger: silent,
+      writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
+      isNewSessionFn: vi.fn(() => true),
+    });
+    const notif = { ...TASK_NOTIF, action: "count_update" };
+    const resolved = await waker.keyFor(notif);
+    await waker.wake(notif, resolved.key, resolved);
+    expect(spawnImpl).not.toHaveBeenCalled(); // no contentless spawn
   });
 });

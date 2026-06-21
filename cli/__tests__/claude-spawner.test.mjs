@@ -281,6 +281,61 @@ describe("ClaudeSpawner.wake", () => {
   });
 });
 
+// add-daemon-headless-interaction-guard: the spawned child is marked with
+// CHORUS_DAEMON_HEADLESS=1 (merged over inherited env) as a machine-checkable headless
+// signal. buildArgs stays free of --append-system-prompt (the rule rides the wake prompt).
+describe("ClaudeSpawner.wake — CHORUS_DAEMON_HEADLESS env signal", () => {
+  async function spawnAndGetOpts(permissionMode) {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      platform: "linux",
+      ...(permissionMode ? { permissionMode } : {}),
+    });
+    const p = spawner.wake({ prompt: "go", sessionId: SID, isNew: true, mcpConfigPath: "/m.json" });
+    child.emit("close", 0);
+    await p;
+    return spawnImpl.mock.calls[0][2]; // spawn options
+  }
+
+  it("sets CHORUS_DAEMON_HEADLESS=1 in the spawned child env (default chorus mode)", async () => {
+    const opts = await spawnAndGetOpts();
+    expect(opts.env).toBeDefined();
+    expect(opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
+  });
+
+  it("sets CHORUS_DAEMON_HEADLESS=1 in yolo mode too (unconditional)", async () => {
+    const opts = await spawnAndGetOpts("yolo");
+    expect(opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
+  });
+
+  it("merges over inherited process.env — a pre-existing var survives", async () => {
+    const sentinel = "__CHORUS_TEST_SENTINEL__";
+    process.env[sentinel] = "keep-me";
+    try {
+      const opts = await spawnAndGetOpts();
+      expect(opts.env[sentinel]).toBe("keep-me"); // inherited var preserved
+      expect(opts.env.CHORUS_DAEMON_HEADLESS).toBe("1"); // and ours added
+      // PATH (always present) is inherited too — sanity that we didn't replace env wholesale.
+      expect(opts.env.PATH).toBe(process.env.PATH);
+    } finally {
+      delete process.env[sentinel];
+    }
+  });
+
+  it("buildArgs output never contains --append-system-prompt (q1=C: rule rides the wake prompt, not the system prompt)", () => {
+    for (const mode of [undefined, "yolo"]) {
+      for (const isNew of [true, false]) {
+        const args = buildArgs({ sessionId: SID, isNew, mcpConfigPath: "/m.json", permissionMode: mode });
+        expect(args).not.toContain("--append-system-prompt");
+      }
+    }
+  });
+});
+
 // 子3 — daemon-interrupt-resume: detached POSIX spawn (process-group leader) so the
 // interrupt path can group-kill the tree, plus the onChild handle hand-off. These
 // MUST NOT regress stdin prompt delivery or stream-json parsing.
