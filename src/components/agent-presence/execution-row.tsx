@@ -59,7 +59,14 @@ import { execHref, useElapsedMono, useEntityTypeLabel } from "./hooks";
 // returns without waiting for the kill (the daemon reports the resulting
 // `interrupted` task state asynchronously; the row simply drops out of the next
 // execution snapshot). Errors surface via a toast with a localized fallback.
-function InterruptButton({ exec }: { exec: ExecutionView }) {
+//
+// Exported (alongside ResumeButton) so the daemon-chat reply composer can mount
+// the SAME control byte-identically — same AlertDialog confirm, same endpoint,
+// same toasts/entityType/entityUuid wiring (see send-instruction-box.tsx). Its
+// internals are prop-driven and surface-agnostic; the standalone ExecutionRow
+// and its other call sites (sidebar popover, Agent Connections deck) keep using
+// it unchanged.
+export function InterruptButton({ exec }: { exec: ExecutionView }) {
   const t = useTranslations("agentConnections");
   const tc = useTranslations("common");
   const [open, setOpen] = useState(false);
@@ -158,7 +165,11 @@ function InterruptButton({ exec }: { exec: ExecutionView }) {
 // the server records the transition + dispatches a `resume` control command, and the
 // row re-appears as running via the next execution snapshot. No confirm dialog —
 // resume is non-destructive, unlike interrupt.
-function ResumeButton({ exec }: { exec: ExecutionView }) {
+//
+// Exported (alongside InterruptButton) so the daemon-chat reply composer can mount
+// the SAME control byte-identically — same /api/daemon/resume endpoint, same
+// toasts/entityType/entityUuid wiring. Internals unchanged.
+export function ResumeButton({ exec }: { exec: ExecutionView }) {
   const t = useTranslations("agentConnections");
   const [pending, setPending] = useState(false);
 

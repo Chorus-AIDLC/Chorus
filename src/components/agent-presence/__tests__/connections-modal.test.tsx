@@ -75,6 +75,13 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// sonner: the reply composer + Interrupt/Resume controls toast on success/error.
+// Stub it so a send-while-running / interrupt test doesn't depend on a mounted
+// <Toaster> (and so we never touch the real notification stack in jsdom).
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 import { Button } from "@/components/ui/button";
 import {
   AgentPresenceProvider,
@@ -596,6 +603,80 @@ describe("Daemon chat modal — opening + conversation list", () => {
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: /resume/i }).length).toBeGreaterThan(0),
     );
+  });
+
+  // ===== Consolidated action row (this task) =====
+  // The standalone footer ExecutionRow card is gone — Interrupt/Resume now live in the
+  // reply input's action row. The control coexists WITH the reply composer (the
+  // placeholder + Send), not as a separate card above an otherwise-disabled box.
+
+  it("hosts Interrupt in the reply action row beside Send (no standalone card), with the textarea usable while running", async () => {
+    await openShipLogin({ turnStatus: "running", executionUuid: null, executions: [adHocExec()] });
+    // The reply composer renders (placeholder + Send) AND Interrupt — together, in one
+    // action row. The control is not a separate card above a disabled box.
+    const textarea = (await screen.findAllByPlaceholderText(
+      "Reply in this conversation…",
+    ))[0] as HTMLTextAreaElement;
+    expect(screen.getAllByRole("button", { name: /interrupt/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Send" }).length).toBeGreaterThan(0);
+    // Send-while-running: the textarea is NOT disabled merely because a turn is running
+    // (only origin-offline hard-disables it). The user can type a mid-run follow-up.
+    expect(textarea.disabled).toBe(false);
+  });
+
+  it("sends a follow-up while running via the existing instruction endpoint (no backend change)", async () => {
+    const user = await openShipLogin({
+      turnStatus: "running",
+      executionUuid: null,
+      executions: [adHocExec()],
+    });
+    const textarea = (await screen.findAllByPlaceholderText(
+      "Reply in this conversation…",
+    ))[0] as HTMLTextAreaElement;
+    await user.type(textarea, "also update the README");
+    await user.click(screen.getAllByRole("button", { name: "Send" })[0]);
+    // The follow-up POSTs to the SAME session instruction endpoint, regardless of run state.
+    await waitFor(() => {
+      const call = mockAuthFetch.mock.calls.find(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0] === "/api/daemon-sessions/s1/instruction" &&
+          (c[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(call).toBeTruthy();
+      const body = JSON.parse((call![1] as RequestInit).body as string);
+      expect(body).toEqual({ instructionText: "also update the README" });
+    });
+  });
+
+  it("shows the crash 'auto-recovers' hint (no Resume) for a crash-interrupted conversation", async () => {
+    await openShipLogin({
+      turnStatus: "ended",
+      executions: [adHocExec({ status: "interrupted", interruptedReason: "crash" })],
+    });
+    await waitFor(() =>
+      expect(screen.getAllByText("Auto-recovers").length).toBeGreaterThan(0),
+    );
+    // Crash recovers via reconnect-backfill — no manual Resume affordance.
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+  });
+
+  it("opening Interrupt in the action row shows its confirmation dialog before any request", async () => {
+    const user = await openShipLogin({
+      turnStatus: "running",
+      executionUuid: null,
+      executions: [adHocExec()],
+    });
+    await user.click((await screen.findAllByRole("button", { name: /interrupt/i }))[0]);
+    // The destructive confirm AlertDialog appears; no control POST has fired yet.
+    await waitFor(() =>
+      expect(screen.getByText("Interrupt this execution?")).toBeTruthy(),
+    );
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (c) => typeof c[0] === "string" && c[0] === "/api/daemon/control",
+      ),
+    ).toBe(false);
   });
 
   it("does NOT show another conversation's execution in this conversation's footer (per-session scope)", async () => {

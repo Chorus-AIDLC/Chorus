@@ -45,7 +45,8 @@ import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { useClientTypeLabel } from "./hooks";
-import type { ConnectionView } from "./types";
+import { InterruptButton, ResumeButton } from "./execution-row";
+import type { ConnectionView, ExecutionView } from "./types";
 import type { SessionView } from "@/services/daemon-session.service";
 
 // Mirror of the server-side `MAX_INSTRUCTION_CHARS` (daemon-instruction.service.ts)
@@ -72,10 +73,23 @@ export interface SessionTarget {
 }
 
 // =====================================================================
-// Shared compose surface — a Textarea + a labeled footer (char counter +
-// disabled-reason + trailing Send button). Geometry is layout-aware so the
-// narrow mobile drill-down stacks the footer while the wide desktop pane keeps
-// it inline, matching the ExecutionRow inline/stacked convention.
+// Shared compose surface — a Textarea whose ACTION GROUP (an optional state-driven
+// control — Interrupt / Resume / a crash "auto-recovers" hint — beside the
+// always-present Send) is OVERLAID in the input's bottom-right corner rather than
+// sitting on a separate row beneath it. The textarea carries enough bottom padding
+// (`pb-12`) that typed text never runs under the controls. This in-box overlay is
+// the shared treatment for BOTH layouts (the `layout` prop is retained for call-site
+// compatibility but no longer branches geometry — the corner overlay reads cleanly
+// on the wide desktop pane and the narrow mobile drill-down alike).
+//
+// The origin-offline read-only reason (when `disabled`) stays VISIBLE — it renders
+// ABOVE the input as a labeled line, never a tooltip — so the gate is never silent.
+//
+// Send-while-running: a RUNNING controllable execution does NOT disable the
+// textarea — the user can type + send a follow-up instruction mid-run (the
+// existing instruction endpoint appends a `human_instruction` turn regardless of
+// run state). Only the hard `disabled` path (origin offline) makes the textarea
+// inert, with its visible read-only reason.
 // =====================================================================
 
 function ComposeField({
@@ -88,6 +102,7 @@ function ComposeField({
   placeholder,
   sendLabel,
   layout,
+  controllableExecution,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -101,7 +116,15 @@ function ComposeField({
   placeholder: string;
   sendLabel: string;
   layout: "inline" | "stacked";
+  // THIS conversation's in-flight execution, if any — a `running` one (→ Interrupt
+  // beside Send) or a `user`-interrupted one (→ Resume). A `crash`-interrupted one is
+  // also accepted and renders the static "auto-recovers" hint (no Resume). The
+  // Interrupt/Resume controls are the SAME shipped components the connection deck
+  // renders — same AlertDialog confirm, same endpoints, same wiring. Null/undefined
+  // when the conversation is idle (just Send).
+  controllableExecution?: ExecutionView | null;
 }) {
+  const tc = useTranslations("agentConnections");
   const empty = value.trim().length === 0;
   // The Send control is inert only when hard-disabled, mid-flight, or empty. There is
   // no client-side char cap UI — the server cap stays authoritative and a rejected
@@ -137,41 +160,72 @@ function ComposeField({
     </Button>
   );
 
-  // Only a hard-disabled reason (no online origin) is shown — it must be visible
-  // (not just a tooltip) so the gate is never silent. Otherwise the footer is empty.
-  const footerLeft = disabled ? (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
-        <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        <span className="min-w-0">{disabledReason}</span>
-      </span>
+  // The state-driven control that joins Send in the action row, mirroring the
+  // standalone ExecutionRow's trailing controls byte-for-byte:
+  //   running                       → Interrupt (with its AlertDialog confirm)
+  //   interrupted + reason === user → Resume
+  //   interrupted + reason === crash → a static "auto-recovers" hint (no Resume),
+  //                                    since a crash recovers via reconnect-backfill.
+  const exec = controllableExecution ?? null;
+  const execControl = exec
+    ? exec.status === "running"
+      ? <InterruptButton exec={exec} />
+      : exec.status === "interrupted" && exec.interruptedReason === "user"
+        ? <ResumeButton exec={exec} />
+        : exec.status === "interrupted" && exec.interruptedReason === "crash"
+          ? (
+              <span className="text-[11px] font-medium text-[#9A8C7E]">
+                {tc("execCrashAutoRecovers")}
+              </span>
+            )
+          : null
+    : null;
+
+  // Action group: the state-driven control (if any) beside the always-present
+  // Send. OVERLAID in the input's bottom-right corner (see the return) — the same
+  // group regardless of `layout`.
+  const actionGroup = (
+    <div className="absolute bottom-2 right-2 z-10 flex shrink-0 items-center gap-2">
+      {execControl}
+      {sendButton}
     </div>
-  ) : (
-    <div className="min-w-0 flex-1" />
   );
+
+  // Only a hard-disabled reason (no online origin) is shown — it must be visible
+  // (not just a tooltip) so the gate is never silent. It renders ABOVE the input.
+  const offlineReason = disabled ? (
+    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
+      <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0">{disabledReason}</span>
+    </span>
+  ) : null;
+
+  // `layout` is retained for call-site compatibility but no longer branches the
+  // geometry: the in-box overlay is the single shared treatment. Reference it so a
+  // future divergence is a one-line change and lint stays clean.
+  void layout;
 
   return (
     <div className="flex flex-col gap-2.5">
-      <Textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        disabled={disabled || pending}
-        placeholder={placeholder}
-        rows={3}
-        className="min-h-[76px] resize-none rounded-xl border-[#E5E0D8] bg-white text-[14px] text-[#2C2C2C] placeholder:text-[#9A9A9A] focus-visible:border-[#C67A52] focus-visible:ring-[#C67A52]/30"
-      />
-      {layout === "stacked" ? (
-        <div className="flex flex-col gap-2">
-          {disabled && footerLeft}
-          {sendButton}
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-3">
-          {footerLeft}
-          {sendButton}
-        </div>
-      )}
+      {/* Origin-offline read-only reason — VISIBLE above the input, never a tooltip. */}
+      {offlineReason}
+      {/* Relative wrapper so the action group can overlay the input's bottom-right.
+          The textarea's `pb-12` reserves room so typed text never sits under the
+          controls. */}
+      <div className="relative">
+        <Textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          // Hard-disable ONLY for origin-offline (or mid-flight). A running turn does
+          // NOT disable the textarea — send-while-running is intentional.
+          disabled={disabled || pending}
+          placeholder={placeholder}
+          rows={3}
+          className="min-h-[76px] resize-none rounded-xl border-[#E5E0D8] bg-white pb-12 text-[14px] text-[#2C2C2C] placeholder:text-[#9A9A9A] focus-visible:border-[#C67A52] focus-visible:ring-[#C67A52]/30"
+        />
+        {actionGroup}
+      </div>
     </div>
   );
 }
@@ -187,12 +241,20 @@ function ComposeField({
 // Gating: sending is allowed only while the session's origin daemon is online
 // (the server re-checks and 409s otherwise); when offline the box is disabled
 // with the localized read-only reason, never silently inert.
+//
+// Action row (子 — daemon chat refinement): the footer no longer stacks a
+// standalone ExecutionRow card above this box. Instead this conversation's
+// in-flight execution (running / user-interrupted / crash) is threaded into
+// ComposeField, which hosts the matching Interrupt / Resume / auto-recovers hint
+// beside Send. While running the textarea stays usable (send-while-running);
+// only origin-offline hard-disables it.
 // =====================================================================
 
 export function ConversationReplyBox({
   sessionUuid,
   originOnline,
   layout = "inline",
+  controllableExecution,
 }: {
   // The open conversation's uuid — replies POST to its `/instruction` endpoint.
   sessionUuid: string;
@@ -200,6 +262,9 @@ export function ConversationReplyBox({
   // server re-checks on POST).
   originOnline: boolean;
   layout?: "inline" | "stacked";
+  // THIS conversation's controllable execution (running or user/crash-interrupted),
+  // if any — hosted in the composer's action row (Interrupt / Resume / hint).
+  controllableExecution?: ExecutionView | null;
 }) {
   const t = useTranslations("agentConnections");
   const tc = useTranslations("daemonChat");
@@ -245,6 +310,7 @@ export function ConversationReplyBox({
       placeholder={tc("replyPlaceholder")}
       sendLabel={t("send")}
       layout={layout}
+      controllableExecution={controllableExecution}
     />
   );
 }

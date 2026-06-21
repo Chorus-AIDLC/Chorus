@@ -615,7 +615,11 @@ export function DaemonChat() {
     listStatus === "ok" && sessions.length === 0;
   const noAgentsAtAll = noConversations && agents.length === 0;
 
-  const transcriptPane = (
+  // The transcript pane is reused on both breakpoints, differing ONLY in the reply
+  // composer's action-row geometry: desktop two-pane keeps it inline (actions on the
+  // footer line), mobile drill-down stacks it beneath the textarea (`footerLayout`).
+  // Everything else is identical, so it's a thin factory over the shared prop set.
+  const renderTranscript = (footerLayout: "inline" | "stacked") => (
     <TranscriptView
       session={detail?.session ?? null}
       turns={turns}
@@ -626,11 +630,13 @@ export function DaemonChat() {
       originOnline={originOnline}
       sessionExecutions={sessionExecutions}
       executionsByUuid={executionsByUuid}
+      footerLayout={footerLayout}
       hasMoreEarlier={hasMoreEarlier}
       loadingEarlier={loadingEarlier}
       onLoadEarlier={loadEarlier}
     />
   );
+  const transcriptPane = renderTranscript("inline");
 
   // The default right pane (nothing selected) — a new-conversation composer, not a
   // passive prompt. Also the mobile drill-down body for "New conversation".
@@ -645,7 +651,11 @@ export function DaemonChat() {
 
   // Mobile drill-down shows EITHER the selected transcript OR (when nothing is
   // selected but the drill-down was opened via "New conversation") the composer.
-  const mobileDrillContent = selectedSession ? transcriptPane : newConversationPane;
+  // The mobile transcript stacks its reply action row beneath the textarea (the
+  // narrow drill-down has no room for an inline footer line), per Q4=mobile-syncs.
+  const mobileDrillContent = selectedSession
+    ? renderTranscript("stacked")
+    : newConversationPane;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#FAF8F4]">
@@ -675,16 +685,17 @@ export function DaemonChat() {
       <div
         className={`${
           mobileDetailOpen ? "hidden lg:flex" : "flex"
-        } h-full min-h-0 flex-col gap-6 overflow-y-auto px-4 py-5 lg:overflow-hidden md:px-8 md:py-6 lg:gap-6 lg:px-8 lg:py-7`}
+        } h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3 lg:overflow-hidden md:px-8 md:py-4 lg:gap-3 lg:px-8 lg:py-4`}
       >
-        {/* Header */}
-        <header className="flex flex-col gap-1.5">
+        {/* Header — title only. The descriptive subtitle is intentionally dropped
+            from the VISIBLE chrome to reclaim vertical space so the two-pane content
+            top-aligns near the modal top; the `daemonChat.subtitle` key is retained
+            and still feeds the hidden DialogDescription in connections-modal.tsx for
+            the Radix dialog's accessibility description. */}
+        <header className="flex flex-col">
           <h2 className="text-[22px] font-semibold text-[#2C2C2C] lg:text-[24px]">
             {t("title")}
           </h2>
-          <p className="max-w-[640px] text-[13px] leading-relaxed text-[#6B6B6B]">
-            {t("subtitle")}
-          </p>
         </header>
 
         {/* Body */}

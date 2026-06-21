@@ -1451,6 +1451,7 @@
     "conversationIdea": "想法 {id}",
     "badgeIdea": "想法",
     "running": "运行中",
+    "runningElapsedLabel": "本次运行已用时",
     "statusActive": "进行中",
     "statusEnded": "已结束",
     "statusInterrupted": "已打断",

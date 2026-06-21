@@ -10,12 +10,13 @@
 //     is a secondary disclosure, per the design brief.
 //   - Body: the turn bands in a ScrollArea, auto-scrolled to the newest turn. The
 //     turn band is the signature element (see turn-band.tsx).
-//   - Footer: the reused SendInstructionBox (direct-send to the open session +
-//     ad-hoc), and — for a running turn whose live execution resolves — the reused
-//     ExecutionRow, which carries the shipped Interrupt control. Both are gated on
-//     origin-online exactly as the connections deck gates them (the send box does
-//     it internally via `originOnline`; the interrupt row only renders when the
-//     execution is in the live snapshot, which requires the origin daemon online).
+//   - Footer: input + actions ONLY — the reused ConversationReplyBox, whose
+//     bottom-right action row now HOSTS this conversation's Interrupt / Resume
+//     control (no standalone ExecutionRow card stacked above it any more). The
+//     running marker + elapsed time live in the HEADER (prior task). Send is gated
+//     on origin-online internally (`originOnline`); Interrupt/Resume reuse the
+//     shipped controls and only resolve when the execution is in the live snapshot
+//     (which requires the origin daemon online).
 //   - States: a distinct error card on read failure (never a silent empty), a
 //     loading state during the first fetch, and a read-only note when the origin is
 //     offline.
@@ -36,9 +37,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { IdentityBlock } from "../identity-block";
-import { ExecutionRow } from "../execution-row";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
+  useElapsedMono,
   useNowTick,
   useRelativeTime,
   useUptimeMono,
@@ -87,13 +88,19 @@ export function TranscriptView({
   originOnline,
   // THIS conversation's CURRENT live executions (running / interrupted), already
   // filtered to the open session by the container (idea:<directIdeaUuid> or
-  // daemon_session:<sessionId>). Rendered with the reused ExecutionRow so its shipped
-  // Interrupt + Resume controls appear inline — and ONLY for this conversation's work,
-  // so unrelated task cards never crowd the reply box. Does not depend on a per-turn
-  // `executionUuid` back-link (which the daemon does not always populate).
+  // daemon_session:<sessionId>). The single relevant one is threaded into the reply
+  // composer's action row so its shipped Interrupt / Resume control appears beside
+  // Send — and ONLY for this conversation's work, so unrelated task cards never crowd
+  // the reply box. Does not depend on a per-turn `executionUuid` back-link (which the
+  // daemon does not always populate).
   sessionExecutions,
   // Matched by `turn.executionUuid` so an entity-bearing turn can show its deep link.
   executionsByUuid,
+  // The reply composer's action-row geometry: "inline" (desktop two-pane — actions on
+  // the footer line) vs "stacked" (mobile drill-down — actions beneath the textarea).
+  // A single TranscriptView instance is reused across breakpoints, so the container
+  // passes the right value per surface rather than this pane sniffing the viewport.
+  footerLayout = "inline",
   // Older-page pagination: `hasMoreEarlier` shows a "load earlier" affordance at the
   // TOP of the transcript; `onLoadEarlier` fetches+prepends the previous page; while
   // `loadingEarlier` the control shows a spinner. The newest page loads first, so a
@@ -111,6 +118,7 @@ export function TranscriptView({
   originOnline: boolean;
   sessionExecutions: ExecutionView[];
   executionsByUuid: Map<string, ExecutionView>;
+  footerLayout?: "inline" | "stacked";
   hasMoreEarlier: boolean;
   loadingEarlier: boolean;
   onLoadEarlier: () => void;
@@ -119,6 +127,7 @@ export function TranscriptView({
   const nowMs = useNowTick();
   const formatRelative = useRelativeTime();
   const formatUptime = useUptimeMono();
+  const formatElapsed = useElapsedMono();
 
   const agentName =
     originConnection?.agentName?.trim() || t("roleAgent");
@@ -130,24 +139,36 @@ export function TranscriptView({
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
 
-  // The conversation's controllable executions — its origin connection's CURRENT
-  // running / user-interrupted work. ExecutionRow renders the shipped Interrupt
-  // (running) and Resume (user-interrupted) controls; we surface these directly off
-  // the connection's live slice rather than the per-turn `executionUuid` link, which
-  // the daemon does not reliably populate (so the control would otherwise never
-  // appear even while the conversation is plainly running). Ordered running-first.
-  const controllableExecutions = useMemo(
+  // The conversation's single composer-hosted execution — its origin connection's
+  // CURRENT in-flight work that the reply box's action row reflects. Priority:
+  // running (→ Interrupt) > user-interrupted (→ Resume) > crash-interrupted (→ the
+  // "auto-recovers" hint, no Resume). We surface this directly off the connection's
+  // live slice rather than the per-turn `executionUuid` link, which the daemon does
+  // not reliably populate (so the control would otherwise never appear even while the
+  // conversation is plainly running). Null when the conversation is idle (just Send).
+  const composerExecution = useMemo(() => {
+    const running = sessionExecutions.find((e) => e.status === "running");
+    if (running) return running;
+    const userInterrupted = sessionExecutions.find(
+      (e) => e.status === "interrupted" && e.interruptedReason === "user",
+    );
+    if (userInterrupted) return userInterrupted;
+    const crashInterrupted = sessionExecutions.find(
+      (e) => e.status === "interrupted" && e.interruptedReason === "crash",
+    );
+    return crashInterrupted ?? null;
+  }, [sessionExecutions]);
+
+  // The conversation's CURRENTLY-running execution. Its `startedAt` feeds the live
+  // elapsed timer beside the header pulse — same `useElapsedMono()` / `nowMs`
+  // formatter the execution rows use, so the header time and the composer's
+  // Interrupt control reflect the same run.
+  const runningExecution = useMemo(
     () =>
-      sessionExecutions
-        .filter(
-          (e) =>
-            e.status === "running" ||
-            (e.status === "interrupted" && e.interruptedReason === "user"),
-        )
-        .sort((a, b) =>
-          a.status === b.status ? 0 : a.status === "running" ? -1 : 1,
-        ),
-    [sessionExecutions],
+      composerExecution && composerExecution.status === "running"
+        ? composerExecution
+        : null,
+    [composerExecution],
   );
 
   // Auto-scroll the transcript to the newest turn when the turn list grows or
@@ -165,50 +186,65 @@ export function TranscriptView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <div className="flex flex-col gap-3 px-6 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[17px] font-semibold text-[#2C2C2C]">
-              {title}
-            </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Badge
-                variant="secondary"
-                className={`border-0 px-2 py-0.5 text-[10px] font-medium ${
-                  sessionEnded
-                    ? "bg-[#F0EDE8] text-[#6B6B6B]"
-                    : "bg-[#DCFCE7] text-[#15803D]"
-                }`}
-              >
-                {sessionEnded ? t("statusEnded") : t("statusActive")}
-              </Badge>
-              {currentTurn && currentTurn.status === "running" && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#C67A52]">
-                  <span className="relative inline-flex h-2 w-2 items-center justify-center">
-                    <span className="absolute inline-flex h-full w-full rounded-full bg-[#C67A52] opacity-40 motion-safe:animate-ping" />
-                    <span className="relative inline-flex h-1 w-1 rounded-full bg-[#C67A52]" />
-                  </span>
-                  {t("running")}
+      {/* Header — the <h3> title on its own line, then a SINGLE flex-wrap line that
+          carries the status badges (active/ended + running pulse + elapsed) AND the
+          'Connection details' disclosure trigger together (wrapping only if truly
+          unavoidable), saving a vertical row. The collapsible CONTENT still expands
+          below the whole line on click. The Collapsible wraps both the inline trigger
+          and the content so Radix open/close state binds correctly. */}
+      <div className="flex flex-col gap-2 px-6 py-2.5 lg:gap-3 lg:py-4">
+        <h3 className="truncate text-[17px] font-semibold text-[#2C2C2C]">
+          {title}
+        </h3>
+        <Collapsible>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="secondary"
+              className={`border-0 px-2 py-0.5 text-[10px] font-medium ${
+                sessionEnded
+                  ? "bg-[#F0EDE8] text-[#6B6B6B]"
+                  : "bg-[#DCFCE7] text-[#15803D]"
+              }`}
+            >
+              {sessionEnded ? t("statusEnded") : t("statusActive")}
+            </Badge>
+            {currentTurn && currentTurn.status === "running" && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#C67A52]">
+                <span className="relative inline-flex h-2 w-2 items-center justify-center">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-[#C67A52] opacity-40 motion-safe:animate-ping" />
+                  <span className="relative inline-flex h-1 w-1 rounded-full bg-[#C67A52]" />
                 </span>
-              )}
-            </div>
+                {t("running")}
+                {/* Live elapsed run time of the conversation's running execution —
+                    ticks every second off `useNowTick()` (no deep-link; the <h3>
+                    header title stays the only navigational affordance). */}
+                {runningExecution?.startedAt && (
+                  <span
+                    className="font-mono tabular-nums text-[#C67A52]"
+                    title={t("runningElapsedLabel")}
+                  >
+                    {formatElapsed(runningExecution.startedAt, nowMs)}
+                  </span>
+                )}
+              </span>
+            )}
+            {/* Connection details — DEMOTED to a collapsible disclosure that shares the
+                status line. Its trigger sits inline with the badges; the content (host /
+                version / uptime / started via the reused IdentityBlock + formatters)
+                expands below the line. A subtle leading separator divides it from the
+                status when both render on the same line. */}
+            {originConnection && (
+              <CollapsibleTrigger className="group ml-auto inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B6B6B] hover:text-[#2C2C2C]">
+                <Info className="h-3.5 w-3.5" aria-hidden />
+                {t("detailsLabel")}
+                <ChevronDown
+                  className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180"
+                  aria-hidden
+                />
+              </CollapsibleTrigger>
+            )}
           </div>
-        </div>
-
-        {/* Connection details — DEMOTED to a collapsible disclosure, not the
-            headline. Holds host / version / uptime / started via the reused
-            IdentityBlock + formatters. */}
-        {originConnection && (
-          <Collapsible>
-            <CollapsibleTrigger className="group inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B6B6B] hover:text-[#2C2C2C]">
-              <Info className="h-3.5 w-3.5" aria-hidden />
-              {t("detailsLabel")}
-              <ChevronDown
-                className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180"
-                aria-hidden
-              />
-            </CollapsibleTrigger>
+          {originConnection && (
             <CollapsibleContent>
               <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-4">
                 <IdentityBlock connection={originConnection} size="sm" />
@@ -238,8 +274,8 @@ export function TranscriptView({
                 </div>
               </div>
             </CollapsibleContent>
-          </Collapsible>
-        )}
+          )}
+        </Collapsible>
       </div>
       <div className="h-px w-full bg-[#EFEBE4]" />
 
@@ -285,7 +321,7 @@ export function TranscriptView({
               `daemon-transcript-scroll` rule in globals.css); without that override
               this alone is insufficient, since the viewport child is `display:table`
               and sizes to content regardless of `min-w-0`. */}
-          <div className="flex w-full min-w-0 flex-col gap-5 px-6 py-5">
+          <div className="flex w-full min-w-0 flex-col gap-3 px-6 py-3 lg:gap-5 lg:py-5">
             {/* Privacy note — once per pane: the transcript is daemon-self-reported. */}
             <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A9A9A]">
               <Lock className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
@@ -329,29 +365,20 @@ export function TranscriptView({
         </ScrollArea>
       )}
 
-      {/* Footer — the live Interrupt/Resume control(s) for this conversation's
-          in-flight work + a PLAIN reply composer (new-conversation/agent/connection
-          targeting all live in the left list, so the footer is just "reply here").
-          The reply box self-gates on origin-online and shows the read-only reason
-          when the daemon is offline. */}
+      {/* Footer — input + actions ONLY. The reply composer's bottom-right action row
+          hosts this conversation's Interrupt / Resume control (running / interrupted);
+          there is no standalone ExecutionRow card stacked above it any more (the
+          running marker + elapsed time live in the header). New-conversation / agent /
+          connection targeting all live in the left list, so the footer is just "reply
+          here". The reply box self-gates on origin-online and shows the read-only
+          reason when the daemon is offline; while running the textarea stays usable. */}
       {!error && session && (
-        <div className="flex flex-col gap-3 border-t border-[#EFEBE4] bg-[#FAF8F4] px-6 py-4">
-          {controllableExecutions.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {controllableExecutions.map((exec) => (
-                <ExecutionRow
-                  key={exec.uuid}
-                  exec={exec}
-                  nowMs={nowMs}
-                  layout="inline"
-                />
-              ))}
-            </ul>
-          )}
+        <div className="flex flex-col gap-3 border-t border-[#EFEBE4] bg-[#FAF8F4] px-6 py-2.5 lg:py-4">
           <ConversationReplyBox
             sessionUuid={session.uuid}
             originOnline={originOnline}
-            layout="inline"
+            layout={footerLayout}
+            controllableExecution={composerExecution}
           />
         </div>
       )}

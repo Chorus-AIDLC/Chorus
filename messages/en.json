@@ -1450,6 +1450,7 @@
     "conversationIdea": "Idea {id}",
     "badgeIdea": "Idea",
     "running": "Running",
+    "runningElapsedLabel": "Elapsed since this run started",
     "statusActive": "Active",
     "statusEnded": "Ended",
     "statusInterrupted": "Interrupted",
