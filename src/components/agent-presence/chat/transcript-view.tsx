@@ -92,9 +92,16 @@ function DetailField({
 // the BARE id (not a `claude --resume <id>` command and not a `cd <dir> && …`): cwd
 // isn't reported yet, so a full command can't be assembled here. Mirrors the copy
 // idiom from `daemon-connect-cta.tsx` (guarded clipboard + 2s Copy→Check + a11y).
+//
+// Responsive label: on mobile the header is cramped, so at rest the button is
+// ICON-ONLY (label hidden) to save space; the moment it's copied it briefly
+// reveals the "Copied!" confirmation text (then collapses back after 2s). On
+// desktop (≥lg) the label is always shown. `aria-label` + `aria-live` keep it
+// accessible at every breakpoint, even while the visible label is hidden.
 export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
   const t = useTranslations("daemonChat");
   const [copied, setCopied] = useState(false);
+  const label = copied ? t("sessionIdCopied") : t("copySessionId");
 
   const copy = async () => {
     try {
@@ -113,7 +120,8 @@ export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
       variant="ghost"
       size="sm"
       onClick={copy}
-      aria-label={copied ? t("sessionIdCopied") : t("copySessionId")}
+      title={label}
+      aria-label={label}
       aria-live="polite"
       className="inline-flex h-auto items-center gap-1.5 px-1.5 py-0.5 text-[12px] font-medium text-[#6B6B6B] hover:bg-transparent hover:text-[#2C2C2C]"
     >
@@ -122,7 +130,9 @@ export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
       ) : (
         <Copy className="h-3.5 w-3.5" aria-hidden />
       )}
-      {copied ? t("sessionIdCopied") : t("copySessionId")}
+      {/* Hidden on mobile at rest (icon-only, space-saving); revealed on copy as
+          the transient confirmation, and always shown on desktop (≥lg). */}
+      <span className={copied ? "inline" : "hidden lg:inline"}>{label}</span>
     </Button>
   );
 }

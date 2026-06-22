@@ -207,6 +207,59 @@ describe("CopySessionIdButton — copy interaction", () => {
   });
 });
 
+describe("CopySessionIdButton — responsive label (mobile icon-only)", () => {
+  // The visible label <span> is space-saving on mobile: hidden at rest
+  // (`hidden lg:inline` → icon-only), shown on copy (`inline` → the transient
+  // "Copied!" confirmation) and always shown on desktop. The accessible name
+  // (aria-label) is present at every breakpoint regardless.
+  function labelSpan(button: HTMLElement, text: string) {
+    return Array.from(button.querySelectorAll("span")).find(
+      (s) => s.textContent === text,
+    ) as HTMLElement | undefined;
+  }
+
+  it("hides the label on mobile at rest but keeps the accessible name (icon-only)", () => {
+    installClipboard();
+    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    const btn = screen.getByRole("button", { name: "Copy session ID" });
+    // Icon-only on mobile: the label span is `hidden` until the `lg` breakpoint.
+    const span = labelSpan(btn, "Copy session ID");
+    expect(span).toBeTruthy();
+    expect(span!.className).toContain("hidden");
+    expect(span!.className).toContain("lg:inline");
+    // a11y name still resolves (button is queryable by it) even while visually hidden.
+  });
+
+  it("reveals the confirmation label on copy (visible on mobile too), then collapses", async () => {
+    vi.useFakeTimers();
+    installClipboard();
+    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy session ID" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // After copy: the "Copied!" label is unconditionally `inline` (shown on mobile
+    // as the requested post-copy hint, not hidden behind the lg breakpoint).
+    const copiedBtn = screen.getByRole("button", { name: "Copied!" });
+    const copiedSpan = labelSpan(copiedBtn, "Copied!");
+    expect(copiedSpan).toBeTruthy();
+    expect(copiedSpan!.className).toContain("inline");
+    expect(copiedSpan!.className).not.toContain("hidden");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    // Back to rest → icon-only again on mobile.
+    const restSpan = labelSpan(
+      screen.getByRole("button", { name: "Copy session ID" }),
+      "Copy session ID",
+    );
+    expect(restSpan!.className).toContain("hidden");
+    expect(restSpan!.className).toContain("lg:inline");
+  });
+});
+
 describe("CopySessionIdButton — inside the TranscriptView header", () => {
   it("renders the button for an idea-anchored session and copies its sessionId", async () => {
     const writeText = installClipboard();
