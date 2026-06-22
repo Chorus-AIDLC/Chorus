@@ -24,9 +24,18 @@
 // Live updates are owned by the container (daemon-chat); this pane is presentational
 // over the already-patched `turns`.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronDown, ChevronUp, Info, Loader2, Lock, WifiOff } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Info,
+  Loader2,
+  Lock,
+  WifiOff,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +45,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { clientLogger } from "@/lib/logger-client";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -72,6 +82,48 @@ function DetailField({
         {value}
       </div>
     </div>
+  );
+}
+
+// A one-click "copy this conversation's session id" button for the header. The
+// session id IS the `claude --resume` anchor (daemon spawns idea-anchored sessions
+// with `--session-id = <idea uuid>`, and ad-hoc sessions carry a server-generated
+// uuid) — so copying it lets a human take the conversation over locally. We copy
+// the BARE id (not a `claude --resume <id>` command and not a `cd <dir> && …`): cwd
+// isn't reported yet, so a full command can't be assembled here. Mirrors the copy
+// idiom from `daemon-connect-cta.tsx` (guarded clipboard + 2s Copy→Check + a11y).
+export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
+  const t = useTranslations("daemonChat");
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      // Optional-chain so an unavailable Clipboard API (insecure context, etc.)
+      // degrades gracefully — the button just no-ops instead of throwing.
+      await navigator.clipboard?.writeText(sessionId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      clientLogger.error("Failed to copy session id:", error);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={copy}
+      aria-label={copied ? t("sessionIdCopied") : t("copySessionId")}
+      aria-live="polite"
+      className="inline-flex h-auto items-center gap-1.5 px-1.5 py-0.5 text-[12px] font-medium text-[#6B6B6B] hover:bg-transparent hover:text-[#2C2C2C]"
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-green-600" aria-hidden />
+      ) : (
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+      )}
+      {copied ? t("sessionIdCopied") : t("copySessionId")}
+    </Button>
   );
 }
 
@@ -228,20 +280,32 @@ export function TranscriptView({
                 )}
               </span>
             )}
-            {/* Connection details — DEMOTED to a collapsible disclosure that shares the
-                status line. Its trigger sits inline with the badges; the content (host /
-                version / uptime / started via the reused IdentityBlock + formatters)
-                expands below the line. A subtle leading separator divides it from the
-                status when both render on the same line. */}
-            {originConnection && (
-              <CollapsibleTrigger className="group ml-auto inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B6B6B] hover:text-[#2C2C2C]">
-                <Info className="h-3.5 w-3.5" aria-hidden />
-                {t("detailsLabel")}
-                <ChevronDown
-                  className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180"
-                  aria-hidden
-                />
-              </CollapsibleTrigger>
+            {/* Right-aligned action group — the "Copy session ID" button and the
+                "Connection details" disclosure trigger sit ADJACENT at the end of the
+                status line. `ml-auto` lives on this wrapper (not on the trigger) so the
+                two stay grouped together rather than splitting to opposite ends. The
+                copy button is gated on `session` (an offline conversation can still be
+                resumed locally, so its id is still worth copying); the details trigger
+                is gated on `originConnection` (there's nothing to disclose without it). */}
+            {(session || originConnection) && (
+              <div className="ml-auto flex items-center gap-1">
+                {session && (
+                  <CopySessionIdButton sessionId={session.sessionId} />
+                )}
+                {/* Connection details — DEMOTED to a collapsible disclosure that shares
+                    the status line. The content (host / version / uptime / started via
+                    the reused IdentityBlock + formatters) expands below the line. */}
+                {originConnection && (
+                  <CollapsibleTrigger className="group inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B6B6B] hover:text-[#2C2C2C]">
+                    <Info className="h-3.5 w-3.5" aria-hidden />
+                    {t("detailsLabel")}
+                    <ChevronDown
+                      className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180"
+                      aria-hidden
+                    />
+                  </CollapsibleTrigger>
+                )}
+              </div>
             )}
           </div>
           {originConnection && (

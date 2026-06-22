@@ -1494,7 +1494,9 @@
     "detailsHostUnknown": "未知主机",
     "detailUptime": "运行时长",
     "detailHost": "主机",
-    "detailStarted": "启动于"
+    "detailStarted": "启动于",
+    "copySessionId": "复制 session ID",
+    "sessionIdCopied": "已复制!"
   },
   "agentPresence": {
     "online": "在线",
