@@ -217,6 +217,41 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;
 
 /**
+ * Type rank for online-first ordering (ascending): online agent → offline agent → user.
+ * Reads the `online` field that enrichAgentLiveness populates, so this must run AFTER
+ * enrichment (a not-yet-enriched agent has `online === undefined`, ranking as offline).
+ */
+function rankMentionable(m: Mentionable): number {
+  if (m.type === "agent") return m.online ? 0 : 1;
+  return 2;
+}
+
+/**
+ * Pure comparator for the @mention candidate list. Sorts (ascending):
+ * 1. By type rank: online agent (0) → offline agent (1) → user (2).
+ * 2. Among online agents (rank 0): by `activeCount` ascending (idle first), then by
+ *    `name.localeCompare` ascending as a deterministic tie-break.
+ * 3. Otherwise (same rank: offline agents, or users) returns 0 — relies on
+ *    `Array.prototype.sort` stability (Node ≥11 / ES2019) to preserve insertion order.
+ *
+ * Exported as a pure function for unit testing without a prisma mock. Must be applied
+ * after enrichAgentLiveness, since it reads `online` / `activeCount`.
+ */
+export function compareMentionables(a: Mentionable, b: Mentionable): number {
+  const ra = rankMentionable(a);
+  const rb = rankMentionable(b);
+  if (ra !== rb) return ra - rb;
+  if (ra === 0) {
+    // Both online agents: idle first, then deterministic name tie-break.
+    const ca = a.activeCount ?? 0;
+    const cb = b.activeCount ?? 0;
+    if (ca !== cb) return ca - cb;
+    return a.name.localeCompare(b.name);
+  }
+  return 0; // offline agents / users: keep stable (insertion) order.
+}
+
+/**
  * Enrich agent candidates in place with daemon liveness: `online` + `activeCount`.
  *
  * Resolves both in BATCH over the given agent uuids (two queries total, both
@@ -322,7 +357,10 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
           roles: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: Math.min(DEFAULT_EMPTY_QUERY_LIMIT, effectiveLimit),
+        // Widen the candidate pool to effectiveLimit (was min(5, effectiveLimit)):
+        // an online agent that is NOT among the most recently created few must
+        // still be eligible to climb to the top via the online-first sort below.
+        take: effectiveLimit,
       });
 
       for (const agent of agents) {
@@ -335,9 +373,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       }
     }
 
-    // Enrich the (agent-only) empty-query results with liveness before returning.
+    // enrich → sort (online-first) → slice. Enrich the full agent candidate pool,
+    // then order online agents to the front, then trim to the display cap (≤5).
     await enrichAgentLiveness(companyUuid, results);
-    return results;
+    results.sort(compareMentionables);
+    return results.slice(0, Math.min(DEFAULT_EMPTY_QUERY_LIMIT, effectiveLimit));
   }
   // Search users (all company users are mentionable)
   const users = await prisma.user.findMany({
@@ -390,7 +430,10 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       name: true,
       roles: true,
     },
-    take: effectiveLimit - results.length > 0 ? effectiveLimit - results.length : effectiveLimit,
+    // Take the full effectiveLimit (NOT effectiveLimit - results.length): the agent
+    // candidate pool must be large enough that online agents survive the slice even
+    // when many matching users were inserted first. Online-first sort happens below.
+    take: effectiveLimit,
   });
 
   for (const agent of agents) {
@@ -402,11 +445,12 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     });
   }
 
-  const sliced = results.slice(0, effectiveLimit);
-  // Enrich only the agents that survive the slice (liveness queries are scoped to
-  // what we actually return).
-  await enrichAgentLiveness(companyUuid, sliced);
-  return sliced;
+  // enrich → sort → slice. Enrich the FULL candidate pool (so liveness is known for
+  // every agent), order online agents to the front, THEN trim to the display limit —
+  // this is what keeps online agents from being sliced out by a flood of users.
+  await enrichAgentLiveness(companyUuid, results);
+  results.sort(compareMentionables);
+  return results.slice(0, effectiveLimit);
 }
 
 /**

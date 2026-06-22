@@ -1,5 +1,82 @@
 import { describe, it, expect } from "vitest";
-import { parseMentions } from "@/services/mention.service";
+import {
+  parseMentions,
+  compareMentionables,
+  type Mentionable,
+} from "@/services/mention.service";
+
+// ===== Test helpers =====
+
+function onlineAgent(name: string, activeCount: number): Mentionable {
+  return { type: "agent", uuid: `${name}-uuid`, name, online: true, activeCount };
+}
+function offlineAgent(name: string): Mentionable {
+  return { type: "agent", uuid: `${name}-uuid`, name, online: false, activeCount: 0 };
+}
+function user(name: string): Mentionable {
+  return { type: "user", uuid: `${name}-uuid`, name };
+}
+
+// ===== compareMentionables (pure comparator) =====
+
+describe("compareMentionables", () => {
+  it("ranks an online agent before a user", () => {
+    expect(compareMentionables(onlineAgent("Bot", 0), user("Alice"))).toBeLessThan(0);
+    expect(compareMentionables(user("Alice"), onlineAgent("Bot", 0))).toBeGreaterThan(0);
+  });
+
+  it("ranks an online agent before an offline agent", () => {
+    expect(compareMentionables(onlineAgent("Bot", 0), offlineAgent("Idle"))).toBeLessThan(0);
+    expect(compareMentionables(offlineAgent("Idle"), onlineAgent("Bot", 0))).toBeGreaterThan(0);
+  });
+
+  it("ranks an offline agent before a user", () => {
+    expect(compareMentionables(offlineAgent("Idle"), user("Alice"))).toBeLessThan(0);
+    expect(compareMentionables(user("Alice"), offlineAgent("Idle"))).toBeGreaterThan(0);
+  });
+
+  it("orders two online agents by activeCount ascending (idle first)", () => {
+    expect(compareMentionables(onlineAgent("Busy", 2), onlineAgent("Free", 0))).toBeGreaterThan(0);
+    expect(compareMentionables(onlineAgent("Free", 0), onlineAgent("Busy", 2))).toBeLessThan(0);
+  });
+
+  it("tie-breaks two online agents with equal activeCount by name (localeCompare asc)", () => {
+    expect(compareMentionables(onlineAgent("Bravo", 1), onlineAgent("Alpha", 1))).toBeGreaterThan(0);
+    expect(compareMentionables(onlineAgent("Alpha", 1), onlineAgent("Bravo", 1))).toBeLessThan(0);
+  });
+
+  it("treats missing activeCount on an online agent as 0", () => {
+    const noCount: Mentionable = { type: "agent", uuid: "x", name: "X", online: true };
+    // noCount (0) should precede an agent with activeCount 1
+    expect(compareMentionables(noCount, onlineAgent("Y", 1))).toBeLessThan(0);
+  });
+
+  it("returns 0 for two offline agents (same rank → stable order preserved)", () => {
+    expect(compareMentionables(offlineAgent("A"), offlineAgent("B"))).toBe(0);
+  });
+
+  it("returns 0 for two users (same rank → stable order preserved)", () => {
+    expect(compareMentionables(user("A"), user("B"))).toBe(0);
+  });
+
+  it("sorts a mixed list online-first, then offline agents, then users", () => {
+    const list: Mentionable[] = [
+      user("Zoe"),
+      offlineAgent("OffBot"),
+      onlineAgent("BusyBot", 3),
+      user("Amy"),
+      onlineAgent("IdleBot", 0),
+    ];
+    const sorted = [...list].sort(compareMentionables);
+    expect(sorted.map((m) => m.name)).toEqual([
+      "IdleBot", // online, activeCount 0
+      "BusyBot", // online, activeCount 3
+      "OffBot", // offline agent
+      "Zoe", // user (stable: came before Amy)
+      "Amy",
+    ]);
+  });
+});
 
 // ===== parseMentions =====
 
