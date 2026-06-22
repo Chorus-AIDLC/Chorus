@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, self-chec
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -183,6 +183,8 @@ chorus_submit_for_verify({
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
 > **Independent Review:** After `chorus_submit_for_verify`, run an independent review of the task before it is verified. Spawn a read-only sub-agent that loads the `task-reviewer-chorus` skill (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`), pass it the `taskUuid`, and let it post a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the task; then read it with `chorus_get_comments` and act. The verdict is **advisory** (it does not block verification). The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
+
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Spawn a read-only sub-agent that loads the `code-reviewer-chorus` skill (`<BASE_URL>/skill/code-reviewer-chorus/SKILL.md`), pass it the `ideaUuid` + round number, and let it review the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and post one `VERDICT` comment on the **Idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it, execute → verify them, then re-run the gateway. Do **not** reopen the already-verified tasks. The plugin's post-verify hook injects this reminder automatically; the verdict is **advisory** (same canonical pattern). Run it **before** writing any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 

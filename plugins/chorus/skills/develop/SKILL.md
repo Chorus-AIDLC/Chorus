@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -236,6 +236,8 @@ chorus_submit_for_verify({
 > ```
 >
 > Why not `agent_type="chorus-task-reviewer"`? Codex 0.125 only has three built-in roles (default / explorer / worker); custom review personas are loaded by mounting the skill. The reviewer posts a `VERDICT:` comment on the task.
+
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the PostToolUse hook injects a reminder to run the ship-time code-review gateway. Spawn it the same way, mounting `chorus:chorus-code-reviewer` and passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks), then execute → verify and re-run the gateway. Advisory/behavioral, same as the other reviewers. Run it **before** any idea-completion report.
 
 After the reviewer completes, read its VERDICT:
 ```

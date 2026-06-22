@@ -92,15 +92,23 @@ The plugin includes a `.mcp.json` template that configures the Chorus MCP server
 
 ```
 public/chorus-plugin/                # Plugin root
-├── .claude-plugin/plugin.json
+├── .claude-plugin/plugin.json       # incl. userConfig: enable{Proposal,Task,Code}Reviewer + max*ReviewRounds
 ├── hooks/hooks.json
+├── agents/                          # Read-only reviewer sub-agents (VERDICT: PASS / PASS WITH NOTES / FAIL)
+│   ├── proposal-reviewer.md         # after chorus_pm_submit_proposal → verdict on the proposal
+│   ├── task-reviewer.md             # after chorus_submit_for_verify → verdict on the task
+│   └── code-reviewer.md             # final ship gateway: Idea's aggregate change → verdict on the idea
 ├── bin/                             # Hook scripts
 │   ├── chorus-api.sh               # Shared API + state + session file helpers
 │   ├── on-session-start.sh         # SessionStart: checkin + session discovery
 │   ├── on-subagent-start.sh        # SubagentStart: create session + write file (SYNC)
 │   ├── on-subagent-stop.sh         # SubagentStop: checkout tasks + close + cleanup
 │   ├── on-teammate-idle.sh         # TeammateIdle: heartbeat
-│   └── on-task-completed.sh        # TaskCompleted: checkout via metadata bridge
+│   ├── on-task-completed.sh        # TaskCompleted: checkout via metadata bridge
+│   ├── on-post-submit-proposal.sh  # PostToolUse: remind to spawn proposal-reviewer
+│   ├── on-post-submit-for-verify.sh # PostToolUse: remind to spawn task-reviewer
+│   ├── on-post-verify-task.sh      # PostToolUse: archive (A) + code-review gateway (C) + completion report (B) reminders
+│   └── tests/                       # Fixture-based hook tests (test-on-post-verify-task.sh)
 ├── skills/chorus/                   # Skill files
 │   ├── SKILL.md
 │   ├── package.json

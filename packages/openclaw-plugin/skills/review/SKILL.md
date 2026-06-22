@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -64,16 +64,16 @@ Key responsibilities:
 
 ## Review Strategy
 
-When reviewing proposals or tasks, get an independent VERDICT before approving/verifying. On OpenClaw there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
+When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On OpenClaw there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
 
-1. **Preferred — spawn a reviewer sub-agent.** Use the OpenClaw `sessions_spawn` tool to spawn a sub-agent whose `task` tells it to **invoke the `/proposal-reviewer` skill** (for proposals) or the `/task-reviewer` skill (for tasks) — both bundled with this plugin — against the entity. Wait for it (poll the `subagents` tool or use `sessions_yield` — do NOT detach; you must have the VERDICT before proceeding). The sub-agent inherits the plugin skills, so the reviewer skill is available to it; it posts a VERDICT comment with detailed findings. Example task prompt: `Run the /proposal-reviewer skill to review proposalUuid <uuid>; post your VERDICT comment when done.`
+1. **Preferred — spawn a reviewer sub-agent.** Use the OpenClaw `sessions_spawn` tool to spawn a sub-agent whose `task` tells it to **invoke the `/proposal-reviewer` skill** (for proposals), the `/task-reviewer` skill (for tasks), or the `/code-reviewer` skill (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) — all bundled with this plugin — against the entity. Wait for it (poll the `subagents` tool or use `sessions_yield` — do NOT detach; you must have the VERDICT before proceeding). The sub-agent inherits the plugin skills, so the reviewer skill is available to it; it posts a VERDICT comment with detailed findings. Example task prompt: `Run the /proposal-reviewer skill to review proposalUuid <uuid>; post your VERDICT comment when done.`
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
-   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). Fix the specific BLOCKERs listed in the comment before resubmitting.
+   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Fix the specific BLOCKERs listed in the comment before resubmitting.
 3. **No new VERDICT comment?** The sub-agent exhausted its turn budget before posting. Respawn it ONCE with an explicit prompt like: *"Stay within your turn budget. Skip deep source verification — batch all MCP fetches up front, skim for obvious BLOCKERs only, and reserve your last few turns to post the VERDICT comment."* If the second attempt also fails to post, review manually (step 5).
 4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
-5. **Fallback — review it yourself (no `sessions_spawn` on the host).** If spawning is unavailable (disabled by policy, or the spawn fails), perform the review yourself as a **focused, read-only pass** using the quality checklists in the workflows below: read the entity, its comments, and the relevant documents/code, run read-only test/build commands where applicable, and do NOT modify anything. Then record your VERDICT via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL), classifying every finding as BLOCKER or NOTE. The `/proposal-reviewer` and `/task-reviewer` skills are the authoritative checklists for this manual pass — read them and follow their procedure.
+5. **Fallback — review it yourself (no `sessions_spawn` on the host).** If spawning is unavailable (disabled by policy, or the spawn fails), perform the review yourself as a **focused, read-only pass** using the quality checklists in the workflows below: read the entity, its comments, and the relevant documents/code, run read-only test/build commands where applicable, and do NOT modify anything. Then record your VERDICT via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL), classifying every finding as BLOCKER or NOTE. The `/proposal-reviewer`, `/task-reviewer`, and `/code-reviewer` skills are the authoritative checklists for this manual pass — read the relevant one and follow its procedure.
 
 ---
 

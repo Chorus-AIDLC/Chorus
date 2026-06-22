@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -308,12 +308,14 @@ The table below shows default tool availability for each preset (no custom permi
 
 ### 5. Review Agent Configuration
 
-The plugin includes two independent review agents. After proposal submission or task verification, a PostToolUse hook injects context instructing the main agent to spawn the reviewer. The main agent must spawn it manually — it is NOT auto-launched. Both are **enabled by default**.
+The plugin includes three independent review agents. After proposal submission, task verification, or the last task of an idea-rooted proposal being verified, a PostToolUse hook injects context instructing the main agent to spawn the reviewer. The main agent must spawn it manually — it is NOT auto-launched. All are **enabled by default**.
 
 | Setting | Controls | Default |
 |---------|----------|---------|
 | `enableProposalReviewer` | Spawn `chorus:proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
 | `enableTaskReviewer` | Spawn `chorus:task-reviewer` after `chorus_submit_for_verify` | `true` (enabled) |
+| `enableCodeReviewer` | Spawn `chorus:code-reviewer` over the Idea's aggregate change after its last task is verified (final ship gateway) | `true` (enabled) |
+| `maxCodeReviewRounds` | Max code-review rounds before escalating to a human (0 = unlimited) | `3` |
 
 To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.claude/settings.json`:
 
@@ -323,14 +325,15 @@ To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.c
     "chorus@chorus-plugins": {
       "options": {
         "enableProposalReviewer": false,
-        "enableTaskReviewer": false
+        "enableTaskReviewer": false,
+        "enableCodeReviewer": false
       }
     }
   }
 }
 ```
 
-When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval or verification. Disabling reduces token usage but removes the independent quality gate.
+When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus:quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Disabling reduces token usage but removes the independent quality gate.
 
 ---
 

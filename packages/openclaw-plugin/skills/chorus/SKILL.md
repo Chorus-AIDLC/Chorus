@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -306,11 +306,11 @@ The table below shows default tool availability for each preset (no custom permi
 
 ### 5. Review Skills
 
-The plugin bundles two independent **review skills**: `/proposal-reviewer` and `/task-reviewer`. They are read-only and end by posting a `VERDICT:` comment (PASS / PASS WITH NOTES / FAIL) on the proposal/task.
+The plugin bundles three independent **review skills**: `/proposal-reviewer`, `/task-reviewer`, and `/code-reviewer`. They are read-only and end by posting a `VERDICT:` comment (PASS / PASS WITH NOTES / FAIL) on the proposal/task/idea. `/code-reviewer` is the **final ship-time gateway**: after an Idea's last task is verified it reviews the Idea's **aggregate code change** (the whole feature across all its tasks) and posts its VERDICT on the **idea**.
 
-**How review runs on OpenClaw.** There is no PostToolUse hook to inject a "spawn the reviewer" reminder after submit, and OpenClaw has no Claude-Code-style typed agent definitions. Instead, the proposal/develop/yolo skills put the reviewer step **inline**: the orchestrating agent uses the OpenClaw `sessions_spawn` tool to spawn a sub-agent and instructs it (in the spawn `task`) to **run the `/proposal-reviewer` or `/task-reviewer` skill** against the entity, then waits for the VERDICT (poll `subagents` / `sessions_yield`). Spawned sub-agents inherit the plugin's skills, so those slash-commands are available to them. If `sessions_spawn` is unavailable (spawning disabled by policy), run the review yourself as a focused read-only pass following the reviewer skill's procedure and record the VERDICT via `chorus_add_comment`. See the relevant stage skill for the exact procedure.
+**How review runs on OpenClaw.** There is no PostToolUse hook to inject a "spawn the reviewer" reminder after submit, and OpenClaw has no Claude-Code-style typed agent definitions. Instead, the proposal/develop/yolo skills put the reviewer step **inline**: the orchestrating agent uses the OpenClaw `sessions_spawn` tool to spawn a sub-agent and instructs it (in the spawn `task`) to **run the `/proposal-reviewer`, `/task-reviewer`, or `/code-reviewer` skill** against the entity (passing the `ideaUuid` for code review), then waits for the VERDICT (poll `subagents` / `sessions_yield`). Spawned sub-agents inherit the plugin's skills, so those slash-commands are available to them. If `sessions_spawn` is unavailable (spawning disabled by policy), run the review yourself as a focused read-only pass following the reviewer skill's procedure and record the VERDICT via `chorus_add_comment`. See the relevant stage skill for the exact procedure.
 
-Results are advisory — they do not hard-block approval or verification, but you should act on a FAIL by fixing the listed BLOCKERs before proceeding.
+Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, fix it via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it (do not reopen old tasks), then execute → verify and re-run.
 
 ---
 

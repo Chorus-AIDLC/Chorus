@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -477,6 +477,40 @@ Continue with remaining tasks -- do not halt the entire pipeline for one stuck t
 
 ---
 
+### Phase 4.5: Code-Review Gateway (mandatory pre-ship)
+
+Once **every** task of the idea's proposal is verified (`done`) — Phase 3 finds no more unblocked tasks and none remain non-terminal — run the final ship-time code-review gateway **before** the Phase 5b completion report. It reviews the **whole Idea's aggregate code change** across all tasks (not a single task) and posts its verdict on the **Idea**. After the last task is verified, the PostToolUse hook injects a reminder to spawn it.
+
+The code-reviewer is a SKILL, not a built-in agent_type — mount it into a default sub-agent and wait for it:
+
+```
+reviewer = spawn_agent(agent_type="default", items=[
+    { type: "skill", name: "Chorus Code Reviewer", path: "chorus:chorus-code-reviewer" },
+    { type: "text", text: "Review the aggregate code for idea <idea-uuid>. Round: N." }
+])
+wait_agent([reviewer])
+close_agent(reviewer)   # release the thread slot (Codex caps concurrent agents at 6)
+
+# Read the VERDICT on the IDEA
+comments = chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
+```
+
+Act on the VERDICT:
+
+- **PASS** / **PASS WITH NOTES** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
+- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`$quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Drive them through Phase 3 → Phase 4, then re-spawn the code-reviewer for the next round. Loop bounded by `maxCodeReviewRounds` (default 3; 0 = unlimited).
+
+```
+ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
+           Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
+```
+
+**No new VERDICT after the code-reviewer returns?** It exhausted its `maxTurns` budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, treat as PASS WITH NOTES and proceed.
+
+> The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
+
+---
+
 ### Phase 5: Report
 
 After all waves complete, output a markdown summary:
@@ -507,6 +541,8 @@ After all waves complete, output a markdown summary:
 ### Phase 5b: Idea Completion Report (mandatory)
 
 A successful `$yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The tool's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
+
+> **Order:** write the completion report only **after** the Phase 4.5 code-review gateway returns PASS / PASS WITH NOTES — never while a code-review FAIL is outstanding.
 
 ---
 

@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -236,6 +236,8 @@ Find the most recent comment containing `VERDICT:` and act on it:
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
 If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its `maxTurns` budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the PostToolUse hook injects a reminder to spawn `chorus:code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it yourself in **foreground**, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/chorus:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks), then re-run the gateway, bounded by `maxCodeReviewRounds`. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 

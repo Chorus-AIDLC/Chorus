@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — drive a single prompt from Idea throu
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -25,6 +25,7 @@ You take a natural-language description of what to build, and you handle everyth
 2. **Proposal Review** — adversarial review loop against the `proposal-reviewer-chorus` skill.
 3. **Execution** — dependency-ordered, wave-based task dispatch.
 4. **Verification** — adversarial review loop against the `task-reviewer-chorus` skill + admin verify.
+4.5. **Code-Review Gateway** — adversarial review loop against the `code-reviewer-chorus` skill over the Idea's aggregate change, before ship (FAIL → add fix tasks → re-run).
 5. **Report** — completion summary + a mandatory Idea Completion Report.
 
 ```
@@ -46,6 +47,9 @@ Wave-based Execution  --  chorus_get_unblocked_tasks
 Verification loop  (up to maxTaskReviewRounds, default 3)
    |   PASS / PASS WITH NOTES -> mark AC + verify ;  FAIL -> reopen
    |   verify unblocks dependents -> loop back to Execution
+   v
+Code-Review Gateway  (all tasks done; up to maxCodeReviewRounds, default 3)
+   |   PASS / PASS WITH NOTES -> ship ;  FAIL -> add fix tasks -> Execution -> re-run
    v
 Done  -->  Report summary + mandatory Idea Completion Report
 ```
@@ -453,6 +457,33 @@ After verifying every task in the wave, return to **Phase 3** and re-run `chorus
 
 ---
 
+### Phase 4.5: Code-Review Gateway (mandatory pre-ship)
+
+Once **every** task of the idea's proposal is verified (`done`) — Phase 3 finds no more unblocked tasks and none remain non-terminal — run the final ship-time code-review gateway **before** the Phase 5b completion report. This is the same **Independent Review pattern** as Phases 2 and 4, pointed at the `code-reviewer-chorus` skill — but it reviews the **whole Idea's aggregate code change** (across all tasks), not a single task, and posts its verdict on the **Idea**.
+
+> **Independent Review pattern (framework-neutral).** Spawn a **read-only** sub-agent and have it load the `code-reviewer-chorus` skill (`<BASE_URL>/skill/code-reviewer-chorus/SKILL.md`), pass it the `ideaUuid` and the current review round number, and instruct it to post exactly one `VERDICT` comment on the **idea**. It reviews cross-task integration, architecture/convention consistency, security, regression/performance, and feature-level test coverage — dimensions a single-task review cannot see — and may run read-only tests/build/lint, but never writes. After it returns, read the verdict via `chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })`.
+>
+> - Claude Code: dispatch a read-only sub-agent with the Task/Agent tool, mounting the `code-reviewer-chorus` skill.
+> - Codex: `spawn_agent` with the `code-reviewer-chorus` skill and the `ideaUuid`.
+
+> **Inline self-review fallback (no sub-agents available).** Perform the review inline as the main agent: read `code-reviewer-chorus`, follow its procedure (fetch the idea, its approved proposals + documents + tasks; infer the aggregate diff from task reports + `git log/diff`; review the six whole-feature dimensions; run the project's build/test), and post your own `VERDICT` comment on the idea.
+
+Act on the verdict:
+
+- **`VERDICT: PASS` / `PASS WITH NOTES`** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
+- **`VERDICT: FAIL`** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (not standalone) — do **not** reopen the already-verified tasks. Drive the fix tasks through Phase 3 → Phase 4, then re-spawn the code-reviewer for the next round. Loop bounded by `maxCodeReviewRounds` (default **3**; 0 = unlimited).
+
+```
+ESCALATE: "Idea '<title>' failed code review after 3 rounds. Last BLOCKERs: <list>.
+           Manual intervention needed. Idea UUID: <idea-uuid>."
+```
+
+**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (it carries a larger budget than the task-reviewer because it reviews the whole feature). Respawn it once with a concise-budget hint; if still none, treat as **PASS WITH NOTES** and proceed — do not loop forever.
+
+> The gateway is **behavioral**, consistent with the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
+
+---
+
 ### Phase 5: Report
 
 When all waves complete, output a markdown summary:
@@ -485,6 +516,8 @@ When all waves complete, output a markdown summary:
 
 A successful yolo run always finishes the Idea. Call `chorus_create_report` **exactly once**, with `proposalUuid` set to the **last verified proposal**. The tool's own description carries the section template — follow it. Surface the returned `documentUuid` in the Phase 5 summary table. Skipping this is a protocol violation.
 
+> **Order:** write the completion report only **after** the Phase 4.5 code-review gateway returns PASS / PASS WITH NOTES. Never write it while a code-review FAIL is outstanding — the report is a ship-time summary, and the gateway is what clears the feature to ship.
+
 ```
 result = chorus_create_report({
   proposalUuid: "<last-verified-proposal-uuid>",
@@ -503,6 +536,7 @@ result = chorus_create_report({
 | Project creation fails | Report the error; suggest the user create the project manually and rerun with an existing-project hint. |
 | Proposal review FAILs after `maxProposalReviewRounds` (3) | Stop the pipeline; report the persisting BLOCKERs; recommend manual review of the proposal. |
 | Task review FAILs after `maxTaskReviewRounds` (3) | Flag the task as escalation-needed; continue with the other tasks. |
+| Code-review gateway FAILs after `maxCodeReviewRounds` (3) | Stop before ship; escalate the persisting feature-level BLOCKERs to a human (Idea UUID); do not write the completion report. |
 | Reviewer returns no VERDICT | Respawn the reviewer once with a concise-budget hint; if still none, treat as PASS WITH NOTES and proceed. |
 | Worker crashes / never submits | Log it, leave the task non-`to_verify`; re-pick it in a later wave or escalate if it stays stuck. |
 | No unblocked tasks but some not done | Stuck DAG (failed reviews or bad dependencies). Break with an escalation report; do not loop. |

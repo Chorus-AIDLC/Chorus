@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -433,6 +433,29 @@ Continue with remaining tasks -- do not halt the entire pipeline for one stuck t
 
 ---
 
+### Phase 4.5: Code-Review Gateway (mandatory pre-ship)
+
+Once **every** task of the idea's proposal is verified (`done`) — Phase 3 finds no more unblocked tasks and none remain non-terminal — run the final ship-time code-review gateway **before** the Phase 5b completion report. It reviews the **whole Idea's aggregate code change** across all tasks (not a single task) and posts its verdict on the **idea**. Inline (no hook on OpenClaw), same mechanism as Phase 4:
+
+- **Preferred — spawn a reviewer sub-agent.** Use `sessions_spawn` to spawn a sub-agent whose `task` tells it to **invoke the `/code-reviewer` skill** against the idea, then wait for it (poll `subagents` / `sessions_yield` — do NOT detach). Example task prompt: `Run the /code-reviewer skill to review the aggregate code for ideaUuid <uuid> (round <N>); post your VERDICT comment on the idea when done.`
+- **Fallback — review it yourself.** If `sessions_spawn` is unavailable, perform the review as a focused read-only pass following the `/code-reviewer` procedure (read the idea, its approved proposals + documents + tasks; infer the aggregate diff from task reports + `git log/diff`; review cross-task integration, architecture, security, regression, feature-level coverage; run the project build/test) and post the `VERDICT:` comment on the idea yourself.
+
+Act on the VERDICT:
+
+- **PASS** / **PASS WITH NOTES** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
+- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`/quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Drive them through Phase 3 → Phase 4, then re-run the gateway for the next round. Loop bounded by `maxCodeReviewRounds` (default 3; 0 = unlimited).
+
+```
+ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
+           Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
+```
+
+**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, fall back to a manual read-only pass and post the VERDICT yourself.
+
+> The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
+
+---
+
 ### Phase 5: Report
 
 After all waves complete, output a markdown summary:
@@ -463,6 +486,8 @@ After all waves complete, output a markdown summary:
 ### Phase 5b: Idea Completion Report (mandatory)
 
 A successful `/yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The tool's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
+
+> **Order:** write the completion report only **after** the Phase 4.5 code-review gateway returns PASS / PASS WITH NOTES — never while a code-review FAIL is outstanding.
 
 > **OpenSpec archive:** if you ran in OpenSpec mode (Step 1.4 branch 2a), the last verified task also triggers the archive flow. OpenClaw has no PostToolUse hook to remind you — after verifying the final task, run `openspec-aware` §3.9 yourself (`openspec archive <slug> --yes`, then mirror each emitted `openspec/specs/<capability>/spec.md` back via §3.8).
 

@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -204,6 +204,17 @@ Before marking acceptance criteria and verifying, run an independent review of t
 The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
 
 > **VERDICT is advisory** — a `FAIL` does not block verification and a `PASS` does not auto-verify. The admin reads the review comment, marks the acceptance criteria, and makes the final decision.
+
+#### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
+
+When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. Spawn a read-only sub-agent that loads the `code-reviewer-chorus` skill (`<BASE_URL>/skill/code-reviewer-chorus/SKILL.md`), pass it the `ideaUuid` + round number, and let it review the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, and feature-level test coverage — dimensions a single-task review cannot see. It posts one `VERDICT` comment on the **Idea**; read it with `chorus_get_comments({ targetType: "idea", targetUuid })` before deciding.
+
+- `PASS` / `PASS WITH NOTES` → the feature may ship.
+- `FAIL` → fix via the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it, targeting the BLOCKERs — do **not** reopen the already-verified tasks — then execute → verify them and re-run the gateway (next round), bounded by `maxCodeReviewRounds`.
+
+The plugin's post-verify hook injects this reminder automatically on the last-task verify. The spawn mechanism is harness-specific with an inline fallback — see the canonical **Independent Review** section in the `chorus` skill.
+
+> **VERDICT is advisory / behavioral** — the gateway does not change the Idea's stored status; the orchestrator honors its verdict. Run it **before** writing any idea-completion report (the report must not be written while a `FAIL` is outstanding).
 
 #### B3: Mark Acceptance Criteria
 

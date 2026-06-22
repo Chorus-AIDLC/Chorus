@@ -2,7 +2,7 @@
 # on-post-verify-task.sh — Codex PostToolUse hook for chorus_admin_verify_task.
 #
 # Mirrors the Claude Code variant at
-# public/chorus-plugin/bin/on-post-verify-task.sh. Two independent
+# public/chorus-plugin/bin/on-post-verify-task.sh. Three independent
 # reminder branches share the post-verify trigger:
 #
 #   Branch A — OpenSpec archive trigger (legacy)
@@ -13,6 +13,13 @@
 #     exists, `openspec` CLI on PATH, proposal description matches
 #     ^OpenSpec change slug:, every task under that proposal is done.
 #
+#   Branch C — Code-review gateway reminder
+#     Tells the agent to spawn the code-reviewer for the idea — the final
+#     ship-time review of the idea's AGGREGATE code change (the whole
+#     feature across all its tasks). Gates: CLAUDE_PLUGIN_OPTION_
+#     ENABLECODEREVIEWER=true (default), proposal inputType=="idea", every
+#     task of THIS proposal done/closed. Read-only — emits a reminder only.
+#
 #   Branch B — Idea-completion report reminder
 #     Tells the agent to call `chorus_create_report` when this proposal
 #     is finished and has no report Document yet. Two checks: all tasks
@@ -22,8 +29,10 @@
 #
 # Each branch is computed independently into its own context variable;
 # any non-empty contexts are concatenated and emitted as one
-# `additionalContext` payload at the end. Branch B is read-only — it
-# never calls `chorus_create_report` or any other mutation tool.
+# `additionalContext` payload at the end, in order [A archive][C code
+# review][B completion report] — code review precedes the completion
+# report. Branches B and C are read-only — they never call a mutation
+# tool; they only inject a reminder.
 #
 # Bash 3.2 compatible (per CLAUDE.md pitfall #10).
 #
@@ -243,21 +252,85 @@ ACTION REQUESTED: create idea-completion report for this Idea. Call \`chorus_cre
 CTX
 }
 
-# ===== Run both branches and emit combined output =====
+# ===== Branch C: Code-review gateway reminder =====
+#
+# Fires when the last task of an idea-rooted proposal is verified and the
+# code-reviewer is enabled. Tells the agent to spawn the code-reviewer for
+# the idea — the final ship-time review of the idea's AGGREGATE code change
+# (the whole feature across all its tasks), not a single task.
+# Read-only — emits a reminder only; never posts a comment or mutates.
+# Gated by enableCodeReviewer (default true); only idea-rooted proposals.
+branch_code_review() {
+  # Config toggle — default enabled.
+  if [ "${CLAUDE_PLUGIN_OPTION_ENABLECODEREVIEWER:-true}" != "true" ]; then
+    return 0
+  fi
+
+  # Only idea-rooted proposals get a code-review gateway.
+  local input_type
+  input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true
+  if [ "$input_type" != "idea" ]; then
+    return 0
+  fi
+
+  # Resolve the idea UUID from the proposal's inputUuids (first idea).
+  local idea_uuid
+  idea_uuid=$(printf '%s' "$PROPOSAL_JSON" | jq -r '(.inputUuids // [])[0] // empty' 2>/dev/null) || true
+  if [ -z "$idea_uuid" ]; then
+    return 0
+  fi
+
+  # All tasks of this proposal must be terminal. Same pageSize=200 +
+  # total>returned pagination guard as Branch B.
+  local tasks_json non_terminal_count tasks_total tasks_returned
+  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  [ -n "$tasks_json" ] || return 0
+  tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
+  tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
+  if [ -n "$tasks_total" ] && [ -n "$tasks_returned" ] && [ "$tasks_total" -gt "$tasks_returned" ]; then
+    return 0
+  fi
+  # Defensive: zero-task proposal -> skip.
+  if [ -z "$tasks_returned" ] || [ "$tasks_returned" -eq 0 ]; then
+    return 0
+  fi
+  non_terminal_count=$(printf '%s' "$tasks_json" | jq -r '[(.tasks // [])[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 0
+  [ "$non_terminal_count" = "0" ] || return 0
+
+  # Emit the reminder. The literal substring `spawn code-reviewer` is the
+  # contract grep target asserted by the regression test.
+  cat <<CTX
+[Chorus — Code-Review Gateway Trigger]
+All tasks of idea-rooted proposal ${PROPOSAL_UUID} are now done. This is the final ship-time gateway for idea ${idea_uuid}.
+
+ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task. Mount the chorus-code-reviewer skill into a default sub-agent (spawn_agent), passing ideaUuid="${idea_uuid}" and the review round number (read prior code-review verdict comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea. Read its VERDICT (chorus_get_comments targetType="idea"): PASS / PASS WITH NOTES -> may ship; FAIL -> create new fix tasks on this approved proposal (do NOT reopen old tasks), and once done re-run the code-reviewer (bounded by maxCodeReviewRounds). Run the code-review gateway BEFORE writing any idea-completion report.
+CTX
+}
+
+# ===== Run all branches and emit combined output =====
 
 OPENSPEC_CONTEXT=$(branch_openspec_archive || true)
+CODEREVIEW_CONTEXT=$(branch_code_review || true)
 REPORT_CONTEXT=$(branch_idea_report_reminder || true)
 
+# Join any non-empty reminders with a blank-line separator, in order
+# [OpenSpec archive][code review][completion report] — code review
+# precedes the completion report (the report must not be written while a
+# code-review FAIL is outstanding).
 COMBINED=""
-if [ -n "$OPENSPEC_CONTEXT" ] && [ -n "$REPORT_CONTEXT" ]; then
-  COMBINED="${OPENSPEC_CONTEXT}
+append_context() {
+  [ -n "$1" ] || return 0
+  if [ -n "$COMBINED" ]; then
+    COMBINED="${COMBINED}
 
-${REPORT_CONTEXT}"
-elif [ -n "$OPENSPEC_CONTEXT" ]; then
-  COMBINED="$OPENSPEC_CONTEXT"
-elif [ -n "$REPORT_CONTEXT" ]; then
-  COMBINED="$REPORT_CONTEXT"
-fi
+$1"
+  else
+    COMBINED="$1"
+  fi
+}
+append_context "$OPENSPEC_CONTEXT"
+append_context "$CODEREVIEW_CONTEXT"
+append_context "$REPORT_CONTEXT"
 
 if [ -n "$COMBINED" ]; then
   hook_output "" "$COMBINED" "PostToolUse"

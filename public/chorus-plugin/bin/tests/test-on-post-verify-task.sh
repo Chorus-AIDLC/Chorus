@@ -12,8 +12,9 @@
 # hook into a sandbox dir alongside our shim wrapper — the hook's
 # `dirname "$0"` lookup then picks up our shim, not the real wrapper.
 #
-# Two independent reminder branches share the post-verify trigger:
+# Three independent reminder branches share the post-verify trigger:
 #   - Branch A (OpenSpec archive trigger) — emits `openspec archive`
+#   - Branch C (Code-review gateway)      — emits `spawn code-reviewer`
 #   - Branch B (Idea-completion report)   — emits `create idea-completion report`
 #
 # Fixtures for Branch A (legacy):
@@ -116,6 +117,10 @@ case "$cmd" in
     fixture="${CHORUS_FIXTURE:-positive}"
     case "$fixture" in
       mode-off|no-folder|no-cli) fixture=positive ;;
+      # codereview-toggle-off uses the same canned data as codereview-positive;
+      # the difference is the CLAUDE_PLUGIN_OPTION_ENABLECODEREVIEWER=false env
+      # set by the runner, which must make Branch C silent on otherwise-firing data.
+      codereview-toggle-off) fixture=codereview-positive ;;
     esac
     case "${fixture}:${tool}" in
       # ----- Branch A fixtures (existing) -----
@@ -245,6 +250,68 @@ case "$cmd" in
         echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
         ;;
 
+      # ----- Branch C fixtures (code-review gateway reminder) -----
+      # codereview-positive: idea-rooted proposal, all tasks done, a report
+      # Document already exists (so Branch B is silent) -> ONLY Branch C
+      # fires, isolating the `spawn code-reviewer` assertion.
+      codereview-positive:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      codereview-positive:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      codereview-positive:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      codereview-positive:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        ;;
+
+      # codereview-not-idea: proposal.inputType != "idea" -> Branch C must
+      # skip at the idea-rooted gate.
+      codereview-not-idea:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      codereview-not-idea:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Manual proposal.","inputType":"manual","inputUuids":[]}'
+        ;;
+      codereview-not-idea:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        ;;
+      codereview-not-idea:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
+      # codereview-not-last: a task is still in_progress -> Branch C silent.
+      codereview-not-last:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      codereview-not-last:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      codereview-not-last:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      codereview-not-last:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
+      # codereview-ordering: idea-rooted, all done, NO report Document ->
+      # BOTH Branch C (spawn code-reviewer) and Branch B (create idea-
+      # completion report) fire. Used to assert C precedes B in the output.
+      codereview-ordering:chorus_get_task)
+        echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      codereview-ordering:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no slug.","inputType":"idea","inputUuids":["idea-9"]}'
+        ;;
+      codereview-ordering:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        ;;
+      codereview-ordering:chorus_get_documents)
+        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        ;;
+
       *)
         # Unhandled (tool, fixture) — return empty, hook should silent-skip.
         echo ""
@@ -279,6 +346,7 @@ tool="${1:-}"
 fixture="${CHORUS_FIXTURE:-positive}"
 case "$fixture" in
   mode-off|no-folder|no-cli) fixture=positive ;;
+  codereview-toggle-off) fixture=codereview-positive ;;
 esac
 case "${fixture}:${tool}" in
   # ----- Branch A fixtures (existing) -----
@@ -391,6 +459,65 @@ case "${fixture}:${tool}" in
     echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
     ;;
 
+  # ----- Branch C fixtures (code-review gateway reminder) -----
+  # codereview-positive: idea-rooted, all done, report Document already
+  # exists (Branch B silent) -> ONLY Branch C fires.
+  codereview-positive:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  codereview-positive:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  codereview-positive:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  codereview-positive:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    ;;
+
+  # codereview-not-idea: inputType != "idea" -> Branch C silent.
+  codereview-not-idea:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  codereview-not-idea:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Manual proposal.","inputType":"manual","inputUuids":[]}'
+    ;;
+  codereview-not-idea:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    ;;
+  codereview-not-idea:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
+  # codereview-not-last: a task still in_progress -> Branch C silent.
+  codereview-not-last:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  codereview-not-last:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  codereview-not-last:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  codereview-not-last:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
+  # codereview-ordering: idea-rooted, all done, NO report -> BOTH C and B
+  # fire; used to assert C precedes B in the combined output.
+  codereview-ordering:chorus_get_task)
+    echo '{"uuid":"task-9","title":"Task 9","status":"done","proposalUuid":"prop-9","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  codereview-ordering:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no slug.","inputType":"idea","inputUuids":["idea-9"]}'
+    ;;
+  codereview-ordering:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    ;;
+  codereview-ordering:chorus_get_documents)
+    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    ;;
+
   *)
     echo "" ;;
 esac
@@ -478,6 +605,13 @@ run_one() {
     MODE_VAR_FOR_RUN="off"
   fi
 
+  # The "codereview-toggle-off" fixture disables Branch C via the plugin
+  # option env var; everything else leaves it unset (defaults to enabled).
+  local CODEREVIEW_OPT_FOR_RUN=""
+  if [ "$fixture" = "codereview-toggle-off" ]; then
+    CODEREVIEW_OPT_FOR_RUN="false"
+  fi
+
   local stdout_file
   stdout_file=$(mktemp)
   local stderr_file
@@ -491,6 +625,7 @@ run_one() {
         PATH="$PATH_FOR_RUN" \
         CLAUDE_PROJECT_DIR="$PROJECT_DIR_FOR_RUN" \
         CHORUS_OPENSPEC_MODE="$MODE_VAR_FOR_RUN" \
+        CLAUDE_PLUGIN_OPTION_ENABLECODEREVIEWER="$CODEREVIEW_OPT_FOR_RUN" \
         /bin/bash -c "cd \"$PROJECT_DIR_FOR_RUN\" && /bin/bash \"$hook_dir/on-post-verify-task.sh\"" \
         >"$stdout_file" 2>"$stderr_file" || rc=$?
 
@@ -513,6 +648,29 @@ run_one() {
       PASS=$((PASS + 1))
     else
       echo "  FAIL  $name [$variant]: stdout missing '$expected'"
+      printf '%s\n' "$stdout" | sed 's/^/         /'
+      FAIL=$((FAIL + 1))
+      FAILED="$FAILED $name[$variant]"
+    fi
+  elif [ "$assertion_mode" = "must-precede" ]; then
+    # $expected MUST appear, $forbidden MUST appear, and $expected's first
+    # occurrence MUST come before $forbidden's. Used to assert Branch C
+    # (code-review) is injected before Branch B (completion report). The
+    # whole payload is a single JSON line, so compare byte offsets (grep
+    # -bo), not line numbers.
+    local off_expected off_forbidden
+    off_expected=$(printf '%s' "$stdout" | grep -bo "$expected" | head -1 | cut -d: -f1)
+    off_forbidden=$(printf '%s' "$stdout" | grep -bo "$forbidden" | head -1 | cut -d: -f1)
+    if [ -z "$off_expected" ] || [ -z "$off_forbidden" ]; then
+      echo "  FAIL  $name [$variant]: expected both '$expected' and '$forbidden' present (got offsets '$off_expected' / '$off_forbidden')"
+      printf '%s\n' "$stdout" | sed 's/^/         /'
+      FAIL=$((FAIL + 1))
+      FAILED="$FAILED $name[$variant]"
+    elif [ "$off_expected" -lt "$off_forbidden" ]; then
+      echo "  PASS  $name [$variant]"
+      PASS=$((PASS + 1))
+    else
+      echo "  FAIL  $name [$variant]: '$expected' (offset $off_expected) does not precede '$forbidden' (offset $off_forbidden)"
       printf '%s\n' "$stdout" | sed 's/^/         /'
       FAIL=$((FAIL + 1))
       FAILED="$FAILED $name[$variant]"
@@ -606,6 +764,38 @@ run_one "report-task-overflow" "report-task-overflow" "codex"  "must-not-contain
 # to assume "no report" and silent-skip Branch B.
 run_one "report-doc-overflow" "report-doc-overflow" "claude" "must-not-contain" "" "create idea-completion report"
 run_one "report-doc-overflow" "report-doc-overflow" "codex"  "must-not-contain" "" "create idea-completion report"
+
+# ===== Branch C: Code-review gateway reminder fixtures =====
+# (assertion: must-contain `spawn code-reviewer` / must-not-contain `spawn code-reviewer`)
+# These fixtures use a non-OpenSpec proposal description (no slug line),
+# so Branch A silent-skips, isolating Branch C behavior.
+
+# C1: codereview-positive — last task of an idea-rooted proposal verified,
+# code-reviewer enabled (default). A report Document already exists so
+# Branch B is silent; ONLY Branch C fires -> reminder MUST contain
+# `spawn code-reviewer`.
+run_one "codereview-positive"   "codereview-positive"   "claude" "must-contain" "spawn code-reviewer"
+run_one "codereview-positive"   "codereview-positive"   "codex"  "must-contain" "spawn code-reviewer"
+
+# C2: codereview-toggle-off — same data as positive but
+# CLAUDE_PLUGIN_OPTION_ENABLECODEREVIEWER=false -> Branch C MUST be silent.
+run_one "codereview-toggle-off" "codereview-toggle-off" "claude" "must-not-contain" "" "spawn code-reviewer"
+run_one "codereview-toggle-off" "codereview-toggle-off" "codex"  "must-not-contain" "" "spawn code-reviewer"
+
+# C3: codereview-not-idea — proposal.inputType != "idea" -> Branch C
+# MUST skip at the idea-rooted gate.
+run_one "codereview-not-idea"   "codereview-not-idea"   "claude" "must-not-contain" "" "spawn code-reviewer"
+run_one "codereview-not-idea"   "codereview-not-idea"   "codex"  "must-not-contain" "" "spawn code-reviewer"
+
+# C4: codereview-not-last — a task still in_progress -> Branch C silent.
+run_one "codereview-not-last"   "codereview-not-last"   "claude" "must-not-contain" "" "spawn code-reviewer"
+run_one "codereview-not-last"   "codereview-not-last"   "codex"  "must-not-contain" "" "spawn code-reviewer"
+
+# C5: codereview-ordering — idea-rooted, all done, NO report Document, so
+# BOTH Branch C and Branch B fire. The code-review reminder MUST precede
+# the completion-report reminder in the combined output.
+run_one "codereview-ordering"   "codereview-ordering"   "claude" "must-precede" "spawn code-reviewer" "create idea-completion report"
+run_one "codereview-ordering"   "codereview-ordering"   "codex"  "must-precede" "spawn code-reviewer" "create idea-completion report"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

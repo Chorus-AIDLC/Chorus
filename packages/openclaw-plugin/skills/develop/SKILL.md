@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.0"
+  version: "0.11.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -256,6 +256,8 @@ Obtain an independent VERDICT before the task is verified:
    - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit (Step 9).
 
 If you spawned a sub-agent and no new `VERDICT:` comment appears after it returns, it exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt still produces no VERDICT, fall back to reviewing manually (Step 8.5 fallback) and post the VERDICT yourself.
+
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Inline (no hook on OpenClaw), same mechanism as Step 8.5: spawn a sub-agent via `sessions_spawn` whose `task` tells it to **invoke the `/code-reviewer` skill** against the idea (pass the `ideaUuid` + round number), and wait for it; fallback is a read-only self-review following the `/code-reviewer` procedure. It reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks), then execute → verify and re-run the gateway. Advisory/behavioral. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 
