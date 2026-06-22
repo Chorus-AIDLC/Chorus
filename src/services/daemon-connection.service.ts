@@ -230,10 +230,21 @@ export async function registerConnection(
   try {
     const row = await prisma.daemonConnection.upsert({
       where: {
-        agentUuid_clientType_host: {
+        // T1 (data model) added `cwd` to the composite unique key. The real
+        // cwd self-report + cwd-aware dedup/old-daemon-null-reuse path is T2 —
+        // NOT this task. This call is left functionally identical to pre-cwd
+        // behavior: it keeps deterministic one-row-per-(agent,clientType,host)
+        // dedup by pinning cwd to the empty-string sentinel, mirroring the
+        // existing `host @default("")` convention (a @@unique over a NULL-able
+        // column does not dedup — Postgres treats NULL as distinct, and Prisma
+        // types the compound-key field as non-null so NULL cannot even be
+        // targeted here; verified empirically + against Prisma docs). T2 will
+        // replace this with the real cwd and reconcile the ""-vs-null sentinel.
+        agentUuid_clientType_host_cwd: {
           agentUuid,
           clientType: report.clientType,
           host,
+          cwd: "",
         },
       },
       create: {
@@ -242,6 +253,7 @@ export async function registerConnection(
         clientType: report.clientType,
         clientVersion: report.clientVersion ?? null,
         host,
+        cwd: "",
         startedAt: report.startedAt ?? null,
         status: "online",
         connectedAt: now,

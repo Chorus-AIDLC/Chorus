@@ -110,14 +110,18 @@ describe("registerConnection", () => {
     expect(result).toEqual({ uuid: connectionUuid, connectedAt });
     expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
     const arg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
-    // Upsert key is the composite unique (agentUuid, clientType, host).
+    // Upsert key is the composite unique (agentUuid, clientType, host, cwd).
+    // T1 added cwd to the key; this path pins cwd to the "" sentinel so dedup
+    // stays deterministic (real cwd self-report is T2).
     expect(arg.where).toEqual({
-      agentUuid_clientType_host: {
+      agentUuid_clientType_host_cwd: {
         agentUuid,
         clientType: "claude_code",
         host: "mac.local",
+        cwd: "",
       },
     });
+    expect(arg.create.cwd).toBe("");
     expect(arg.create.status).toBe("online");
     expect(arg.create.companyUuid).toBe(companyUuid);
     expect(arg.create.host).toBe("mac.local");
@@ -186,7 +190,7 @@ describe("registerConnection", () => {
     mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
     await registerConnection(companyUuid, agentUuid, { clientType: "claude_code" });
     const arg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
-    expect(arg.where.agentUuid_clientType_host.host).toBe("");
+    expect(arg.where.agentUuid_clientType_host_cwd.host).toBe("");
     expect(arg.create.host).toBe("");
   });
 

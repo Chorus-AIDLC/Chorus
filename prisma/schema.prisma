@@ -408,6 +408,23 @@ model DaemonConnection {
   // null as distinct (Prisma docs), which would let reconnects accumulate rows.
   // Defaulting to "" makes (agentUuid, clientType, host) a deterministic upsert key.
   host          String    @default("")
+  // Self-reported working directory this connection serves (display + identity).
+  // Nullable per the ratified migration decision (DEC/Q6=a): rows that exist at
+  // migration time get cwd=NULL as a sentinel and are backfilled on the next
+  // handshake — no forced backfill script. NOTE: unlike `host` (which defaults
+  // to "" to stay a deterministic dedup key), `cwd` is left nullable here.
+  // Postgres treats NULL as distinct in a UNIQUE index, so two
+  // (agentUuid, clientType, host, NULL) rows do NOT dedup; that is accepted for
+  // the migration era (old daemons are single-cwd, so independent null rows
+  // match the HARD-1 "behave exactly as today" requirement). Verified
+  // empirically (psql) + against Prisma docs. The real cwd self-report, the
+  // cwd-aware dedup, and the "reuse the migrated null row on reconnect"
+  // compatibility path all live in T2 — not this task. Because Prisma types a
+  // nullable column as non-null inside the compound-unique `where` input (NULL
+  // cannot be targeted there), T1's still-untouched registerConnection() upsert
+  // pins cwd to the "" sentinel to preserve today's deterministic dedup; T2
+  // reconciles the ""-vs-NULL sentinel when it wires real cwd self-report.
+  cwd           String?
   startedAt     DateTime? // self-reported daemon process start time
 
   status         String    @default("online") // online | offline
@@ -418,7 +435,7 @@ model DaemonConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([agentUuid, clientType, host])
+  @@unique([agentUuid, clientType, host, cwd])
   @@index([companyUuid])
   @@index([agentUuid])
   @@index([status])
