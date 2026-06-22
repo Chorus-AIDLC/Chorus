@@ -146,7 +146,7 @@ describe("ChorusSseListener", () => {
     listener.disconnect();
   });
 
-  it("appends clientType=openclaw + version + host + startedAt to the SSE URL", async () => {
+  it("appends clientType=openclaw + version + host + cwd + startedAt to the SSE URL", async () => {
     const fetchSpy = vi.fn(async () => streamingResponse([]));
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -165,6 +165,8 @@ describe("ChorusSseListener", () => {
     // Version is the plugin's real package version, not a hardcoded literal.
     expect(url.searchParams.get("clientVersion")).toBe(PLUGIN_VERSION);
     expect(url.searchParams.get("host")).toBe(hostname());
+    // cwd is the working directory this connection serves (single-cwd today).
+    expect(url.searchParams.get("cwd")).toBe(process.cwd());
     const startedAt = url.searchParams.get("startedAt");
     expect(startedAt).toBeTruthy();
     expect(Number.isNaN(Date.parse(startedAt as string))).toBe(false);

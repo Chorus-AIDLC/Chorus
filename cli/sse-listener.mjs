@@ -8,11 +8,19 @@
 // API key; data lines are `data: <json>\n\n`, heartbeats are `: ...` comments.
 //
 // Self-report: the listener appends ?clientType=claude_code&clientVersion=…&
-// host=…&startedAt=… to the endpoint so the server's DaemonConnection registry
-// (src/services/daemon-connection.service.ts → parseSelfReport) can record which
-// client is on the other end. The CLI reports clientType=claude_code (it only
-// drives a local Claude Code subprocess — not a generic "daemon"). These params
-// are display-only metadata; auth remains the unchanged Bearer header.
+// host=…&cwd=…&startedAt=… to the endpoint so the server's DaemonConnection
+// registry (src/services/daemon-connection.service.ts → parseSelfReport) can
+// record which client is on the other end. The CLI reports clientType=claude_code
+// (it only drives a local Claude Code subprocess — not a generic "daemon"). These
+// params are display-only metadata; auth remains the unchanged Bearer header.
+//
+// `cwd` is the working directory this daemon connection serves. Today the CLI
+// runs single-cwd (the directory it was launched from), so it reports
+// `process.cwd()`. The server keys the connection registry on
+// (agentUuid, clientType, host, cwd) — so the same agent on the same host driving
+// two different working directories registers as two independent connections
+// instead of overwriting each other. An *older* daemon that does not send `cwd`
+// registers as a `cwd=null` row (HARD-1: no error, behaves exactly as before).
 
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
@@ -91,6 +99,11 @@ export class SseListener {
       clientType: "claude_code",
       clientVersion: CLI_VERSION,
       host: hostname(),
+      // Working directory this connection serves. The CLI is single-cwd today
+      // (the dir it was launched from), so report process.cwd(). The server uses
+      // it as part of the registry's composite key so same agent + same host +
+      // different cwd no longer overwrite each other (the multi-path fix).
+      cwd: process.cwd(),
       startedAt: PROCESS_STARTED_AT.toISOString(),
     });
     this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;

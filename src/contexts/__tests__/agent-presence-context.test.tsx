@@ -73,6 +73,7 @@ function conn(uuid: string, effectiveStatus: "online" | "offline"): ConnectionVi
     clientType: "claude_code",
     clientVersion: null,
     host: "host",
+    cwd: null,
     startedAt: null,
     status: effectiveStatus,
     effectiveStatus,

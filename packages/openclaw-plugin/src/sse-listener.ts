@@ -108,6 +108,11 @@ export class ChorusSseListener {
       clientType: "openclaw",
       clientVersion: PLUGIN_VERSION,
       host: hostname(),
+      // Working directory this connection serves. OpenClaw is single-cwd today
+      // (the dir it was launched from), so report process.cwd(). The server keys
+      // the connection registry on (agentUuid, clientType, host, cwd) so the same
+      // agent on the same host with different cwds no longer overwrite each other.
+      cwd: process.cwd(),
       startedAt: PROCESS_STARTED_AT.toISOString(),
     });
     this.endpoint = `${this.opts.chorusUrl.replace(/\/$/, "")}/api/events/notifications?${params.toString()}`;

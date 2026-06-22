@@ -41,6 +41,13 @@ export interface SelfReport {
   clientType: string; // raw query value; gated against DAEMON_CLIENT_TYPES
   clientVersion?: string | null;
   host?: string | null;
+  // Working directory this connection serves. The self-reporting representation
+  // of "unknown cwd" is `null` (NOT the empty string): a daemon that does not
+  // report cwd — i.e. an OLD daemon predating the multi-path change — yields
+  // `cwd: null`, which lands a `cwd=null` registry row (HARD-1). This matches the
+  // nullable `cwd` column and the rows backfilled to NULL at migration time, so
+  // "unknown cwd" has a single consistent representation end to end.
+  cwd?: string | null;
   startedAt?: Date | null;
 }
 
@@ -84,6 +91,11 @@ export interface ConnectionView {
   clientType: string;
   clientVersion: string | null;
   host: string; // "" when host-less (display can show a placeholder)
+  // Working directory this connection serves; null for an old daemon that did
+  // not self-report cwd (the "unknown cwd" sentinel). Two connections of the
+  // same agent+host with different cwds are distinct rows, so the cwd is what
+  // distinguishes them in the projection.
+  cwd: string | null;
   startedAt: string | null; // ISO-8601 — self-reported daemon process start
   status: string; // raw persisted status
   effectiveStatus: "online" | "offline";
@@ -111,6 +123,7 @@ interface DaemonConnectionRow {
   clientType: string;
   clientVersion: string | null;
   host: string;
+  cwd: string | null;
   startedAt: Date | null;
   status: string;
   connectedAt: Date;
@@ -139,6 +152,7 @@ function toConnectionView(row: DaemonConnectionRow): ConnectionView {
     clientType: row.clientType,
     clientVersion: row.clientVersion,
     host: row.host,
+    cwd: row.cwd,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     status: row.status,
     effectiveStatus,
@@ -172,6 +186,12 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
   const clientType = searchParams.get("clientType") ?? "";
   const clientVersion = searchParams.get("clientVersion");
   const host = searchParams.get("host");
+  // `cwd` is the working directory the connection serves. An absent param
+  // (an OLD daemon that predates the multi-path change) parses to `null` — the
+  // single representation of "unknown cwd" — which registerConnection lands as a
+  // `cwd=null` row (HARD-1). Unlike `host`, cwd is NOT coerced to "": null is the
+  // sentinel here, matching the nullable column and the migration-era NULL rows.
+  const cwd = searchParams.get("cwd");
 
   let startedAt: Date | null = null;
   const startedAtRaw = searchParams.get("startedAt");
@@ -186,6 +206,7 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
     clientType,
     clientVersion: clientVersion ?? null,
     host: host ?? null,
+    cwd: cwd ?? null,
     startedAt,
   };
 }
@@ -201,12 +222,38 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
  *    rest of the lifecycle — no touch / no markDisconnected), or
  *  - the persistence write fails (swallowed + logged).
  *
- * Idempotent per logical daemon: keyed on (agentUuid, clientType, host). A
- * reconnect refreshes the existing row (status→online, connectedAt/lastSeenAt
- * refreshed, disconnectedAt cleared) rather than inserting a new one. `host`
- * defaults to "" so the composite unique key is deterministic even for a
- * host-less self-report (Prisma treats null as distinct, which would defeat the
- * dedup — see schema comment).
+ * Idempotent per logical daemon: keyed on (agentUuid, clientType, host, cwd) —
+ * the composite unique key T1 widened with `cwd`. A reconnect refreshes the
+ * existing row (status→online, connectedAt/lastSeenAt refreshed, disconnectedAt
+ * cleared) rather than inserting a new one. `host` defaults to "" so the key is
+ * deterministic even for a host-less self-report.
+ *
+ * cwd carries the working directory this connection serves, which fixes the
+ * overwrite bug: the *same* agent on the *same* host driving two *different*
+ * cwds now lands two independent rows (each its own presence) instead of one
+ * overwriting the other. "Unknown cwd" is represented as SQL `NULL` (NOT the
+ * empty string) — consistent with the nullable `cwd` column and the rows
+ * backfilled to NULL at migration time. (This supersedes T1's compile-only
+ * `cwd=""` shim, which existed only to preserve deterministic dedup until this
+ * task wired the real self-report; the ""-vs-NULL asymmetry is resolved here in
+ * favor of NULL.)
+ *
+ * Two write paths, because Postgres + Prisma treat a NULL cwd specially:
+ *  - cwd PRESENT (a current daemon) → a single `upsert` on the compound unique
+ *    key. Clean idempotent reconnect.
+ *  - cwd NULL (an OLD daemon that does not self-report cwd — HARD-1) → we CANNOT
+ *    use the compound-key upsert: Postgres treats each NULL as distinct in a
+ *    UNIQUE index (so two `(agent,clientType,host,NULL)` rows never collide) AND
+ *    Prisma types the compound-key `where` field as non-null (so NULL cannot be
+ *    targeted there at all). Both verified empirically by T1 on Postgres 16. A
+ *    naive cwd=null upsert would therefore ACCUMULATE a fresh row on every
+ *    reconnect. So we implement the tech design's compatibility path: find the
+ *    existing `(agentUuid, clientType, host, cwd:null)` row via `findFirst` and
+ *    `update` it by uuid; only `create` when none exists. This keeps an old
+ *    daemon on a single stable null row across reconnects — no error, no
+ *    rejection, behavior identical to the pre-cwd world. New and old daemons
+ *    coexist under the same agent without interfering (the new daemon owns its
+ *    cwd row; the old daemon owns its null row).
  *
  * The returned `connectedAt` is the fencing token for the lifecycle calls: it is
  * stamped fresh on every (re)registration, so a later reconnect's `connectedAt`
@@ -225,51 +272,77 @@ export async function registerConnection(
   }
 
   const host = report.host ?? "";
+  // "Unknown cwd" → SQL NULL. Do NOT coerce to "" — null is the single sentinel
+  // for an old daemon that does not report cwd, matching the nullable column.
+  const cwd = report.cwd ?? null;
   const now = new Date();
 
   try {
+    // Shared field sets, so the upsert and the null-compat path stay in lockstep.
+    const createData = {
+      companyUuid,
+      agentUuid,
+      clientType: report.clientType,
+      clientVersion: report.clientVersion ?? null,
+      host,
+      cwd,
+      startedAt: report.startedAt ?? null,
+      status: "online",
+      connectedAt: now,
+      lastSeenAt: now,
+      disconnectedAt: null,
+    };
+    const refreshData = {
+      // Multi-tenancy: re-affirm companyUuid from the authenticated context.
+      companyUuid,
+      clientVersion: report.clientVersion ?? null,
+      startedAt: report.startedAt ?? null,
+      status: "online",
+      connectedAt: now,
+      lastSeenAt: now,
+      disconnectedAt: null,
+    };
+
+    if (cwd === null) {
+      // ===== Old-daemon / unknown-cwd compatibility path (HARD-1) =====
+      // Prisma cannot target a NULL cwd in the compound-unique `where`, and
+      // Postgres would never dedup two NULL-cwd rows on its own. So reuse the
+      // existing null row by uuid when present; create one only on first connect.
+      // This prevents null-row pileup on reconnect while keeping old daemons
+      // behaving exactly as before.
+      const existing = await prisma.daemonConnection.findFirst({
+        where: { agentUuid, clientType: report.clientType, host, cwd: null },
+        select: { uuid: true },
+      });
+
+      if (existing) {
+        const row = await prisma.daemonConnection.update({
+          where: { uuid: existing.uuid },
+          data: refreshData,
+          select: { uuid: true, connectedAt: true },
+        });
+        return { uuid: row.uuid, connectedAt: row.connectedAt };
+      }
+
+      const row = await prisma.daemonConnection.create({
+        data: createData,
+        select: { uuid: true, connectedAt: true },
+      });
+      return { uuid: row.uuid, connectedAt: row.connectedAt };
+    }
+
+    // ===== Current-daemon path: real cwd → clean compound-key upsert =====
     const row = await prisma.daemonConnection.upsert({
       where: {
-        // T1 (data model) added `cwd` to the composite unique key. The real
-        // cwd self-report + cwd-aware dedup/old-daemon-null-reuse path is T2 —
-        // NOT this task. This call is left functionally identical to pre-cwd
-        // behavior: it keeps deterministic one-row-per-(agent,clientType,host)
-        // dedup by pinning cwd to the empty-string sentinel, mirroring the
-        // existing `host @default("")` convention (a @@unique over a NULL-able
-        // column does not dedup — Postgres treats NULL as distinct, and Prisma
-        // types the compound-key field as non-null so NULL cannot even be
-        // targeted here; verified empirically + against Prisma docs). T2 will
-        // replace this with the real cwd and reconcile the ""-vs-null sentinel.
         agentUuid_clientType_host_cwd: {
           agentUuid,
           clientType: report.clientType,
           host,
-          cwd: "",
+          cwd,
         },
       },
-      create: {
-        companyUuid,
-        agentUuid,
-        clientType: report.clientType,
-        clientVersion: report.clientVersion ?? null,
-        host,
-        cwd: "",
-        startedAt: report.startedAt ?? null,
-        status: "online",
-        connectedAt: now,
-        lastSeenAt: now,
-        disconnectedAt: null,
-      },
-      update: {
-        // Multi-tenancy: re-affirm companyUuid from the authenticated context.
-        companyUuid,
-        clientVersion: report.clientVersion ?? null,
-        startedAt: report.startedAt ?? null,
-        status: "online",
-        connectedAt: now,
-        lastSeenAt: now,
-        disconnectedAt: null,
-      },
+      create: createData,
+      update: refreshData,
       select: { uuid: true, connectedAt: true },
     });
     return { uuid: row.uuid, connectedAt: row.connectedAt };

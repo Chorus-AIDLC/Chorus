@@ -204,7 +204,7 @@ describe("SseListener self-report URL", () => {
     return { listener, fetchImpl };
   }
 
-  it("appends clientType=claude_code + version + host + startedAt", async () => {
+  it("appends clientType=claude_code + version + host + cwd + startedAt", async () => {
     const { listener, fetchImpl } = captureUrl();
     await listener.connect();
 
@@ -216,6 +216,10 @@ describe("SseListener self-report URL", () => {
     // Version is the CLI's real package version, not a hardcoded literal.
     expect(url.searchParams.get("clientVersion")).toBe(CLI_VERSION);
     expect(url.searchParams.get("host")).toBe(hostname());
+    // cwd is the working directory this connection serves — the CLI is single-cwd
+    // today so it reports process.cwd(). The server keys the registry on it so
+    // same agent + same host + different cwd no longer overwrite each other.
+    expect(url.searchParams.get("cwd")).toBe(process.cwd());
     // startedAt is a valid ISO-8601 timestamp.
     const startedAt = url.searchParams.get("startedAt");
     expect(startedAt).toBeTruthy();
