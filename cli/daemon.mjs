@@ -37,7 +37,7 @@ import { WAKE_ACTIONS } from "./prompts.mjs";
 import { createInterruptReporter } from "./interrupt-reporter.mjs";
 import { createTurnReporter } from "./turn-reporter.mjs";
 import { createControlHandler } from "./control-handler.mjs";
-import { resolveSigintTimeoutMs } from "./daemon-config.mjs";
+import { resolveSigintTimeoutMs, resolveDaemonCwds } from "./daemon-config.mjs";
 import {
   startBackground,
   stopDaemon,
@@ -81,7 +81,8 @@ function defaultLogger() {
  *   fetchImpl?: typeof fetch,
  *   sseListener?: any,
  *   spawner?: any,
- *   cwd?: string,
+ *   cwd?: string,   Single served path (back-compat); maps to a one-element cwd set.
+ *   cwds?: Array<string|undefined>,  The SET of paths this daemon serves (T3 多路径). Each entry registers one independent connection bound to that cwd; `undefined` ⇒ process cwd. Takes precedence over `cwd`.
  *   hooks?: any,
  *   makeSseListener?: (opts: any) => any,
  *   maxConcurrency?: number,
@@ -102,37 +103,8 @@ export function buildDaemon(creds, deps = {}) {
   // the layered resolver; falls back to the resolver's default here when not given,
   // so a daemon built directly (integration tests) still gets a sane value.
   const sigintTimeoutMs = deps.sigintTimeoutMs ?? resolveSigintTimeoutMs();
-  // Interrupt reporter (子3): REST POST with the daemon's Bearer key (zero new deps),
-  // injectable for tests. The waker calls it on an interrupted/crashed exit.
-  // connectionState holds the connection uuid learned from the SSE handshake;
-  // declared here so the reporter (which needs it to address the execution row)
-  // can read it lazily. It is assigned by onConnectionId below.
-  /** @type {{ connectionUuid: string|null }} */
-  const connectionState = { connectionUuid: null };
-  const reportInterrupt =
-    deps.reportInterrupt ??
-    createInterruptReporter({
-      url: creds.url,
-      apiKey: creds.apiKey,
-      getConnectionUuid: () => connectionState.connectionUuid,
-      logger,
-      fetchImpl: deps.fetchImpl,
-    });
-  // Turn-lifecycle reporter (子1 — daemon-session-conversation): REST POST with the
-  // daemon's Bearer key (zero new deps), injectable for tests. The waker calls it on a
-  // wake's spawn (→ running) and exit (→ ended) to advance the server-side
-  // DaemonSessionTurn the notification chokepoint created. Reads the connectionUuid
-  // lazily from the same box the SSE handshake fills.
-  const advanceTurn =
-    deps.advanceTurn ??
-    createTurnReporter({
-      url: creds.url,
-      apiKey: creds.apiKey,
-      getConnectionUuid: () => connectionState.connectionUuid,
-      logger,
-      fetchImpl: deps.fetchImpl,
-    });
-
+  // ===== Shared deps (one set per daemon process) =====
+  // These are process-wide — independent of how many paths (cwds) the daemon serves.
   const mcpClient =
     deps.mcpClient ?? new ChorusClient({ url: creds.url, apiKey: creds.apiKey, logger });
   // Lineage resolution is a plain REST call (Bearer agent key) per notification —
@@ -141,150 +113,202 @@ export function buildDaemon(creds, deps = {}) {
     deps.lineage ??
     new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
   const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
+  // The WakeQueue serializes per DIRECT idea (keyFor's key). It is shared across all
+  // path-connections: serialization-per-idea still holds, and maxConcurrency caps the
+  // whole process's in-flight wakes rather than per-cwd — the right global budget.
   const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });
 
-  // `connectionState` (declared above, next to the reporter) is the mutable box the
-  // SSE handshake fills with this daemon's `connection_registered` uuid; the upload
-  // hooks, the reporter, and the control handler all read it lazily so construction
-  // order doesn't matter. `waker` is assigned just below; the snapshot closure reads
-  // it lazily so the hooks can predate it.
-  /** @type {Waker|undefined} */
-  let waker;
+  // ===== Multi-path: the SET of cwds this daemon serves (T3 — FR-5) =====
+  // Each declared path becomes one INDEPENDENT connection (own SSE self-report + own
+  // Waker bound to that cwd + own router/backfill/control). The daemon process's OWN
+  // cwd never changes (NFR-3). `undefined` ⇒ "serve the process default cwd" (single-
+  // path / HARD-1 default). `deps.cwds` (a list) takes precedence; `deps.cwd` (a single
+  // value, still injected by integration tests) maps to a one-element set; otherwise a
+  // single `[undefined]` connection at the process cwd — exactly today's behavior. This
+  // is JUST a list of paths; it carries NO path↔project binding (DEC-5: cwd ⟂ project).
+  const cwdSet =
+    Array.isArray(deps.cwds) && deps.cwds.length > 0
+      ? deps.cwds
+      : [deps.cwd];
 
-  // Execution-state upload hooks: POST the WakeQueue/waker-derived snapshot to
-  // the server on each lifecycle transition. `getSnapshot` reads the waker's
-  // per-task registry (which reuses the already-resolved root-idea lineage).
-  // Fire-and-forget; failures logged + non-fatal (see upload-hooks.mjs). The
-  // hooks share the daemon's existing creds + zero new deps (global fetch).
-  // Transcript upload hooks (子1 — daemon-session-conversation): the waker's
-  // stream-json consumer (onMessage) and pre-spawn (onSessionStart) feed these,
-  // which keep only user/assistant text and batch-POST it to /api/daemon/transcript
-  // for the current turn (resolved server-side by the session business key the waker
-  // already anchors on). Same zero-dep, fire-and-forget, warn-not-throw contract as
-  // the execution hooks; no connectionUuid needed (the agent key + sessionId suffice).
-  // The two hook sets are MERGED into the single object the waker takes:
-  // onSessionStart/onTranscriptMessage fan out to the transcript hooks,
-  // onExecutionChange to the execution hooks.
-  const hooks =
-    deps.hooks ??
-    mergeUploadHooks(
-      createExecutionUploadHooks({
+  /**
+   * Build ONE independent path-connection bound to `cwd` (one SSE stream → one
+   * DaemonConnection row, keyed by that cwd server-side). All per-connection state —
+   * its connectionUuid box, reporters, hooks, Waker(cwd), router, backfill, control
+   * handler, and SseListener(cwd) — lives in this closure so two connections never
+   * share a connectionUuid or a dedup set. `index` selects the per-connection injected
+   * test dep (sseListener/makeSseListener) when an array was supplied (a single value
+   * is reused for connection 0, mirroring the historical single-connection injection).
+   * @param {string|undefined} cwd
+   * @param {number} index
+   */
+  function buildConnection(cwd, index) {
+    // connectionState holds the connectionUuid learned from THIS stream's SSE handshake;
+    // the reporters, hooks, and control handler read it lazily so construction order
+    // doesn't matter. Per-connection so each path's wakes report against the right row.
+    /** @type {{ connectionUuid: string|null }} */
+    const connectionState = { connectionUuid: null };
+
+    // Interrupt reporter (子3): REST POST with the daemon's Bearer key. Injectable for
+    // tests (shared across connections when injected — tests use a single connection).
+    const reportInterrupt =
+      deps.reportInterrupt ??
+      createInterruptReporter({
         url: creds.url,
         apiKey: creds.apiKey,
         getConnectionUuid: () => connectionState.connectionUuid,
-        getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
         logger,
         fetchImpl: deps.fetchImpl,
-      }),
-      createTranscriptUploadHooks({
+      });
+    // Turn-lifecycle reporter (子1): advances the server-side DaemonSessionTurn on
+    // spawn (→ running) and exit (→ ended), reading the connectionUuid lazily.
+    const advanceTurn =
+      deps.advanceTurn ??
+      createTurnReporter({
         url: creds.url,
         apiKey: creds.apiKey,
+        getConnectionUuid: () => connectionState.connectionUuid,
         logger,
         fetchImpl: deps.fetchImpl,
-      }),
-      { logger }
-    );
+      });
 
-  // One dedup set shared by the router (live SSE path) and the reconnect
-  // backfill, so a notification handled live is never re-woken on reconnect.
-  const seen = new Set();
-  // cwd: the daemon spawns all wakes in one working directory; the waker uses it
-  // BOTH to probe the transcript (new-vs-resume) and to spawn, so they never diverge.
-  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt, advanceTurn, verbose });
-  const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
+    /** @type {Waker|undefined} */
+    let waker;
 
-  // Reverse control channel (子3): the control handler verifies a control event
-  // against this daemon's own connectionUuid + the running child for the target
-  // entity (q1=a double-check), then interrupts the subprocess. It reads the
-  // connectionUuid lazily from the same mutable box the SSE handshake fills, so it
-  // works regardless of construction order.
-  // Resume re-dispatch (子3): a `command:"resume"` control event re-runs the wake
-  // for the target entity. It reuses the SAME router/queue path as a normal wake,
-  // so serialization-per-direct-idea holds and the spawner's on-disk transcript
-  // probe naturally selects `claude --resume` (the session already exists). The
-  // synthetic event mirrors the `new_notification` shape the router expects; we
-  // fetch the real notification detail lazily inside the router via MCP, so a
-  // minimal `{ action: "resource_resumed", entityType, entityUuid }` is enough to
-  // re-key and re-spawn. Because resume rides the control channel (not a persisted
-  // notification), there is no notificationUuid — the router tolerates a synthetic
-  // resume dispatch via the dedicated entrypoint below.
-  const redispatchResume = (entityType, entityUuid) => {
-    router.dispatchResume?.({ entityType, entityUuid });
-  };
-  // Origin-only live delivery (子2 — daemon-instruction-injection): a `deliver_turn`
-  // control event means the server pinged THIS connection that a SPECIFIC new pending
-  // `human_instruction` turn (`turnUuid`) awaits. The control handler forwards that uuid
-  // to the connection-scoped pending-turns sweep (exposed as `backfill.pendingTurnsOnly`)
-  // so ONLY that one turn is dispatched — never a connection-wide sweep that would also
-  // run every other still-pending turn. It shares the same `seen` set as reconnect
-  // backfill (a turn runs at most once). Read lazily so it tolerates the construction
-  // order (backfill is assigned just after).
-  const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
-  const onControl = createControlHandler({
-    waker,
-    getConnectionUuid: () => connectionState.connectionUuid,
-    sigintTimeoutMs,
-    redispatchResume,
-    deliverTurn,
-    logger,
-  });
+    // Execution + transcript upload hooks (子1), merged. Bound to THIS connection's
+    // connectionState + waker so snapshots attribute to the right connection row.
+    const hooks =
+      deps.hooks ??
+      mergeUploadHooks(
+        createExecutionUploadHooks({
+          url: creds.url,
+          apiKey: creds.apiKey,
+          getConnectionUuid: () => connectionState.connectionUuid,
+          getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
+          logger,
+          fetchImpl: deps.fetchImpl,
+        }),
+        createTranscriptUploadHooks({
+          url: creds.url,
+          apiKey: creds.apiKey,
+          logger,
+          fetchImpl: deps.fetchImpl,
+        }),
+        { logger }
+      );
 
-  // Reconnect backfill re-dispatches notifications missed during a gap, through
-  // the SAME router/queue (so serialization holds) and the SAME seen set (so
-  // already-handled notifications are skipped). The router marks seen at
-  // dispatch; backfill's own pre-check is a cheap early-out.
-  // `deliverTurn` (defined above) closes over `backfill` but only invokes it lazily,
-  // so a `const` initialized here is safe despite the earlier lexical reference.
-  const backfill = createBackfill({
-    mcpClient,
-    dispatch: (event) => router.dispatch(event),
-    seen,
-    logger,
-    // 子1 — pending-turn backfill: re-derive unstarted turns from the turn table (NOT
-    // notifications) for this connection's origin-pinned sessions, so a lost delivery
-    // ping never loses an instruction. Shares the same router (dispatchPendingTurn) +
-    // seen set so a turn handled live (or by an earlier backfill) is not re-run. Reads
-    // the connectionUuid lazily from the SSE-handshake box.
-    url: creds.url,
-    apiKey: creds.apiKey,
-    getConnectionUuid: () => connectionState.connectionUuid,
-    dispatchPendingTurn: (turn) => router.dispatchPendingTurn?.(turn),
-    fetchImpl: deps.fetchImpl,
-  });
+    // One dedup set per connection, shared by its router (live SSE) and its reconnect
+    // backfill, so a notification handled live is never re-woken on reconnect.
+    const seen = new Set();
+    // The Waker is bound to THIS connection's cwd: it uses cwd BOTH to probe the
+    // transcript (new-vs-resume) and to spawn, so they never diverge (Module Contract
+    // 1 — resolveCwd is the single source). `cwd` is `undefined` for the single-path /
+    // old-daemon default, which the Waker degrades to process.cwd() (HARD-1).
+    waker = new Waker({ creds, lineage, spawner, cwd, hooks, logger, reportInterrupt, advanceTurn, verbose });
+    const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
 
-  const sseListener =
-    deps.sseListener ??
-    (deps.makeSseListener ?? ((o) => new SseListener(o)))({
-      url: creds.url,
-      apiKey: creds.apiKey,
-      onEvent: (event) => router.dispatch(event),
-      // Capture the connectionUuid the server reports for this stream so the
-      // execution-state upload hooks can attribute snapshots to it.
-      onConnectionId: (connectionUuid) => {
-        connectionState.connectionUuid = connectionUuid;
-        logger.info(`[Chorus] registered as connection ${connectionUuid}`);
-      },
-      // Reverse control channel: a `type:"control"` event is forked here, NEVER to
-      // onEvent/router/queue — so it can never spawn a wake (子3).
-      onControl,
-      onReconnect: backfill,
+    // Reverse control channel (子3) + resume re-dispatch + origin-only deliver_turn —
+    // all scoped to THIS connection's uuid/router/backfill (see the original wiring
+    // comments retained on the shared helpers). The control handler verifies a control
+    // event against this connection's own connectionUuid before acting.
+    const redispatchResume = (entityType, entityUuid) => {
+      router.dispatchResume?.({ entityType, entityUuid });
+    };
+    const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      sigintTimeoutMs,
+      redispatchResume,
+      deliverTurn,
       logger,
     });
+
+    // Reconnect + pending-turn backfill, pinned to THIS connection's sessions (the
+    // server scopes getPendingTurnsForConnection by originConnectionUuid — i.e. the
+    // cwd this connection serves — so a multi-path daemon's backfill never re-runs
+    // another cwd's turns).
+    const backfill = createBackfill({
+      mcpClient,
+      dispatch: (event) => router.dispatch(event),
+      seen,
+      logger,
+      url: creds.url,
+      apiKey: creds.apiKey,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      dispatchPendingTurn: (turn) => router.dispatchPendingTurn?.(turn),
+      fetchImpl: deps.fetchImpl,
+    });
+
+    // Per-connection SSE listener, self-reporting THIS connection's cwd so the server
+    // registers it as a distinct (agent, clientType, host, cwd) row. Test injection:
+    //  - `deps.sseListener` is a CONCRETE instance — there is only one, so it stands in
+    //    for connection 0 only (a single-path daemon, the historical injection shape).
+    //  - `deps.makeSseListener` is a FACTORY — it is invoked PER connection (so a
+    //    multi-path test gets one mock listener per cwd). An array form also works:
+    //    one factory/instance per connection by index.
+    const injectedListener = Array.isArray(deps.sseListener)
+      ? deps.sseListener[index]
+      : index === 0
+        ? deps.sseListener
+        : undefined;
+    const makeSse =
+      (Array.isArray(deps.makeSseListener) ? deps.makeSseListener[index] : deps.makeSseListener) ??
+      ((o) => new SseListener(o));
+    const sseListener =
+      injectedListener ??
+      makeSse({
+        url: creds.url,
+        apiKey: creds.apiKey,
+        // The working directory THIS connection serves (T3). `undefined` ⇒ the listener
+        // reports its process cwd (single-path / HARD-1). It is just the served path.
+        cwd,
+        onEvent: (event) => router.dispatch(event),
+        onConnectionId: (connectionUuid) => {
+          connectionState.connectionUuid = connectionUuid;
+          logger.info(
+            `[Chorus] registered as connection ${connectionUuid}` +
+              (cwd ? ` (cwd=${cwd})` : "")
+          );
+        },
+        onControl,
+        onReconnect: backfill,
+        logger,
+      });
+
+    return { cwd, connectionState, waker, router, backfill, sseListener, hooks };
+  }
+
+  // Build one connection per declared cwd. The order is the declaration order; the
+  // FIRST connection's pieces are aliased onto the returned object for backward
+  // compatibility (existing tests/inspection read daemon.waker / .router / .sseListener).
+  const connections = cwdSet.map((cwd, i) => buildConnection(cwd, i));
+  const primary = connections[0];
 
   return {
     mcpClient,
     lineage,
     spawner,
     queue,
-    waker,
-    router,
-    sseListener,
+    // Back-compat single-connection aliases (the common single-path case). The full
+    // set is exposed as `connections` for multi-path inspection/tests.
+    waker: primary.waker,
+    router: primary.router,
+    sseListener: primary.sseListener,
+    connections,
     async start() {
-      await hooks.onConnect?.({ host: creds.url });
-      await sseListener.connect();
+      // Connect every path-connection. Each fires its own onConnect hook + SSE connect;
+      // the daemon process cwd is untouched (NFR-3).
+      for (const c of connections) {
+        await c.hooks.onConnect?.({ host: creds.url });
+        await c.sseListener.connect();
+      }
     },
     async stop() {
-      sseListener.disconnect?.();
+      for (const c of connections) {
+        c.sseListener.disconnect?.();
+      }
+      // The MCP client is process-wide (shared) — disconnect it once.
       await mcpClient.disconnect?.();
     },
   };
@@ -358,6 +382,13 @@ export async function runDaemon(flags = {}, deps = {}) {
   //   --sigint-timeout flag > CHORUS_DAEMON_SIGINT_TIMEOUT env > ~/.chorus/daemon.json > 10000.
   const sigintTimeoutMs = resolveSigintTimeoutMs({ sigintTimeout: flags.sigintTimeout }, { env });
 
+  // The SET of working directories this daemon serves (T3 — 单 daemon 多路径引擎).
+  // Layered: --cwd flag(s) > CHORUS_DAEMON_CWDS env > ~/.chorus/daemon.json `cwds`
+  // > [undefined] (single connection at the process cwd). A single `[undefined]`
+  // is exactly today's single-path behavior. JUST a list of paths — no project
+  // binding (DEC-5: cwd ⟂ project). The daemon process's own cwd never changes.
+  const cwds = resolveDaemonCwds({ cwd: flags.cwd }, { env });
+
   // Foreground preflight: resolve/complete credentials + resolve the permission
   // posture (confirming yolo on a TTY). Reuses the same pfDeps bundle the detach
   // path uses. Returns a numeric exit code on failure, or
@@ -394,12 +425,22 @@ export async function runDaemon(flags = {}, deps = {}) {
     errLog(`[Chorus] ${yoloWarningLine()}`);
   }
 
+  // Surface the served paths so an operator sees a multi-path daemon at a glance.
+  // A single `[undefined]` (the default) prints the process cwd it falls back to.
+  const servedPaths = cwds.map((c) => c ?? process.cwd());
+  if (servedPaths.length > 1) {
+    log(`[Chorus] serving ${servedPaths.length} paths: ${servedPaths.join(", ")}`);
+  } else {
+    log(`[Chorus] serving path: ${servedPaths[0]}`);
+  }
+
   const daemon = build(creds, {
     logger: { info: log, warn: errLog, error: errLog },
     permissionMode,
     agentType,
     verbose,
     sigintTimeoutMs,
+    cwds,
   });
 
   // Graceful shutdown on signals.

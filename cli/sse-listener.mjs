@@ -71,6 +71,12 @@ const PROCESS_STARTED_AT = new Date();
  *   connection + entity and interrupts the running subprocess (see control-handler.mjs).
  * @property {() => Promise<void>} [onReconnect]  Called after a reconnect so the
  *   caller can back-fill notifications missed during the gap.
+ * @property {string} [cwd]  The working directory THIS connection serves (T3 — 单
+ *   daemon 多路径). A multi-path daemon runs one SseListener per declared path, each
+ *   self-reporting its own cwd so the server registers them as distinct connections
+ *   (the registry key includes cwd). Omitted ⇒ the daemon's process cwd (single-path
+ *   / HARD-1 default — identical to today). It is JUST the served path; it carries no
+ *   project binding (DEC-5: cwd ⟂ project).
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
  * @property {typeof fetch} [fetchImpl]  Injectable for tests.
  * @property {number} [initialDelayMs]
@@ -95,15 +101,18 @@ export class SseListener {
 
     // Build the self-reporting endpoint URL once and reuse it across every
     // (re)connect, so the reconnect path always re-sends the same params.
+    // Working directory THIS connection serves. A multi-path daemon (T3) constructs
+    // one SseListener per declared path, each with its own `opts.cwd`, so the server's
+    // (agentUuid, clientType, host, cwd) registry key lands them as distinct rows —
+    // same agent + same host + different cwd no longer overwrite each other. When no
+    // cwd is supplied the daemon is single-path: report the process cwd (the directory
+    // it was launched from), identical to today / an old daemon (HARD-1).
+    this.cwd = opts.cwd ?? process.cwd();
     const params = new URLSearchParams({
       clientType: "claude_code",
       clientVersion: CLI_VERSION,
       host: hostname(),
-      // Working directory this connection serves. The CLI is single-cwd today
-      // (the dir it was launched from), so report process.cwd(). The server uses
-      // it as part of the registry's composite key so same agent + same host +
-      // different cwd no longer overwrite each other (the multi-path fix).
-      cwd: process.cwd(),
+      cwd: this.cwd,
       startedAt: PROCESS_STARTED_AT.toISOString(),
     });
     this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;

@@ -581,6 +581,67 @@ describe("listConnectionsForAgent", () => {
   });
 });
 
+// ===== T3 — 派单选连接维度不变 (AC#5 / Module Contract 5) =====
+// Dispatch selects a connection by AGENT + ONLINE status only (the chokepoint takes the
+// FIRST online connection of the agent). Introducing multi-path (same agent, several cwd
+// rows) and null-cwd (old daemon) rows must NOT make that selection miss, error, or
+// collapse rows — and there is NO project→cwd inference. These tests model the exact read
+// the dispatch chokepoint runs (listConnectionsForAgent, then first-online) and prove it
+// behaves correctly across those new row shapes.
+describe("T3 dispatch selection across multi-cwd + null-cwd connections", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  it("surfaces EVERY same-agent cwd row (multi-path does not collapse/miss connections)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ uuid: "conn-a", cwd: "/dev/repo-a", status: "online", agoMs: 0 }),
+      makeRow({ uuid: "conn-b", cwd: "/dev/repo-b", status: "online", agoMs: 1000 }),
+      makeRow({ uuid: "conn-null", cwd: null, status: "online", agoMs: 2000 }),
+    ]);
+    const result = await listConnectionsForAgent(companyUuid, agentUuid);
+    // All three distinct connections are returned — none missed, none merged.
+    expect(result.map((v) => v.uuid).sort()).toEqual(["conn-a", "conn-b", "conn-null"]);
+    expect(result.map((v) => v.cwd).sort()).toEqual(["/dev/repo-a", "/dev/repo-b", null].sort());
+    // The query dimension is unchanged — agent + company, NO cwd / project filter.
+    expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+    });
+  });
+
+  it("the dispatch chokepoint's 'first online' selection is unaffected by cwd (online-first sort)", async () => {
+    // One OFFLINE repo-a row + two ONLINE rows (repo-b, then null). The first-online pick
+    // must land an ONLINE connection regardless of cwd — selection is by online status,
+    // never by cwd or project.
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ uuid: "conn-a-offline", cwd: "/dev/repo-a", status: "offline", agoMs: 0 }),
+      makeRow({ uuid: "conn-b-online", cwd: "/dev/repo-b", status: "online", agoMs: 5000 }),
+      makeRow({ uuid: "conn-null-online", cwd: null, status: "online", agoMs: 1000 }),
+    ]);
+    const result = await listConnectionsForAgent(companyUuid, agentUuid);
+    // The chokepoint does exactly this: take the first effectiveStatus==="online" entry.
+    const origin = result.find((c) => c.effectiveStatus === "online");
+    expect(origin).toBeTruthy();
+    expect(origin!.effectiveStatus).toBe("online");
+    // Online-first, then lastSeenAt desc: the freshest online (null-cwd, agoMs 1000) leads
+    // the offline repo-a row — i.e. a null-cwd connection is fully selectable as origin.
+    expect(origin!.uuid).toBe("conn-null-online");
+  });
+
+  it("a null-cwd (old daemon) connection is selectable as the sole online connection (HARD-1)", async () => {
+    // Old daemon only: a single cwd=null online row. Dispatch must still select it.
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      makeRow({ uuid: "conn-old", cwd: null, status: "online", agoMs: 0 }),
+    ]);
+    const result = await listConnectionsForAgent(companyUuid, agentUuid);
+    const origin = result.find((c) => c.effectiveStatus === "online");
+    expect(origin?.uuid).toBe("conn-old");
+    expect(origin?.cwd).toBeNull();
+  });
+});
+
 describe("effectiveStatus derivation", () => {
   beforeEach(() => {
     vi.useFakeTimers();

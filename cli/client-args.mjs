@@ -28,10 +28,16 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * "false" (important for layered env/flag precedence downstream).
  *
  * @param {string[]} argv
+ * The new repeatable `--cwd <path>` (space + `=`) declares a working directory the
+ * daemon serves; repeating it (`--cwd a --cwd b`) declares the SET of paths for the
+ * single-daemon multi-path engine (T3). It is collected into a `cwd: string[]` array
+ * preserving order; absent ⇒ `cwd` is unset (the layered resolver then falls back to
+ * env / config / the process cwd). It is JUST a path list — no project binding.
+ *
  * @returns {{
  *   url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: string,
  *   agent?: string, chorusOnly?: boolean, verbose?: boolean, detach?: boolean,
- *   help?: boolean,
+ *   cwd?: string[], help?: boolean,
  * }}
  */
 export function parseClientFlags(argv) {
@@ -47,6 +53,11 @@ export function parseClientFlags(argv) {
     else if (a.startsWith("--sigint-timeout=")) out.sigintTimeout = a.slice("--sigint-timeout=".length);
     else if (a === "--agent") out.agent = argv[i + 1];
     else if (a.startsWith("--agent=")) out.agent = a.slice("--agent=".length);
+    else if (a === "--cwd" || a.startsWith("--cwd=")) {
+      // Repeatable: collect every --cwd into an ordered array (the cwd SET).
+      const value = a === "--cwd" ? argv[i + 1] : a.slice("--cwd=".length);
+      if (typeof value === "string") (out.cwd ??= []).push(value);
+    }
     else if (a === "--chorus-only") out.chorusOnly = true;
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
@@ -103,6 +114,11 @@ OPTIONS
   --chorus-only            Restrict the woken agent to Chorus  (env: CHORUS_CHORUS_ONLY=1)
                            MCP tools only (no Bash / file edits) — reclaims the
                            safe posture from the default yolo.
+  --cwd <path>             A working directory the daemon serves. Repeatable —
+                           (env: CHORUS_DAEMON_CWDS) each --cwd registers an independent
+                           connection for that path, so one daemon can serve several
+                           local paths at once. Default: the directory it was launched
+                           from. (Also configurable as "cwds":[…] in ~/.chorus/daemon.json.)
   -d, --detach             Run detached in the background (pidfile + logfile)
   --verbose                More detailed per-wake logging
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill

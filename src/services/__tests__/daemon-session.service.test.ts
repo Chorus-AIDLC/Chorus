@@ -1308,6 +1308,72 @@ describe("assertContinuable", () => {
     await expect(assertContinuable(companyUuid, sessionUuid)).resolves.toBe(connectionUuid);
     vi.useRealTimers();
   });
+
+  // ===== T3 — resume 按 (host+cwd) 路由 (AC#4 / FR-7 / Module Contract 4) =====
+  // assertContinuable pins resume to the session's ORIGIN connection, which is uniquely
+  // keyed by (agentUuid, clientType, host, cwd). Pinning to that exact uuid IS the
+  // (host+cwd) consistency check — a different-cwd connection is a different row/uuid and
+  // is NEVER considered. A cross-cwd route is therefore structurally impossible: there is
+  // no fallback path. cwd⟂project — this is the session's bound cwd, not project-derived.
+  describe("T3 cwd consistency (resume by host+cwd)", () => {
+    it("resolves the origin connection's cwd (the binding is made explicit, not just uuid)", async () => {
+      mockPrisma.daemonSession.findFirst.mockResolvedValue({ originConnectionUuid: connectionUuid });
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+        status: "online",
+        lastSeenAt: new Date(),
+        cwd: "/dev/repo-a",
+      });
+      await expect(assertContinuable(companyUuid, sessionUuid)).resolves.toBe(connectionUuid);
+      // The connection lookup now also selects cwd — the (host+cwd) binding is explicit.
+      expect(mockPrisma.daemonConnection.findFirst.mock.calls[0][0].select).toMatchObject({
+        cwd: true,
+      });
+    });
+
+    it("a cross-cwd route is impossible: ONLY the origin (host+cwd) connection is ever queried", async () => {
+      // The session's origin lives on cwd repo-a. Even if the same agent has another
+      // ONLINE connection on a DIFFERENT cwd (repo-b), assertContinuable never looks at
+      // it — it queries the origin uuid alone. (We assert exactly one connection query,
+      // pinned to the origin uuid — there is no second "any-other-cwd" query.)
+      mockPrisma.daemonSession.findFirst.mockResolvedValue({ originConnectionUuid: connectionUuid });
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+        status: "online",
+        lastSeenAt: new Date(),
+        cwd: "/dev/repo-a",
+      });
+      await assertContinuable(companyUuid, sessionUuid);
+      expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.daemonConnection.findFirst.mock.calls[0][0].where.uuid).toBe(connectionUuid);
+    });
+
+    it("when the origin (host+cwd) connection is offline it REFUSES — never falls back to another cwd", async () => {
+      // Origin on repo-a is offline. The refusal is a structured SessionReadOnlyError —
+      // NOT a silent re-route to a repo-b connection (which would `claude --resume`
+      // against the wrong cwd → "No conversation found").
+      mockPrisma.daemonSession.findFirst.mockResolvedValue({ originConnectionUuid: connectionUuid });
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+        status: "offline",
+        lastSeenAt: new Date(),
+        cwd: "/dev/repo-a",
+      });
+      await expect(assertContinuable(companyUuid, sessionUuid)).rejects.toBeInstanceOf(SessionReadOnlyError);
+      // Exactly one connection query — the origin. No fallback query for another cwd.
+      expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("[HARD-1] an OLD-daemon origin (cwd = null) passes through when online — null never makes it read-only", async () => {
+      // A session whose origin is an old daemon has cwd=null. The cwd is "unconstrained";
+      // the only gate is online-ness. assertContinuable must NOT reject just because cwd
+      // is null (Module Contract 2 — null pass-through).
+      mockPrisma.daemonSession.findFirst.mockResolvedValue({ originConnectionUuid: connectionUuid });
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+        status: "online",
+        lastSeenAt: new Date(),
+        cwd: null,
+      });
+      await expect(assertContinuable(companyUuid, sessionUuid)).resolves.toBe(connectionUuid);
+    });
+  });
 });
 
 // ===== appendTranscriptMessages =====
