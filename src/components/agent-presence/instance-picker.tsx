@@ -196,16 +196,28 @@ export function InstancePicker({
       className={cn("gap-1.5", className)}
     >
       {instances.map((instance) => {
-        const radioId = `instance-${instance.connectionUuid}`;
+        const selected =
+          selectedConnectionUuid === instance.connectionUuid;
+        // The row is a plain container, NOT a <label htmlFor>. A label both
+        // wrapping the Radix radio AND pointing at it by id double-fired
+        // activation, and the per-connection id collided across two pickers
+        // mounted at once (e.g. the open conversation's reply box + this one),
+        // so a click forwarded to a stale/hidden control and the visible
+        // selection never moved. We select via an explicit row onClick instead;
+        // RadioGroupItem stays as the visual indicator + keyboard target, with
+        // NO id (so nothing can resolve to a duplicate). tabIndex=-1 keeps the
+        // row out of the tab order — Radix RadioGroup drives focus through the
+        // items themselves (arrow keys), and onClick handles pointer selection.
         return (
-          <label
+          <div
             key={instance.connectionUuid}
-            htmlFor={radioId}
+            role="presentation"
+            tabIndex={-1}
+            onClick={() => onSelect(instance)}
             className={cn(
               "flex items-center gap-2.5 rounded-md border px-2.5 py-2 transition-colors",
               "cursor-pointer border-[#E5E0D8] hover:bg-[#FAF8F4]",
-              selectedConnectionUuid === instance.connectionUuid &&
-                "border-[#C67A52] bg-[#FAF8F4]",
+              selected && "border-[#C67A52] bg-[#FAF8F4]",
             )}
           >
             {/* Status dot — pinned to the row edge, never shrinks. Always online
@@ -225,13 +237,17 @@ export function InstancePicker({
               )}
             </span>
 
-            {/* Selection control — pinned to the row edge, never shrinks. */}
+            {/* Selection control — pinned to the row edge, never shrinks. No id:
+                the row onClick + RadioGroup value drive selection; an id here
+                would re-introduce the cross-picker collision. The path chip's
+                text is the accessible name (aria-label), since the row is no
+                longer a <label>. */}
             <RadioGroupItem
-              id={radioId}
               value={instance.connectionUuid}
+              aria-label={instance.cwd ?? undefined}
               className="shrink-0"
             />
-          </label>
+          </div>
         );
       })}
     </RadioGroup>
