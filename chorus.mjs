@@ -34,6 +34,10 @@ import {
   daemonHelpText,
   loginHelpText,
 } from "./cli/client-args.mjs";
+// Server-only signal-handler installer, guarded so a client subcommand
+// (`chorus daemon` / `chorus login`) never registers the server's handlers.
+// Pure module → unit-testable without this entry's import-time side effects.
+import { installServerSignalHandlers } from "./cli/server-signal-handlers.mjs";
 
 /** Read the package version once for help/version output. */
 function pkgVersion() {
@@ -451,12 +455,21 @@ function shutdown() {
   }
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-process.on("exit", () => {
-  if (pgliteProcess && !pgliteProcess.killed) {
-    pgliteProcess.kill("SIGKILL");
-  }
+// Install the server's SIGINT/SIGTERM/exit handlers ONLY on the server launch
+// path. On a client subcommand (`chorus daemon` / `chorus login`) this installs
+// nothing, so the daemon's OWN graceful shutdown handler is the sole signal
+// disposition — otherwise the server's handler (registered first) would pre-empt
+// it with a synchronous `process.exit(0)`, leaving the daemon to disconnect
+// non-gracefully (stale presence) and printing a misleading bare "Shutting down...".
+installServerSignalHandlers({
+  isSubcommand,
+  processRef: process,
+  shutdown,
+  cleanupExit: () => {
+    if (pgliteProcess && !pgliteProcess.killed) {
+      pgliteProcess.kill("SIGKILL");
+    }
+  },
 });
 
 // ---------------------------------------------------------------------------
