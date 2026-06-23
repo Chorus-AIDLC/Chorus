@@ -13,6 +13,8 @@
 // IO (env / file read) is injectable so this is unit-testable without real disk.
 
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { loginFilePath } from "./credentials.mjs";
 
 /** Built-in default escalation window (ms) — matches the spec's 10 seconds. */
@@ -81,4 +83,120 @@ export function resolveSigintTimeoutMs(flags = {}, deps = {}) {
 
   // 4. Built-in default
   return DEFAULT_SIGINT_TIMEOUT_MS;
+}
+
+// ===== Multi-path cwd set (T3 — 单 daemon 多路径引擎, FR-5/FR-8, DEC-2) =====
+//
+// A daemon may declare a SET of local working directories (a cwd LIST) it serves.
+// Each declared path becomes one INDEPENDENT connection (own SSE self-report +
+// own Waker bound to that cwd), so the same agent on the same host driving several
+// paths registers as several distinct rows instead of one. This is JUST a set of
+// paths: per the human's cwd⟂project correction (DEC-5) it carries NO path↔project
+// binding and there is NO project→cwd routing — the daemon only declares which
+// directories it serves.
+//
+// Layered resolution, mirroring resolveSigintTimeoutMs's precedence — first defined
+// source wins (the WHOLE set comes from the first source that yields any path):
+//
+//   --cwd flag(s)  > CHORUS_DAEMON_CWDS env (comma/`os.delimiter`-separated)
+//                  > ~/.chorus/daemon.json `cwds: [...]`
+//                  > [undefined]  (single connection at the daemon's process cwd)
+//
+// The `[undefined]` fallback is the HARD-1 / single-path default: an unspecified
+// cwd set means "serve one path, the process default" — exactly today's behavior.
+// The Waker/SseListener treat an `undefined` entry as "use process.cwd()".
+
+/** Expand a leading `~` to the home dir and resolve to an absolute path. */
+function normalizeCwd(value, home) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  let expanded = trimmed;
+  if (expanded === "~") expanded = home;
+  else if (expanded.startsWith("~/")) expanded = resolvePath(home, expanded.slice(2));
+  // Resolve relative paths against the daemon's process cwd so the declared path is
+  // always absolute (claude --resume scopes transcripts to the ABSOLUTE cwd).
+  return isAbsolute(expanded) ? expanded : resolvePath(expanded);
+}
+
+/**
+ * De-duplicate a list of normalized paths preserving first-seen order, dropping
+ * blanks/undefined. Returns the cleaned array (possibly empty).
+ * @param {Array<unknown>} list @param {string} home
+ * @returns {string[]}
+ */
+function cleanCwdList(list, home) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const norm = normalizeCwd(raw, home);
+    if (norm === undefined || seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
+  }
+  return out;
+}
+
+/**
+ * Resolve the SET of working directories this daemon serves (FR-5). One entry per
+ * connection the daemon will register. Each entry is an absolute path, EXCEPT the
+ * single-element `[undefined]` fallback which means "serve the process default cwd"
+ * (the unspecified / single-path / HARD-1 default — identical to today's behavior).
+ *
+ * Layered precedence (first source that yields ANY path wins for the whole set):
+ *   1. flags.cwd      — a string or string[] from repeatable `--cwd` flags.
+ *   2. env            — CHORUS_DAEMON_CWDS, split on the platform path delimiter or
+ *                       a comma (whichever the user used; both are accepted).
+ *   3. login/config   — ~/.chorus/daemon.json `cwds` (array of strings).
+ *   4. default        — `[undefined]` (one connection at the process cwd).
+ *
+ * The declaration is purely a list of paths — it does NOT carry, store, or upload
+ * any path↔project binding (DEC-5: cwd ⟂ project).
+ *
+ * @param {{ cwd?: string|string[] }} [flags]  Explicit `--cwd` value(s).
+ * @param {{
+ *   env?: Record<string, string|undefined>,
+ *   readJson?: (path: string) => (Record<string, unknown>|null),
+ *   loginPath?: string,
+ *   home?: string,
+ *   delimiter?: string,
+ * }} [deps]
+ * @returns {Array<string|undefined>}  A non-empty list; `[undefined]` ⇒ process cwd.
+ */
+export function resolveDaemonCwds(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const home = deps.home ?? homedir();
+  // Accept both the OS path delimiter (":" on POSIX, ";" on Windows) and a comma, so
+  // CHORUS_DAEMON_CWDS=/a:/b and CHORUS_DAEMON_CWDS=/a,/b both work cross-platform.
+  const delimiters = new RegExp(`[${deps.delimiter ?? ""},]|${process.platform === "win32" ? ";" : ":"}`);
+
+  // 1. Explicit --cwd flag(s) — a string or an array (repeatable flag).
+  const flagList = Array.isArray(flags.cwd)
+    ? flags.cwd
+    : typeof flags.cwd === "string"
+      ? [flags.cwd]
+      : [];
+  const fromFlags = cleanCwdList(flagList, home);
+  if (fromFlags.length > 0) return fromFlags;
+
+  // 2. Environment variable (delimiter- or comma-separated).
+  const envRaw = env.CHORUS_DAEMON_CWDS;
+  if (typeof envRaw === "string" && envRaw.trim()) {
+    const fromEnv = cleanCwdList(envRaw.split(delimiters), home);
+    if (fromEnv.length > 0) return fromEnv;
+  }
+
+  // 3. Login/config file (~/.chorus/daemon.json `cwds`).
+  const file = readJson(loginPath);
+  if (file && Array.isArray(file.cwds)) {
+    const fromFile = cleanCwdList(file.cwds, home);
+    if (fromFile.length > 0) return fromFile;
+  }
+
+  // 4. Built-in default: a single connection at the daemon's process cwd. `undefined`
+  //    is the "unspecified" sentinel the Waker/SseListener degrade to process.cwd()
+  //    for (HARD-1 / single-path — exactly today's behavior).
+  return [undefined];
 }

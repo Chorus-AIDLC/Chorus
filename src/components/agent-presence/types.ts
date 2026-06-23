@@ -11,6 +11,7 @@ export interface ConnectionView {
   clientType: string;
   clientVersion: string | null;
   host: string; // "" when host-less
+  cwd: string | null; // working directory this connection serves; null for an old daemon
   startedAt: string | null;
   status: string;
   effectiveStatus: "online" | "offline";

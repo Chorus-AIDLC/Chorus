@@ -118,6 +118,7 @@ type Conn = {
   clientType: string;
   clientVersion: string | null;
   host: string;
+  cwd: string | null;
   startedAt: string | null;
   status: string;
   effectiveStatus: "online" | "offline";
@@ -134,6 +135,7 @@ function conn(overrides: Partial<Conn> & { uuid: string }): Conn {
     clientType: "claude_code",
     clientVersion: "0.11.0",
     host: "host-" + overrides.uuid,
+    cwd: "/work/" + overrides.uuid,
     startedAt: now,
     status: "online",
     effectiveStatus: "online",

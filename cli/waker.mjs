@@ -28,7 +28,7 @@ export class Waker {
    *   creds: { url: string, apiKey: string },
    *   lineage: { resolve: (event: any) => Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }> },
    *   spawner: { wake: (params: any) => Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }> },
-   *   cwd?: string,  Spawn working directory; used BOTH for the transcript probe and the spawn (default process.cwd()).
+   *   cwd?: string,  The connection/session-bound working directory this Waker serves; resolveCwd() is the single source the probe + spawn + resume use. `undefined` ⇒ the process default cwd (HARD-1 / single-path).
    *   hooks?: import("./upload-hooks.mjs").UploadHooks,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
    *   writeMcpConfigFn?: typeof writeMcpConfig,
@@ -54,10 +54,14 @@ export class Waker {
     // line per lifecycle event (arrival / spawn new-vs-resume / completion).
     // When true, additional detail is emitted alongside those lines.
     this.verbose = opts.verbose ?? false;
-    // The daemon spawns in one fixed working directory; the transcript probe must
-    // use the SAME cwd as the spawn, or it would decide new-vs-resume against the
-    // wrong directory (claude scopes --resume to cwd).
-    this.cwd = opts.cwd ?? process.cwd();
+    // The connection/session-bound working directory this Waker serves (T3 — 单
+    // daemon 多路径引擎). A daemon process may run SEVERAL Wakers, one per declared
+    // path, each pinned to its own cwd; the daemon process's OWN cwd never changes
+    // (NFR-3). `opts.cwd` is that bound path; `undefined` (unspecified / old daemon /
+    // single-path default) degrades to the process cwd via resolveCwd(). Stored raw
+    // so resolveCwd() is the SINGLE place the process-default fallback is applied
+    // (Module Contract 1 — one cwd source of truth, no scattered process.cwd()).
+    this.cwd = opts.cwd;
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
@@ -103,6 +107,25 @@ export class Waker {
     // `child` — the handle stays daemon-local and never leaks onto the wire.
     /** @type {Map<string, { entityType: string, entityUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null, child: import("node:child_process").ChildProcess|null }>} */
     this.executions = new Map();
+  }
+
+  /**
+   * The SINGLE source of truth for this Waker's working directory (Module Contract
+   * 1 — 不变式安全 / cwd 事实源统一). transcript probing (new-vs-resume), spawn, and
+   * resume ALL resolve cwd through here, so they can never diverge — a divergence
+   * would make the on-disk transcript probe decide new-vs-resume against a different
+   * directory than the one we spawn in (`claude --resume` is cwd-bound).
+   *
+   * Returns the connection/session-bound cwd when one was declared, else the daemon
+   * process's own cwd. The process-default fallback lives ONLY here: `this.cwd` is
+   * stored raw (possibly `undefined`) and `process.cwd()` is read at exactly this one
+   * site — Module Contract 2's HARD-1 degrade path (an old daemon / unspecified cwd
+   * behaves exactly as today, spawning at the process default). No other code in the
+   * wake path reads `process.cwd()`.
+   * @returns {string}
+   */
+  resolveCwd() {
+    return this.cwd ?? process.cwd();
   }
 
   /**
@@ -295,7 +318,12 @@ export class Waker {
       // spawn in. The spawner re-validates the id is a lowercase UUID before
       // spawning, so a garbage id surfaces visibly rather than misanchoring.
       const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
-      const isNew = sessionId ? this.isNewSessionFn(sessionId, this.cwd) : true;
+      // Resolve the connection/session-bound cwd ONCE for this wake (Module Contract
+      // 1). The transcript probe and the spawn below BOTH use this same value, so a
+      // session's repeated wakes/probes always land the same cwd (NFR-3) — and a
+      // multi-path daemon's other Wakers (other cwds) never bleed in.
+      const cwd = this.resolveCwd();
+      const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
       // Lifecycle line 2 — spawn: new vs resume, plus the (otherwise hidden)
       // `claude --resume <id>` takeover hint so an operator can attach to the
@@ -305,7 +333,7 @@ export class Waker {
           (sessionId ? ` — take over with: claude --resume ${sessionId}` : "")
       );
       if (this.verbose) {
-        this.logger.info(`[Chorus]   cwd=${this.cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
+        this.logger.info(`[Chorus]   cwd=${cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
       }
 
       cfg = this.writeMcpConfigFn(this.creds);
@@ -331,7 +359,7 @@ export class Waker {
         prompt,
         sessionId,
         isNew,
-        cwd: this.cwd,
+        cwd,
         mcpConfigPath: cfg.path,
         // Capture the live child into the running execution entry the instant it
         // spawns (子3) so the control handler can interrupt it mid-wake. Guarded so

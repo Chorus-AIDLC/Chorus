@@ -120,6 +120,7 @@ function makeConnection(over: Partial<ConnectionView> = {}): ConnectionView {
     clientType: "claude_code",
     clientVersion: "1.2.3",
     host: "macbook",
+    cwd: "/Users/me/projects/alpha",
     startedAt: "2026-06-18T09:00:00.000Z",
     status: "online",
     effectiveStatus: "online",

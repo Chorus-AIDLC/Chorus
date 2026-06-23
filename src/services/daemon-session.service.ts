@@ -913,6 +913,21 @@ export class SessionReadOnlyError extends Error {
  * single staleness threshold, reused — NOT a new constant). It NEVER considers any
  * other connection of the same agent: continuation is pinned to the origin, full stop.
  *
+ * cwd consistency (T3 — resume 按 (host+cwd) 路由, FR-7 / Module Contract 4): a
+ * `DaemonConnection` is uniquely keyed by `(agentUuid, clientType, host, cwd)`, so the
+ * session's `originConnectionUuid` ALREADY identifies one specific (host + cwd). Pinning
+ * resume to that exact connection IS the (host+cwd) consistency check — a connection on
+ * a DIFFERENT cwd is a DIFFERENT row with a different uuid, and is never considered.
+ * Routing the resume anywhere else would `claude --resume` against the wrong working
+ * directory and fail with `No conversation found`; we refuse with a structured
+ * `SessionReadOnlyError` instead of falling back to another cwd. This is purely the
+ * session's already-bound cwd — NOT derived from any project (DEC-5: cwd ⟂ project).
+ *
+ * HARD-1 (Module Contract 2): a session whose origin is an OLD daemon (cwd = null)
+ * passes through unchanged — the cwd is "unknown / unconstrained", so the only gate is
+ * the origin's online-ness, exactly as before. The null cwd never makes a continuable
+ * session read-only.
+ *
  * Throws `SessionReadOnlyError` when the origin is offline/stale (the caller renders a
  * read-only / origin-offline error and does not route elsewhere). Throws a plain
  * not-found Error when the session does not resolve in-company. companyUuid-scoped; a
@@ -933,16 +948,21 @@ export async function assertContinuable(
     throw new Error(`DaemonSession ${sessionUuid} not found`);
   }
 
+  // Resolve the origin connection by its uuid — which pins BOTH host AND cwd (the
+  // registry key includes cwd). `cwd` is selected so the (host+cwd) binding is explicit
+  // here even though uuid already encodes it; it is never used to route ELSEWHERE.
   const conn = await prisma.daemonConnection.findFirst({
     where: { uuid: session.originConnectionUuid, companyUuid },
-    select: { status: true, lastSeenAt: true },
+    select: { status: true, lastSeenAt: true, cwd: true },
   });
   const online =
     conn != null &&
     conn.status === "online" &&
     Date.now() - conn.lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
   if (!online) {
-    // Read-only: origin offline. NEVER route to another connection.
+    // Read-only: origin offline/stale, or the origin (host+cwd) row no longer exists.
+    // NEVER route to another connection / another cwd — that would resume against the
+    // wrong working directory (`No conversation found`).
     throw new SessionReadOnlyError(session.originConnectionUuid);
   }
   return session.originConnectionUuid;
