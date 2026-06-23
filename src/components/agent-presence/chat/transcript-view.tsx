@@ -31,9 +31,11 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Folder,
   Info,
   Loader2,
   Lock,
+  Server,
   WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +48,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { clientLogger } from "@/lib/logger-client";
+import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -81,6 +84,76 @@ function DetailField({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+// The conversation's INSTANCE IDENTITY chip, shown inline in the header beneath the
+// title: path-first (the origin connection's cwd is what makes this conversation a
+// distinct (agent, host, cwd) instance), via the shared T1 `formatCwd` truncation
+// contract. A legacy daemon that never self-reported a cwd renders the localized
+// "unknown path" treatment (formatCwd(null), reusing agentPresence.unknownPath) so the
+// chip never silently disappears. Host stays DEMOTED to the "Connection details"
+// disclosure and is only surfaced here — as a second, de-emphasized badge — when
+// `crossHost` is true (the same agent spans multiple hosts, so the path alone is
+// ambiguous). The full path / host is exposed as a hover title.
+function InstanceIdentity({
+  cwd,
+  host,
+  crossHost,
+}: {
+  cwd: string | null;
+  host: string;
+  crossHost: boolean;
+}) {
+  // Root-scoped resolver: formatCwd/formatHost return i18n KEYS (e.g.
+  // "agentPresence.unknownPath") for unknown values, so we resolve them off the message
+  // root rather than a single namespace.
+  const tRoot = useTranslations();
+  const th = useTranslations("transcriptHeader");
+
+  const cwdFmt = formatCwd(cwd);
+  const cwdLabel = cwdFmt.isUnknown ? tRoot(cwdFmt.label) : cwdFmt.label;
+  const cwdTitle = cwdFmt.isUnknown ? tRoot(cwdFmt.title) : cwdFmt.title;
+
+  const hostFmt = crossHost ? formatHost(host) : null;
+  const hostLabel = hostFmt
+    ? hostFmt.isUnknown
+      ? tRoot(hostFmt.label)
+      : hostFmt.label
+    : null;
+  const hostTitle = hostFmt
+    ? hostFmt.isUnknown
+      ? tRoot(hostFmt.title)
+      : hostFmt.title
+    : null;
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span
+        className={`inline-flex max-w-full items-center gap-1.5 rounded-md bg-[#F1ECE3] px-2 py-0.5 ${
+          cwdFmt.isUnknown ? "italic text-[#9A9A9A]" : "text-[#6B6B6B]"
+        }`}
+        title={`${th("cwdAriaLabel")}: ${cwdTitle}`}
+        aria-label={`${th("cwdAriaLabel")}: ${cwdTitle}`}
+      >
+        <Folder className="h-3 w-3 shrink-0 text-[#9A8C7E]" aria-hidden />
+        <span className="truncate font-mono text-[11px] font-medium">
+          {cwdLabel}
+        </span>
+      </span>
+      {hostLabel !== null && (
+        <span
+          className="inline-flex max-w-full items-center gap-1 text-[11px] font-medium text-[#9A9A9A]"
+          title={`${th("hostAriaLabel")}: ${hostTitle}`}
+          aria-label={`${th("hostAriaLabel")}: ${hostTitle}`}
+        >
+          <Server className="h-3 w-3 shrink-0" aria-hidden />
+          <span className={`truncate ${hostFmt?.isUnknown ? "italic" : ""}`}>
+            {hostLabel}
+          </span>
+        </span>
+      )}
     </div>
   );
 }
@@ -148,6 +221,12 @@ export function TranscriptView({
   // note + the details disclosure. When online, the send box + interrupt are live.
   originConnection,
   originOnline,
+  // True when the origin agent currently spans MORE THAN ONE distinct host. The header is
+  // path-first (cwd is the instance identity) and host normally lives only in the
+  // "Connection details" disclosure; we promote host INLINE beside the path chip only when
+  // it actually disambiguates — i.e. this same agent is connected on multiple hosts, so a
+  // bare path could belong to either. Resolved by the container from the connection set.
+  originCrossHost = false,
   // THIS conversation's CURRENT live executions (running / interrupted), already
   // filtered to the open session by the container (idea:<directIdeaUuid> or
   // daemon_session:<sessionId>). The single relevant one is threaded into the reply
@@ -170,6 +249,14 @@ export function TranscriptView({
   hasMoreEarlier,
   loadingEarlier,
   onLoadEarlier,
+  // Origin-offline escape hatch (T11 / qr3): the origin agent's currently-online
+  // connections. When the origin is offline BUT this set is non-empty, the reply box
+  // offers a "Continue on an online directory" action that starts a NEW conversation
+  // on a chosen online instance (the original stays read-only history). Empty → plain
+  // read-only. `onSessionStarted` hands the new session back to the container to
+  // auto-select it.
+  originAgentOnlineConnections = [],
+  onSessionStarted,
 }: {
   session: SessionView | null;
   turns: TurnWithMessagesView[];
@@ -178,12 +265,15 @@ export function TranscriptView({
   error: boolean;
   originConnection: ConnectionView | null;
   originOnline: boolean;
+  originCrossHost?: boolean;
   sessionExecutions: ExecutionView[];
   executionsByUuid: Map<string, ExecutionView>;
   footerLayout?: "inline" | "stacked";
   hasMoreEarlier: boolean;
   loadingEarlier: boolean;
   onLoadEarlier: () => void;
+  originAgentOnlineConnections?: ConnectionView[];
+  onSessionStarted?: (session: SessionView) => void;
 }) {
   const t = useTranslations("daemonChat");
   const nowMs = useNowTick();
@@ -248,16 +338,34 @@ export function TranscriptView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header — the <h3> title on its own line, then a SINGLE flex-wrap line that
-          carries the status badges (active/ended + running pulse + elapsed) AND the
-          'Connection details' disclosure trigger together (wrapping only if truly
-          unavoidable), saving a vertical row. The collapsible CONTENT still expands
-          below the whole line on click. The Collapsible wraps both the inline trigger
-          and the content so Radix open/close state binds correctly. */}
+      {/* Header — the title row carries the <h3> on the LEFT and the path-first instance
+          identity chip RIGHT-ALIGNED on the SAME line (justify-between), then a SINGLE
+          flex-wrap line below that carries the status badges (active/ended + running pulse
+          + elapsed) AND the 'Connection details' disclosure trigger together (wrapping only
+          if truly unavoidable). Two rows, not three. The collapsible CONTENT still expands
+          below the whole line on click. The Collapsible wraps both the inline trigger and
+          the content so Radix open/close state binds correctly. */}
       <div className="flex flex-col gap-2 px-6 py-2.5 lg:gap-3 lg:py-4">
-        <h3 className="truncate text-[17px] font-semibold text-[#2C2C2C]">
-          {title}
-        </h3>
+        {/* Title row: title left (truncates), instance-identity chip right (shrink-0). The
+            cwd path is the conversation's working-directory identity, so it shares the title
+            line rather than claiming its own full-width row. Host stays in the "Connection
+            details" disclosure below and only re-surfaces in the chip when the agent spans
+            multiple hosts (`originCrossHost`). The chip is gated on `originConnection` —
+            without one there is no instance to identify. */}
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="truncate text-[17px] font-semibold text-[#2C2C2C] min-w-0">
+            {title}
+          </h3>
+          {originConnection && (
+            <div className="shrink-0">
+              <InstanceIdentity
+                cwd={originConnection.cwd}
+                host={originConnection.host}
+                crossHost={originCrossHost}
+              />
+            </div>
+          )}
+        </div>
         <Collapsible>
           <div className="flex flex-wrap items-center gap-2">
             <Badge
@@ -453,6 +561,9 @@ export function TranscriptView({
             originOnline={originOnline}
             layout={footerLayout}
             controllableExecution={composerExecution}
+            agentUuid={originConnection?.agentUuid ?? null}
+            onlineConnections={originAgentOnlineConnections}
+            onSessionStarted={onSessionStarted}
           />
         </div>
       )}

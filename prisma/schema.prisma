@@ -214,6 +214,17 @@ model Task {
   assigneeUuid            String? // User or Agent UUID (polymorphic)
   assignedAt              DateTime? // Assignment timestamp
   assignedByUuid          String? // User UUID (human assignment)
+  // Pinned target daemon instance for the durable-intent wake (cwd-addressable
+  // instances). When an owner pins which (host, cwd) instance should run a task
+  // at assignment time, these record that "place" so a later autonomous wake
+  // (notification-turn.ts) resolves the matching live DaemonConnection and pins
+  // the session origin there — falling back to online-first if none matches.
+  // Stored as (host, cwd) rather than a connectionUuid because connections
+  // churn on daemon restart while the place is stable. Nullable: an unpinned
+  // assignment behaves exactly as before this change. Never inferred from the
+  // project (parent idea DEC-5).
+  targetHost              String? // pinned instance host ("" = unknown-host instance)
+  targetCwd               String? // pinned instance working directory
   proposalUuid            String? // Source Proposal UUID (traceable, optional)
   createdByUuid           String // User or Agent UUID
   createdAt               DateTime              @default(now())

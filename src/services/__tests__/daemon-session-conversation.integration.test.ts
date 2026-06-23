@@ -56,6 +56,11 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     notificationPreference: [] as Row[],
+    // T5: the wake bridge reads a task_assigned wake's pinned (host, cwd) from the Task's
+    // targetHost/targetCwd columns. This integration exercises UN-pinned task wakes, so
+    // the store has no task rows — task.findFirst returns null → no pin → online-first
+    // (the behavior this checkpoint asserts), exactly as before the pin feature.
+    task: [] as Row[],
   };
   let autoId = 1;
   let autoUuid = 1;
@@ -285,6 +290,11 @@ function buildPrismaFake(store: Store) {
     },
     daemonExecution: {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonExecution", args)),
+    },
+    task: {
+      // T5 pin read for a task_assigned wake. No task rows are seeded here (un-pinned
+      // wakes), so this resolves null → the bridge derives no pin and stays online-first.
+      findFirst: vi.fn(async (args: Row) => findFirst("task", args)),
     },
     notification: {
       create: vi.fn(async (args: Row) => {

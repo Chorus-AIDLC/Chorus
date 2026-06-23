@@ -5,18 +5,43 @@
 import { prisma } from "@/lib/prisma";
 import { getActorName } from "@/lib/uuid-resolver";
 import * as notificationService from "@/services/notification.service";
+// Pure mention-markup codec, shared with the client editor so producer and
+// parser of the on-disk markup cannot drift (cwd-addressable instances, T3).
+import { decodePinSuffix } from "@/lib/mention-format";
+// Re-exported for callers that build pinned markers (kept here so existing
+// imports of these symbols from the service keep resolving).
+export {
+  encodePinSuffix,
+  buildMentionMarker,
+} from "@/lib/mention-format";
 // Reuse the daemon-connection registry's single liveness threshold and the
 // execution service's active-status set — do NOT restate either rule here, so
-// producer and consumer cannot drift.
-import { STALE_THRESHOLD_MS } from "@/services/daemon-connection.service";
+// producer and consumer cannot drift. listConnectionsForAgent supplies the
+// per-instance (host, cwd) candidates with their effectiveStatus already
+// derived, so the instance picker shows exactly the registry's liveness verdict.
+import {
+  STALE_THRESHOLD_MS,
+  listConnectionsForAgent,
+} from "@/services/daemon-connection.service";
 import { ACTIVE_EXECUTION_STATUSES } from "@/services/daemon-execution.service";
 
 // ===== Constants =====
 
 const MAX_MENTIONS_PER_CONTENT = 10;
 
-// Regex to match @[DisplayName](type:uuid)
-const MENTION_REGEX = /@\[([^\]]+)\]\((user|agent):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/gi;
+// Regex to match @[DisplayName](type:uuid) with an OPTIONAL pinned-instance
+// suffix (cwd-addressable instances, T3). The base form is byte-identical to
+// before this change: `@[Name](agent:uuid)`. A mention that pins a target
+// instance carries an additional `?cwd=…&host=…` query-string suffix INSIDE the
+// parens — `@[Name](agent:uuid?cwd=…&host=…)` — so an UN-pinned mention is
+// unchanged (the suffix group is optional). The suffix is matched as "anything
+// up to the closing paren" so the pin codec (see encodePinSuffix) must keep the
+// payload paren-free; the codec percent-escapes `(`/`)` to guarantee that.
+//
+// ADDITIVE / backward-compatible: every existing parser/renderer that matched
+// the old shape still matches the base; the new optional group only captures the
+// pin when present. Group 4 is the raw pin query string (or undefined).
+const MENTION_REGEX = /@\[([^\]]+)\]\((user|agent):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\?([^)]*))?\)/gi;
 
 // ===== Type Definitions =====
 
@@ -24,6 +49,32 @@ export interface MentionRef {
   type: "user" | "agent";
   uuid: string;
   displayName: string;
+  // Pinned target daemon instance (cwd-addressable instances, T3). When the
+  // owner picked a specific (host, cwd) instance for this mention, these carry
+  // the durable "place" so the autonomous wake (T5) routes to it. Both null for
+  // an un-pinned mention — which behaves exactly as before this change. The pin
+  // is the durable (host, cwd), NOT a connectionUuid (connections churn on
+  // daemon restart while the place is stable). `pinnedHost` is "" for an
+  // unknown-host instance; `pinnedCwd` is null for an unknown-path instance.
+  pinnedHost?: string | null;
+  pinnedCwd?: string | null;
+}
+
+/**
+ * A live (host, cwd) daemon instance candidate for the instance picker. A
+ * structural subset of `ConnectionView` (daemon-connection.service) carrying
+ * exactly what the picker needs. Populated for agent `Mentionable`s only, by
+ * enrichAgentInstances. The picker auto-selects when there is exactly one.
+ */
+export interface MentionableInstance {
+  /** Current live `DaemonConnection.uuid` for this (host, cwd) place. */
+  connectionUuid: string;
+  /** Host the instance runs on. "" = unknown/host-less self-report. */
+  host: string;
+  /** Working directory. null = legacy daemon that never self-reported one. */
+  cwd: string | null;
+  /** Server-derived liveness verdict (rendered verbatim). */
+  effectiveStatus: "online" | "offline";
 }
 
 export interface Mentionable {
@@ -40,6 +91,13 @@ export interface Mentionable {
   // agent reports 0). See enrichAgentLiveness.
   online?: boolean;
   activeCount?: number;
+  // Live (host, cwd) instances for this agent (cwd-addressable instances, T3),
+  // populated for `type: "agent"` candidates by enrichAgentInstances. The
+  // @mention secondary picker lists these when the agent has 2+ of them; a
+  // single instance auto-selects. ADDITIVE: existing consumers that ignore this
+  // field are unaffected. Undefined when not enriched (e.g. user candidates, or
+  // the empty-query / search paths that don't request instances).
+  instances?: MentionableInstance[];
 }
 
 export interface CreateMentionsParams {
@@ -60,13 +118,26 @@ export interface SearchMentionablesParams {
   actorUuid: string;
   ownerUuid?: string;
   limit?: number;
+  // When true, enrich agent candidates with their per-instance (host, cwd)
+  // candidates (the `instances` field) so the @mention secondary picker can list
+  // them (cwd-addressable instances, T3). Off by default — only the @mention
+  // flow needs them, and it costs one connection query per returned agent. The
+  // sort/slice still runs on liveness only; instances are attached AFTER the
+  // slice so we query connections only for the agents actually returned.
+  withInstances?: boolean;
 }
 
 // ===== Service Methods =====
 
 /**
- * Parse @[Name](type:uuid) patterns from content string.
- * Returns deduplicated list of mention references (max 10).
+ * Parse @[Name](type:uuid) patterns from content string, including any optional
+ * pinned-instance suffix `?cwd=…&host=…` (cwd-addressable instances, T3).
+ * Returns deduplicated list of mention references (max 10). An UN-pinned mention
+ * yields a `MentionRef` with NO `pinnedHost`/`pinnedCwd` keys at all — so it is
+ * object-identical to before this change (existing consumers and tests that
+ * deep-equal the un-pinned shape are unaffected). A pinned mention adds the
+ * two keys. Dedup key is `type:uuid` (the pin does not widen the key: a mention
+ * targets the agent; the pin only refines which instance wakes).
  */
 export function parseMentions(content: string): MentionRef[] {
   const mentions: MentionRef[] = [];
@@ -82,11 +153,19 @@ export function parseMentions(content: string): MentionRef[] {
     const displayName = match[1];
     const type = match[2].toLowerCase() as "user" | "agent";
     const uuid = match[3].toLowerCase();
+    const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
     const key = `${type}:${uuid}`;
 
     if (!seen.has(key)) {
       seen.add(key);
-      mentions.push({ type, uuid, displayName });
+      const ref: MentionRef = { type, uuid, displayName };
+      // Only attach the pin when present, keeping un-pinned refs byte-identical
+      // to the legacy shape (additive — existing consumers unaffected).
+      if (pinnedHost !== null || pinnedCwd !== null) {
+        ref.pinnedHost = pinnedHost;
+        ref.pinnedCwd = pinnedCwd;
+      }
+      mentions.push(ref);
     }
   }
 
@@ -206,6 +285,14 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       actorType,
       actorUuid,
       actorName,
+      // Thread the owner-chosen pinned instance (cwd-addressable instances, T5) from
+      // the mention markup into the wake-turn chokepoint so the `mentioned` autonomous
+      // wake routes to that `(host, cwd)` instance. Only present when the mention was
+      // pinned (parseMentions attaches pinnedHost/pinnedCwd only for a pinned ref); an
+      // un-pinned mention omits them → online-first selection, exactly as before. The
+      // pin is transport-only here — it is NOT persisted on the Notification row.
+      pinnedHost: mention.pinnedHost,
+      pinnedCwd: mention.pinnedCwd,
     });
   }
 
@@ -322,13 +409,66 @@ async function enrichAgentLiveness(
 }
 
 /**
+ * Enrich agent candidates in place with their per-instance (host, cwd)
+ * candidates (cwd-addressable instances, T3): the `instances` field the @mention
+ * secondary picker lists when an agent has 2+ live instances.
+ *
+ * Reuses `listConnectionsForAgent` (which already returns one row per
+ * `(host, cwd)` connection with `effectiveStatus` derived from the registry's
+ * single liveness rule, sorted online-first) — the rule is NOT restated here, so
+ * the picker shows exactly the registry's verdict. BATCHED and owner-scoped: it
+ * is gated to run only over the candidate agents that already passed the
+ * owner-scoping in searchMentionables, and issues NO query when there are zero
+ * agent candidates. Calls listConnectionsForAgent once per agent in parallel
+ * (each is itself a single companyUuid-scoped query). No new permission bit.
+ *
+ * We surface ALL connections (online + offline) with each one's
+ * `effectiveStatus`; the CONSUMER filters to online before showing the picker
+ * (an offline instance is never a wake target, so the secondary picker only ever
+ * lists online instances and a fully-offline agent shows no picker). Users are
+ * never enriched. Mutates the `instances` field of the agent entries in
+ * `results`.
+ */
+export async function enrichAgentInstances(
+  companyUuid: string,
+  results: Mentionable[]
+): Promise<void> {
+  const agents = results.filter((r) => r.type === "agent");
+  // Cheap empty path: no agents → no connection queries at all.
+  if (agents.length === 0) return;
+
+  // One companyUuid-scoped query per candidate agent, run in parallel. The set
+  // of agents is already owner-scoped by the caller (searchMentionables), so
+  // this never widens visibility beyond what the owner can already mention.
+  const perAgent = await Promise.all(
+    agents.map(async (agent) => {
+      const connections = await listConnectionsForAgent(companyUuid, agent.uuid);
+      const instances: MentionableInstance[] = connections.map((c) => ({
+        connectionUuid: c.uuid,
+        host: c.host,
+        cwd: c.cwd,
+        effectiveStatus: c.effectiveStatus,
+      }));
+      return { uuid: agent.uuid, instances };
+    })
+  );
+
+  const byAgent = new Map<string, MentionableInstance[]>();
+  for (const { uuid, instances } of perAgent) byAgent.set(uuid, instances);
+  for (const r of results) {
+    if (r.type !== "agent") continue;
+    r.instances = byAgent.get(r.uuid) ?? [];
+  }
+}
+
+/**
  * Search for mentionable users and agents within a company.
  * Permission scoping:
  * - User caller: all company users + own agents (agents with ownerUuid = actorUuid)
  * - Agent caller: all company users + same-owner agents (agents with same ownerUuid)
  */
 export async function searchMentionables(params: SearchMentionablesParams): Promise<Mentionable[]> {
-  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10 } = params;
+  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10, withInstances = false } = params;
 
   const effectiveLimit = Math.min(limit, 50);
   const results: Mentionable[] = [];
@@ -377,7 +517,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     // then order online agents to the front, then trim to the display cap (≤5).
     await enrichAgentLiveness(companyUuid, results);
     results.sort(compareMentionables);
-    return results.slice(0, Math.min(DEFAULT_EMPTY_QUERY_LIMIT, effectiveLimit));
+    const sliced = results.slice(0, Math.min(DEFAULT_EMPTY_QUERY_LIMIT, effectiveLimit));
+    // Attach per-instance candidates AFTER the slice so we only query connections
+    // for the agents actually returned (cwd-addressable instances, T3).
+    if (withInstances) await enrichAgentInstances(companyUuid, sliced);
+    return sliced;
   }
   // Search users (all company users are mentionable)
   const users = await prisma.user.findMany({
@@ -450,7 +594,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   // this is what keeps online agents from being sliced out by a flood of users.
   await enrichAgentLiveness(companyUuid, results);
   results.sort(compareMentionables);
-  return results.slice(0, effectiveLimit);
+  const sliced = results.slice(0, effectiveLimit);
+  // Attach per-instance candidates AFTER the slice so we only query connections
+  // for the agents actually returned (cwd-addressable instances, T3).
+  if (withInstances) await enrichAgentInstances(companyUuid, sliced);
+  return sliced;
 }
 
 /**

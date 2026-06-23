@@ -17,6 +17,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const query = parseQuery(request);
   const q = query.q || "";
   const limit = Math.min(50, Math.max(1, parseInt(query.limit || "10", 10)));
+  // Opt-in: the @mention flow requests per-instance (host, cwd) candidates so it
+  // can surface the secondary instance picker (cwd-addressable instances, T3).
+  // Default off so existing callers (and the cheap suggestion list) are unchanged.
+  const withInstances = query.withInstances === "1" || query.withInstances === "true";
 
   const results = await mentionService.searchMentionables({
     companyUuid: auth.companyUuid,
@@ -25,6 +29,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     actorUuid: auth.actorUuid,
     ownerUuid: isAgent(auth) ? auth.ownerUuid : auth.actorUuid,
     limit,
+    withInstances,
   });
 
   return success(results);

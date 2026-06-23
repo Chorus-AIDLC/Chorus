@@ -589,6 +589,84 @@ describe("claimTask", () => {
     const updateData = mockPrisma.task.update.mock.calls[0][0].data;
     expect(updateData.assignedByUuid).toBe("user-123");
   });
+
+  // cwd-addressable instances (T4): the durable (host, cwd) pin is persisted with
+  // the assignment so the autonomous wake (T5) can resolve it later.
+  it("persists the pinned (host, cwd) instance when provided", async () => {
+    const claimed = {
+      ...rawTask({
+        status: "assigned",
+        assigneeType: "agent",
+        assigneeUuid: "a1",
+        targetHost: "ci-runner-02",
+        targetCwd: "/home/u/dev/chorus",
+      }),
+      project: { uuid: PROJECT_UUID, name: "Test Project" },
+    };
+    mockPrisma.task.update.mockResolvedValue(claimed);
+
+    const result = await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "a1",
+      targetHost: "ci-runner-02",
+      targetCwd: "/home/u/dev/chorus",
+    });
+
+    const updateData = mockPrisma.task.update.mock.calls[0][0].data;
+    expect(updateData.targetHost).toBe("ci-runner-02");
+    expect(updateData.targetCwd).toBe("/home/u/dev/chorus");
+    // The pin is surfaced on the formatted response too.
+    expect(result.targetHost).toBe("ci-runner-02");
+    expect(result.targetCwd).toBe("/home/u/dev/chorus");
+  });
+
+  // An offline pin is a valid durable intent — the host "" / cwd null sentinels
+  // (unknown-host / unknown-path instance) must round-trip unchanged.
+  it("preserves the unknown-host (\"\") / unknown-path (null) pin sentinels", async () => {
+    const claimed = {
+      ...rawTask({ status: "assigned", targetHost: "", targetCwd: null }),
+      project: { uuid: PROJECT_UUID, name: "Test Project" },
+    };
+    mockPrisma.task.update.mockResolvedValue(claimed);
+
+    await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "a1",
+      targetHost: "",
+      targetCwd: null,
+    });
+
+    const updateData = mockPrisma.task.update.mock.calls[0][0].data;
+    // "" host is preserved (NOT coerced to null) — it denotes a real instance.
+    expect(updateData.targetHost).toBe("");
+    expect(updateData.targetCwd).toBeNull();
+  });
+
+  // RE-assigning without a pin must CLEAR a stale pin from a prior assignment
+  // rather than silently inheriting it: undefined → null on both columns.
+  it("clears a prior pin when re-assigned with no pin (undefined → null)", async () => {
+    const claimed = {
+      ...rawTask({ status: "assigned", targetHost: null, targetCwd: null }),
+      project: { uuid: PROJECT_UUID, name: "Test Project" },
+    };
+    mockPrisma.task.update.mockResolvedValue(claimed);
+
+    await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "a2",
+      // no targetHost / targetCwd
+    });
+
+    const updateData = mockPrisma.task.update.mock.calls[0][0].data;
+    expect(updateData.targetHost).toBeNull();
+    expect(updateData.targetCwd).toBeNull();
+  });
 });
 
 // ---------- releaseTask ----------
@@ -613,6 +691,10 @@ describe("releaseTask", () => {
           assigneeUuid: null,
           assignedAt: null,
           assignedByUuid: null,
+          // Releasing clears the pin with the assignment (cwd-addressable
+          // instances, T4) so a re-assignment picks a fresh instance.
+          targetHost: null,
+          targetCwd: null,
         }),
       }),
     );

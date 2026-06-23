@@ -36,7 +36,9 @@ export function NewConversationPane({
   // composer is gated behind a non-null uuid.
   agentUuid: string | null;
   agentName: string;
-  // The selected agent's ONLINE connections — the ad-hoc picker candidates.
+  // The selected agent's ONLINE connections — gates whether the composer is live
+  // AND is the only instance set the ad-hoc picker renders (offline is never a
+  // target).
   onlineConnections: ConnectionView[];
   onStarted: (session: SessionView) => void;
 }) {
