@@ -17,7 +17,13 @@
 // path (same harness as the other agent-presence component tests).
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  cleanup,
+  within,
+} from "@testing-library/react";
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
@@ -69,12 +75,20 @@ const onlineB: InstanceCandidate = {
   effectiveStatus: "online",
 };
 
-// Find the radio input for a given connectionUuid (the picker ids them
-// `instance-<connectionUuid>`).
-function radioFor(connectionUuid: string): HTMLInputElement {
-  return document.getElementById(
-    `instance-${connectionUuid}`,
-  ) as HTMLInputElement;
+// The picker no longer ids its rows (the old `instance-<uuid>` id + label htmlFor
+// double-fired and collided across two simultaneously-mounted pickers). Selection
+// is driven by a row click, so tests act on the row by its cwd label. `within` a
+// container scopes lookups to one picker so two mounted pickers don't clash.
+function rowByCwd(scope: HTMLElement, cwdLabelFragment: string): HTMLElement {
+  // The path chip renders the abbreviated tail (e.g. "…/dev/chorus"); match on the
+  // final segment which is always preserved.
+  const chip = within(scope).getByText(
+    (t) => t.includes(cwdLabelFragment),
+  );
+  // Walk up to the clickable row container.
+  const row = chip.closest('[role="presentation"]');
+  if (!row) throw new Error(`row for ${cwdLabelFragment} not found`);
+  return row as HTMLElement;
 }
 
 beforeEach(() => {
@@ -83,31 +97,85 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("InstancePicker — online-only rows (2+ instances)", () => {
-  it("renders every (online) row enabled and selectable", () => {
-    render(
+  it("renders every (online) row as an enabled radio", () => {
+    const { container } = render(
       <InstancePicker
         instances={[onlineA, onlineB]}
         selectedConnectionUuid={null}
         onSelect={vi.fn()}
       />,
     );
-    expect(radioFor("conn-online-a").disabled).toBe(false);
-    expect(radioFor("conn-online-b").disabled).toBe(false);
+    const radios = within(container).getAllByRole("radio");
+    expect(radios).toHaveLength(2);
+    radios.forEach((r) => expect(r.hasAttribute("disabled")).toBe(false));
   });
 
   it("fires onSelect with the chosen candidate when a row is clicked", () => {
     const onSelect = vi.fn();
-    render(
+    const { container } = render(
       <InstancePicker
         instances={[onlineA, onlineB]}
         selectedConnectionUuid={onlineA.connectionUuid}
         onSelect={onSelect}
       />,
     );
-    fireEvent.click(radioFor("conn-online-b"));
+    fireEvent.click(rowByCwd(container, "payments"));
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ connectionUuid: "conn-online-b" }),
     );
+  });
+
+  // REGRESSION (bug A/B root cause): selecting the SECOND (non-default) row must
+  // work. The old <label htmlFor> + wrapped RadioGroupItem id double-fired and,
+  // worse, collided with a second mounted picker's identical ids, so clicking the
+  // 2nd row forwarded activation to a stale control and selection never moved.
+  it("selects the SECOND of two rows (the previously-broken case)", () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <InstancePicker
+        instances={[onlineA, onlineB]}
+        selectedConnectionUuid={onlineA.connectionUuid}
+        onSelect={onSelect}
+      />,
+    );
+    // Click the second row's container (anywhere on it).
+    fireEvent.click(rowByCwd(container, "payments"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectionUuid: "conn-online-b" }),
+    );
+  });
+
+  // REGRESSION (bug A repro): two pickers mounted at once (e.g. an open
+  // conversation's reply box + the new-conversation composer) must NOT share
+  // element ids — the old per-connection `instance-<uuid>` id appeared twice and
+  // broke selection. The picker now uses NO such ids; assert none leak, and that
+  // each picker selects independently.
+  it("two mounted pickers do not collide on ids and select independently", () => {
+    const onSelectFirst = vi.fn();
+    const onSelectSecond = vi.fn();
+    const { container: first } = render(
+      <InstancePicker
+        instances={[onlineA, onlineB]}
+        selectedConnectionUuid={onlineA.connectionUuid}
+        onSelect={onSelectFirst}
+      />,
+    );
+    const { container: second } = render(
+      <InstancePicker
+        instances={[onlineA, onlineB]}
+        selectedConnectionUuid={onlineA.connectionUuid}
+        onSelect={onSelectSecond}
+      />,
+    );
+    // No element carries the old colliding id pattern.
+    expect(document.querySelectorAll('[id^="instance-"]').length).toBe(0);
+    // Selecting in the SECOND picker fires only its callback with the right uuid.
+    fireEvent.click(rowByCwd(second, "payments"));
+    expect(onSelectSecond).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectionUuid: "conn-online-b" }),
+    );
+    expect(onSelectFirst).not.toHaveBeenCalled();
   });
 
   it("shows NO 'Offline' tag and NO 'Queue' affordance (those concepts are gone)", () => {
