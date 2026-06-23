@@ -18,6 +18,15 @@ vi.mock("@/services/daemon-session.service", () => ({
   resolveDirectIdeaUuid: mockResolveDirectIdeaUuid,
 }));
 
+// The task-assignment pin (T5) is read from the Task's targetHost/targetCwd columns,
+// so the bridge now touches prisma.task.findFirst for a task_assigned wake. Mock it so
+// these stay pure unit tests with no DB. Default: no pin recorded (both null) — the
+// unchanged online-first path. Pin-honoring tests override the resolved value.
+const mockTaskFindFirst = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({
+  prisma: { task: { findFirst: mockTaskFindFirst } },
+}));
+
 // Capture logger.error so we can assert the VISIBLE-failure (no silent swallow) rule.
 // The child logger object is built at hoist time so the module-level
 // `logger.child(...)` call (evaluated at import) returns a stable spy-bearing object.
@@ -61,6 +70,7 @@ function onlineConn(overrides: Record<string, unknown> = {}) {
     clientType: "claude_code",
     clientVersion: null,
     host: "host-1",
+    cwd: "/home/u/dev/chorus",
     startedAt: null,
     status: "online",
     effectiveStatus: "online" as const,
@@ -129,6 +139,9 @@ beforeEach(() => {
   mockCreatePendingTurn.mockImplementation(async (p: { trigger: string; promptText?: string | null }) =>
     turnView({ trigger: p.trigger, promptText: p.promptText ?? null }),
   );
+  // Default: the assigned Task records NO pin (both columns null) — the unchanged
+  // online-first path. Pin-honoring tests override this per-case.
+  mockTaskFindFirst.mockResolvedValue({ targetHost: null, targetCwd: null });
 });
 
 // ===== Action → trigger mapping =====
@@ -309,6 +322,231 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
 
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: fresh }),
+    );
+  });
+});
+
+// ===== Pinned-target instance routing (cwd-addressable instances, T5) =====
+//
+// The wake honors a pinned (host, cwd): a `mentioned` wake carries the pin on the
+// context (threaded from the mention markup by mention.service); a `task_assigned`
+// wake reads it from the Task's targetHost/targetCwd columns. ONLINE-ONLY selection:
+//   - pin matches an ONLINE connection       → pin the session origin THERE (not [0])
+//   - pin matches an OFFLINE connection       → NOT wakeable (no durable queue) →
+//                                              online-first fallback
+//   - pin matches NO connection / no pin      → online-first fallback (unchanged)
+//   - no online connection at all             → no turn (the notification stands)
+// DEC-5: the cwd is ONLY ever the explicit pin — never inferred from the project.
+describe("maybeCreateTurnForWakeNotification — pinned-target instance routing (T5)", () => {
+  const pinnedHost = "Laptop-Q3";
+  const pinnedCwd = "/home/u/dev/payments";
+  const pinnedConnUuid = "conn-pinned-target";
+
+  function pinnedConn(overrides: Record<string, unknown> = {}) {
+    return onlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd, ...overrides });
+  }
+
+  // ----- mentioned wake: pin carried on the context -----
+
+  it("pins the session origin to the (host, cwd)-matching LIVE connection (not online-first) for a mentioned wake", async () => {
+    // Online-first would pick `conn-online-first`; the pin must override that and
+    // select the pinned-target connection even though it is NOT first in the list.
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
+      pinnedConn(),
+    ]);
+
+    const result = await maybeCreateTurnForWakeNotification(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    expect(result?.trigger).toBe("mentioned");
+    expect(result?.status).toBe("pending");
+    expect(mockLoggerError).not.toHaveBeenCalled();
+    // A mentioned wake reads its pin from the context, NOT from the Task table.
+    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("does NOT read the Task pin for a mentioned wake (pin is context-only)", async () => {
+    await maybeCreateTurnForWakeNotification(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd, entityType: "task", entityUuid: taskUuid }),
+    );
+    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+  });
+
+  // ----- task_assigned wake: pin read from the Task columns -----
+
+  it("reads the Task targetHost/targetCwd and pins the matching LIVE connection for a task_assigned wake", async () => {
+    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
+      pinnedConn(),
+    ]);
+
+    const result = await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
+
+    expect(mockTaskFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ uuid: taskUuid, companyUuid }),
+      }),
+    );
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    expect(result?.status).toBe("pending");
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  // ----- pin → online-first fallback (no matching live connection) -----
+
+  it("falls back to online-first when the pin matches NO connection at all (mentioned)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: "conn-offline", host: "host-B", cwd: "/home/u/dev/b" }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(
+      // Pin to a place that is not registered for this agent at all.
+      ctx({ action: "mentioned", pinnedHost: "ghost-host", pinnedCwd: "/no/such/path" }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("falls back to online-first when the Task pin matches NO connection (task_assigned)", async () => {
+    mockTaskFindFirst.mockResolvedValue({ targetHost: "ghost-host", targetCwd: "/no/such/path" });
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+  });
+
+  // ----- OFFLINE pin is NOT wakeable: falls back to online-first / no turn -----
+
+  it("a pin matching an OFFLINE connection is NOT wakeable: falls back to online-first (no durable queue)", async () => {
+    // The pinned (host, cwd) instance is OFFLINE; another instance is online. An offline
+    // place is not wakeable — there is no durable queue — so the wake falls back to
+    // online-first and pins the ONLINE-elsewhere connection, NOT the offline pinned one.
+    const onlineElsewhere = "conn-online-elsewhere";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineElsewhere, host: "other-host", cwd: "/home/u/dev/other" }),
+      offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    const result = await maybeCreateTurnForWakeNotification(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
+    );
+
+    // A turn IS created, but pinned to the ONLINE-elsewhere connection (online-first) —
+    // the offline pin did not win and there is no backfill queue.
+    expect(mockCreatePendingTurn).toHaveBeenCalledTimes(1);
+    expect(result?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineElsewhere }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    // A skipped offline wake is normal, not an error.
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("an OFFLINE Task pin with NO online connection at all creates NO turn (the notification stands as the plain record)", async () => {
+    // Agent is fully offline; the pinned instance exists (offline). An offline place is
+    // not wakeable and there is no durable queue, so NO turn is created — the already-
+    // created Notification stands as the plain record. This is the durable-queue removal.
+    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    const result = await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
+
+    expect(result).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    // Not an error — a fully-offline target is a notification-only event.
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  // ----- un-pinned: unchanged online-first -----
+
+  it("an un-pinned mentioned wake uses online-first exactly as before (no Task read, no pin narrowing)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: "conn-older", host: "host-B", cwd: "/home/u/dev/b" }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(ctx({ action: "mentioned" }));
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    // No pin on a mentioned wake → never reads the Task table.
+    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("a task_assigned wake whose Task records no pin (both columns null) uses online-first, unchanged", async () => {
+    // mockTaskFindFirst default already returns { targetHost: null, targetCwd: null }.
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: "conn-offline", host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+  });
+
+  it("treats an unknown-host + unknown-path pin (host '' + cwd null) as no pin → online-first (no false narrowing)", async () => {
+    // A pin carrying no disambiguating info matches any legacy/unknown instance, so it
+    // is NOT used to narrow — the wake stays online-first.
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(
+      ctx({ action: "mentioned", pinnedHost: "", pinnedCwd: null }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+  });
+
+  it("matches a pin against the registry's sentinels: host-only pin (unknown-path cwd null) on an ONLINE instance", async () => {
+    // The owner pinned a host but the instance has an unknown path (legacy null cwd).
+    // The pin's cwd normalizes to null and must match the connection's null cwd. The
+    // matched instance is ONLINE, so the pin wins over the online-first entry.
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: "conn-nullcwd", host: pinnedHost, cwd: null }),
+    ]);
+
+    await maybeCreateTurnForWakeNotification(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd: null }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: "conn-nullcwd" }),
     );
   });
 });

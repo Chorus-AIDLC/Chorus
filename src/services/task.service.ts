@@ -47,6 +47,14 @@ export interface TaskClaimParams {
   assigneeType: string;
   assigneeUuid: string;
   assignedByUuid?: string | null;
+  // Pinned (host, cwd) daemon instance the assignment should run on (cwd-
+  // addressable instances, T4). A durable "place" (host + working directory),
+  // NOT an ephemeral connectionUuid, so the pin survives a daemon restart and is
+  // resolved to a live connection at wake time (T5). Both undefined → no pin
+  // (behaves exactly as before this change). host "" denotes an unknown-host
+  // instance; cwd null denotes an unknown-path (legacy null-cwd) instance.
+  targetHost?: string | null;
+  targetCwd?: string | null;
 }
 
 export interface TaskUpdateParams {
@@ -113,6 +121,11 @@ export interface TaskResponse {
     assignedBy: { type: string; uuid: string; name: string } | null;
   } | null;
   proposalUuid: string | null;
+  // Pinned (host, cwd) daemon instance for the autonomous wake (cwd-addressable
+  // instances, T4). null when no instance was pinned at assignment time. host ""
+  // = unknown-host instance; cwd null = unknown-path (legacy null-cwd) instance.
+  targetHost: string | null;
+  targetCwd: string | null;
   project?: { uuid: string; name: string };
   createdBy: { type: string; uuid: string; name: string } | null;
   dependsOn: TaskDependencyInfo[];
@@ -210,6 +223,8 @@ async function formatTaskResponse(
     assigneeUuid: string | null;
     assignedAt: Date | null;
     assignedByUuid: string | null;
+    targetHost?: string | null;
+    targetCwd?: string | null;
     proposalUuid: string | null;
     createdByUuid: string;
     createdAt: Date;
@@ -256,6 +271,8 @@ async function formatTaskResponse(
     acceptanceSummary,
     assignee,
     proposalUuid: task.proposalUuid,
+    targetHost: task.targetHost ?? null,
+    targetCwd: task.targetCwd ?? null,
     ...(task.project && { project: task.project }),
     createdBy,
     dependsOn,
@@ -279,6 +296,8 @@ type RawTaskForBatch = {
   assigneeUuid: string | null;
   assignedAt: Date | null;
   assignedByUuid: string | null;
+  targetHost?: string | null;
+  targetCwd?: string | null;
   proposalUuid: string | null;
   createdByUuid: string;
   createdAt: Date;
@@ -370,6 +389,8 @@ async function formatTaskResponsesBatch(
       acceptanceSummary,
       assignee,
       proposalUuid: task.proposalUuid,
+      targetHost: task.targetHost ?? null,
+      targetCwd: task.targetCwd ?? null,
       ...(task.project && { project: task.project }),
       createdBy,
       dependsOn,
@@ -437,6 +458,8 @@ export async function listTasks({
         assigneeUuid: true,
         assignedAt: true,
         assignedByUuid: true,
+        targetHost: true,
+        targetCwd: true,
         proposalUuid: true,
         createdByUuid: true,
         createdAt: true,
@@ -594,12 +617,15 @@ export async function updateTask(
 }
 
 // Claim Task (atomic: only succeeds if status is "open")
+// `companyUuid` is part of the params contract for callers but unused here — the
+// atomic update is keyed on the task uuid + status guard, not company scope.
 export async function claimTask({
   taskUuid,
-  companyUuid,
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  targetHost,
+  targetCwd,
 }: TaskClaimParams): Promise<TaskResponse> {
   try {
     const task = await prisma.task.update({
@@ -610,6 +636,12 @@ export async function claimTask({
         assigneeUuid,
         assignedAt: new Date(),
         assignedByUuid,
+        // Persist the pinned (host, cwd) instance with the assignment when the
+        // caller threaded one (cwd-addressable instances, T4). Always write both
+        // (coercing undefined → null) so RE-assigning without a pin CLEARS a
+        // stale pin from a prior assignment rather than silently inheriting it.
+        targetHost: targetHost ?? null,
+        targetCwd: targetCwd ?? null,
       },
       include: {
         project: { select: { uuid: true, name: true } },
@@ -638,6 +670,11 @@ export async function releaseTask(uuid: string): Promise<TaskResponse> {
         assigneeUuid: null,
         assignedAt: null,
         assignedByUuid: null,
+        // Releasing clears the assignment, so the pinned (host, cwd) instance
+        // goes with it (cwd-addressable instances, T4) — a re-assignment picks a
+        // fresh instance rather than inheriting the released one's pin.
+        targetHost: null,
+        targetCwd: null,
       },
       include: {
         project: { select: { uuid: true, name: true } },
@@ -1175,6 +1212,8 @@ export async function getUnblockedTasks({
         assigneeUuid: true,
         assignedAt: true,
         assignedByUuid: true,
+        targetHost: true,
+        targetCwd: true,
         proposalUuid: true,
         createdByUuid: true,
         createdAt: true,

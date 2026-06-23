@@ -566,13 +566,21 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status)",
+      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status). Optionally pin which (host, cwd) daemon instance the autonomous wake should route the task to — an offline instance is a valid durable pin (the turn queues and backfills when that place's daemon reconnects).",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
         agentUuid: z.string().describe("Target Agent UUID (must have task:write permission)"),
+        targetHost: z
+          .string()
+          .nullish()
+          .describe("Optional pinned instance host (\"\" = unknown-host instance). Omit for no pin."),
+        targetCwd: z
+          .string()
+          .nullish()
+          .describe("Optional pinned instance working directory (null = unknown-path instance). Omit for no pin."),
       }),
     },
-    async ({ taskUuid, agentUuid }) => {
+    async ({ taskUuid, agentUuid, targetHost, targetCwd }) => {
       // Validate task exists
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
@@ -614,6 +622,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           assigneeType: "agent",
           assigneeUuid: agentUuid,
           assignedByUuid: auth.actorUuid,
+          // Thread the optional durable (host, cwd) pin (cwd-addressable
+          // instances, T4); both undefined → no pin, coerced to null by the
+          // service so a re-assignment clears a stale pin.
+          targetHost: targetHost ?? null,
+          targetCwd: targetCwd ?? null,
         });
 
         // Log activity
@@ -625,7 +638,14 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           actorType: "agent",
           actorUuid: auth.actorUuid,
           action: "assigned",
-          value: { assigneeType: "agent", assigneeUuid: agentUuid, assignedBy: auth.actorUuid },
+          value: {
+            assigneeType: "agent",
+            assigneeUuid: agentUuid,
+            assignedBy: auth.actorUuid,
+            ...(targetHost != null || targetCwd != null
+              ? { targetHost: targetHost ?? null, targetCwd: targetCwd ?? null }
+              : {}),
+          },
         });
 
         // Fetch full task details with dependencies

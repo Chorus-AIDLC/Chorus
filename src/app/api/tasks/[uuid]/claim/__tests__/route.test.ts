@@ -112,6 +112,52 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
     expect(mockClaimTask).not.toHaveBeenCalled();
   });
 
+  it("threads a pinned (host, cwd) to claimTask when assigning to an agent (cwd-addressable instances, T4)", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["developer_agent"],
+      permissions: [],
+    });
+    mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: agentUuid });
+
+    // An OFFLINE pin is a valid durable intent — the route does NOT gate on
+    // online (only the live ad-hoc send does), so it must pass the pin through.
+    const res = await POST(
+      jsonRequest({
+        agentUuid,
+        targetHost: "ci-runner-02",
+        targetCwd: "/home/u/dev/chorus",
+      }),
+      ctx(),
+    );
+    expect(res.status).toBe(200);
+    expect(mockClaimTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assigneeType: "agent",
+        assigneeUuid: agentUuid,
+        targetHost: "ci-runner-02",
+        targetCwd: "/home/u/dev/chorus",
+      }),
+    );
+  });
+
+  it("passes null host/cwd to claimTask when no pin is sent (un-pinned assignment)", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["developer_agent"],
+      permissions: [],
+    });
+    mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: agentUuid });
+
+    await POST(jsonRequest({ agentUuid }), ctx());
+    expect(mockClaimTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetHost: null,
+        targetCwd: null,
+      }),
+    );
+  });
+
   it("looks up the agent scoped by companyUuid (no cross-tenant leakage)", async () => {
     mockPrisma.agent.findFirst.mockResolvedValue({
       uuid: agentUuid,

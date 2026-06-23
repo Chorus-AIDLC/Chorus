@@ -31,6 +31,11 @@ export const POST = withErrorHandler<{ uuid: string }>(
     let assigneeType: string;
     let assigneeUuid: string;
     let assignedByUuid: string | null = null;
+    // Pinned (host, cwd) daemon instance to run the assignment on (cwd-
+    // addressable instances, T4). Only the user→agent path threads a pin; an
+    // agent self-claim never pins one (it runs wherever it already is).
+    let targetHost: string | null = null;
+    let targetCwd: string | null = null;
 
     if (isAgent(auth)) {
       // Agents need task:write permission to claim
@@ -44,6 +49,12 @@ export const POST = withErrorHandler<{ uuid: string }>(
       const body = await parseBody<{
         assignToSelf?: boolean;
         agentUuid?: string;
+        // Optional durable pin (cwd-addressable instances, T4): the (host, cwd)
+        // "place" the autonomous wake should route this assignment to. An
+        // offline place is accepted (durable intent — the turn queues and
+        // backfills on reconnect). Omitted → no pin.
+        targetHost?: string | null;
+        targetCwd?: string | null;
       }>(request);
 
       if (body.agentUuid) {
@@ -75,6 +86,11 @@ export const POST = withErrorHandler<{ uuid: string }>(
         assigneeType = "agent";
         assigneeUuid = agent.uuid;
         assignedByUuid = auth.actorUuid;
+        // Carry the pin only when assigning to an agent. A pin is a durable
+        // intent for the autonomous wake; an offline place is accepted here (the
+        // 409-if-offline gate is the LIVE-send contract, not the assignment one).
+        targetHost = body.targetHost ?? null;
+        targetCwd = body.targetCwd ?? null;
       } else {
         // Assign to self (all owned Developer Agents can handle it)
         assigneeType = "user";
@@ -92,6 +108,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
         assigneeType,
         assigneeUuid,
         assignedByUuid,
+        targetHost,
+        targetCwd,
       });
 
       return success(updated);

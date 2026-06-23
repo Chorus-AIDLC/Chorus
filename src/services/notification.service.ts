@@ -28,6 +28,17 @@ export interface NotificationCreateParams {
   // copy lives on the created `DaemonSessionTurn.promptText`. Null for every
   // non-instruction notification.
   instructionText?: string | null;
+  // Pinned target daemon instance carried by a `mentioned` wake (cwd-addressable
+  // instances, T5). The mention markup encodes the owner-chosen `(host, cwd)` and
+  // mention.service threads it here so the autonomous wake (notification-turn.ts)
+  // routes to that instance. These are NOT persisted on the Notification row — they
+  // are transport-only into the wake-turn chokepoint, which resolves them to a live
+  // connection at wake time. A `task_assigned` wake reads its pin from the Task's
+  // `targetHost`/`targetCwd` columns instead (the durable storage), so it does not
+  // need these. Both undefined/null → no pin (online-first, exactly as before).
+  // `pinnedHost` "" = unknown-host instance; `pinnedCwd` null = unknown-path instance.
+  pinnedHost?: string | null;
+  pinnedCwd?: string | null;
 }
 
 export interface NotificationListParams {

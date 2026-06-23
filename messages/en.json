@@ -120,6 +120,18 @@
     "releaseAssignee": "Release (Clear Assignee)",
     "releaseAssigneeDesc": "Remove current assignee and make this task available again"
   },
+  "assignInstance": {
+    "workingDirectory": "Working directory",
+    "loadingInstances": "Loading working directories…",
+    "noInstances": "This agent has no online daemon. The task is assigned and the agent is notified; it will pick it up the next time it comes online.",
+    "pinNote": "The autonomous wake routes this task to the exact (host, path) you pin here. Only online instances can be pinned. Paths are never inferred from the project.",
+    "assignTo": "Assign at {path}",
+    "assignToWithHost": "Assign at {path} · {host}",
+    "sendingTo": "Sending to {path}",
+    "sendingToWithHost": "Sending to {path} · {host}",
+    "liveSendNote": "Send an instruction now. Live sends need the path to be online.",
+    "offlineCantRun": "Offline — can't run until it reconnects"
+  },
   "time": {
     "justNow": "Just now",
     "minutesAgo": "{minutes}m ago",
@@ -1490,7 +1502,10 @@
     "selectPrompt": "Select a conversation to read its transcript.",
     "loadErrorTitle": "Couldn't load this conversation",
     "loadErrorBody": "We couldn't reach the transcript service. This is a loading problem, not an empty conversation. Retrying when you reopen it.",
-    "originOfflineNote": "This conversation's origin daemon is offline, so it's read-only. Its history still shows; start a new conversation to send.",
+    "originOfflineNote": "This conversation's origin daemon is offline, so it's read-only. Its history still shows; continue it on an online directory to send.",
+    "continueOnlineAction": "Continue on an online directory",
+    "continueOnlineHelp": "Keep this same conversation but continue it on one of this agent's online working directories. It picks up there with a fresh start (the history above stays as read-only context).",
+    "continueOnlineStarted": "Continuing on the online directory",
     "detailsLabel": "Connection details",
     "detailsHostUnknown": "Unknown host",
     "detailUptime": "Uptime",
@@ -1507,7 +1522,24 @@
     "pillAria": "Online agents — open details",
     "popoverTitle": "Online agents",
     "connectionIdle": "Idle — no running or queued work.",
-    "viewAll": "View all"
+    "viewAll": "View all",
+    "unknownPath": "unknown path",
+    "unknownHost": "unknown host",
+    "drilldown": {
+      "instancesCount": "{count, plural, one {# instance} other {# instances}}",
+      "hostsCount": "{count, plural, one {# host} other {# hosts}}",
+      "expandAgent": "Show {agent}'s working directories",
+      "collapseAgent": "Hide {agent}'s working directories",
+      "idle": "idle",
+      "runningFor": "running · {time}",
+      "queuedCount": "{count, plural, one {# queued} other {# queued}}",
+      "offlineSince": "offline · {time}",
+      "fieldPath": "Working directory"
+    }
+  },
+  "transcriptHeader": {
+    "cwdAriaLabel": "Working directory",
+    "hostAriaLabel": "Host"
   },
   "daemonConnectCta": {
     "headline": "Next step: keep your agent online",
@@ -1523,5 +1555,12 @@
     "offline": "Offline",
     "activeCount": "{count} active",
     "idle": "Idle"
+  },
+  "mentionInstance": {
+    "title": "Which working directory?",
+    "subtitle": "{name} is live in {count, plural, one {# instance} other {# instances}} across {hosts, plural, one {# host} other {# hosts}}.",
+    "confirm": "Pin instance",
+    "cancel": "Cancel",
+    "noInstances": "No live instances"
   }
 }

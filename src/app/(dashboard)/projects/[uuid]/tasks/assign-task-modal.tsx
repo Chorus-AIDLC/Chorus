@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, Loader2 } from "lucide-react";
+import { X, Bot, User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -15,11 +15,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  InstancePicker,
+  type InstanceCandidate,
+} from "@/components/agent-presence/instance-picker";
+import {
+  formatCwd,
+  formatHost,
+} from "@/lib/daemon-instance-format";
+import {
   claimTaskAction,
   claimTaskToAgentAction,
   claimTaskToUserAction,
   releaseTaskAction,
   getDeveloperAgentsAction,
+  getAgentInstancesAction,
 } from "./[taskUuid]/actions";
 
 interface Task {
@@ -73,6 +82,16 @@ export function AssignTaskModal({
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // The selected agent's ONLINE (host, cwd) daemon instances for the cwd pin
+  // (cwd-addressable instances). Only online instances are pinnable — an offline
+  // instance is not a wake target, so it is filtered out (a fully-offline agent
+  // shows no picker and just assigns plainly with no pin).
+  const [instances, setInstances] = useState<InstanceCandidate[]>([]);
+  const [isLoadingInstances, setIsLoadingInstances] = useState(false);
+  const [pinnedConnectionUuid, setPinnedConnectionUuid] = useState<string | null>(
+    null,
+  );
+
   const isAssigned = !!task.assignee;
 
   // Load agents and users
@@ -89,6 +108,61 @@ export function AssignTaskModal({
 
   // All developer agents in the company are available for assignment
 
+  // Load the selected agent's daemon instances whenever the agent changes (and
+  // the agent option is active). Resets the pin so a stale (host, cwd) from a
+  // previously-selected agent never leaks across agents.
+  useEffect(() => {
+    if (selectedOption !== "agent" || !selectedAgentUuid) {
+      setInstances([]);
+      setPinnedConnectionUuid(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingInstances(true);
+    setPinnedConnectionUuid(null);
+    getAgentInstancesAction(selectedAgentUuid)
+      .then((res) => {
+        if (cancelled) return;
+        // Online-only: an offline instance is not a wake target, so it never
+        // appears in the picker. A fully-offline agent yields [] → no picker.
+        setInstances(
+          res.instances.filter((i) => i.effectiveStatus === "online"),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingInstances(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOption, selectedAgentUuid]);
+
+  // The instance the owner pinned, resolved from the controlled connectionUuid.
+  const pinnedInstance =
+    instances.find((i) => i.connectionUuid === pinnedConnectionUuid) ?? null;
+  // Host is included in a target confirmation only when it disambiguates — i.e.
+  // the agent's instances span 2+ distinct hosts (same rule as the picker rows).
+  const isMultiHost = new Set(instances.map((i) => i.host)).size > 1;
+
+  // The CTA label / footer confirmation names the resolved (path · host) of the
+  // pinned online instance; host only when it disambiguates (2+ hosts).
+  function resolvePinLabel(): string {
+    if (selectedOption !== "agent" || !pinnedInstance) {
+      return t("common.assign");
+    }
+    const cwd = formatCwd(pinnedInstance.cwd);
+    const pathLabel = cwd.isUnknown ? t(cwd.label) : cwd.label;
+    const host = formatHost(pinnedInstance.host);
+    const hostLabel = host.isUnknown ? t(host.label) : host.label;
+    if (isMultiHost) {
+      return t("assignInstance.assignToWithHost", {
+        path: pathLabel,
+        host: hostLabel,
+      });
+    }
+    return t("assignInstance.assignTo", { path: pathLabel });
+  }
+
   const handleSubmit = async () => {
     setIsLoading(true);
     setError(null);
@@ -97,7 +171,13 @@ export function AssignTaskModal({
     if (selectedOption === "self") {
       result = await claimTaskAction(task.uuid);
     } else if (selectedOption === "agent" && selectedAgentUuid) {
-      result = await claimTaskToAgentAction(task.uuid, selectedAgentUuid);
+      // Thread the durable (host, cwd) pin when the owner picked one. We send the
+      // place (host + cwd), NOT the ephemeral connectionUuid, so the pin survives
+      // a daemon restart and the wake resolves it at run time. No pin → undefined.
+      const pin = pinnedInstance
+        ? { targetHost: pinnedInstance.host, targetCwd: pinnedInstance.cwd }
+        : undefined;
+      result = await claimTaskToAgentAction(task.uuid, selectedAgentUuid, pin);
     } else if (selectedOption === "user" && selectedUserUuid) {
       result = await claimTaskToUserAction(task.uuid, selectedUserUuid);
     } else if (selectedOption === "release") {
@@ -228,7 +308,7 @@ export function AssignTaskModal({
                 </p>
 
                 {selectedOption === "agent" && (
-                  <div className="mt-3 ml-6">
+                  <div className="mt-3 ml-6 space-y-3">
                     <Select
                       value={selectedAgentUuid}
                       onValueChange={setSelectedAgentUuid}
@@ -253,6 +333,42 @@ export function AssignTaskModal({
                         )}
                       </SelectContent>
                     </Select>
+
+                    {/* Working-directory pin (cwd-addressable instances).
+                        ONLINE-only: an offline instance is not a wake target, so
+                        it is filtered out and never shown. A fully-offline agent
+                        yields no instances → no picker; the task is assigned
+                        plainly with no pin (a plain notification, no wake). */}
+                    {selectedAgentUuid && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                          {t("assignInstance.workingDirectory")}
+                        </span>
+                        {isLoadingInstances ? (
+                          <div className="flex items-center gap-2 py-2 text-xs text-[#9A9A9A]">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {t("assignInstance.loadingInstances")}
+                          </div>
+                        ) : instances.length === 0 ? (
+                          <p className="rounded-lg bg-[#FAF8F4] p-2.5 text-[11px] leading-relaxed text-[#6B6B6B]">
+                            {t("assignInstance.noInstances")}
+                          </p>
+                        ) : (
+                          <InstancePicker
+                            instances={instances}
+                            selectedConnectionUuid={pinnedConnectionUuid}
+                            onSelect={(inst) =>
+                              setPinnedConnectionUuid(inst.connectionUuid)
+                            }
+                            ariaLabel={t("assignInstance.workingDirectory")}
+                          />
+                        )}
+                        <div className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A8C7E]">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                          <span>{t("assignInstance.pinNote")}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -350,7 +466,9 @@ export function AssignTaskModal({
             ) : selectedOption === "release" ? (
               t("common.release")
             ) : (
-              t("common.assign")
+              // When an instance is pinned the CTA names the resolved (path · host)
+              // target (cwd-addressable instances, T4); otherwise the plain label.
+              resolvePinLabel()
             )}
           </Button>
         </div>

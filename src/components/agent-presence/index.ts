@@ -22,6 +22,23 @@ export {
 } from "./hooks";
 export { StatusDot, StatusBadge } from "./status";
 export { IdentityBlock } from "./identity-block";
+export {
+  groupConnectionsByAgent,
+  onlineConnectionsOnly,
+  deriveInstanceActivity,
+  useInstanceActivity,
+  AgentGroupHeader,
+  InstanceRow,
+  PathChip,
+  type AgentInstanceGroup,
+  type InstanceActivity,
+  type InstanceActivityState,
+} from "./instance-group";
+export {
+  InstancePicker,
+  type InstancePickerProps,
+  type InstanceCandidate,
+} from "./instance-picker";
 export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";

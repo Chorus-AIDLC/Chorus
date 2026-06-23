@@ -282,18 +282,21 @@ describe("Send-instruction dock — default is a NEW conversation (ad-hoc), not 
     );
   });
 
-  it("shows only a localized 'no online connection' reason when nothing is online", async () => {
+  it("online-only deck: an all-offline connection set shows the empty 'connect a daemon' card, no send dock", async () => {
+    // T11 / qr2 reverses the old behavior where an offline connection still
+    // rendered in the deck with a disabled dock. Presence is online-only now, so
+    // an all-offline set surfaces the "no connections" empty card — never an
+    // offline row, never a (disabled) send dock to a connection that isn't shown.
     routeFetch({
       connections: [{ ...connection, status: "offline", effectiveStatus: "offline" }],
       sessions: [],
     });
     await renderView();
     await waitFor(() =>
-      expect(screen.getAllByText("Send instruction").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("No agent connections yet").length).toBeGreaterThan(0),
     );
-    expect(
-      screen.getAllByText(/no online connection to send to/i).length,
-    ).toBeGreaterThan(0);
+    // No offline row, no send dock, no compose/start affordance reachable.
+    expect(screen.queryAllByText("Send instruction").length).toBe(0);
     expect(screen.queryAllByRole("button", { name: "Start session" }).length).toBe(0);
     expect(screen.queryAllByRole("button", { name: "Send" }).length).toBe(0);
   });

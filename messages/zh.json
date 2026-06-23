@@ -120,6 +120,18 @@
     "releaseAssignee": "释放（清除负责人）",
     "releaseAssigneeDesc": "移除当前负责人，使此任务重新可用"
   },
+  "assignInstance": {
+    "workingDirectory": "工作目录",
+    "loadingInstances": "正在加载工作目录…",
+    "noInstances": "该智能体没有在线的守护进程。任务已分配并已通知该智能体，它将在下次上线时领取。",
+    "pinNote": "自主唤醒会将此任务路由到你在此固定的确切（主机，路径）实例。只能固定在线实例。路径绝不会从项目推断。",
+    "assignTo": "分配到 {path}",
+    "assignToWithHost": "分配到 {path} · {host}",
+    "sendingTo": "发送到 {path}",
+    "sendingToWithHost": "发送到 {path} · {host}",
+    "liveSendNote": "立即发送指令。实时发送要求该路径处于在线状态。",
+    "offlineCantRun": "离线 — 重新连接前无法运行"
+  },
   "time": {
     "justNow": "刚刚",
     "minutesAgo": "{minutes}分钟前",
@@ -1491,7 +1503,10 @@
     "selectPrompt": "选择一个对话以查看其记录。",
     "loadErrorTitle": "无法加载该对话",
     "loadErrorBody": "无法连接到记录服务。这是加载问题，而非空对话。重新打开时会自动重试。",
-    "originOfflineNote": "该对话的来源守护进程已离线，因此为只读。历史记录仍会显示；如需发送请开启新对话。",
+    "originOfflineNote": "该对话的来源守护进程已离线，因此为只读。历史记录仍会显示；如需发送，请在某个在线目录中继续。",
+    "continueOnlineAction": "在在线目录中继续",
+    "continueOnlineHelp": "保留本对话，并在该智能体的某个在线工作目录中继续。它会在该目录中以全新状态接续（上方历史记录将保留为只读上下文）。",
+    "continueOnlineStarted": "正在该在线目录中继续",
     "detailsLabel": "连接详情",
     "detailsHostUnknown": "未知主机",
     "detailUptime": "运行时长",
@@ -1508,7 +1523,24 @@
     "pillAria": "在线智能体 — 打开详情",
     "popoverTitle": "在线智能体",
     "connectionIdle": "空闲 — 没有正在运行或排队的工作。",
-    "viewAll": "查看全部"
+    "viewAll": "查看全部",
+    "unknownPath": "未知路径",
+    "unknownHost": "未知主机",
+    "drilldown": {
+      "instancesCount": "{count, plural, other {# 个实例}}",
+      "hostsCount": "{count, plural, other {# 台主机}}",
+      "expandAgent": "展开 {agent} 的工作目录",
+      "collapseAgent": "收起 {agent} 的工作目录",
+      "idle": "空闲",
+      "runningFor": "运行中 · {time}",
+      "queuedCount": "{count, plural, other {# 个排队}}",
+      "offlineSince": "离线 · {time}",
+      "fieldPath": "工作目录"
+    }
+  },
+  "transcriptHeader": {
+    "cwdAriaLabel": "工作目录",
+    "hostAriaLabel": "主机"
   },
   "daemonConnectCta": {
     "headline": "下一步：让你的智能体保持在线",
@@ -1524,5 +1556,12 @@
     "offline": "离线",
     "activeCount": "进行中 {count}",
     "idle": "空闲"
+  },
+  "mentionInstance": {
+    "title": "选择工作目录？",
+    "subtitle": "{name} 在 {hosts, plural, other {# 台主机}}上有 {count, plural, other {# 个在线实例}}。",
+    "confirm": "固定实例",
+    "cancel": "取消",
+    "noInstances": "没有在线实例"
   }
 }

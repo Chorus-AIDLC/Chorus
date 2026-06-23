@@ -16,6 +16,7 @@
 // hides an error. So idle (0 online), loading, and error are three visually
 // distinct states and none of them is blank.
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { ListChecks, Play } from "lucide-react";
 import {
@@ -26,12 +27,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import {
+  AgentGroupHeader,
   DaemonConnectCta,
   ExecutionRow,
   ExecutionSection,
-  IdentityBlock,
+  InstanceRow,
   StatusDot,
+  groupConnectionsByAgent,
+  onlineConnectionsOnly,
+  useInstanceActivity,
   useNowTick,
+  type AgentInstanceGroup,
   type ConnectionView,
   type ExecutionView,
 } from "@/components/agent-presence";
@@ -67,87 +73,183 @@ function PillDot({
   );
 }
 
-// The list of online connections + their running/queued executions, rendered
-// inside the popover. Interrupted rows are deliberately dropped here — the
-// popover is glanceable and has no resume control (that is the modal's job).
-function PopoverBody({
-  onlineConnections,
-  executionsByConnection,
+// One instance sub-row inside an agent group. The path-first `InstanceRow`
+// (cwd + host-conditional suffix + tinted activity dot) is the drill-down
+// identity; nested beneath it the instance's running/queued executions render
+// as the SAME stacked `ExecutionRow`s used before the drill-down rework — so
+// the per-execution titles AND the Interrupt control (子3) stay reachable from
+// the glanceable popover. Interrupted rows are still dropped here (the popover
+// has no resume affordance — that is the modal's job). An ONLINE instance with
+// no running/queued work shows the quiet idle line instead, never a blank gap.
+function PopoverInstanceRow({
+  connection,
+  executions,
+  showHost,
   nowMs,
 }: {
-  onlineConnections: ConnectionView[];
-  executionsByConnection: Record<string, ExecutionView[]>;
+  connection: ConnectionView;
+  executions: ExecutionView[];
+  showHost: boolean;
   nowMs: number;
 }) {
   const t = useTranslations("agentPresence");
   const ta = useTranslations("agentConnections");
+  const { text, dot } = useInstanceActivity(connection, executions, nowMs);
+
+  // Glanceable surface: only running + queued executions are detailed.
+  // Interrupted rows are the modal's concern (they carry a resume affordance
+  // this popover lacks), so they are filtered out here.
+  const running = executions.filter((e) => e.status === "running");
+  const queued = executions.filter((e) => e.status === "queued");
+  const hasActive = running.length > 0 || queued.length > 0;
+  const online = connection.effectiveStatus === "online";
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <InstanceRow
+        connection={connection}
+        showHost={showHost}
+        activity={text}
+        dot={dot}
+      />
+      {hasActive ? (
+        <div className="flex flex-col gap-4 pl-1">
+          {running.length > 0 && (
+            <ExecutionSection
+              icon={Play}
+              label={ta("execRunning")}
+              count={running.length}
+            >
+              {running.map((exec) => (
+                <ExecutionRow
+                  key={exec.uuid}
+                  exec={exec}
+                  nowMs={nowMs}
+                  layout="stacked"
+                />
+              ))}
+            </ExecutionSection>
+          )}
+          {queued.length > 0 && (
+            <ExecutionSection
+              icon={ListChecks}
+              label={ta("execQueued")}
+              count={queued.length}
+            >
+              {queued.map((exec) => (
+                <ExecutionRow
+                  key={exec.uuid}
+                  exec={exec}
+                  nowMs={nowMs}
+                  layout="stacked"
+                />
+              ))}
+            </ExecutionSection>
+          )}
+        </div>
+      ) : (
+        // A quiet idle line for an ONLINE instance with no running/queued work —
+        // never blank. An offline instance already reads "offline · <last seen>"
+        // in its own row, so the idle line is online-only to avoid redundancy.
+        online && (
+          <p className="pl-1 text-[12px] text-[#9A9A9A]">{t("connectionIdle")}</p>
+        )
+      )}
+    </div>
+  );
+}
+
+// One agent group: a host-conditional COLLAPSIBLE header + (when expanded) one
+// path-first sub-row per ONLINE instance. The group is grouped from the
+// online-only connection set (offline instances — including a legacy null-cwd
+// "unknown path" — never reach this surface), so every listed instance is live.
+//
+// Collapse (T11 / qr1): DEFAULT COLLAPSED. Collapsed shows just the header
+// (agent name + online count + status dot); the per-cwd instance rows are
+// revealed only when the user expands the agent via the header toggle. The pill
+// popover is meant to be glanceable, so the per-cwd rows are opt-in noise.
+function PopoverAgentGroup({
+  group,
+  executionsByConnection,
+  nowMs,
+  expanded,
+  onToggle,
+}: {
+  group: AgentInstanceGroup;
+  executionsByConnection: Record<string, ExecutionView[]>;
+  nowMs: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <AgentGroupHeader group={group} expanded={expanded} onToggle={onToggle} />
+      {expanded && (
+        <div className="flex flex-col gap-3 pl-7">
+          {group.connections.map((connection) => (
+            <PopoverInstanceRow
+              key={connection.uuid}
+              connection={connection}
+              executions={executionsByConnection[connection.uuid] ?? []}
+              showHost={group.multiHost}
+              nowMs={nowMs}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The drill-down body: one COLLAPSIBLE row per ONLINE agent. Collapsed by
+// default (just the agent header); expanding an agent reveals one sub-row per
+// live instance keyed by (agent, host, cwd). Each instance row surfaces its
+// running/queued executions (with the Interrupt control) and a quiet idle line
+// when it has none; interrupted rows are deliberately dropped here (the popover
+// is glanceable and has no resume control — that is the modal's job).
+//
+// Per-agent expand state lives here in a Set of expanded agentUuids (local
+// React state), so toggling one agent never re-fetches or re-mounts the others.
+function PopoverBody({
+  groups,
+  executionsByConnection,
+  nowMs,
+}: {
+  groups: AgentInstanceGroup[];
+  executionsByConnection: Record<string, ExecutionView[]>;
+  nowMs: number;
+}) {
+  // DEFAULT COLLAPSED — the set starts empty so every agent is collapsed; a
+  // header toggle adds/removes its agentUuid.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (agentUuid: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentUuid)) next.delete(agentUuid);
+      else next.add(agentUuid);
+      return next;
+    });
 
   // 0-online empty state: no longer a dead-end "nobody online" sentence — show
   // the daemon-connect CTA (compact) so the user knows HOW to bring an agent
   // online. Not dismissible: once a daemon connects, this branch is replaced by
-  // the live connection list below, so the CTA disappears on its own.
-  if (onlineConnections.length === 0) {
+  // the live agent groups below, so the CTA disappears on its own.
+  if (groups.length === 0) {
     return <DaemonConnectCta variant="compact" />;
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {onlineConnections.map((connection) => {
-        const execs = executionsByConnection[connection.uuid] ?? [];
-        // Glanceable surface: only running + queued. Interrupted rows are the
-        // modal's concern (they carry a resume affordance this popover lacks).
-        const running = execs.filter((e) => e.status === "running");
-        const queued = execs.filter((e) => e.status === "queued");
-        const hasActive = running.length > 0 || queued.length > 0;
-
-        return (
-          <div key={connection.uuid} className="flex flex-col gap-2.5">
-            <IdentityBlock connection={connection} size="sm" />
-            {hasActive ? (
-              <div className="flex flex-col gap-4 pl-1">
-                {running.length > 0 && (
-                  <ExecutionSection
-                    icon={Play}
-                    label={ta("execRunning")}
-                    count={running.length}
-                  >
-                    {running.map((exec) => (
-                      <ExecutionRow
-                        key={exec.uuid}
-                        exec={exec}
-                        nowMs={nowMs}
-                        layout="stacked"
-                      />
-                    ))}
-                  </ExecutionSection>
-                )}
-                {queued.length > 0 && (
-                  <ExecutionSection
-                    icon={ListChecks}
-                    label={ta("execQueued")}
-                    count={queued.length}
-                  >
-                    {queued.map((exec) => (
-                      <ExecutionRow
-                        key={exec.uuid}
-                        exec={exec}
-                        nowMs={nowMs}
-                        layout="stacked"
-                      />
-                    ))}
-                  </ExecutionSection>
-                )}
-              </div>
-            ) : (
-              // Quiet idle line — never blank — when an online connection has no
-              // running or queued work.
-              <p className="pl-1 text-[12px] text-[#9A9A9A]">
-                {t("connectionIdle")}
-              </p>
-            )}
-          </div>
-        );
-      })}
+    <div className="flex flex-col gap-5">
+      {groups.map((group) => (
+        <PopoverAgentGroup
+          key={group.agentUuid}
+          group={group}
+          executionsByConnection={executionsByConnection}
+          nowMs={nowMs}
+          expanded={expanded.has(group.agentUuid)}
+          onToggle={() => toggle(group.agentUuid)}
+        />
+      ))}
     </div>
   );
 }
@@ -226,9 +328,17 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
     );
   }
 
-  const onlineConnections = connections.filter(
-    (c) => c.effectiveStatus === "online",
-  );
+  // Online-only presence (T11 / qr2): filter to the ONLINE connection set FIRST,
+  // then group. The popover lists only live (host, cwd) instances — an offline
+  // instance (including a legacy null-cwd "unknown path" row) never appears, and
+  // an agent with zero online instances produces no group at all (it disappears
+  // from presence rather than lingering as an all-offline row). Because every
+  // grouped connection is now online, each group's onlineCount equals its
+  // instance count, so the `> 0` filter is just defensive (a group can't be
+  // empty). The service's online-first sort still orders the rows.
+  const onlineAgentGroups = groupConnectionsByAgent(
+    onlineConnectionsOnly(connections),
+  ).filter((g) => g.onlineCount > 0);
 
   return (
     <Popover>
@@ -249,7 +359,7 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
         className="max-h-[60vh] w-[min(92vw,400px)] overflow-y-auto p-3"
       >
         <PopoverContentInner
-          onlineConnections={onlineConnections}
+          groups={onlineAgentGroups}
           executionsByConnection={executionsByConnection}
           onViewAll={() => setModalOpen(true)}
         />
@@ -262,11 +372,11 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
 // elapsed timers) only mounts when the popover is open — the PopoverContent is
 // unmounted while closed, so the interval lives exactly as long as the popover.
 function PopoverContentInner({
-  onlineConnections,
+  groups,
   executionsByConnection,
   onViewAll,
 }: {
-  onlineConnections: ConnectionView[];
+  groups: AgentInstanceGroup[];
   executionsByConnection: Record<string, ExecutionView[]>;
   onViewAll: () => void;
 }) {
@@ -281,7 +391,7 @@ function PopoverContentInner({
         </span>
       </div>
       <PopoverBody
-        onlineConnections={onlineConnections}
+        groups={groups}
         executionsByConnection={executionsByConnection}
         nowMs={nowMs}
       />
