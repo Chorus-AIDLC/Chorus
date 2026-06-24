@@ -25,12 +25,15 @@ vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 
 // Mock the wake-notification → DaemonSessionTurn bridge so this suite stays focused on
 // the notification chokepoint itself (the bridge's own action→trigger / instruction /
-// failure-isolation behavior is exhaustively covered in notification-turn.test.ts).
-// Mocking it also keeps the daemon-session / connection / lineage chains out of this
-// unit test. We still assert the chokepoint INVOKES it for each created notification.
-const mockMaybeCreateTurn = vi.hoisted(() => vi.fn());
+// directed-delivery / failure-isolation behavior is exhaustively covered in
+// notification-turn.test.ts). Mocking it also keeps the daemon-session / connection /
+// lineage chains out of this unit test. The chokepoint uses the richer
+// `createTurnAndResolveTarget` (returns `{ turn, targetConnectionUuid }`) so the SSE event
+// can stamp the directed target; we assert the chokepoint INVOKES it per created
+// notification and threads its `targetConnectionUuid` onto the emitted event.
+const mockCreateTurnAndResolveTarget = vi.hoisted(() => vi.fn());
 vi.mock("@/services/notification-turn", () => ({
-  maybeCreateTurnForWakeNotification: mockMaybeCreateTurn,
+  createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
 }));
 
 import {
@@ -82,9 +85,14 @@ function makeNotifRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The bridge resolves to null by default (no turn created) — its real behavior is
-  // tested separately; here we only care that the chokepoint calls it.
-  mockMaybeCreateTurn.mockResolvedValue(null);
+  // The bridge resolves to no turn + no directed target by default — its real behavior is
+  // tested separately; here we only care that the chokepoint calls it and threads the
+  // resolved target onto the SSE event.
+  mockCreateTurnAndResolveTarget.mockResolvedValue({
+    turn: null,
+    targetConnectionUuid: null,
+    suppressWake: false,
+  });
 });
 
 // ===== create =====
@@ -126,7 +134,7 @@ describe("create", () => {
       })
     );
     // The chokepoint invokes the bridge with the full params (incl. instructionText).
-    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "human_instruction",
         instructionText: "Please refactor the auth module",
@@ -153,7 +161,73 @@ describe("create", () => {
 
     await create(makeNotifParams());
 
-    expect(mockMaybeCreateTurn).toHaveBeenCalledTimes(1);
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it("threads the resolved directed targetConnectionUuid onto the SSE event (transport-only)", async () => {
+    // A pinned/directed wake resolves to a target connection; the chokepoint must stamp it
+    // on the `new_notification` event so non-target daemons can suppress their broadcast
+    // copy. An un-pinned wake (default mock) stamps null.
+    const record = makeNotifRecord();
+    mockPrisma.notification.create.mockResolvedValue(record);
+    mockPrisma.notification.count.mockResolvedValue(0);
+    mockCreateTurnAndResolveTarget.mockResolvedValue({
+      turn: { uuid: "turn-1" },
+      targetConnectionUuid: "conn-target-1",
+      suppressWake: false,
+    });
+
+    await create(makeNotifParams());
+
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:user:${recipientUuid}`,
+      expect.objectContaining({
+        type: "new_notification",
+        targetConnectionUuid: "conn-target-1",
+        suppressWake: false,
+      })
+    );
+  });
+
+  it("stamps targetConnectionUuid: null on the SSE event for an un-pinned wake", async () => {
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+    // Default mock → { turn: null, targetConnectionUuid: null, suppressWake: false }.
+
+    await create(makeNotifParams());
+
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:user:${recipientUuid}`,
+      expect.objectContaining({
+        type: "new_notification",
+        targetConnectionUuid: null,
+        suppressWake: false,
+      })
+    );
+  });
+
+  it("stamps suppressWake: true (with null target) on the SSE event for an OFFLINE-PIN wake", async () => {
+    // The offline-pin discriminator on the transport: a pin matched no online connection →
+    // no turn, no target, but suppressWake TRUE so every daemon suppresses (Q2 notify-only)
+    // instead of treating it as un-pinned and re-waking online-first.
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+    mockCreateTurnAndResolveTarget.mockResolvedValue({
+      turn: null,
+      targetConnectionUuid: null,
+      suppressWake: true,
+    });
+
+    await create(makeNotifParams());
+
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:user:${recipientUuid}`,
+      expect.objectContaining({
+        type: "new_notification",
+        targetConnectionUuid: null,
+        suppressWake: true,
+      })
+    );
   });
 
   it("surfaces instructionText in the READ projection so the daemon reads it with no extra fetch (子1)", async () => {
@@ -179,7 +253,7 @@ describe("create", () => {
   it("should still return the notification when the turn bridge resolves (failure-isolated)", async () => {
     // The bridge never throws (it logs+swallows internally), but assert create() does
     // not depend on the bridge's outcome: the notification is returned regardless.
-    mockMaybeCreateTurn.mockResolvedValue(null);
+    mockCreateTurnAndResolveTarget.mockResolvedValue({ turn: null, targetConnectionUuid: null });
     mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
     mockPrisma.notification.count.mockResolvedValue(0);
 
@@ -242,12 +316,64 @@ describe("createBatch", () => {
     await createBatch([params1, params2]);
 
     // One bridge call per param (the bridge itself decides whether a turn is created).
-    expect(mockMaybeCreateTurn).toHaveBeenCalledTimes(2);
-    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledTimes(2);
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledWith(
       expect.objectContaining({ action: "task_assigned" })
     );
-    expect(mockMaybeCreateTurn).toHaveBeenCalledWith(
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledWith(
       expect.objectContaining({ action: "mentioned" })
+    );
+  });
+
+  it("threads each notification's resolved targetConnectionUuid onto its per-recipient SSE event", async () => {
+    // The batch path is what @mentions take, so the directed target must reach the event
+    // per recipient. Map each param to its own resolved target by referential identity.
+    const recipient2 = "agent-0000-0000-0000-000000000002";
+    const params1 = makeNotifParams({ recipientType: "agent", action: "mentioned" });
+    const params2 = makeNotifParams({
+      recipientType: "agent",
+      recipientUuid: recipient2,
+      action: "mentioned",
+    });
+    mockPrisma.notification.create
+      .mockResolvedValueOnce(makeNotifRecord(params1))
+      .mockResolvedValueOnce(makeNotifRecord(params2));
+    mockPrisma.notification.count.mockResolvedValue(1);
+    mockCreateTurnAndResolveTarget.mockImplementation(async (p: { recipientUuid: string }) =>
+      p.recipientUuid === recipient2
+        ? { turn: { uuid: "t2" }, targetConnectionUuid: "conn-for-r2", suppressWake: false }
+        : { turn: { uuid: "t1" }, targetConnectionUuid: "conn-for-r1", suppressWake: false },
+    );
+
+    await createBatch([params1, params2]);
+
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:agent:${recipientUuid}`,
+      expect.objectContaining({ targetConnectionUuid: "conn-for-r1", suppressWake: false }),
+    );
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:agent:${recipient2}`,
+      expect.objectContaining({ targetConnectionUuid: "conn-for-r2", suppressWake: false }),
+    );
+  });
+
+  it("threads each notification's suppressWake onto its per-recipient SSE event (offline-pin marker)", async () => {
+    // The batch path is what @mentions take, so an offline-pin mention must stamp
+    // suppressWake:true per recipient so every daemon suppresses (Q2 notify-only).
+    const params = makeNotifParams({ recipientType: "agent", action: "mentioned" });
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(params));
+    mockPrisma.notification.count.mockResolvedValue(1);
+    mockCreateTurnAndResolveTarget.mockResolvedValue({
+      turn: null,
+      targetConnectionUuid: null,
+      suppressWake: true,
+    });
+
+    await createBatch([params]);
+
+    expect(mockEventBus.emit).toHaveBeenCalledWith(
+      `notification:agent:${recipientUuid}`,
+      expect.objectContaining({ targetConnectionUuid: null, suppressWake: true }),
     );
   });
 

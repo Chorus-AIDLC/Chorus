@@ -330,7 +330,7 @@ async function createInstructionTurn(params: {
  * errors), never rethrown. `dispatchControl` is synchronous (it `emit`s and returns), so a
  * throw can only come from a misconfigured event bus; we guard it anyway.
  */
-function deliverTurnPing(params: {
+export function deliverTurnPing(params: {
   companyUuid: string;
   originConnectionUuid: string;
   turnUuid: string;
