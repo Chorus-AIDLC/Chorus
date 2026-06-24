@@ -70,6 +70,7 @@ function conn(uuid: string, effectiveStatus: "online" | "offline"): ConnectionVi
     uuid,
     agentUuid: `agent-${uuid}`,
     agentName: `Agent ${uuid}`,
+    ownerUuid: null,
     clientType: "claude_code",
     clientVersion: null,
     host: "host",

@@ -22,6 +22,7 @@ import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-cl
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { AuthProvider } from "@/contexts/auth-context";
 import { AgentPresencePill } from "@/components/agent-presence-pill";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
@@ -480,6 +481,16 @@ export default function DashboardLayout({
 
   return (
     <NotificationProvider>
+    {/* AuthProvider exposes the current user via useAuth() to the whole shell.
+        It is mounted here (not the root layout) because only the authenticated
+        dashboard tree needs it: the comment mention badge's owner gate reads
+        useAuth().user.uuid. AuthProvider self-fetches /api/auth/session (the same
+        endpoint this layout already polls), so it is additive — the layout keeps
+        its own local `user` state for the sidebar; this provider serves consumers
+        deep in the tree that can't be prop-threaded (e.g. MentionBadge inside a
+        rendered comment body). Without it, useAuth() throws and any agent mention
+        in a comment crashes the comment area. */}
+    <AuthProvider>
     {/* AgentPresenceProvider is the single shell-level data spine for the
         sidebar presence pill + popover + modal. Mounted ONCE here, wrapping the
         whole shell (sidebar + main), so it survives route changes (does not
@@ -546,6 +557,7 @@ export default function DashboardLayout({
       )}
     </div>
     </AgentPresenceProvider>
+    </AuthProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
   );

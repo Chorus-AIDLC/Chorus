@@ -183,6 +183,8 @@ export function DaemonChat() {
     executionsByConnection,
     setOpenSession,
     subscribeTranscript,
+    focusTarget,
+    clearChatFocusTarget,
   } = useAgentPresence();
 
   // ===== Conversation list (GET /api/daemon-sessions) =====
@@ -598,6 +600,24 @@ export function DaemonChat() {
     setSelectedSessionUuid(null);
     setMobileDetailOpen(true);
   }, []);
+
+  // Consume a one-shot chat focus target (seeded by `openChatForAgent`, e.g. the
+  // comment mention badge's "Open conversation" action): pin the left rail to the
+  // focused agent and clear any prior conversation selection so the owner lands on
+  // that agent's conversation list / composer. Per the Tech Design contract
+  // (elaboration q3), focusing the agent is sufficient — for a pinned mention the
+  // `(host, cwd)` instance belongs to the SAME agentUuid, so focusing the agent
+  // already lands the owner on the right surface; precise past-session
+  // auto-selection is intentionally not done here. ADDITIVE: this only seeds the
+  // existing `pickedAgentUuid` selection state and does not touch
+  // `setOpenSession`/`subscribeTranscript`. The target is consumed (cleared) so a
+  // later manual modal open is not re-hijacked.
+  useEffect(() => {
+    if (!focusTarget) return;
+    setPickedAgentUuid(focusTarget.agentUuid);
+    setSelectedSessionUuid(null);
+    clearChatFocusTarget();
+  }, [focusTarget, clearChatFocusTarget]);
 
   // A freshly-started ad-hoc session OR a RE-POINTED existing conversation (T12): pull/patch
   // it into the list immediately (so it appears / flips online without waiting for the 15s

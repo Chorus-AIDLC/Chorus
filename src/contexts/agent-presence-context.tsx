@@ -84,6 +84,23 @@ export type TranscriptSubscriber = (event: TranscriptEvent) => void;
 
 export type AgentPresenceStatus = "loading" | "ok" | "error";
 
+// The chat focus target seeded by `openChatForAgent` (e.g. clicking a comment
+// mention badge's "Open conversation"). It tells `DaemonChat`, when the modal
+// opens, WHICH agent — and optionally which pinned `(host, cwd)` instance — to
+// focus the left rail on, so the owner lands on the right conversation surface
+// instead of the default most-recent agent. Per the Tech Design's
+// "Open-conversation action contract" (elaboration q3 = "just open the daemon
+// chat"), focusing the agent is sufficient; precise past-session auto-selection
+// is NOT required. `pin` is present only for a pinned mention; a non-pinned
+// mention focuses the agent and the owner picks the instance/conversation inside.
+export interface ChatFocusTarget {
+  agentUuid: string;
+  // The pinned instance's place, present ONLY for a pinned mention. `host` is ""
+  // for an unknown-host pin and `cwd` is null for an unknown-path pin (same
+  // sentinels the connection projection / liveness rule use).
+  pin?: { host: string; cwd: string | null };
+}
+
 // Map of connectionUuid → that connection's current displayable executions
 // (running/queued/interrupted; consumers filter — the popover drops interrupted,
 // the modal keeps it). Wholesale-replaced per connection by each SSE event.
@@ -113,6 +130,24 @@ export interface AgentPresenceValue {
   // subscribed to (it sets the SSE `?sessionUuid=`), so a subscriber receives only the
   // open conversation's events. Mirrors realtime-context's `subscribeExecution`.
   subscribeTranscript: (cb: TranscriptSubscriber) => () => void;
+  // The chat focus target seeded by `openChatForAgent`. `DaemonChat` reads it when
+  // the modal opens to focus the right agent/instance, then calls
+  // `clearChatFocusTarget()` to consume it (so a later manual modal open is NOT
+  // re-hijacked by a stale focus). ADDITIVE — purely a one-shot seed; it does not
+  // touch `openSession`/`subscribeTranscript`/`setModalOpen` behavior for any other
+  // entry point.
+  focusTarget: ChatFocusTarget | null;
+  // Open the daemon-chat modal focused on a given agent (and optionally a pinned
+  // `(host, cwd)` instance). Used by the comment mention badge's owner-only "Open
+  // conversation" action. Sets the focus target THEN opens the modal; `DaemonChat`
+  // consumes the target on open. Additive — does not change any existing entry
+  // point's modal/openSession behavior.
+  openChatForAgent: (
+    agentUuid: string,
+    pin?: { host: string; cwd: string | null },
+  ) => void;
+  // Consume the one-shot focus target (called by `DaemonChat` after it focuses).
+  clearChatFocusTarget: () => void;
 }
 
 const AgentPresenceContext = createContext<AgentPresenceValue | null>(null);
@@ -212,6 +247,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   // `?sessionUuid=` (see the SSE effect). `null` = no conversation open / no transcript
   // channel subscribed.
   const [openSession, setOpenSession] = useState<string | null>(null);
+  // One-shot chat focus target (set by `openChatForAgent`, consumed by `DaemonChat`
+  // on modal open). Not a SSE/poll concern — purely UI focus seeding.
+  const [focusTarget, setFocusTarget] = useState<ChatFocusTarget | null>(null);
 
   // Live-transcript subscribers (the chat container). Held in a ref — a Set so multiple
   // mounts can coexist and unsubscribe independently — mirroring realtime-context's
@@ -413,6 +451,24 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Open the chat focused on an agent (+ optional pinned instance). Seed the focus
+  // target FIRST, then open the modal, so the modal mounts with the target already
+  // available for `DaemonChat` to consume on open. Stable identity (uses only the
+  // setters, which are stable).
+  const openChatForAgent = useCallback(
+    (agentUuid: string, pin?: { host: string; cwd: string | null }) => {
+      setFocusTarget(pin ? { agentUuid, pin } : { agentUuid });
+      setModalOpen(true);
+    },
+    [],
+  );
+
+  // Consume the one-shot focus target (called by `DaemonChat` after focusing) so a
+  // later manual modal open is not re-hijacked by a stale focus.
+  const clearChatFocusTarget = useCallback(() => {
+    setFocusTarget(null);
+  }, []);
+
   const value = useMemo<AgentPresenceValue>(
     () => ({
       status,
@@ -425,6 +481,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       openSession,
       setOpenSession,
       subscribeTranscript,
+      focusTarget,
+      openChatForAgent,
+      clearChatFocusTarget,
     }),
     [
       status,
@@ -435,6 +494,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       modalOpen,
       openSession,
       subscribeTranscript,
+      focusTarget,
+      openChatForAgent,
+      clearChatFocusTarget,
     ],
   );
 

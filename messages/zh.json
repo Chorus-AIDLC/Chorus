@@ -1555,7 +1555,11 @@
     "online": "在线",
     "offline": "离线",
     "activeCount": "进行中 {count}",
-    "idle": "空闲"
+    "idle": "空闲",
+    "openConversation": "打开对话",
+    "host": "主机",
+    "workingDirectory": "工作目录",
+    "badgeAria": "{name} — {status}"
   },
   "mentionInstance": {
     "title": "选择工作目录？",

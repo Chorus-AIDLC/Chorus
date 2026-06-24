@@ -129,6 +129,7 @@ function makeConnection(over: Partial<ConnectionView> = {}): ConnectionView {
     uuid: "conn-1",
     agentUuid: "agent-1",
     agentName: "Builder Bot",
+    ownerUuid: null,
     clientType: "claude_code",
     clientVersion: "1.2.3",
     host: "macbook",
@@ -171,6 +172,9 @@ function setPresence(over: Partial<AgentPresenceValue>) {
     openSession: null,
     setOpenSession: vi.fn(),
     subscribeTranscript: vi.fn(() => () => {}),
+    focusTarget: null,
+    openChatForAgent: vi.fn(),
+    clearChatFocusTarget: vi.fn(),
     ...over,
   };
   mockPresence.mockReturnValue(value);

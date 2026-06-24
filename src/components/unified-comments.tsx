@@ -12,7 +12,11 @@ import {
   createCommentAction,
 } from "@/app/(dashboard)/projects/comment-actions";
 import type { CommentWithOwner } from "@/services/comment.service";
-import { ContentWithMentions } from "@/components/mention-renderer";
+import {
+  ContentWithMentions,
+  type RenderMentionArg,
+} from "@/components/mention-renderer";
+import { MentionBadge } from "@/components/agent-presence";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { getAgentColor } from "@/lib/agent-color";
@@ -23,6 +27,35 @@ type TargetType = "idea" | "proposal" | "task" | "document";
 type TranslateFn = ReturnType<typeof UseTranslationsType>;
 
 const COLLAPSE_THRESHOLD = 200;
+
+// React-native mention rendering for the COMMENT surface only (passed as the opt-in
+// `renderMention` prop to ContentWithMentions). AGENT mentions become an interactive
+// MentionBadge (online dot + identity popover + owner/online-gated "Open
+// conversation"); USER mentions keep the existing styled-text appearance unchanged
+// (q1 = agent mentions only). Module-level + stable identity so it never churns the
+// memoized Streamdown components map upstream. Every OTHER ContentWithMentions
+// surface omits this prop and keeps its byte-stable DOM-injection rendering.
+function renderCommentMention(mention: RenderMentionArg) {
+  if (mention.type === "agent") {
+    return (
+      <MentionBadge
+        key={mention.index}
+        mention={mention}
+        displayName={mention.displayName}
+      />
+    );
+  }
+  // User mention — same styled text the legacy DOM-injection path produced.
+  return (
+    <span
+      key={mention.index}
+      className="text-blue-600 font-medium"
+      title={`${mention.type}: ${mention.uuid}`}
+    >
+      @{mention.displayName}
+    </span>
+  );
+}
 
 function formatRelativeTime(dateString: string, t: TranslateFn): string {
   const date = new Date(dateString);
@@ -270,7 +303,7 @@ function CommentItem({
         <div className={`mt-1 ${compact ? "text-xs" : "text-[13px]"} leading-relaxed text-[#3D3D3D] max-w-none [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-[13px] [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5`}>
           {shouldCollapse && !expanded ? (
             <>
-              <ContentWithMentions>
+              <ContentWithMentions renderMention={renderCommentMention}>
                 {c.content.slice(0, COLLAPSE_THRESHOLD) + "..."}
               </ContentWithMentions>
               <Button
@@ -284,7 +317,9 @@ function CommentItem({
             </>
           ) : (
             <>
-              <ContentWithMentions>{c.content}</ContentWithMentions>
+              <ContentWithMentions renderMention={renderCommentMention}>
+                {c.content}
+              </ContentWithMentions>
               {shouldCollapse && (
                 <Button
                   variant="link"
