@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
-import { formatCreatedBy, formatReview } from "@/lib/uuid-resolver";
+import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { createDocumentFromProposal } from "./document.service";
 import { createTasksFromProposal } from "./task.service";
@@ -459,9 +459,19 @@ export async function checkIdeasAssignee(
   const unassignedIdeas: string[] = [];
 
   for (const idea of ideas) {
-    // Check if current actor is the assignee
-    const isAssignee =
-      idea.assigneeType === actorType && idea.assigneeUuid === actorUuid;
+    // Check if current actor is the assignee. An `agent_instance` assignment
+    // belongs to its owning agent (its assigneeUuid is an instance uuid, not the
+    // agent uuid), so resolve it before comparing — otherwise an instance-pinned
+    // idea would never match its own agent author.
+    let isAssignee = idea.assigneeType === actorType && idea.assigneeUuid === actorUuid;
+    if (!isAssignee && actorType === "agent" && idea.assigneeType === "agent_instance") {
+      const ownerAgentUuid = await resolveAssigneeAgentUuid(
+        companyUuid,
+        idea.assigneeType,
+        idea.assigneeUuid
+      );
+      isAssignee = ownerAgentUuid === actorUuid;
+    }
 
     if (!isAssignee) {
       unassignedIdeas.push(idea.uuid);

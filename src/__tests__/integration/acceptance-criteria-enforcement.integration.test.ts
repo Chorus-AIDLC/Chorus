@@ -24,7 +24,7 @@ const acStore: AcRow[] = [];
 
 // ===== Hoisted mocks =====
 
-const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, proposalStore } = vi.hoisted(() => {
+const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockIsAssignmentOwnedByActor, proposalStore } = vi.hoisted(() => {
   const proposalStore = { current: null as Record<string, unknown> | null };
   const mockPrisma = {
     proposal: {
@@ -41,6 +41,20 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, proposa
     mockEventBus: { emitChange: vi.fn() },
     mockFormatCreatedBy: vi.fn().mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" }),
     mockFormatReview: vi.fn().mockResolvedValue(null),
+    // Plain-agent ownership gate for these AC-enforcement tasks (assigned to the
+    // acting agent). Mirrors the real helper for the agent/owner arms.
+    mockIsAssignmentOwnedByActor: vi.fn(
+      async (
+        auth: { actorUuid: string; ownerUuid?: string },
+        assigneeType: string | null,
+        assigneeUuid: string | null
+      ) => {
+        if (!assigneeType || !assigneeUuid) return false;
+        if (assigneeType === "agent") return assigneeUuid === auth.actorUuid;
+        if (assigneeType === "user") return !!auth.ownerUuid && assigneeUuid === auth.ownerUuid;
+        return false;
+      }
+    ),
     proposalStore,
   };
 });
@@ -71,7 +85,7 @@ const mockSessionService = vi.hoisted(() => ({ getSession: vi.fn(), heartbeatSes
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/generated/prisma/client", () => ({ Prisma: { JsonNull: "DbNull", InputJsonValue: {} } }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
-vi.mock("@/lib/uuid-resolver", () => ({ formatCreatedBy: mockFormatCreatedBy, formatReview: mockFormatReview }));
+vi.mock("@/lib/uuid-resolver", () => ({ formatCreatedBy: mockFormatCreatedBy, formatReview: mockFormatReview, isAssignmentOwnedByActor: mockIsAssignmentOwnedByActor }));
 vi.mock("@/services/task.service", () => mockTaskService);
 vi.mock("@/services/project.service", () => ({ ...mockProjectService, projectExists: mockProjectService.projectExists }));
 vi.mock("@/services/activity.service", () => mockActivityService);

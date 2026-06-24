@@ -125,6 +125,7 @@
     "loadingInstances": "Loading working directories…",
     "noInstances": "This agent has no online daemon. The task is assigned and the agent is notified; it will pick it up the next time it comes online.",
     "pinNote": "The autonomous wake routes this task to the exact (host, path) you pin here. Only online instances can be pinned. Paths are never inferred from the project.",
+    "ideaPinNote": "The idea is the pin root: the proposal, tasks, and autonomous wakes for this agent inherit the (host, path) you pin here. Only online instances can be pinned. Leave it unset to assign the plain agent.",
     "assignTo": "Assign at {path}",
     "assignToWithHost": "Assign at {path} · {host}",
     "sendingTo": "Sending to {path}",

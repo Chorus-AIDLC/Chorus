@@ -110,6 +110,33 @@ export interface ConnectionView {
   connectedAt: string; // ISO-8601 — when this SSE connection registered
   lastSeenAt: string; // ISO-8601
   disconnectedAt: string | null;
+  // The durable AgentInstance this connection currently serves — the stable
+  // `(agent, host, cwd)` identity that survives reconnects (DaemonConnection.uuid
+  // does not). Additive: null for a row that predates the AgentInstance link
+  // (existed at migration time, not yet re-handshaked) or whose link could not be
+  // resolved. A client can pin against this uuid; liveness is still read from the
+  // connection's `effectiveStatus`, never from the instance row.
+  agentInstanceUuid: string | null;
+}
+
+/**
+ * Read projection of an `AgentInstance` for the InstancePicker. The instance row
+ * itself carries NO liveness (R5: liveness is a DaemonConnection property), so
+ * `online` here is DERIVED from the instance's linked connections using the same
+ * `effectiveStatus` rule the connection read path applies — an instance is online
+ * iff *any* of its connections is effectively online. This is what backs the
+ * picker's "online instances only" requirement: the caller filters on `online`.
+ */
+export interface InstanceView {
+  uuid: string;
+  agentUuid: string;
+  host: string; // "" when host-less
+  cwd: string | null; // null = unknown-path sentinel
+  // True iff at least one linked DaemonConnection is effectively online
+  // (status === "online" AND within STALE_THRESHOLD_MS). Derived, never stored.
+  online: boolean;
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
 }
 
 // ===== Helpers =====
@@ -137,6 +164,9 @@ interface DaemonConnectionRow {
   connectedAt: Date;
   lastSeenAt: Date;
   disconnectedAt: Date | null;
+  // The linked durable instance (additive). Null when unlinked (pre-migration
+  // row not yet re-handshaked). Passed straight through to the view.
+  agentInstanceUuid: string | null;
   // `name` for the display identity, `ownerUuid` for the owner gate. nullable for
   // the rare deleted-agent case (see ConnectionView.agentName / ownerUuid).
   agent: { name: string; ownerUuid: string | null } | null;
@@ -172,6 +202,7 @@ function toConnectionView(row: DaemonConnectionRow): ConnectionView {
     connectedAt: row.connectedAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
     disconnectedAt: row.disconnectedAt ? row.disconnectedAt.toISOString() : null,
+    agentInstanceUuid: row.agentInstanceUuid ?? null,
   };
 }
 
@@ -275,6 +306,88 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
  * cannot flip the newer generation's row (the "stale-abort-resurrects-offline"
  * race).
  */
+/**
+ * Upsert the durable `AgentInstance` for `(companyUuid, agentUuid, host, cwd)` and
+ * return its uuid. This is the stable `(agent, host, cwd)` identity that outlives
+ * the churning `DaemonConnection.uuid` (which is recreated on every reconnect via
+ * its own composite `@@unique`). Called from `registerConnection` so the very same
+ * handshake that registers a connection also materializes (or reuses) the instance
+ * it serves, then links the connection to it.
+ *
+ * Idempotent per identity tuple: a repeat report for an existing `(agent,host,cwd)`
+ * reuses the row (no duplicate); the returned uuid is therefore stable across
+ * reconnects even though the connection uuid is not.
+ *
+ * Same two write paths as the connection upsert, and for the same reason — Postgres
+ * treats a NULL `cwd` as distinct in the `@@unique([companyUuid,agentUuid,host,cwd])`
+ * index, and Prisma types the compound-key `where` field as non-null:
+ *  - cwd PRESENT → a single compound-key `upsert` (clean idempotent reuse). The
+ *    `update` is a no-op data-wise (the identity tuple cannot change), but it bumps
+ *    `updatedAt` and, crucially, returns the existing row's uuid.
+ *  - cwd NULL → `findFirst` the existing `(…, cwd:null)` row and reuse its uuid;
+ *    only `create` when none exists — mirroring the connection null-cwd branch so an
+ *    old daemon keeps a single stable instance row across reconnects (no pileup).
+ *
+ * Returns null on failure; the caller treats a null instance as "could not link"
+ * and still registers the connection (the link is additive — a missing link must
+ * never block SSE setup). The caller's own try/catch also covers this, but the
+ * resilience is documented here as the contract.
+ */
+async function upsertAgentInstance(
+  companyUuid: string,
+  agentUuid: string,
+  host: string,
+  cwd: string | null,
+): Promise<string | null> {
+  const createData = { companyUuid, agentUuid, host, cwd };
+
+  // Self-contained swallow-and-log: an AgentInstance write failure must degrade the
+  // connection link to `null` (the additive, never-blocking contract) rather than
+  // propagate into registerConnection's outer catch and abort the WHOLE registration.
+  // The connection registry write must never be blocked by the instance table — so a
+  // failure here is contained here, logged, and surfaced as a null link.
+  try {
+    if (cwd === null) {
+      // ===== Old-daemon / unknown-cwd path: findFirst → create (NULL-distinct) =====
+      const existing = await prisma.agentInstance.findFirst({
+        where: { companyUuid, agentUuid, host, cwd: null },
+        select: { uuid: true },
+      });
+      if (existing) {
+        // Touch updatedAt so "last materialized" tracks the latest handshake; the
+        // identity tuple is immutable, so this is the only mutable effect.
+        const row = await prisma.agentInstance.update({
+          where: { uuid: existing.uuid },
+          data: { updatedAt: new Date() },
+          select: { uuid: true },
+        });
+        return row.uuid;
+      }
+      const row = await prisma.agentInstance.create({
+        data: createData,
+        select: { uuid: true },
+      });
+      return row.uuid;
+    }
+
+    // ===== Current-daemon path: real cwd → clean compound-key upsert =====
+    const row = await prisma.agentInstance.upsert({
+      where: { companyUuid_agentUuid_host_cwd: { companyUuid, agentUuid, host, cwd } },
+      create: createData,
+      // Identity is immutable; bump updatedAt and return the row (its uuid is stable).
+      update: { updatedAt: new Date() },
+      select: { uuid: true },
+    });
+    return row.uuid;
+  } catch (err) {
+    logger.error(
+      { err, companyUuid, agentUuid, host, cwd },
+      "Failed to upsert AgentInstance; connection will register with a null instance link",
+    );
+    return null;
+  }
+}
+
 export async function registerConnection(
   companyUuid: string,
   agentUuid: string,
@@ -291,6 +404,15 @@ export async function registerConnection(
   const now = new Date();
 
   try {
+    // Materialize / reuse the durable AgentInstance for this identity FIRST, so we
+    // can link the connection to it in the SAME write path. upsertAgentInstance
+    // swallows its own errors and returns `null` on failure: an instance-table write
+    // failure degrades the link to null but must NEVER abort the connection
+    // registration (the additive-link contract). The connection write still runs in
+    // the outer try/catch for ITS own failures. The resolved instance uuid (or null
+    // if unresolved/failed) is stamped onto the connection's create AND update data
+    // so a reconnecting row is (re)linked too.
+    const agentInstanceUuid = await upsertAgentInstance(companyUuid, agentUuid, host, cwd);
     // Shared field sets, so the upsert and the null-compat path stay in lockstep.
     const createData = {
       companyUuid,
@@ -304,6 +426,9 @@ export async function registerConnection(
       connectedAt: now,
       lastSeenAt: now,
       disconnectedAt: null,
+      // Link to the durable instance materialized above (null if it could not be
+      // resolved — the link is additive and never blocks registration).
+      agentInstanceUuid,
     };
     const refreshData = {
       // Multi-tenancy: re-affirm companyUuid from the authenticated context.
@@ -314,6 +439,10 @@ export async function registerConnection(
       connectedAt: now,
       lastSeenAt: now,
       disconnectedAt: null,
+      // Re-affirm the instance link on reconnect: a row that existed before the
+      // AgentInstance migration (agentInstanceUuid=null) gets linked on this
+      // handshake, and a row whose instance was resolved stays linked.
+      agentInstanceUuid,
     };
 
     if (cwd === null) {
@@ -463,4 +592,98 @@ export async function listConnectionsForAgent(
     include: { agent: { select: { name: true, ownerUuid: true } } },
   });
   return sortConnectionViews(rows.map(toConnectionView));
+}
+
+// ===== Instance resolution (read functions — do NOT swallow) =====
+//
+// Like the connection reads above, these propagate a query failure rather than
+// returning a default — null/[] must mean "genuinely absent", never "the DB threw".
+// They are the lookups the wake path (notification-turn) and the InstancePicker UI
+// build on: a durable instance pointer that survives reconnects.
+
+/**
+ * Resolve the durable `AgentInstance` uuid for an identity tuple
+ * `(companyUuid, agentUuid, host, cwd)`, or null if no such instance exists.
+ *
+ * Used by the wake path to turn a pin's `(host, cwd)` — whether typed in a mention
+ * suffix or carried by an `agent_instance` assignment — into the stable instance
+ * pointer. `host` defaults to "" and `cwd` to null exactly as `registerConnection`
+ * derives them, so the lookup key maps 1:1 to the upserted row. The null-cwd lookup
+ * uses `findFirst` (Postgres treats NULL as distinct, so a compound-key `where`
+ * cannot target it) — the same NULL-handling asymmetry the upsert observes.
+ */
+export async function resolveInstanceByTuple(
+  companyUuid: string,
+  agentUuid: string,
+  host: string | null,
+  cwd: string | null,
+): Promise<string | null> {
+  const normalizedHost = host ?? "";
+  const row = await prisma.agentInstance.findFirst({
+    where: { companyUuid, agentUuid, host: normalizedHost, cwd: cwd ?? null },
+    select: { uuid: true },
+  });
+  return row?.uuid ?? null;
+}
+
+/**
+ * Given a connection uuid, return the uuid of the `AgentInstance` it currently
+ * serves (its `agentInstanceUuid` link), or null when the connection does not
+ * exist in this company or is not yet linked (a pre-migration row not re-handshaked).
+ * companyUuid-scoped so a connection in another tenant is never resolved.
+ */
+export async function resolveInstanceForConnection(
+  companyUuid: string,
+  connectionUuid: string,
+): Promise<string | null> {
+  const row = await prisma.daemonConnection.findFirst({
+    where: { uuid: connectionUuid, companyUuid },
+    select: { agentInstanceUuid: true },
+  });
+  return row?.agentInstanceUuid ?? null;
+}
+
+/**
+ * List an agent's durable instances, each with `online` DERIVED from its linked
+ * `DaemonConnection`s (R5: liveness lives on the connection, never on the instance
+ * row). An instance is `online` iff *any* of its linked connections is effectively
+ * online — `status === "online"` AND `lastSeenAt` within `STALE_THRESHOLD_MS` —
+ * the exact rule `toConnectionView` applies, so producer and consumer can never
+ * drift. This backs the InstancePicker's "online instances only" rule: the UI
+ * filters the returned list on `online === true`.
+ *
+ * Ordered online-first, then most-recently-updated, so the freshest reachable
+ * instances surface at the top of the picker. Propagates query errors (read rule).
+ */
+export async function listInstancesForAgent(
+  companyUuid: string,
+  agentUuid: string,
+): Promise<InstanceView[]> {
+  const now = Date.now();
+  const rows = await prisma.agentInstance.findMany({
+    where: { companyUuid, agentUuid },
+    // Pull just the liveness-relevant fields off each linked connection; `online`
+    // is derived from them, so we never need the full connection projection here.
+    include: { connections: { select: { status: true, lastSeenAt: true } } },
+  });
+
+  const views: InstanceView[] = rows.map((row) => {
+    const online = row.connections.some(
+      (c) => c.status === "online" && now - c.lastSeenAt.getTime() <= STALE_THRESHOLD_MS,
+    );
+    return {
+      uuid: row.uuid,
+      agentUuid: row.agentUuid,
+      host: row.host,
+      cwd: row.cwd,
+      online,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  });
+
+  return views.sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
 }

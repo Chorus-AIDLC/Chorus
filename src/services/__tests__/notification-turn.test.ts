@@ -18,20 +18,34 @@ vi.mock("@/services/daemon-session.service", () => ({
   resolveDirectIdeaUuid: mockResolveDirectIdeaUuid,
 }));
 
-// The task-assignment pin (T5) is read from the Task's targetHost/targetCwd columns,
-// so the bridge touches prisma.task.findFirst for a task_assigned wake. The directed-
-// delivery change ALSO reads prisma.daemonSession.findFirst to (a) resolve an
-// elaboration_verified wake's existing idea-session origin and (b) detect a cross-cwd
-// directed mention (existing session origin != resolved target). Mock both so these stay
-// pure unit tests with no DB. Defaults: no Task pin (both null → online-first); no existing
-// daemon session (null → no cross-cwd suffix, normal session, no elaboration upgrade).
+// The assignment pin is now INSTANCE-based (T11): the bridge reads the wake's Task row
+// (`assigneeType`/`assigneeUuid`) and, for the same-agent inheritance, the root Idea's row
+// — then resolves an `agent_instance` assignee to its `(host, cwd)` place via
+// prisma.agentInstance.findFirst. The directed-delivery change ALSO reads
+// prisma.daemonSession.findFirst to (a) resolve an elaboration_verified wake's existing
+// idea-session origin and (b) detect a cross-cwd directed mention (existing session origin
+// != resolved target). Mock all four so these stay pure unit tests with no DB. Defaults:
+// no Task pin (plain `agent` assignee → no instance pin); no root-idea pin (idea row also a
+// plain agent); no instance row; no existing daemon session.
 const mockTaskFindFirst = vi.hoisted(() => vi.fn());
+const mockIdeaFindFirst = vi.hoisted(() => vi.fn());
+const mockAgentInstanceFindFirst = vi.hoisted(() => vi.fn());
 const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { findFirst: mockTaskFindFirst },
+    idea: { findFirst: mockIdeaFindFirst },
+    agentInstance: { findFirst: mockAgentInstanceFindFirst },
     daemonSession: { findFirst: mockDaemonSessionFindFirst },
   },
+}));
+
+// The instance-inheritance step resolves the wake's ROOT idea via the shared lineage
+// resolver. Mock it so we control which idea the wake inherits a pin from (or none).
+// Default: the entity's lineage roots at `ideaUuid` (the same idea the session anchors on).
+const mockResolveRootIdea = vi.hoisted(() => vi.fn());
+vi.mock("@/services/lineage.service", () => ({
+  resolveRootIdea: mockResolveRootIdea,
 }));
 
 // The directed `deliver_turn` ping reuses `deliverTurnPing` from the daemon-instruction
@@ -78,6 +92,48 @@ const connectionUuid = "conn-0000-0000-0000-000000000001";
 const ideaUuid = "idea-0000-0000-0000-000000000001";
 const taskUuid = "task-0000-0000-0000-000000000001";
 const sessionUuid = "session-0000-0000-0000-000000000001";
+const instanceUuid = "instance-0000-0000-0000-000000000001";
+
+/**
+ * Pin the wake's TASK row to an `agent_instance` at `(host, cwd)`. Sets the Task's
+ * `assigneeType`/`assigneeUuid` to point at an instance, and stubs the AgentInstance
+ * lookup to resolve that instance to its place (owned by `agentUuid` by default — the
+ * task-override resolution does NOT apply the same-agent guard, but supplying the owner
+ * keeps fixtures realistic).
+ */
+function pinTaskToInstance(
+  host: string,
+  cwd: string | null,
+  opts: { instanceAgentUuid?: string; uuid?: string } = {},
+) {
+  const uuid = opts.uuid ?? instanceUuid;
+  mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: uuid });
+  mockAgentInstanceFindFirst.mockResolvedValue({
+    host,
+    cwd,
+    agentUuid: opts.instanceAgentUuid ?? agentUuid,
+  });
+}
+
+/**
+ * Pin the wake's ROOT IDEA to an `agent_instance` at `(host, cwd)` — the inheritance
+ * source. `instanceAgentUuid` controls the same-agent guard: equal to the wake's target
+ * agent → inherits; different → does NOT inherit (resolves its own agent). The Task stays
+ * a plain `agent` (no override) so the root-idea step is reached.
+ */
+function pinIdeaToInstance(
+  host: string,
+  cwd: string | null,
+  opts: { instanceAgentUuid?: string; uuid?: string } = {},
+) {
+  const uuid = opts.uuid ?? instanceUuid;
+  mockIdeaFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: uuid });
+  mockAgentInstanceFindFirst.mockResolvedValue({
+    host,
+    cwd,
+    agentUuid: opts.instanceAgentUuid ?? agentUuid,
+  });
+}
 
 function onlineConn(overrides: Record<string, unknown> = {}) {
   return {
@@ -156,9 +212,15 @@ beforeEach(() => {
   mockCreatePendingTurn.mockImplementation(async (p: { trigger: string; promptText?: string | null }) =>
     turnView({ trigger: p.trigger, promptText: p.promptText ?? null }),
   );
-  // Default: the assigned Task records NO pin (both columns null) — the unchanged
-  // online-first path. Pin-honoring tests override this per-case.
-  mockTaskFindFirst.mockResolvedValue({ targetHost: null, targetCwd: null });
+  // Default: the assigned Task is a plain `agent` (un-pinned) — the unchanged online-first
+  // path, no instance pin. Pin-honoring tests override per-case.
+  mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent", assigneeUuid: agentUuid });
+  // Default: the wake's root idea is also a plain `agent` (no instance to inherit).
+  mockIdeaFindFirst.mockResolvedValue({ assigneeType: "agent", assigneeUuid: agentUuid });
+  // Default: no AgentInstance row resolves (no test pins to one unless it overrides).
+  mockAgentInstanceFindFirst.mockResolvedValue(null);
+  // Default: the entity's lineage roots at `ideaUuid` (the canonical idea anchor).
+  mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: ideaUuid });
   // Default: no existing idea-anchored daemon session — so a directed wake creates a
   // normal session (no cross-cwd suffix) and an elaboration_verified wake has no origin to
   // upgrade to (online-first fallback). Cross-cwd / origin tests override per-case.
@@ -347,18 +409,19 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
   });
 });
 
-// ===== Pinned-target instance routing (cwd-addressable instances, T5) =====
+// ===== Pinned-target instance routing (cwd-addressable instances, T11) =====
 //
 // The wake honors a pinned (host, cwd): a `mentioned` wake carries the pin on the
-// context (threaded from the mention markup by mention.service); a `task_assigned`
-// wake reads it from the Task's targetHost/targetCwd columns. ONLINE-ONLY selection:
+// context (threaded from the mention markup by mention.service — a HARD pin); an
+// assignment wake (task_assigned / idea_claimed) reads it from the Task's / root Idea's
+// `agent_instance` assignee, resolved to its place (a SOFT pin). ONLINE-ONLY selection:
 //   - pin matches an ONLINE connection       → pin the session origin THERE (not [0])
-//   - pin matches an OFFLINE connection       → NOT wakeable (no durable queue) →
-//                                              online-first fallback
-//   - pin matches NO connection / no pin      → online-first fallback (unchanged)
+//   - HARD pin matches NO online connection   → offline_pin: notify-only, NO wake (#354)
+//   - SOFT pin matches NO online connection   → DEGRADE to online-first (R2 graceful un-pin)
+//   - no pin at all                           → online-first (unchanged)
 //   - no online connection at all             → no turn (the notification stands)
 // DEC-5: the cwd is ONLY ever the explicit pin — never inferred from the project.
-describe("maybeCreateTurnForWakeNotification — pinned-target instance routing (T5)", () => {
+describe("maybeCreateTurnForWakeNotification — pinned-target instance routing (T11)", () => {
   const pinnedHost = "Laptop-Q3";
   const pinnedCwd = "/home/u/dev/payments";
   const pinnedConnUuid = "conn-pinned-target";
@@ -398,10 +461,10 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockTaskFindFirst).not.toHaveBeenCalled();
   });
 
-  // ----- task_assigned wake: pin read from the Task columns -----
+  // ----- task_assigned wake: SOFT pin read from the Task's agent_instance assignee -----
 
-  it("reads the Task targetHost/targetCwd and pins the matching LIVE connection for a task_assigned wake", async () => {
-    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+  it("reads the Task's agent_instance override and pins the matching LIVE connection for a task_assigned wake (SOFT)", async () => {
+    pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
       pinnedConn(),
@@ -412,6 +475,12 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockTaskFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ uuid: taskUuid, companyUuid }),
+      }),
+    );
+    // The Task's agent_instance assigneeUuid is resolved to its (host, cwd) place.
+    expect(mockAgentInstanceFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ uuid: instanceUuid, companyUuid }),
       }),
     );
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
@@ -455,20 +524,59 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("offline Task pin (place not registered): creates NO turn, NO ping, NO target (task_assigned)", async () => {
-    mockTaskFindFirst.mockResolvedValue({ targetHost: "ghost-host", targetCwd: "/no/such/path" });
+  // ----- SOFT pin offline = DEGRADE to online-first (R2 graceful un-pin) -----
+  //
+  // An assignment pin (Task agent_instance override / inherited idea instance) is SOFT:
+  // when its instance has no online connection, R2 says it degrades to a plain agent and
+  // wakes the agent's online-first connection — it is NEVER notify-only (that policy is
+  // reserved for HARD mention pins). suppressWake stays false; the turn IS created.
+
+  it("offline SOFT Task pin (place not registered): DEGRADES to online-first (turn created, no suppress)", async () => {
+    // Task pinned to an instance whose place is not registered online for this agent at all.
+    pinTaskToInstance("ghost-host", "/no/such/path");
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
     ]);
 
-    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
       ctx({ action: "task_assigned" }),
     );
 
-    expect(turn).toBeNull();
+    // Graceful degrade: the turn IS created on the agent's online-first connection.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    // A degraded soft pin is a broadcast → online-first wake: no directed ping/target,
+    // and crucially NOT notify-only (suppressWake false — distinct from a HARD offline pin).
     expect(targetConnectionUuid).toBeNull();
-    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(suppressWake).toBe(false);
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("offline SOFT Task pin matching an OFFLINE connection (online-elsewhere): DEGRADES to the online-elsewhere connection", async () => {
+    // The pinned instance is OFFLINE; another instance is online. A SOFT pin degrades to
+    // that online-elsewhere connection (the opposite of a HARD mention pin, which would be
+    // notify-only and never re-route).
+    pinTaskToInstance(pinnedHost, pinnedCwd);
+    const onlineElsewhere = "conn-online-elsewhere";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineElsewhere, host: "other-host", cwd: "/home/u/dev/other" }),
+      offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineElsewhere }),
+    );
+    expect(targetConnectionUuid).toBeNull();
+    expect(suppressWake).toBe(false);
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
@@ -497,18 +605,20 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("an OFFLINE Task pin with NO online connection at all creates NO turn (the notification stands as the plain record)", async () => {
-    // Agent is fully offline; the pinned instance exists (offline). An offline place is
-    // not wakeable and there is no durable queue, so NO turn is created — the already-
-    // created Notification stands as the plain record. This is the durable-queue removal.
-    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+  it("a SOFT Task pin with NO online connection at all creates NO turn (none — the notification stands)", async () => {
+    // Agent is FULLY offline (the soft pin degrades to online-first, but there IS no online
+    // connection to degrade to → `none`). NO turn — the already-created Notification stands
+    // as the plain record. suppressWake stays FALSE (no one is connected to suppress, and a
+    // momentary-no-online wake must stay byte-identical to before).
+    pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
     ]);
 
-    const result = await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
+    const { turn, suppressWake } = await createTurnAndResolveTarget(ctx({ action: "task_assigned" }));
 
-    expect(result).toBeNull();
+    expect(turn).toBeNull();
+    expect(suppressWake).toBe(false);
     expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
     expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     // Not an error — a fully-offline target is a notification-only event.
@@ -533,8 +643,9 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockTaskFindFirst).not.toHaveBeenCalled();
   });
 
-  it("a task_assigned wake whose Task records no pin (both columns null) uses online-first, unchanged", async () => {
-    // mockTaskFindFirst default already returns { targetHost: null, targetCwd: null }.
+  it("a task_assigned wake whose Task is a plain agent (no instance) uses online-first, unchanged", async () => {
+    // mockTaskFindFirst default returns { assigneeType: "agent" } and the root idea is a
+    // plain agent too — so no pin is resolved and the wake stays online-first.
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
@@ -638,7 +749,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
   });
 
   it("a pinned task_assigned wake matching an ONLINE connection: creates the turn, PINGS it, surfaces the target", async () => {
-    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+    pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
       pinnedConn(),
@@ -722,7 +833,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
   });
 
   it("an un-pinned task_assigned wake (no Task pin) emits NO ping and surfaces NO target", async () => {
-    // mockTaskFindFirst default returns { targetHost: null, targetCwd: null }.
+    // Defaults: Task and root idea are both plain `agent` → no instance pin resolved.
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
@@ -1051,6 +1162,295 @@ describe("maybeCreateTurnForWakeNotification — failure isolation", () => {
   it("does not log on a successful turn creation", async () => {
     await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
 
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Instance-based pin LINEAGE: soft/hard, same-agent guard, idea inheritance (T11) =====
+//
+// resolvePinnedTarget now resolves the pin from an INSTANCE lineage, tagging each pin with
+// its origin (`soft`) so selectOriginConnection applies the right offline policy:
+//   1. mention pin (HARD, soft:false)             — covered above (offline_pin / suppressWake)
+//   2. task override (SOFT, soft:true)            — Task's own agent_instance assignee
+//   3. root-idea inheritance (SOFT, soft:true)    — root Idea's instance, SAME-AGENT only
+//   4. else null → online-first
+// This block exercises the lineage priority order, the same-agent guard, the idea-instance
+// priority over the elaboration_verified session-origin heuristic, and idea_claimed (which
+// now gains pin-reading via the root-idea step).
+describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () => {
+  const ideaHost = "idea-host";
+  const ideaCwd = "/home/u/dev/idea-pin";
+  const ideaConnUuid = "conn-idea-instance";
+  const taskHost = "task-host";
+  const taskCwd = "/home/u/dev/task-pin";
+  const taskConnUuid = "conn-task-instance";
+  const otherAgentUuid = "agent-OTHER-0000-0000-000000000099";
+
+  function ideaInstanceConn(overrides: Record<string, unknown> = {}) {
+    return onlineConn({ uuid: ideaConnUuid, host: ideaHost, cwd: ideaCwd, ...overrides });
+  }
+  function taskInstanceConn(overrides: Record<string, unknown> = {}) {
+    return onlineConn({ uuid: taskConnUuid, host: taskHost, cwd: taskCwd, ...overrides });
+  }
+
+  // ----- (2) task override beats the inherited idea instance -----
+
+  it("task override (agent_instance) beats the root-idea instance: targets the TASK's instance", async () => {
+    // Both the Task and the root Idea are pinned to DIFFERENT instances. The task's own
+    // override must win — the per-task agent_instance assignee is resolved first and the
+    // root-idea step is never consulted for the place.
+    mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: "task-inst" });
+    mockIdeaFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: "idea-inst" });
+    // The instance lookup returns the TASK place first (task override), then the idea place
+    // (only consulted if task had none — it shouldn't be here).
+    mockAgentInstanceFindFirst.mockImplementation(
+      async ({ where }: { where: { uuid: string } }) => {
+        if (where.uuid === "task-inst") return { host: taskHost, cwd: taskCwd, agentUuid };
+        if (where.uuid === "idea-inst") return { host: ideaHost, cwd: ideaCwd, agentUuid };
+        return null;
+      },
+    );
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(),
+      taskInstanceConn(),
+    ]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    // Directed to the TASK's instance, not the idea's.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: taskConnUuid }),
+    );
+    expect(targetConnectionUuid).toBe(taskConnUuid);
+  });
+
+  // ----- (3) root-idea inheritance WITH the same-agent guard -----
+
+  it("inherits the root-idea instance (SAME agent) when the Task has no override → targets the idea's instance", async () => {
+    // Task is a plain `agent` (no override) so the root-idea step is reached; the idea is
+    // pinned to an instance OWNED BY THE WAKE'S TARGET AGENT → inherit it.
+    pinIdeaToInstance(ideaHost, ideaCwd); // instanceAgentUuid defaults to agentUuid (same)
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    // The root idea was resolved and its instance inherited (directed there, not online-first).
+    expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "task", taskUuid);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(ideaConnUuid);
+  });
+
+  // ----- (3) cross-agent → NO inherit (the same-agent guard blocks it) -----
+
+  it("does NOT inherit the root-idea instance when it belongs to a DIFFERENT agent (same-agent guard) → online-first", async () => {
+    // The idea is pinned to an instance of ANOTHER agent. The wake's target is `agentUuid`,
+    // so the guard blocks inheritance and the wake resolves against its OWN agent (online-first).
+    pinIdeaToInstance(ideaHost, ideaCwd, { instanceAgentUuid: otherAgentUuid });
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      // Even though the idea's instance place is online here, it must NOT be selected.
+      ideaInstanceConn(),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    // No pin inherited → un-pinned online-first, NOT the idea's instance.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    // Un-pinned (degraded-to-online-first) → no directed delivery.
+    expect(targetConnectionUuid).toBeNull();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+  });
+
+  // ----- a stale instance row (assignment points at a deleted instance) → online-first -----
+
+  it("treats a missing AgentInstance row (stale assignment) as no pin → online-first", async () => {
+    mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: "ghost-inst" });
+    mockAgentInstanceFindFirst.mockResolvedValue(null); // instance row no longer exists
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  // ----- idea_claimed gains pin-reading via the root-idea step -----
+
+  it("idea_claimed reads the idea's agent_instance pin and targets that instance (NEW: it had none before)", async () => {
+    // An idea_claimed wake on an idea entity: the root-idea step reads the idea's own
+    // assignee. Pinned to a same-agent instance → directed there.
+    pinIdeaToInstance(ideaHost, ideaCwd);
+    mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: ideaUuid });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "idea_claimed", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "idea", ideaUuid);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    expect(targetConnectionUuid).toBe(ideaConnUuid);
+    expect(turn?.status).toBe("pending");
+  });
+
+  // ----- elaboration_verified: idea-instance pin takes PRIORITY over the session-origin heuristic -----
+
+  it("elaboration_verified targets the idea's INSTANCE pin OVER the existing session-origin heuristic", async () => {
+    // The idea is pinned to instance A (online). It ALSO has an existing session whose origin
+    // is a DIFFERENT online connection. The instance pin must WIN — the session-origin upgrade
+    // is skipped because the selection is already `directed` on the instance.
+    pinIdeaToInstance(ideaHost, ideaCwd);
+    const sessionOrigin = "conn-session-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      onlineConn({ uuid: sessionOrigin, host: "session-host", cwd: "/session" }),
+      ideaInstanceConn(),
+    ]);
+    // The idea's existing session lives on a DIFFERENT connection than the instance pin.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: sessionOrigin });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // Directed to the INSTANCE pin, NOT the session origin.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: sessionOrigin }),
+    );
+    expect(targetConnectionUuid).toBe(ideaConnUuid);
+    expect(turn?.status).toBe("pending");
+  });
+
+  it("elaboration_verified with NO idea-instance pin falls to the session-origin heuristic (then online-first)", async () => {
+    // The idea is a plain `agent` (no instance pin) → the root-idea step yields no pin →
+    // selection stays online_first → the LOWER-priority session-origin upgrade applies.
+    // (mockIdeaFindFirst default is a plain agent.)
+    const sessionOrigin = "conn-session-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      onlineConn({ uuid: sessionOrigin, host: "session-host", cwd: "/session" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: sessionOrigin });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // Falls to the session origin (the un-pinned heuristic), NOT online-first.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: sessionOrigin }),
+    );
+    expect(targetConnectionUuid).toBe(sessionOrigin);
+    expect(turn?.status).toBe("pending");
+  });
+
+  // ----- a non-lineage entity (e.g. comment) skips the assignment-lineage reads entirely -----
+
+  it("does NOT read Task/Idea/Instance/lineage for a non-lineage entity (mentioned comment) — pin is context-only", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([onlineConn()]);
+
+    await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", entityType: "comment", entityUuid: "comment-1" }),
+    );
+
+    // task_assigned on a non-lineage entity → no assignment-lineage reads at all.
+    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+    expect(mockIdeaFindFirst).not.toHaveBeenCalled();
+    expect(mockAgentInstanceFindFirst).not.toHaveBeenCalled();
+    expect(mockResolveRootIdea).not.toHaveBeenCalled();
+  });
+
+  // ----- a task override resolving to a no-info place falls THROUGH to root-idea inherit -----
+
+  it("a Task agent_instance whose place carries no disambiguating info (host '' + cwd null) falls through to root-idea inheritance", async () => {
+    // The Task IS pinned to an instance, but that instance resolves to (host '', cwd null) —
+    // no disambiguating info → makePinnedTarget returns null → the task override yields no
+    // pin and the resolver continues to the root-idea step, which inherits a real instance.
+    mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: "blank-inst" });
+    mockIdeaFindFirst.mockResolvedValue({ assigneeType: "agent_instance", assigneeUuid: "idea-inst" });
+    mockAgentInstanceFindFirst.mockImplementation(
+      async ({ where }: { where: { uuid: string } }) => {
+        if (where.uuid === "blank-inst") return { host: "", cwd: null, agentUuid };
+        if (where.uuid === "idea-inst") return { host: ideaHost, cwd: ideaCwd, agentUuid };
+        return null;
+      },
+    );
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(),
+    ]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    // The blank task override was skipped; the root-idea instance was inherited instead.
+    expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "task", taskUuid);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    expect(targetConnectionUuid).toBe(ideaConnUuid);
+  });
+
+  // ----- a SOFT idea-inherited pin that is OFFLINE degrades to online-first (no suppress) -----
+
+  it("an inherited (SOFT) idea-instance pin that is OFFLINE degrades to online-first, suppressWake false", async () => {
+    pinIdeaToInstance(ideaHost, ideaCwd); // same agent → inherited, but offline below
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: ideaConnUuid, host: ideaHost, cwd: ideaCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(targetConnectionUuid).toBeNull();
+    // SOFT → degrade, NEVER notify-only.
+    expect(suppressWake).toBe(false);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });

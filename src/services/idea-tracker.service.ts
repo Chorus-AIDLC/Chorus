@@ -8,6 +8,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
+import { buildAssigneeMatch } from "@/lib/uuid-resolver";
 import { computeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
 
 // ===== Idea tracker types =====
@@ -58,26 +59,6 @@ export interface BuildTaskTrackerOptions {
   projectUuids?: string[];
 }
 
-// ===== Internal helpers =====
-
-// Assignee conditions for the current agent/user. For agents, also match the
-// owner-as-assignee path so "owner claims for themselves" shows up under the
-// agent's tracker too.
-function getAssigneeConditions(
-  auth: AuthContext,
-): Array<{ assigneeType: string; assigneeUuid: string }> {
-  const conditions: Array<{ assigneeType: string; assigneeUuid: string }> = [];
-  if (auth.type === "agent") {
-    conditions.push({ assigneeType: "agent", assigneeUuid: auth.actorUuid });
-    if (auth.ownerUuid) {
-      conditions.push({ assigneeType: "user", assigneeUuid: auth.ownerUuid });
-    }
-  } else {
-    conditions.push({ assigneeType: "user", assigneeUuid: auth.actorUuid });
-  }
-  return conditions;
-}
-
 // ===== Idea tracker =====
 
 /**
@@ -102,13 +83,17 @@ export async function buildIdeaTracker(
       ? { projectUuid: { in: options.projectUuids } }
       : {};
 
-  // Q1: Ideas assigned to the agent OR to the agent's owner.
+  // Q1: Ideas assigned to the agent OR to the agent's owner. The assignee match
+  // routes through buildAssigneeMatch so an `agent_instance` assignment (whose
+  // assigneeUuid is an instance uuid, not the agent uuid) is also matched —
+  // otherwise instance-pinned ideas would be silently dropped from the tracker.
+  const assigneeMatch = await buildAssigneeMatch(auth);
   // Exclude legacy "closed" (terminal) — elaborated/completed/etc. still flow
   // through so the agent sees downstream proposal/task work.
   const rawIdeas = await prisma.idea.findMany({
     where: {
       companyUuid: auth.companyUuid,
-      OR: getAssigneeConditions(auth),
+      OR: assigneeMatch,
       status: { not: "closed" },
       ...projectFilter,
     },
@@ -269,10 +254,13 @@ export async function buildTaskTracker(
       ? { projectUuid: { in: options.projectUuids } }
       : {};
 
+  // Route the assignee match through buildAssigneeMatch so `agent_instance`
+  // task assignments resolve to the agent and are not dropped from the tracker.
+  const assigneeMatch = await buildAssigneeMatch(auth);
   const rawTasks = await prisma.task.findMany({
     where: {
       companyUuid: auth.companyUuid,
-      OR: getAssigneeConditions(auth),
+      OR: assigneeMatch,
       status: { notIn: ["done", "closed"] },
       ...projectFilter,
     },

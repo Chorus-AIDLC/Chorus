@@ -26,6 +26,11 @@ const prismaMock = vi.hoisted(() => {
     document: {
       findFirst: vi.fn(),
     },
+    agentInstance: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
   };
 });
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
@@ -40,7 +45,13 @@ import {
   batchFormatCreatedBy,
   getSessionName,
   validateTargetExists,
+  resolveAssigneeAgentUuid,
+  buildAssigneeMatch,
+  isAssignmentOwnedByActor,
+  resolveAssigneeInstanceInfo,
+  batchGetAssigneeInstanceInfo,
 } from '../uuid-resolver';
+import type { AuthContext } from '@/types/auth';
 import { makeUser, makeAgent } from '@/__test-utils__/fixtures';
 
 describe('getActorName', () => {
@@ -294,6 +305,80 @@ describe('formatAssigneeComplete', () => {
       assignedBy: null,
     });
   });
+
+  // add-agent-instance-addressing: an agent_instance assignee resolves its name to
+  // the OWNING agent (getActorName) AND enriches the payload with the pinned
+  // (host, cwd) place + owning agentUuid (resolveAssigneeInstanceInfo) so the UI
+  // can render the instance and gate ownership.
+  it('enriches an agent_instance assignee with its (host, cwd) place + owning agent', async () => {
+    // formatAssigneeComplete runs getActorName + resolveAssigneeInstanceInfo
+    // concurrently (Promise.all), both hitting agentInstance.findUnique with a
+    // DIFFERENT `select`. Branch on the select shape rather than call order.
+    prismaMock.agentInstance.findUnique.mockImplementation((args: { select?: Record<string, unknown> }) =>
+      args.select && 'agent' in args.select
+        ? Promise.resolve({ agent: { name: 'Worker Bot' } })
+        : Promise.resolve({ agentUuid: 'agent-9', host: 'ci-host', cwd: '/srv/app' }),
+    );
+
+    const result = await formatAssigneeComplete('agent_instance', 'inst-1', null, null);
+
+    expect(result).toEqual({
+      type: 'agent_instance',
+      uuid: 'inst-1',
+      name: 'Worker Bot',
+      assignedAt: null,
+      assignedBy: null,
+      instance: { agentUuid: 'agent-9', host: 'ci-host', cwd: '/srv/app' },
+    });
+  });
+
+  it('omits instance enrichment when the agent_instance row is missing', async () => {
+    // Name still resolves (agent relation present) but the info lookup returns null.
+    prismaMock.agentInstance.findUnique.mockImplementation((args: { select?: Record<string, unknown> }) =>
+      args.select && 'agent' in args.select
+        ? Promise.resolve({ agent: { name: 'Worker Bot' } })
+        : Promise.resolve(null),
+    );
+
+    const result = await formatAssigneeComplete('agent_instance', 'inst-x', null, null);
+
+    expect(result).toEqual({
+      type: 'agent_instance',
+      uuid: 'inst-x',
+      name: 'Worker Bot',
+      assignedAt: null,
+      assignedBy: null,
+    });
+    expect((result as { instance?: unknown }).instance).toBeUndefined();
+  });
+});
+
+describe('resolveAssigneeInstanceInfo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns null for a non-instance assignee type without any DB read', async () => {
+    expect(await resolveAssigneeInstanceInfo('agent', 'agent-1')).toBeNull();
+    expect(await resolveAssigneeInstanceInfo('user', 'user-1')).toBeNull();
+    expect(await resolveAssigneeInstanceInfo(null, null)).toBeNull();
+    expect(prismaMock.agentInstance.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns the (agentUuid, host, cwd) for an existing instance', async () => {
+    prismaMock.agentInstance.findUnique.mockResolvedValue({
+      agentUuid: 'agent-7',
+      host: '',
+      cwd: null,
+    });
+    const result = await resolveAssigneeInstanceInfo('agent_instance', 'inst-2');
+    expect(result).toEqual({ agentUuid: 'agent-7', host: '', cwd: null });
+  });
+
+  it('returns null when the instance row does not exist', async () => {
+    prismaMock.agentInstance.findUnique.mockResolvedValue(null);
+    expect(await resolveAssigneeInstanceInfo('agent_instance', 'gone')).toBeNull();
+  });
 });
 
 describe('formatReview', () => {
@@ -460,6 +545,96 @@ describe('batchGetActorNames', () => {
 
     expect(result.get('user-1')).toBe('alice@test.com');
   });
+
+  // add-agent-instance-addressing: the third arm. Without it an instance-pinned
+  // assignee's name was never resolved → it fell to null → it silently vanished
+  // from any batched list/kanban render. Keyed by the INSTANCE uuid (the row's
+  // assigneeUuid), valued by the OWNING agent's name.
+  it('resolves agent_instance names to the owning agent, keyed by the instance uuid', async () => {
+    prismaMock.user.findMany.mockResolvedValue([]);
+    prismaMock.agent.findMany.mockResolvedValue([]);
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1', agent: { name: 'Worker Bot' } },
+      { uuid: 'inst-2', agent: { name: 'Other Bot' } },
+    ]);
+
+    const result = await batchGetActorNames([
+      { type: 'agent_instance', uuid: 'inst-1' },
+      { type: 'agent_instance', uuid: 'inst-2' },
+    ]);
+
+    expect(result.get('inst-1')).toBe('Worker Bot');
+    expect(result.get('inst-2')).toBe('Other Bot');
+    expect(prismaMock.agentInstance.findMany).toHaveBeenCalledWith({
+      where: { uuid: { in: ['inst-1', 'inst-2'] } },
+      select: { uuid: true, agent: { select: { name: true } } },
+    });
+  });
+
+  it('resolves all three types together in one batch', async () => {
+    prismaMock.user.findMany.mockResolvedValue([makeUser({ uuid: 'user-1', name: 'Alice' })]);
+    prismaMock.agent.findMany.mockResolvedValue([makeAgent({ uuid: 'agent-1', name: 'Bot' })]);
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1', agent: { name: 'Pinned Bot' } },
+    ]);
+
+    const result = await batchGetActorNames([
+      { type: 'user', uuid: 'user-1' },
+      { type: 'agent', uuid: 'agent-1' },
+      { type: 'agent_instance', uuid: 'inst-1' },
+    ]);
+
+    expect(result.get('user-1')).toBe('Alice');
+    expect(result.get('agent-1')).toBe('Bot');
+    expect(result.get('inst-1')).toBe('Pinned Bot');
+  });
+
+  it('skips an instance whose owning agent relation is missing', async () => {
+    prismaMock.user.findMany.mockResolvedValue([]);
+    prismaMock.agent.findMany.mockResolvedValue([]);
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1', agent: null },
+    ]);
+
+    const result = await batchGetActorNames([{ type: 'agent_instance', uuid: 'inst-1' }]);
+    expect(result.has('inst-1')).toBe(false);
+  });
+
+  it('does not query agentInstance when there are no instance actors', async () => {
+    prismaMock.user.findMany.mockResolvedValue([makeUser({ uuid: 'user-1', name: 'Alice' })]);
+    prismaMock.agent.findMany.mockResolvedValue([]);
+
+    await batchGetActorNames([{ type: 'user', uuid: 'user-1' }]);
+    expect(prismaMock.agentInstance.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('batchGetAssigneeInstanceInfo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns an empty map (and no query) for empty input', async () => {
+    const result = await batchGetAssigneeInstanceInfo([]);
+    expect(result.size).toBe(0);
+    expect(prismaMock.agentInstance.findMany).not.toHaveBeenCalled();
+  });
+
+  it('resolves (agentUuid, host, cwd) per instance uuid, deduplicated', async () => {
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1', agentUuid: 'agent-1', host: 'h1', cwd: '/a' },
+      { uuid: 'inst-2', agentUuid: 'agent-2', host: '', cwd: null },
+    ]);
+
+    const result = await batchGetAssigneeInstanceInfo(['inst-1', 'inst-2', 'inst-1']);
+
+    expect(result.get('inst-1')).toEqual({ agentUuid: 'agent-1', host: 'h1', cwd: '/a' });
+    expect(result.get('inst-2')).toEqual({ agentUuid: 'agent-2', host: '', cwd: null });
+    expect(prismaMock.agentInstance.findMany).toHaveBeenCalledWith({
+      where: { uuid: { in: ['inst-1', 'inst-2'] } },
+      select: { uuid: true, agentUuid: true, host: true, cwd: true },
+    });
+  });
 });
 
 describe('batchFormatCreatedBy', () => {
@@ -590,6 +765,236 @@ describe('validateTargetExists', () => {
 
   it('returns false for unknown target type', async () => {
     const result = await validateTargetExists('unknown' as any, 'id', 'comp-1');
+    expect(result).toBe(false);
+  });
+});
+
+describe('getActorName — agent_instance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the owning agent name for an agent_instance', async () => {
+    prismaMock.agentInstance.findUnique.mockResolvedValue({
+      agent: { name: 'Admin Claude' },
+    });
+
+    const name = await getActorName('agent_instance', 'inst-1');
+    expect(name).toBe('Admin Claude');
+    expect(prismaMock.agentInstance.findUnique).toHaveBeenCalledWith({
+      where: { uuid: 'inst-1' },
+      select: { agent: { select: { name: true } } },
+    });
+  });
+
+  it('returns null when the instance is not found', async () => {
+    prismaMock.agentInstance.findUnique.mockResolvedValue(null);
+
+    const name = await getActorName('agent_instance', 'missing');
+    expect(name).toBeNull();
+  });
+});
+
+describe('resolveAssigneeAgentUuid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the assigneeUuid as-is for an agent', async () => {
+    const result = await resolveAssigneeAgentUuid('comp-1', 'agent', 'agent-1');
+    expect(result).toBe('agent-1');
+    // No DB lookup for a plain agent — the uuid already IS the agent uuid.
+    expect(prismaMock.agentInstance.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("resolves an agent_instance to its owning agent's uuid (company-scoped)", async () => {
+    prismaMock.agentInstance.findFirst.mockResolvedValue({ agentUuid: 'agent-9' });
+
+    const result = await resolveAssigneeAgentUuid('comp-1', 'agent_instance', 'inst-1');
+    expect(result).toBe('agent-9');
+    expect(prismaMock.agentInstance.findFirst).toHaveBeenCalledWith({
+      where: { uuid: 'inst-1', companyUuid: 'comp-1' },
+      select: { agentUuid: true },
+    });
+  });
+
+  it('returns null for an agent_instance that does not resolve', async () => {
+    prismaMock.agentInstance.findFirst.mockResolvedValue(null);
+    const result = await resolveAssigneeAgentUuid('comp-1', 'agent_instance', 'missing');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for a user', async () => {
+    const result = await resolveAssigneeAgentUuid('comp-1', 'user', 'user-1');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for null type or uuid', async () => {
+    expect(await resolveAssigneeAgentUuid('comp-1', null, 'x')).toBeNull();
+    expect(await resolveAssigneeAgentUuid('comp-1', 'agent', null)).toBeNull();
+  });
+
+  it('returns null for an unknown type', async () => {
+    const result = await resolveAssigneeAgentUuid('comp-1', 'robot', 'x');
+    expect(result).toBeNull();
+  });
+});
+
+describe('buildAssigneeMatch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const agentAuth = (over: Partial<AuthContext> = {}): AuthContext => ({
+    type: 'agent',
+    companyUuid: 'comp-1',
+    actorUuid: 'agent-1',
+    ownerUuid: 'owner-1',
+    ...over,
+  });
+
+  it('matches agent rows, owner-as-assignee user rows, AND the actor instance uuids', async () => {
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1' },
+      { uuid: 'inst-2' },
+    ]);
+
+    const conditions = await buildAssigneeMatch(agentAuth());
+
+    expect(conditions).toEqual([
+      { assigneeType: 'agent', assigneeUuid: 'agent-1' },
+      { assigneeType: 'user', assigneeUuid: 'owner-1' },
+      { assigneeType: 'agent_instance', assigneeUuid: { in: ['inst-1', 'inst-2'] } },
+    ]);
+    // The instance arm targets INSTANCE uuids, never the actor uuid.
+    const instArm = conditions.find((c) => c.assigneeType === 'agent_instance')!;
+    expect(instArm.assigneeUuid).toEqual({ in: ['inst-1', 'inst-2'] });
+    expect(instArm.assigneeUuid).not.toBe('agent-1');
+    expect(prismaMock.agentInstance.findMany).toHaveBeenCalledWith({
+      where: { companyUuid: 'comp-1', agentUuid: 'agent-1' },
+      select: { uuid: true },
+    });
+  });
+
+  it('omits the agent_instance arm when the agent has no instances', async () => {
+    prismaMock.agentInstance.findMany.mockResolvedValue([]);
+
+    const conditions = await buildAssigneeMatch(agentAuth());
+
+    expect(conditions).toEqual([
+      { assigneeType: 'agent', assigneeUuid: 'agent-1' },
+      { assigneeType: 'user', assigneeUuid: 'owner-1' },
+    ]);
+    expect(conditions.some((c) => c.assigneeType === 'agent_instance')).toBe(false);
+  });
+
+  it('omits the owner-user arm when the agent has no owner', async () => {
+    prismaMock.agentInstance.findMany.mockResolvedValue([]);
+
+    const conditions = await buildAssigneeMatch(agentAuth({ ownerUuid: undefined }));
+
+    expect(conditions).toEqual([
+      { assigneeType: 'agent', assigneeUuid: 'agent-1' },
+    ]);
+  });
+
+  it('matches only the user row for a user actor (no DB read)', async () => {
+    const conditions = await buildAssigneeMatch({
+      type: 'user',
+      companyUuid: 'comp-1',
+      actorUuid: 'user-1',
+    } as AuthContext);
+
+    expect(conditions).toEqual([{ assigneeType: 'user', assigneeUuid: 'user-1' }]);
+    expect(prismaMock.agentInstance.findMany).not.toHaveBeenCalled();
+  });
+
+  it('REGRESSION: a naive flat {assigneeType:"agent", assigneeUuid:actor} filter misses an agent_instance row', async () => {
+    // This is the exact bug the helper exists to prevent: an agent_instance row's
+    // assigneeUuid is an INSTANCE uuid, so the old flat agent-equality condition
+    // can never match it — the helper's IN-arm is what catches it.
+    const agentInstanceRow = { assigneeType: 'agent_instance', assigneeUuid: 'inst-1' };
+    const naiveFlatCondition = { assigneeType: 'agent', assigneeUuid: 'agent-1' };
+
+    const matchesNaive =
+      agentInstanceRow.assigneeType === naiveFlatCondition.assigneeType &&
+      agentInstanceRow.assigneeUuid === naiveFlatCondition.assigneeUuid;
+    expect(matchesNaive).toBe(false); // the bug: silently dropped
+
+    prismaMock.agentInstance.findMany.mockResolvedValue([{ uuid: 'inst-1' }]);
+    const conditions = await buildAssigneeMatch(agentAuth());
+    const instArm = conditions.find((c) => c.assigneeType === 'agent_instance')!;
+    const matchesHelper =
+      instArm &&
+      agentInstanceRow.assigneeType === instArm.assigneeType &&
+      (instArm.assigneeUuid as { in: string[] }).in.includes(agentInstanceRow.assigneeUuid);
+    expect(matchesHelper).toBe(true); // the fix: the helper's IN-arm catches it
+  });
+});
+
+describe('isAssignmentOwnedByActor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const agentAuth = (over: Partial<AuthContext> = {}): AuthContext => ({
+    type: 'agent',
+    companyUuid: 'comp-1',
+    actorUuid: 'agent-1',
+    ownerUuid: 'owner-1',
+    ...over,
+  });
+
+  it('passes a plain agent assignment whose uuid is the actor (no DB lookup)', async () => {
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'agent', 'agent-1');
+    expect(result).toBe(true);
+    expect(prismaMock.agentInstance.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('rejects a plain agent assignment whose uuid is a different agent', async () => {
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'agent', 'agent-2');
+    expect(result).toBe(false);
+  });
+
+  it('passes an agent_instance assignment owned by the actor (resolved instance → agent)', async () => {
+    prismaMock.agentInstance.findFirst.mockResolvedValue({ agentUuid: 'agent-1' });
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'agent_instance', 'inst-1');
+    expect(result).toBe(true);
+    expect(prismaMock.agentInstance.findFirst).toHaveBeenCalledWith({
+      where: { uuid: 'inst-1', companyUuid: 'comp-1' },
+      select: { agentUuid: true },
+    });
+  });
+
+  it('rejects an agent_instance assignment owned by a DIFFERENT agent', async () => {
+    prismaMock.agentInstance.findFirst.mockResolvedValue({ agentUuid: 'agent-2' });
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'agent_instance', 'inst-1');
+    expect(result).toBe(false);
+  });
+
+  it('rejects an agent_instance assignment that does not resolve', async () => {
+    prismaMock.agentInstance.findFirst.mockResolvedValue(null);
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'agent_instance', 'missing');
+    expect(result).toBe(false);
+  });
+
+  it('passes a user assignment matching the agent owner (owner-as-assignee)', async () => {
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'user', 'owner-1');
+    expect(result).toBe(true);
+  });
+
+  it('rejects a user assignment when the agent has no owner', async () => {
+    const result = await isAssignmentOwnedByActor(agentAuth({ ownerUuid: undefined }), 'user', 'owner-1');
+    expect(result).toBe(false);
+  });
+
+  it('returns false for a null/absent assignment', async () => {
+    expect(await isAssignmentOwnedByActor(agentAuth(), null, 'x')).toBe(false);
+    expect(await isAssignmentOwnedByActor(agentAuth(), 'agent', null)).toBe(false);
+  });
+
+  it('returns false for an unknown assignee type', async () => {
+    const result = await isAssignmentOwnedByActor(agentAuth(), 'robot', 'x');
     expect(result).toBe(false);
   });
 });

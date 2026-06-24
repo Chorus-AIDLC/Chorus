@@ -59,20 +59,30 @@ vi.mock("next-intl", async () => {
 
 import {
   InstancePicker,
+  filterOnlineInstances,
   type InstanceCandidate,
 } from "@/components/agent-presence/instance-picker";
 
 const onlineA: InstanceCandidate = {
   connectionUuid: "conn-online-a",
+  agentInstanceUuid: "inst-a",
   host: "Laptop-Q3",
   cwd: "/home/u/dev/chorus",
   effectiveStatus: "online",
 };
 const onlineB: InstanceCandidate = {
   connectionUuid: "conn-online-b",
+  agentInstanceUuid: "inst-b",
   host: "ci-runner-02",
   cwd: "/home/u/dev/payments",
   effectiveStatus: "online",
+};
+const offlineC: InstanceCandidate = {
+  connectionUuid: "conn-offline-c",
+  agentInstanceUuid: "inst-c",
+  host: "old-box",
+  cwd: "/home/u/dev/legacy",
+  effectiveStatus: "offline",
 };
 
 // The picker no longer ids its rows (the old `instance-<uuid>` id + label htmlFor
@@ -217,6 +227,27 @@ describe("InstancePicker — single-instance auto-select", () => {
       />,
     );
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("filterOnlineInstances — the online-only assignment contract", () => {
+  it("drops offline instances so an offline place is never selectable", () => {
+    const result = filterOnlineInstances([onlineA, offlineC, onlineB]);
+    expect(result.map((i) => i.connectionUuid)).toEqual([
+      "conn-online-a",
+      "conn-online-b",
+    ]);
+    // The offline candidate is gone — a pin to it (which would immediately
+    // degrade to a plain agent) is impossible by construction.
+    expect(result.some((i) => i.effectiveStatus === "offline")).toBe(false);
+  });
+
+  it("returns an empty list for a fully-offline agent (caller then shows no picker)", () => {
+    expect(filterOnlineInstances([offlineC])).toEqual([]);
+  });
+
+  it("passes an all-online list through unchanged", () => {
+    expect(filterOnlineInstances([onlineA, onlineB])).toHaveLength(2);
   });
 });
 

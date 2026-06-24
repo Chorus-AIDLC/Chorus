@@ -23,6 +23,7 @@ import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
 import { registerPermissionedTool } from "./register-helpers";
+import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import {
   ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
   hasNonEmptyAcceptanceCriteria,
@@ -966,11 +967,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         };
       }
 
-      // Status update requires assignee check
+      // Status update requires assignee check. The shared helper also passes an
+      // `agent_instance` assignment owned by this agent.
       if (status) {
-        const isAssignee =
-          (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
-          (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+        const isAssignee = await isAssignmentOwnedByActor(auth, task.assigneeType, task.assigneeUuid);
 
         if (!isAssignee) {
           return { content: [{ type: "text", text: "Only the assignee can update task status" }], isError: true };

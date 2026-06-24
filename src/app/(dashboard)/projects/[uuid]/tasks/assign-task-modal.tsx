@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import {
   InstancePicker,
+  filterOnlineInstances,
   type InstanceCandidate,
 } from "@/components/agent-presence/instance-picker";
 import {
@@ -82,10 +83,11 @@ export function AssignTaskModal({
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // The selected agent's ONLINE (host, cwd) daemon instances for the cwd pin
-  // (cwd-addressable instances). Only online instances are pinnable — an offline
-  // instance is not a wake target, so it is filtered out (a fully-offline agent
-  // shows no picker and just assigns plainly with no pin).
+  // The selected agent's ONLINE (host, cwd) daemon instances for the optional
+  // override pin. Default = inherit the root idea (a plain agent assignment, no
+  // instance). Only online instances are pinnable — an offline instance is not a
+  // wake target, so it is filtered out (a fully-offline agent shows no picker and
+  // just assigns plainly, inheriting the root idea's instance via wake lineage).
   const [instances, setInstances] = useState<InstanceCandidate[]>([]);
   const [isLoadingInstances, setIsLoadingInstances] = useState(false);
   const [pinnedConnectionUuid, setPinnedConnectionUuid] = useState<string | null>(
@@ -125,9 +127,7 @@ export function AssignTaskModal({
         if (cancelled) return;
         // Online-only: an offline instance is not a wake target, so it never
         // appears in the picker. A fully-offline agent yields [] → no picker.
-        setInstances(
-          res.instances.filter((i) => i.effectiveStatus === "online"),
-        );
+        setInstances(filterOnlineInstances(res.instances));
       })
       .finally(() => {
         if (!cancelled) setIsLoadingInstances(false);
@@ -171,13 +171,15 @@ export function AssignTaskModal({
     if (selectedOption === "self") {
       result = await claimTaskAction(task.uuid);
     } else if (selectedOption === "agent" && selectedAgentUuid) {
-      // Thread the durable (host, cwd) pin when the owner picked one. We send the
-      // place (host + cwd), NOT the ephemeral connectionUuid, so the pin survives
-      // a daemon restart and the wake resolves it at run time. No pin → undefined.
-      const pin = pinnedInstance
-        ? { targetHost: pinnedInstance.host, targetCwd: pinnedInstance.cwd }
-        : undefined;
-      result = await claimTaskToAgentAction(task.uuid, selectedAgentUuid, pin);
+      // Thread the DURABLE AgentInstance pin when the owner picked one — the
+      // stable pointer that survives a daemon restart, NOT the ephemeral
+      // connectionUuid. No pin (default = inherit root idea) → undefined, which
+      // assigns the plain agent and lets wake lineage inherit the idea's instance.
+      result = await claimTaskToAgentAction(
+        task.uuid,
+        selectedAgentUuid,
+        pinnedInstance?.agentInstanceUuid ?? undefined,
+      );
     } else if (selectedOption === "user" && selectedUserUuid) {
       result = await claimTaskToUserAction(task.uuid, selectedUserUuid);
     } else if (selectedOption === "release") {

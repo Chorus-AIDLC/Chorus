@@ -100,3 +100,66 @@ describe("buildMentionMarker", () => {
     expect(decodePinSuffix(suffix)).toEqual({ pinnedHost: "h", pinnedCwd: "/p" });
   });
 });
+
+// ===== Codec byte-stability (cwd-addressable mentions T-final lock-in) =====
+//
+// The cwd-addressable-instances feature interprets the `?cwd=…&host=…` suffix as
+// "the AgentInstance for this agent at (host, cwd)" — but it CHANGES NOTHING about
+// the wire format or the codec (spec: "without changing the wire format"; existing
+// stored comment tokens require no migration). These tests pin the exact bytes the
+// codec emits and prove `decode ∘ encode` is the identity over the (host, cwd)
+// domain (incl. both sentinels and paren-bearing payloads), so any future drift in
+// encodePinSuffix/decodePinSuffix is caught — the durable instance handle stays
+// (host, cwd), the SAME tuple daemon-connection.service.resolveInstanceByTuple keys
+// on, never a connectionUuid.
+describe("pin codec byte-stability (wire format unchanged)", () => {
+  // The complete (host, cwd) domain the registry / resolver must round-trip:
+  // a normal place, the unknown-host ("") and unknown-path (null) sentinels, and a
+  // paren-bearing payload (which must never break the closing-paren regex match).
+  const CASES: Array<{ host: string | null; cwd: string | null }> = [
+    { host: "prod", cwd: "/work" },
+    { host: "Laptop-Q3", cwd: "/home/u/dev/chorus" },
+    { host: "ci-runner", cwd: null }, // unknown-path pin
+    { host: "", cwd: "/srv/app" }, // unknown-host pin ("" sentinel)
+    { host: "h(1)", cwd: "/a(b)/c" }, // parens must be escaped away
+    { host: "host with spaces", cwd: "/path with spaces/x" },
+    { host: "h&q=x", cwd: "/p?a=b&c=d" }, // reserved chars must survive
+  ];
+
+  it.each(CASES)(
+    "decode(encode($host,$cwd)) is the identity and the suffix is paren-free",
+    ({ host, cwd }) => {
+      const suffix = encodePinSuffix(host, cwd);
+      // Suffix begins with `?` and contains no bare paren (so the markup regex's
+      // "up to the closing paren" match can never be broken by the payload).
+      expect(suffix.startsWith("?")).toBe(true);
+      expect(suffix).not.toContain("(");
+      expect(suffix).not.toContain(")");
+      // Round-trip: decode the text after the leading `?`.
+      expect(decodePinSuffix(suffix.slice(1))).toEqual({
+        pinnedHost: host,
+        pinnedCwd: cwd,
+      });
+    },
+  );
+
+  it("emits the exact documented bytes for the spec's pinned-mention example", () => {
+    // Spec scenario token: @[Name](agent:uuid?cwd=/work&host=prod). The codec's
+    // suffix bytes are frozen here — a change to this string is a wire-format
+    // change and would require migrating stored comment tokens (forbidden).
+    expect(encodePinSuffix("prod", "/work")).toBe("?cwd=%2Fwork&host=prod");
+    expect(buildMentionMarker("Name", "agent", UUID, "prod", "/work")).toBe(
+      `@[Name](agent:${UUID}?cwd=%2Fwork&host=prod)`,
+    );
+  });
+
+  it("an un-pinned marker is byte-identical to the legacy bare form (no migration)", () => {
+    // Both the explicit-null and the omitted-arg paths must serialize with NO
+    // suffix, so every previously-stored bare token still parses unchanged.
+    expect(encodePinSuffix(null, null)).toBe("");
+    expect(buildMentionMarker("Name", "agent", UUID)).toBe(`@[Name](agent:${UUID})`);
+    expect(buildMentionMarker("Name", "agent", UUID, null, null)).toBe(
+      `@[Name](agent:${UUID})`,
+    );
+  });
+});

@@ -1222,7 +1222,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_pm_assign_task
 
-**Description**: Assign a task to a specified Developer Agent (task must be in open or assigned status)
+**Description**: Assign a task to an agent that has `task:write` permission (task must be in open or assigned status). Optionally pin the task to a specific **AgentInstance** by passing its `instanceUuid` — the durable `(agent, host, cwd)` identity surfaced by the presence/daemon tools.
 
 **Required Permission**: `proposal:write`
 
@@ -1230,14 +1230,15 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | taskUuid | string | Yes | Task UUID |
-| agentUuid | string | Yes | Target Developer Agent UUID |
+| agentUuid | string | Yes | Target Agent UUID (must have `task:write` permission) |
+| instanceUuid | string | No | AgentInstance UUID to pin the task to. **Present** → the task is assigned as `agent_instance` (the autonomous wake targets that instance). **Omitted** → a plain `agent` assignment whose wake-time instance is inherited from the root idea (backward-compatible). The instance must belong to the target agent's company. |
 
 **Output**: Updated Task JSON
 
 **Validation rules**:
 - Task must be in open or assigned status
-- Target Agent must exist and belong to the same company
-- Target Agent must carry the `developer` / `developer_agent` role label (the handler still uses the role string here as an explicit "is this an executor agent?" check, distinct from the broader permission gating)
+- Target Agent must exist, belong to the same company, and hold the effective `task:write` permission (preset or custom)
+- When `instanceUuid` is supplied, it must reference an AgentInstance in the same company, otherwise the call is rejected ("Agent instance not found")
 
 ### chorus_pm_start_elaboration
 

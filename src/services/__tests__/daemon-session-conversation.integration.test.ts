@@ -56,11 +56,14 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     notificationPreference: [] as Row[],
-    // T5: the wake bridge reads a task_assigned wake's pinned (host, cwd) from the Task's
-    // targetHost/targetCwd columns. This integration exercises UN-pinned task wakes, so
-    // the store has no task rows — task.findFirst returns null → no pin → online-first
-    // (the behavior this checkpoint asserts), exactly as before the pin feature.
+    // The wake bridge reads a task_assigned wake's pin from the Task's agent_instance
+    // assignee, and the root Idea's assignee for inheritance. This integration exercises
+    // UN-pinned wakes, so the store has no task/idea/instance rows — the findFirst reads
+    // resolve null → no pin → online-first (the behavior this checkpoint asserts), exactly
+    // as before the pin feature.
     task: [] as Row[],
+    idea: [] as Row[],
+    agentInstance: [] as Row[],
   };
   let autoId = 1;
   let autoUuid = 1;
@@ -292,9 +295,17 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonExecution", args)),
     },
     task: {
-      // T5 pin read for a task_assigned wake. No task rows are seeded here (un-pinned
-      // wakes), so this resolves null → the bridge derives no pin and stays online-first.
+      // Pin read for a task_assigned wake (the Task's agent_instance assignee). No task
+      // rows are seeded here (un-pinned wakes), so this resolves null → no pin.
       findFirst: vi.fn(async (args: Row) => findFirst("task", args)),
+    },
+    // Root-idea inheritance read + instance-place resolution. No rows seeded (un-pinned),
+    // so both resolve null → no inherited pin → online-first.
+    idea: {
+      findFirst: vi.fn(async (args: Row) => findFirst("idea", args)),
+    },
+    agentInstance: {
+      findFirst: vi.fn(async (args: Row) => findFirst("agentInstance", args)),
     },
     notification: {
       create: vi.fn(async (args: Row) => {

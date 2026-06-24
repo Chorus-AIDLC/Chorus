@@ -31,6 +31,7 @@ const companyUuid = "company-0000-0000-0000-000000000001";
 const userUuid = "user-0000-0000-0000-000000000001";
 const agentUuid = "agent-0000-0000-0000-000000000001";
 const ideaUuid = "idea-0000-0000-0000-000000000001";
+const instanceUuid = "instance-0000-0000-0000-000000000001";
 
 function jsonRequest(body: unknown) {
   return new NextRequest(new URL(`/api/ideas/${ideaUuid}/claim`, "http://localhost:3000"), {
@@ -130,6 +131,79 @@ describe("POST /api/ideas/[uuid]/claim — agent selection gating", () => {
         }),
       }),
     );
+  });
+});
+
+// add-agent-instance-addressing (T7): the idea claim route accepts an optional
+// `instanceUuid` and forwards it into claimIdea so the service can pin the idea
+// as an `agent_instance` assignment (the authoritative pin root). Absent → a
+// plain agent claim, byte-identical to before.
+describe("POST /api/ideas/[uuid]/claim — instance pin", () => {
+  it("forwards instanceUuid into claimIdea when assigning to an agent (agent_instance pin)", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["pm_agent"],
+      permissions: [],
+    });
+    mockClaimIdea.mockResolvedValue({ uuid: ideaUuid, assigneeUuid: instanceUuid });
+
+    const res = await POST(jsonRequest({ agentUuid, instanceUuid }), ctx());
+    expect(res.status).toBe(200);
+    expect(mockClaimIdea).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assigneeType: "agent",
+        assigneeUuid: agentUuid,
+        assignedByUuid: userUuid,
+        instanceUuid,
+      }),
+    );
+  });
+
+  it("omits instanceUuid from claimIdea args when none is supplied (backward-compatible)", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["pm_agent"],
+      permissions: [],
+    });
+    mockClaimIdea.mockResolvedValue({ uuid: ideaUuid, assigneeUuid: agentUuid });
+
+    await POST(jsonRequest({ agentUuid }), ctx());
+    const claimArgs = mockClaimIdea.mock.calls[0][0];
+    expect(claimArgs).not.toHaveProperty("instanceUuid");
+  });
+
+  it("returns 400 when the service rejects a foreign-company / unknown instance pin", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["pm_agent"],
+      permissions: [],
+    });
+    mockClaimIdea.mockRejectedValue(new Error("Agent instance not found"));
+
+    const res = await POST(
+      jsonRequest({ agentUuid, instanceUuid: "instance-does-not-exist" }),
+      ctx(),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.error.message).toMatch(/Agent instance not found/);
+  });
+
+  it("does not thread an instanceUuid on an agent self-claim", async () => {
+    mockGetAuthContext.mockResolvedValue({
+      type: "agent",
+      companyUuid,
+      actorUuid: agentUuid,
+      roles: ["pm_agent"],
+      permissions: ["idea:read", "idea:write"],
+    });
+    mockClaimIdea.mockResolvedValue({ uuid: ideaUuid, assigneeUuid: agentUuid });
+
+    await POST(jsonRequest({ instanceUuid }), ctx());
+    const claimArgs = mockClaimIdea.mock.calls[0][0];
+    expect(claimArgs).not.toHaveProperty("instanceUuid");
+    expect(claimArgs.assigneeType).toBe("agent");
+    expect(claimArgs.assigneeUuid).toBe(agentUuid);
   });
 });
 

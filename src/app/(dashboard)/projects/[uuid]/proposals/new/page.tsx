@@ -38,6 +38,7 @@ export default async function NewProposalPage({ params, searchParams }: PageProp
     assignedToMe: true,
     actorUuid: auth.actorUuid,
     actorType: auth.type,
+    ownerUuid: auth.ownerUuid,
   });
 
   // All ideas with resolved elaboration are available (ideas can be reused across proposals)

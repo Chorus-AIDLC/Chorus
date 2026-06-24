@@ -24,6 +24,7 @@ const { mockState, mockEventBus, mockPrisma, mockNotificationService } = vi.hois
     user: { findUnique: vi.fn() },
     agent: { findUnique: vi.fn() },
     project: { findUnique: vi.fn() },
+    agentInstance: { findFirst: vi.fn() },
   };
 
   // Mock notification service
@@ -121,6 +122,9 @@ describe("notification-listener", () => {
       uuid: "project-uuid",
       name: "Test Project",
     });
+    // Default: an agent_instance resolves to its owning agent. Individual tests
+    // override the agentUuid as needed.
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "owning-agent" });
   });
 
   afterEach(() => {
@@ -1105,6 +1109,222 @@ describe("notification-listener", () => {
       expect(call.length).toBeGreaterThan(0);
       expect(call.some((n: any) => n.recipientType === "agent")).toBe(true);
       expect(call.some((n: any) => n.recipientType === "user")).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // agent_instance recipient resolution (add-agent-instance-addressing)
+  // ============================================================
+  //
+  // Every recipient branch derived from an entity assignee must, for an
+  // `agent_instance` assignment, emit {type:"agent", uuid:<resolved agentUuid>}
+  // and NEVER the instance uuid — otherwise the daemon wake targets an instance
+  // uuid that no agent recipient matches (silent drop).
+  describe("agent_instance recipient resolution", () => {
+    const INSTANCE_UUID = "inst-1111";
+    const OWNING_AGENT = "agent-owner-2222";
+
+    beforeEach(() => {
+      mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: OWNING_AGENT });
+    });
+
+    it("task_assigned: emits the owning agent, not the instance uuid", async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        uuid: "task-uuid",
+        title: "My Task",
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+        createdByUuid: "creator-uuid",
+      });
+      const event = makeEvent({ action: "assigned", targetType: "task", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(1);
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe(OWNING_AGENT);
+      expect(call.every((n: any) => n.recipientUuid !== INSTANCE_UUID)).toBe(true);
+      expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith({
+        where: { uuid: INSTANCE_UUID, companyUuid: "company-uuid" },
+        select: { agentUuid: true },
+      });
+    });
+
+    it("task_verified: emits the owning agent", async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+      });
+      const event = makeEvent({ action: "verified", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe(OWNING_AGENT);
+    });
+
+    it("task_reopened: emits the owning agent", async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+      });
+      const event = makeEvent({ action: "reopened", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe(OWNING_AGENT);
+    });
+
+    it("task_status_changed: emits the owning agent (not the instance uuid)", async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+        createdByUuid: "user-1",
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({ uuid: "user-1", name: "Alice" });
+      const event = makeEvent({ action: "status_changed", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientType === "agent");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
+      expect(call.every((n: any) => n.recipientUuid !== INSTANCE_UUID)).toBe(true);
+    });
+
+    it("idea_claimed: emits the owning agent for an instance-pinned assignee", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+      });
+      const event = makeEvent({ targetType: "idea", action: "assigned", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientType === "agent");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
+      expect(call.every((n: any) => n.recipientUuid !== INSTANCE_UUID)).toBe(true);
+    });
+
+    it("report_created: emits the owning agent + that agent's human owner", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "Idea Title" });
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent_instance",
+          assigneeUuid: INSTANCE_UUID,
+        });
+      });
+      // The resolved owning agent has a human owner.
+      mockPrisma.agent.findUnique.mockResolvedValue({
+        uuid: OWNING_AGENT,
+        name: "Owner Bot",
+        ownerUuid: "human-owner",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "report_created",
+        actorType: "agent",
+        actorUuid: "agent-actor",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientUuid === OWNING_AGENT);
+      const ownerRec = call.find((n: any) => n.recipientUuid === "human-owner");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientType).toBe("agent");
+      expect(ownerRec).toBeDefined();
+      expect(ownerRec.recipientType).toBe("user");
+      expect(call.every((n: any) => n.recipientUuid !== INSTANCE_UUID)).toBe(true);
+    });
+
+    it("elaboration_answered: emits the owning agent assignee", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+        createdByUuid: "user-creator",
+      });
+      const event = makeEvent({ targetType: "idea", action: "elaboration_answered", actorUuid: "other" });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientType === "agent");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
+    });
+
+    it("elaboration_verified: wakes the owning agent of the pinned instance (never the instance uuid)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(1);
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe(OWNING_AGENT);
+      expect(call[0].recipientUuid).not.toBe(INSTANCE_UUID);
+    });
+
+    it("elaboration_verified: produces NO wake when the instance fails to resolve (degrades to no recipient, no silent instance-uuid wake)", async () => {
+      mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "elaboration_verified",
+        actorType: "user",
+        actorUuid: "user-verifier",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("comment_added on task: emits the owning agent assignee, excluding the commenter", async () => {
+      mockPrisma.task.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+        createdByUuid: "user-1",
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({ uuid: "user-1" });
+      const event = makeEvent({
+        targetType: "task",
+        action: "comment_added",
+        actorType: "user",
+        actorUuid: "user-commenter",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientType === "agent");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
+      expect(call.every((n: any) => n.recipientUuid !== INSTANCE_UUID)).toBe(true);
+    });
+
+    it("comment_added on idea: emits the owning agent assignee", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
+        createdByUuid: "user-1",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "comment_added",
+        actorType: "user",
+        actorUuid: "user-commenter",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      const agentRec = call.find((n: any) => n.recipientType === "agent");
+      expect(agentRec).toBeDefined();
+      expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
     });
   });
 });

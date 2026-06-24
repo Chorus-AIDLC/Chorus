@@ -42,6 +42,9 @@ const mockPrisma = vi.hoisted(() => ({
       createMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    // isAssignmentOwnedByActor → resolveAssigneeAgentUuid reads this for the
+    // agent_instance ownership-gate path.
+    agentInstance: { findFirst: vi.fn() },
   },
 }));
 
@@ -239,6 +242,45 @@ describe("chorus_update_task", () => {
   it("checks assignee for status update", async () => {
     const nonAssigneeTask = { ...TASK, assigneeUuid: "other-agent" };
     mockTaskService.getTaskByUuid.mockResolvedValue(nonAssigneeTask);
+
+    const result = await toolHandlers["chorus_update_task"]({
+      taskUuid: "task-1",
+      status: "in_progress",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ isError: true }));
+    expect(mockTaskService.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("permits status update on an agent_instance task owned by the acting agent", async () => {
+    const instanceTask = { ...TASK, assigneeType: "agent_instance", assigneeUuid: "inst-1" };
+    mockTaskService.getTaskByUuid.mockResolvedValue(instanceTask);
+    // The instance resolves to the acting agent (agent-1).
+    mockPrisma.prisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "agent-1" });
+    mockTaskService.isValidTaskStatusTransition.mockReturnValue(true);
+    mockTaskService.checkDependenciesResolved.mockResolvedValue({ resolved: true, blockers: [] });
+    mockTaskService.updateTask.mockResolvedValue({ ...instanceTask, status: "in_progress" });
+
+    const result = await toolHandlers["chorus_update_task"]({
+      taskUuid: "task-1",
+      status: "in_progress",
+    });
+
+    expect(result).not.toEqual(expect.objectContaining({ isError: true }));
+    expect(mockTaskService.updateTask).toHaveBeenCalled();
+    const updateArgs = mockTaskService.updateTask.mock.calls[0];
+    expect(updateArgs[0]).toBe("task-1");
+    expect(updateArgs[1]).toEqual(expect.objectContaining({ status: "in_progress" }));
+    expect(mockPrisma.prisma.agentInstance.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "inst-1", companyUuid: "company-1" },
+      select: { agentUuid: true },
+    });
+  });
+
+  it("rejects status update on an agent_instance task owned by a DIFFERENT agent", async () => {
+    const instanceTask = { ...TASK, assigneeType: "agent_instance", assigneeUuid: "inst-2" };
+    mockTaskService.getTaskByUuid.mockResolvedValue(instanceTask);
+    mockPrisma.prisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
 
     const result = await toolHandlers["chorus_update_task"]({
       taskUuid: "task-1",
