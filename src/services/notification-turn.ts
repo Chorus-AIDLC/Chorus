@@ -12,11 +12,27 @@
 // (`resolveOrCreateSession` + `createPendingTurn` + `resolveDirectIdeaUuid`) and the
 // connection registry (`listConnectionsForAgent`, to pin the cwd-bound origin).
 //
-// ONLINE-ONLY WAKE: only an ONLINE connection is wakeable. A pin only ever wakes when
-// it matches an online connection; an offline/no-match pin falls through to online-first,
-// and when the agent has NO online connection at all, no turn is created — the
-// already-created Notification stands as the plain record (a fully-offline target is a
-// notification-only event; there is NO durable queue / backfill of pending turns).
+// ONLINE-ONLY WAKE: only an ONLINE connection is wakeable. When the agent has NO online
+// connection at all, no turn is created — the already-created Notification stands as the
+// plain record (a fully-offline target is a notification-only event; there is NO durable
+// queue / backfill of pending turns).
+//
+// DIRECTED LIVE DELIVERY (fix-pinned-wake-directed-delivery, T1): a PINNED autonomous wake
+// (`mentioned` with a markup pin, `task_assigned` with a Task `targetHost`/`targetCwd` pin)
+// and the idea-anchored `elaboration_verified` wake are DIRECTED so only the resolved
+// instance wakes — mirroring the `human_instruction` keystone (子2). When such a wake
+// resolves to an ONLINE target connection, the turn is created against THAT connection's
+// session and a `deliver_turn` control ping is emitted on its `control:{connectionUuid}`
+// channel (fire-and-forget + non-fatal; the persisted turn + reconnect backfill are the
+// durability net). The resolved target is also surfaced TRANSPORT-ONLY to the daemon (see
+// `WakeTurnResult.targetConnectionUuid`) so non-target daemons suppress their broadcast copy.
+//
+// OFFLINE PIN = NOTIFY-ONLY, NO WAKE (a deliberate REVERSAL of #354's "offline pin →
+// online-first"): a PINNED wake whose pin matches NO online connection creates NO turn,
+// emits NO ping, and surfaces NO target. The already-created Notification stands as the
+// plain record. Silently re-routing a pinned wake to a cwd the user did not choose is the
+// user-visible defect this change fixes, so an offline pin must NEVER fall back to
+// online-first. An UN-PINNED wake is unaffected and still goes broadcast → online-first.
 //
 // FAILURE ISOLATION (repo "no silent errors" + the wake notification must always
 // survive): turn creation runs AFTER the notification row already exists, and any
@@ -39,6 +55,7 @@ import {
   listConnectionsForAgent,
   type ConnectionView,
 } from "@/services/daemon-connection.service";
+import { deliverTurnPing } from "@/services/daemon-instruction.service";
 import type { LineageEntityType } from "@/services/lineage.service";
 
 const turnLogger = logger.child({ module: "notification-turn" });
@@ -217,83 +234,198 @@ async function resolvePinnedTarget(
 }
 
 /**
- * Select the ONLINE origin connection for the wake (cwd-addressable instances):
+ * The outcome of resolving a wake's origin connection. `kind` records HOW the connection
+ * was chosen, which governs directed live delivery downstream:
+ *
+ *  - `directed` — a PINNED (or idea-origin-resolved) wake matched a specific ONLINE
+ *    connection. The turn is delivered to ONLY that connection (`deliver_turn` ping) and
+ *    the target is surfaced transport-only so non-target daemons suppress their broadcast
+ *    copy. `connection` is the resolved target.
+ *  - `online_first` — an UN-PINNED wake fell to the first online connection. Behavior is
+ *    byte-identical to before this change: broadcast → online-first, NO ping, NO target.
+ *    `connection` is the chosen online-first connection.
+ *  - `offline_pin` — a PINNED wake whose pin matched NO online connection. NOTHING is
+ *    wakeable: NO turn, NO ping, NO target (notify-only). This deliberately does NOT fall
+ *    back to online-first (REVERSES #354). `connection` is null.
+ *  - `none` — the agent has NO online connection at all. NO turn (notification stands).
+ *    `connection` is null.
+ */
+type OriginSelection =
+  | { kind: "directed"; connection: ConnectionView }
+  | { kind: "online_first"; connection: ConnectionView }
+  | { kind: "offline_pin" }
+  | { kind: "none" };
+
+/**
+ * Select the ONLINE origin connection for the wake (cwd-addressable instances), and
+ * classify HOW it was chosen so the caller can drive directed live delivery:
  *
  *  - With a pin: the connection whose `(host, cwd)` EXACTLY matches the pinned place AND
- *    is ONLINE. Only an online match can be woken, so the pin wakes the daemon at that
- *    exact place when it is running. An OFFLINE match is NOT wakeable — there is no
- *    durable queue / backfill, so an offline pin is treated as "no match" and falls
- *    through to online-first below.
- *  - With a pin that matches no ONLINE connection (offline match, or the place is not
- *    registered at all), or no pin: fall back to the online-first selection
- *    (`effectiveStatus === "online"`, first entry — the list is already sorted
- *    online-first then lastSeenAt desc), exactly as an un-pinned wake.
+ *    is ONLINE → `directed`. Only an online match can be woken, so the pin wakes the
+ *    daemon at that exact place when it is running.
+ *    A pin that matches NO online connection (the pinned instance is offline, or the place
+ *    is not registered) → `offline_pin`: NOTHING is woken. There is NO durable queue and
+ *    NO online-first fallback for a PINNED wake — silently re-routing a pinned wake to an
+ *    unchosen cwd is the defect this change fixes (a deliberate REVERSAL of #354).
+ *  - With no pin: the online-first selection (`effectiveStatus === "online"`, first entry —
+ *    the list is already sorted online-first then lastSeenAt desc) → `online_first`,
+ *    exactly as before this change. None online → `none`.
  *
- * Returns the chosen ONLINE `ConnectionView`, or null when there is nothing to wake (no
- * online connection at all — the agent has no running daemon). A null result means the
- * caller creates NO turn; the already-created Notification stands as the plain record.
+ * A `directed`/`online_first` result carries the chosen ONLINE `ConnectionView`. An
+ * `offline_pin`/`none` result carries no connection: the caller creates NO turn and the
+ * already-created Notification stands as the plain record.
  */
 function selectOriginConnection(
   connections: ConnectionView[],
   pin: PinnedTarget | null,
-): ConnectionView | null {
+): OriginSelection {
   if (pin) {
     // Strict (host, cwd) equality against the registry's sentinels, gated on ONLINE: a
-    // pin only wakes the daemon at that exact place when it is actually running. An
-    // offline match is not wakeable and is ignored here (no durable queue).
+    // pin only wakes the daemon at that exact place when it is actually running.
     const matched = connections.find(
       (c) =>
         c.host === pin.host &&
         c.cwd === pin.cwd &&
         c.effectiveStatus === "online",
     );
-    if (matched) return matched;
-    // Pin matched no ONLINE connection (offline place, or not registered at all):
-    // fall through to online-first, exactly as an un-pinned wake.
+    if (matched) return { kind: "directed", connection: matched };
+    // Pin matched no ONLINE connection (offline place, or not registered at all): NOTHING
+    // is wakeable. Do NOT fall back to online-first — that silent re-route to the wrong
+    // cwd is the user-visible defect. Notify-only, no wake.
+    return { kind: "offline_pin" };
   }
 
-  // No pin, or pin matched no online connection → online-first (the existing behavior).
-  // The list is pre-sorted online-first, so the first online entry is the freshest
-  // connection. None online → null → no turn (a notification-only event).
-  return connections.find((c) => c.effectiveStatus === "online") ?? null;
+  // No pin → online-first (the existing behavior). The list is pre-sorted online-first, so
+  // the first online entry is the freshest connection. None online → no turn.
+  const onlineFirst = connections.find((c) => c.effectiveStatus === "online");
+  return onlineFirst
+    ? { kind: "online_first", connection: onlineFirst }
+    : { kind: "none" };
 }
 
 /**
- * For a wake-triggering notification destined for a DAEMON agent, record the matching
- * `DaemonSessionTurn`. Composes (never reimplements) the daemon-session service:
+ * Resolve the directed ONLINE target for an `elaboration_verified` wake: the connection
+ * that OWNS the idea's existing daemon session (`DaemonSession.originConnectionUuid` for
+ * the idea-anchored session), when that connection is ONLINE.
  *
- *  1. Map `action → trigger`; bail (null) if the action is not wake-triggering.
- *  2. Only agent recipients can be daemons — bail for `user` recipients.
- *  3. Resolve the wake's pinned target instance (cwd-addressable instances): the
- *     mention's `(host, cwd)` for a `mentioned` wake, the Task's `targetHost`/`targetCwd`
- *     for a `task_assigned` wake on a task, else none (DEC-5: NEVER inferred from the
- *     project). Then pick the ONLINE origin connection: the `(host, cwd)`-matching
- *     ONLINE connection when pinned, else online-first. An offline pin (or one matching
- *     no online place) is NOT wakeable — there is no durable queue — so it falls through
- *     to online-first. No online connection at all ⇒ bail (null): the agent is fully
- *     offline and the already-created Notification stands as the plain record.
- *  4. Derive the session id: the entity's `directIdeaUuid` via lineage when the
- *     entityType is lineage-walkable, else the entity uuid (ad-hoc session). This is
- *     the stable `(agentUuid, sessionId)` business key.
- *  5. `resolveOrCreateSession` (stamps origin + directIdeaUuid write-once) then
- *     `createPendingTurn` with the mapped trigger. For `human_instruction`, the turn's
- *     `promptText` is the instruction body (canonical).
+ * The `Idea` entity carries NO pin columns (no DDL), so the "where does this idea's
+ * conversation live" signal is the idea's existing session origin — the cwd where the
+ * idea's transcript already lives. When no idea-anchored session exists yet (the idea was
+ * elaborated entirely in the UI and the daemon was never woken on it), or that origin is
+ * not currently online, this returns null → the caller falls back to online-first (NO
+ * directed delivery), exactly as the pre-change proposal-writing wake.
  *
- * FAILURE ISOLATION: any throw from steps 3-5 is caught, logged VISIBLY, and swallowed
- * to null — a turn-creation failure MUST NOT abort or block the already-created
- * notification (the notification row exists before this runs). Returns the created
- * `TurnView`, or null when no turn was created (not wake-triggering, human recipient,
- * nothing to wake, or a logged failure).
+ * `directIdeaUuid` is the idea anchor (the session business key for an idea-anchored
+ * session). `connections` is the agent's live registry, already resolved by the caller.
+ * A query failure propagates to the caller's failure-isolation guard.
  */
-export async function maybeCreateTurnForWakeNotification(
+async function resolveElaborationVerifiedTarget(
+  companyUuid: string,
+  agentUuid: string,
+  directIdeaUuid: string | null,
+  connections: ConnectionView[],
+): Promise<ConnectionView | null> {
+  if (!directIdeaUuid) return null;
+  // The idea-anchored session's business key is its directIdeaUuid (sessionId === idea).
+  const session = await prisma.daemonSession.findFirst({
+    where: { companyUuid, agentUuid, sessionId: directIdeaUuid },
+    select: { originConnectionUuid: true },
+  });
+  if (!session) return null;
+  // The origin must be ONLINE to be wakeable (no durable queue). An offline origin is
+  // not directed — fall back to online-first.
+  return (
+    connections.find(
+      (c) =>
+        c.uuid === session.originConnectionUuid && c.effectiveStatus === "online",
+    ) ?? null
+  );
+}
+
+/**
+ * The richer result of the wake-turn chokepoint: the created `DaemonSessionTurn` (or null
+ * when none was created) PLUS the resolved DIRECTED target connection uuid (or null).
+ *
+ * `targetConnectionUuid` is non-null ONLY for a DIRECTED wake — a pinned `mentioned` /
+ * `task_assigned` whose pin matched an ONLINE connection, or an `elaboration_verified`
+ * whose idea-session origin is ONLINE. It is the resolved connection the `deliver_turn`
+ * ping was sent to, and the value the daemon uses for broadcast suppression (TRANSPORT-
+ * ONLY — see the surfacing note on `notification.service`). It is NULL for an un-pinned
+ * wake (broadcast → online-first, unchanged) and for an offline-pin / no-online-target
+ * wake (notify-only, no wake).
+ *
+ * `suppressWake` distinguishes the OFFLINE-PIN case from the un-pinned case, which would
+ * OTHERWISE be indistinguishable at the daemon (both carry `targetConnectionUuid: null`).
+ * It is `true` ONLY for an `offline_pin` selection — a PINNED wake whose pin matched NO
+ * online connection. The daemon reads this transport-only flag off the `new_notification`
+ * SSE event and suppresses the broadcast wake on EVERY connection (Q2 — notify-only, no
+ * wake), realizing the design's "no daemon matches → every connection suppresses" intent
+ * without depending on a non-null sentinel. It is `false` for an un-pinned wake (so the
+ * broadcast wakes online-first, byte-identical to before), for a directed wake (the target
+ * wakes), and for `none` (agent fully offline — nobody is connected to suppress anyway, and
+ * a momentarily-no-online un-pinned wake must stay byte-identical to before).
+ */
+export interface WakeTurnResult {
+  turn: TurnView | null;
+  targetConnectionUuid: string | null;
+  suppressWake: boolean;
+}
+
+/**
+ * The full wake-turn chokepoint: for a wake-triggering notification destined for a DAEMON
+ * agent, record the matching `DaemonSessionTurn`, and — when the wake is DIRECTED — emit a
+ * `deliver_turn` control ping to the resolved target and surface that target. Composes
+ * (never reimplements) the daemon-session service:
+ *
+ *  1. Map `action → trigger`; bail if the action is not wake-triggering.
+ *  2. Only agent recipients can be daemons — bail for `user` recipients.
+ *  3. Resolve the wake's pinned target instance (cwd-addressable instances): the mention's
+ *     `(host, cwd)` for a `mentioned` wake, the Task's `targetHost`/`targetCwd` for a
+ *     `task_assigned` wake on a task, else none (DEC-5: NEVER inferred from the project).
+ *     Select the ONLINE origin, classified by HOW it was chosen:
+ *       - `directed`     — pin matched an ONLINE connection (turn delivered to ONLY it).
+ *       - `online_first` — un-pinned → first online (unchanged broadcast → online-first).
+ *       - `offline_pin`  — pin matched NO online connection → notify-only, NO turn, NO
+ *                          fallback (REVERSES #354).
+ *       - `none`         — agent fully offline → NO turn (the notification stands).
+ *  4. `elaboration_verified` (Idea has NO pin columns): when the wake is un-pinned BUT the
+ *     idea has an existing ONLINE session origin, UPGRADE the selection to `directed` on
+ *     that origin so the proposal-writing wake lands where the idea's conversation already
+ *     lives — else stay `online_first`.
+ *  5. Derive the session id: the entity's `directIdeaUuid` via lineage when the entityType
+ *     is lineage-walkable, else the entity uuid (ad-hoc). For a CROSS-CWD directed mention
+ *     (the resolved target differs from the idea's existing session origin), the resolved
+ *     INSTANCE participates in the session business key so each `(host, cwd)` keeps its own
+ *     cwd-bound transcript — NEVER re-pointing the existing session's origin (which would
+ *     `No conversation found` on `--resume`).
+ *  6. `resolveOrCreateSession` (origin + directIdeaUuid write-once on create) then
+ *     `createPendingTurn` with the mapped trigger. For `human_instruction`, the turn's
+ *     `promptText` is the instruction body (canonical); every other trigger has a null
+ *     promptText (the daemon rebuilds the autonomous prompt from notification context).
+ *  7. DIRECTED wake only: emit a `deliver_turn` control ping on the target connection's
+ *     `control:{connectionUuid}` channel carrying the precise `turnUuid` (reuses the
+ *     `human_instruction` keystone `deliverTurnPing`). Fire-and-forget + non-fatal (the
+ *     persisted turn + reconnect backfill are the durability net). Surface the target.
+ *
+ * FAILURE ISOLATION: any throw from steps 3-7 is caught, logged VISIBLY, and swallowed —
+ * a turn-creation/ping failure MUST NOT abort or block the already-created notification.
+ * Returns `{ turn, targetConnectionUuid }` (turn null + target null when no turn created).
+ */
+export async function createTurnAndResolveTarget(
   ctx: WakeNotificationContext,
-): Promise<TurnView | null> {
+): Promise<WakeTurnResult> {
+  const empty: WakeTurnResult = {
+    turn: null,
+    targetConnectionUuid: null,
+    suppressWake: false,
+  };
+
   // (1) Not a wake-triggering action → no turn (and the daemon would not wake either).
   const trigger = triggerForAction(ctx.action);
-  if (!trigger) return null;
+  if (!trigger) return empty;
 
   // (2) Only agents can be daemons; a human recipient never owns a daemon session.
-  if (ctx.recipientType !== "agent") return null;
+  if (ctx.recipientType !== "agent") return empty;
 
   try {
     // (3) Resolve the agent's connections, then select the ONLINE origin (cwd-bound
@@ -306,20 +438,14 @@ export async function maybeCreateTurnForWakeNotification(
     // The wake's pinned (host, cwd), or null when un-pinned. DEC-5: cwd is only ever the
     // explicit pin — never inferred from the project.
     const pin = await resolvePinnedTarget(ctx, trigger);
-    // Pin-aware selection: the (host, cwd)-matching ONLINE connection when pinned, else
-    // online-first. Only an online connection is wakeable — an offline pin (or one with
-    // no online match) falls through to online-first; none online → no turn.
-    const origin = selectOriginConnection(connections, pin);
-    if (!origin) {
-      // Nothing to wake: the agent has no online daemon (whether or not a pin was set).
-      // This is NORMAL, not an error: a notification can target a fully-offline agent.
-      // The already-created Notification stands as the plain record — there is no durable
-      // queue / backfill of pending turns.
-      return null;
-    }
+    // Pin-aware selection, classified by HOW the origin was chosen (drives directed
+    // delivery). A PINNED wake whose pin matched no online connection is `offline_pin` →
+    // notify-only with NO online-first fallback (REVERSES #354).
+    let selection = selectOriginConnection(connections, pin);
 
-    // (4) Session id = the entity's direct idea (when lineage-walkable), else the
-    // entity uuid (ad-hoc). directIdeaUuid stays null for an ad-hoc session.
+    // (3a) Session id = the entity's direct idea (when lineage-walkable), else the entity
+    // uuid (ad-hoc). Resolved BEFORE the elaboration_verified upgrade because that origin
+    // is keyed on the idea anchor.
     let directIdeaUuid: string | null = null;
     if (LINEAGE_ENTITY_TYPES.has(ctx.entityType)) {
       directIdeaUuid = await resolveDirectIdeaUuid(
@@ -328,16 +454,83 @@ export async function maybeCreateTurnForWakeNotification(
         ctx.entityUuid,
       );
     }
-    const sessionId = directIdeaUuid ?? ctx.entityUuid;
 
-    // (5) Resolve-or-create the session (origin + directIdeaUuid write-once on create),
+    // (4) elaboration_verified: the Idea has NO pin columns, so an un-pinned selection is
+    // UPGRADED to directed on the idea's existing ONLINE session origin (where the idea's
+    // conversation already lives). No session, or an offline origin → stays online-first.
+    // Only applies when the un-pinned online-first path was taken (a real pin already won).
+    if (trigger === "elaboration_verified" && selection.kind === "online_first") {
+      const ideaTarget = await resolveElaborationVerifiedTarget(
+        ctx.companyUuid,
+        ctx.recipientUuid,
+        directIdeaUuid,
+        connections,
+      );
+      if (ideaTarget) {
+        selection = { kind: "directed", connection: ideaTarget };
+      }
+    }
+
+    // offline_pin / none → NOTHING to wake. NO turn, NO ping, NO target. The already-
+    // created Notification stands as the plain record. offline_pin specifically does NOT
+    // fall back to online-first (the user-visible defect being fixed).
+    //
+    // offline_pin vs none — the distinction that DRIVES `suppressWake`: an OFFLINE-PIN wake
+    // (a real pin matched no ONLINE connection) MUST wake NO instance even though OTHER
+    // instances of the agent may be online and would otherwise broadcast→online-first. Since
+    // it carries `targetConnectionUuid: null` exactly like an un-pinned wake, the daemon
+    // cannot tell the two apart from the target alone — so we stamp `suppressWake: true` so
+    // every connection suppresses (Q2 notify-only). `none` (the agent has NO online
+    // connection at all) does NOT set the flag: nobody is connected to receive the broadcast,
+    // and a momentarily-no-online UN-PINNED wake must remain byte-identical to before (no new
+    // suppression behavior). So only `offline_pin` suppresses agent-wide.
+    if (selection.kind === "offline_pin") {
+      return { turn: null, targetConnectionUuid: null, suppressWake: true };
+    }
+    if (selection.kind === "none") {
+      return empty;
+    }
+
+    const origin = selection.connection;
+    const directed = selection.kind === "directed";
+
+    // (5) Session business key. For a DIRECTED mention/task whose resolved target differs
+    // from the idea's EXISTING session origin (a cross-cwd directed wake), the resolved
+    // INSTANCE participates in the key so each (host, cwd) keeps its OWN cwd-bound
+    // transcript — never re-pointing the existing session's origin. An idea-anchored
+    // session normally keys on directIdeaUuid; here we suffix the resolved connection so
+    // the per-instance session is distinct, and stamp directIdeaUuid = null so this
+    // per-instance conversation is treated as its own thread (the idea's canonical session
+    // keeps its directIdeaUuid intact).
+    let sessionId = directIdeaUuid ?? ctx.entityUuid;
+    let sessionDirectIdeaUuid: string | null = directIdeaUuid;
+    if (directed && directIdeaUuid) {
+      const existing = await prisma.daemonSession.findFirst({
+        where: {
+          companyUuid: ctx.companyUuid,
+          agentUuid: ctx.recipientUuid,
+          sessionId: directIdeaUuid,
+        },
+        select: { originConnectionUuid: true },
+      });
+      if (existing && existing.originConnectionUuid !== origin.uuid) {
+        // Cross-cwd directed wake: the idea's canonical session lives on a DIFFERENT
+        // connection. Open a per-instance session keyed on (idea, resolved connection) so
+        // the resolved cwd gets its own transcript instead of re-pointing the existing one.
+        sessionId = `${directIdeaUuid}::${origin.uuid}`;
+        sessionDirectIdeaUuid = null;
+      }
+    }
+
+    // (6) Resolve-or-create the session (origin + directIdeaUuid write-once on create),
     // then append the pending turn. For human_instruction the canonical free-text body
-    // lives on the turn's promptText.
+    // lives on the turn's promptText; every autonomous trigger has promptText = null (the
+    // daemon rebuilds the autonomous prompt from notification context).
     const session = await resolveOrCreateSession({
       companyUuid: ctx.companyUuid,
       agentUuid: ctx.recipientUuid,
       sessionId,
-      directIdeaUuid,
+      directIdeaUuid: sessionDirectIdeaUuid,
       originConnectionUuid: origin.uuid,
     });
 
@@ -349,11 +542,27 @@ export async function maybeCreateTurnForWakeNotification(
       trigger,
       promptText,
     });
-    return turn;
+
+    // (7) DIRECTED wake: deliver to ONLY the resolved target via the human_instruction
+    // keystone — a `deliver_turn` control ping on control:{connectionUuid} carrying the
+    // precise turnUuid. Fire-and-forget + non-fatal (the persisted turn + reconnect
+    // backfill are the durability net). Surface the target so non-target daemons suppress
+    // their broadcast copy. An un-pinned wake emits NO ping and surfaces NO target →
+    // broadcast → online-first, byte-identical to before.
+    if (directed) {
+      deliverTurnPing({
+        companyUuid: ctx.companyUuid,
+        originConnectionUuid: origin.uuid,
+        turnUuid: turn.uuid,
+      });
+      return { turn, targetConnectionUuid: origin.uuid, suppressWake: false };
+    }
+
+    return { turn, targetConnectionUuid: null, suppressWake: false };
   } catch (error) {
     // VISIBLE failure (repo "no silent errors"): log with full context but DO NOT
     // rethrow — the notification was already created and must not be aborted by a
-    // turn-creation failure.
+    // turn-creation/ping failure.
     turnLogger.error(
       {
         err: error,
@@ -365,6 +574,19 @@ export async function maybeCreateTurnForWakeNotification(
       },
       "Failed to create DaemonSessionTurn for wake notification (notification was still created)",
     );
-    return null;
+    return empty;
   }
+}
+
+/**
+ * Thin back-compat wrapper over `createTurnAndResolveTarget` returning ONLY the created
+ * `TurnView` (or null). The notification chokepoint uses the richer variant to also surface
+ * the directed `targetConnectionUuid`; existing callers/tests that only need the turn use
+ * this. Behavior is otherwise identical (the directed `deliver_turn` ping still fires).
+ */
+export async function maybeCreateTurnForWakeNotification(
+  ctx: WakeNotificationContext,
+): Promise<TurnView | null> {
+  const { turn } = await createTurnAndResolveTarget(ctx);
+  return turn;
 }

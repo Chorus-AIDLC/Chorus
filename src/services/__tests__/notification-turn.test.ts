@@ -19,12 +19,28 @@ vi.mock("@/services/daemon-session.service", () => ({
 }));
 
 // The task-assignment pin (T5) is read from the Task's targetHost/targetCwd columns,
-// so the bridge now touches prisma.task.findFirst for a task_assigned wake. Mock it so
-// these stay pure unit tests with no DB. Default: no pin recorded (both null) — the
-// unchanged online-first path. Pin-honoring tests override the resolved value.
+// so the bridge touches prisma.task.findFirst for a task_assigned wake. The directed-
+// delivery change ALSO reads prisma.daemonSession.findFirst to (a) resolve an
+// elaboration_verified wake's existing idea-session origin and (b) detect a cross-cwd
+// directed mention (existing session origin != resolved target). Mock both so these stay
+// pure unit tests with no DB. Defaults: no Task pin (both null → online-first); no existing
+// daemon session (null → no cross-cwd suffix, normal session, no elaboration upgrade).
 const mockTaskFindFirst = vi.hoisted(() => vi.fn());
+const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
-  prisma: { task: { findFirst: mockTaskFindFirst } },
+  prisma: {
+    task: { findFirst: mockTaskFindFirst },
+    daemonSession: { findFirst: mockDaemonSessionFindFirst },
+  },
+}));
+
+// The directed `deliver_turn` ping reuses `deliverTurnPing` from the daemon-instruction
+// service (the human_instruction keystone). Mock that module so we can assert the ping is
+// emitted to ONLY the resolved target for a directed wake — and NOT for un-pinned / offline
+// wakes — without an event bus.
+const mockDeliverTurnPing = vi.hoisted(() => vi.fn());
+vi.mock("@/services/daemon-instruction.service", () => ({
+  deliverTurnPing: mockDeliverTurnPing,
 }));
 
 // Capture logger.error so we can assert the VISIBLE-failure (no silent swallow) rule.
@@ -49,6 +65,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   maybeCreateTurnForWakeNotification,
+  createTurnAndResolveTarget,
   triggerForAction,
   NOTIFICATION_ACTION_TO_TURN_TRIGGER,
   type WakeNotificationContext,
@@ -142,6 +159,10 @@ beforeEach(() => {
   // Default: the assigned Task records NO pin (both columns null) — the unchanged
   // online-first path. Pin-honoring tests override this per-case.
   mockTaskFindFirst.mockResolvedValue({ targetHost: null, targetCwd: null });
+  // Default: no existing idea-anchored daemon session — so a directed wake creates a
+  // normal session (no cross-cwd suffix) and an elaboration_verified wake has no origin to
+  // upgrade to (online-first fallback). Cross-cwd / origin tests override per-case.
+  mockDaemonSessionFindFirst.mockResolvedValue(null);
 });
 
 // ===== Action → trigger mapping =====
@@ -400,67 +421,79 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  // ----- pin → online-first fallback (no matching live connection) -----
+  // ----- OFFLINE PIN = notify-only, NO wake (deliberate REVERSAL of #354) -----
+  //
+  // fix-pinned-wake-directed-delivery (T1) REVERSES #354's "offline pin → online-first":
+  // a PINNED wake whose pin matches NO online connection now creates NO turn, emits NO
+  // ping, and surfaces NO target. The already-created Notification stands as the plain
+  // record. Silently re-routing a pinned wake to a cwd the user did NOT choose is the
+  // user-visible defect this change fixes, so there is NO online-first fallback for a
+  // pinned wake (an UN-pinned wake still goes online-first, tested below).
 
-  it("falls back to online-first when the pin matches NO connection at all (mentioned)", async () => {
+  it("offline pin (place not registered): creates NO turn, NO ping, NO target (notify-only — REVERSAL of #354)", async () => {
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
       offlineConn({ uuid: "conn-offline", host: "host-B", cwd: "/home/u/dev/b" }),
     ]);
 
-    await maybeCreateTurnForWakeNotification(
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
       // Pin to a place that is not registered for this agent at all.
       ctx({ action: "mentioned", pinnedHost: "ghost-host", pinnedCwd: "/no/such/path" }),
     );
 
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // It must NOT fall back to the online-first instance (the defect being fixed).
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: onlineFirst }),
     );
+    // A notify-only offline pin is normal, not an error.
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("falls back to online-first when the Task pin matches NO connection (task_assigned)", async () => {
+  it("offline Task pin (place not registered): creates NO turn, NO ping, NO target (task_assigned)", async () => {
     mockTaskFindFirst.mockResolvedValue({ targetHost: "ghost-host", targetCwd: "/no/such/path" });
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
     ]);
 
-    await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));
-
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
     );
+
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  // ----- OFFLINE pin is NOT wakeable: falls back to online-first / no turn -----
-
-  it("a pin matching an OFFLINE connection is NOT wakeable: falls back to online-first (no durable queue)", async () => {
-    // The pinned (host, cwd) instance is OFFLINE; another instance is online. An offline
-    // place is not wakeable — there is no durable queue — so the wake falls back to
-    // online-first and pins the ONLINE-elsewhere connection, NOT the offline pinned one.
+  it("a pin matching an OFFLINE connection (online-elsewhere) creates NO turn, NO ping, NO target (no silent re-route)", async () => {
+    // The pinned (host, cwd) instance is OFFLINE; another instance is online. The wake must
+    // NOT fall back to that online-elsewhere instance — routing to an unchosen cwd is the
+    // defect. Notify-only, no wake anywhere.
     const onlineElsewhere = "conn-online-elsewhere";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineElsewhere, host: "other-host", cwd: "/home/u/dev/other" }),
       offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
     ]);
 
-    const result = await maybeCreateTurnForWakeNotification(
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
       ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
     );
 
-    // A turn IS created, but pinned to the ONLINE-elsewhere connection (online-first) —
-    // the offline pin did not win and there is no backfill queue.
-    expect(mockCreatePendingTurn).toHaveBeenCalledTimes(1);
-    expect(result?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineElsewhere }),
-    );
-    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
-    );
-    // A skipped offline wake is normal, not an error.
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // It must NOT have routed to the online-elsewhere connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    // A notify-only offline pin is normal, not an error.
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
@@ -548,6 +581,347 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: "conn-nullcwd" }),
     );
+  });
+});
+
+// ===== Directed live delivery (fix-pinned-wake-directed-delivery, T1) =====
+//
+// The five behavioral branches the spec delta defines for the LIVE wake:
+//   1. pinned-online   → turn created on the pinned connection + `deliver_turn` ping to it
+//                        + the resolved target SURFACED (transport-only) for suppression.
+//   2. offline-pin     → NO turn, NO ping, NO target (notify-only; REVERSES #354 — see the
+//                        OFFLINE-PIN block above for the no-fallback assertions).
+//   3. un-pinned       → NO ping, NO target → broadcast → online-first, byte-identical.
+//   4. elaboration_verified → directed to the idea's EXISTING online session origin (ping
+//                        + target); no session / offline origin → no target (online-first).
+//   5. cross-cwd mention → a pin resolving to a (host,cwd) different from the idea's
+//                        existing session origin creates a PER-INSTANCE session (own
+//                        transcript); the existing session's origin is never re-pointed.
+describe("createTurnAndResolveTarget — directed live delivery", () => {
+  const pinnedHost = "Laptop-Q3";
+  const pinnedCwd = "/home/u/dev/payments";
+  const pinnedConnUuid = "conn-pinned-target";
+
+  function pinnedConn(overrides: Record<string, unknown> = {}) {
+    return onlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd, ...overrides });
+  }
+
+  // ----- (1) pinned-online → turn + ping + target -----
+
+  it("a pinned mentioned wake matching an ONLINE connection: creates the turn, PINGS that connection, and surfaces it as the target", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
+      pinnedConn(),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
+    );
+
+    // Turn created on the pinned connection.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    // deliver_turn ping emitted to ONLY the resolved target, carrying the precise turnUuid.
+    expect(mockDeliverTurnPing).toHaveBeenCalledTimes(1);
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith({
+      companyUuid,
+      originConnectionUuid: pinnedConnUuid,
+      turnUuid: turn?.uuid,
+    });
+    // The resolved target is surfaced transport-only (for non-target broadcast suppression).
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+    // A directed wake does NOT set suppressWake — the target wakes (others suppress by target).
+    expect(suppressWake).toBe(false);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("a pinned task_assigned wake matching an ONLINE connection: creates the turn, PINGS it, surfaces the target", async () => {
+    mockTaskFindFirst.mockResolvedValue({ targetHost: pinnedHost, targetCwd: pinnedCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
+      pinnedConn(),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+  });
+
+  // ----- (2) offline-pin → none -----
+
+  it("an offline pin emits NO ping and surfaces NO target, but STAMPS suppressWake (notify-only, distinguishable from un-pinned)", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-elsewhere", host: "other-host", cwd: "/home/u/dev/other" }),
+      offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
+    );
+
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // The offline-pin discriminator: suppressWake is TRUE so the daemon suppresses on EVERY
+    // connection (an online-elsewhere instance must NOT be silently re-woken). This is what
+    // makes an offline-pin distinguishable from an un-pinned wake (both carry null target).
+    expect(suppressWake).toBe(true);
+  });
+
+  it("a fully-offline agent (none — no online connection at all) does NOT set suppressWake", async () => {
+    // `none` (the agent has NO online connection) differs from `offline_pin`: nobody is
+    // connected to receive the broadcast, and an un-pinned momentary-no-online wake must stay
+    // byte-identical to before. So suppressWake stays FALSE — only a real offline-PIN suppresses.
+    mockListConnectionsForAgent.mockResolvedValue([
+      offlineConn({ uuid: "conn-offline-only", host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned" }),
+    );
+
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(suppressWake).toBe(false);
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+  });
+
+  // ----- (3) un-pinned → no ping, no target (broadcast → online-first, unchanged) -----
+
+  it("an un-pinned mentioned wake emits NO ping and surfaces NO target (broadcast → online-first, unchanged)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: "conn-older", host: "host-B", cwd: "/home/u/dev/b" }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned" }),
+    );
+
+    // Turn IS created (online-first), but NO directed delivery — exactly as before.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+    // An un-pinned wake does NOT suppress — the daemon broadcast wakes online-first,
+    // byte-identical to before. This is the other half of the offline-pin discriminator.
+    expect(suppressWake).toBe(false);
+  });
+
+  it("an un-pinned task_assigned wake (no Task pin) emits NO ping and surfaces NO target", async () => {
+    // mockTaskFindFirst default returns { targetHost: null, targetCwd: null }.
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  // ----- (4) elaboration_verified → idea's existing online session origin + fallbacks ----
+
+  it("elaboration_verified resolves the idea's EXISTING ONLINE session origin → ping + target", async () => {
+    // The idea already has a daemon session whose origin lives on a SPECIFIC online
+    // connection (NOT the online-first entry). The verify wake must be directed there.
+    const ideaOriginConn = "conn-idea-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    // The idea-anchored session (sessionId === ideaUuid) lives on ideaOriginConn.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // The session lookup is keyed on the idea anchor.
+    expect(mockDaemonSessionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ companyUuid, agentUuid, sessionId: ideaUuid }),
+      }),
+    );
+    // Directed to the idea's existing origin, NOT online-first.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
+  });
+
+  it("elaboration_verified with NO existing session falls back to online-first (no ping, no target)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+    // Default mockDaemonSessionFindFirst → null (no existing idea session).
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // Turn IS created online-first (the pre-change behavior), but no directed delivery.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("elaboration_verified whose idea session origin is OFFLINE falls back to online-first (no ping, no target)", async () => {
+    const onlineFirst = "conn-online-first";
+    const offlineIdeaOrigin = "conn-idea-origin-offline";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: offlineIdeaOrigin, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    // The idea session exists but its origin connection is OFFLINE → not wakeable.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: offlineIdeaOrigin });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "elaboration_verified", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // Offline origin is not wakeable → online-first fallback, no directed delivery.
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  // ----- (5) cross-cwd mention → per-instance session, never re-point -----
+
+  it("a cross-cwd mention (pin differs from the idea's existing session origin) creates a PER-INSTANCE session, never re-pointing", async () => {
+    // The idea's canonical session lives on conn-idea-origin (/dev/ai-pm). A mention pins a
+    // DIFFERENT online instance (/dev/strands). The wake must open a per-instance session
+    // keyed on (idea, resolved connection) with directIdeaUuid = null (its own thread), and
+    // pin its origin to the resolved connection — NEVER re-pointing the idea's session.
+    const ideaSessionOrigin = "conn-idea-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: ideaSessionOrigin, host: pinnedHost, cwd: "/home/u/dev/ai-pm" }),
+      pinnedConn(),
+    ]);
+    // The existing idea-anchored session (sessionId === ideaUuid) lives on a DIFFERENT cwd.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaSessionOrigin });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        pinnedHost,
+        pinnedCwd,
+      }),
+    );
+
+    // Per-instance session: keyed on (idea, resolved connection), directIdeaUuid null,
+    // origin = the resolved (pinned) connection — its OWN cwd-bound transcript.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: `${ideaUuid}::${pinnedConnUuid}`,
+        directIdeaUuid: null,
+        originConnectionUuid: pinnedConnUuid,
+      }),
+    );
+    // The existing idea session's origin is NEVER re-pointed (no resolve on its origin/key).
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaSessionOrigin }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: ideaUuid }),
+    );
+    // Directed delivery to the resolved (per-instance) connection.
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+  });
+
+  it("a pinned mention whose pin EQUALS the idea's existing session origin reuses the idea session (no per-instance suffix)", async () => {
+    // When the pin resolves to the SAME connection the idea's session already lives on,
+    // there is no cross-cwd divergence — the canonical idea session is reused (sessionId ===
+    // ideaUuid, directIdeaUuid === ideaUuid), still directed.
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
+      pinnedConn(),
+    ]);
+    // The idea's existing session already lives on the pinned connection.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: pinnedConnUuid });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        pinnedHost,
+        pinnedCwd,
+      }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
+        originConnectionUuid: pinnedConnUuid,
+      }),
+    );
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+  });
+
+  it("does NOT emit a directed ping for human_instruction (the keystone path is unchanged here)", async () => {
+    // human_instruction's directed delivery is owned by daemon-instruction.service, not
+    // this chokepoint — so createTurnAndResolveTarget must NOT also ping for it (no double
+    // delivery) and surfaces no target.
+    mockListConnectionsForAgent.mockResolvedValue([onlineConn()]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "human_instruction", instructionText: "do it" }),
+    );
+
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("emits exactly ONE directed ping per directed wake (the precise turn, not a connection sweep)", async () => {
+    // deliverTurnPing is non-throwing by contract (its own try/catch swallows + logs), so a
+    // directed wake always returns the turn + target, with a single ping carrying the
+    // PRECISE turnUuid (never a connection-wide sweep that would drag other pending turns).
+    mockListConnectionsForAgent.mockResolvedValue([pinnedConn()]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", pinnedHost, pinnedCwd }),
+    );
+
+    expect(mockDeliverTurnPing).toHaveBeenCalledTimes(1);
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ turnUuid: turn?.uuid }),
+    );
+    expect(turn?.status).toBe("pending");
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+    expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });
 

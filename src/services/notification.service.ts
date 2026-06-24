@@ -4,7 +4,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
-import { maybeCreateTurnForWakeNotification } from "@/services/notification-turn";
+import { createTurnAndResolveTarget } from "@/services/notification-turn";
 import type { TurnView } from "@/services/daemon-session.service";
 
 // ===== Type Definitions =====
@@ -199,7 +199,42 @@ export async function createReturningTurn(
     params.recipientUuid
   );
 
-  // Emit SSE event for real-time notification delivery (includes details for toast)
+  // After the notification row exists, record the matching DaemonSessionTurn for a
+  // wake-triggering notification destined for a daemon agent — and resolve the DIRECTED
+  // target connection. This is the single chokepoint where every wake notification is
+  // born, so human and autonomous wakes are handled symmetrically. The bridge is
+  // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
+  // block this already-created notification. We surface its return so the send path gets
+  // the exact turn created (no seq read-back), and so the SSE event can carry the directed
+  // target. It runs BEFORE the SSE emit so the `new_notification` event can stamp the
+  // resolved `targetConnectionUuid` (the bridge reads only `params`, not the created row,
+  // so this reorder is behavior-preserving for the notification row itself).
+  const { turn, targetConnectionUuid, suppressWake } =
+    await createTurnAndResolveTarget(params);
+
+  // Emit SSE event for real-time notification delivery (includes details for toast).
+  //
+  // DIRECTED LIVE DELIVERY (fix-pinned-wake-directed-delivery): for a PINNED autonomous
+  // wake (or the idea-anchored elaboration_verified wake) that resolved to an ONLINE
+  // target, `targetConnectionUuid` is the resolved connection. It is surfaced TRANSPORT-
+  // ONLY on this `new_notification` event so the daemon can compare it to its own
+  // connection identity and SUPPRESS the broadcast wake on non-target connections (only
+  // the target acts). It is NOT a persisted column and NOT inferable at read time (a
+  // mention pin is transport-only and never stored), so it rides the SSE event the daemon
+  // already receives — which the Redis fan-out delivers intact to every instance/daemon,
+  // making suppression reliable in multi-instance deployments. An un-pinned wake carries
+  // `targetConnectionUuid: null` AND `suppressWake: false` → no suppression, broadcast →
+  // online-first, byte-identical to before. The precise `deliver_turn` ping (emitted by the
+  // bridge to the target) plus the reconnect pending-turn backfill remain the durability
+  // net, so a missed stamp degrades to the pre-change broadcast, never to a lost wake.
+  //
+  // OFFLINE-PIN SUPPRESS-ALL (the offline-pin-vs-un-pinned discriminator): an offline-pin
+  // wake (a real pin matched NO online connection — Q2 notify-only, wake nothing) ALSO
+  // carries `targetConnectionUuid: null`, so it is indistinguishable from an un-pinned wake
+  // by the target alone. `suppressWake: true` is the transport-only flag that tells EVERY
+  // daemon "this pinned wake resolved to no online instance — do NOT wake," so an
+  // offline-pin is not silently re-woken as if it were un-pinned. It is `false` for every
+  // other case (un-pinned, directed, fully-offline `none`).
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
     type: "new_notification",
     notificationUuid: notification.uuid,
@@ -210,15 +245,12 @@ export async function createReturningTurn(
     entityType: params.entityType,
     entityUuid: params.entityUuid,
     projectUuid: params.projectUuid,
+    // Transport-only directed-delivery target (null for un-pinned / notify-only wakes).
+    targetConnectionUuid,
+    // Transport-only offline-pin marker: true ONLY for an offline-pin wake (suppress on
+    // EVERY connection), false otherwise.
+    suppressWake,
   });
-
-  // After the notification row exists, record the matching DaemonSessionTurn for a
-  // wake-triggering notification destined for a daemon agent. This is the single
-  // chokepoint where every wake notification is born, so human and autonomous wakes
-  // are handled symmetrically. The bridge is failure-isolated (logs + swallows): a
-  // turn-creation failure MUST NOT abort or block this already-created notification. We
-  // surface its return so the send path gets the exact turn created (no seq read-back).
-  const turn = await maybeCreateTurnForWakeNotification(params);
 
   return { notification: formatNotification(notification), turn };
 }
@@ -265,6 +297,26 @@ export async function createBatch(
     )
   );
 
+  // Record a DaemonSessionTurn for each wake-triggering notification destined for a daemon
+  // agent (symmetric with create()) — and resolve its DIRECTED target — BEFORE emitting the
+  // SSE events, so each `new_notification` event can stamp the resolved
+  // `targetConnectionUuid` (directed live delivery, fix-pinned-wake-directed-delivery; this
+  // is the path mentions take, so it is where the headline @mention misroute is fixed).
+  // Each attempt is failure-isolated inside the bridge: a turn-creation/ping failure logs
+  // and is swallowed, never aborting the notifications that were already created. Run
+  // sequentially so per-session monotonic turn `seq` allocation is not raced when one batch
+  // carries multiple wakes for the same agent session. Map each resolved target back to its
+  // notification params (referential identity) so the per-recipient emit below can read it.
+  const targetByParams = new Map<
+    NotificationCreateParams,
+    { targetConnectionUuid: string | null; suppressWake: boolean }
+  >();
+  for (const params of notifications) {
+    const { targetConnectionUuid, suppressWake } =
+      await createTurnAndResolveTarget(params);
+    targetByParams.set(params, { targetConnectionUuid, suppressWake });
+  }
+
   // Deduplicate recipients and emit one event per recipient
   const recipientKeys = new Set<string>();
   for (const params of notifications) {
@@ -293,17 +345,17 @@ export async function createBatch(
       entityType: matchParams?.entityType,
       entityUuid: matchParams?.entityUuid,
       projectUuid: matchParams?.projectUuid,
+      // Transport-only directed-delivery target for the recipient's wake (null when
+      // un-pinned / notify-only). Resolved above by the wake-turn chokepoint.
+      targetConnectionUuid: matchParams
+        ? targetByParams.get(matchParams)?.targetConnectionUuid ?? null
+        : null,
+      // Transport-only offline-pin marker: true ONLY for an offline-pin wake — tells every
+      // daemon to suppress (Q2 notify-only), distinguishing it from an un-pinned wake.
+      suppressWake: matchParams
+        ? targetByParams.get(matchParams)?.suppressWake ?? false
+        : false,
     });
-  }
-
-  // After all notification rows exist, record a DaemonSessionTurn for each
-  // wake-triggering notification destined for a daemon agent (symmetric with create()).
-  // Each attempt is failure-isolated inside the bridge: a turn-creation failure logs
-  // and is swallowed, never aborting the notifications that were already created. Run
-  // sequentially so per-session monotonic turn `seq` allocation is not raced when one
-  // batch carries multiple wakes for the same agent session.
-  for (const params of notifications) {
-    await maybeCreateTurnForWakeNotification(params);
   }
 
   return created.map(formatNotification);

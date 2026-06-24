@@ -738,7 +738,7 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT field names cl
 // ===========================================================================================
 
 describe("integration: an OFFLINE pin is NOT wakeable — no durable queue, the notification stands", () => {
-  it("a task_assigned wake pinned to an OFFLINE place falls back to online-first (the offline place is NOT the origin, NO backfill queue)", async () => {
+  it("a task_assigned wake pinned to an OFFLINE place creates NO turn — notify-only, NO silent re-route to the online-elsewhere instance (REVERSAL of #354)", async () => {
     seedTask();
 
     // WRITE: pin the assignment to (PIN_HOST, PIN_CWD) via the REAL claimTask.
@@ -752,8 +752,11 @@ describe("integration: an OFFLINE pin is NOT wakeable — no durable queue, the 
       targetCwd: PIN_CWD,
     });
 
-    // The pinned place is OFFLINE; another instance is online elsewhere. The offline pin
-    // is NOT wakeable, so the wake falls back to online-first and pins the ONLINE place.
+    // The pinned place is OFFLINE; another instance is online elsewhere. The directed-
+    // delivery change (fix-pinned-wake-directed-delivery) REVERSES #354: a PINNED wake whose
+    // pin is offline must NOT fall back to the online-elsewhere instance — routing to a cwd
+    // the user did not choose is the defect being fixed. So NO turn is created; the
+    // already-recorded notification stands as the plain record.
     mockListConnectionsForAgent.mockResolvedValue([
       connView({ uuid: OTHER_CONN, host: "other-host", cwd: "/home/u/dev/other", effectiveStatus: "online" }),
       connView({ uuid: PINNED_CONN, host: PIN_HOST, cwd: PIN_CWD, status: "offline", effectiveStatus: "offline" }),
@@ -775,21 +778,28 @@ describe("integration: an OFFLINE pin is NOT wakeable — no durable queue, the 
       actorName: "Alice",
     });
 
-    // A turn IS created (an online connection exists), but pinned to the ONLINE-elsewhere
-    // place — NOT the offline pinned one. There is no durable queue at the offline place.
-    expect(store.data.daemonSessionTurn).toHaveLength(1);
-    expect(store.data.daemonSession[0].originConnectionUuid).toBe(OTHER_CONN);
-    expect(store.data.daemonSession[0].originConnectionUuid).not.toBe(PINNED_CONN);
+    // NO turn, NO session — the offline pin is notify-only with NO online-first fallback.
+    expect(store.data.daemonSessionTurn).toHaveLength(0);
+    expect(store.data.daemonSession).toHaveLength(0);
+    // The plain notification still stands.
+    expect(store.data.notification).toHaveLength(1);
+    // A notify-only offline pin is normal, not an error.
     expect(mockLogger.error).not.toHaveBeenCalled();
 
-    // No pending turn is queued at the OFFLINE pinned place — a reconnect there reads
-    // nothing (the durable-intent backfill net is gone).
+    // No pending turn is queued at EITHER place — there is no durable queue and no
+    // silent re-route to the online-elsewhere instance.
     const pendingAtOffline = await getPendingTurnsForConnection({
       companyUuid: COMPANY,
       agentUuid: AGENT,
       connectionUuid: PINNED_CONN,
     });
     expect(pendingAtOffline).toHaveLength(0);
+    const pendingAtOnlineElsewhere = await getPendingTurnsForConnection({
+      companyUuid: COMPANY,
+      agentUuid: AGENT,
+      connectionUuid: OTHER_CONN,
+    });
+    expect(pendingAtOnlineElsewhere).toHaveLength(0);
   });
 
   it("a fully-offline agent records a PLAIN notification with NO turn (no durable queue)", async () => {

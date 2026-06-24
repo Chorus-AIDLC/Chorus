@@ -205,7 +205,20 @@ export function buildDaemon(creds, deps = {}) {
     // 1 — resolveCwd is the single source). `cwd` is `undefined` for the single-path /
     // old-daemon default, which the Waker degrades to process.cwd() (HARD-1).
     waker = new Waker({ creds, lineage, spawner, cwd, hooks, logger, reportInterrupt, advanceTurn, verbose });
-    const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
+    // The router reads THIS connection's own uuid lazily (same source the control handler
+    // uses) to suppress a DIRECTED (pinned) wake stamped for a different connection
+    // (fix-pinned-wake-directed-delivery, T2). Null until the SSE handshake assigns it — a
+    // targeted wake arriving in that window is treated as "not mine" → suppressed (delivery
+    // covered by the deliver_turn ping to the actual target + the reconnect pending backfill).
+    const router = new EventRouter({
+      mcpClient,
+      waker,
+      queue,
+      wakeActions: WAKE_ACTIONS,
+      seen,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      logger,
+    });
 
     // Reverse control channel (子3) + resume re-dispatch + origin-only deliver_turn —
     // all scoped to THIS connection's uuid/router/backfill (see the original wiring
