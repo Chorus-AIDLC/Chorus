@@ -74,15 +74,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const init = async () => {
       setLoading(true);
 
-      // Check if we have an OIDC user
+      // If we have a valid OIDC user, sync its (possibly refreshed) token to the
+      // cookie first so the backend session lookup sees the freshest token.
       const oidcUser = await getOidcUser();
-
       if (oidcUser && !oidcUser.expired) {
-        // Sync token (and refresh token) to cookie in case it was refreshed while the page was away
         await syncTokenToCookie(oidcUser.access_token, oidcUser.refresh_token);
-        // We have a valid OIDC session, fetch user info from backend
-        await fetchSession();
       }
+
+      // Always resolve the session from the backend. `/api/auth/session` accepts
+      // BOTH an OIDC bearer token AND a session cookie (default-auth / superadmin
+      // set `user_session` / `admin_session` with no OIDC user), so this populates
+      // `user` for every login mode — not just OIDC. Previously this was gated
+      // behind the OIDC branch, leaving `user` permanently null for default-auth
+      // users and silently disabling every owner-gated UI (e.g. the comment
+      // mention badge's owner-only "Open conversation" button).
+      await fetchSession();
 
       setLoading(false);
     };

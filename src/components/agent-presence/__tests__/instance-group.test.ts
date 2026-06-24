@@ -17,6 +17,7 @@ function conn(overrides: Partial<ConnectionView> & { uuid: string }): Connection
   return {
     agentUuid: "agent-1",
     agentName: "Alpha",
+    ownerUuid: null,
     clientType: "claude_code",
     clientVersion: "0.11.0",
     host: "host-1",

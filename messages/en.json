@@ -1554,7 +1554,11 @@
     "online": "Online",
     "offline": "Offline",
     "activeCount": "{count} active",
-    "idle": "Idle"
+    "idle": "Idle",
+    "openConversation": "Open conversation",
+    "host": "Host",
+    "workingDirectory": "Working directory",
+    "badgeAria": "{name} — {status}"
   },
   "mentionInstance": {
     "title": "Which working directory?",

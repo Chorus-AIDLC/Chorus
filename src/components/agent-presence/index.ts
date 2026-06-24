@@ -43,6 +43,7 @@ export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";
 export { AgentConnectionsModal } from "./connections-modal";
+export { MentionBadge, type MentionBadgeProps } from "./mention-badge";
 export {
   DaemonConnectCta,
   type DaemonConnectCtaVariant,
