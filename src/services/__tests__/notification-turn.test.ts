@@ -1304,13 +1304,13 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(targetConnectionUuid).toBeNull();
   });
 
-  // ----- idea_claimed gains pin-reading via the root-idea step -----
+  // ----- idea_claimed gains pin-reading via the own-idea step (2.5) -----
 
   it("idea_claimed reads the idea's agent_instance pin and targets that instance (NEW: it had none before)", async () => {
-    // An idea_claimed wake on an idea entity: the root-idea step reads the idea's own
-    // assignee. Pinned to a same-agent instance → directed there.
+    // An idea_claimed wake on an idea entity: the own-idea step (2.5) reads the idea's
+    // OWN assignee via its direct anchor. Pinned to a same-agent instance → directed there.
     pinIdeaToInstance(ideaHost, ideaCwd);
-    mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: ideaUuid });
+    mockResolveDirectIdeaUuid.mockResolvedValue(ideaUuid);
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
       ideaInstanceConn(),
@@ -1320,12 +1320,96 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
       ctx({ action: "idea_claimed", entityType: "idea", entityUuid: ideaUuid }),
     );
 
-    expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "idea", ideaUuid);
+    // The own-idea step resolves the idea's direct anchor (not the lineage root walk).
+    expect(mockResolveDirectIdeaUuid).toHaveBeenCalledWith(companyUuid, "idea", ideaUuid);
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
     );
     expect(targetConnectionUuid).toBe(ideaConnUuid);
     expect(turn?.status).toBe("pending");
+  });
+
+  // ----- multi-level lineage: a child idea's OWN pin beats its ancestor's (finding #2) -----
+
+  it("a directly-pinned CHILD idea targets its OWN instance, NOT the root ancestor's (same agent)", async () => {
+    // A child idea pinned to instance B; its lineage ROOT is pinned to a DIFFERENT
+    // instance A of the SAME agent. The own-idea step (2.5) must win over root inheritance.
+    const childIdeaUuid = "idea-child-0000-0000-0000-00000000c1";
+    const rootIdeaUuid = "idea-root-0000-0000-0000-00000000a1";
+    const childInstanceUuid = "instance-child-B";
+    const rootInstanceUuid = "instance-root-A";
+    const childHost = "child-host";
+    const childCwd = "/home/u/dev/child";
+    const childConnUuid = "conn-child-instance";
+
+    // The wake is anchored on the CHILD idea; its direct anchor is itself, its root is the parent.
+    mockResolveDirectIdeaUuid.mockResolvedValue(childIdeaUuid);
+    mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid });
+
+    // Idea lookups: child → instance B, root → instance A.
+    mockIdeaFindFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => {
+      if (where.uuid === childIdeaUuid)
+        return { assigneeType: "agent_instance", assigneeUuid: childInstanceUuid };
+      if (where.uuid === rootIdeaUuid)
+        return { assigneeType: "agent_instance", assigneeUuid: rootInstanceUuid };
+      return null;
+    });
+    // Instance lookups: B = child place, A = root place — both owned by the SAME target agent.
+    mockAgentInstanceFindFirst.mockImplementation(
+      async ({ where }: { where: { uuid: string } }) => {
+        if (where.uuid === childInstanceUuid) return { host: childHost, cwd: childCwd, agentUuid };
+        if (where.uuid === rootInstanceUuid) return { host: ideaHost, cwd: ideaCwd, agentUuid };
+        return null;
+      },
+    );
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(), // root A's connection (must NOT be chosen)
+      onlineConn({ uuid: childConnUuid, host: childHost, cwd: childCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "idea_claimed", entityType: "idea", entityUuid: childIdeaUuid }),
+    );
+
+    // Directed to the CHILD's own instance B, NOT the root ancestor A.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: childConnUuid }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
+    );
+    expect(targetConnectionUuid).toBe(childConnUuid);
+    expect(turn?.status).toBe("pending");
+  });
+
+  it("a plain-agent CHILD idea (no own pin) INHERITS its root ancestor's instance (same agent)", async () => {
+    // The child idea has no instance pin → own-idea step (2.5) yields nothing → falls
+    // through to root inheritance, which targets the root's instance A.
+    const childIdeaUuid = "idea-child-0000-0000-0000-00000000c2";
+    const rootIdeaUuid = "idea-root-0000-0000-0000-00000000a2";
+    const rootInstanceUuid = "instance-root-A2";
+
+    mockResolveDirectIdeaUuid.mockResolvedValue(childIdeaUuid);
+    mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid });
+    mockIdeaFindFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => {
+      if (where.uuid === childIdeaUuid) return { assigneeType: "agent", assigneeUuid: agentUuid };
+      if (where.uuid === rootIdeaUuid)
+        return { assigneeType: "agent_instance", assigneeUuid: rootInstanceUuid };
+      return null;
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({ host: ideaHost, cwd: ideaCwd, agentUuid });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      ideaInstanceConn(),
+    ]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "idea_claimed", entityType: "idea", entityUuid: childIdeaUuid }),
+    );
+
+    // Inherited the ROOT ancestor's instance A (no own pin to win).
+    expect(targetConnectionUuid).toBe(ideaConnUuid);
   });
 
   // ----- elaboration_verified: idea-instance pin takes PRIORITY over the session-origin heuristic -----

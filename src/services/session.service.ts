@@ -500,13 +500,18 @@ export async function getActiveSessionsForProject(
   }
 
   // 2. Sessionless workers: agents doing in_progress tasks without a session
-  //    (the main agent working directly, not via a sub-agent session)
+  //    (the main agent working directly, not via a sub-agent session). Include
+  //    BOTH plain `agent` and `agent_instance` assignments: a directly-pinned
+  //    instance task is still the same main agent working — its `assigneeUuid` is
+  //    an AgentInstance.uuid, so we resolve it to the owning agent before dedup +
+  //    name lookup (add-agent-instance-addressing — otherwise instance-pinned
+  //    in_progress work silently vanishes from the active-workers display).
   const sessionlessTasks = await prisma.task.findMany({
     where: {
       projectUuid,
       companyUuid,
       status: "in_progress",
-      assigneeType: "agent",
+      assigneeType: { in: ["agent", "agent_instance"] },
       assigneeUuid: { not: null },
       // Exclude tasks that already have active session checkins
       ...(tasksWithCheckins.size > 0
@@ -515,37 +520,61 @@ export async function getActiveSessionsForProject(
     },
     select: {
       uuid: true,
+      assigneeType: true,
       assigneeUuid: true,
       updatedAt: true,
     },
     orderBy: { updatedAt: "asc" },
   });
 
-  // Deduplicate by agent UUID — one entry per "main agent" working directly
+  // Resolve each task's assignee to its canonical agent UUID. For `agent_instance`
+  // the stored uuid is an AgentInstance.uuid → map it to its owning agent (one
+  // batched query); a plain `agent` uuid is already the agent.
+  const instanceUuids = sessionlessTasks
+    .filter((t) => t.assigneeType === "agent_instance" && t.assigneeUuid)
+    .map((t) => t.assigneeUuid!);
+  const instanceToAgent = new Map<string, string>();
+  if (instanceUuids.length > 0) {
+    const instances = await prisma.agentInstance.findMany({
+      where: { uuid: { in: instanceUuids }, companyUuid },
+      select: { uuid: true, agentUuid: true },
+    });
+    for (const inst of instances) instanceToAgent.set(inst.uuid, inst.agentUuid);
+  }
+  const resolveTaskAgentUuid = (t: (typeof sessionlessTasks)[number]): string | null =>
+    t.assigneeType === "agent_instance"
+      ? t.assigneeUuid
+        ? instanceToAgent.get(t.assigneeUuid) ?? null
+        : null
+      : t.assigneeUuid;
+
+  // Deduplicate by RESOLVED agent UUID — one entry per "main agent" working directly
+  // (two instances of the same agent collapse to one worker entry).
   const seenDirectAgents = new Set<string>();
-  const uniqueAgentTasks: typeof sessionlessTasks = [];
+  const uniqueAgentTasks: Array<{ agentUuid: string; updatedAt: Date }> = [];
   for (const task of sessionlessTasks) {
-    if (!task.assigneeUuid || seenDirectAgents.has(task.assigneeUuid)) continue;
-    seenDirectAgents.add(task.assigneeUuid);
-    uniqueAgentTasks.push(task);
+    const agentUuid = resolveTaskAgentUuid(task);
+    if (!agentUuid || seenDirectAgents.has(agentUuid)) continue;
+    seenDirectAgents.add(agentUuid);
+    uniqueAgentTasks.push({ agentUuid, updatedAt: task.updatedAt });
     if (results.length + uniqueAgentTasks.length >= 7) break;
   }
 
   if (uniqueAgentTasks.length > 0) {
-    // Batch-fetch agent names
+    // Batch-fetch agent names by the RESOLVED agent uuids
     const agents = await prisma.agent.findMany({
-      where: { uuid: { in: uniqueAgentTasks.map((t) => t.assigneeUuid!) } },
+      where: { uuid: { in: uniqueAgentTasks.map((t) => t.agentUuid) } },
       select: { uuid: true, name: true },
     });
     const agentMap = new Map(agents.map((a) => [a.uuid, a.name]));
 
     for (const task of uniqueAgentTasks) {
-      const agentName = agentMap.get(task.assigneeUuid!);
+      const agentName = agentMap.get(task.agentUuid);
       if (!agentName) continue;
       results.push({
         sessionUuid: "",
         sessionName: agentName,
-        agentUuid: task.assigneeUuid!,
+        agentUuid: task.agentUuid,
         agentName,
         checkinAt: task.updatedAt.toISOString(),
       });

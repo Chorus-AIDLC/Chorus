@@ -255,6 +255,12 @@ function makePinnedTarget(
  *  2. task override (SOFT, `soft:true`) — the wake's TASK row is itself pinned
  *     (`assigneeType === "agent_instance"`): resolve that AgentInstance to its place.
  *     The explicit per-task override beats the inherited idea instance.
+ *  2.5 own-idea pin (SOFT, `soft:true`) — when the wake's entity IS an idea, its OWN
+ *     assignee pin (subject to the same-agent guard) beats an ancestor's. Symmetric
+ *     with the task override: "the idea I'm acting on" wins over a root ancestor that
+ *     is pinned to a different instance of the same agent. Only relevant for a
+ *     multi-level idea lineage with divergent same-agent pins; for a top-level idea
+ *     the own idea IS the root, so this and step 3 resolve identically.
  *  3. root-idea inheritance (SOFT, `soft:true`) — resolve the wake's ROOT idea; if its
  *     assignee is an `agent_instance` AND that instance's `agentUuid` EQUALS the wake's
  *     target agent (`ctx.recipientUuid`, the SAME-AGENT GUARD), inherit the idea's
@@ -265,7 +271,8 @@ function makePinnedTarget(
  * Steps 2-3 apply to any non-mention wake whose entity is lineage-walkable (task /
  * document / proposal / idea). They are the mechanism behind both `task_assigned`
  * inheritance and the `idea_claimed` / `elaboration_verified` idea-instance priority:
- * an idea-anchored wake reads the idea's own assignee through the root-idea step.
+ * an idea-anchored wake reads the idea's own assignee (step 2.5), then falls back to
+ * the lineage root (step 3).
  */
 async function resolvePinnedTarget(
   ctx: WakeNotificationContext,
@@ -298,15 +305,43 @@ async function resolvePinnedTarget(
     }
   }
 
+  // (2.5) Own-idea pin — SOFT. When the wake's entity IS an idea, resolve ITS OWN
+  // assignee pin first (its direct-idea anchor), so a directly-pinned child idea wins
+  // over an ancestor pinned to a different instance of the same agent. Subject to the
+  // same-agent guard. For a top-level idea the direct anchor equals the root, so this
+  // simply short-circuits the identical step 3 lookup.
+  if (ctx.entityType === "idea") {
+    const ownIdeaUuid = await resolveDirectIdeaUuid(
+      ctx.companyUuid,
+      ctx.entityType as LineageEntityType,
+      ctx.entityUuid,
+    );
+    const ownPin = await resolveIdeaInstancePin(ctx, ownIdeaUuid);
+    if (ownPin) return ownPin;
+  }
+
   // (3) Root-idea inheritance — SOFT, gated on the SAME-AGENT GUARD. Resolve the wake's
   // root idea and read its assignee; inherit ONLY when the idea is instance-pinned AND
   // that instance belongs to the wake's TARGET agent. A cross-agent child does NOT
   // inherit (it resolves against its own agent → online-first).
   const rootIdeaUuid = await resolveRootIdeaUuidForPin(ctx);
-  if (!rootIdeaUuid) return null;
+  return resolveIdeaInstancePin(ctx, rootIdeaUuid);
+}
 
+/**
+ * Resolve an idea's own `agent_instance` assignee to a SOFT PinnedTarget, applying the
+ * SAME-AGENT GUARD (the idea's instance must belong to the wake's target agent). Returns
+ * null when the idea uuid is null, the idea is not instance-pinned, or the guard fails —
+ * a legitimate "no pin here" outcome. Shared by the own-idea (step 2.5) and root-idea
+ * (step 3) resolution so both apply identical pin + guard semantics.
+ */
+async function resolveIdeaInstancePin(
+  ctx: WakeNotificationContext,
+  ideaUuid: string | null,
+): Promise<PinnedTarget | null> {
+  if (!ideaUuid) return null;
   const idea = await prisma.idea.findFirst({
-    where: { uuid: rootIdeaUuid, companyUuid: ctx.companyUuid },
+    where: { uuid: ideaUuid, companyUuid: ctx.companyUuid },
     select: { assigneeType: true, assigneeUuid: true },
   });
   if (idea?.assigneeType === "agent_instance" && idea.assigneeUuid) {
@@ -316,7 +351,6 @@ async function resolvePinnedTarget(
       return makePinnedTarget(place.host, place.cwd, true);
     }
   }
-
   return null;
 }
 
