@@ -98,6 +98,38 @@ describe("MentionInstancePickerDialog — mobile-safe layout", () => {
     expect(content.className).toContain("flex-col");
   });
 
+  it("lifts BOTH the content and the overlay above the side panel's z-50 (no paint-order tie)", () => {
+    // The picker opens from inside the idea-detail side panel, which is `fixed
+    // z-50`. The default Dialog overlay+content are also z-50, so the dialog only
+    // sits above the panel by PAINT ORDER — a tie some mobile browsers resolve the
+    // other way, leaving the panel's Overview/Elaboration/Activity tab bar painted
+    // over the dialog (title occluded, Pin untappable). Both layers must carry an
+    // explicit z-index strictly above 50.
+    render(
+      <MentionInstancePickerDialog
+        open
+        agentName="Test Agent"
+        instances={makeInstances(6)}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const content = dialogContent();
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]') as HTMLElement;
+    expect(overlay).toBeTruthy();
+
+    const zOf = (el: HTMLElement) => {
+      const m = el.className.match(/(?:^|\s)z-\[(\d+)\]/);
+      return m ? Number(m[1]) : NaN;
+    };
+    const contentZ = zOf(content);
+    const overlayZ = zOf(overlay);
+    expect(contentZ).toBeGreaterThan(50);
+    expect(overlayZ).toBeGreaterThan(50);
+    // The content must not sit below its own backdrop.
+    expect(contentZ).toBeGreaterThanOrEqual(overlayZ);
+  });
+
   it("puts the instance list in the only overflow-y-auto scroll region, with header and footer outside it", () => {
     render(
       <MentionInstancePickerDialog

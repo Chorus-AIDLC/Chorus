@@ -444,6 +444,16 @@ export function createSuggestionPopupRenderer(
 // (`min-h-0 flex-1 overflow-y-auto`). Without this, a tall instance list on a
 // keyboard-shortened viewport pushed the Pin button off-screen with no way to reach
 // it (Radix centers the content against the layout viewport, ignoring the keyboard).
+//
+// Stacking (z-[110]): this picker is opened from inside the idea-detail side panel,
+// which is itself `fixed z-50`. The default Dialog overlay+content are also `z-50`,
+// so the dialog only sits above the panel by PAINT ORDER — a tie that some mobile
+// browsers resolve the other way, leaving the panel (and its Overview/Elaboration/
+// Activity tab bar) painted OVER the dialog: the title looks occluded and taps on
+// the footer land on the tab bar so Pin can't be clicked. Lifting BOTH the content
+// and the overlay to `z-[110]` (above the panel's z-50 — in the same high band as
+// the @-mention suggestion popup's own `z-[100]`, which already clears the panel)
+// makes it deterministic regardless of paint order.
 // Exported for the unit test that pins this layout contract.
 export function MentionInstancePickerDialog({
   open,
@@ -475,7 +485,10 @@ export function MentionInstancePickerDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="flex max-h-[85svh] flex-col gap-0 sm:max-w-md">
+      <DialogContent
+        className="z-[110] flex max-h-[85svh] flex-col gap-0 sm:max-w-md"
+        overlayClassName="z-[110]"
+      >
         <DialogHeader className="shrink-0">
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
