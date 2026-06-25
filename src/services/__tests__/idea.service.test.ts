@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Mocks (hoisted so vi.mock factories can reference them) =====
 
-const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedBy, mockFormatReview, mockCreateActivity, mockParseMentions, mockCreateMentions } = vi.hoisted(() => ({
+const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedBy, mockFormatReview, mockBuildAssigneeMatch, mockCreateActivity, mockParseMentions, mockCreateMentions } = vi.hoisted(() => ({
   mockPrisma: {
     idea: {
       create: vi.fn(),
@@ -38,12 +38,19 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    // AgentInstance lookups back the optional instance pin on claim/assign
+    // (add-agent-instance-addressing). findFirst is company-scoped: a foreign /
+    // missing instance resolves to null and the call is rejected.
+    agentInstance: {
+      findFirst: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   mockEventBus: { emitChange: vi.fn() },
   mockFormatAssigneeComplete: vi.fn().mockResolvedValue(null),
   mockFormatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "creator-uuid", name: "Creator" }),
   mockFormatReview: vi.fn().mockResolvedValue(null),
+  mockBuildAssigneeMatch: vi.fn().mockResolvedValue([]),
   mockCreateActivity: vi.fn().mockResolvedValue(undefined),
   mockParseMentions: vi.fn().mockReturnValue([]),
   mockCreateMentions: vi.fn().mockResolvedValue(undefined),
@@ -55,6 +62,7 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatAssigneeComplete: mockFormatAssigneeComplete,
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
+  buildAssigneeMatch: mockBuildAssigneeMatch,
 }));
 vi.mock("@/services/mention.service", () => ({
   parseMentions: mockParseMentions,
@@ -254,6 +262,80 @@ describe("claimIdea", () => {
       })
     ).rejects.toThrow("Cannot claim an elaborated Idea");
   });
+
+  // add-agent-instance-addressing: an optional instance pin promotes the
+  // assignment to assigneeType="agent_instance"+instance uuid (validated
+  // company-scoped); without it the assignment stays a plain agent.
+  const INSTANCE_UUID = "instance-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+  it("pins to an instance → persists agent_instance + the instance uuid", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_UUID });
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID }),
+    );
+
+    await claimIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+      instanceUuid: INSTANCE_UUID,
+    });
+
+    // Company-scoped validation runs before the write.
+    expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID } }),
+    );
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          assigneeType: "agent_instance",
+          assigneeUuid: INSTANCE_UUID,
+        }),
+      }),
+    );
+  });
+
+  it("without an instance → persists a plain agent assignment", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent", assigneeUuid: ACTOR_UUID }),
+    );
+
+    await claimIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+    });
+
+    // No instance lookup on the un-pinned path.
+    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assigneeType: "agent", assigneeUuid: ACTOR_UUID }),
+      }),
+    );
+  });
+
+  it("rejects pinning to a foreign / missing company instance", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null); // company-scoped miss
+
+    await expect(
+      claimIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: ACTOR_UUID,
+        instanceUuid: "instance-of-another-company",
+      }),
+    ).rejects.toThrow("Agent instance not found");
+
+    // The idea row is never updated when instance validation fails.
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("assignIdea", () => {
@@ -368,6 +450,87 @@ describe("assignIdea", () => {
         assigneeUuid: ACTOR_UUID,
       })
     ).rejects.toThrow("Cannot assign an elaborated Idea");
+  });
+
+  // Re-assignment matrix (add-agent-instance-addressing): agent → different
+  // agent, agent → instance, instance → instance, and instance → plain agent
+  // (revert). Re-assignment honors the instance pin exactly like claimIdea.
+  const INSTANCE_A = "instance-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const INSTANCE_B = "instance-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  it("re-assigns agent → a different agent (stays plain agent, no instance lookup)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent", assigneeUuid: "old-agent" }),
+    );
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent", assigneeUuid: "new-agent" }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "new-agent",
+      assignedByUuid: "admin-uuid",
+    });
+
+    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assigneeType: "agent", assigneeUuid: "new-agent" }),
+      }),
+    );
+  });
+
+  it("re-assigns instance A → instance B (promotes to agent_instance with B's uuid)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
+    );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_B });
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent_instance", assigneeUuid: INSTANCE_B }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+      assignedByUuid: "admin-uuid",
+      instanceUuid: INSTANCE_B,
+    });
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_B }),
+      }),
+    );
+  });
+
+  it("reverts an instance-pinned idea back to a plain agent when re-assigned with no instance", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
+    );
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent", assigneeUuid: ACTOR_UUID }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+      assignedByUuid: "admin-uuid",
+      // no instanceUuid → revert to plain agent
+    });
+
+    // No instance lookup on the revert path; the type drops back to "agent".
+    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assigneeType: "agent", assigneeUuid: ACTOR_UUID }),
+      }),
+    );
   });
 });
 
@@ -1062,6 +1225,69 @@ describe("deleteIdea", () => {
       })
     );
     expect(result.uuid).toBe(IDEA_UUID);
+  });
+});
+
+// ===== listIdeas — assignedToMe filter (add-agent-instance-addressing) =====
+
+describe("listIdeas — assignedToMe filter routes through buildAssigneeMatch", () => {
+  it("spreads buildAssigneeMatch (incl. the agent_instance arm) into where.OR for an agent", async () => {
+    // The match includes the instance arm so an instance-pinned idea is not
+    // dropped from "assigned to me".
+    mockBuildAssigneeMatch.mockResolvedValue([
+      { assigneeType: "agent", assigneeUuid: ACTOR_UUID },
+      { assigneeType: "user", assigneeUuid: "owner-1" },
+      { assigneeType: "agent_instance", assigneeUuid: { in: ["inst-1"] } },
+    ]);
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.idea.count.mockResolvedValue(0);
+
+    await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+      assignedToMe: true,
+      actorUuid: ACTOR_UUID,
+      actorType: "agent",
+      ownerUuid: "owner-1",
+    });
+
+    expect(mockBuildAssigneeMatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "agent",
+        companyUuid: COMPANY_UUID,
+        actorUuid: ACTOR_UUID,
+        ownerUuid: "owner-1",
+      }),
+    );
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { assigneeType: "agent", assigneeUuid: ACTOR_UUID },
+            { assigneeType: "user", assigneeUuid: "owner-1" },
+            { assigneeType: "agent_instance", assigneeUuid: { in: ["inst-1"] } },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("does NOT add an assignee OR when assignedToMe is not set", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.idea.count.mockResolvedValue(0);
+
+    await listIdeas({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(mockBuildAssigneeMatch).not.toHaveBeenCalled();
+    const callArg = mockPrisma.idea.findMany.mock.calls[0][0];
+    expect(callArg.where).not.toHaveProperty("OR");
   });
 });
 

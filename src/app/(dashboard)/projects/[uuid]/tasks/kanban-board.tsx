@@ -10,6 +10,7 @@ import {
 } from "@hello-pangea/dnd";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { Lock, TriangleAlert, Monitor } from "lucide-react";
+import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { motion, LayoutGroup } from "framer-motion";
 import { ANIM } from "@/lib/animation";
 import { Card } from "@/components/ui/card";
@@ -43,6 +44,8 @@ interface Task {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place.
+    instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
   dependsOn?: { uuid: string; title: string; status: string }[];
   acceptanceStatus?: string;
@@ -452,29 +455,40 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   </div>
                                 )}
 
-                                <div className="flex items-center justify-between text-xs text-[#9A9A9A]">
+                                <div className="flex items-start justify-between gap-2 text-xs text-[#9A9A9A]">
                                   {task.assignee ? (
-                                    <span className="flex items-center gap-1">
-                                      <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        className="h-3 w-3"
-                                      >
-                                        <path d="M12 8V4H8" />
-                                        <rect
-                                          width="16"
-                                          height="12"
-                                          x="4"
-                                          y="8"
-                                          rx="2"
+                                    <span className="flex min-w-0 flex-col gap-0.5">
+                                      <span className="flex items-center gap-1">
+                                        <svg
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          className="h-3 w-3 shrink-0"
+                                        >
+                                          <path d="M12 8V4H8" />
+                                          <rect
+                                            width="16"
+                                            height="12"
+                                            x="4"
+                                            y="8"
+                                            rx="2"
+                                          />
+                                        </svg>
+                                        <span className="truncate">{task.assignee.name}</span>
+                                      </span>
+                                      {/* Pinned (host, cwd) place for an agent_instance assignee. */}
+                                      {task.assignee.type === "agent_instance" && task.assignee.instance && (
+                                        <AssigneeInstanceLine
+                                          cwd={task.assignee.instance.cwd}
+                                          host={task.assignee.instance.host}
+                                          showHost={false}
+                                          className="pl-4"
                                         />
-                                      </svg>
-                                      {task.assignee.name}
+                                      )}
                                     </span>
                                   ) : task.status === "open" ? (
                                     <span className="text-[#C67A52]">

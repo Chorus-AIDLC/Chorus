@@ -12,8 +12,23 @@ const mockPrisma = vi.hoisted(() => ({
     update: vi.fn(),
     create: vi.fn(),
   },
+  // The durable AgentInstance materialized/reused alongside each connection in the
+  // SAME registerConnection write path. Same two-path shape as the connection upsert
+  // (compound-key upsert for a real cwd; findFirst→create/update for the NULL-cwd
+  // old-daemon path), plus findMany for the InstancePicker list.
+  agentInstance: {
+    upsert: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    findMany: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+
+// Stable instance uuid the AgentInstance upsert resolves to by default, so the
+// connection-focused registerConnection tests below need not re-stub it each time.
+const instanceUuid = "inst-0000-0000-0000-000000000001";
 
 const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
@@ -32,6 +47,9 @@ import {
   touchConnection,
   listConnectionsForOwner,
   listConnectionsForAgent,
+  resolveInstanceByTuple,
+  resolveInstanceForConnection,
+  listInstancesForAgent,
   type SelfReport,
 } from "@/services/daemon-connection.service";
 
@@ -45,6 +63,15 @@ const handle = { uuid: connectionUuid, connectedAt };
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  // Default AgentInstance resolutions so the connection-focused registerConnection
+  // tests (which only assert connection behavior) don't have to stub the instance
+  // upsert. The instance-specific tests below override these as needed.
+  //  - real-cwd path → compound-key upsert returns the stable instance uuid
+  //  - null-cwd path → findFirst yields an existing instance (reuse, no create)
+  mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: instanceUuid });
+  mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: instanceUuid });
+  mockPrisma.agentInstance.create.mockResolvedValue({ uuid: instanceUuid });
+  mockPrisma.agentInstance.update.mockResolvedValue({ uuid: instanceUuid });
 });
 
 // ===== Constants =====
@@ -161,6 +188,10 @@ describe("registerConnection", () => {
       expect(arg.update.companyUuid).toBe(companyUuid);
       // The handle's connectedAt comes from the persisted row, not the local clock.
       expect(arg.select).toEqual({ uuid: true, connectedAt: true });
+      // The SAME write path materialized + linked the durable AgentInstance: the
+      // connection's create AND refresh data both carry the resolved instance uuid.
+      expect(arg.create.agentInstanceUuid).toBe(instanceUuid);
+      expect(arg.update.agentInstanceUuid).toBe(instanceUuid);
     });
 
     it("registers an openclaw clientType", async () => {
@@ -361,6 +392,216 @@ describe("registerConnection", () => {
       expect(result).toBeNull();
       expect(mockPrisma.daemonConnection.upsert).not.toHaveBeenCalled();
       expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+      // A gated (non-daemon) clientType must not touch the instance table either.
+      expect(mockPrisma.agentInstance.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ===== AgentInstance materialization inside registerConnection =====
+//
+// AC#1: the SAME write path that upserts the connection ALSO upserts the
+// AgentInstance for (companyUuid, agentUuid, host, cwd) and links the connection
+// (agentInstanceUuid) to it. AC#2: a repeat report reuses the row (no duplicate)
+// and the instance uuid is stable across reconnects even though the connection uuid
+// churns. AC#3: the null-cwd path avoids the Postgres NULL-unique collision via
+// findFirst → create/update.
+describe("registerConnection → AgentInstance upsert + connection link", () => {
+  describe("cwd present → compound-key AgentInstance upsert (new identity)", () => {
+    it("AC#1: upserts the AgentInstance for (company, agent, host, cwd) and links the connection to its uuid", async () => {
+      mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "claude_code",
+        host: "mac.local",
+        cwd: "/Users/me/projects/alpha",
+      });
+
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      // The instance is upserted on the compound identity key — NOT the null path.
+      expect(mockPrisma.agentInstance.upsert).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
+      const instArg = mockPrisma.agentInstance.upsert.mock.calls[0][0];
+      expect(instArg.where).toEqual({
+        companyUuid_agentUuid_host_cwd: {
+          companyUuid,
+          agentUuid,
+          host: "mac.local",
+          cwd: "/Users/me/projects/alpha",
+        },
+      });
+      expect(instArg.create).toEqual({
+        companyUuid,
+        agentUuid,
+        host: "mac.local",
+        cwd: "/Users/me/projects/alpha",
+      });
+      // The connection write carries the resolved instance uuid in BOTH branches.
+      const connArg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
+      expect(connArg.create.agentInstanceUuid).toBe(instanceUuid);
+      expect(connArg.update.agentInstanceUuid).toBe(instanceUuid);
+    });
+
+    it("defaults a missing host to '' in BOTH the connection and the instance key", async () => {
+      mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+      await registerConnection(companyUuid, agentUuid, { clientType: "claude_code", cwd: "/w" });
+      const instArg = mockPrisma.agentInstance.upsert.mock.calls[0][0];
+      expect(instArg.where.companyUuid_agentUuid_host_cwd.host).toBe("");
+      expect(instArg.create.host).toBe("");
+    });
+  });
+
+  describe("cwd present → AgentInstance reuse across repeat reports + reconnect (AC#2)", () => {
+    it("a repeat report upserts the SAME instance key (reuse, no duplicate) and stays linked", async () => {
+      mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+      const report: SelfReport = { clientType: "claude_code", host: "mac.local", cwd: "/w" };
+
+      await registerConnection(companyUuid, agentUuid, report);
+      await registerConnection(companyUuid, agentUuid, report);
+
+      // Upsert (not create) both times, keyed identically → DB reuses one row.
+      expect(mockPrisma.agentInstance.upsert).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
+      const firstKey = mockPrisma.agentInstance.upsert.mock.calls[0][0].where;
+      const secondKey = mockPrisma.agentInstance.upsert.mock.calls[1][0].where;
+      expect(firstKey).toEqual(secondKey);
+    });
+
+    it("AC#2: the instance uuid is STABLE across a reconnect even though the connection uuid changes", async () => {
+      // Same identity, but the daemon reconnected → a brand-new connection uuid.
+      // The AgentInstance upsert resolves the SAME uuid both times (durable identity).
+      mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.daemonConnection.upsert
+        .mockResolvedValueOnce({ uuid: "conn-gen-1", connectedAt })
+        .mockResolvedValueOnce({ uuid: "conn-gen-2", connectedAt });
+      const report: SelfReport = { clientType: "claude_code", host: "mac.local", cwd: "/w" };
+
+      const first = await registerConnection(companyUuid, agentUuid, report);
+      const second = await registerConnection(companyUuid, agentUuid, report);
+
+      // Connection uuid churned…
+      expect(first?.uuid).toBe("conn-gen-1");
+      expect(second?.uuid).toBe("conn-gen-2");
+      // …but BOTH connection writes linked to the SAME durable instance uuid.
+      expect(mockPrisma.daemonConnection.upsert.mock.calls[0][0].create.agentInstanceUuid).toBe(
+        instanceUuid,
+      );
+      expect(mockPrisma.daemonConnection.upsert.mock.calls[1][0].update.agentInstanceUuid).toBe(
+        instanceUuid,
+      );
+    });
+  });
+
+  describe("cwd null (old daemon) → AgentInstance findFirst → create/update, NOT upsert (AC#3)", () => {
+    it("creates a cwd=null instance on first connect (no existing null instance)", async () => {
+      mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+      mockPrisma.agentInstance.create.mockResolvedValue({ uuid: instanceUuid });
+      // Old daemon also lands a null-cwd CONNECTION row via its own null path.
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+      mockPrisma.daemonConnection.create.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "claude_code",
+        host: "mac.local",
+      });
+
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      // The compound-key upsert must NOT be used for a NULL cwd (Postgres NULL-distinct).
+      expect(mockPrisma.agentInstance.upsert).not.toHaveBeenCalled();
+      // Looked for an existing null-cwd instance keyed on (company, agent, host, cwd:null).
+      expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentInstance.findFirst.mock.calls[0][0].where).toEqual({
+        companyUuid,
+        agentUuid,
+        host: "mac.local",
+        cwd: null,
+      });
+      // Then created exactly one instance row with cwd:null.
+      expect(mockPrisma.agentInstance.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentInstance.create.mock.calls[0][0].data).toEqual({
+        companyUuid,
+        agentUuid,
+        host: "mac.local",
+        cwd: null,
+      });
+      // And the null-cwd connection row was linked to the created instance.
+      expect(mockPrisma.daemonConnection.create.mock.calls[0][0].data.agentInstanceUuid).toBe(
+        instanceUuid,
+      );
+    });
+
+    it("AC#3: REUSES the existing cwd=null instance on reconnect (no duplicate null instance)", async () => {
+      mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.agentInstance.update.mockResolvedValue({ uuid: instanceUuid });
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: connectionUuid });
+      mockPrisma.daemonConnection.update.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "claude_code",
+        host: "mac.local",
+      });
+
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      // The anti-pileup guarantee: it UPDATEs the found instance by uuid (touch
+      // updatedAt), it does NOT create a second null instance.
+      expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
+      expect(mockPrisma.agentInstance.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.agentInstance.update).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.agentInstance.update.mock.calls[0][0].where).toEqual({ uuid: instanceUuid });
+      // The reconnecting null-cwd connection row is re-linked to the same instance.
+      expect(mockPrisma.daemonConnection.update.mock.calls[0][0].data.agentInstanceUuid).toBe(
+        instanceUuid,
+      );
+    });
+  });
+
+  describe("instance-link resilience (additive link never blocks registration)", () => {
+    it("a failed instance upsert is swallowed + logged, and the connection STILL registers with a null link", async () => {
+      // The additive-link contract: an AgentInstance-table failure must NOT abort the
+      // connection registration. upsertAgentInstance swallows + logs and returns null;
+      // the connection upsert then runs and lands the row with agentInstanceUuid:null.
+      mockPrisma.agentInstance.upsert.mockRejectedValue(new Error("instance db down"));
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "claude_code",
+        host: "mac.local",
+        cwd: "/w",
+      });
+
+      // The connection registration SUCCEEDS — the instance failure did not block it.
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      // The instance failure was logged exactly once (swallowed inside upsertAgentInstance).
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      // The connection write ran and degraded the link to null in BOTH branches.
+      expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+      const connArg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
+      expect(connArg.create.agentInstanceUuid).toBeNull();
+      expect(connArg.update.agentInstanceUuid).toBeNull();
+    });
+
+    it("a failed instance findFirst on the null-cwd path also degrades to a null link, connection still registers", async () => {
+      // Same contract on the old-daemon (null-cwd) instance path.
+      mockPrisma.agentInstance.findFirst.mockRejectedValue(new Error("instance db down"));
+      mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+      mockPrisma.daemonConnection.create.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "claude_code",
+        host: "mac.local",
+      });
+
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      // The null-cwd connection row was still created, with a null instance link.
+      expect(mockPrisma.daemonConnection.create).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.daemonConnection.create.mock.calls[0][0].data.agentInstanceUuid).toBeNull();
     });
   });
 });
@@ -440,6 +681,7 @@ function makeRow(
     host?: string;
     cwd?: string | null;
     disconnectedAt?: Date | null;
+    agentInstanceUuid?: string | null;
     agent?: { name: string; ownerUuid: string | null } | null;
   } = {},
 ) {
@@ -459,6 +701,8 @@ function makeRow(
     connectedAt: new Date("2026-06-15T03:30:00.000Z"),
     lastSeenAt: new Date(NOW.getTime() - agoMs),
     disconnectedAt: "disconnectedAt" in overrides ? overrides.disconnectedAt : null,
+    agentInstanceUuid:
+      "agentInstanceUuid" in overrides ? overrides.agentInstanceUuid : instanceUuid,
     agent:
       "agent" in overrides
         ? overrides.agent
@@ -503,6 +747,8 @@ describe("listConnectionsForOwner", () => {
       connectedAt: "2026-06-15T03:30:00.000Z",
       lastSeenAt: "2026-06-15T04:00:00.000Z",
       disconnectedAt: null,
+      // The durable instance link is now part of the projection (additive).
+      agentInstanceUuid: instanceUuid,
     });
   });
 
@@ -745,5 +991,227 @@ describe("ordering", () => {
     const result = await listConnectionsForOwner(companyUuid, ownerUuid);
     expect(result.map((v) => v.uuid)).toEqual(["fresh-online", "stale-online"]);
     expect(result.map((v) => v.effectiveStatus)).toEqual(["online", "offline"]);
+  });
+});
+
+// ===== Instance resolvers (resolveInstanceByTuple / resolveInstanceForConnection) =====
+//
+// The wake path turns a pin's (host, cwd) — from a mention suffix or an
+// agent_instance assignment — into the durable instance pointer. These resolvers
+// are read functions: they PROPAGATE a query error (null/[] must mean "absent",
+// never "the DB threw").
+describe("resolveInstanceByTuple", () => {
+  it("returns the instance uuid for a present-cwd tuple, normalizing a null host to ''", async () => {
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: instanceUuid });
+    const result = await resolveInstanceByTuple(companyUuid, agentUuid, null, "/work");
+    expect(result).toBe(instanceUuid);
+    // A null host is normalized to "" so the lookup key matches what registerConnection wrote.
+    expect(mockPrisma.agentInstance.findFirst.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+      host: "",
+      cwd: "/work",
+    });
+  });
+
+  it("resolves a null-cwd tuple via findFirst with cwd:null (the NULL-distinct lookup)", async () => {
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: instanceUuid });
+    const result = await resolveInstanceByTuple(companyUuid, agentUuid, "mac.local", null);
+    expect(result).toBe(instanceUuid);
+    expect(mockPrisma.agentInstance.findFirst.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+      host: "mac.local",
+      cwd: null,
+    });
+  });
+
+  it("returns null when no instance matches the tuple", async () => {
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+    await expect(
+      resolveInstanceByTuple(companyUuid, agentUuid, "mac.local", "/work"),
+    ).resolves.toBeNull();
+  });
+
+  it("PROPAGATES a query error (read rule — does not swallow)", async () => {
+    mockPrisma.agentInstance.findFirst.mockRejectedValue(new Error("db down"));
+    await expect(
+      resolveInstanceByTuple(companyUuid, agentUuid, "mac.local", "/work"),
+    ).rejects.toThrow("db down");
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveInstanceForConnection", () => {
+  it("returns the connection's linked agentInstanceUuid, scoped by companyUuid", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ agentInstanceUuid: instanceUuid });
+    const result = await resolveInstanceForConnection(companyUuid, connectionUuid);
+    expect(result).toBe(instanceUuid);
+    expect(mockPrisma.daemonConnection.findFirst.mock.calls[0][0]).toEqual({
+      where: { uuid: connectionUuid, companyUuid },
+      select: { agentInstanceUuid: true },
+    });
+  });
+
+  it("returns null when the connection is not yet linked (pre-migration row)", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ agentInstanceUuid: null });
+    await expect(resolveInstanceForConnection(companyUuid, connectionUuid)).resolves.toBeNull();
+  });
+
+  it("returns null when the connection does not exist in this company", async () => {
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    await expect(resolveInstanceForConnection(companyUuid, connectionUuid)).resolves.toBeNull();
+  });
+
+  it("PROPAGATES a query error (read rule)", async () => {
+    mockPrisma.daemonConnection.findFirst.mockRejectedValue(new Error("db down"));
+    await expect(resolveInstanceForConnection(companyUuid, connectionUuid)).rejects.toThrow(
+      "db down",
+    );
+  });
+});
+
+// ===== listInstancesForAgent — online status DERIVED from linked connections =====
+//
+// AC#4: an instance is `online` iff ANY of its linked DaemonConnections is
+// effectively online (status==="online" AND within STALE_THRESHOLD_MS). The
+// instance row itself stores NO liveness (R5). This backs the InstancePicker's
+// "online instances only" rule — the UI filters on `online`.
+describe("listInstancesForAgent", () => {
+  const NOW2 = new Date("2026-06-15T05:00:00.000Z");
+
+  // Build an AgentInstance row fixture with its linked connections' liveness fields.
+  function makeInstance(
+    overrides: {
+      uuid?: string;
+      host?: string;
+      cwd?: string | null;
+      updatedAt?: Date;
+      connections?: { status: string; agoMs: number }[];
+    } = {},
+  ) {
+    return {
+      uuid: overrides.uuid ?? instanceUuid,
+      agentUuid,
+      host: overrides.host ?? "mac.local",
+      cwd: "cwd" in overrides ? overrides.cwd : "/work",
+      createdAt: new Date("2026-06-15T04:00:00.000Z"),
+      updatedAt: overrides.updatedAt ?? new Date("2026-06-15T04:30:00.000Z"),
+      connections: (overrides.connections ?? []).map((c) => ({
+        status: c.status,
+        lastSeenAt: new Date(NOW2.getTime() - c.agoMs),
+      })),
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW2);
+  });
+
+  it("queries by company + agent and pulls just the connections' liveness fields", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({ connections: [{ status: "online", agoMs: 0 }] }),
+    ]);
+    await listInstancesForAgent(companyUuid, agentUuid);
+    expect(mockPrisma.agentInstance.findMany.mock.calls[0][0]).toEqual({
+      where: { companyUuid, agentUuid },
+      include: { connections: { select: { status: true, lastSeenAt: true } } },
+    });
+  });
+
+  it("AC#4: derives online=true when ANY linked connection is online + fresh", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({
+        uuid: "inst-online",
+        connections: [
+          { status: "offline", agoMs: 0 },
+          { status: "online", agoMs: STALE_THRESHOLD_MS - 1 }, // fresh online
+        ],
+      }),
+    ]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.online).toBe(true);
+    expect(view).toEqual({
+      uuid: "inst-online",
+      agentUuid,
+      host: "mac.local",
+      cwd: "/work",
+      online: true,
+      createdAt: "2026-06-15T04:00:00.000Z",
+      updatedAt: "2026-06-15T04:30:00.000Z",
+    });
+  });
+
+  it("derives online=false when the only connection is stale (older than threshold)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({ connections: [{ status: "online", agoMs: STALE_THRESHOLD_MS + 1 }] }),
+    ]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.online).toBe(false);
+  });
+
+  it("treats the staleness boundary as inclusive (exactly at threshold → online)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({ connections: [{ status: "online", agoMs: STALE_THRESHOLD_MS }] }),
+    ]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.online).toBe(true);
+  });
+
+  it("derives online=false for an instance with no linked connections (never blocks)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([makeInstance({ connections: [] })]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.online).toBe(false);
+  });
+
+  it("derives online=false when a fresh connection's raw status is offline", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({ connections: [{ status: "offline", agoMs: 0 }] }),
+    ]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.online).toBe(false);
+  });
+
+  it("projects a null-cwd instance through with cwd:null", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({ cwd: null, connections: [{ status: "online", agoMs: 0 }] }),
+    ]);
+    const [view] = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(view.cwd).toBeNull();
+  });
+
+  it("orders online-first, then updatedAt desc (the picker surfaces reachable instances first)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      makeInstance({
+        uuid: "offline-new",
+        updatedAt: new Date("2026-06-15T04:59:00.000Z"),
+        connections: [{ status: "offline", agoMs: 0 }],
+      }),
+      makeInstance({
+        uuid: "online-old",
+        updatedAt: new Date("2026-06-15T04:10:00.000Z"),
+        connections: [{ status: "online", agoMs: 0 }],
+      }),
+      makeInstance({
+        uuid: "online-new",
+        updatedAt: new Date("2026-06-15T04:50:00.000Z"),
+        connections: [{ status: "online", agoMs: 0 }],
+      }),
+    ]);
+    const result = await listInstancesForAgent(companyUuid, agentUuid);
+    expect(result.map((v) => v.uuid)).toEqual(["online-new", "online-old", "offline-new"]);
+    expect(result.map((v) => v.online)).toEqual([true, true, false]);
+  });
+
+  it("returns an empty array when the agent has no instances", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([]);
+    await expect(listInstancesForAgent(companyUuid, agentUuid)).resolves.toEqual([]);
+  });
+
+  it("PROPAGATES a query error (read rule — does not swallow to [])", async () => {
+    mockPrisma.agentInstance.findMany.mockRejectedValue(new Error("db down"));
+    await expect(listInstancesForAgent(companyUuid, agentUuid)).rejects.toThrow("db down");
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 });

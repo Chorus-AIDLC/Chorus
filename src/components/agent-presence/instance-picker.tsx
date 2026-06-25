@@ -40,13 +40,30 @@ import {
 import { StatusDot } from "./status";
 
 /**
- * One selectable daemon instance. A structural subset of `ConnectionView`
- * (daemon-connection.service) carrying exactly the fields the picker renders, so
- * every consumer (mention / assign / send) maps its data to this shape.
+ * THE one canonical selectable-daemon-instance shape, shared across every
+ * consumer (the @mention secondary picker, the task-assignment pin, the
+ * idea-assignment pin, the ad-hoc send picker). A structural subset of
+ * `ConnectionView` (daemon-connection.service) carrying exactly the fields the
+ * picker renders, so every consumer maps its data to this ONE type — there is no
+ * second `AgentInstanceCandidate` shape.
+ *
+ * Selection is keyed on `connectionUuid` (the live socket the picker is choosing
+ * among). Assignment surfaces ALSO read `agentInstanceUuid` — the DURABLE
+ * AgentInstance pointer that survives reconnects — and thread THAT (not the
+ * ephemeral connection uuid) as the persisted pin, so a stored assignment points
+ * at a place, not a transient socket. Live-wake surfaces (mention / send) ignore
+ * `agentInstanceUuid` and wake the chosen connection directly.
  */
 export interface InstanceCandidate {
   /** The current live `DaemonConnection.uuid` for this (host, cwd) place. */
   connectionUuid: string;
+  /**
+   * The durable `AgentInstance.uuid` this connection serves — the stable pointer
+   * an assignment pin is persisted against (survives daemon reconnects). null for
+   * a pre-AgentInstance connection not yet re-handshaked, or on a live-wake
+   * surface that never needs it. Assignment callers gate on it being non-null.
+   */
+  agentInstanceUuid?: string | null;
   /** Host the instance runs on. "" denotes an unknown/host-less self-report. */
   host: string;
   /** Working directory. null for a legacy daemon that never self-reported one. */
@@ -58,6 +75,20 @@ export interface InstanceCandidate {
    * status dot can render verbatim.
    */
   effectiveStatus: "online" | "offline";
+}
+
+/**
+ * The ONLINE-ONLY contract, in one pure place. Every assignment surface
+ * (assign-task / assign-idea) MUST run its candidate list through this before
+ * handing it to the picker: an OFFLINE instance is never a wake target, so it is
+ * not selectable — a pin to it would immediately degrade to a plain agent (spec
+ * "Instance selection at assignment offers only online instances"). Pulling the
+ * filter out of the modals keeps it unit-testable and identical across callers.
+ */
+export function filterOnlineInstances(
+  instances: InstanceCandidate[],
+): InstanceCandidate[] {
+  return instances.filter((i) => i.effectiveStatus === "online");
 }
 
 export interface InstancePickerProps {

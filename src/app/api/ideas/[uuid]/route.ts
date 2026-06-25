@@ -90,7 +90,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
 
       // Non-users can only update the status of Ideas they have claimed
       if (!isUser(auth)) {
-        if (!isAssignee(auth, idea.assigneeType, idea.assigneeUuid)) {
+        if (!(await isAssignee(auth, idea.assigneeType, idea.assigneeUuid))) {
           return errors.permissionDenied("Only assignee can update status");
         }
       }

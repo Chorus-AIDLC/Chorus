@@ -24,6 +24,9 @@ const mockPrisma = vi.hoisted(() => ({
   agent: {
     findMany: vi.fn(),
   },
+  agentInstance: {
+    findMany: vi.fn(),
+  },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -542,6 +545,75 @@ describe("getActiveSessionsForProject", () => {
     expect(result[1].agentUuid).toBe("a2");
     expect(result[2].sessionUuid).toBe("");
     expect(result[2].agentUuid).toBe("a3");
+  });
+
+  it("should include an agent_instance-pinned in_progress worker, resolved to its owning agent (finding #1)", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+
+    // A plain-agent task AND an agent_instance-pinned task whose assigneeUuid is an
+    // INSTANCE uuid (not an agent uuid). Before the fix the instance-pinned task was
+    // excluded by the flat assigneeType:"agent" filter and would never render.
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t1", assigneeType: "agent", assigneeUuid: "a1", updatedAt: now },
+      { uuid: "t2", assigneeType: "agent_instance", assigneeUuid: "inst-2", updatedAt: now },
+    ]);
+    // The instance resolves to its owning agent a2.
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      { uuid: "inst-2", agentUuid: "a2" },
+    ]);
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { uuid: "a1", name: "Agent 1" },
+      { uuid: "a2", name: "Agent 2" },
+    ]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    // The query includes BOTH assignee types.
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          assigneeType: { in: ["agent", "agent_instance"] },
+        }),
+      }),
+    );
+    // The instance was resolved company-scoped to its owning agent.
+    expect(mockPrisma.agentInstance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: { in: ["inst-2"] }, companyUuid },
+      }),
+    );
+    // Both workers render; the instance-pinned one shows as its OWNING agent (a2),
+    // never the instance uuid.
+    expect(result).toHaveLength(2);
+    const agentUuids = result.map((r) => r.agentUuid).sort();
+    expect(agentUuids).toEqual(["a1", "a2"]);
+    expect(result.every((r) => r.sessionUuid === "")).toBe(true);
+    // Defensive: the instance uuid is NEVER surfaced as an agent.
+    expect(result.some((r) => r.agentUuid === "inst-2")).toBe(false);
+  });
+
+  it("should collapse two instances of the SAME agent into one direct worker entry", async () => {
+    const { getActiveSessionsForProject } = await import("@/services/session.service");
+
+    mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
+    // Two tasks pinned to two DIFFERENT instances of the SAME agent a1.
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t1", assigneeType: "agent_instance", assigneeUuid: "inst-a", updatedAt: now },
+      { uuid: "t2", assigneeType: "agent_instance", assigneeUuid: "inst-b", updatedAt: now },
+    ]);
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      { uuid: "inst-a", agentUuid: "a1" },
+      { uuid: "inst-b", agentUuid: "a1" },
+    ]);
+    mockPrisma.agent.findMany.mockResolvedValue([{ uuid: "a1", name: "Agent 1" }]);
+
+    const result = await getActiveSessionsForProject(companyUuid, projectUuid);
+
+    // Deduplicated by RESOLVED agent uuid → one entry, not two.
+    expect(result).toHaveLength(1);
+    expect(result[0].agentUuid).toBe("a1");
   });
 
   it("should deduplicate sessionless workers by agent UUID", async () => {

@@ -31,6 +31,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AssigneeInstanceLine } from "@/components/agent-presence";
+import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
 import { markCriteriaAction, selfCheckCriteriaAction, resetCriterionAction } from "./[taskUuid]/criteria-actions";
 import { UnifiedComments } from "@/components/unified-comments";
@@ -108,6 +110,9 @@ interface Task {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place +
+    // owning agent uuid (for rendering the instance and the ownership check).
+    instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
   dependsOn?: DependencyTask[];
   dependedBy?: DependencyTask[];
@@ -289,7 +294,17 @@ export function TaskDetailPanel({
   const [editError, setEditError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const isAssignedToMe = task?.assignee?.uuid === currentUserUuid;
+  // Ownership check fixed (add-agent-instance-addressing): compare BOTH type AND
+  // uuid, not uuid alone. This panel is user-facing, so the current actor is the
+  // viewing USER; an `agent_instance` assignment (whose `uuid` is an instance
+  // uuid, never a user uuid) is correctly NOT "mine" here — only a `user`
+  // assignment matching this user is. The shared helper also covers the agent
+  // viewer (treats agent_instance as mine when the instance's agent is the actor)
+  // for any future agent-facing reuse, keyed off the assignee's owning agentUuid.
+  const isAssignedToMe = isAssignedToActor(task?.assignee ?? null, {
+    type: "user",
+    uuid: currentUserUuid,
+  });
   const canStart = isAssignedToMe && task?.status === "assigned";
   const canMarkToVerify = isAssignedToMe && task?.status === "in_progress";
   const canMarkDone = task?.status === "to_verify";
@@ -803,23 +818,32 @@ export function TaskDetailPanel({
                     {task.assignee ? (
                       <>
                         <Avatar className="h-7 w-7">
-                          <AvatarFallback className={task.assignee.type === "agent" ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
-                            {task.assignee.type === "agent" ? (
+                          <AvatarFallback className={isAgentAssignee(task.assignee) ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
+                            {isAgentAssignee(task.assignee) ? (
                               <Bot className="h-3.5 w-3.5" />
                             ) : (
                               task.assignee.name.charAt(0).toUpperCase()
                             )}
                           </AvatarFallback>
                         </Avatar>
-                        <div>
+                        <div className="min-w-0">
                           <div className="text-sm font-medium text-[#2C2C2C]">
                             {task.assignee.name}
                           </div>
                           <div className="text-xs text-[#6B6B6B]">
-                            {task.assignee.type === "agent"
+                            {isAgentAssignee(task.assignee)
                               ? `${t("common.agent")} • ${task.assignee.assignedAt ? formatDateTime(task.assignee.assignedAt) : ''}`
                               : t("common.user")}
                           </div>
+                          {/* Pinned (host, cwd) place for an agent_instance assignee. */}
+                          {task.assignee.type === "agent_instance" && task.assignee.instance && (
+                            <div className="mt-1">
+                              <AssigneeInstanceLine
+                                cwd={task.assignee.instance.cwd}
+                                host={task.assignee.instance.host}
+                              />
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : (

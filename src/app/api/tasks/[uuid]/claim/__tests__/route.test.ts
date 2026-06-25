@@ -31,6 +31,7 @@ const companyUuid = "company-0000-0000-0000-000000000001";
 const userUuid = "user-0000-0000-0000-000000000001";
 const agentUuid = "agent-0000-0000-0000-000000000001";
 const taskUuid = "task-0000-0000-0000-000000000001";
+const instanceUuid = "instance-0000-0000-0000-000000000001";
 
 function jsonRequest(body: unknown) {
   return new NextRequest(new URL(`/api/tasks/${taskUuid}/claim`, "http://localhost:3000"), {
@@ -112,22 +113,20 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
     expect(mockClaimTask).not.toHaveBeenCalled();
   });
 
-  it("threads a pinned (host, cwd) to claimTask when assigning to an agent (cwd-addressable instances, T4)", async () => {
+  // add-agent-instance-addressing (T7): the route accepts an optional
+  // `instanceUuid` and forwards it into claimTask so the service can persist the
+  // task as an `agent_instance` assignment. The legacy targetHost/targetCwd body
+  // shape is gone — it is replaced by the durable instance reference.
+  it("forwards instanceUuid into claimTask when assigning to an agent (agent_instance pin)", async () => {
     mockPrisma.agent.findFirst.mockResolvedValue({
       uuid: agentUuid,
       roles: ["developer_agent"],
       permissions: [],
     });
-    mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: agentUuid });
+    mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: instanceUuid });
 
-    // An OFFLINE pin is a valid durable intent — the route does NOT gate on
-    // online (only the live ad-hoc send does), so it must pass the pin through.
     const res = await POST(
-      jsonRequest({
-        agentUuid,
-        targetHost: "ci-runner-02",
-        targetCwd: "/home/u/dev/chorus",
-      }),
+      jsonRequest({ agentUuid, instanceUuid }),
       ctx(),
     );
     expect(res.status).toBe(200);
@@ -135,13 +134,13 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
       expect.objectContaining({
         assigneeType: "agent",
         assigneeUuid: agentUuid,
-        targetHost: "ci-runner-02",
-        targetCwd: "/home/u/dev/chorus",
+        assignedByUuid: userUuid,
+        instanceUuid,
       }),
     );
   });
 
-  it("passes null host/cwd to claimTask when no pin is sent (un-pinned assignment)", async () => {
+  it("omits instanceUuid from claimTask args when none is supplied (backward-compatible agent assignment)", async () => {
     mockPrisma.agent.findFirst.mockResolvedValue({
       uuid: agentUuid,
       roles: ["developer_agent"],
@@ -150,12 +149,45 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
     mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: agentUuid });
 
     await POST(jsonRequest({ agentUuid }), ctx());
-    expect(mockClaimTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targetHost: null,
-        targetCwd: null,
-      }),
+    const claimArgs = mockClaimTask.mock.calls[0][0];
+    expect(claimArgs).not.toHaveProperty("instanceUuid");
+    expect(claimArgs).not.toHaveProperty("targetHost");
+    expect(claimArgs).not.toHaveProperty("targetCwd");
+  });
+
+  it("returns 400 when the service rejects a foreign-company / unknown instance pin", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({
+      uuid: agentUuid,
+      roles: ["developer_agent"],
+      permissions: [],
+    });
+    mockClaimTask.mockRejectedValue(new Error("Agent instance not found"));
+
+    const res = await POST(
+      jsonRequest({ agentUuid, instanceUuid: "instance-does-not-exist" }),
+      ctx(),
     );
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.error.message).toMatch(/Agent instance not found/);
+  });
+
+  it("does not thread an instanceUuid on an agent self-claim", async () => {
+    mockGetAuthContext.mockResolvedValue({
+      type: "agent",
+      companyUuid,
+      actorUuid: agentUuid,
+      roles: ["developer_agent"],
+      permissions: ["task:read", "task:write"],
+    });
+    mockClaimTask.mockResolvedValue({ uuid: taskUuid, assigneeUuid: agentUuid });
+
+    // Even if a body carries instanceUuid, the agent branch never reads the body.
+    await POST(jsonRequest({ instanceUuid }), ctx());
+    const claimArgs = mockClaimTask.mock.calls[0][0];
+    expect(claimArgs).not.toHaveProperty("instanceUuid");
+    expect(claimArgs.assigneeType).toBe("agent");
+    expect(claimArgs.assigneeUuid).toBe(agentUuid);
   });
 
   it("looks up the agent scoped by companyUuid (no cross-tenant leakage)", async () => {

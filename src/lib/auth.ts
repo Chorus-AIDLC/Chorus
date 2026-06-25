@@ -17,6 +17,7 @@ import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { getSuperAdminFromRequest } from "./super-admin";
 import { getUserSessionFromRequest } from "./user-session";
 import { verifyOidcAccessToken, isOidcToken } from "./oidc-auth";
+import { isAssignmentOwnedByActor } from "./uuid-resolver";
 
 // Get auth context from request (UUID-based)
 export async function getAuthContext(
@@ -235,12 +236,18 @@ export function requireAgentPermission<T>(
   };
 }
 
-// Check if context is the assignee of a resource (UUID-based)
-export function isAssignee(
+// Check if context is the assignee of a resource (UUID-based).
+//
+// ASYNC: the agent arms delegate to the shared `isAssignmentOwnedByActor`
+// helper so an `agent_instance` assignment owned by the calling agent resolves
+// to its owning agent (a DB lookup) — keeping REST gates byte-for-byte
+// consistent with the MCP gates (spec: an agent_instance assignment resolves to
+// its owning agent EVERYWHERE, not just in MCP).
+export async function isAssignee(
   ctx: AuthContext,
   assigneeType: string | null,
   assigneeUuid: string | null
-): boolean {
+): Promise<boolean> {
   if (!assigneeType || !assigneeUuid) return false;
 
   if (isUser(ctx)) {
@@ -251,18 +258,8 @@ export function isAssignee(
   }
 
   if (isAgent(ctx)) {
-    // Direct Agent match
-    if (assigneeType === "agent" && assigneeUuid === ctx.actorUuid) {
-      return true;
-    }
-    // Agent's Owner claim ("Assign to myself")
-    if (
-      assigneeType === "user" &&
-      ctx.ownerUuid &&
-      assigneeUuid === ctx.ownerUuid
-    ) {
-      return true;
-    }
+    // Agent + agent_instance (resolved to owner) + owner-as-assignee user arms.
+    return isAssignmentOwnedByActor(ctx, assigneeType, assigneeUuid);
   }
 
   return false;

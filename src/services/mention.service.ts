@@ -51,11 +51,24 @@ export interface MentionRef {
   displayName: string;
   // Pinned target daemon instance (cwd-addressable instances, T3). When the
   // owner picked a specific (host, cwd) instance for this mention, these carry
-  // the durable "place" so the autonomous wake (T5) routes to it. Both null for
-  // an un-pinned mention — which behaves exactly as before this change. The pin
-  // is the durable (host, cwd), NOT a connectionUuid (connections churn on
+  // the durable "place" so the autonomous wake (T5/T6) routes to it. Both null
+  // for an un-pinned mention — which behaves exactly as before this change. The
+  // pin is the durable (host, cwd), NOT a connectionUuid (connections churn on
   // daemon restart while the place is stable). `pinnedHost` is "" for an
   // unknown-host instance; `pinnedCwd` is null for an unknown-path instance.
+  //
+  // SEMANTIC CONTRACT (spec "Mention markup identifies an instance without
+  // changing the wire format"): this `(pinnedHost, pinnedCwd)` IS the identity of
+  // the `AgentInstance` for this agent at `(host, cwd)` — the SAME tuple
+  // `daemon-connection.service.resolveInstanceByTuple(companyUuid, agentUuid,
+  // host, cwd)` keys on, and the SAME `("" / null)` sentinels the connection
+  // registry matches against. The wire format is NEVER parsed for a
+  // connectionUuid; the place IS the durable instance handle. The wake path (T6
+  // `notification-turn.resolvePinnedTarget`, `trigger === "mentioned"`) reads the
+  // threaded pin off `WakeNotificationContext` and resolves it to the matching
+  // AgentInstance's live connection by strict `(host, cwd)` equality — so a
+  // pinned mention targets exactly the instance the owner typed, with no change
+  // to the stored token and no migration of existing comment tokens.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
 }

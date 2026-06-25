@@ -3,7 +3,8 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
 import { ApiError } from "@/lib/api-handler";
@@ -28,6 +29,7 @@ export interface IdeaListParams {
   assignedToMe?: boolean;  // Filter for ideas assigned to current user
   actorUuid?: string;      // Current user/agent UUID for assignedToMe filter
   actorType?: string;      // "user" | "agent" for assignedToMe filter
+  ownerUuid?: string;      // Agent's owner UUID — matches owner-as-assignee ideas
 }
 
 export interface IdeaCreateParams {
@@ -60,6 +62,14 @@ export interface IdeaClaimParams {
   assigneeType: string;
   assigneeUuid: string;
   assignedByUuid?: string | null;
+  // Optional durable AgentInstance pin (add-agent-instance-addressing). When
+  // provided, the idea is pinned to that (agent, host, cwd) instance: the row is
+  // persisted as assigneeType="agent_instance", assigneeUuid=<instance uuid>
+  // (overriding the `assigneeType`/`assigneeUuid` the caller passed). The
+  // instance must belong to `companyUuid`, otherwise the call is rejected. When
+  // omitted/null, the assignment behaves exactly as before this change
+  // (assigneeType="agent" → un-pinned, online-first at wake time).
+  instanceUuid?: string | null;
 }
 
 // API response format
@@ -75,6 +85,9 @@ export interface IdeaResponse {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place +
+    // owning agent uuid, so the UI can render the instance and gate ownership.
+    instance?: AssigneeInstanceInfo;
   } | null;
   project?: { uuid: string; name: string };
   elaborationStatus?: string;
@@ -158,6 +171,33 @@ export function isValidIdeaStatusTransition(from: string, to: string): boolean {
 
 // ===== Internal Helper Functions =====
 
+// Resolve the polymorphic assignee fields for a claim/assign, honoring an
+// optional durable AgentInstance pin (add-agent-instance-addressing). When
+// `instanceUuid` is given we VALIDATE it belongs to `companyUuid` (rejecting a
+// pin to a foreign-company instance) and persist the assignment as
+// assigneeType="agent_instance"/assigneeUuid=<instance uuid>; otherwise the
+// caller's own `assigneeType`/`assigneeUuid` are returned unchanged so an
+// un-pinned assignment (or a user assignment) is byte-identical to before.
+async function resolveAssigneeFields(
+  companyUuid: string,
+  assigneeType: string,
+  assigneeUuid: string,
+  instanceUuid?: string | null,
+): Promise<{ assigneeType: string; assigneeUuid: string }> {
+  if (!instanceUuid) {
+    return { assigneeType, assigneeUuid };
+  }
+  const instance = await prisma.agentInstance.findFirst({
+    where: { uuid: instanceUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!instance) {
+    // Company-scoped: a non-existent OR foreign-company instance is rejected.
+    throw new Error("Agent instance not found");
+  }
+  return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
+}
+
 // Format a single Idea into API response format
 async function formatIdeaResponse(
   idea: {
@@ -211,23 +251,30 @@ export async function listIdeas({
   assignedToMe,
   actorUuid,
   actorType,
+  ownerUuid,
 }: IdeaListParams): Promise<{ ideas: IdeaResponse[]; total: number }> {
   const where: {
     projectUuid: string;
     companyUuid: string;
     status?: string;
-    assigneeUuid?: string;
-    assigneeType?: string;
+    OR?: AssigneeCondition[];
   } = {
     projectUuid,
     companyUuid,
     ...(status && { status }),
   };
 
-  // Add assignedToMe filter if requested
+  // Add assignedToMe filter if requested. Route through buildAssigneeMatch so an
+  // `agent_instance` assignment (whose assigneeUuid is an instance uuid, not the
+  // agent uuid) is matched too — a flat {assigneeType,assigneeUuid} equality on
+  // the actor uuid would silently drop instance-pinned ideas.
   if (assignedToMe && actorUuid && actorType) {
-    where.assigneeUuid = actorUuid;
-    where.assigneeType = actorType;
+    where.OR = await buildAssigneeMatch({
+      type: actorType === "agent" ? "agent" : "user",
+      companyUuid,
+      actorUuid,
+      ownerUuid,
+    } as AuthContext);
   }
 
   const [rawIdeas, total] = await Promise.all([
@@ -690,6 +737,7 @@ export async function claimIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  instanceUuid,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -703,12 +751,16 @@ export async function claimIdea({
     throw new Error("Cannot claim an elaborated Idea");
   }
 
+  // Resolve the polymorphic assignee, applying an optional durable instance pin
+  // (validates company ownership and may promote to assigneeType="agent_instance").
+  const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
     data: {
       status: "elaborating",
-      assigneeType,
-      assigneeUuid,
+      assigneeType: resolved.assigneeType,
+      assigneeUuid: resolved.assigneeUuid,
       assignedAt: new Date(),
       assignedByUuid,
     },
@@ -729,6 +781,7 @@ export async function assignIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  instanceUuid,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -742,12 +795,18 @@ export async function assignIdea({
   // If currently open, move to elaborating; otherwise keep current status
   const newStatus = existing.status === "open" ? "elaborating" : existing.status;
 
+  // Re-assignment honors the optional instance pin the same way as claimIdea.
+  // Omitting `instanceUuid` reverts an instance-pinned idea back to a plain
+  // assignment (agent→agent, instance→instance, or instance→agent revert), since
+  // the caller's `assigneeType`/`assigneeUuid` are persisted as-is when no pin.
+  const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
     data: {
       status: newStatus,
-      assigneeType,
-      assigneeUuid,
+      assigneeType: resolved.assigneeType,
+      assigneeUuid: resolved.assigneeUuid,
       assignedAt: new Date(),
       assignedByUuid,
     },

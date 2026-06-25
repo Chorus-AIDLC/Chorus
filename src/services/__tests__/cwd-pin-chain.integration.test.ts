@@ -1,42 +1,46 @@
 // src/services/__tests__/cwd-pin-chain.integration.test.ts
 //
-// INTEGRATION CHECKPOINT (T7 — cwd-addressable daemon instances).
+// INTEGRATION CHECKPOINT (cwd-addressable daemon instances — updated for
+// add-agent-instance-addressing: the task pin is now an `agent_instance` assignment, not
+// the removed `targetHost`/`targetCwd` columns).
 //
 // The single most load-bearing contract of this feature is a WRITE → READ chain that
-// spans three tasks and would pass in isolation while the feature is broken:
+// would pass in isolation while the feature is broken:
 //
-//   T4 (write): an owner pins (host, cwd) at TASK ASSIGNMENT → claimTask persists it to
-//               the Task's `targetHost`/`targetCwd` columns.
-//   T3 (write): an owner pins (host, cwd) at @MENTION → the pin is encoded in the mention
-//               markup `@[Name](agent:uuid?cwd=…&host=…)`, parseMentions decodes it, and
-//               createMentions threads it as `pinnedHost`/`pinnedCwd` into the wake.
-//   T5 (read):  the autonomous wake (notification-turn.ts) reads the SAME shape — the
-//               Task columns for a `task_assigned` wake, the threaded context fields for a
-//               `mentioned` wake — resolves the matching live DaemonConnection, and pins
-//               the session origin THERE.
+//   write (assignment): an owner pins (host, cwd) at TASK ASSIGNMENT → the Task row carries
+//               `assigneeType="agent_instance"`, `assigneeUuid=<AgentInstance.uuid>`.
+//   write (@mention):   an owner pins (host, cwd) at @MENTION → the pin is encoded in the
+//               mention markup `@[Name](agent:uuid?cwd=…&host=…)`, parseMentions decodes it,
+//               and createMentions threads it as `pinnedHost`/`pinnedCwd` into the wake.
+//   read (wake): the autonomous wake (notification-turn.ts) reads the SAME shape — the
+//               Task's agent_instance assignee (resolved to its AgentInstance's (host, cwd))
+//               for a `task_assigned` wake, the threaded context fields for a `mentioned`
+//               wake — resolves the matching live DaemonConnection, and pins the session
+//               origin THERE.
 //
 // The reviewer's flagged failure mode: each side unit-tested in isolation passes even if
-// T4 wrote `targetCwd` but T5 read a differently-named field. This test defeats that by
-// wiring the REAL write functions and the REAL read function against ONE stateful
-// in-memory prisma store: claimTask WRITES to `store.data.task[...]`, then the wake calls
-// the REAL `prisma.task.findFirst({ select: { targetHost, targetCwd } })` and reads back
-// what claimTask actually stored. If the field names disagree, the pin resolves to
-// nothing, the wake falls back to online-first, and the origin-pinning assertion FAILS —
+// the write and read disagree on the assignment shape. This test defeats that by wiring the
+// REAL write functions and the REAL read function against ONE stateful in-memory prisma
+// store: the assigned+pinned Task row + its AgentInstance live in the store, then the wake
+// calls the REAL `prisma.task.findFirst({ select: { assigneeType, assigneeUuid } })` +
+// `prisma.agentInstance.findFirst` and pins the origin to the matching live connection. If
+// the shapes disagree, the pin resolves to nothing and the wake falls back to online-first —
 // exactly the silent-mismatch this checkpoint must catch (the `KEY ASSERTION` test below
-// proves this by deliberately corrupting the field name and asserting the pin breaks).
+// proves this by using a plain `agent` assignment and asserting the pin does NOT resolve).
 //
 // Threads exercised end-to-end as ONE flow:
-//   (1) task-assignment pin: claimTask write → Task columns → task_assigned wake reads
-//       them → origin pinned to the matching LIVE connection.
+//   (1) task-assignment pin: agent_instance Task row → AgentInstance place → task_assigned
+//       wake resolves it → origin pinned to the matching LIVE connection.
 //       @mention pin: pinned marker → parseMentions → createMentions → mentioned wake
 //       reads the threaded (host, cwd) → origin pinned to the matching LIVE connection.
-//   (2) KEY ASSERTION: the write shape ≡ the read shape, proven against the REAL field
-//       names on both ends (a deliberate mismatch fails, not passes silently).
-//   (3) OFFLINE pin / fully-offline agent: an offline place is NOT wakeable and there is
-//       NO durable queue → NO turn is created; the already-created Notification stands as
-//       the plain record. The pin only ever wakes a matching ONLINE connection.
+//   (2) KEY ASSERTION: the write shape ≡ the read shape (assigneeType/assigneeUuid), proven
+//       on both ends (a plain-agent assignment resolves no pin, not passes silently).
+//   (3) OFFLINE assignment (SOFT) pin / fully-offline agent: a SOFT assignment pin to an
+//       offline instance DEGRADES to online-first (R2 graceful un-pin); a fully-offline
+//       agent has nothing to degrade to → NO turn, the Notification stands. (A HARD mention
+//       pin's notify-only policy is exercised in the unit tests.)
 //   (4) live ad-hoc send to an OFFLINE instance → rejected (409). Online-only holds end
-//       to end on both the autonomous-wake side and the live-send side.
+//       to end on the live-send side.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -53,6 +57,8 @@ interface Row {
 function makeStore() {
   const data = {
     task: [] as Row[],
+    idea: [] as Row[],
+    agentInstance: [] as Row[],
     daemonSession: [] as Row[],
     daemonSessionTurn: [] as Row[],
     daemonConnection: [] as Row[],
@@ -210,6 +216,16 @@ function buildPrismaFake(store: Store) {
       // The wake bridge reads the pin via prisma.task.findFirst({ where, select }).
       findFirst: vi.fn(async (args: Row) => findFirst("task", args)),
       findMany: vi.fn(async (args: Row) => findMany("task", args)),
+    },
+    // The instance-based pin reader (add-agent-instance-addressing) reads the root idea's
+    // assignee and resolves an agent_instance assignee to its (host, cwd) place.
+    idea: {
+      findFirst: vi.fn(async (args: Row) => findFirst("idea", args)),
+      findMany: vi.fn(async (args: Row) => findMany("idea", args)),
+    },
+    agentInstance: {
+      findFirst: vi.fn(async (args: Row) => findFirst("agentInstance", args)),
+      findMany: vi.fn(async (args: Row) => findMany("agentInstance", args)),
     },
     daemonSession: {
       upsert: vi.fn(async (args: Row) => {
@@ -413,6 +429,10 @@ const PIN_CWD = "/home/u/dev/payments";
 const PINNED_CONN = "conn-pinned-0001";
 const OTHER_CONN = "conn-other-0002";
 
+// The durable AgentInstance for the pinned (host, cwd) place — the instance-based pin
+// (add-agent-instance-addressing) references this uuid via assigneeType="agent_instance".
+const INSTANCE = "instance-pinned-0001";
+
 // A ConnectionView (the shape listConnectionsForAgent returns), online-first then
 // lastSeenAt desc per the registry contract. We build the list explicitly per test.
 function connView(overrides: Record<string, unknown> = {}) {
@@ -452,8 +472,6 @@ function seedTask(overrides: Record<string, unknown> = {}) {
     assigneeUuid: null,
     assignedAt: null,
     assignedByUuid: null,
-    targetHost: null,
-    targetCwd: null,
     proposalUuid: null,
     createdByUuid: USER,
     createdAt: now,
@@ -461,6 +479,27 @@ function seedTask(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   store.data.task.push(row);
+  return row;
+}
+
+// Seed a durable AgentInstance row at a (host, cwd) place so the instance-based pin
+// reader resolves an agent_instance assignee to its place. Owned by AGENT by default
+// (the same-agent guard matches the wake's target agent).
+function seedInstance(
+  host: string,
+  cwd: string | null,
+  overrides: Record<string, unknown> = {},
+) {
+  const row: Row = {
+    id: store.nextId(),
+    uuid: INSTANCE,
+    companyUuid: COMPANY,
+    agentUuid: AGENT,
+    host,
+    cwd,
+    ...overrides,
+  };
+  store.data.agentInstance.push(row);
   return row;
 }
 
@@ -509,29 +548,21 @@ beforeEach(() => {
 // THREAD 1 + 2 — task-assignment pin: the REAL write (claimTask) feeds the REAL read (wake).
 // ===========================================================================================
 
-describe("integration: task-assignment pin written by claimTask is the SAME shape the wake reads", () => {
-  it("claimTask persists (host, cwd) to Task.targetHost/targetCwd, then the task_assigned wake reads THAT shape and pins the matching live connection", async () => {
-    seedTask();
-
-    // --- WRITE (T4): the REAL claimTask threads the owner-chosen pin into the assignment. ---
-    const claimed = await claimTask({
-      taskUuid: TASK,
-      companyUuid: COMPANY,
-      assigneeType: "agent",
-      assigneeUuid: AGENT,
+describe("integration: task-assignment instance pin is the SAME shape the wake reads", () => {
+  it("a task_assigned wake reads the Task's agent_instance assignee and pins the matching live connection", async () => {
+    // NOTE (add-agent-instance-addressing): the task pin is now an `agent_instance`
+    // assignment — assigneeType="agent_instance", assigneeUuid=<AgentInstance.uuid> —
+    // and the wake reader (notification-turn) resolves that instance to its (host, cwd)
+    // place. The legacy targetHost/targetCwd reader was removed by this task. This
+    // checkpoint seeds the assigned+pinned Task row + its AgentInstance directly; the
+    // full assignment→wake lifecycle is re-covered by the new T10 integration test.
+    seedInstance(PIN_HOST, PIN_CWD);
+    seedTask({
+      status: "assigned",
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
       assignedByUuid: USER,
-      targetHost: PIN_HOST,
-      targetCwd: PIN_CWD,
     });
-
-    // The pin surfaces on the response in the exact field names T4 added ...
-    expect(claimed.targetHost).toBe(PIN_HOST);
-    expect(claimed.targetCwd).toBe(PIN_CWD);
-    // ... and is PERSISTED to the Task row's targetHost/targetCwd columns (the durable
-    // storage the wake reads). This is the write shape, asserted against the stored row.
-    const storedTask = store.data.task.find((t) => t.uuid === TASK)!;
-    expect(storedTask.targetHost).toBe(PIN_HOST);
-    expect(storedTask.targetCwd).toBe(PIN_CWD);
 
     // --- READ (T5): a task_assigned wake. listConnectionsForAgent returns an online
     // "elsewhere" connection FIRST (so online-first would pick it) and the pinned-place
@@ -656,22 +687,18 @@ describe("integration: task-assignment pin written by claimTask is the SAME shap
 // THREAD 2 — KEY ASSERTION: write shape ≡ read shape (a deliberate mismatch must FAIL).
 // ===========================================================================================
 
-describe("integration: KEY ASSERTION — the wake reads the EXACT field names claimTask writes", () => {
-  it("a deliberate field-name mismatch (pin stored under a wrong column) breaks the pin → online-first fallback (the silent-mismatch this checkpoint must catch)", async () => {
+describe("integration: KEY ASSERTION — the wake reads the EXACT assignment shape the assigner writes", () => {
+  it("an un-pinned (plain agent) assignment resolves NO instance pin → online-first fallback (the silent-mismatch this checkpoint must catch)", async () => {
     seedTask();
 
-    // Write the pin under a WRONG column name — simulating the reviewer's flagged drift
-    // where T4 and T5 disagree on the field. The REAL wake reads `targetHost`/`targetCwd`;
-    // a pin written elsewhere is invisible to it.
+    // The task is a PLAIN agent assignment — no agent_instance assignee, no instance to
+    // resolve. The REAL wake reader sees no pin and (after also finding no root-idea
+    // instance) falls back to online-first. This is the contract the structural-guard
+    // below locks in: only an agent_instance assignee that resolves to a live place pins.
     const storedTask = store.data.task.find((t) => t.uuid === TASK)!;
     storedTask.assigneeType = "agent";
     storedTask.assigneeUuid = AGENT;
     storedTask.status = "assigned";
-    // The CORRECT columns stay null (the mismatch); the pin is misfiled under a typo'd key.
-    storedTask.targetHost = null;
-    storedTask.targetCwd = null;
-    (storedTask as Record<string, unknown>).pinnedHostTYPO = PIN_HOST;
-    (storedTask as Record<string, unknown>).pinnedCwdTYPO = PIN_CWD;
 
     mockListConnectionsForAgent.mockResolvedValue([
       connView({ uuid: OTHER_CONN, host: "other-host", cwd: "/home/u/dev/other" }),
@@ -687,31 +714,25 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT field names cl
       action: "task_assigned",
     });
 
-    // Because the wake found NO pin in its real columns, it fell back to online-first
-    // (OTHER_CONN) rather than the pinned place. This is the failure the integration
-    // catches: with the columns aligned (the test above) the origin is PINNED_CONN; with
-    // them misaligned it is NOT. The two assertions together prove the contract is real.
+    // No pin resolved → online-first (OTHER_CONN), not the pinned place. With an
+    // agent_instance assignee (the test above) the origin is PINNED_CONN; with a plain
+    // agent it is NOT. The two assertions together prove the contract is real.
     expect(store.data.daemonSession[0].originConnectionUuid).toBe(OTHER_CONN);
     expect(store.data.daemonSession[0].originConnectionUuid).not.toBe(PINNED_CONN);
   });
 
-  it("the field names the wake reads are exactly the field names claimTask writes (no codec drift between write and read)", async () => {
-    // A structural guard against silent rename of either side: the wake's task-pin read
-    // selects targetHost/targetCwd, and claimTask's write data sets targetHost/targetCwd.
-    // Drive the REAL write, then capture the REAL read's select clause.
-    seedTask();
-    await claimTask({
-      taskUuid: TASK,
-      companyUuid: COMPANY,
-      assigneeType: "agent",
-      assigneeUuid: AGENT,
+  it("the wake's task-pin read selects exactly assigneeType/assigneeUuid (the assignment shape the instance pin stores)", async () => {
+    // A structural guard against silent rename of the READER: the wake's task-pin read
+    // selects assigneeType/assigneeUuid (the polymorphic assignee pair that now carries
+    // the agent_instance pin), scoped by uuid + companyUuid. The legacy
+    // targetHost/targetCwd reader was removed by this task.
+    seedInstance(PIN_HOST, PIN_CWD);
+    seedTask({
+      status: "assigned",
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
       assignedByUuid: USER,
-      targetHost: PIN_HOST,
-      targetCwd: PIN_CWD,
     });
-    // claimTask wrote these exact keys onto the Task row.
-    const stored = store.data.task.find((t) => t.uuid === TASK)!;
-    expect(Object.keys(stored)).toEqual(expect.arrayContaining(["targetHost", "targetCwd"]));
 
     mockListConnectionsForAgent.mockResolvedValue([connView({ uuid: PINNED_CONN, host: PIN_HOST, cwd: PIN_CWD })]);
     await maybeCreateTurnForWakeNotification({
@@ -722,41 +743,42 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT field names cl
       entityUuid: TASK,
       action: "task_assigned",
     });
-    // The wake's read selected the SAME two columns (and scoped by uuid + companyUuid).
+    // The wake's read selected the polymorphic assignee pair (and scoped by uuid + companyUuid).
     const readArgs = hoisted.prismaFake.task.findFirst.mock.calls[0][0] as {
       where: Record<string, unknown>;
       select: Record<string, unknown>;
     };
-    expect(readArgs.select).toMatchObject({ targetHost: true, targetCwd: true });
+    expect(readArgs.select).toMatchObject({ assigneeType: true, assigneeUuid: true });
     expect(readArgs.where).toMatchObject({ uuid: TASK, companyUuid: COMPANY });
+    // And resolved that instance to its (host, cwd) place.
+    expect(hoisted.prismaFake.agentInstance.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ uuid: INSTANCE, companyUuid: COMPANY }) }),
+    );
   });
 });
 
 // ===========================================================================================
-// THREAD 3 — OFFLINE pin / fully-offline agent: NOT wakeable, NO durable queue. An offline
-// place never becomes the origin; the pin only ever wakes a matching ONLINE connection.
+// THREAD 3 — OFFLINE assignment (SOFT) pin / fully-offline agent. An offline assignment pin
+// is SOFT: it DEGRADES to online-first (R2 graceful un-pin), NOT notify-only (that policy is
+// reserved for a HARD mention pin). A fully-offline agent has nothing to degrade to → no turn.
 // ===========================================================================================
 
-describe("integration: an OFFLINE pin is NOT wakeable — no durable queue, the notification stands", () => {
-  it("a task_assigned wake pinned to an OFFLINE place creates NO turn — notify-only, NO silent re-route to the online-elsewhere instance (REVERSAL of #354)", async () => {
-    seedTask();
-
-    // WRITE: pin the assignment to (PIN_HOST, PIN_CWD) via the REAL claimTask.
-    await claimTask({
-      taskUuid: TASK,
-      companyUuid: COMPANY,
-      assigneeType: "agent",
-      assigneeUuid: AGENT,
+describe("integration: an OFFLINE assignment (SOFT) pin degrades to online-first; a fully-offline agent records a plain notification", () => {
+  it("a task_assigned wake pinned (agent_instance, SOFT) to an OFFLINE place DEGRADES to the online-elsewhere instance (R2 graceful un-pin)", async () => {
+    // The assignment is pinned to the (PIN_HOST, PIN_CWD) instance. This is a SOFT pin
+    // (an assignment, not a human-typed mention): when its instance is offline, R2 says it
+    // degrades to a plain agent and wakes the agent's online-first connection — NOT
+    // notify-only (that is reserved for a HARD mention pin, covered in the unit tests).
+    seedInstance(PIN_HOST, PIN_CWD);
+    seedTask({
+      status: "assigned",
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
       assignedByUuid: USER,
-      targetHost: PIN_HOST,
-      targetCwd: PIN_CWD,
     });
 
-    // The pinned place is OFFLINE; another instance is online elsewhere. The directed-
-    // delivery change (fix-pinned-wake-directed-delivery) REVERSES #354: a PINNED wake whose
-    // pin is offline must NOT fall back to the online-elsewhere instance — routing to a cwd
-    // the user did not choose is the defect being fixed. So NO turn is created; the
-    // already-recorded notification stands as the plain record.
+    // The pinned place is OFFLINE; another instance is online elsewhere. The SOFT pin
+    // degrades to the online-elsewhere connection.
     mockListConnectionsForAgent.mockResolvedValue([
       connView({ uuid: OTHER_CONN, host: "other-host", cwd: "/home/u/dev/other", effectiveStatus: "online" }),
       connView({ uuid: PINNED_CONN, host: PIN_HOST, cwd: PIN_CWD, status: "offline", effectiveStatus: "offline" }),
@@ -778,40 +800,21 @@ describe("integration: an OFFLINE pin is NOT wakeable — no durable queue, the 
       actorName: "Alice",
     });
 
-    // NO turn, NO session — the offline pin is notify-only with NO online-first fallback.
-    expect(store.data.daemonSessionTurn).toHaveLength(0);
-    expect(store.data.daemonSession).toHaveLength(0);
-    // The plain notification still stands.
+    // Graceful degrade: a turn IS created on the online-elsewhere connection (NOT notify-only).
+    expect(store.data.daemonSessionTurn).toHaveLength(1);
+    expect(store.data.daemonSession).toHaveLength(1);
+    expect(store.data.daemonSession[0].originConnectionUuid).toBe(OTHER_CONN);
     expect(store.data.notification).toHaveLength(1);
-    // A notify-only offline pin is normal, not an error.
     expect(mockLogger.error).not.toHaveBeenCalled();
-
-    // No pending turn is queued at EITHER place — there is no durable queue and no
-    // silent re-route to the online-elsewhere instance.
-    const pendingAtOffline = await getPendingTurnsForConnection({
-      companyUuid: COMPANY,
-      agentUuid: AGENT,
-      connectionUuid: PINNED_CONN,
-    });
-    expect(pendingAtOffline).toHaveLength(0);
-    const pendingAtOnlineElsewhere = await getPendingTurnsForConnection({
-      companyUuid: COMPANY,
-      agentUuid: AGENT,
-      connectionUuid: OTHER_CONN,
-    });
-    expect(pendingAtOnlineElsewhere).toHaveLength(0);
   });
 
-  it("a fully-offline agent records a PLAIN notification with NO turn (no durable queue)", async () => {
-    seedTask();
-    await claimTask({
-      taskUuid: TASK,
-      companyUuid: COMPANY,
-      assigneeType: "agent",
-      assigneeUuid: AGENT,
+  it("a fully-offline agent records a PLAIN notification with NO turn (none — nothing to degrade to, no durable queue)", async () => {
+    seedInstance(PIN_HOST, PIN_CWD);
+    seedTask({
+      status: "assigned",
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
       assignedByUuid: USER,
-      targetHost: PIN_HOST,
-      targetCwd: PIN_CWD,
     });
 
     // Agent fully offline; the pinned place exists (offline) but nothing is wakeable.
@@ -905,21 +908,23 @@ describe("integration: live ad-hoc send to an OFFLINE instance is rejected (409)
 // ===========================================================================================
 
 describe("integration: an un-pinned assignment behaves exactly as before this change", () => {
-  it("claimTask without a pin writes null columns, and the task_assigned wake stays online-first", async () => {
+  it("claimTask without an instance leaves the task a plain agent, and the task_assigned wake stays online-first", async () => {
     seedTask();
+    // The REAL claimTask drives an un-pinned assignment (add-agent-instance-addressing):
+    // with no instanceUuid it persists assigneeType="agent" and carries NO instance, so
+    // the wake resolves no pin and stays online-first (the additive-feature guarantee).
     const claimed = await claimTask({
       taskUuid: TASK,
       companyUuid: COMPANY,
       assigneeType: "agent",
       assigneeUuid: AGENT,
       assignedByUuid: USER,
-      // No targetHost/targetCwd → no pin.
+      // No instanceUuid → no pin.
     });
-    expect(claimed.targetHost).toBeNull();
-    expect(claimed.targetCwd).toBeNull();
+    expect(claimed.assignee?.type).toBe("agent");
     const stored = store.data.task.find((t) => t.uuid === TASK)!;
-    expect(stored.targetHost).toBeNull();
-    expect(stored.targetCwd).toBeNull();
+    // A plain agent assignment carries no instance — the wake finds no pin.
+    expect(stored.assigneeType).toBe("agent");
 
     // Online-first should pick the first online connection (no pin narrowing).
     mockListConnectionsForAgent.mockResolvedValue([

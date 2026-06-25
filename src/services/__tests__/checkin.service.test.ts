@@ -19,6 +19,11 @@ const { mockPrisma } = vi.hoisted(() => ({
     project: {
       findMany: vi.fn(),
     },
+    // buildIdeaTracker/buildTaskTracker → buildAssigneeMatch reads this; defaults
+    // to [] so the assignee OR-shape is unchanged for agents with no instances.
+    agentInstance: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -97,6 +102,7 @@ beforeEach(() => {
   mockPrisma.proposal.findMany.mockResolvedValue([]);
   mockPrisma.task.findMany.mockResolvedValue([]);
   mockPrisma.project.findMany.mockResolvedValue([]);
+  mockPrisma.agentInstance.findMany.mockResolvedValue([]);
   mockNotificationService.list.mockResolvedValue(emptyNotifications());
   mockNotificationService.markRead.mockResolvedValue({});
   mockNotificationService.emitAgentCheckin.mockReturnValue(undefined);

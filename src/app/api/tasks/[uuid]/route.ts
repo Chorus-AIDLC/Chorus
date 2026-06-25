@@ -118,7 +118,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
 
       // Non-users can only update the status of Tasks they have claimed
       if (!isUser(auth)) {
-        if (!isAssignee(auth, task.assigneeType, task.assigneeUuid)) {
+        if (!(await isAssignee(auth, task.assigneeType, task.assigneeUuid))) {
           return errors.permissionDenied("Only assignee can update status");
         }
       }

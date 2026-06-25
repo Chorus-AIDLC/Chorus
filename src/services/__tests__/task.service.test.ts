@@ -50,6 +50,12 @@ const mockPrisma = vi.hoisted(() => {
     sessionTaskCheckin: {
       findMany: vi.fn(),
     },
+    // AgentInstance lookups back the optional instance-override pin on claimTask
+    // (add-agent-instance-addressing). findFirst is company-scoped: a foreign /
+    // missing instance resolves to null and the claim is rejected.
+    agentInstance: {
+      findFirst: vi.fn(),
+    },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txProxy)),
   };
 });
@@ -66,6 +72,10 @@ const mockUuidResolver = vi.hoisted(() => ({
   formatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "u1", name: "Test User" }),
   batchGetActorNames: vi.fn().mockResolvedValue(new Map()),
   batchFormatCreatedBy: vi.fn().mockResolvedValue(new Map()),
+  // add-agent-instance-addressing: the batch path now also resolves the (host, cwd)
+  // place of any agent_instance assignee. Default to an empty map (no instance pins
+  // in these fixtures).
+  batchGetAssigneeInstanceInfo: vi.fn().mockResolvedValue(new Map()),
 }));
 vi.mock("@/lib/uuid-resolver", () => mockUuidResolver);
 
@@ -590,16 +600,19 @@ describe("claimTask", () => {
     expect(updateData.assignedByUuid).toBe("user-123");
   });
 
-  // cwd-addressable instances (T4): the durable (host, cwd) pin is persisted with
-  // the assignment so the autonomous wake (T5) can resolve it later.
-  it("persists the pinned (host, cwd) instance when provided", async () => {
+  // add-agent-instance-addressing: an optional instance override persists the
+  // pin as the TASK ROW's own agent_instance assignment (assigneeType=
+  // "agent_instance", assigneeUuid=<instance uuid>), overriding the passed-in
+  // agent assignee. The instance is validated company-scoped before the write.
+  const INSTANCE_UUID = "00000000-0000-0000-0000-0000000000aa";
+
+  it("persists an instance override as the task row's own agent_instance assignment", async () => {
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_UUID });
     const claimed = {
       ...rawTask({
         status: "assigned",
-        assigneeType: "agent",
-        assigneeUuid: "a1",
-        targetHost: "ci-runner-02",
-        targetCwd: "/home/u/dev/chorus",
+        assigneeType: "agent_instance",
+        assigneeUuid: INSTANCE_UUID,
       }),
       project: { uuid: PROJECT_UUID, name: "Test Project" },
     };
@@ -610,47 +623,48 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a1",
-      targetHost: "ci-runner-02",
-      targetCwd: "/home/u/dev/chorus",
+      instanceUuid: INSTANCE_UUID,
     });
 
+    // The instance is validated against the company before persisting.
+    expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID },
+      }),
+    );
     const updateData = mockPrisma.task.update.mock.calls[0][0].data;
-    expect(updateData.targetHost).toBe("ci-runner-02");
-    expect(updateData.targetCwd).toBe("/home/u/dev/chorus");
-    // The pin is surfaced on the formatted response too.
-    expect(result.targetHost).toBe("ci-runner-02");
-    expect(result.targetCwd).toBe("/home/u/dev/chorus");
+    // The polymorphic assignee is promoted to the instance — NOT the plain agent.
+    expect(updateData.assigneeType).toBe("agent_instance");
+    expect(updateData.assigneeUuid).toBe(INSTANCE_UUID);
+    expect(result.assignee?.type).toBeUndefined();
+    // No targetHost/targetCwd are ever written (the columns are gone from the service).
+    expect(updateData).not.toHaveProperty("targetHost");
+    expect(updateData).not.toHaveProperty("targetCwd");
   });
 
-  // An offline pin is a valid durable intent — the host "" / cwd null sentinels
-  // (unknown-host / unknown-path instance) must round-trip unchanged.
-  it("preserves the unknown-host (\"\") / unknown-path (null) pin sentinels", async () => {
-    const claimed = {
-      ...rawTask({ status: "assigned", targetHost: "", targetCwd: null }),
-      project: { uuid: PROJECT_UUID, name: "Test Project" },
-    };
-    mockPrisma.task.update.mockResolvedValue(claimed);
+  it("rejects an instance override for a foreign / missing company instance", async () => {
+    // Company-scoped findFirst returns null for an instance of another company.
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
 
-    await claimTask({
-      taskUuid: TASK_UUID,
-      companyUuid: COMPANY_UUID,
-      assigneeType: "agent",
-      assigneeUuid: "a1",
-      targetHost: "",
-      targetCwd: null,
-    });
+    await expect(
+      claimTask({
+        taskUuid: TASK_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: "a1",
+        instanceUuid: "instance-of-another-company",
+      }),
+    ).rejects.toThrow("Agent instance not found");
 
-    const updateData = mockPrisma.task.update.mock.calls[0][0].data;
-    // "" host is preserved (NOT coerced to null) — it denotes a real instance.
-    expect(updateData.targetHost).toBe("");
-    expect(updateData.targetCwd).toBeNull();
+    // The task row is never touched when the instance validation fails.
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
   });
 
-  // RE-assigning without a pin must CLEAR a stale pin from a prior assignment
-  // rather than silently inheriting it: undefined → null on both columns.
-  it("clears a prior pin when re-assigned with no pin (undefined → null)", async () => {
+  // No override → the task stays a plain agent assignment (default). Inheritance
+  // from the root idea is resolved later by the wake path (T6), not here.
+  it("persists a plain agent assignment when no instance override is given", async () => {
     const claimed = {
-      ...rawTask({ status: "assigned", targetHost: null, targetCwd: null }),
+      ...rawTask({ status: "assigned", assigneeType: "agent", assigneeUuid: "a2" }),
       project: { uuid: PROJECT_UUID, name: "Test Project" },
     };
     mockPrisma.task.update.mockResolvedValue(claimed);
@@ -660,12 +674,16 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a2",
-      // no targetHost / targetCwd
+      // no instanceUuid
     });
 
+    // No instance lookup happens on the un-pinned path.
+    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
     const updateData = mockPrisma.task.update.mock.calls[0][0].data;
-    expect(updateData.targetHost).toBeNull();
-    expect(updateData.targetCwd).toBeNull();
+    expect(updateData.assigneeType).toBe("agent");
+    expect(updateData.assigneeUuid).toBe("a2");
+    expect(updateData).not.toHaveProperty("targetHost");
+    expect(updateData).not.toHaveProperty("targetCwd");
   });
 });
 
@@ -691,13 +709,15 @@ describe("releaseTask", () => {
           assigneeUuid: null,
           assignedAt: null,
           assignedByUuid: null,
-          // Releasing clears the pin with the assignment (cwd-addressable
-          // instances, T4) so a re-assignment picks a fresh instance.
-          targetHost: null,
-          targetCwd: null,
         }),
       }),
     );
+    // The release no longer writes targetHost/targetCwd — clearing the assignee
+    // (assigneeType/assigneeUuid → null) is the sole un-pin (the columns are gone
+    // from the service; add-agent-instance-addressing).
+    const releaseData = mockPrisma.task.update.mock.calls[0][0].data;
+    expect(releaseData).not.toHaveProperty("targetHost");
+    expect(releaseData).not.toHaveProperty("targetCwd");
   });
 
   it("throws NotClaimedError when task is not assigned (Prisma P2025)", async () => {

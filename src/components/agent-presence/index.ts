@@ -36,9 +36,14 @@ export {
 } from "./instance-group";
 export {
   InstancePicker,
+  filterOnlineInstances,
   type InstancePickerProps,
   type InstanceCandidate,
 } from "./instance-picker";
+export {
+  AssigneeInstanceLine,
+  type AssigneeInstanceLineProps,
+} from "./assignee-instance-line";
 export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";

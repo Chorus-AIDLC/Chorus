@@ -7,6 +7,7 @@ import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { listConnectionsForAgent } from "@/services/daemon-connection.service";
 import { createActivity } from "@/services/activity.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
+import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
 
 export async function claimTaskAction(taskUuid: string) {
@@ -57,15 +58,16 @@ export async function claimTaskAction(taskUuid: string) {
   }
 }
 
-// Claim task to a specific agent, optionally pinning a (host, cwd) daemon
-// instance for the autonomous wake (cwd-addressable instances, T4). The pin is a
-// durable "place" — an offline instance is a valid pin (the turn queues and
-// backfills on reconnect), so this path does NOT gate on the instance being
-// online. `targetHost`/`targetCwd` are both omitted for an un-pinned assignment.
+// Claim task to a specific agent, optionally pinning a DURABLE AgentInstance
+// (the (agent, host, cwd) place) for the autonomous wake. When `instanceUuid` is
+// given the row is persisted as assigneeType="agent_instance"/assigneeUuid=<that
+// uuid> (validated company-scoped in claimTask); omitting it assigns the plain
+// agent. The InstancePicker only offers ONLINE instances, so a pin is always to a
+// reachable place; a fully-offline agent shows no picker and assigns plainly.
 export async function claimTaskToAgentAction(
   taskUuid: string,
   agentUuid: string,
-  pin?: { targetHost: string | null; targetCwd: string | null },
+  instanceUuid?: string | null,
 ) {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
@@ -88,8 +90,11 @@ export async function claimTaskToAgentAction(
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
-      targetHost: pin?.targetHost ?? null,
-      targetCwd: pin?.targetCwd ?? null,
+      // Thread the durable AgentInstance pin. claimTask validates it belongs to
+      // the company and promotes the row to assigneeType="agent_instance"; with
+      // no instanceUuid the assignment stays a plain agent (also the path that
+      // reverts a prior instance pin back to the plain agent on re-assignment).
+      instanceUuid: instanceUuid ?? undefined,
     });
 
     // Record activity
@@ -104,11 +109,9 @@ export async function claimTaskToAgentAction(
       value: {
         assigneeType: "agent",
         assigneeUuid: agentUuid,
-        // Record the pin in the activity value so the timeline reflects which
-        // (host, cwd) place was chosen (omitted when un-pinned).
-        ...(pin?.targetCwd !== undefined || pin?.targetHost !== undefined
-          ? { targetHost: pin?.targetHost ?? null, targetCwd: pin?.targetCwd ?? null }
-          : {}),
+        // Record the durable instance pin in the activity value so the timeline
+        // reflects which place was chosen (omitted when un-pinned).
+        ...(instanceUuid ? { instanceUuid } : {}),
       },
     });
 
@@ -424,27 +427,19 @@ export async function getDeveloperAgentsAction() {
   }
 }
 
-// One selectable daemon instance for the assign-task cwd picker (cwd-addressable
-// instances) — the structural subset the shared InstancePicker renders. Both
-// online AND offline instances are returned here (each carries effectiveStatus);
-// the modal filters to ONLINE before showing the picker, since an offline
-// instance is not a wake target. A fully-offline agent yields no online
-// instances → no picker → the task is assigned plainly with no pin.
-export interface AgentInstanceCandidate {
-  connectionUuid: string;
-  host: string;
-  cwd: string | null;
-  effectiveStatus: "online" | "offline";
-}
-
 // Get one agent's daemon instances (online + offline, each with effectiveStatus)
 // so the assign-task modal can let the owner pin which ONLINE (host, cwd) place
 // runs the task. The modal filters to online before rendering the picker.
 // Company-scoped read; returns [] for any non-user caller or on error (the picker
 // then shows its own "no instances" empty state — never a silent throw).
+//
+// Each candidate carries the durable `agentInstanceUuid` (the stable pin pointer
+// the modal threads into claimTaskToAgentAction), alongside the connectionUuid
+// (the picker's selection key). The two shapes that previously diverged
+// (InstanceCandidate / AgentInstanceCandidate) are now the single InstanceCandidate.
 export async function getAgentInstancesAction(
   agentUuid: string,
-): Promise<{ instances: AgentInstanceCandidate[] }> {
+): Promise<{ instances: InstanceCandidate[] }> {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
     return { instances: [] };
@@ -455,6 +450,7 @@ export async function getAgentInstancesAction(
     return {
       instances: connections.map((c) => ({
         connectionUuid: c.uuid,
+        agentInstanceUuid: c.agentInstanceUuid,
         host: c.host,
         cwd: c.cwd,
         effectiveStatus: c.effectiveStatus,

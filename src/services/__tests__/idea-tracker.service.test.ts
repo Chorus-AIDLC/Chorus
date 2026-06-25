@@ -7,6 +7,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     proposal: { findMany: vi.fn() },
     task: { findMany: vi.fn() },
     project: { findMany: vi.fn() },
+    agentInstance: { findMany: vi.fn() },
   },
 }));
 
@@ -81,6 +82,9 @@ beforeEach(() => {
   mockPrisma.proposal.findMany.mockResolvedValue([]);
   mockPrisma.task.findMany.mockResolvedValue([]);
   mockPrisma.project.findMany.mockResolvedValue([]);
+  // By default the agent owns no instances → buildAssigneeMatch omits the
+  // agent_instance arm, so the existing OR-shape assertions stay unchanged.
+  mockPrisma.agentInstance.findMany.mockResolvedValue([]);
 });
 
 // ============================================================
@@ -132,6 +136,48 @@ describe("buildIdeaTracker — assignee conditions", () => {
         }),
       }),
     );
+  });
+
+  it("includes an agent_instance arm (instance uuids) when the agent owns instances, alongside the owner-as-user arm", async () => {
+    // The canonical bug: an agent_instance-assigned idea was silently dropped
+    // because the flat agent-equality OR could never match its instance uuid.
+    mockPrisma.agentInstance.findMany.mockResolvedValue([
+      { uuid: "inst-A" },
+      { uuid: "inst-B" },
+    ]);
+
+    await buildIdeaTracker(agentAuth);
+
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { assigneeType: "agent", assigneeUuid: AGENT_UUID },
+            { assigneeType: "user", assigneeUuid: OWNER_UUID },
+            { assigneeType: "agent_instance", assigneeUuid: { in: ["inst-A", "inst-B"] } },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("returns an agent_instance-assigned idea AND an owner-as-assignee user idea (neither dropped)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([{ uuid: "inst-A" }]);
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i_instance", PROJECT_A, "open", {
+        assigneeType: "agent_instance",
+        assigneeUuid: "inst-A",
+      }),
+      makeIdea("i_owner", PROJECT_A, "open", {
+        assigneeType: "user",
+        assigneeUuid: OWNER_UUID,
+      }),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    const ids = tracker[PROJECT_A].ideas.map((i) => i.uuid).sort();
+    expect(ids).toEqual(["i_instance", "i_owner"]);
   });
 });
 
@@ -452,6 +498,47 @@ describe("buildTaskTracker — assignee conditions", () => {
         }),
       }),
     );
+  });
+
+  it("includes an agent_instance arm (instance uuids) when the agent owns instances", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([{ uuid: "inst-T" }]);
+
+    await buildTaskTracker(agentAuth);
+
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { assigneeType: "agent", assigneeUuid: AGENT_UUID },
+            { assigneeType: "user", assigneeUuid: OWNER_UUID },
+            { assigneeType: "agent_instance", assigneeUuid: { in: ["inst-T"] } },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("returns an agent_instance-assigned task AND an owner-as-assignee user task (neither dropped)", async () => {
+    mockPrisma.agentInstance.findMany.mockResolvedValue([{ uuid: "inst-T" }]);
+    const makeT = (uuid: string, over: Record<string, unknown>) => ({
+      uuid,
+      title: `Task ${uuid}`,
+      status: "in_progress",
+      priority: "high",
+      assignedAt: now,
+      projectUuid: PROJECT_A,
+      project: { uuid: PROJECT_A, name: "A" },
+      acceptanceCriteriaItems: [],
+      ...over,
+    });
+    mockPrisma.task.findMany.mockResolvedValue([
+      makeT("t_instance", { assigneeType: "agent_instance", assigneeUuid: "inst-T" }),
+      makeT("t_owner", { assigneeType: "user", assigneeUuid: OWNER_UUID }),
+    ]);
+
+    const tracker = await buildTaskTracker(agentAuth);
+    const ids = tracker[PROJECT_A].tasks.map((t) => t.uuid).sort();
+    expect(ids).toEqual(["t_instance", "t_owner"]);
   });
 });
 

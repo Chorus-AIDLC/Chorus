@@ -22,6 +22,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AssigneeInstanceLine } from "@/components/agent-presence";
+import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { UnifiedComments } from "@/components/unified-comments";
 import { getIdeaActivitiesAction } from "./[ideaUuid]/activity-actions";
 import { updateIdeaAction, deleteIdeaAction } from "./actions";
@@ -51,6 +53,9 @@ interface Idea {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place +
+    // owning agent uuid (for rendering the instance and the ownership check).
+    instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
   createdAt: string;
 }
@@ -213,7 +218,10 @@ export function IdeaDetailPanel({
   const canSkipElaboration =
     idea.status === "elaborating" &&
     (!idea.elaborationStatus || idea.elaborationStatus !== "resolved") &&
-    (idea.assignee?.uuid === currentUserUuid);
+    // Ownership fixed (add-agent-instance-addressing): compare type AND uuid via
+    // the shared helper, not uuid alone. A user-facing panel: an agent_instance
+    // assignment (instance uuid) is correctly never "mine" here.
+    isAssignedToActor(idea.assignee ?? null, { type: "user", uuid: currentUserUuid });
   const canEdit = idea.status !== "elaborated";
 
   useEffect(() => {
@@ -446,23 +454,32 @@ export function IdeaDetailPanel({
                     {idea.assignee ? (
                       <>
                         <Avatar className="h-7 w-7">
-                          <AvatarFallback className={idea.assignee.type === "agent" ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
-                            {idea.assignee.type === "agent" ? (
+                          <AvatarFallback className={isAgentAssignee(idea.assignee) ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
+                            {isAgentAssignee(idea.assignee) ? (
                               <Bot className="h-3.5 w-3.5" />
                             ) : (
                               idea.assignee.name.charAt(0).toUpperCase()
                             )}
                           </AvatarFallback>
                         </Avatar>
-                        <div>
+                        <div className="min-w-0">
                           <div className="text-sm font-medium text-[#2C2C2C]">
                             {idea.assignee.name}
                           </div>
                           <div className="text-xs text-[#6B6B6B]">
-                            {idea.assignee.type === "agent"
+                            {isAgentAssignee(idea.assignee)
                               ? `${t("common.agent")} • ${idea.assignee.assignedAt ? formatDateTime(idea.assignee.assignedAt) : ""}`
                               : t("common.user")}
                           </div>
+                          {/* Pinned (host, cwd) place for an agent_instance assignee. */}
+                          {idea.assignee.type === "agent_instance" && idea.assignee.instance && (
+                            <div className="mt-1">
+                              <AssigneeInstanceLine
+                                cwd={idea.assignee.instance.cwd}
+                                host={idea.assignee.instance.host}
+                              />
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : (

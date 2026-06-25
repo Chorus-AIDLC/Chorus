@@ -283,10 +283,14 @@ Dependencies are validated: same project, no self-dependency, no cycles (DFS det
 
 ```
 chorus_pm_assign_task({ taskUuid: "<task-uuid>", agentUuid: "<developer-agent-uuid>" })
+
+# Optional: pin the task to a specific (agent, host, cwd) AgentInstance
+chorus_pm_assign_task({ taskUuid: "<task-uuid>", agentUuid: "<developer-agent-uuid>", instanceUuid: "<agent-instance-uuid>" })
 ```
 
 - Task must be `open` or `assigned`
 - Target agent must have `task: ["write"]` permission
+- Pass `instanceUuid` to pin the task to a specific online instance (assigns as `agent_instance`); omit it for a plain `agent` assignment that inherits the root idea's pinned instance at wake time
 
 ---
 
