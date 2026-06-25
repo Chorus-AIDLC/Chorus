@@ -19,7 +19,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   }
 
   const query = parseQuery(request);
-  const { page, pageSize, skip, take } = parsePagination(request);
 
   // Validate required parameters
   if (!query.targetType || !query.targetUuid) {
@@ -35,6 +34,24 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     });
   }
 
+  // Cursor mode: opt-in when `cursor` and/or `limit` is present. Returns a
+  // newest-first page plus continuation metadata for the comment component's
+  // infinite scroll. Absent both, fall through to the unchanged offset path.
+  if (query.cursor !== undefined || query.limit !== undefined) {
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit || "10", 10)));
+    const { comments, total, nextCursor, hasMore } =
+      await commentService.listComments({
+        companyUuid: auth.companyUuid,
+        targetType: query.targetType as TargetType,
+        targetUuid: query.targetUuid,
+        cursor: query.cursor ?? null,
+        limit,
+      });
+
+    return success({ comments, total, nextCursor, hasMore });
+  }
+
+  const { page, pageSize, skip, take } = parsePagination(request);
   const { comments, total } = await commentService.listComments({
     companyUuid: auth.companyUuid,
     targetType: query.targetType as TargetType,
