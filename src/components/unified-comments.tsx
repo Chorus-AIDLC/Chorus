@@ -387,7 +387,15 @@ export function UnifiedComments({
           {t("comments.noComments")}
         </p>
       ) : (
-        <div className="max-h-[420px] overflow-y-auto">
+        // No fixed-height inner scroll container: the comment list flows in the
+        // host surface's own scroll area (the idea panel's ScrollArea, the proposal
+        // discussion drawer's overflow-y-auto body). A nested `max-h + overflow-y`
+        // here created a scroll-within-scroll trap on short mobile viewports — the
+        // tail (last comment + "no more" footer) ended up below the fold and was
+        // unreachable without separately scrolling the outer panel. The
+        // IntersectionObserver sentinel still fires against the nearest scrollable
+        // ancestor, so infinite scroll keeps working.
+        <div>
           {comments.map((c) => (
             <CommentItem
               key={c.uuid}
