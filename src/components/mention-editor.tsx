@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { buildMentionMarker, decodePinSuffix } from "@/lib/mention-format";
 import {
@@ -525,6 +526,44 @@ export function MentionInstancePickerDialog({
   );
 }
 
+// ── Confirm handler (extracted + pure, for testability) ────────────────────
+//
+// Runs when the owner taps "Pin instance" in the secondary picker. The ORDER here
+// is the fix for "tapped Pin but the modal didn't close" on mobile: it closes the
+// modal FIRST (always), then performs the mention insert deferred + guarded so a
+// failing insert can never leave the dialog stuck open. See the call site comment.
+interface PendingPick {
+  item: Mentionable;
+  onlineInstances: InstanceCandidate[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  command: (attrs: any) => void;
+}
+export function handleInstancePickConfirm(
+  pick: PendingPick | null,
+  instance: InstanceCandidate,
+  deps: {
+    close: () => void;
+    insert: (pick: PendingPick, instance: InstanceCandidate) => void;
+    // Schedule the deferred insert (rAF in the app; synchronous in tests).
+    defer: (fn: () => void) => void;
+    focusEditor: () => void;
+    onError: (err: unknown) => void;
+  },
+): void {
+  // 1. Close the modal unconditionally, before anything that can throw.
+  deps.close();
+  if (!pick) return;
+  // 2. Insert deferred + guarded — never let a failed insert resurface as a stuck modal.
+  deps.defer(() => {
+    try {
+      deps.focusEditor();
+      deps.insert(pick, instance);
+    } catch (err) {
+      deps.onError(err);
+    }
+  });
+}
+
 // ── MentionEditor Component ────────────────────────────────────
 
 export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
@@ -874,10 +913,24 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           agentName={pendingPick?.item.name ?? ""}
           instances={pendingPick?.onlineInstances ?? []}
           onConfirm={(instance) => {
-            if (pendingPick) {
-              insertMention(pendingPick.item, pendingPick.command, instance);
-            }
-            setPendingPick(null);
+            // Close the modal FIRST and unconditionally, then insert deferred +
+            // guarded. The insert runs the Tiptap suggestion `command` captured when
+            // the picker opened; by now the editor has blurred (the Radix dialog
+            // stole focus) so that command can throw or no-op — especially on mobile
+            // Safari. If the insert ran before the close and threw, the dialog would
+            // stay open after a successful tap (looks like "Pin does nothing").
+            // handleInstancePickConfirm enforces close-first + guarded-deferred-insert.
+            handleInstancePickConfirm(pendingPick, instance, {
+              close: () => setPendingPick(null),
+              insert: (pick, inst) => insertMention(pick.item, pick.command, inst),
+              defer: (fn) => requestAnimationFrame(fn),
+              focusEditor: () => editor?.commands.focus(),
+              onError: (err) =>
+                clientLogger.error(
+                  "MentionEditor: cwd-pinned mention insert failed",
+                  err,
+                ),
+            });
           }}
           onCancel={() => setPendingPick(null)}
         />
