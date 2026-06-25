@@ -435,7 +435,17 @@ export function createSuggestionPopupRenderer(
 // selection state; Confirm calls onConfirm with the chosen instance, Cancel
 // discards (inserting nothing — the user can re-type the mention). Matches
 // design.pen "@mention cwd Picker".
-function MentionInstancePickerDialog({
+//
+// Mobile-safe layout (fix-mention-cwd-picker-mobile-overflow): the dialog is
+// capped to `max-h-[85svh]` — a DYNAMIC small-viewport unit that shrinks with the
+// mobile soft keyboard / URL bar, unlike a static `vh` that tracks only the layout
+// viewport. The body is a flex column: the header and footer (Cancel / Pin) are
+// `shrink-0` so they stay visible and tappable, and ONLY the instance list scrolls
+// (`min-h-0 flex-1 overflow-y-auto`). Without this, a tall instance list on a
+// keyboard-shortened viewport pushed the Pin button off-screen with no way to reach
+// it (Radix centers the content against the layout viewport, ignoring the keyboard).
+// Exported for the unit test that pins this layout contract.
+export function MentionInstancePickerDialog({
   open,
   agentName,
   instances,
@@ -465,20 +475,26 @@ function MentionInstancePickerDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85svh] flex-col gap-0 sm:max-w-md">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
             {t("subtitle", { name: agentName, count: instances.length, hosts: distinctHosts })}
           </DialogDescription>
         </DialogHeader>
-        <InstancePicker
-          instances={instances}
-          selectedConnectionUuid={selected?.connectionUuid ?? null}
-          onSelect={setSelected}
-          ariaLabel={t("title")}
-        />
-        <DialogFooter>
+        {/* The ONLY scroll region — keeps the header + footer pinned and reachable
+            even when the instance list is tall or the soft keyboard shrinks the
+            viewport. `min-h-0` lets this flex child shrink below its content height
+            so it actually scrolls instead of pushing the footer off-screen. */}
+        <div className="min-h-0 flex-1 overflow-y-auto py-3">
+          <InstancePicker
+            instances={instances}
+            selectedConnectionUuid={selected?.connectionUuid ?? null}
+            onSelect={setSelected}
+            ariaLabel={t("title")}
+          />
+        </div>
+        <DialogFooter className="shrink-0">
           <Button variant="ghost" onClick={onCancel}>
             {t("cancel")}
           </Button>
