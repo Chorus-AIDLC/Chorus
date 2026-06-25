@@ -36,7 +36,7 @@ export function DiscussionDrawer({
     try {
       const result = await getCommentsAction("proposal", proposalUuid);
       if (!result.success) return;
-      setCount(result.comments.length);
+      setCount(result.total);
     } catch {
       // Ignore — badge stays at last known count
     }

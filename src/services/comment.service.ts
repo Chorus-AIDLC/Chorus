@@ -17,8 +17,70 @@ export interface CommentListParams {
   companyUuid: string;
   targetType: TargetType;
   targetUuid: string;
-  skip: number;
-  take: number;
+  // Offset mode (existing — used by the MCP `chorus_get_comments` tool and the
+  // offset REST path): both present, oldest-first.
+  skip?: number;
+  take?: number;
+  // Cursor mode (additive): selected by the presence of `limit`. `cursor` is a
+  // comment uuid; the page returned is strictly older than it (newest-first).
+  cursor?: string | null;
+  limit?: number;
+}
+
+// Cursor-mode result extends the offset shape with continuation metadata. Offset
+// mode keeps returning exactly `{ comments, total }` (byte-for-byte unchanged).
+export interface CommentListResult {
+  comments: CommentResponse[];
+  total: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+}
+
+// Shared column projection so cursor and offset modes return identical row shapes.
+const COMMENT_SELECT = {
+  uuid: true,
+  targetType: true,
+  targetUuid: true,
+  content: true,
+  authorType: true,
+  authorUuid: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+type RawComment = {
+  uuid: string;
+  targetType: string;
+  targetUuid: string;
+  content: string;
+  authorType: string;
+  authorUuid: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+// Map raw Comment rows to the response format, resolving author display names.
+async function toCommentResponses(
+  rawComments: RawComment[]
+): Promise<CommentResponse[]> {
+  return Promise.all(
+    rawComments.map(async (c) => {
+      const authorName = await getActorName(c.authorType, c.authorUuid);
+      return {
+        uuid: c.uuid,
+        targetType: c.targetType,
+        targetUuid: c.targetUuid,
+        content: c.content,
+        author: {
+          type: c.authorType,
+          uuid: c.authorUuid,
+          name: authorName ?? "Unknown",
+        },
+        createdAt: c.createdAt.toISOString(),
+        updatedAt: c.updatedAt.toISOString(),
+      };
+    })
+  );
 }
 
 export interface CommentCreateParams {
@@ -45,20 +107,34 @@ export interface CommentResponse {
   updatedAt: string;
 }
 
-// List comments
-export async function listComments({
-  companyUuid,
-  targetType,
-  targetUuid,
-  skip,
-  take,
-}: CommentListParams): Promise<{ comments: CommentResponse[]; total: number }> {
+// List comments.
+//
+// Two retrieval modes, selected by the presence of `limit`:
+//   - Offset mode (skip/take): oldest-first (`createdAt asc`), returns
+//     `{ comments, total }`. Used by the MCP `chorus_get_comments` tool and the
+//     offset REST path — its behavior and ordering MUST stay unchanged.
+//   - Cursor mode (limit, optional cursor): newest-first (`createdAt desc, id desc`),
+//     returns `{ comments, total, nextCursor, hasMore }`. The page is strictly older
+//     than the `cursor` comment (a comment uuid); an unresolvable cursor degrades to
+//     the newest page. Used for the comment component's infinite scroll.
+export async function listComments(
+  params: CommentListParams
+): Promise<CommentListResult> {
+  const { companyUuid, targetType, targetUuid, limit } = params;
+
   // Validate target exists
   const exists = await validateTargetExists(targetType, targetUuid, companyUuid);
   if (!exists) {
-    return { comments: [], total: 0 };
+    return limit !== undefined
+      ? { comments: [], total: 0, nextCursor: null, hasMore: false }
+      : { comments: [], total: 0 };
   }
 
+  if (limit !== undefined) {
+    return listCommentsCursor(params, limit);
+  }
+
+  const { skip, take } = params;
   const where = { companyUuid, targetType, targetUuid };
 
   const [rawComments, total] = await Promise.all([
@@ -67,41 +143,54 @@ export async function listComments({
       skip,
       take,
       orderBy: { createdAt: "asc" },
-      select: {
-        uuid: true,
-        targetType: true,
-        targetUuid: true,
-        content: true,
-        authorType: true,
-        authorUuid: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: COMMENT_SELECT,
     }),
     prisma.comment.count({ where }),
   ]);
 
-  // Convert to response format
-  const comments: CommentResponse[] = await Promise.all(
-    rawComments.map(async (c) => {
-      const authorName = await getActorName(c.authorType, c.authorUuid);
-      return {
-        uuid: c.uuid,
-        targetType: c.targetType,
-        targetUuid: c.targetUuid,
-        content: c.content,
-        author: {
-          type: c.authorType,
-          uuid: c.authorUuid,
-          name: authorName ?? "Unknown",
-        },
-        createdAt: c.createdAt.toISOString(),
-        updatedAt: c.updatedAt.toISOString(),
-      };
-    })
-  );
-
+  const comments = await toCommentResponses(rawComments);
   return { comments, total };
+}
+
+// Cursor-mode page: newest-first, strictly older than `cursor`. Fetches `limit + 1`
+// rows to detect whether more remain; the cursor row itself is excluded via Prisma's
+// `skip: 1`. An unresolvable cursor (not a comment of this target) is ignored so a
+// stale client cursor degrades to the newest page instead of throwing.
+async function listCommentsCursor(
+  params: CommentListParams,
+  limit: number
+): Promise<CommentListResult> {
+  const { companyUuid, targetType, targetUuid, cursor } = params;
+  const where = { companyUuid, targetType, targetUuid };
+
+  // A cursor is usable only if it resolves to a comment of THIS target. Otherwise
+  // ignore it (newest page). `findFirst` scoped to `where` enforces both checks.
+  let useCursor = false;
+  if (cursor) {
+    const cursorRow = await prisma.comment.findFirst({
+      where: { ...where, uuid: cursor },
+      select: { uuid: true },
+    });
+    useCursor = cursorRow !== null;
+  }
+
+  const [rawComments, total] = await Promise.all([
+    prisma.comment.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      ...(useCursor ? { cursor: { uuid: cursor as string }, skip: 1 } : {}),
+      select: COMMENT_SELECT,
+    }),
+    prisma.comment.count({ where }),
+  ]);
+
+  const hasMore = rawComments.length > limit;
+  const pageRows = hasMore ? rawComments.slice(0, limit) : rawComments;
+  const nextCursor = hasMore ? pageRows[pageRows.length - 1].uuid : null;
+
+  const comments = await toCommentResponses(pageRows);
+  return { comments, total, nextCursor, hasMore };
 }
 
 // Create comment

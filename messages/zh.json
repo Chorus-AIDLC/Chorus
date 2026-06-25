@@ -105,7 +105,9 @@
     "showMore": "展开更多",
     "showLess": "收起",
     "loadError": "加载评论失败",
-    "retry": "重试"
+    "retry": "重试",
+    "loadingMore": "加载更多...",
+    "noMoreComments": "没有更多评论"
   },
   "mentions": {
     "noResults": "无结果",

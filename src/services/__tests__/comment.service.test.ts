@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockPrisma = vi.hoisted(() => ({
   comment: {
     create: vi.fn(),
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
     groupBy: vi.fn(),
@@ -603,6 +604,194 @@ describe("listComments", () => {
     });
 
     expect(result.comments[0].author.name).toBe("Unknown");
+  });
+
+  it("offset mode is unchanged: oldest-first orderBy, {comments,total} shape, no cursor fields", async () => {
+    mockPrisma.comment.findMany.mockResolvedValue([makeCommentRecord()]);
+    mockPrisma.comment.count.mockResolvedValue(1);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result).toEqual({
+      comments: expect.any(Array),
+      total: 1,
+    });
+    expect(result).not.toHaveProperty("nextCursor");
+    expect(result).not.toHaveProperty("hasMore");
+    expect(mockPrisma.comment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { createdAt: "asc" }, skip: 0, take: 20 })
+    );
+    // Offset mode must not issue a cursor-resolution lookup.
+    expect(mockPrisma.comment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("offset mode returns empty cursor-less result when target missing", async () => {
+    mockValidateTargetExists.mockResolvedValue(false);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid: "nonexistent",
+      skip: 0,
+      take: 20,
+    });
+
+    expect(result).toEqual({ comments: [], total: 0 });
+  });
+});
+
+// ===== listComments — cursor mode =====
+describe("listComments (cursor mode)", () => {
+  it("first page (no cursor): newest-first, take = limit + 1, no cursor lookup", async () => {
+    const records = [
+      makeCommentRecord({ uuid: "c-newest" }),
+      makeCommentRecord({ uuid: "c-2" }),
+    ];
+    mockPrisma.comment.findMany.mockResolvedValue(records);
+    mockPrisma.comment.count.mockResolvedValue(2);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      limit: 10,
+    });
+
+    expect(result.comments.map((c) => c.uuid)).toEqual(["c-newest", "c-2"]);
+    expect(result.total).toBe(2);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeNull();
+    // No cursor → no resolution lookup; newest-first ordering; take = limit + 1.
+    expect(mockPrisma.comment.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.comment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 11,
+      })
+    );
+    // No cursor/skip on the first page.
+    const findManyArgs = mockPrisma.comment.findMany.mock.calls[0][0];
+    expect(findManyArgs).not.toHaveProperty("cursor");
+    expect(findManyArgs).not.toHaveProperty("skip");
+  });
+
+  it("hasMore/nextCursor: limit+1 rows → hasMore true, extra row dropped, nextCursor = last KEPT uuid", async () => {
+    // limit 2 → fetch 3; the 3rd row signals "more" and is dropped.
+    const records = [
+      makeCommentRecord({ uuid: "c1" }),
+      makeCommentRecord({ uuid: "c2" }),
+      makeCommentRecord({ uuid: "c3-extra" }),
+    ];
+    mockPrisma.comment.findMany.mockResolvedValue(records);
+    mockPrisma.comment.count.mockResolvedValue(5);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      limit: 2,
+    });
+
+    expect(result.comments.map((c) => c.uuid)).toEqual(["c1", "c2"]);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toBe("c2");
+    expect(result.total).toBe(5);
+  });
+
+  it("cursor page: excludes the cursor row via cursor+skip:1, returns strictly older", async () => {
+    mockPrisma.comment.findFirst.mockResolvedValue({ uuid: "cursor-uuid" });
+    mockPrisma.comment.findMany.mockResolvedValue([
+      makeCommentRecord({ uuid: "older-1" }),
+    ]);
+    mockPrisma.comment.count.mockResolvedValue(3);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      cursor: "cursor-uuid",
+      limit: 10,
+    });
+
+    expect(result.comments.map((c) => c.uuid)).toEqual(["older-1"]);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeNull();
+    // Cursor resolved against THIS target before use.
+    expect(mockPrisma.comment.findFirst).toHaveBeenCalledWith({
+      where: { companyUuid, targetType: "task", targetUuid, uuid: "cursor-uuid" },
+      select: { uuid: true },
+    });
+    expect(mockPrisma.comment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursor: { uuid: "cursor-uuid" },
+        skip: 1,
+        take: 11,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      })
+    );
+  });
+
+  it("stale/unknown cursor falls back to newest page (no cursor/skip), does not throw", async () => {
+    // Cursor does not resolve to a comment of this target.
+    mockPrisma.comment.findFirst.mockResolvedValue(null);
+    mockPrisma.comment.findMany.mockResolvedValue([
+      makeCommentRecord({ uuid: "c-newest" }),
+    ]);
+    mockPrisma.comment.count.mockResolvedValue(1);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      cursor: "stale-uuid",
+      limit: 10,
+    });
+
+    expect(result.comments.map((c) => c.uuid)).toEqual(["c-newest"]);
+    expect(result.hasMore).toBe(false);
+    const findManyArgs = mockPrisma.comment.findMany.mock.calls[0][0];
+    expect(findManyArgs).not.toHaveProperty("cursor");
+    expect(findManyArgs).not.toHaveProperty("skip");
+  });
+
+  it("total reflects full count regardless of page size", async () => {
+    mockPrisma.comment.findMany.mockResolvedValue([
+      makeCommentRecord({ uuid: "c1" }),
+    ]);
+    mockPrisma.comment.count.mockResolvedValue(42);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid,
+      limit: 10,
+    });
+
+    expect(result.total).toBe(42);
+  });
+
+  it("returns empty cursor-shaped result when target missing", async () => {
+    mockValidateTargetExists.mockResolvedValue(false);
+
+    const result = await listComments({
+      companyUuid,
+      targetType: "task",
+      targetUuid: "nonexistent",
+      limit: 10,
+    });
+
+    expect(result).toEqual({
+      comments: [],
+      total: 0,
+      nextCursor: null,
+      hasMore: false,
+    });
   });
 });
 
