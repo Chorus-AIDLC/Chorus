@@ -105,7 +105,9 @@
     "showMore": "Show more",
     "showLess": "Show less",
     "loadError": "Failed to load comments",
-    "retry": "Retry"
+    "retry": "Retry",
+    "loadingMore": "Loading more...",
+    "noMoreComments": "No more comments"
   },
   "mentions": {
     "noResults": "No results",

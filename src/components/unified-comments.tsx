@@ -72,6 +72,115 @@ function formatRelativeTime(dateString: string, t: TranslateFn): string {
   return formatDateTime(date);
 }
 
+// First-page / per-scroll page size for cursor-mode comment loading. Keep in sync
+// with the server action's DEFAULT_COMMENT_PAGE_SIZE.
+const COMMENT_PAGE_SIZE = 10;
+
+// Upper bound on how many pages a single live-sync sweep walks before giving up and
+// resetting the window to the newest pages (see syncLatestComments). Bounds a burst
+// so a flood of new comments never forces an unbounded reload.
+const MAX_SYNC_PAGES = 5;
+
+// One cursor page of comments plus its continuation metadata — the shape both the
+// initial/older-page loaders and the live-sync sweep consume.
+export interface CommentPageResult {
+  comments: CommentWithOwner[];
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface SyncLatestResult {
+  comments: CommentWithOwner[];
+  total: number;
+  // contiguous = the fetched newest pages overlapped the already-loaded window, so the
+  // merge preserved the loaded older pages. When false the window was reset to the
+  // freshly fetched newest pages (a bounded, one-time loss of older history rather than
+  // a permanent hole), and the reset* fields carry the new bottom cursor.
+  contiguous: boolean;
+  resetOldestCursor: string | null;
+  resetHasMore: boolean;
+}
+
+// Union two comment lists by uuid into a single newest-first list. Incoming wins on a
+// uuid collision (it is the fresher copy — e.g. an SSE refetch or the server echo of an
+// optimistic insert), so the same comment never appears twice. Ordering is descending
+// createdAt with a deterministic uuid tiebreak. Pure + exported for unit testing.
+export function mergeCommentsByUuid(
+  existing: CommentWithOwner[],
+  incoming: CommentWithOwner[]
+): CommentWithOwner[] {
+  const byUuid = new Map<string, CommentWithOwner>();
+  for (const c of existing) byUuid.set(c.uuid, c);
+  for (const c of incoming) byUuid.set(c.uuid, c);
+  return [...byUuid.values()].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+    return a.uuid < b.uuid ? 1 : -1;
+  });
+}
+
+// Live-sync sweep: fetch newest→older pages and merge them into `existing` until a
+// fetched page overlaps an already-loaded comment (or the server reports no more),
+// bounded by `maxPages`. This closes the burst gap: a single newest-page fetch would
+// leave comments that are newer than the oldest-loaded row but beyond the first page
+// permanently unreachable (older-cursor paging only walks below the oldest loaded row).
+// On overlap the loaded older pages are preserved; if the cap is hit without overlap the
+// window is reset to the fetched newest pages. Returns null if nothing could be fetched
+// (caller keeps current state). Pure (DOM-free) + exported for unit testing.
+export async function syncLatestComments(
+  existing: CommentWithOwner[],
+  fetchPage: (cursor: string | null) => Promise<CommentPageResult | null>,
+  maxPages: number = MAX_SYNC_PAGES
+): Promise<SyncLatestResult | null> {
+  const loaded = new Set(existing.map((c) => c.uuid));
+  const collected: CommentWithOwner[] = [];
+  let cursor: string | null = null;
+  let contiguous = false;
+  let total = 0;
+  let lastHasMore = false;
+  let lastOldestCursor: string | null = null;
+  let fetched = false;
+
+  for (let i = 0; i < maxPages; i++) {
+    const page = await fetchPage(cursor);
+    if (!page) break; // fetch failed — stop and keep whatever we have
+    fetched = true;
+    total = page.total;
+    collected.push(...page.comments);
+    lastHasMore = page.hasMore;
+    lastOldestCursor = page.nextCursor;
+    if (page.comments.some((c) => loaded.has(c.uuid))) {
+      contiguous = true; // reconnected with the loaded window
+      break;
+    }
+    if (!page.hasMore) {
+      contiguous = true; // reached the oldest comment — full set fetched, no hole
+      break;
+    }
+    cursor = page.nextCursor;
+  }
+
+  if (!fetched) return null;
+
+  if (contiguous) {
+    return {
+      comments: mergeCommentsByUuid(existing, collected),
+      total,
+      contiguous: true,
+      resetOldestCursor: null,
+      resetHasMore: false,
+    };
+  }
+
+  return {
+    comments: mergeCommentsByUuid([], collected),
+    total,
+    contiguous: false,
+    resetOldestCursor: lastOldestCursor,
+    resetHasMore: lastHasMore,
+  };
+}
+
 interface UnifiedCommentsProps {
   targetType: TargetType;
   targetUuid: string;
@@ -89,44 +198,117 @@ export function UnifiedComments({
 }: UnifiedCommentsProps) {
   const t = useTranslations();
   const [comment, setComment] = useState("");
+  // Comments are held NEWEST-FIRST and rendered top-down (no reverse). Scrolling
+  // down loads OLDER pages, appended to the end of this array.
   const [comments, setComments] = useState<CommentWithOwner[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoadingPage, setIsLoadingPage] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [oldestCursor, setOldestCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  // Server-reported total comment count — the source of truth for the count badge,
+  // accurate even though only a subset of comments is loaded.
+  const [total, setTotal] = useState(0);
   const editorRef = useRef<MentionEditorRef>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Mutable mirrors of state the IntersectionObserver / SSE callbacks read, so they
+  // see fresh values without being torn down + rebuilt on every state change.
+  const commentsRef = useRef(comments);
+  commentsRef.current = comments;
+  const oldestCursorRef = useRef(oldestCursor);
+  oldestCursorRef.current = oldestCursor;
+  const hasMoreRef = useRef(hasMore);
+  hasMoreRef.current = hasMore;
+  const isLoadingPageRef = useRef(isLoadingPage);
+  isLoadingPageRef.current = isLoadingPage;
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
 
   const avatarSize = compact ? "h-6 w-6" : "h-[30px] w-[30px]";
   const gap = compact ? "gap-2" : "gap-2.5";
   const iconSize = compact ? "h-3 w-3" : "h-[15px] w-[15px]";
 
-  // Notify parent of comment count changes
+  // Notify the parent of the server-reported total whenever it changes.
   useEffect(() => {
-    onCountChange?.(comments.length);
-  }, [comments.length, onCountChange]);
+    onCountChange?.(total);
+  }, [total, onCountChange]);
 
-  const loadComments = useCallback(async () => {
+  // Initial / reset load — the newest page only (fast first paint).
+  const loadInitial = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
-    const result = await getCommentsAction(targetType, targetUuid);
+    const result = await getCommentsAction(targetType, targetUuid, {
+      limit: COMMENT_PAGE_SIZE,
+    });
     if (result.success) {
       setComments(result.comments);
+      setOldestCursor(result.nextCursor);
+      setHasMore(result.hasMore);
+      setTotal(result.total);
     } else {
       setLoadError(result.error);
     }
     setIsLoading(false);
   }, [targetType, targetUuid]);
 
-  // Initial load
   useEffect(() => {
-    loadComments();
-  }, [loadComments]);
+    loadInitial();
+  }, [loadInitial]);
 
-  // SSE real-time refresh
+  // Load the next OLDER page (scroll-down) and append below the current list.
+  const loadOlder = useCallback(async () => {
+    if (isLoadingPageRef.current || isLoadingRef.current) return;
+    if (!hasMoreRef.current || !oldestCursorRef.current) return;
+    setIsLoadingPage(true);
+    const result = await getCommentsAction(targetType, targetUuid, {
+      cursor: oldestCursorRef.current,
+      limit: COMMENT_PAGE_SIZE,
+    });
+    if (result.success) {
+      setComments((prev) => mergeCommentsByUuid(prev, result.comments));
+      setOldestCursor(result.nextCursor);
+      setHasMore(result.hasMore);
+      setTotal(result.total);
+    }
+    setIsLoadingPage(false);
+  }, [targetType, targetUuid]);
+
+  // Auto-load older pages when the bottom sentinel scrolls into view. Re-runs once
+  // the initial load finishes (isLoading flips false) so it attaches to the sentinel
+  // element, which only mounts alongside the rendered list.
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadOlder();
+      },
+      { rootMargin: "120px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadOlder, isLoading]);
+
+  // SSE real-time delivery: instead of reloading the whole list, sweep newest→older
+  // pages and merge them in de-duped by uuid (burst-safe — see syncLatestComments).
   useRealtimeEntityEvent(targetType, targetUuid, (event) => {
     if (currentUserUuid && event.actorUuid === currentUserUuid) return;
-    getCommentsAction(targetType, targetUuid).then((result) => {
-      if (result.success) {
-        setComments(result.comments);
+    syncLatestComments(commentsRef.current, async (cursor) => {
+      const result = await getCommentsAction(targetType, targetUuid, {
+        cursor,
+        limit: COMMENT_PAGE_SIZE,
+      });
+      return result.success ? result : null;
+    }).then((sync) => {
+      if (!sync) return;
+      setComments(sync.comments);
+      setTotal(sync.total);
+      if (!sync.contiguous) {
+        // Window was reset to the newest pages — adopt the new bottom cursor.
+        setOldestCursor(sync.resetOldestCursor);
+        setHasMore(sync.resetHasMore);
       }
     });
   });
@@ -139,16 +321,18 @@ export function UnifiedComments({
     setIsSubmitting(false);
 
     if (result.success) {
-      setComments((prev) => [...prev, result.comment]);
+      // Optimistic insert via the same merge path so the later SSE echo de-dups.
+      // Only bump the total when the comment is genuinely new to the loaded window
+      // (guards against a double-count if an echo already merged it in).
+      const isNew = !commentsRef.current.some((c) => c.uuid === result.comment.uuid);
+      setComments((prev) => mergeCommentsByUuid(prev, [result.comment]));
+      if (isNew) setTotal((prev) => prev + 1);
       setComment("");
       editorRef.current?.clear();
     } else {
       toast.error(result.error);
     }
   };
-
-  // Reverse chronological order (newest first)
-  const sortedComments = [...comments].reverse();
 
   return (
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
@@ -186,25 +370,25 @@ export function UnifiedComments({
       </div>
 
       {/* Comments List */}
-      <div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
-          </div>
-        ) : loadError ? (
-          <div className="flex flex-col items-center gap-2 py-8 text-sm text-[#9A9A9A]">
-            <AlertCircle className="h-4 w-4" />
-            <p>{t("comments.loadError")}</p>
-            <Button variant="outline" size="sm" onClick={loadComments}>
-              {t("comments.retry")}
-            </Button>
-          </div>
-        ) : sortedComments.length === 0 ? (
-          <p className="py-8 text-center text-sm text-[#9A9A9A] italic">
-            {t("comments.noComments")}
-          </p>
-        ) : (
-          sortedComments.map((c) => (
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center gap-2 py-8 text-sm text-[#9A9A9A]">
+          <AlertCircle className="h-4 w-4" />
+          <p>{t("comments.loadError")}</p>
+          <Button variant="outline" size="sm" onClick={loadInitial}>
+            {t("comments.retry")}
+          </Button>
+        </div>
+      ) : comments.length === 0 ? (
+        <p className="py-8 text-center text-sm text-[#9A9A9A] italic">
+          {t("comments.noComments")}
+        </p>
+      ) : (
+        <div className="max-h-[420px] overflow-y-auto">
+          {comments.map((c) => (
             <CommentItem
               key={c.uuid}
               comment={c}
@@ -214,9 +398,25 @@ export function UnifiedComments({
               iconSize={iconSize}
               t={t}
             />
-          ))
-        )}
-      </div>
+          ))}
+          {/* Bottom sentinel + loading / end-of-list affordance */}
+          <div ref={sentinelRef} aria-hidden="true" />
+          {isLoadingPage ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
+              <span className="ml-2 text-xs text-[#9A9A9A]">
+                {t("comments.loadingMore")}
+              </span>
+            </div>
+          ) : (
+            !hasMore && (
+              <p className="py-4 text-center text-xs text-[#BFBFBF] italic">
+                {t("comments.noMoreComments")}
+              </p>
+            )
+          )}
+        </div>
+      )}
     </div>
     </PresenceIndicator>
   );
