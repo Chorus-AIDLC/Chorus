@@ -114,9 +114,47 @@ chorus daemon logs               # 查看 daemon 日志
 - **Claude Code 集成** — 自动检测 PATH 中的 `claude` CLI
 - **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
 - **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
+- **多路径** — 用可重复的 `--cwd` 让单个 daemon 同时服务多个工作目录（见下文）
 - **交互式设置** — 首次启动时如未配置凭证会提示输入
 
 daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
+
+#### 服务多个工作目录
+
+一个 daemon 可以同时服务多个本地工作目录——每个声明的路径会注册为一条独立连接（各自拥有会话与唤起循环），归属同一个 Agent。路径**仅仅**是 daemon 服务的目录，不携带任何项目绑定。
+
+```bash
+chorus daemon --cwd ~/work/repo-a --cwd ~/work/repo-b   # 可重复传入
+CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # 或用环境变量（`:` 或 `,` 分隔）
+```
+
+不传 `--cwd` 时，daemon 只服务它的启动目录这一个路径。
+
+#### 配置文件 —— `~/.chorus/daemon.json`
+
+`chorus login` 会把凭证写入此文件（权限 `0600`）。你也可以把 daemon 的调优项写进**同一个**文件。所有字段都是可选的；命令行参数和环境变量的优先级始终高于文件。
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "apiKey": "cho_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "agentUuid": "00000000-0000-0000-0000-000000000000",
+  "agentName": "My Daemon Agent",
+  "cwds": ["~/work/repo-a", "~/work/repo-b"],
+  "sigintTimeoutMs": 10000
+}
+```
+
+| 字段 | 类型 | 写入方 / 用途 | 优先级（从高到低） |
+|------|------|---------------|--------------------|
+| `url` | string | 远程 Chorus 服务器 URL | `--url` 参数 → `CHORUS_URL` → 文件 |
+| `apiKey` | string | Agent API Key（`cho_…`） | `--api-key` 参数 → `CHORUS_API_KEY` → 文件 |
+| `agentUuid` / `agentName` | string | 认证身份（登录时记录） | 由 `chorus login` 写入 |
+| `cwds` | string[] | daemon 服务的工作目录（多路径） | `--cwd` 参数 → `CHORUS_DAEMON_CWDS` → 文件 → 启动目录 |
+| `sigintTimeoutMs` | number | SIGINT 后强制结束前的宽限窗口（毫秒，默认 `10000`） | `--sigint-timeout` 参数 → `CHORUS_DAEMON_SIGINT_TIMEOUT` → 文件 → `10000` |
+| `yoloAckAt` | string | 内部字段——TTY 下 yolo 确认的时间戳（自动管理） | — |
+
+daemon 启动时的横幅会打印它**实际读取的 `daemon.json` 路径**（以及该文件是否存在），让你随时清楚该编辑哪个文件。
 
 ---
 

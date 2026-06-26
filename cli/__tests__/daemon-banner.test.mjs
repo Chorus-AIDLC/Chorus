@@ -74,6 +74,24 @@ describe("bannerRows", () => {
     const perm = rows.find(([k]) => k === "Permission")[1];
     expect(perm).toMatch(/chorus-only/);
   });
+
+  it("shows the daemon.json config path when one is provided", () => {
+    const rows = bannerRows({ ...INFO, configPath: "/home/u/.chorus/daemon.json", configExists: true });
+    const config = rows.find(([k]) => k === "Config")[1];
+    expect(config).toBe("/home/u/.chorus/daemon.json");
+  });
+
+  it("flags an absent config file so the operator knows it fell back to flags/env", () => {
+    const rows = bannerRows({ ...INFO, configPath: "/home/u/.chorus/daemon.json", configExists: false });
+    const config = rows.find(([k]) => k === "Config")[1];
+    expect(config).toContain("/home/u/.chorus/daemon.json");
+    expect(config).toMatch(/not found/i);
+  });
+
+  it("omits the Config row entirely when no path is known", () => {
+    const rows = bannerRows(INFO);
+    expect(rows.find(([k]) => k === "Config")).toBeUndefined();
+  });
 });
 
 describe("resolveAgentType", () => {

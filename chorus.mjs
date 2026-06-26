@@ -163,10 +163,13 @@ ENVIRONMENT VARIABLES
 DAEMON / LOGIN (client mode)
   --url <url>              Remote Chorus server URL      (env: CHORUS_URL)
   --api-key <cho_...>      Agent API key                 (env: CHORUS_API_KEY)
-  --yolo                   Give the woken Claude FULL permissions             (env: CHORUS_YOLO=1)
+  --chorus-only            Restrict the woken Claude to Chorus MCP tools only  (env: CHORUS_CHORUS_ONLY=1)
+                           (comment/claim/report/status — no Bash / file edits).
+                           Opt out of the default full-autonomy posture.
+  --yolo                   Full autonomy for the woken Claude — the DEFAULT     (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes,
-                           any command). Default is Chorus-MCP-tools-only.
-  --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill   (env: CHORUS_DAEMON_SIGINT_TIMEOUT)
+                           any command). Already on unless --chorus-only is set.
+  --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill    (env: CHORUS_DAEMON_SIGINT_TIMEOUT)
                            when an interrupt is received (default: 10000).
                            Also configurable via ~/.chorus/daemon.json sigintTimeoutMs.
 
@@ -174,9 +177,9 @@ DAEMON / LOGIN (client mode)
   ~/.chorus/daemon.json (from 'chorus login') > Claude Code plugin config.
 
   The daemon spawns the local 'claude' CLI headlessly per task dispatch; it must
-  be on PATH. Override with CHORUS_CLAUDE_PATH. By default the woken Claude may
-  use only Chorus MCP tools (comment/claim/report/status) — pass --yolo for full
-  autonomy (real code-writing AI-DLC), which is dangerous: run it sandboxed.
+  be on PATH. Override with CHORUS_CLAUDE_PATH. By default the woken Claude runs
+  with FULL autonomy (real code-writing AI-DLC), which is dangerous: run it
+  sandboxed, or pass --chorus-only to restrict it to Chorus MCP tools.
 
 EXAMPLES
   chorus                                     # Embedded PGlite (default)
@@ -184,8 +187,8 @@ EXAMPLES
   chorus --data-dir /var/lib/chorus          # Custom data directory
   DATABASE_URL=postgres://... chorus --use-pglite=false   # External PostgreSQL
   chorus login                               # Interactive: validate key, save credentials
-  chorus daemon                              # Connect & wake local Claude Code (Chorus tools only)
-  chorus daemon --yolo                       # Full autonomy: woken Claude can run Bash / edit files
+  chorus daemon                              # Connect & wake local Claude Code (full autonomy by default)
+  chorus daemon --chorus-only                # Restrict the woken Claude to Chorus MCP tools only
   CHORUS_URL=https://... CHORUS_API_KEY=cho_... chorus daemon
 `);
   process.exit(0);
