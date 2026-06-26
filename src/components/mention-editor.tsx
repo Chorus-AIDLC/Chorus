@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { buildMentionMarker, decodePinSuffix } from "@/lib/mention-format";
 import {
@@ -435,7 +436,27 @@ export function createSuggestionPopupRenderer(
 // selection state; Confirm calls onConfirm with the chosen instance, Cancel
 // discards (inserting nothing — the user can re-type the mention). Matches
 // design.pen "@mention cwd Picker".
-function MentionInstancePickerDialog({
+//
+// Mobile-safe layout (fix-mention-cwd-picker-mobile-overflow): the dialog is
+// capped to `max-h-[85svh]` — a DYNAMIC small-viewport unit that shrinks with the
+// mobile soft keyboard / URL bar, unlike a static `vh` that tracks only the layout
+// viewport. The body is a flex column: the header and footer (Cancel / Pin) are
+// `shrink-0` so they stay visible and tappable, and ONLY the instance list scrolls
+// (`min-h-0 flex-1 overflow-y-auto`). Without this, a tall instance list on a
+// keyboard-shortened viewport pushed the Pin button off-screen with no way to reach
+// it (Radix centers the content against the layout viewport, ignoring the keyboard).
+//
+// Stacking (z-[110]): this picker is opened from inside the idea-detail side panel,
+// which is itself `fixed z-50`. The default Dialog overlay+content are also `z-50`,
+// so the dialog only sits above the panel by PAINT ORDER — a tie that some mobile
+// browsers resolve the other way, leaving the panel (and its Overview/Elaboration/
+// Activity tab bar) painted OVER the dialog: the title looks occluded and taps on
+// the footer land on the tab bar so Pin can't be clicked. Lifting BOTH the content
+// and the overlay to `z-[110]` (above the panel's z-50 — in the same high band as
+// the @-mention suggestion popup's own `z-[100]`, which already clears the panel)
+// makes it deterministic regardless of paint order.
+// Exported for the unit test that pins this layout contract.
+export function MentionInstancePickerDialog({
   open,
   agentName,
   instances,
@@ -465,20 +486,29 @@ function MentionInstancePickerDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent
+        className="z-[110] flex max-h-[85svh] flex-col gap-0 sm:max-w-md"
+        overlayClassName="z-[110]"
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
             {t("subtitle", { name: agentName, count: instances.length, hosts: distinctHosts })}
           </DialogDescription>
         </DialogHeader>
-        <InstancePicker
-          instances={instances}
-          selectedConnectionUuid={selected?.connectionUuid ?? null}
-          onSelect={setSelected}
-          ariaLabel={t("title")}
-        />
-        <DialogFooter>
+        {/* The ONLY scroll region — keeps the header + footer pinned and reachable
+            even when the instance list is tall or the soft keyboard shrinks the
+            viewport. `min-h-0` lets this flex child shrink below its content height
+            so it actually scrolls instead of pushing the footer off-screen. */}
+        <div className="min-h-0 flex-1 overflow-y-auto py-3">
+          <InstancePicker
+            instances={instances}
+            selectedConnectionUuid={selected?.connectionUuid ?? null}
+            onSelect={setSelected}
+            ariaLabel={t("title")}
+          />
+        </div>
+        <DialogFooter className="shrink-0">
           <Button variant="ghost" onClick={onCancel}>
             {t("cancel")}
           </Button>
@@ -494,6 +524,44 @@ function MentionInstancePickerDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+// ── Confirm handler (extracted + pure, for testability) ────────────────────
+//
+// Runs when the owner taps "Pin instance" in the secondary picker. The ORDER here
+// is the fix for "tapped Pin but the modal didn't close" on mobile: it closes the
+// modal FIRST (always), then performs the mention insert deferred + guarded so a
+// failing insert can never leave the dialog stuck open. See the call site comment.
+interface PendingPick {
+  item: Mentionable;
+  onlineInstances: InstanceCandidate[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  command: (attrs: any) => void;
+}
+export function handleInstancePickConfirm(
+  pick: PendingPick | null,
+  instance: InstanceCandidate,
+  deps: {
+    close: () => void;
+    insert: (pick: PendingPick, instance: InstanceCandidate) => void;
+    // Schedule the deferred insert (rAF in the app; synchronous in tests).
+    defer: (fn: () => void) => void;
+    focusEditor: () => void;
+    onError: (err: unknown) => void;
+  },
+): void {
+  // 1. Close the modal unconditionally, before anything that can throw.
+  deps.close();
+  if (!pick) return;
+  // 2. Insert deferred + guarded — never let a failed insert resurface as a stuck modal.
+  deps.defer(() => {
+    try {
+      deps.focusEditor();
+      deps.insert(pick, instance);
+    } catch (err) {
+      deps.onError(err);
+    }
+  });
 }
 
 // ── MentionEditor Component ────────────────────────────────────
@@ -845,10 +913,24 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           agentName={pendingPick?.item.name ?? ""}
           instances={pendingPick?.onlineInstances ?? []}
           onConfirm={(instance) => {
-            if (pendingPick) {
-              insertMention(pendingPick.item, pendingPick.command, instance);
-            }
-            setPendingPick(null);
+            // Close the modal FIRST and unconditionally, then insert deferred +
+            // guarded. The insert runs the Tiptap suggestion `command` captured when
+            // the picker opened; by now the editor has blurred (the Radix dialog
+            // stole focus) so that command can throw or no-op — especially on mobile
+            // Safari. If the insert ran before the close and threw, the dialog would
+            // stay open after a successful tap (looks like "Pin does nothing").
+            // handleInstancePickConfirm enforces close-first + guarded-deferred-insert.
+            handleInstancePickConfirm(pendingPick, instance, {
+              close: () => setPendingPick(null),
+              insert: (pick, inst) => insertMention(pick.item, pick.command, inst),
+              defer: (fn) => requestAnimationFrame(fn),
+              focusEditor: () => editor?.commands.focus(),
+              onError: (err) =>
+                clientLogger.error(
+                  "MentionEditor: cwd-pinned mention insert failed",
+                  err,
+                ),
+            });
           }}
           onCancel={() => setPendingPick(null)}
         />
