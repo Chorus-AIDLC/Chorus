@@ -3,8 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, Loader2, Info } from "lucide-react";
+import { Bot, User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  ScrollableDialog,
+  ScrollableDialogTitle,
+} from "@/components/ui/scrollable-dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -205,31 +209,52 @@ export function AssignTaskModal({
     (selectedOption === "release" && isAssigned);
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/40"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-xl border border-[#E5E0D8]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#E5E0D8] px-6 py-5">
-          <h2 className="text-base font-semibold text-[#2C2C2C]">
-            {t("tasks.assignTask")}
-          </h2>
-          <button
+    // Mobile-safe shell: ScrollableDialog (shadcn Dialog) keeps the title and the
+    // footer Cancel/Assign pinned and the body scrollable within a dynamic-viewport
+    // height cap. Conditionally mounted by the parent (no `open` prop there), so we
+    // render it always-open and route every close path back to onClose.
+    <ScrollableDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      className="bg-white sm:max-w-[400px]"
+      header={
+        <ScrollableDialogTitle className="text-base font-semibold text-[#2C2C2C]">
+          {t("tasks.assignTask")}
+        </ScrollableDialogTitle>
+      }
+      footer={
+        <div className="flex w-full items-center justify-end gap-4">
+          <Button
+            variant="outline"
             onClick={onClose}
-            className="text-[#9A9A9A] hover:text-[#6B6B6B] transition-colors"
+            disabled={isLoading}
+            className="border-[#E5E0D8]"
           >
-            <X className="h-5 w-5" />
-          </button>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={isLoading || !canSubmit}
+            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : selectedOption === "release" ? (
+              t("common.release")
+            ) : (
+              // When an instance is pinned the CTA names the resolved (path · host)
+              // target (cwd-addressable instances, T4); otherwise the plain label.
+              resolvePinLabel()
+            )}
+          </Button>
         </div>
-
-        {/* Body */}
-        <div className="p-6 space-y-4">
-          {/* Task Info */}
+      }
+      bodyClassName="space-y-4"
+    >
+      {/* Body */}
+      {/* Task Info */}
           <div className="rounded-lg bg-[#FAF8F4] p-3">
             <p className="text-[13px] font-medium text-[#2C2C2C]">{task.title}</p>
             {task.description && (
@@ -318,7 +343,7 @@ export function AssignTaskModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("tasks.selectAgent")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {agents.length > 0 ? (
                           agents.map((agent) => (
                             <SelectItem key={agent.uuid} value={agent.uuid}>
@@ -402,7 +427,7 @@ export function AssignTaskModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("tasks.selectUser")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {users.length > 0 ? (
                           users.map((user) => (
                             <SelectItem key={user.uuid} value={user.uuid}>
@@ -446,35 +471,6 @@ export function AssignTaskModal({
               )}
             </RadioGroup>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-4 rounded-b-2xl bg-white px-6 py-6 border-t border-[#E5E0D8]">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            disabled={isLoading}
-            className="border-[#E5E0D8]"
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isLoading || !canSubmit}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : selectedOption === "release" ? (
-              t("common.release")
-            ) : (
-              // When an instance is pinned the CTA names the resolved (path · host)
-              // target (cwd-addressable instances, T4); otherwise the plain label.
-              resolvePinLabel()
-            )}
-          </Button>
-        </div>
-      </div>
-    </>
+    </ScrollableDialog>
   );
 }
