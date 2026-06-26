@@ -183,14 +183,25 @@ export default function DashboardLayout({
       // token) and retry once. This rescues the iOS bfcache/resume case where no server
       // document request preceded this probe. (The old `/api/auth/refresh` retry here was a
       // SuperAdmin-only endpoint — a no-op for OIDC users — so it never helped them.)
-      if (!response.ok) {
+      if (response.status === 401) {
         await primeSessionCookie();
         response = await authFetch("/api/auth/session");
       }
 
-      if (!response.ok) {
+      // Session death is decided ONLY by a true 401 that survived the prime+retry — the
+      // same contract as auth-context.fetchSession. A transient/non-401 failure must NOT
+      // bounce the user (it would log out a still-valid session on a network blip, e.g.
+      // right after an iOS resume); leave session state untouched and let a later
+      // resume/navigation re-check.
+      if (response.status === 401) {
         clearUserManager();
         router.push("/login");
+        return;
+      }
+
+      if (!response.ok) {
+        // Transient/non-401 error — do not redirect; stop the loading gate and retry later.
+        setLoading(false);
         return;
       }
 
@@ -201,16 +212,12 @@ export default function DashboardLayout({
           email: data.data.user.email,
           name: data.data.user.name || data.data.user.email,
         });
-      } else {
-        clearUserManager();
-        router.push("/login");
-        return;
       }
+      // A non-success body without a 401 is treated as transient: don't bounce, just
+      // leave session state and let a later check resolve it.
     } catch (error) {
+      // Network/transient error — do NOT treat as session death, do not redirect.
       clientLogger.error("Session check failed:", error);
-      clearUserManager();
-      router.push("/login");
-      return;
     }
 
     setLoading(false);

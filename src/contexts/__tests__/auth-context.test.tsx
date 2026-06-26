@@ -255,4 +255,26 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
 
     await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
   });
+
+  it("coalesces the pageshow + visibilitychange burst into a single prime (in-flight guard)", async () => {
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
+
+    renderProvider();
+    await waitFor(() => expect(authFetch).toHaveBeenCalled());
+    primeSessionCookie.mockClear();
+
+    // iOS bfcache restore fires BOTH signals in the same sync tick. The first revalidate
+    // sets the in-flight flag before its `await primeSessionCookie()` yields, so the second
+    // signal's revalidate returns immediately → prime runs once, not twice.
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    const ps = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(ps, "persisted", { value: true });
+    window.dispatchEvent(ps);
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalledTimes(1));
+    // Let the cycle settle and confirm the burst did not stack a second prime.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(primeSessionCookie).toHaveBeenCalledTimes(1);
+  });
 });

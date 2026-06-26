@@ -226,12 +226,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // re-binding listeners on every fetchSession identity change.
   const fetchSessionRef = useRef(fetchSession);
   fetchSessionRef.current = fetchSession;
+  const revalidateInFlight = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    // An in-flight guard collapses the burst of resume signals into a single
+    // prime+probe cycle: an iOS bfcache restore fires BOTH `pageshow(persisted)` and
+    // `visibilitychange→visible`, and a refocus can fire visibilitychange repeatedly.
+    // Without the guard each would kick its own prime + 1-2 probes. It is idempotent
+    // either way (no redirect storm), but the guard avoids the redundant traffic.
     const revalidate = async () => {
-      await primeSessionCookie();
-      await fetchSessionRef.current();
+      if (revalidateInFlight.current) return;
+      revalidateInFlight.current = true;
+      try {
+        await primeSessionCookie();
+        await fetchSessionRef.current();
+      } finally {
+        revalidateInFlight.current = false;
+      }
     };
 
     const onPageShow = (e: PageTransitionEvent) => {
