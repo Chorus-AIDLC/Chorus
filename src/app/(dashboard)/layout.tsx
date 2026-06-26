@@ -18,7 +18,7 @@ import {
   LogOut,
   Menu,
 } from "lucide-react";
-import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
+import { authFetch, primeSessionCookie, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
@@ -177,13 +177,15 @@ export default function DashboardLayout({
       // and the server authenticates via the user_session httpOnly cookie.
       let response = await authFetch("/api/auth/session");
 
-      // If access token expired, try refreshing with the refresh token cookie
+      // The session probe (/api/auth/session) is NOT covered by the middleware matcher,
+      // so it can't refresh the cookie itself. On a 401, prime the cookie via a
+      // matcher-covered request (primeSessionCookie → middleware refreshes from the refresh
+      // token) and retry once. This rescues the iOS bfcache/resume case where no server
+      // document request preceded this probe. (The old `/api/auth/refresh` retry here was a
+      // SuperAdmin-only endpoint — a no-op for OIDC users — so it never helped them.)
       if (!response.ok) {
-        const refreshRes = await fetch("/api/auth/refresh", { method: "POST" });
-        if (refreshRes.ok) {
-          // Refresh succeeded — retry session check with new cookies
-          response = await authFetch("/api/auth/session");
-        }
+        await primeSessionCookie();
+        response = await authFetch("/api/auth/session");
       }
 
       if (!response.ok) {

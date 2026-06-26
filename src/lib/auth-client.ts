@@ -84,6 +84,32 @@ export async function syncTokenToCookie(accessToken: string, refreshToken?: stri
   }
 }
 
+// Prime the session cookie before a session probe.
+//
+// The session probe (`/api/auth/session`) is NOT covered by the middleware matcher
+// (it excludes `api/auth`), so it can never refresh the cookie itself. The middleware —
+// the single OIDC refresh authority — only runs for matcher-covered paths. On a desktop
+// full-page reload the document request (matcher-covered) refreshes the cookie before the
+// probe runs, masking this. But when the page is restored without a server document
+// request (iOS WebKit bfcache / frozen-tab `pageshow(persisted)` resume), the probe is the
+// FIRST network call, hits an expired access cookie, 401s, and bounces the user to /login —
+// even though the refresh token is still valid.
+//
+// `primeSessionCookie` issues a best-effort GET to a matcher-covered path so the middleware
+// refreshes the `oidc_access_token` cookie from the refresh token BEFORE the probe. It is a
+// no-op for default-auth/superadmin (their middleware branch refreshes the same way, and a
+// non-refreshable session simply gets a normal response). Verified on production against the
+// real Cognito IdP: with an expired access cookie + valid refresh token, GET /api/keepalive
+// returns 200 and rewrites the cookie, after which /api/auth/session returns 200.
+export async function primeSessionCookie(): Promise<void> {
+  try {
+    await fetch("/api/keepalive", { method: "GET", credentials: "same-origin", cache: "no-store" });
+  } catch {
+    // Best-effort only — if it fails, fetchSession still tries the probe and the next
+    // matcher-covered request will refresh.
+  }
+}
+
 // Create authenticated fetch wrapper
 export async function authFetch(
   url: string,

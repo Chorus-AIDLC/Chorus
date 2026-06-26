@@ -20,6 +20,7 @@ import { render, waitFor } from "@testing-library/react";
 const authFetch = vi.fn();
 const push = vi.fn();
 const getOidcUser = vi.fn().mockResolvedValue(null);
+const primeSessionCookie = vi.fn().mockResolvedValue(undefined);
 
 // OIDC manager event registry captured per-test.
 let registeredEvents: Record<string, ((...a: unknown[]) => void) | undefined>;
@@ -29,6 +30,7 @@ vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, opts?: RequestInit) => authFetch(url, opts),
   getOidcUser: () => getOidcUser(),
   syncTokenToCookie: vi.fn().mockResolvedValue(true),
+  primeSessionCookie: () => primeSessionCookie(),
   logout: vi.fn().mockResolvedValue(undefined),
   clearUserManager: vi.fn(),
   getUserManager: () => manager,
@@ -88,6 +90,8 @@ beforeEach(() => {
   push.mockReset();
   getOidcUser.mockResolvedValue(null);
   pingKeepalive.mockClear();
+  primeSessionCookie.mockClear();
+  primeSessionCookie.mockResolvedValue(undefined);
   manager = makeManager();
 });
 
@@ -103,12 +107,36 @@ describe("AuthProvider session-death contract", () => {
     expect(registeredEvents.renewError).toBeUndefined();
   });
 
-  it("redirects to /login on a true 401 from the session fetch", async () => {
+  it("redirects to /login only after prime+retry still 401 (true session death)", async () => {
+    // Both probe attempts 401 → genuinely dead → redirect. prime is called between them.
     authFetch.mockResolvedValue({ status: 401, json: async () => ({ success: false }) });
 
     renderProvider();
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
+    expect(primeSessionCookie).toHaveBeenCalled(); // primed before declaring death
+    // Two probe calls (initial + post-prime retry).
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does NOT redirect when a 401 is rescued by prime+retry (the iOS bfcache case)", async () => {
+    // First probe 401 (cookie expired in background); after prime, middleware refreshed the
+    // cookie, retry returns 200 → user stays logged in, no redirect.
+    authFetch
+      .mockResolvedValueOnce({ status: 401, json: async () => ({ success: false }) })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: { user: { uuid: "u1", email: "a@b.c" }, company: { uuid: "c1", name: "Co" } },
+        }),
+      });
+
+    renderProvider();
+
+    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
+    await waitFor(() => expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBe(2));
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("does NOT redirect on a transient/network failure of the session fetch", async () => {
@@ -171,5 +199,60 @@ describe("AuthProvider OIDC keepalive (defense-in-depth)", () => {
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 20));
     expect(pingKeepalive).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () => {
+  it("primes + re-validates on a bfcache pageshow (persisted)", async () => {
+    authFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { user: { uuid: "u1", email: "a@b.c" }, company: { uuid: "c1", name: "Co" } },
+      }),
+    });
+
+    renderProvider();
+    await waitFor(() => expect(authFetch).toHaveBeenCalled());
+    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length;
+    primeSessionCookie.mockClear();
+
+    // Simulate iOS restoring the tab from bfcache.
+    const evt = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(evt, "persisted", { value: true });
+    window.dispatchEvent(evt);
+
+    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBeGreaterThan(probesAfterInit)
+    );
+  });
+
+  it("does NOT re-validate on a non-persisted pageshow (normal load)", async () => {
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
+
+    renderProvider();
+    await waitFor(() => expect(authFetch).toHaveBeenCalled());
+    primeSessionCookie.mockClear();
+
+    const evt = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(evt, "persisted", { value: false });
+    window.dispatchEvent(evt);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(primeSessionCookie).not.toHaveBeenCalled();
+  });
+
+  it("primes + re-validates when the tab becomes visible again", async () => {
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
+
+    renderProvider();
+    await waitFor(() => expect(authFetch).toHaveBeenCalled());
+    primeSessionCookie.mockClear();
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
   });
 });

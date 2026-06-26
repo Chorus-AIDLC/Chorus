@@ -16,6 +16,7 @@ import {
   getOidcUser,
   authFetch,
   syncTokenToCookie,
+  primeSessionCookie,
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
@@ -65,20 +66,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fetch current session from backend.
   //
-  // Session death is decided ONLY by the backend. A request to /api/auth/session
-  // passes through the Edge middleware, which already had its chance to refresh the
-  // `oidc_access_token` cookie (the single OIDC refresh authority). So a 401 here
-  // means the refresh token itself is expired/revoked — a true re-login condition,
-  // and only then do we redirect. A transient/network failure must NOT redirect
-  // (the next request retries), so it leaves session state untouched.
+  // The session probe (`/api/auth/session`) is NOT matcher-covered, so it can't refresh
+  // the cookie itself. A 401 therefore does NOT immediately mean the session is dead — it
+  // may just mean the access cookie expired while the page was backgrounded and no
+  // middleware-covered request has run yet (the iOS bfcache/resume case). So on a 401 we
+  // first `primeSessionCookie()` (a matcher-covered request that lets the middleware refresh
+  // the cookie from the refresh token) and retry the probe ONCE. Only if the retry is still
+  // 401 is the refresh token genuinely expired/revoked — a true re-login condition. A
+  // transient/network failure must NOT redirect (the next request retries), so it leaves
+  // session state untouched.
   const fetchSession = useCallback(async () => {
     try {
-      const response = await authFetch("/api/auth/session");
+      let response = await authFetch("/api/auth/session");
 
       if (response.status === 401) {
-        // Genuine session death (survived middleware refresh).
-        handleSessionExpired();
-        return false;
+        // Give the middleware a chance to refresh the cookie, then retry once.
+        await primeSessionCookie();
+        response = await authFetch("/api/auth/session");
+        if (response.status === 401) {
+          // Genuine session death (survived a middleware refresh attempt).
+          handleSessionExpired();
+          return false;
+        }
       }
 
       const data = await response.json();
@@ -105,6 +114,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const oidcUser = await getOidcUser();
       if (oidcUser && !oidcUser.expired) {
         await syncTokenToCookie(oidcUser.access_token, oidcUser.refresh_token);
+      } else {
+        // No fresh OIDC user in localStorage (e.g. the page was restored from bfcache /
+        // a frozen tab and the access cookie may have expired in the background). Prime
+        // the cookie via a matcher-covered request so the middleware refreshes it from the
+        // refresh token BEFORE the (non-matcher-covered) session probe below. Without this,
+        // the probe would 401 and bounce the user even though the refresh token is valid.
+        await primeSessionCookie();
       }
 
       // Always resolve the session from the backend. `/api/auth/session` accepts
@@ -192,6 +208,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearTimeout(keepaliveTimer.current);
         keepaliveTimer.current = null;
       }
+    };
+  }, []);
+
+  // Re-validate the session when the page is RESTORED after being backgrounded.
+  //
+  // This is the fix for the iOS Chrome (WebKit) report: long-backgrounded tabs are
+  // restored from bfcache / frozen state via `pageshow(persisted)` or a
+  // visibilitychange→visible with NO server document request. In that case the access
+  // cookie may have expired in the background and nothing has refreshed it. We prime the
+  // cookie (matcher-covered request → middleware refresh) and re-resolve the session, so a
+  // resumed tab with a still-valid refresh token stays logged in instead of bouncing.
+  // `fetchSession` itself only redirects on a genuine post-prime 401, so a truly dead
+  // session still goes to /login cleanly.
+  //
+  // A ref holds the latest fetchSession so this effect can mount once (empty deps) without
+  // re-binding listeners on every fetchSession identity change.
+  const fetchSessionRef = useRef(fetchSession);
+  fetchSessionRef.current = fetchSession;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const revalidate = async () => {
+      await primeSessionCookie();
+      await fetchSessionRef.current();
+    };
+
+    const onPageShow = (e: PageTransitionEvent) => {
+      // Only react to bfcache restores; a normal load already ran the init effect.
+      if (e.persisted) revalidate();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") revalidate();
+    };
+
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
