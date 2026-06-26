@@ -46,27 +46,19 @@ export async function getOidcUser(): Promise<User | null> {
   }
 }
 
-// Get valid access token (will trigger silent renew if needed)
+// Get the current OIDC access token, if any.
+//
+// The frontend does NOT renew the token here. Renewal is owned solely by the Edge
+// middleware (cookie path) — see src/middleware.ts and src/lib/oidc.ts. If the token
+// is expired we still return it: the request is sent with the (stale) Bearer header,
+// the middleware refreshes the `oidc_access_token` cookie for that same request, and
+// getAuthContext (src/lib/auth.ts) falls through from the expired Bearer token to the
+// freshly-refreshed cookie. Calling signinSilent() here would make the frontend a
+// second consumer of the rotating refresh token and reintroduce the invalid_grant race.
 export async function getAccessToken(): Promise<string | null> {
   const user = await getOidcUser();
 
   if (!user) return null;
-
-  // Check if token is expired
-  if (user.expired) {
-    // Try silent renew
-    const manager = getUserManager();
-    if (manager) {
-      try {
-        const renewedUser = await manager.signinSilent();
-        return renewedUser?.access_token || null;
-      } catch {
-        // Silent renew failed, user needs to re-login
-        return null;
-      }
-    }
-    return null;
-  }
 
   return user.access_token;
 }
@@ -110,21 +102,17 @@ export async function authFetch(
     headers,
   });
 
-  // On 401, attempt token refresh, then retry once
+  // On 401: OIDC users rely on the middleware-refreshed cookie (no retry here);
+  // default-auth users get one cookie-based refresh + retry.
   if (response.status === 401) {
     const manager = getUserManager();
     if (manager) {
-      // OIDC user: try silent renew
-      try {
-        const renewed = await manager.signinSilent();
-        if (renewed?.access_token) {
-          await syncTokenToCookie(renewed.access_token);
-          headers.set("Authorization", `Bearer ${renewed.access_token}`);
-          return fetch(url, { ...options, headers });
-        }
-      } catch {
-        // Silent renew failed, return original 401
-      }
+      // OIDC user: do NOT silent-renew here. Renewal is owned by the Edge middleware,
+      // which already had its chance to refresh the cookie on this same request before
+      // it reached the route. A 401 that survives the middleware means the refresh
+      // token is genuinely expired/revoked — a true session-death condition. Surface
+      // the 401 so the single redirect site (auth-context) handles re-login. Calling
+      // signinSilent() here would re-race the rotating refresh token.
     } else {
       // Default auth user: refresh via cookie-based refresh token
       try {

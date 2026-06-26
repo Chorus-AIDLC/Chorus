@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   useCallback,
   type ReactNode,
@@ -18,6 +19,7 @@ import {
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
+import { computeKeepaliveDelayMs, pingKeepalive } from "@/lib/oidc-keepalive";
 import { clientLogger } from "@/lib/logger-client";
 
 // User info from OIDC
@@ -52,10 +54,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch current session from backend
+  // Handle a genuinely dead session: clear state and route to login.
+  // Defined before fetchSession so the 401 path below can call it.
+  const handleSessionExpired = useCallback(() => {
+    setUser(null);
+    setCompany(null);
+    setError("Session expired. Please log in again.");
+    router.push("/login");
+  }, [router]);
+
+  // Fetch current session from backend.
+  //
+  // Session death is decided ONLY by the backend. A request to /api/auth/session
+  // passes through the Edge middleware, which already had its chance to refresh the
+  // `oidc_access_token` cookie (the single OIDC refresh authority). So a 401 here
+  // means the refresh token itself is expired/revoked — a true re-login condition,
+  // and only then do we redirect. A transient/network failure must NOT redirect
+  // (the next request retries), so it leaves session state untouched.
   const fetchSession = useCallback(async () => {
     try {
       const response = await authFetch("/api/auth/session");
+
+      if (response.status === 401) {
+        // Genuine session death (survived middleware refresh).
+        handleSessionExpired();
+        return false;
+      }
+
       const data = await response.json();
 
       if (data.success) {
@@ -65,9 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return false;
     } catch {
+      // Network/transient error — do not treat as session death, do not redirect.
       return false;
     }
-  }, []);
+  }, [handleSessionExpired]);
 
   // Initialize session on mount
   useEffect(() => {
@@ -96,58 +122,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     init();
   }, [fetchSession]);
 
-  // Set up OIDC event handlers
+  // Set up OIDC event handlers.
+  //
+  // We deliberately do NOT redirect to /login on `addAccessTokenExpired` or
+  // `addSilentRenewError`. An expired access token is not a dead session: the Edge
+  // middleware silently refreshes the cookie on the next request, and getAuthContext
+  // falls through to it. Treating expiry as logout (the previous behavior) bounced
+  // users out while their cookie session was still valid. Session death is decided
+  // only by a true 401 from /api/auth/session (see fetchSession). The only handler we
+  // keep is `addUserLoaded`, which syncs the token oidc-client-ts already holds into
+  // the cookie at initial login — it does not consume the refresh token.
   useEffect(() => {
     const manager = getUserManager();
     if (!manager) return;
 
-    // Handle token expiring (oidc-client-ts will auto-renew)
-    const handleExpiring = () => {
-      clientLogger.debug("OIDC token expiring, will be auto-renewed");
-    };
-
-    // Handle token expired
-    const handleExpired = () => {
-      clientLogger.debug("OIDC token expired");
-      handleSessionExpired();
-    };
-
-    // Handle silent renew error
-    const handleRenewError = (err: Error) => {
-      clientLogger.error("Silent renew error:", err);
-      handleSessionExpired();
-    };
-
-    // Handle user loaded (after silent renew) — sync new token + refresh token to cookie
     const handleUserLoaded = async (user: User) => {
-      clientLogger.debug("OIDC user loaded/renewed, syncing token to cookie");
+      clientLogger.debug("OIDC user loaded, syncing token to cookie");
       try {
         await syncTokenToCookie(user.access_token, user.refresh_token);
       } catch (err) {
-        clientLogger.error("Failed to sync token after renewal:", err);
+        clientLogger.error("Failed to sync token after load:", err);
       }
     };
 
-    manager.events.addAccessTokenExpiring(handleExpiring);
-    manager.events.addAccessTokenExpired(handleExpired);
-    manager.events.addSilentRenewError(handleRenewError);
     manager.events.addUserLoaded(handleUserLoaded);
 
     return () => {
-      manager.events.removeAccessTokenExpiring(handleExpiring);
-      manager.events.removeAccessTokenExpired(handleExpired);
-      manager.events.removeSilentRenewError(handleRenewError);
       manager.events.removeUserLoaded(handleUserLoaded);
     };
   }, []);
 
-  // Handle session expired
-  const handleSessionExpired = () => {
-    setUser(null);
-    setCompany(null);
-    setError("Session expired. Please log in again.");
-    router.push("/login");
-  };
+  // OIDC keepalive (DEFENSE-IN-DEPTH — not a correctness dependency).
+  //
+  // The middleware refreshes the cookie on any matcher-covered request, but a user idle
+  // on a single SPA page may make none for a while, letting the cookie lapse mid-idle.
+  // When (and only when) there is an OIDC session, schedule a ping to a middleware-covered
+  // path shortly before the access token expires so the middleware rotates the cookie. The
+  // interval is derived from the token's own exp/iat (not a fixed constant). If this whole
+  // block were removed, sessions would still be correct — the next real request is rescued
+  // by the middleware fall-through; this only shrinks the idle SSE-drop window.
+  const keepaliveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    // No OIDC manager ⇒ default-auth/superadmin (or logged out) ⇒ do not arm. (Harmless if
+    // it ever did: the keepalive path is a no-op for a non-OIDC session.)
+    const manager = getUserManager();
+    if (!manager) return;
+
+    let cancelled = false;
+
+    const schedule = async () => {
+      if (cancelled) return;
+      const oidcUser = await getOidcUser();
+      // Only arm while an OIDC session exists.
+      if (cancelled || !oidcUser) return;
+
+      const delay = computeKeepaliveDelayMs(oidcUser.access_token, Date.now());
+      keepaliveTimer.current = setTimeout(async () => {
+        if (cancelled) return;
+        await pingKeepalive(); // best-effort; middleware refreshes the cookie
+        schedule(); // re-arm from the (current) token's exp
+      }, delay);
+    };
+
+    schedule();
+
+    return () => {
+      cancelled = true;
+      if (keepaliveTimer.current) {
+        clearTimeout(keepaliveTimer.current);
+        keepaliveTimer.current = null;
+      }
+    };
+  }, []);
 
   // Logout
   const logout = async () => {

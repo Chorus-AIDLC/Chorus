@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getCookieOptions, getMaxAgeFromJwt } from '../cookie-utils';
+import {
+  getCookieOptions,
+  getMaxAgeFromJwt,
+  resolveRefreshCookieMaxAge,
+  REFRESH_TOKEN_COOKIE_MAX_AGE,
+} from '../cookie-utils';
 
 const env = process.env as Record<string, string | undefined>;
 
@@ -125,5 +130,34 @@ describe('getMaxAgeFromJwt', () => {
   it('returns fallback for malformed token', () => {
     expect(getMaxAgeFromJwt('not-a-jwt')).toBe(3600);
     expect(getMaxAgeFromJwt('')).toBe(3600);
+  });
+});
+
+describe('resolveRefreshCookieMaxAge', () => {
+  it('uses the IdP refresh_expires_in when it is a positive number', () => {
+    expect(resolveRefreshCookieMaxAge(3600)).toBe(3600);
+    expect(resolveRefreshCookieMaxAge(7 * 24 * 3600)).toBe(7 * 24 * 3600);
+  });
+
+  it('floors a fractional refresh_expires_in', () => {
+    expect(resolveRefreshCookieMaxAge(3600.9)).toBe(3600);
+  });
+
+  it('falls back to the centralized default when refresh_expires_in is absent', () => {
+    expect(resolveRefreshCookieMaxAge()).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge(undefined)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+  });
+
+  it('falls back to the default for non-numeric / non-positive values', () => {
+    expect(resolveRefreshCookieMaxAge(null)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge('3600')).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge(0)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge(-100)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge(Number.NaN)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+    expect(resolveRefreshCookieMaxAge(Infinity)).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
+  });
+
+  it('the centralized default is 30 days', () => {
+    expect(REFRESH_TOKEN_COOKIE_MAX_AGE).toBe(30 * 24 * 3600);
   });
 });

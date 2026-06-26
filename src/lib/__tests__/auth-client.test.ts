@@ -251,54 +251,27 @@ describe('getAccessToken', () => {
     expect(mockManager.signinSilent).not.toHaveBeenCalled();
   });
 
-  it('attempts signinSilent for expired user', async () => {
+  it('does NOT call signinSilent for an expired user; returns the (stale) token', async () => {
+    // Single refresh authority: the frontend never renews. It returns the expired
+    // token so the request still fires — the Edge middleware refreshes the cookie for
+    // that request and getAuthContext falls through to the refreshed cookie. Calling
+    // signinSilent here would re-race the rotating refresh token (the root-cause bug).
     vi.stubGlobal('window', { localStorage: {} });
-    const expiredUser = createMockUser({ expired: true });
-    const renewedUser = createMockUser({ access_token: 'renewed-token' });
+    const expiredUser = createMockUser({ expired: true, access_token: 'stale-token' });
     const mockManager = createMockUserManager({
       getUser: vi.fn().mockResolvedValue(expiredUser),
-      signinSilent: vi.fn().mockResolvedValue(renewedUser),
+      signinSilent: vi.fn(),
     });
     vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(createUserManager).mockReturnValue(mockManager as any);
 
     const result = await getAccessToken();
 
-    expect(mockManager.signinSilent).toHaveBeenCalled();
-    expect(result).toBe('renewed-token');
+    expect(mockManager.signinSilent).not.toHaveBeenCalled();
+    expect(result).toBe('stale-token');
   });
 
-  it('returns null when signinSilent fails', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const expiredUser = createMockUser({ expired: true });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(expiredUser),
-      signinSilent: vi.fn().mockRejectedValue(new Error('Silent renew failed')),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await getAccessToken();
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null when signinSilent returns null', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const expiredUser = createMockUser({ expired: true });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(expiredUser),
-      signinSilent: vi.fn().mockResolvedValue(null),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await getAccessToken();
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null when expired user but no manager', async () => {
+  it('returns null when no user (no manager)', async () => {
     // This edge case shouldn't happen in practice, but test defensive code
     const result = await getAccessToken();
     expect(result).toBeNull();
@@ -433,36 +406,15 @@ describe('authFetch', () => {
     expect(headers.get('Authorization')).toBe('Bearer access-token-xyz');
   });
 
-  it('retries on 401 with silent renew', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const renewedUser = createMockUser({ access_token: 'renewed-token' });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-      signinSilent: vi.fn().mockResolvedValue(renewedUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ status: 401, ok: false } as any)
-      .mockResolvedValueOnce({ status: 200, ok: true } as any) // syncTokenToCookie call
-      .mockResolvedValueOnce({ status: 200, ok: true } as any); // retry call
-
-    await authFetch('/api/test');
-
-    expect(fetch).toHaveBeenCalledTimes(3);
-    expect(mockManager.signinSilent).toHaveBeenCalled();
-    const retryCallHeaders = vi.mocked(fetch).mock.calls[2][1]?.headers as Headers;
-    expect(retryCallHeaders.get('Authorization')).toBe('Bearer renewed-token');
-  });
-
-  it('returns original 401 when silent renew fails', async () => {
+  it('does NOT silent-renew on 401 for an OIDC user; surfaces the 401', async () => {
+    // OIDC 401 survives the middleware's cookie-refresh chance ⇒ true session death.
+    // authFetch must NOT call signinSilent (single refresh authority) and must surface
+    // the original 401 to the single redirect site (auth-context).
     vi.stubGlobal('window', { localStorage: {} });
     const mockUser = createMockUser();
     const mockManager = createMockUserManager({
       getUser: vi.fn().mockResolvedValue(mockUser),
-      signinSilent: vi.fn().mockRejectedValue(new Error('Renew failed')),
+      signinSilent: vi.fn(),
     });
     vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(createUserManager).mockReturnValue(mockManager as any);
@@ -473,7 +425,8 @@ describe('authFetch', () => {
     const result = await authFetch('/api/test');
 
     expect(result).toBe(response401);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mockManager.signinSilent).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1); // no retry
   });
 
   it('retries on 401 via cookie refresh when no OIDC manager', async () => {
