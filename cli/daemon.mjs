@@ -12,7 +12,7 @@
 // NOT done here — the no-op UploadHooks reserve those seams for the derived
 // observability idea.
 
-import { resolveCredentials } from "./credentials.mjs";
+import { resolveCredentials, loginFilePath } from "./credentials.mjs";
 import { prompt, writeLoginFile } from "./login.mjs";
 import {
   resolvePermissionMode,
@@ -44,7 +44,7 @@ import {
   isRunning,
   readLog,
 } from "./daemon-lifecycle.mjs";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -415,6 +415,12 @@ export async function runDaemon(flags = {}, deps = {}) {
   // resolved path (or absence) is shown in the banner below.
   const claudePath = findClaude();
 
+  // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
+  // consult. Surfacing its absolute path + presence in the banner makes it obvious
+  // which file to edit for `cwds` / `sigintTimeoutMs` and whether one exists at all.
+  const configPath = loginFilePath();
+  const configExists = existsSync(configPath);
+
   // Boxed startup banner — one screen replacing the scattered [Chorus] lines.
   log(
     formatBanner(
@@ -428,6 +434,8 @@ export async function runDaemon(flags = {}, deps = {}) {
         agentType,
         claudePath,
         connection: "connecting…",
+        configPath,
+        configExists,
       },
       { isTTY: isTTY && Boolean(process.stdout.isTTY) }
     )

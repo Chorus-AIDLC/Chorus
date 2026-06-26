@@ -123,9 +123,47 @@ chorus daemon logs               # View daemon logs
 - **Claude Code integration** — Auto-detects `claude` CLI on your PATH
 - **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
 - **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
+- **Multi-path** — Serve several working directories from one daemon with repeatable `--cwd` (see below)
 - **Interactive setup** — Prompts for credentials on first start if not already configured
 
 The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
+
+#### Serve multiple working directories
+
+One daemon can serve several local working directories at once — each declared path registers as an independent connection (its own session + wake loop) under the same agent. A path is **just** a directory the daemon serves; it carries no project binding.
+
+```bash
+chorus daemon --cwd ~/work/repo-a --cwd ~/work/repo-b   # repeatable flag
+CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # or env (`:`- or `,`-separated)
+```
+
+With no `--cwd`, the daemon serves the single directory it was launched from.
+
+#### Configuration file — `~/.chorus/daemon.json`
+
+`chorus login` writes credentials here (mode `0600`). You can also add daemon tunables to the **same** file. Every field is optional; flags and environment variables always take precedence over the file.
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "apiKey": "cho_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "agentUuid": "00000000-0000-0000-0000-000000000000",
+  "agentName": "My Daemon Agent",
+  "cwds": ["~/work/repo-a", "~/work/repo-b"],
+  "sigintTimeoutMs": 10000
+}
+```
+
+| Field | Type | Written by / used for | Precedence (highest first) |
+|-------|------|-----------------------|----------------------------|
+| `url` | string | Remote Chorus server URL | `--url` flag → `CHORUS_URL` → file |
+| `apiKey` | string | Agent API key (`cho_…`) | `--api-key` flag → `CHORUS_API_KEY` → file |
+| `agentUuid` / `agentName` | string | Authenticated identity (recorded at login) | written by `chorus login` |
+| `cwds` | string[] | Working directories the daemon serves (multi-path) | `--cwd` flag(s) → `CHORUS_DAEMON_CWDS` → file → launch dir |
+| `sigintTimeoutMs` | number | Grace window (ms) after SIGINT before a forceful kill (default `10000`) | `--sigint-timeout` flag → `CHORUS_DAEMON_SIGINT_TIMEOUT` → file → `10000` |
+| `yoloAckAt` | string | Internal — timestamp of a TTY yolo confirmation (managed automatically) | — |
+
+On startup the daemon banner prints the **exact `daemon.json` path it read** (and whether the file exists), so you always know which file to edit.
 
 ---
 

@@ -19,6 +19,8 @@
  * @property {string} agentType        local agent backend (e.g. claude-code).
  * @property {string|null} claudePath  resolved claude path, or null when not found.
  * @property {string} [connection]     connection state line (default "connecting…").
+ * @property {string} [configPath]     absolute path to the daemon.json the CLI reads.
+ * @property {boolean} [configExists]  whether that daemon.json exists on disk.
  */
 
 /** Right-pad to width (banner box alignment). */
@@ -38,7 +40,7 @@ export function bannerRows(info) {
       ? "YOLO ⚠  (full autonomy — Bash/write/any command)"
       : "chorus-only (Chorus MCP tools only)";
   const claude = info.claudePath ? `found: ${info.claudePath}` : "NOT FOUND — install `claude` or set CHORUS_CLAUDE_PATH";
-  return [
+  const rows = [
     ["Version", `chorus v${info.version}`],
     ["Server", info.url],
     ["Agent", `${info.agentName} (${info.agentUuid})`],
@@ -48,6 +50,14 @@ export function bannerRows(info) {
     ["Connection", info.connection ?? "connecting…"],
     ["claude CLI", claude],
   ];
+  // Config file row — shown only when the path is known. Tells the operator
+  // exactly which daemon.json the CLI read (and whether it exists), so a
+  // mis-located or absent config is obvious at a glance.
+  if (info.configPath) {
+    const exists = info.configExists ? "" : " (not found — using flags/env/defaults)";
+    rows.push(["Config", `${info.configPath}${exists}`]);
+  }
+  return rows;
 }
 
 /**
