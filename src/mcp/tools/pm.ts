@@ -14,6 +14,7 @@ import * as activityService from "@/services/activity.service";
 import * as elaborationService from "@/services/elaboration.service";
 import { getAgentByUuid } from "@/services/agent.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
+import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { hasPermission } from "@/lib/auth";
@@ -87,10 +88,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }
 
-      // Check if the caller is the assignee (UUID comparison)
-      const isAssignee =
-        (idea.assigneeType === "agent" && idea.assigneeUuid === auth.actorUuid) ||
-        (idea.assigneeType === "user" && auth.ownerUuid && idea.assigneeUuid === auth.ownerUuid);
+      // Check if the caller is the assignee. Routes through the shared helper so
+      // an `agent_instance` assignment owned by this agent also passes (its
+      // assigneeUuid is an instance uuid, resolved back to the agent first).
+      const isAssignee = await isAssignmentOwnedByActor(auth, idea.assigneeType, idea.assigneeUuid);
 
       if (!isAssignee) {
         return { content: [{ type: "text", text: "Only the assignee can release a claimed Idea" }], isError: true };
@@ -566,13 +567,17 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status)",
+      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status). Optionally pin the task to a specific AgentInstance by passing its `instanceUuid` (the durable (agent, host, cwd) identity from chorus presence/daemon tools): when provided the task is assigned as `agent_instance` and the autonomous wake targets that instance; when omitted the task is a plain `agent` assignment whose wake-time instance is inherited from the root idea. The instance must belong to the target agent's company, else the call is rejected.",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
         agentUuid: z.string().describe("Target Agent UUID (must have task:write permission)"),
+        instanceUuid: z
+          .string()
+          .nullish()
+          .describe("Optional AgentInstance UUID to pin the task to (assigns as agent_instance). Omit for a plain agent assignment (backward-compatible)."),
       }),
     },
-    async ({ taskUuid, agentUuid }) => {
+    async ({ taskUuid, agentUuid, instanceUuid }) => {
       // Validate task exists
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
@@ -606,7 +611,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         };
       }
 
-      // Execute assignment
+      // Execute assignment. When an instanceUuid is supplied, claimTask validates
+      // it belongs to this company and persists the task as an `agent_instance`
+      // assignment (assigneeUuid = the instance uuid); when omitted the task is a
+      // plain `agent` assignment, byte-identical to before this change. Pass the
+      // field only when set so an un-pinned assignment's args are unchanged.
       try {
         await taskService.claimTask({
           taskUuid: task.uuid,
@@ -614,9 +623,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           assigneeType: "agent",
           assigneeUuid: agentUuid,
           assignedByUuid: auth.actorUuid,
+          ...(instanceUuid != null ? { instanceUuid } : {}),
         });
 
-        // Log activity
+        // Log activity. Record the resolved assignee type and the pinned instance
+        // uuid (when any) so the timeline reflects the agent_instance assignment.
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
           projectUuid: task.projectUuid,
@@ -625,7 +636,13 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           actorType: "agent",
           actorUuid: auth.actorUuid,
           action: "assigned",
-          value: { assigneeType: "agent", assigneeUuid: agentUuid, assignedBy: auth.actorUuid },
+          value: {
+            assigneeType: instanceUuid != null ? "agent_instance" : "agent",
+            assigneeUuid: instanceUuid != null ? instanceUuid : agentUuid,
+            agentUuid,
+            assignedBy: auth.actorUuid,
+            ...(instanceUuid != null ? { instanceUuid } : {}),
+          },
         });
 
         // Fetch full task details with dependencies
@@ -676,6 +693,14 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         if (e instanceof AlreadyClaimedError) {
           return {
             content: [{ type: "text", text: "Task is already claimed and cannot be assigned" }],
+            isError: true,
+          };
+        }
+        // A non-existent / foreign-company instance pin is rejected by the
+        // service with a plain Error; surface it as a tool error, not a throw.
+        if (e instanceof Error && e.message === "Agent instance not found") {
+          return {
+            content: [{ type: "text", text: "Agent instance not found" }],
             isError: true,
           };
         }

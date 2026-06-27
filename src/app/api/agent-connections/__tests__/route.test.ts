@@ -36,6 +36,7 @@ const sampleConnections = [
     clientType: "claude_code",
     clientVersion: "0.11.0",
     host: "laptop",
+    cwd: "/Users/me/projects/alpha",
     startedAt: "2026-06-15T03:00:00.000Z",
     status: "online",
     effectiveStatus: "online",
@@ -52,6 +53,8 @@ const sampleConnections = [
     clientType: "openclaw",
     clientVersion: null,
     host: "",
+    // Old daemon (no cwd self-report) → cwd:null flows through verbatim.
+    cwd: null,
     startedAt: null,
     status: "offline",
     effectiveStatus: "offline",

@@ -36,6 +36,7 @@ model Company {
   comments          Comment[]
   sessions          AgentSession[]
   daemonConnections DaemonConnection[]
+  agentInstances    AgentInstance[]
 }
 
 // User (human, OIDC login)
@@ -78,9 +79,41 @@ model Agent {
   daemonConnections DaemonConnection[]
   daemonExecutions  DaemonExecution[]
   daemonSessions    DaemonSession[]
+  agentInstances    AgentInstance[]
 
   @@index([companyUuid])
   @@index([ownerUuid])
+}
+
+// AgentInstance — a durable, addressable (agent, host, cwd) actor. Created by
+// upsert when a daemon first reports a (host, cwd); it holds ONLY identity, never
+// liveness. The stable pointer that assignment (assigneeType="agent_instance") and
+// mention markup resolve to: DaemonConnection.uuid churns on every reconnect, but
+// the (agent, host, cwd) triple is stable, so this row's uuid is the durable handle.
+// Liveness for an instance is read through its linked DaemonConnection
+// (effectiveStatus / STALE_THRESHOLD_MS), never stored here — that is a connection
+// property (see add-agent-instance-addressing design §"Data model"). host defaults
+// to "" (unknown host) and cwd is nullable (unknown path), mirroring the
+// DaemonConnection sentinels so a connection's identity maps 1:1 to an instance key.
+model AgentInstance {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @unique @default(uuid())
+  companyUuid String
+  company     Company  @relation(fields: [companyUuid], references: [uuid])
+  agentUuid   String
+  agent       Agent    @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  host        String   @default("") // "" = unknown-host (matches DaemonConnection.host sentinel)
+  cwd         String? // null = unknown-path (matches DaemonConnection.cwd sentinel)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Connections that have served this instance (current + historical). Liveness is
+  // derived from these, never duplicated onto the instance row.
+  connections DaemonConnection[]
+
+  @@unique([companyUuid, agentUuid, host, cwd])
+  @@index([companyUuid])
+  @@index([agentUuid])
 }
 
 // API Key (independently managed, supports rotation and revocation)
@@ -210,8 +243,15 @@ model Task {
   priority                String                @default("medium") // low | medium | high
   storyPoints             Float? // Effort estimate (unit: Agent hours)
   acceptanceCriteria      String? // Acceptance criteria (Markdown)
-  assigneeType            String? // user | agent
-  assigneeUuid            String? // User or Agent UUID (polymorphic)
+  // Polymorphic assignee: user | agent | agent_instance. A pinned assignment is
+  // assigneeType="agent_instance" with assigneeUuid = AgentInstance.uuid (the
+  // durable (agent, host, cwd) actor); an un-pinned agent assignment is
+  // assigneeType="agent". The legacy targetHost/targetCwd pin columns were removed
+  // by add-agent-instance-addressing — the wake's pinned place now comes from the
+  // task's own agent_instance assignment (override) or, for the same agent, the
+  // root idea's instance (notification-turn.ts resolvePinnedTarget).
+  assigneeType            String? // user | agent | agent_instance
+  assigneeUuid            String? // User / Agent / AgentInstance UUID (polymorphic)
   assignedAt              DateTime? // Assignment timestamp
   assignedByUuid          String? // User UUID (human assignment)
   proposalUuid            String? // Source Proposal UUID (traceable, optional)
@@ -408,7 +448,32 @@ model DaemonConnection {
   // null as distinct (Prisma docs), which would let reconnects accumulate rows.
   // Defaulting to "" makes (agentUuid, clientType, host) a deterministic upsert key.
   host          String    @default("")
+  // Self-reported working directory this connection serves (display + identity).
+  // Nullable per the ratified migration decision (DEC/Q6=a): rows that exist at
+  // migration time get cwd=NULL as a sentinel and are backfilled on the next
+  // handshake — no forced backfill script. NOTE: unlike `host` (which defaults
+  // to "" to stay a deterministic dedup key), `cwd` is left nullable here.
+  // Postgres treats NULL as distinct in a UNIQUE index, so two
+  // (agentUuid, clientType, host, NULL) rows do NOT dedup; that is accepted for
+  // the migration era (old daemons are single-cwd, so independent null rows
+  // match the HARD-1 "behave exactly as today" requirement). Verified
+  // empirically (psql) + against Prisma docs. The real cwd self-report, the
+  // cwd-aware dedup, and the "reuse the migrated null row on reconnect"
+  // compatibility path all live in T2 — not this task. Because Prisma types a
+  // nullable column as non-null inside the compound-unique `where` input (NULL
+  // cannot be targeted there), T1's still-untouched registerConnection() upsert
+  // pins cwd to the "" sentinel to preserve today's deterministic dedup; T2
+  // reconciles the ""-vs-NULL sentinel when it wires real cwd self-report.
+  cwd           String?
   startedAt     DateTime? // self-reported daemon process start time
+
+  // The durable AgentInstance this connection currently serves (same
+  // (agentUuid, host, cwd) identity). Nullable: rows existing at migration time
+  // have no instance yet and get linked on the next handshake (the "rebuild on
+  // reconnect" path — no backfill). SetNull (app-level, relationMode=prisma) so
+  // deleting an instance never deletes its connection history.
+  agentInstanceUuid String?
+  agentInstance     AgentInstance? @relation(fields: [agentInstanceUuid], references: [uuid], onDelete: SetNull)
 
   status         String    @default("online") // online | offline
   connectedAt    DateTime  @default(now())
@@ -418,11 +483,12 @@ model DaemonConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([agentUuid, clientType, host])
+  @@unique([agentUuid, clientType, host, cwd])
   @@index([companyUuid])
   @@index([agentUuid])
   @@index([status])
   @@index([lastSeenAt])
+  @@index([agentInstanceUuid])
 }
 
 // Daemon execution state — one row per (connection, resource) the daemon is

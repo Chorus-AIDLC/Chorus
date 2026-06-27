@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.12.0](https://chorus-ai.dev/zh/blog/chorus-v0.12.0-release/)** — 可寻址的 daemon 实例：一个 `chorus daemon` 可同时守多个工作目录（`--cwd`），每一个 `(agent, 主机, 目录)` 都成为一个能单独看见、单独点名的实例，贯穿 presence、@-mention 与任务指派。在想法上钉一次实例，其下的提案、任务与唤醒都会继承；带钉的唤醒被精确投递到那个实例，而非全员广播。评论区的 Agent @-mention 渲染为实时在线状态徽章，评论列表改为游标式无限滚动。
+
 **[v0.11.0](https://chorus-ai.dev/zh/blog/chorus-v0.11.0-release/)** — Chorus Daemon：`chorus daemon` 将本机变为常驻 Agent 运行时，在每次派发时唤起本地 Claude Code。Agent Connections 界面提供实时可观测与控制：流式 transcript、指令注入、打断 / 恢复；新增"完成细化"按钮，唤起被指派的 Agent 撰写提案。
 
 **[v0.10.0](https://chorus-ai.dev/zh/blog/chorus-v0.10.0-release/)** — 单父想法血缘：一条想法可派生子想法或挂靠至另一条之下，构成森林结构。该关联为弱关联，父想法仅呈现只读的 "+N derived" 汇总，不约束子想法的细化、提案与任务流程。想法浏览统一收敛至 Dashboard（Ideas / Lineage / Stats 三档视图切换，支持自适应默认）；独立的 Idea List 页面下线，原 URL 经 308 重定向至 Dashboard。
@@ -36,18 +38,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.9.0](https://chorus-ai.dev/zh/blog/chorus-v0.9.0-release/)** — 头脑风暴 skill 帮你把模糊的想法聊出形状（在结构化多选题前先开放式对话），想法落地后自动生成总结报告（Summary / Decisions / Follow-ups 三段式，挂在想法概览页）。
 
 **[v0.8.0](https://chorus-ai.dev/zh/blog/chorus-v0.8.0-release/)** — OpenSpec-aware 模式（仅 Claude Code）：当仓库下同时存在 `openspec/` 目录和 `openspec` CLI 时自动启用，新增 `/opsx/{explore,propose,apply,archive}` 与 task verify 后的 archive-trigger 钩子。
-
-**[v0.7.0](https://chorus-ai.dev/zh/blog/chorus-v0.7.0-release/)** — 细粒度 Agent 权限：5 类资源 × 3 个动作组成的网格，取代 PM / Developer / Admin 三选一。保留原有预设，新增 Custom 选项自由组合。
-
-**[v0.6.7](https://chorus-ai.dev/zh/blog/chorus-v0.6.7-release/)** — Codex CLI 版 Chorus 插件（一条命令装完）、同一邮箱属于多个 Company 时的工作区选择器、每种客户端的接入文档。
-
-**[v0.6.6](https://chorus-ai.dev/zh/blog/chorus-v0.6.6-release/)** — npm 一键安装（`npx @chorus-aidlc/chorus`）、文档导出（MD/PDF/Word）、Proposal 撤回、优化 Agent Checkin 快速获取工作状态。
-
-**[v0.6.2](https://chorus-ai.dev/zh/blog/chorus-v0.6.2-release/)** — 嵌入式 PGlite 模式（零依赖部署）、Pino 结构化日志、无状态 MCP 支持水平扩展、默认端口改为 8637。
-
-**[v0.6.1](https://chorus-ai.dev/zh/blog/chorus-v0.6.1-release/)** — `/yolo` 技能：全自动 AI-DLC 流水线（Idea → Proposal → Execute → Verify），支持 Agent Team 并行执行。
-
-**[v0.6.0](https://chorus-ai.dev/zh/blog/chorus-v0.6.0-release/)** — IdeaTracker 面板、独立审阅 Agent（proposal-reviewer + task-reviewer）、实时 Agent Presence 指示器、跨列 Kanban 动画。
 
 > 完整更新日志：[CHANGELOG.md](CHANGELOG.md)
 
@@ -114,13 +104,57 @@ chorus daemon logs               # 查看 daemon 日志
 - **Claude Code 集成** — 自动检测 PATH 中的 `claude` CLI
 - **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
 - **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
+- **多路径** — 用可重复的 `--cwd` 让单个 daemon 同时服务多个工作目录（见下文）
 - **交互式设置** — 首次启动时如未配置凭证会提示输入
 
 daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
 
+#### 服务多个工作目录
+
+一个 daemon 可以同时服务多个本地工作目录——每个声明的路径会注册为一条独立连接（各自拥有会话与唤起循环），归属同一个 Agent。路径**仅仅**是 daemon 服务的目录，不携带任何项目绑定。
+
+```bash
+chorus daemon --cwd ~/work/repo-a --cwd ~/work/repo-b   # 可重复传入
+CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # 或用环境变量（`:` 或 `,` 分隔）
+```
+
+不传 `--cwd` 时，daemon 只服务它的启动目录这一个路径。
+
+#### 配置文件 —— `~/.chorus/daemon.json`
+
+`chorus login` 会把凭证写入此文件（权限 `0600`）。你也可以把 daemon 的调优项写进**同一个**文件。所有字段都是可选的；命令行参数和环境变量的优先级始终高于文件。
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "apiKey": "cho_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "agentUuid": "00000000-0000-0000-0000-000000000000",
+  "agentName": "My Daemon Agent",
+  "cwds": ["~/work/repo-a", "~/work/repo-b"],
+  "sigintTimeoutMs": 10000
+}
+```
+
+| 字段 | 类型 | 写入方 / 用途 | 优先级（从高到低） |
+|------|------|---------------|--------------------|
+| `url` | string | 远程 Chorus 服务器 URL | `--url` 参数 → `CHORUS_URL` → 文件 |
+| `apiKey` | string | Agent API Key（`cho_…`） | `--api-key` 参数 → `CHORUS_API_KEY` → 文件 |
+| `agentUuid` / `agentName` | string | 认证身份（登录时记录） | 由 `chorus login` 写入 |
+| `cwds` | string[] | daemon 服务的工作目录（多路径） | `--cwd` 参数 → `CHORUS_DAEMON_CWDS` → 文件 → 启动目录 |
+| `sigintTimeoutMs` | number | SIGINT 后强制结束前的宽限窗口（毫秒，默认 `10000`） | `--sigint-timeout` 参数 → `CHORUS_DAEMON_SIGINT_TIMEOUT` → 文件 → `10000` |
+| `yoloAckAt` | string | 内部字段——TTY 下 yolo 确认的时间戳（自动管理） | — |
+
+daemon 启动时的横幅会打印它**实际读取的 `daemon.json` 路径**（以及该文件是否存在），让你随时清楚该编辑哪个文件。
+
 ---
 
 ## 界面预览
+
+### 远程唤醒 Agent——派活到指定目录，实时看它跑
+
+![远程唤醒 Agent](docs/images/agent-daemon-wake.gif)
+
+把一条想法派给远程 Agent 的某个目录，打开对话窗口，就能实时看到本地的 Claude Code 接活、开跑，全程不用碰终端，也不用手动 resume。
 
 ### Proposal——AI Agent 实时生成计划
 
@@ -248,7 +282,7 @@ Cmd+K 命令面板，支持跨 6 种实体类型搜索。支持范围筛选（�
 | Agent 集成 | MCP SDK 1.26 (HTTP Streamable Transport) |
 | 认证 | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh) |
-| 部署 | [Docker Hub](https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general) / Docker Compose / AWS CDK |
+| 部署 | [Docker Hub](https://hub.docker.com/r/chorusaidlc/chorus-app) / Docker Compose / AWS CDK |
 
 ---
 

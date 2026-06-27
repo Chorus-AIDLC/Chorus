@@ -31,6 +31,13 @@ export const POST = withErrorHandler<{ uuid: string }>(
     let assigneeType: string;
     let assigneeUuid: string;
     let assignedByUuid: string | null = null;
+    // Optional durable AgentInstance pin (add-agent-instance-addressing). When a
+    // user assigns an idea to an agent, they may pin which (agent, host, cwd)
+    // instance the idea is rooted at by passing the instance's uuid. Presence →
+    // the idea is persisted as assigneeType="agent_instance" (the authoritative
+    // pin root that proposals/tasks/wakes inherit); absence → plain agent
+    // (backward-compatible). An agent self-claim never pins one.
+    let instanceUuid: string | null = null;
 
     if (isAgent(auth)) {
       // Agents need idea:write permission to claim
@@ -44,6 +51,11 @@ export const POST = withErrorHandler<{ uuid: string }>(
       const body = await parseBody<{
         assignToSelf?: boolean;
         agentUuid?: string;
+        // Optional durable AgentInstance pin: the uuid of the (agent, host, cwd)
+        // instance to root this idea at. The instance must belong to this
+        // company (validated server-side in claimIdea); a non-existent or
+        // foreign-company uuid is rejected. Omitted → no pin (plain agent).
+        instanceUuid?: string | null;
       }>(request);
 
       if (body.agentUuid) {
@@ -77,6 +89,10 @@ export const POST = withErrorHandler<{ uuid: string }>(
         assigneeType = "agent";
         assigneeUuid = agent.uuid;
         assignedByUuid = auth.actorUuid;
+        // Carry the optional instance pin only when assigning to an agent. The
+        // service validates the instance belongs to this company and, when
+        // present, persists the idea as assigneeType="agent_instance".
+        instanceUuid = body.instanceUuid ?? null;
       } else {
         // Assign to self (all owned PM Agents can handle it)
         assigneeType = "user";
@@ -88,18 +104,29 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     try {
+      // Thread the optional instance pin through to the service. When present,
+      // claimIdea validates the instance belongs to this company and persists
+      // the idea as assigneeType="agent_instance"/assigneeUuid=<instance uuid>;
+      // when null it is byte-identical to a plain-agent claim. Pass it only when
+      // set so an un-pinned claim's args are unchanged from before.
       const updated = await claimIdea({
         ideaUuid: idea.uuid,
         companyUuid: auth.companyUuid,
         assigneeType,
         assigneeUuid,
         assignedByUuid,
+        ...(instanceUuid != null ? { instanceUuid } : {}),
       });
 
       return success(updated);
     } catch (e) {
       if (e instanceof AlreadyClaimedError) {
         return errors.alreadyClaimed();
+      }
+      // A foreign-company / non-existent instance pin is rejected by the
+      // service with a plain Error; surface it as a 400 rather than a 500.
+      if (e instanceof Error && e.message === "Agent instance not found") {
+        return errors.badRequest(e.message);
       }
       throw e;
     }

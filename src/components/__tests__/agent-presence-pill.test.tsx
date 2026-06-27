@@ -112,14 +112,28 @@ import { ExecutionRow } from "@/components/agent-presence";
 
 const TRIGGER_LABEL = "Online agents — open details";
 
+// T11: the agent group is COLLAPSED by default in the popover, so its per-cwd
+// instance rows (and their executions / idle line / Interrupt control) only
+// render after the agent header toggle is clicked. Expand every agent so the
+// nested rows under test become visible (the header `aria-label` is
+// "Show <agent>'s working directories" while collapsed).
+async function expandAgents(user: ReturnType<typeof userEvent.setup>) {
+  const toggles = await screen.findAllByRole("button", {
+    name: /Show .*working directories/,
+  });
+  for (const toggle of toggles) await user.click(toggle);
+}
+
 function makeConnection(over: Partial<ConnectionView> = {}): ConnectionView {
   return {
     uuid: "conn-1",
     agentUuid: "agent-1",
     agentName: "Builder Bot",
+    ownerUuid: null,
     clientType: "claude_code",
     clientVersion: "1.2.3",
     host: "macbook",
+    cwd: "/Users/me/projects/alpha",
     startedAt: "2026-06-18T09:00:00.000Z",
     status: "online",
     effectiveStatus: "online",
@@ -158,6 +172,9 @@ function setPresence(over: Partial<AgentPresenceValue>) {
     openSession: null,
     setOpenSession: vi.fn(),
     subscribeTranscript: vi.fn(() => () => {}),
+    focusTarget: null,
+    openChatForAgent: vi.fn(),
+    clearChatFocusTarget: vi.fn(),
     ...over,
   };
   mockPresence.mockReturnValue(value);
@@ -293,6 +310,8 @@ describe("AgentPresencePill — popover content", () => {
 
     // PopoverContent renders in a portal — assert against the document text.
     await screen.findByText("Builder Bot");
+    // T11: expand the (default-collapsed) agent so its execution rows render.
+    await expandAgents(user);
     const popoverText = document.body.textContent ?? "";
     expect(popoverText).toContain("Running task A");
     expect(popoverText).toContain("Queued task B");
@@ -311,7 +330,40 @@ describe("AgentPresencePill — popover content", () => {
     const user = userEvent.setup();
     render(<AgentPresencePill />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+    // T11: expand the (default-collapsed) agent so its idle line renders.
+    await expandAgents(user);
 
+    expect(
+      await screen.findByText("Idle — no running or queued work."),
+    ).toBeTruthy();
+  });
+
+  it("default COLLAPSED: agent header shows name + count but hides instance rows until expanded (T11)", async () => {
+    setPresence({
+      status: "ok",
+      onlineCount: 1,
+      connections: [makeConnection({ agentName: "Builder Bot" })],
+      executionsByConnection: {},
+    });
+
+    const user = userEvent.setup();
+    render(<AgentPresencePill />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+
+    // The collapsed agent header is present (a real toggle, aria-expanded=false)…
+    const toggle = await screen.findByRole("button", {
+      name: /Show .*working directories/,
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(await screen.findByText("Builder Bot")).toBeTruthy();
+    // …but the per-cwd idle line is NOT visible while collapsed.
+    expect(
+      screen.queryByText("Idle — no running or queued work."),
+    ).toBeNull();
+
+    // Expanding flips aria-expanded and reveals the rows.
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(
       await screen.findByText("Idle — no running or queued work."),
     ).toBeTruthy();
@@ -382,6 +434,9 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     const user = userEvent.setup();
     render(<AgentPresencePill />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+    // T11: expand the (default-collapsed) agent so the idle line (used as the
+    // "portal mounted" proof) renders.
+    await expandAgents(user);
     // The popover empty-connection line proves the portal content has mounted.
     await screen.findByText("Idle — no running or queued work.");
 
@@ -415,6 +470,8 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     const user = userEvent.setup();
     render(<AgentPresencePill />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+    // T11: expand the (default-collapsed) agent so its running row renders.
+    await expandAgents(user);
 
     // Interrupt control is still present in the popover (controls retained).
     const interruptBtn = await screen.findByRole("button", {

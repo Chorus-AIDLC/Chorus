@@ -8,6 +8,9 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    agentInstance: {
+      findFirst: vi.fn(),
+    },
     elaborationRound: {
       count: vi.fn(),
       create: vi.fn(),
@@ -965,6 +968,114 @@ describe("skipElaboration", () => {
         reason: "Clear",
       })
     ).rejects.toThrow("Cannot skip elaboration from status");
+  });
+});
+
+// Ownership gate must accept an agent_instance-pinned idea owned by the actor.
+// An agent_instance idea's assigneeUuid is an instance uuid (≠ actorUuid), so the
+// gate resolves it to the owning agent via resolveAssigneeAgentUuid before
+// comparing. Without this, the assigned agent could never act on its own
+// instance-pinned idea.
+describe("ownership gate — agent_instance assignment (add-agent-instance-addressing)", () => {
+  const INSTANCE_UUID = "inst-9999";
+
+  function instanceIdea(overrides: Record<string, unknown> = {}) {
+    return makeIdea({
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE_UUID,
+      ...overrides,
+    });
+  }
+
+  it("startElaboration: permits the owning agent of an instance-pinned idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(instanceIdea());
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: ACTOR_UUID });
+    mockPrisma.elaborationRound.count.mockResolvedValue(0);
+    mockPrisma.elaborationRound.create.mockResolvedValue(makeRound());
+    mockPrisma.elaborationRound.findUniqueOrThrow.mockResolvedValue(makeRound());
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      startElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+        depth: "standard",
+        questions: validQuestions,
+      })
+    ).resolves.toBeDefined();
+    expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith({
+      where: { uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID },
+      select: { agentUuid: true },
+    });
+  });
+
+  it("startElaboration: rejects an agent that does not own the pinned instance", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(instanceIdea());
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
+
+    await expect(
+      startElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+        depth: "standard",
+        questions: validQuestions,
+      })
+    ).rejects.toThrow("Only the assigned agent can start elaboration");
+  });
+
+  it("resolveElaboration: permits the owning agent of an instance-pinned idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      instanceIdea({ elaborationStatus: "validating" })
+    );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: ACTOR_UUID });
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([
+      makeRound({ status: "answered", validatedAt: now }),
+    ]);
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      resolveElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+      })
+    ).resolves.toBeDefined();
+  });
+
+  it("skipElaboration: permits the owning agent of an instance-pinned idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(instanceIdea());
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: ACTOR_UUID });
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      skipElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+        reason: "Clear enough",
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("skipElaboration: rejects an agent that does not own the pinned instance", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(instanceIdea());
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
+
+    await expect(
+      skipElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID,
+        actorType: "agent",
+        reason: "Clear",
+      })
+    ).rejects.toThrow("Only the assigned agent can skip elaboration");
   });
 });
 

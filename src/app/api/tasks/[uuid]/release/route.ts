@@ -30,7 +30,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     // Check permissions: users can release any Task, Agents can only release their own
     if (!isUser(auth)) {
-      if (!isAssignee(auth, task.assigneeType, task.assigneeUuid)) {
+      if (!(await isAssignee(auth, task.assigneeType, task.assigneeUuid))) {
         return errors.permissionDenied("Only assignee can release this task");
       }
     }

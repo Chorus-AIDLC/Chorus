@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Mock dependencies that auth.ts imports transitively
-vi.mock('@/lib/prisma', () => ({ prisma: {} }));
+// Mock dependencies that auth.ts imports transitively. agentInstance.findFirst
+// backs the agent_instance ownership-resolution path now shared by isAssignee
+// (via isAssignmentOwnedByActor → resolveAssigneeAgentUuid).
+const { mockAgentInstanceFindFirst } = vi.hoisted(() => ({ mockAgentInstanceFindFirst: vi.fn() }));
+vi.mock('@/lib/prisma', () => ({ prisma: { agentInstance: { findFirst: mockAgentInstanceFindFirst } } }));
 vi.mock('@/generated/prisma/client', () => ({ PrismaClient: vi.fn() }));
 vi.mock('@/lib/super-admin', () => ({ getSuperAdminFromRequest: vi.fn() }));
 vi.mock('@/lib/user-session', () => ({ getUserSessionFromRequest: vi.fn() }));
@@ -456,44 +459,62 @@ describe('requireAgentRole', () => {
 });
 
 describe('isAssignee', () => {
-  it('returns true when user is the assignee', () => {
-    expect(isAssignee(userCtx, 'user', 'user-uuid')).toBe(true);
+  beforeEach(() => {
+    mockAgentInstanceFindFirst.mockReset();
   });
 
-  it('returns false when user is not the assignee', () => {
-    expect(isAssignee(userCtx, 'user', 'other-uuid')).toBe(false);
+  it('returns true when user is the assignee', async () => {
+    expect(await isAssignee(userCtx, 'user', 'user-uuid')).toBe(true);
   });
 
-  it('returns true when agent is the assignee', () => {
-    expect(isAssignee(agentCtx, 'agent', 'agent-uuid')).toBe(true);
+  it('returns false when user is not the assignee', async () => {
+    expect(await isAssignee(userCtx, 'user', 'other-uuid')).toBe(false);
   });
 
-  it('returns false when agent is not the assignee', () => {
-    expect(isAssignee(agentCtx, 'agent', 'other-uuid')).toBe(false);
+  it('returns true when agent is the assignee', async () => {
+    expect(await isAssignee(agentCtx, 'agent', 'agent-uuid')).toBe(true);
   });
 
-  it('returns true when agent owner matches user assignee', () => {
+  it('returns false when agent is not the assignee', async () => {
+    expect(await isAssignee(agentCtx, 'agent', 'other-uuid')).toBe(false);
+  });
+
+  it('returns true when agent owner matches user assignee', async () => {
     const agentWithOwner: AgentAuthContext = {
       ...agentCtx,
       ownerUuid: 'owner-uuid',
     };
-    expect(isAssignee(agentWithOwner, 'user', 'owner-uuid')).toBe(true);
+    expect(await isAssignee(agentWithOwner, 'user', 'owner-uuid')).toBe(true);
   });
 
-  it('returns false when agent has no owner', () => {
-    expect(isAssignee(agentCtx, 'user', 'some-user-uuid')).toBe(false);
+  it('returns false when agent has no owner', async () => {
+    expect(await isAssignee(agentCtx, 'user', 'some-user-uuid')).toBe(false);
   });
 
-  it('returns false when assigneeType is null', () => {
-    expect(isAssignee(userCtx, null, 'user-uuid')).toBe(false);
+  it('returns true when the agent owns the agent_instance assignment (resolved instance → agent)', async () => {
+    mockAgentInstanceFindFirst.mockResolvedValue({ agentUuid: 'agent-uuid' });
+    expect(await isAssignee(agentCtx, 'agent_instance', 'inst-1')).toBe(true);
+    expect(mockAgentInstanceFindFirst).toHaveBeenCalledWith({
+      where: { uuid: 'inst-1', companyUuid: agentCtx.companyUuid },
+      select: { agentUuid: true },
+    });
   });
 
-  it('returns false when assigneeUuid is null', () => {
-    expect(isAssignee(userCtx, 'user', null)).toBe(false);
+  it('returns false when the agent_instance assignment belongs to a different agent', async () => {
+    mockAgentInstanceFindFirst.mockResolvedValue({ agentUuid: 'other-agent' });
+    expect(await isAssignee(agentCtx, 'agent_instance', 'inst-1')).toBe(false);
   });
 
-  it('returns false when both assigneeType and assigneeUuid are null', () => {
-    expect(isAssignee(userCtx, null, null)).toBe(false);
+  it('returns false when assigneeType is null', async () => {
+    expect(await isAssignee(userCtx, null, 'user-uuid')).toBe(false);
+  });
+
+  it('returns false when assigneeUuid is null', async () => {
+    expect(await isAssignee(userCtx, 'user', null)).toBe(false);
+  });
+
+  it('returns false when both assigneeType and assigneeUuid are null', async () => {
+    expect(await isAssignee(userCtx, null, null)).toBe(false);
   });
 });
 

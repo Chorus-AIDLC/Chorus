@@ -183,6 +183,8 @@ export function DaemonChat() {
     executionsByConnection,
     setOpenSession,
     subscribeTranscript,
+    focusTarget,
+    clearChatFocusTarget,
   } = useAgentPresence();
 
   // ===== Conversation list (GET /api/daemon-sessions) =====
@@ -500,7 +502,22 @@ export function DaemonChat() {
   }, [detail, connections]);
   const originOnline = originConnection?.effectiveStatus === "online";
 
-  // The agent's online connections — the ad-hoc picker candidates for the send box.
+  // Whether the origin agent currently spans MULTIPLE distinct hosts. The transcript
+  // header is path-first (cwd as the instance identity) and de-emphasizes host into the
+  // "Connection details" disclosure; host is only worth surfacing inline when it actually
+  // disambiguates — i.e. the same agent has connections on >1 host, so a bare path could be
+  // ambiguous. Distinct non-empty hosts only (an unknown/"" host can't disambiguate).
+  const originCrossHost = useMemo(() => {
+    const agentUuid = originConnection?.agentUuid;
+    if (!agentUuid) return false;
+    const hosts = new Set<string>();
+    for (const c of connections) {
+      if (c.agentUuid === agentUuid && c.host !== "") hosts.add(c.host);
+    }
+    return hosts.size > 1;
+  }, [originConnection, connections]);
+
+  // The agent's online connections — gates whether the ad-hoc path is offered.
   const selectedAgentOnlineConnections = useMemo(
     () =>
       selectedAgentUuid
@@ -512,6 +529,20 @@ export function DaemonChat() {
         : [],
     [connections, selectedAgentUuid],
   );
+
+  // The OPEN conversation's agent's online connections — the candidate set for the
+  // origin-offline "Continue on an online directory" escape hatch (T11 / qr3).
+  // Sourced from the origin connection's agent (not the picked agent) so the escape
+  // hatch is always pinned to the conversation actually on screen. When the origin
+  // is offline but this set is non-empty, the reply box offers starting a NEW
+  // conversation on one of these online instances; the original stays read-only.
+  const originAgentOnlineConnections = useMemo(() => {
+    const agentUuid = originConnection?.agentUuid;
+    if (!agentUuid) return [];
+    return connections.filter(
+      (c) => c.agentUuid === agentUuid && c.effectiveStatus === "online",
+    );
+  }, [originConnection, connections]);
 
   // Display name for the selected agent (the new-conversation pane's header).
   const selectedAgentName =
@@ -570,9 +601,32 @@ export function DaemonChat() {
     setMobileDetailOpen(true);
   }, []);
 
-  // A freshly-started ad-hoc session: pull it into the list immediately (so it
-  // appears without waiting for the 15s poll) and auto-select it, sliding the new
-  // conversation's (empty) transcript into view.
+  // Consume a one-shot chat focus target (seeded by `openChatForAgent`, e.g. the
+  // comment mention badge's "Open conversation" action): pin the left rail to the
+  // focused agent and clear any prior conversation selection so the owner lands on
+  // that agent's conversation list / composer. Per the Tech Design contract
+  // (elaboration q3), focusing the agent is sufficient — for a pinned mention the
+  // `(host, cwd)` instance belongs to the SAME agentUuid, so focusing the agent
+  // already lands the owner on the right surface; precise past-session
+  // auto-selection is intentionally not done here. ADDITIVE: this only seeds the
+  // existing `pickedAgentUuid` selection state and does not touch
+  // `setOpenSession`/`subscribeTranscript`. The target is consumed (cleared) so a
+  // later manual modal open is not re-hijacked.
+  useEffect(() => {
+    if (!focusTarget) return;
+    setPickedAgentUuid(focusTarget.agentUuid);
+    setSelectedSessionUuid(null);
+    clearChatFocusTarget();
+  }, [focusTarget, clearChatFocusTarget]);
+
+  // A freshly-started ad-hoc session OR a RE-POINTED existing conversation (T12): pull/patch
+  // it into the list immediately (so it appears / flips online without waiting for the 15s
+  // poll) and (re)select it.
+  //  - Ad-hoc start: a brand-new uuid → prepend it as a new online row, sliding the new
+  //    conversation's (empty) transcript into view.
+  //  - Re-point: the SAME uuid already in the list → patch its origin (the chosen online
+  //    connection) + `originOnline: true` IN PLACE so the SAME conversation stays selected
+  //    and flips read-only → live immediately (no switch to a different session).
   const handleSessionStarted = useCallback(
     (created: SessionView) => {
       const target: SessionTarget = {
@@ -584,17 +638,49 @@ export function DaemonChat() {
         status: created.status,
         title: created.title,
         lastTurnAt: created.lastTurnAt,
-        // The ad-hoc session is pinned to a connection we just verified online.
+        // The session is pinned to a connection we just verified online (ad-hoc start) or
+        // re-pointed to one (T12 re-point) — either way its origin is online right now.
         originOnline: true,
         // Naming fields settle on the next fetchSessions() re-sync (the just-sent
         // instruction becomes this conversation's firstInstruction server-side).
         firstInstruction: null,
         ideaTitle: null,
       };
-      setSessions((prev) =>
-        prev.some((s) => s.uuid === target.uuid)
-          ? prev
-          : [target, ...prev],
+      setSessions((prev) => {
+        const idx = prev.findIndex((s) => s.uuid === target.uuid);
+        if (idx === -1) {
+          // New conversation (ad-hoc) — prepend.
+          return [target, ...prev];
+        }
+        // Re-pointed existing conversation — patch its origin + online flag in place,
+        // preserving the naming fields the list already resolved.
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          originConnectionUuid: created.originConnectionUuid,
+          originOnline: true,
+          status: created.status,
+          lastTurnAt: created.lastTurnAt,
+        };
+        return next;
+      });
+      // If the re-pointed conversation is the one currently OPEN, patch the loaded detail's
+      // origin in place too — `originConnection` (and thus the reply box's online gate) is
+      // derived from `detail.session.originConnectionUuid`, so without this the open pane
+      // would keep reading the OLD offline origin until the next reselect. This is what
+      // flips the open transcript read-only → live on the new origin immediately.
+      setDetail((prev) =>
+        prev && prev.session.uuid === created.uuid
+          ? {
+              ...prev,
+              session: {
+                ...prev.session,
+                originConnectionUuid: created.originConnectionUuid,
+                status: created.status,
+                lastTurnAt: created.lastTurnAt,
+              },
+            }
+          : prev,
       );
       setSelectedSessionUuid(created.uuid);
       // Re-sync from the server in the background (authoritative ordering + fields).
@@ -629,12 +715,15 @@ export function DaemonChat() {
       error={detailError}
       originConnection={originConnection}
       originOnline={originOnline}
+      originCrossHost={originCrossHost}
       sessionExecutions={sessionExecutions}
       executionsByUuid={executionsByUuid}
       footerLayout={footerLayout}
       hasMoreEarlier={hasMoreEarlier}
       loadingEarlier={loadingEarlier}
       onLoadEarlier={loadEarlier}
+      originAgentOnlineConnections={originAgentOnlineConnections}
+      onSessionStarted={handleSessionStarted}
     />
   );
   const transcriptPane = renderTranscript("inline");

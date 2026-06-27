@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockPrisma = vi.hoisted(() => ({
   daemonSession: {
     findFirst: vi.fn(),
+    // T12 re-point: the SUT UPDATEs originConnectionUuid then reads the row back.
+    update: vi.fn(),
+    findUnique: vi.fn(),
   },
   daemonSessionTurn: {
     findMany: vi.fn(),
@@ -87,8 +90,10 @@ import {
   SessionNotVisibleError,
   ConnectionNotVisibleError,
   ConnectionOfflineError,
+  RepointOriginLiveError,
   sendInstruction,
   createAdHocSessionWithInstruction,
+  repointSessionOriginAndSend,
   getVisibleSessionsWithOrigin,
 } from "@/services/daemon-instruction.service";
 // The mocked SessionReadOnlyError class (defined in the vi.mock factory above), imported
@@ -154,6 +159,21 @@ beforeEach(() => {
     sessionId: ideaUuid,
     directIdeaUuid: ideaUuid,
     originConnectionUuid: connectionUuid,
+  });
+  // T12 re-point defaults: the UPDATE resolves, and the read-back returns a full row whose
+  // origin is now the (online) target connection — Date objects (Prisma row, not the view).
+  mockPrisma.daemonSession.update.mockResolvedValue({});
+  mockPrisma.daemonSession.findUnique.mockResolvedValue({
+    uuid: sessionUuid,
+    agentUuid,
+    sessionId: ideaUuid,
+    directIdeaUuid: ideaUuid,
+    originConnectionUuid: otherConnectionUuid,
+    status: "active",
+    title: null,
+    lastTurnAt: new Date("2026-06-19T03:00:00.000Z"),
+    createdAt: new Date("2026-06-19T03:00:00.000Z"),
+    updatedAt: new Date("2026-06-19T03:00:00.000Z"),
   });
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
   // Naming enrichment defaults: no instruction turns + no ideas resolved unless a test
@@ -435,6 +455,232 @@ describe("createAdHocSessionWithInstruction", () => {
       }),
     ).rejects.toBeInstanceOf(ConnectionNotVisibleError);
     expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+  });
+});
+
+// ===== repointSessionOriginAndSend (T12 — corrects T11) =====
+describe("repointSessionOriginAndSend", () => {
+  // The session's CURRENT origin (offline) vs the chosen ONLINE target (a DIFFERENT
+  // connection of the SAME agent). `isConnectionLive` is consulted twice in order:
+  // (1) the current origin → must be OFFLINE (false) to allow re-point; (2) the target →
+  // must be ONLINE (true). Each test wires this sequence explicitly.
+  const currentOrigin = connectionUuid; // offline
+  const targetOnline = otherConnectionUuid; // online
+
+  function wireRepointHappyPath() {
+    // Visible, owned, idea-anchored session whose current origin is `currentOrigin`.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      agentUuid,
+      sessionId: ideaUuid,
+      directIdeaUuid: ideaUuid,
+      originConnectionUuid: currentOrigin,
+    });
+    // (1) current origin OFFLINE, (2) target ONLINE.
+    mockIsConnectionLive
+      .mockReset()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockConnectionBelongsToAgent.mockResolvedValue(true);
+  }
+
+  it("keeps the SAME session (uuid + sessionId + directIdeaUuid), re-points origin to the target, creates a turn, delivers to the NEW origin", async () => {
+    wireRepointHappyPath();
+    const { session, turn } = await repointSessionOriginAndSend(userAuth, {
+      sessionUuid,
+      connectionUuid: targetOnline,
+      instructionText: "  pick up where we left off  ",
+    });
+
+    // The origin is RE-POINTED — the single deliberate write-once reversal — scoped to the
+    // session uuid + company (no cross-company write).
+    expect(mockPrisma.daemonSession.update).toHaveBeenCalledTimes(1);
+    const upd = mockPrisma.daemonSession.update.mock.calls[0][0];
+    expect(upd.where).toMatchObject({ uuid: sessionUuid, companyUuid });
+    expect(upd.data).toEqual({ originConnectionUuid: targetOnline });
+
+    // NO new ad-hoc session is minted — resolveOrCreateSession is NOT called.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+
+    // The turn is created on the SAME session, idea-aligned (same directIdeaUuid → lands on
+    // the existing row), with the trimmed canonical text.
+    expect(mockNotificationCreate).toHaveBeenCalledTimes(1);
+    const notif = mockNotificationCreate.mock.calls[0][0];
+    expect(notif.action).toBe("human_instruction");
+    expect(notif.entityType).toBe("idea");
+    expect(notif.entityUuid).toBe(ideaUuid);
+    expect(notif.instructionText).toBe("pick up where we left off");
+
+    // Delivered to the NEW origin connection (never the offline one), precise turnUuid.
+    expect(mockDispatchControl).toHaveBeenCalledWith({
+      companyUuid,
+      targetConnectionUuid: targetOnline,
+      command: "deliver_turn",
+      turnUuid,
+    });
+
+    // The returned session is the SAME one, now pointing at the online target.
+    expect(session.uuid).toBe(sessionUuid);
+    expect(session.sessionId).toBe(ideaUuid);
+    expect(session.directIdeaUuid).toBe(ideaUuid);
+    expect(session.originConnectionUuid).toBe(targetOnline);
+    expect(turn.uuid).toBe(turnUuid);
+  });
+
+  it("ad-hoc session re-point keeps its sessionId and stays non-lineage aligned (entityUuid = sessionId)", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      agentUuid,
+      sessionId: adHocSessionId,
+      directIdeaUuid: null,
+      originConnectionUuid: currentOrigin,
+    });
+    mockIsConnectionLive
+      .mockReset()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({
+      uuid: sessionUuid,
+      agentUuid,
+      sessionId: adHocSessionId,
+      directIdeaUuid: null,
+      originConnectionUuid: targetOnline,
+      status: "active",
+      title: null,
+      lastTurnAt: new Date("2026-06-19T03:00:00.000Z"),
+      createdAt: new Date("2026-06-19T03:00:00.000Z"),
+      updatedAt: new Date("2026-06-19T03:00:00.000Z"),
+    });
+
+    const { session } = await repointSessionOriginAndSend(userAuth, {
+      sessionUuid,
+      connectionUuid: targetOnline,
+      instructionText: "go",
+    });
+    const notif = mockNotificationCreate.mock.calls[0][0];
+    expect(notif.entityType).toBe(AD_HOC_ENTITY_TYPE);
+    expect(notif.entityUuid).toBe(adHocSessionId);
+    expect(session.sessionId).toBe(adHocSessionId);
+  });
+
+  it("refuses to re-point a LIVE session (current origin online) → RepointOriginLiveError, no update/turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      agentUuid,
+      sessionId: ideaUuid,
+      directIdeaUuid: ideaUuid,
+      originConnectionUuid: currentOrigin,
+    });
+    // current origin ONLINE → refuse.
+    mockIsConnectionLive.mockReset().mockResolvedValueOnce(true);
+    await expect(
+      repointSessionOriginAndSend(userAuth, {
+        sessionUuid,
+        connectionUuid: targetOnline,
+        instructionText: "go",
+      }),
+    ).rejects.toBeInstanceOf(RepointOriginLiveError);
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    // The target's liveness is never even consulted once the live-origin guard trips.
+    expect(mockIsConnectionLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("not-visible session → SessionNotVisibleError, no liveness check, no update/turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(null);
+    await expect(
+      repointSessionOriginAndSend(userAuth, {
+        sessionUuid,
+        connectionUuid: targetOnline,
+        instructionText: "go",
+      }),
+    ).rejects.toBeInstanceOf(SessionNotVisibleError);
+    expect(mockIsConnectionLive).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+
+  it("target connection NOT of the same agent → ConnectionNotVisibleError (non-disclosure), no update/turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      agentUuid,
+      sessionId: ideaUuid,
+      directIdeaUuid: ideaUuid,
+      originConnectionUuid: currentOrigin,
+    });
+    // current origin OFFLINE (passes), then same-agent check fails.
+    mockIsConnectionLive.mockReset().mockResolvedValueOnce(false);
+    mockConnectionBelongsToAgent.mockResolvedValue(false);
+    await expect(
+      repointSessionOriginAndSend(userAuth, {
+        sessionUuid,
+        connectionUuid: targetOnline,
+        instructionText: "go",
+      }),
+    ).rejects.toBeInstanceOf(ConnectionNotVisibleError);
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+
+  it("offline TARGET connection → ConnectionOfflineError, no update/turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      agentUuid,
+      sessionId: ideaUuid,
+      directIdeaUuid: ideaUuid,
+      originConnectionUuid: currentOrigin,
+    });
+    // current origin OFFLINE (passes), same-agent ok, target OFFLINE → 409.
+    mockIsConnectionLive
+      .mockReset()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
+    mockConnectionBelongsToAgent.mockResolvedValue(true);
+    await expect(
+      repointSessionOriginAndSend(userAuth, {
+        sessionUuid,
+        connectionUuid: targetOnline,
+        instructionText: "go",
+      }),
+    ).rejects.toBeInstanceOf(ConnectionOfflineError);
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+
+  it("validates text BEFORE any lookup/liveness/update — empty → InstructionTextError", async () => {
+    await expect(
+      repointSessionOriginAndSend(userAuth, {
+        sessionUuid,
+        connectionUuid: targetOnline,
+        instructionText: "   ",
+      }),
+    ).rejects.toBeInstanceOf(InstructionTextError);
+    expect(mockPrisma.daemonSession.findFirst).not.toHaveBeenCalled();
+    expect(mockIsConnectionLive).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+
+  it("agent-key caller is owner/self-scoped on the session lookup (agentUuid filter)", async () => {
+    wireRepointHappyPath();
+    await repointSessionOriginAndSend(agentAuth, {
+      sessionUuid,
+      connectionUuid: targetOnline,
+      instructionText: "go",
+    });
+    const where = mockPrisma.daemonSession.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ uuid: sessionUuid, companyUuid, agentUuid });
+  });
+
+  it("a deliver_turn dispatch FAILURE does NOT fail the re-point (turn already persisted; non-fatal)", async () => {
+    wireRepointHappyPath();
+    mockDispatchControl.mockImplementation(() => {
+      throw new Error("event bus down");
+    });
+    const { session, turn } = await repointSessionOriginAndSend(userAuth, {
+      sessionUuid,
+      connectionUuid: targetOnline,
+      instructionText: "go",
+    });
+    expect(session.originConnectionUuid).toBe(targetOnline);
+    expect(turn.uuid).toBe(turnUuid);
+    expect(mockPrisma.daemonSession.update).toHaveBeenCalledTimes(1);
   });
 });
 

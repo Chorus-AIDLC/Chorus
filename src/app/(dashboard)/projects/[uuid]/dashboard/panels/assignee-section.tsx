@@ -4,12 +4,16 @@ import { useTranslations } from "next-intl";
 import { Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
+import { AssigneeInstanceLine } from "@/components/agent-presence";
+import { isAgentAssignee } from "@/lib/assignee-identity";
 
 interface AssigneeSectionProps {
   assignee: {
     type: string;
     uuid: string;
     name: string;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place.
+    instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
 }
 
@@ -27,27 +31,36 @@ export function AssigneeSection({ assignee }: AssigneeSectionProps) {
             <Avatar className="h-7 w-7">
               <AvatarFallback
                 className={
-                  assignee.type === "agent"
+                  isAgentAssignee(assignee)
                     ? "bg-[#C67A52] text-white"
                     : "bg-[#E5E0D8] text-[#6B6B6B]"
                 }
               >
-                {assignee.type === "agent" ? (
+                {isAgentAssignee(assignee) ? (
                   <Bot className="h-3.5 w-3.5" />
                 ) : (
                   assignee.name.charAt(0).toUpperCase()
                 )}
               </AvatarFallback>
             </Avatar>
-            <div>
+            <div className="min-w-0">
               <div className="text-sm font-medium text-[#2C2C2C]">
                 {assignee.name}
               </div>
               <div className="text-xs text-[#6B6B6B]">
-                {assignee.type === "agent"
+                {isAgentAssignee(assignee)
                   ? tCommon("agent")
                   : tCommon("user")}
               </div>
+              {/* Pinned (host, cwd) place for an agent_instance assignee. */}
+              {assignee.type === "agent_instance" && assignee.instance && (
+                <div className="mt-1">
+                  <AssigneeInstanceLine
+                    cwd={assignee.instance.cwd}
+                    host={assignee.instance.host}
+                  />
+                </div>
+              )}
             </div>
           </>
         ) : (

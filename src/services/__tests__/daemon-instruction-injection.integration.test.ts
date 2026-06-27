@@ -74,6 +74,12 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     agent: [] as Row[],
+    // The wake bridge's pin reader resolves the wake entity's root Idea assignee (and an
+    // agent_instance assignee to its place). These instruction flows are un-pinned, so the
+    // reads resolve null → no pin → online-first / the idea's existing session origin.
+    task: [] as Row[],
+    idea: [] as Row[],
+    agentInstance: [] as Row[],
   };
   let autoId = 1;
   let autoUuid = 1;
@@ -278,6 +284,17 @@ function buildPrismaFake(store: Store) {
     },
     daemonExecution: {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonExecution", args)),
+    },
+    // Pin-reader reads (un-pinned here → null): the wake entity's Task assignee, its root
+    // Idea assignee, and an agent_instance assignee's (host, cwd) place.
+    task: {
+      findFirst: vi.fn(async (args: Row) => findFirst("task", args)),
+    },
+    idea: {
+      findFirst: vi.fn(async (args: Row) => findFirst("idea", args)),
+    },
+    agentInstance: {
+      findFirst: vi.fn(async (args: Row) => findFirst("agentInstance", args)),
     },
     notification: {
       create: vi.fn(async (args: Row) => {

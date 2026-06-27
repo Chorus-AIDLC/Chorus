@@ -120,6 +120,28 @@ export class ConnectionOfflineError extends Error {
   }
 }
 
+/**
+ * The session whose origin is being RE-POINTED is currently LIVE (its origin connection is
+ * online) — so re-pointing is refused (409). The re-point escape hatch exists ONLY to
+ * rescue a session whose origin went offline (read-only) onto another online instance; a
+ * live session has no dead-end to route around, and `sendInstruction` already delivers to
+ * its online origin. Re-pointing a live session would orphan a running daemon's transcript,
+ * so this is a hard guard, not a fallback.
+ */
+export class RepointOriginLiveError extends Error {
+  readonly code = "repoint_origin_live";
+  readonly originConnectionUuid: string;
+  constructor(originConnectionUuid: string) {
+    super(
+      "This conversation's origin is still online, so it cannot be re-pointed. " +
+        "Re-pointing only rescues a read-only conversation whose origin went offline; " +
+        "send to the live origin instead.",
+    );
+    this.name = "RepointOriginLiveError";
+    this.originConnectionUuid = originConnectionUuid;
+  }
+}
+
 /** Reasons the free-text instruction fails validation, so the route maps a 400. */
 export type InstructionTextErrorReason = "empty" | "too_long";
 
@@ -308,7 +330,7 @@ async function createInstructionTurn(params: {
  * errors), never rethrown. `dispatchControl` is synchronous (it `emit`s and returns), so a
  * throw can only come from a misconfigured event bus; we guard it anyway.
  */
-function deliverTurnPing(params: {
+export function deliverTurnPing(params: {
   companyUuid: string;
   originConnectionUuid: string;
   turnUuid: string;
@@ -473,6 +495,147 @@ export async function createAdHocSessionWithInstruction(
   });
 
   return { session, turn };
+}
+
+// ===== Re-point an offline session's origin onto a chosen online instance =====
+
+/**
+ * RE-POINT a read-only (origin-offline) daemon session onto a caller-chosen ONLINE
+ * connection of the SAME agent, then send a fresh `human_instruction` turn there — keeping
+ * the SAME `DaemonSession` (same `uuid`, same `sessionId`, same `directIdeaUuid`). This is
+ * the corrected "Continue on an online directory" escape hatch (T12): it does NOT mint a new
+ * ad-hoc session (the T11 mistake, which lost the conversation's identity). The session's
+ * Claude session id is preserved, so when the daemon spawns on the new cwd it finds no
+ * transcript there and starts a FRESH transcript under the SAME id (`claude --session-id
+ * <sameId>`) — a cold start, no context injection. The prior turns remain as Chorus-visible
+ * read-only history.
+ *
+ * Order (each gate before any mutation):
+ *  1. Validate `instructionText` (trim non-empty, ≤ `MAX_INSTRUCTION_CHARS`) →
+ *     `InstructionTextError` (route → 400) BEFORE any lookup or write.
+ *  2. Resolve the session under the caller's visibility scope → `SessionNotVisibleError`
+ *     (route → 404 non-disclosure) when not visible/owned.
+ *  3. Assert the session's CURRENT origin is OFFLINE — re-point is ONLY for a read-only
+ *     session. A live origin is refused with `RepointOriginLiveError` (route → 409): a live
+ *     session has no dead-end to route around (use `sendInstruction` on its online origin).
+ *     Reuses the SAME staleness verdict (`isConnectionLive`).
+ *  4. Assert the target `connectionUuid` belongs to the SAME agent as the session AND is
+ *     ONLINE: same-agent miss → `ConnectionNotVisibleError` (route → 404 non-disclosure),
+ *     offline → `ConnectionOfflineError` (route → 409). Reuses `connectionBelongsToAgent` +
+ *     `isConnectionLive`.
+ *  5. UPDATE `DaemonSession.originConnectionUuid` to the target. *** THIS is the single,
+ *     deliberate place the 'originConnectionUuid is write-once / never re-routed' invariant
+ *     (resolveOrCreateSession + assertContinuable) is reversed — and ONLY under this explicit
+ *     user action. The autonomous wake path (notification-turn) never re-points. *** The
+ *     UPDATE is companyUuid-scoped (the visibility fence above already proved ownership) so a
+ *     cross-company write is impossible.
+ *  6. Create the `human_instruction` turn through the SAME chokepoint `sendInstruction`/the
+ *     ad-hoc path use, bound to the SAME session (same `uuid`/`sessionId`/`directIdeaUuid`),
+ *     then deliver it to the NEW origin connection.
+ *
+ * Returns `{ session, turn }` — the SAME session (now re-pointed, so its derived
+ * `originOnline` is true) plus the created turn. Throws the typed errors above (mapped by the
+ * route). A query/write failure propagates (no silent swallow).
+ */
+export async function repointSessionOriginAndSend(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  params: { sessionUuid: string; connectionUuid: string; instructionText: string },
+): Promise<{ session: SessionView; turn: TurnView }> {
+  // (1) Validate text first — a bad instruction must never re-point or create a turn.
+  const instructionText = validateInstructionText(params.instructionText);
+
+  // (2) Owner-scoped visibility fence (404 non-disclosure when not visible/owned).
+  const session = await findVisibleSession(auth, params.sessionUuid);
+  if (!session) {
+    throw new SessionNotVisibleError();
+  }
+
+  // (3) The CURRENT origin must be OFFLINE — re-point is only for a read-only session. A live
+  // origin has no dead-end to route around, so refuse (409) rather than orphan a running run.
+  const currentOriginLive = await isConnectionLive(
+    auth.companyUuid,
+    session.originConnectionUuid,
+  );
+  if (currentOriginLive) {
+    throw new RepointOriginLiveError(session.originConnectionUuid);
+  }
+
+  // (4) The TARGET connection must belong to the SAME agent as the session AND be online.
+  // Same-agent miss collapses to ONE 404 non-disclosure (an unowned/foreign/absent
+  // connection is indistinguishable); an offline target is a 409.
+  const connectionOfAgent = await connectionBelongsToAgent(
+    auth.companyUuid,
+    session.agentUuid,
+    params.connectionUuid,
+  );
+  if (!connectionOfAgent) {
+    throw new ConnectionNotVisibleError();
+  }
+  const targetOnline = await isConnectionLive(auth.companyUuid, params.connectionUuid);
+  if (!targetOnline) {
+    throw new ConnectionOfflineError(params.connectionUuid);
+  }
+
+  // (5) Re-point the origin. *** SINGLE DELIBERATE REVERSAL of the write-once
+  // `originConnectionUuid` invariant (resolveOrCreateSession stamps it once and never moves
+  // it; assertContinuable refuses to route a continuation anywhere else). This explicit
+  // user action is the ONLY path that moves it — the autonomous wake / resolve paths stay
+  // write-once. companyUuid-scoped (ownership already proven above) so no cross-company
+  // write is possible. The SAME sessionId/uuid/directIdeaUuid are untouched. ***
+  await prisma.daemonSession.update({
+    where: { uuid: params.sessionUuid, companyUuid: auth.companyUuid },
+    data: { originConnectionUuid: params.connectionUuid },
+  });
+
+  // (6) Create the turn on the SAME session via the chokepoint (same sessionId/directIdeaUuid
+  // → it lands on this very row, no new session), then deliver to the NEW origin connection.
+  const turn = await createInstructionTurn({
+    auth,
+    agentUuid: session.agentUuid,
+    sessionUuid: params.sessionUuid,
+    sessionId: session.sessionId,
+    directIdeaUuid: session.directIdeaUuid,
+    instructionText,
+  });
+
+  // (7) Origin-only live delivery: ping ONLY the NEW origin connection (verified online in
+  // (4)), carrying the PRECISE turnUuid so it runs ONLY this turn. Fire-and-forget +
+  // non-fatal — the persisted turn + reconnect-backfill are the durability net.
+  deliverTurnPing({
+    companyUuid: auth.companyUuid,
+    originConnectionUuid: params.connectionUuid,
+    turnUuid: turn.uuid,
+  });
+
+  // Read back the re-pointed session so the caller (the UI) sees the new origin reflected —
+  // the SAME session uuid/sessionId, now pointing at the online connection. Mapped to the
+  // wire `SessionView` shape (ISO timestamps) inline rather than reaching for the session
+  // service's private mapper.
+  const updated = await prisma.daemonSession.findUnique({
+    where: { uuid: params.sessionUuid },
+  });
+  if (!updated) {
+    // The row was just updated above; a missing one means a torn write — surface it rather
+    // than fabricate a stale view (no silent errors).
+    throw new Error(
+      `repointSessionOriginAndSend: session ${params.sessionUuid} missing after re-point`,
+    );
+  }
+
+  const sessionView: SessionView = {
+    uuid: updated.uuid,
+    agentUuid: updated.agentUuid,
+    sessionId: updated.sessionId,
+    directIdeaUuid: updated.directIdeaUuid,
+    originConnectionUuid: updated.originConnectionUuid,
+    status: updated.status,
+    title: updated.title,
+    lastTurnAt: updated.lastTurnAt.toISOString(),
+    createdAt: updated.createdAt.toISOString(),
+    updatedAt: updated.updatedAt.toISOString(),
+  };
+
+  return { session: sessionView, turn };
 }
 
 /**

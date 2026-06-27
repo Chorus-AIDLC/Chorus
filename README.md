@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.12.0](https://chorus-ai.dev/blog/chorus-v0.12.0-release/)** — Addressable daemon instances: one `chorus daemon` can serve multiple working directories (`--cwd`), and each `(agent, host, cwd)` becomes an individually visible, individually targetable instance across presence, @-mention, and assignment. Pin an instance once on an idea and its proposals, tasks, and wakes inherit it; pinned wakes are delivered to exactly that instance instead of broadcast. Comment @-mentions render as live online-status badges, and comments switch to cursor-based infinite scroll.
+
 **[v0.11.0](https://chorus-ai.dev/blog/chorus-v0.11.0-release/)** — The Chorus Daemon: `chorus daemon` turns your machine into a resident agent runtime that wakes a local Claude Code on each dispatch. An Agent Connections surface gives live observability and control — streaming transcripts, instruction injection, and interrupt / resume — and a "Verify Elaborate" button wakes the assigned agent to write the proposal.
 
 **[v0.10.0](https://chorus-ai.dev/blog/chorus-v0.10.0-release/)** — Single-parent idea lineage: an idea may derive a child or be attached under another, forming a forest. The relation is intentionally weak — a parent surfaces a read-only "+N derived" rollup and does not constrain any child's elaboration, proposal, or task flow. Idea browsing consolidates onto the Dashboard (a three-way Ideas / Lineage / Stats view switch with an adaptive default); the standalone Idea List page is retired and its URLs 308-redirect to the Dashboard.
@@ -45,18 +47,6 @@ The labels under each stage are the **permissions** an actor needs at that stage
 **[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — Brainstorm skill for fuzzy ideas (open-ended chat before structured Q&A) and idea-completion reports (every shipped idea gets a Summary / Decisions / Follow-ups writeup, surfaced on the idea overview).
 
 **[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware mode (Claude Code): auto-activates when an `openspec/` directory and the `openspec` CLI are both present, adds `/opsx/{explore,propose,apply,archive}` and a post-verify archive-trigger hook.
-
-**[v0.7.0](https://chorus-ai.dev/blog/chorus-v0.7.0-release/)** — Fine-grained agent permissions: 5 resources × 3 actions grid replaces the PM/Developer/Admin three-way choice, with presets + a Custom option for free combination.
-
-**[v0.6.7](https://chorus-ai.dev/blog/chorus-v0.6.7-release/)** — Chorus plugin for Codex CLI (one-command installer), workspace picker when one email belongs to multiple Companies, per-client connect guides.
-
-**[v0.6.6](https://chorus-ai.dev/blog/chorus-v0.6.6-release/)** — npm one-click install (`npx @chorus-aidlc/chorus`), document export (MD/PDF/Word), proposal revoke, faster agent checkin with work status at a glance.
-
-**[v0.6.2](https://chorus-ai.dev/blog/chorus-v0.6.2-release/)** — Embedded PGlite mode (zero-dependency deployment), structured logging with Pino, stateless MCP for horizontal scaling, default port changed to 8637.
-
-**[v0.6.1](https://chorus-ai.dev/blog/chorus-v0.6.1-release/)** — `/yolo` skill: full-auto AI-DLC pipeline (Idea → Proposal → Execute → Verify) with Agent Team parallel execution.
-
-**[v0.6.0](https://chorus-ai.dev/blog/chorus-v0.6.0-release/)** — IdeaTracker dashboard, independent review agents (proposal-reviewer + task-reviewer), real-time agent presence indicators, cross-column Kanban animation.
 
 > Full changelog: [CHANGELOG.md](CHANGELOG.md)
 
@@ -123,13 +113,57 @@ chorus daemon logs               # View daemon logs
 - **Claude Code integration** — Auto-detects `claude` CLI on your PATH
 - **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
 - **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
+- **Multi-path** — Serve several working directories from one daemon with repeatable `--cwd` (see below)
 - **Interactive setup** — Prompts for credentials on first start if not already configured
 
 The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
 
+#### Serve multiple working directories
+
+One daemon can serve several local working directories at once — each declared path registers as an independent connection (its own session + wake loop) under the same agent. A path is **just** a directory the daemon serves; it carries no project binding.
+
+```bash
+chorus daemon --cwd ~/work/repo-a --cwd ~/work/repo-b   # repeatable flag
+CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # or env (`:`- or `,`-separated)
+```
+
+With no `--cwd`, the daemon serves the single directory it was launched from.
+
+#### Configuration file — `~/.chorus/daemon.json`
+
+`chorus login` writes credentials here (mode `0600`). You can also add daemon tunables to the **same** file. Every field is optional; flags and environment variables always take precedence over the file.
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "apiKey": "cho_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "agentUuid": "00000000-0000-0000-0000-000000000000",
+  "agentName": "My Daemon Agent",
+  "cwds": ["~/work/repo-a", "~/work/repo-b"],
+  "sigintTimeoutMs": 10000
+}
+```
+
+| Field | Type | Written by / used for | Precedence (highest first) |
+|-------|------|-----------------------|----------------------------|
+| `url` | string | Remote Chorus server URL | `--url` flag → `CHORUS_URL` → file |
+| `apiKey` | string | Agent API key (`cho_…`) | `--api-key` flag → `CHORUS_API_KEY` → file |
+| `agentUuid` / `agentName` | string | Authenticated identity (recorded at login) | written by `chorus login` |
+| `cwds` | string[] | Working directories the daemon serves (multi-path) | `--cwd` flag(s) → `CHORUS_DAEMON_CWDS` → file → launch dir |
+| `sigintTimeoutMs` | number | Grace window (ms) after SIGINT before a forceful kill (default `10000`) | `--sigint-timeout` flag → `CHORUS_DAEMON_SIGINT_TIMEOUT` → file → `10000` |
+| `yoloAckAt` | string | Internal — timestamp of a TTY yolo confirmation (managed automatically) | — |
+
+On startup the daemon banner prints the **exact `daemon.json` path it read** (and whether the file exists), so you always know which file to edit.
+
 ---
 
 ## Screenshots
+
+### Remote Agent Wake — Dispatch to a Directory, Watch It Run
+
+![Remote Agent Wake](docs/images/agent-daemon-wake.gif)
+
+Assign an idea to a specific directory on a remote agent, then open the conversation and watch the local Claude Code pick up the work and run in real time — no terminal, no manual resume.
 
 ### Proposal — AI Agent Generates Plans in Real Time
 
@@ -257,7 +291,7 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 | Agent Integration | MCP SDK 1.26 (HTTP Streamable Transport) |
 | Auth | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh) |
-| Deployment | [Docker Hub](https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general) / Docker Compose / AWS CDK |
+| Deployment | [Docker Hub](https://hub.docker.com/r/chorusaidlc/chorus-app) / Docker Compose / AWS CDK |
 
 ---
 

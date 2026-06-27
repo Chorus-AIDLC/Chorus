@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate, replaceAcceptanceCriteria } from "@/services/task.service";
 import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
+import { listConnectionsForAgent } from "@/services/daemon-connection.service";
 import { createActivity } from "@/services/activity.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
+import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
 
 export async function claimTaskAction(taskUuid: string) {
@@ -56,8 +58,17 @@ export async function claimTaskAction(taskUuid: string) {
   }
 }
 
-// Claim task to a specific agent
-export async function claimTaskToAgentAction(taskUuid: string, agentUuid: string) {
+// Claim task to a specific agent, optionally pinning a DURABLE AgentInstance
+// (the (agent, host, cwd) place) for the autonomous wake. When `instanceUuid` is
+// given the row is persisted as assigneeType="agent_instance"/assigneeUuid=<that
+// uuid> (validated company-scoped in claimTask); omitting it assigns the plain
+// agent. The InstancePicker only offers ONLINE instances, so a pin is always to a
+// reachable place; a fully-offline agent shows no picker and assigns plainly.
+export async function claimTaskToAgentAction(
+  taskUuid: string,
+  agentUuid: string,
+  instanceUuid?: string | null,
+) {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
@@ -79,6 +90,11 @@ export async function claimTaskToAgentAction(taskUuid: string, agentUuid: string
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
+      // Thread the durable AgentInstance pin. claimTask validates it belongs to
+      // the company and promotes the row to assigneeType="agent_instance"; with
+      // no instanceUuid the assignment stays a plain agent (also the path that
+      // reverts a prior instance pin back to the plain agent on re-assignment).
+      instanceUuid: instanceUuid ?? undefined,
     });
 
     // Record activity
@@ -90,7 +106,13 @@ export async function claimTaskToAgentAction(taskUuid: string, agentUuid: string
       actorType: auth.type,
       actorUuid: auth.actorUuid,
       action: "assigned",
-      value: { assigneeType: "agent", assigneeUuid: agentUuid },
+      value: {
+        assigneeType: "agent",
+        assigneeUuid: agentUuid,
+        // Record the durable instance pin in the activity value so the timeline
+        // reflects which place was chosen (omitted when un-pinned).
+        ...(instanceUuid ? { instanceUuid } : {}),
+      },
     });
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
@@ -402,5 +424,40 @@ export async function getDeveloperAgentsAction() {
   } catch (error) {
     logger.error({ err: error }, "Failed to get assignable agents");
     return { agents: [], users: [] };
+  }
+}
+
+// Get one agent's daemon instances (online + offline, each with effectiveStatus)
+// so the assign-task modal can let the owner pin which ONLINE (host, cwd) place
+// runs the task. The modal filters to online before rendering the picker.
+// Company-scoped read; returns [] for any non-user caller or on error (the picker
+// then shows its own "no instances" empty state — never a silent throw).
+//
+// Each candidate carries the durable `agentInstanceUuid` (the stable pin pointer
+// the modal threads into claimTaskToAgentAction), alongside the connectionUuid
+// (the picker's selection key). The two shapes that previously diverged
+// (InstanceCandidate / AgentInstanceCandidate) are now the single InstanceCandidate.
+export async function getAgentInstancesAction(
+  agentUuid: string,
+): Promise<{ instances: InstanceCandidate[] }> {
+  const auth = await getServerAuthContext();
+  if (!auth || auth.type !== "user") {
+    return { instances: [] };
+  }
+
+  try {
+    const connections = await listConnectionsForAgent(auth.companyUuid, agentUuid);
+    return {
+      instances: connections.map((c) => ({
+        connectionUuid: c.uuid,
+        agentInstanceUuid: c.agentInstanceUuid,
+        host: c.host,
+        cwd: c.cwd,
+        effectiveStatus: c.effectiveStatus,
+      })),
+    };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to get agent instances");
+    return { instances: [] };
   }
 }

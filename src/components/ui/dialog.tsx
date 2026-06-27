@@ -49,15 +49,24 @@ function DialogOverlay({
 
 function DialogContent({
   className,
+  overlayClassName,
   children,
   showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  /**
+   * Extra classes for the backdrop overlay. Use this to lift BOTH the overlay
+   * and (via `className`) the content above a same-z-index `fixed` surface — e.g.
+   * a dialog opened from inside a `z-50` side panel must raise its overlay past
+   * `z-50` too, or the overlay ties the panel and the panel can win on paint
+   * order (device-dependent), leaving the dialog visually behind the panel.
+   */
+  overlayClassName?: string
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

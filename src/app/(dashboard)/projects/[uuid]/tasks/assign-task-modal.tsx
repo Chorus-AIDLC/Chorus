@@ -3,8 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, Loader2 } from "lucide-react";
+import { Bot, User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  ScrollableDialog,
+  ScrollableDialogTitle,
+} from "@/components/ui/scrollable-dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -15,11 +19,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  InstancePicker,
+  filterOnlineInstances,
+  type InstanceCandidate,
+} from "@/components/agent-presence/instance-picker";
+import {
+  formatCwd,
+  formatHost,
+} from "@/lib/daemon-instance-format";
+import {
   claimTaskAction,
   claimTaskToAgentAction,
   claimTaskToUserAction,
   releaseTaskAction,
   getDeveloperAgentsAction,
+  getAgentInstancesAction,
 } from "./[taskUuid]/actions";
 
 interface Task {
@@ -73,6 +87,17 @@ export function AssignTaskModal({
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // The selected agent's ONLINE (host, cwd) daemon instances for the optional
+  // override pin. Default = inherit the root idea (a plain agent assignment, no
+  // instance). Only online instances are pinnable — an offline instance is not a
+  // wake target, so it is filtered out (a fully-offline agent shows no picker and
+  // just assigns plainly, inheriting the root idea's instance via wake lineage).
+  const [instances, setInstances] = useState<InstanceCandidate[]>([]);
+  const [isLoadingInstances, setIsLoadingInstances] = useState(false);
+  const [pinnedConnectionUuid, setPinnedConnectionUuid] = useState<string | null>(
+    null,
+  );
+
   const isAssigned = !!task.assignee;
 
   // Load agents and users
@@ -89,6 +114,59 @@ export function AssignTaskModal({
 
   // All developer agents in the company are available for assignment
 
+  // Load the selected agent's daemon instances whenever the agent changes (and
+  // the agent option is active). Resets the pin so a stale (host, cwd) from a
+  // previously-selected agent never leaks across agents.
+  useEffect(() => {
+    if (selectedOption !== "agent" || !selectedAgentUuid) {
+      setInstances([]);
+      setPinnedConnectionUuid(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingInstances(true);
+    setPinnedConnectionUuid(null);
+    getAgentInstancesAction(selectedAgentUuid)
+      .then((res) => {
+        if (cancelled) return;
+        // Online-only: an offline instance is not a wake target, so it never
+        // appears in the picker. A fully-offline agent yields [] → no picker.
+        setInstances(filterOnlineInstances(res.instances));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingInstances(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOption, selectedAgentUuid]);
+
+  // The instance the owner pinned, resolved from the controlled connectionUuid.
+  const pinnedInstance =
+    instances.find((i) => i.connectionUuid === pinnedConnectionUuid) ?? null;
+  // Host is included in a target confirmation only when it disambiguates — i.e.
+  // the agent's instances span 2+ distinct hosts (same rule as the picker rows).
+  const isMultiHost = new Set(instances.map((i) => i.host)).size > 1;
+
+  // The CTA label / footer confirmation names the resolved (path · host) of the
+  // pinned online instance; host only when it disambiguates (2+ hosts).
+  function resolvePinLabel(): string {
+    if (selectedOption !== "agent" || !pinnedInstance) {
+      return t("common.assign");
+    }
+    const cwd = formatCwd(pinnedInstance.cwd);
+    const pathLabel = cwd.isUnknown ? t(cwd.label) : cwd.label;
+    const host = formatHost(pinnedInstance.host);
+    const hostLabel = host.isUnknown ? t(host.label) : host.label;
+    if (isMultiHost) {
+      return t("assignInstance.assignToWithHost", {
+        path: pathLabel,
+        host: hostLabel,
+      });
+    }
+    return t("assignInstance.assignTo", { path: pathLabel });
+  }
+
   const handleSubmit = async () => {
     setIsLoading(true);
     setError(null);
@@ -97,7 +175,15 @@ export function AssignTaskModal({
     if (selectedOption === "self") {
       result = await claimTaskAction(task.uuid);
     } else if (selectedOption === "agent" && selectedAgentUuid) {
-      result = await claimTaskToAgentAction(task.uuid, selectedAgentUuid);
+      // Thread the DURABLE AgentInstance pin when the owner picked one — the
+      // stable pointer that survives a daemon restart, NOT the ephemeral
+      // connectionUuid. No pin (default = inherit root idea) → undefined, which
+      // assigns the plain agent and lets wake lineage inherit the idea's instance.
+      result = await claimTaskToAgentAction(
+        task.uuid,
+        selectedAgentUuid,
+        pinnedInstance?.agentInstanceUuid ?? undefined,
+      );
     } else if (selectedOption === "user" && selectedUserUuid) {
       result = await claimTaskToUserAction(task.uuid, selectedUserUuid);
     } else if (selectedOption === "release") {
@@ -123,31 +209,52 @@ export function AssignTaskModal({
     (selectedOption === "release" && isAssigned);
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/40"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-xl border border-[#E5E0D8]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#E5E0D8] px-6 py-5">
-          <h2 className="text-base font-semibold text-[#2C2C2C]">
-            {t("tasks.assignTask")}
-          </h2>
-          <button
+    // Mobile-safe shell: ScrollableDialog (shadcn Dialog) keeps the title and the
+    // footer Cancel/Assign pinned and the body scrollable within a dynamic-viewport
+    // height cap. Conditionally mounted by the parent (no `open` prop there), so we
+    // render it always-open and route every close path back to onClose.
+    <ScrollableDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      className="bg-white sm:max-w-[400px]"
+      header={
+        <ScrollableDialogTitle className="text-base font-semibold text-[#2C2C2C]">
+          {t("tasks.assignTask")}
+        </ScrollableDialogTitle>
+      }
+      footer={
+        <div className="flex w-full items-center justify-end gap-4">
+          <Button
+            variant="outline"
             onClick={onClose}
-            className="text-[#9A9A9A] hover:text-[#6B6B6B] transition-colors"
+            disabled={isLoading}
+            className="border-[#E5E0D8]"
           >
-            <X className="h-5 w-5" />
-          </button>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={isLoading || !canSubmit}
+            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : selectedOption === "release" ? (
+              t("common.release")
+            ) : (
+              // When an instance is pinned the CTA names the resolved (path · host)
+              // target (cwd-addressable instances, T4); otherwise the plain label.
+              resolvePinLabel()
+            )}
+          </Button>
         </div>
-
-        {/* Body */}
-        <div className="p-6 space-y-4">
-          {/* Task Info */}
+      }
+      bodyClassName="space-y-4"
+    >
+      {/* Body */}
+      {/* Task Info */}
           <div className="rounded-lg bg-[#FAF8F4] p-3">
             <p className="text-[13px] font-medium text-[#2C2C2C]">{task.title}</p>
             {task.description && (
@@ -228,7 +335,7 @@ export function AssignTaskModal({
                 </p>
 
                 {selectedOption === "agent" && (
-                  <div className="mt-3 ml-6">
+                  <div className="mt-3 ml-6 space-y-3">
                     <Select
                       value={selectedAgentUuid}
                       onValueChange={setSelectedAgentUuid}
@@ -236,7 +343,7 @@ export function AssignTaskModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("tasks.selectAgent")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {agents.length > 0 ? (
                           agents.map((agent) => (
                             <SelectItem key={agent.uuid} value={agent.uuid}>
@@ -253,6 +360,42 @@ export function AssignTaskModal({
                         )}
                       </SelectContent>
                     </Select>
+
+                    {/* Working-directory pin (cwd-addressable instances).
+                        ONLINE-only: an offline instance is not a wake target, so
+                        it is filtered out and never shown. A fully-offline agent
+                        yields no instances → no picker; the task is assigned
+                        plainly with no pin (a plain notification, no wake). */}
+                    {selectedAgentUuid && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                          {t("assignInstance.workingDirectory")}
+                        </span>
+                        {isLoadingInstances ? (
+                          <div className="flex items-center gap-2 py-2 text-xs text-[#9A9A9A]">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {t("assignInstance.loadingInstances")}
+                          </div>
+                        ) : instances.length === 0 ? (
+                          <p className="rounded-lg bg-[#FAF8F4] p-2.5 text-[11px] leading-relaxed text-[#6B6B6B]">
+                            {t("assignInstance.noInstances")}
+                          </p>
+                        ) : (
+                          <InstancePicker
+                            instances={instances}
+                            selectedConnectionUuid={pinnedConnectionUuid}
+                            onSelect={(inst) =>
+                              setPinnedConnectionUuid(inst.connectionUuid)
+                            }
+                            ariaLabel={t("assignInstance.workingDirectory")}
+                          />
+                        )}
+                        <div className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A8C7E]">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                          <span>{t("assignInstance.pinNote")}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -284,7 +427,7 @@ export function AssignTaskModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("tasks.selectUser")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {users.length > 0 ? (
                           users.map((user) => (
                             <SelectItem key={user.uuid} value={user.uuid}>
@@ -328,33 +471,6 @@ export function AssignTaskModal({
               )}
             </RadioGroup>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-4 rounded-b-2xl bg-white px-6 py-6 border-t border-[#E5E0D8]">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            disabled={isLoading}
-            className="border-[#E5E0D8]"
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isLoading || !canSubmit}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : selectedOption === "release" ? (
-              t("common.release")
-            ) : (
-              t("common.assign")
-            )}
-          </Button>
-        </div>
-      </div>
-    </>
+    </ScrollableDialog>
   );
 }

@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
 import { batchCommentCounts } from "@/services/comment.service";
@@ -47,6 +47,14 @@ export interface TaskClaimParams {
   assigneeType: string;
   assigneeUuid: string;
   assignedByUuid?: string | null;
+  // Optional durable AgentInstance override pin (add-agent-instance-addressing).
+  // When provided, the TASK ROW carries its own pin via the polymorphic assignee:
+  // it is persisted as assigneeType="agent_instance", assigneeUuid=<instance uuid>
+  // (overriding the `assigneeType`/`assigneeUuid` passed in). The instance must
+  // belong to `companyUuid`, else the call is rejected. When omitted/null the
+  // task has no override (assigneeType="agent") and its wake-time instance is
+  // inherited from the root idea by the wake path (T6) — not resolved here.
+  instanceUuid?: string | null;
 }
 
 export interface TaskUpdateParams {
@@ -111,6 +119,9 @@ export interface TaskResponse {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place +
+    // owning agent uuid, so the UI can render the instance and gate ownership.
+    instance?: AssigneeInstanceInfo;
   } | null;
   proposalUuid: string | null;
   project?: { uuid: string; name: string };
@@ -195,6 +206,34 @@ function formatCriterionResponse(
 }
 
 // ===== Internal Helper Functions =====
+
+// Resolve the polymorphic assignee for a claim/assign, honoring an optional
+// durable AgentInstance override pin (add-agent-instance-addressing). When
+// `instanceUuid` is given we VALIDATE it belongs to `companyUuid` (rejecting a
+// pin to a foreign-company instance) and persist the assignment as the TASK
+// ROW's own assigneeType="agent_instance"/assigneeUuid=<instance uuid>;
+// otherwise the caller's own `assigneeType`/`assigneeUuid` are returned
+// unchanged (an un-pinned task whose wake-time instance is inherited from the
+// root idea by the wake path in T6, never resolved here).
+async function resolveTaskAssigneeFields(
+  companyUuid: string,
+  assigneeType: string,
+  assigneeUuid: string,
+  instanceUuid?: string | null,
+): Promise<{ assigneeType: string; assigneeUuid: string }> {
+  if (!instanceUuid) {
+    return { assigneeType, assigneeUuid };
+  }
+  const instance = await prisma.agentInstance.findFirst({
+    where: { uuid: instanceUuid, companyUuid },
+    select: { uuid: true },
+  });
+  if (!instance) {
+    // Company-scoped: a non-existent OR foreign-company instance is rejected.
+    throw new Error("Agent instance not found");
+  }
+  return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
+}
 
 // Format a single Task into API response format
 async function formatTaskResponse(
@@ -298,10 +337,16 @@ async function formatTaskResponsesBatch(
   // Collect all unique actors for batch resolution
   const actors: Array<{ type: string; uuid: string }> = [];
   const createdByUuids: string[] = [];
+  const instanceUuids: string[] = [];
 
   for (const task of tasks) {
     if (task.assigneeType && task.assigneeUuid) {
       actors.push({ type: task.assigneeType, uuid: task.assigneeUuid });
+      // An instance-pinned assignee also needs its (host, cwd) + owning agent for
+      // the card render; collect its uuid for the batched instance lookup.
+      if (task.assigneeType === "agent_instance") {
+        instanceUuids.push(task.assigneeUuid);
+      }
     }
     if (task.assignedByUuid) {
       actors.push({ type: "user", uuid: task.assignedByUuid });
@@ -309,10 +354,11 @@ async function formatTaskResponsesBatch(
     createdByUuids.push(task.createdByUuid);
   }
 
-  // 2 batch queries instead of N * (3-4) individual queries
-  const [actorNames, createdByMap] = await Promise.all([
+  // Batch queries instead of N * (3-5) individual queries
+  const [actorNames, createdByMap, instanceInfoMap] = await Promise.all([
     batchGetActorNames(actors),
     batchFormatCreatedBy(createdByUuids),
+    batchGetAssigneeInstanceInfo(instanceUuids),
   ]);
 
   // Build responses synchronously from lookup maps
@@ -328,12 +374,17 @@ async function formatTaskResponsesBatch(
             assignedBy = { type: "user", uuid: task.assignedByUuid, name: assignedByName };
           }
         }
+        const instanceInfo =
+          task.assigneeType === "agent_instance"
+            ? instanceInfoMap.get(task.assigneeUuid)
+            : undefined;
         assignee = {
           type: task.assigneeType,
           uuid: task.assigneeUuid,
           name: assigneeName,
           assignedAt: task.assignedAt?.toISOString() ?? null,
           assignedBy,
+          ...(instanceInfo ? { instance: instanceInfo } : {}),
         };
       }
     }
@@ -593,21 +644,30 @@ export async function updateTask(
   return formatTaskResponse(task);
 }
 
-// Claim Task (atomic: only succeeds if status is "open")
+// Claim Task (atomic: only succeeds if status is "open" or "assigned")
+// The atomic update is keyed on the task uuid + status guard; `companyUuid` is
+// used to company-scope the optional instance-override validation.
 export async function claimTask({
   taskUuid,
   companyUuid,
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  instanceUuid,
 }: TaskClaimParams): Promise<TaskResponse> {
   try {
+    // Apply an optional durable instance override pin (validates company
+    // ownership; may promote the row to assigneeType="agent_instance"). With no
+    // override the assignee fields are written as-is — re-assigning without an
+    // override therefore reverts a prior instance pin back to a plain agent.
+    const resolved = await resolveTaskAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+
     const task = await prisma.task.update({
       where: { uuid: taskUuid, status: { in: ["open", "assigned"] } },
       data: {
         status: "assigned",
-        assigneeType,
-        assigneeUuid,
+        assigneeType: resolved.assigneeType,
+        assigneeUuid: resolved.assigneeUuid,
         assignedAt: new Date(),
         assignedByUuid,
       },

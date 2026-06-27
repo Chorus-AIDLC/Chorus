@@ -30,7 +30,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     // Check permissions: users can release any Idea, Agents can only release their own
     if (!isUser(auth)) {
-      if (!isAssignee(auth, idea.assigneeType, idea.assigneeUuid)) {
+      if (!(await isAssignee(auth, idea.assigneeType, idea.assigneeUuid))) {
         return errors.permissionDenied("Only assignee can release this idea");
       }
     }

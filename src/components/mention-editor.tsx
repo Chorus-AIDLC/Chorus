@@ -13,7 +13,22 @@ import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
+import { buildMentionMarker, decodePinSuffix } from "@/lib/mention-format";
+import {
+  InstancePicker,
+  type InstanceCandidate,
+} from "@/components/agent-presence/instance-picker";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 // Localized strings the (module-level, hook-less) popup renderer needs. Built in
 // the component via useTranslations and threaded through as plain strings.
@@ -26,7 +41,11 @@ interface MentionPopupLabels {
   activeCount: (n: number) => string;
 }
 
-// Extend Mention to support custom `mentionType` attribute (user | agent)
+// Extend Mention to support custom `mentionType` (user | agent) plus the
+// optional pinned (host, cwd) instance target (cwd-addressable instances, T3).
+// The pin attributes are carried on the node and serialized into the markup's
+// query-string suffix by editorToPlainText; an un-pinned mention leaves them at
+// their `null` default and serializes byte-identically to before this change.
 const CustomMention = Mention.extend({
   addAttributes() {
     return {
@@ -38,6 +57,27 @@ const CustomMention = Mention.extend({
         renderHTML: (attributes: Record<string, unknown>) => ({
           "data-mention-type": attributes.mentionType || "user",
         }),
+      },
+      // Pinned instance host ("" = unknown-host instance, null = un-pinned).
+      pinnedHost: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-pinned-host"),
+        renderHTML: (attributes: Record<string, unknown>) =>
+          attributes.pinnedHost == null
+            ? {}
+            : { "data-pinned-host": String(attributes.pinnedHost) },
+      },
+      // Pinned instance cwd (null = unknown-path instance OR un-pinned; the
+      // presence of pinnedHost or a non-null cwd marks the mention as pinned).
+      pinnedCwd: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-pinned-cwd"),
+        renderHTML: (attributes: Record<string, unknown>) =>
+          attributes.pinnedCwd == null
+            ? {}
+            : { "data-pinned-cwd": String(attributes.pinnedCwd) },
       },
     };
   },
@@ -55,6 +95,11 @@ interface Mentionable {
   // status dot; `activeCount` drives the count badge (shown only when > 0).
   online?: boolean;
   activeCount?: number;
+  // Live (host, cwd) instances for an agent (cwd-addressable instances, T3),
+  // populated when the editor requests them (withInstances). When an agent has
+  // 2+ instances the editor surfaces the secondary picker; a single instance
+  // auto-selects; 0 instances → un-pinned mention (behaves as before).
+  instances?: InstanceCandidate[];
 }
 
 export interface MentionEditorProps {
@@ -115,9 +160,18 @@ function editorToPlainText(editor: Editor): string {
 
   function processNode(node: Record<string, unknown>): string {
     if (node.type === "mention") {
-      const attrs = node.attrs as Record<string, string> | undefined;
+      const attrs = node.attrs as Record<string, string | null> | undefined;
       if (attrs) {
-        return `@[${attrs.label || attrs.id}](${attrs.mentionType || "user"}:${attrs.id})`;
+        // Serialize via the shared codec so the optional pinned (host, cwd)
+        // suffix matches what the service parser reads. Un-pinned (both null) →
+        // byte-identical to the legacy `@[Name](type:uuid)` form.
+        return buildMentionMarker(
+          (attrs.label || attrs.id) as string,
+          ((attrs.mentionType as string) || "user") as "user" | "agent",
+          attrs.id as string,
+          attrs.pinnedHost ?? null,
+          attrs.pinnedCwd ?? null,
+        );
       }
       return "";
     }
@@ -150,7 +204,10 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
     return { type: "doc", content: [{ type: "paragraph" }] };
   }
 
-  const MENTION_RE = /@\[([^\]]+)\]\((user|agent):([a-f0-9-]+)\)/g;
+  // Matches the legacy `@[Name](type:uuid)` form plus an OPTIONAL pinned-instance
+  // suffix `?cwd=…&host=…` (cwd-addressable instances, T3). Group 4 is the raw
+  // pin query string (or undefined for an un-pinned mention).
+  const MENTION_RE = /@\[([^\]]+)\]\((user|agent):([a-f0-9-]+)(?:\?([^)]*))?\)/g;
   const lines = text.split("\n");
 
   const content = lines.map((line) => {
@@ -167,12 +224,15 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
         });
       }
 
+      const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
       inlineContent.push({
         type: "mention",
         attrs: {
           id: match[3],
           label: match[1],
           mentionType: match[2],
+          pinnedHost,
+          pinnedCwd,
         },
       });
 
@@ -206,7 +266,17 @@ export function createSuggestionPopupRenderer(
   command: (attrs: any) => void,
   keyDownRef: React.MutableRefObject<KeyDownHandler | null>,
   container: HTMLDivElement,
-  labels: MentionPopupLabels
+  labels: MentionPopupLabels,
+  // Decides what happens when a candidate is chosen (cwd-addressable instances,
+  // T3). When provided, it owns the secondary-picker branch: an agent with 2+
+  // live instances defers the insert and opens the picker; otherwise it inserts
+  // (auto-pinning a single instance). Omitted → legacy behavior: insert the bare
+  // mention immediately. Tests can omit it to assert the un-pinned DOM/flow.
+  selectMentionable?: (
+    item: Mentionable,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    command: (attrs: any) => void,
+  ) => void,
 ) {
   container.innerHTML = "";
 
@@ -232,6 +302,13 @@ export function createSuggestionPopupRenderer(
   let selectedIdx = 0;
 
   const doCommand = (item: Mentionable) => {
+    if (selectMentionable) {
+      // Delegate to the React owner: it decides immediate insert (auto-pinning a
+      // single instance) vs. opening the secondary picker for 2+ instances.
+      selectMentionable(item, command);
+      return;
+    }
+    // Legacy path (no instance pinning): insert the bare mention.
     command({
       id: item.uuid,
       label: item.name,
@@ -351,6 +428,142 @@ export function createSuggestionPopupRenderer(
   };
 }
 
+// ── Secondary instance picker dialog (cwd-addressable instances, T3) ───────
+//
+// Shown when an @mentioned agent has 2+ ONLINE instances: the owner pins which
+// (host, cwd) the mention targets. The caller passes ONLINE instances only — an
+// offline instance is never a wake target and is not shown. Owns its own
+// selection state; Confirm calls onConfirm with the chosen instance, Cancel
+// discards (inserting nothing — the user can re-type the mention). Matches
+// design.pen "@mention cwd Picker".
+//
+// Mobile-safe layout (fix-mention-cwd-picker-mobile-overflow): the dialog is
+// capped to `max-h-[85svh]` — a DYNAMIC small-viewport unit that shrinks with the
+// mobile soft keyboard / URL bar, unlike a static `vh` that tracks only the layout
+// viewport. The body is a flex column: the header and footer (Cancel / Pin) are
+// `shrink-0` so they stay visible and tappable, and ONLY the instance list scrolls
+// (`min-h-0 flex-1 overflow-y-auto`). Without this, a tall instance list on a
+// keyboard-shortened viewport pushed the Pin button off-screen with no way to reach
+// it (Radix centers the content against the layout viewport, ignoring the keyboard).
+//
+// Stacking (z-[110]): this picker is opened from inside the idea-detail side panel,
+// which is itself `fixed z-50`. The default Dialog overlay+content are also `z-50`,
+// so the dialog only sits above the panel by PAINT ORDER — a tie that some mobile
+// browsers resolve the other way, leaving the panel (and its Overview/Elaboration/
+// Activity tab bar) painted OVER the dialog: the title looks occluded and taps on
+// the footer land on the tab bar so Pin can't be clicked. Lifting BOTH the content
+// and the overlay to `z-[110]` (above the panel's z-50 — in the same high band as
+// the @-mention suggestion popup's own `z-[100]`, which already clears the panel)
+// makes it deterministic regardless of paint order.
+// Exported for the unit test that pins this layout contract.
+export function MentionInstancePickerDialog({
+  open,
+  agentName,
+  instances,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  agentName: string;
+  instances: InstanceCandidate[];
+  onConfirm: (instance: InstanceCandidate) => void;
+  onCancel: () => void;
+}) {
+  const t = useTranslations("mentionInstance");
+  const [selected, setSelected] = useState<InstanceCandidate | null>(null);
+
+  // Reset the local selection whenever a new pick opens the dialog.
+  useEffect(() => {
+    if (open) setSelected(null);
+  }, [open, instances]);
+
+  const distinctHosts = new Set(instances.map((i) => i.host)).size;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <DialogContent
+        className="z-[110] flex max-h-[85svh] flex-col gap-0 sm:max-w-md"
+        overlayClassName="z-[110]"
+      >
+        <DialogHeader className="shrink-0">
+          <DialogTitle>{t("title")}</DialogTitle>
+          <DialogDescription>
+            {t("subtitle", { name: agentName, count: instances.length, hosts: distinctHosts })}
+          </DialogDescription>
+        </DialogHeader>
+        {/* The ONLY scroll region — keeps the header + footer pinned and reachable
+            even when the instance list is tall or the soft keyboard shrinks the
+            viewport. `min-h-0` lets this flex child shrink below its content height
+            so it actually scrolls instead of pushing the footer off-screen. */}
+        <div className="min-h-0 flex-1 overflow-y-auto py-3">
+          <InstancePicker
+            instances={instances}
+            selectedConnectionUuid={selected?.connectionUuid ?? null}
+            onSelect={setSelected}
+            ariaLabel={t("title")}
+          />
+        </div>
+        <DialogFooter className="shrink-0">
+          <Button variant="ghost" onClick={onCancel}>
+            {t("cancel")}
+          </Button>
+          <Button
+            disabled={!selected}
+            onClick={() => {
+              if (selected) onConfirm(selected);
+            }}
+          >
+            {t("confirm")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Confirm handler (extracted + pure, for testability) ────────────────────
+//
+// Runs when the owner taps "Pin instance" in the secondary picker. The ORDER here
+// is the fix for "tapped Pin but the modal didn't close" on mobile: it closes the
+// modal FIRST (always), then performs the mention insert deferred + guarded so a
+// failing insert can never leave the dialog stuck open. See the call site comment.
+interface PendingPick {
+  item: Mentionable;
+  onlineInstances: InstanceCandidate[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  command: (attrs: any) => void;
+}
+export function handleInstancePickConfirm(
+  pick: PendingPick | null,
+  instance: InstanceCandidate,
+  deps: {
+    close: () => void;
+    insert: (pick: PendingPick, instance: InstanceCandidate) => void;
+    // Schedule the deferred insert (rAF in the app; synchronous in tests).
+    defer: (fn: () => void) => void;
+    focusEditor: () => void;
+    onError: (err: unknown) => void;
+  },
+): void {
+  // 1. Close the modal unconditionally, before anything that can throw.
+  deps.close();
+  if (!pick) return;
+  // 2. Insert deferred + guarded — never let a failed insert resurface as a stuck modal.
+  deps.defer(() => {
+    try {
+      deps.focusEditor();
+      deps.insert(pick, instance);
+    } catch (err) {
+      deps.onError(err);
+    }
+  });
+}
+
 // ── MentionEditor Component ────────────────────────────────────
 
 export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
@@ -388,8 +601,11 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
       forceUpdate((n) => n + 1);
 
       try {
+        // withInstances=1 → candidates carry their live (host, cwd) instances so
+        // an agent with 2+ surfaces the secondary picker (cwd-addressable
+        // instances, T3). Additive; the suggestion-row rendering is unchanged.
         const res = await fetch(
-          `/api/mentionables?q=${encodeURIComponent(query)}&limit=10`
+          `/api/mentionables?q=${encodeURIComponent(query)}&limit=10&withInstances=1`
         );
         if (res.ok) {
           const json = await res.json();
@@ -407,6 +623,73 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
 
     const debouncedFetch = useDebouncedCallback(fetchMentionables, 250);
 
+    // ── Secondary instance picker (cwd-addressable instances, T3) ──────────
+    //
+    // When an agent with 2+ live instances is chosen, defer the mention insert
+    // and open this picker so the owner pins which (host, cwd) the wake targets.
+    // A single live instance auto-selects (no extra click) — handled inline so
+    // we never open the picker for it. An agent with 0/1 instances, or a user,
+    // inserts immediately and un-pinned (behaves exactly as before this change).
+    const [pendingPick, setPendingPick] = useState<{
+      item: Mentionable;
+      // The ONLINE instances to offer in the picker (offline is never a wake
+      // target, so it is filtered out before the dialog opens).
+      onlineInstances: InstanceCandidate[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      command: (attrs: any) => void;
+    } | null>(null);
+
+    const insertMention = useCallback(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (item: Mentionable, command: (attrs: any) => void, pin?: InstanceCandidate) => {
+        command({
+          id: item.uuid,
+          label: item.name,
+          mentionType: item.type,
+          // A pin carries the durable (host, cwd) "place"; null for an un-pinned
+          // mention. host "" is preserved (unknown-host instance).
+          pinnedHost: pin ? pin.host : null,
+          pinnedCwd: pin ? pin.cwd : null,
+        });
+      },
+      [],
+    );
+
+    // The renderer calls this when a candidate is chosen. Kept in a ref so the
+    // long-lived Tiptap suggestion callbacks always see the current closure.
+    const selectMentionableRef = useRef<
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (item: Mentionable, command: (attrs: any) => void) => void
+    >(() => {});
+    selectMentionableRef.current = (item, command) => {
+      const liveInstances =
+        item.type === "agent"
+          ? (item.instances ?? []).filter((i) => i.effectiveStatus === "online")
+          : [];
+      if (liveInstances.length >= 2) {
+        // Multiple live (online) instances: open the picker over the online set,
+        // defer the insert.
+        setPendingPick({ item, onlineInstances: liveInstances, command });
+        return;
+      }
+      if (liveInstances.length === 1) {
+        // Exactly one live instance: auto-select it, no extra interaction.
+        insertMention(item, command, liveInstances[0]);
+        return;
+      }
+      // No live instances (or a user): un-pinned mention, exactly as before.
+      insertMention(item, command);
+    };
+
+    // Stable wrapper passed to the (long-lived) renderer; always dispatches to
+    // the current selectMentionableRef closure so there is no stale capture.
+    const selectMentionable = useCallback(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (item: Mentionable, command: (attrs: any) => void) =>
+        selectMentionableRef.current(item, command),
+      [],
+    );
+
     // Re-render popup when items change
     useEffect(() => {
       if (popupRef.current && currentCommandRef.current) {
@@ -416,7 +699,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           currentCommandRef.current,
           keyDownRef,
           popupRef.current,
-          labelsRef.current
+          labelsRef.current,
+          selectMentionable
         );
       }
     });
@@ -494,7 +778,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                     props.command,
                     keyDownRef,
                     popup,
-                    labelsRef.current
+                    labelsRef.current,
+                    selectMentionable
                   );
                 },
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -525,7 +810,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                       props.command,
                       keyDownRef,
                       popupRef.current,
-                      labelsRef.current
+                      labelsRef.current,
+                      selectMentionable
                     );
                   }
                 },
@@ -619,6 +905,35 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         )}
       >
         <EditorContent editor={editor} />
+        {/* Secondary instance picker — opened only for an agent with 2+ ONLINE
+            instances (cwd-addressable instances). Offline instances are filtered
+            out before the dialog opens (never a wake target). */}
+        <MentionInstancePickerDialog
+          open={pendingPick !== null}
+          agentName={pendingPick?.item.name ?? ""}
+          instances={pendingPick?.onlineInstances ?? []}
+          onConfirm={(instance) => {
+            // Close the modal FIRST and unconditionally, then insert deferred +
+            // guarded. The insert runs the Tiptap suggestion `command` captured when
+            // the picker opened; by now the editor has blurred (the Radix dialog
+            // stole focus) so that command can throw or no-op — especially on mobile
+            // Safari. If the insert ran before the close and threw, the dialog would
+            // stay open after a successful tap (looks like "Pin does nothing").
+            // handleInstancePickConfirm enforces close-first + guarded-deferred-insert.
+            handleInstancePickConfirm(pendingPick, instance, {
+              close: () => setPendingPick(null),
+              insert: (pick, inst) => insertMention(pick.item, pick.command, inst),
+              defer: (fn) => requestAnimationFrame(fn),
+              focusEditor: () => editor?.commands.focus(),
+              onError: (err) =>
+                clientLogger.error(
+                  "MentionEditor: cwd-pinned mention insert failed",
+                  err,
+                ),
+            });
+          }}
+          onCancel={() => setPendingPick(null)}
+        />
         <style>{`
           .tiptap p.is-editor-empty:first-child::before {
             content: attr(data-placeholder);

@@ -8,9 +8,15 @@ export interface ConnectionView {
   uuid: string;
   agentUuid: string;
   agentName: string | null;
+  // Owning agent's human owner (Agent.ownerUuid); null for an unowned/system
+  // agent or an unresolved relation. Mirrors the server owner rule in
+  // daemon-control.service so the client can gate owner-only actions (e.g. the
+  // mention badge's "Open conversation") against useAuth().user.uuid.
+  ownerUuid: string | null;
   clientType: string;
   clientVersion: string | null;
   host: string; // "" when host-less
+  cwd: string | null; // working directory this connection serves; null for an old daemon
   startedAt: string | null;
   status: string;
   effectiveStatus: "online" | "offline";

@@ -44,8 +44,9 @@ import {
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
-import { useClientTypeLabel } from "./hooks";
+import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
 import { InterruptButton, ResumeButton } from "./execution-row";
+import { InstancePicker, type InstanceCandidate } from "./instance-picker";
 import type { ConnectionView, ExecutionView } from "./types";
 import type { SessionView } from "@/services/daemon-session.service";
 
@@ -242,6 +243,20 @@ function ComposeField({
 // (the server re-checks and 409s otherwise); when offline the box is disabled
 // with the localized read-only reason, never silently inert.
 //
+// Origin-offline escape hatch (T12 — corrects T11): `claude --resume` is cwd/machine-
+// bound, so THIS conversation cannot be resumed on its offline origin. But when the SAME
+// agent still has ≥1 OTHER ONLINE (host, cwd) instance, we surface a "Continue on an
+// online directory" action beside the read-only banner. It opens the RepointForm
+// (→ POST /api/daemon-sessions/{sessionUuid}/repoint) which RE-POINTS this SAME
+// conversation's origin onto the chosen online instance and sends a fresh turn there —
+// KEEPING the same DaemonSession (same uuid + sessionId). The daemon, finding no
+// transcript at the new cwd, starts a fresh transcript under the SAME id (cold start, no
+// context injection); the prior turns stay as read-only history. `onSessionStarted` hands
+// the SAME (now re-pointed, online) session back so the chat keeps it selected and it
+// flips read-only → live. We do NOT mint a new ad-hoc session (the T11 mistake, which lost
+// the conversation's identity). When the agent has NO online instance, the box stays plain
+// read-only.
+//
 // Action row (子 — daemon chat refinement): the footer no longer stacks a
 // standalone ExecutionRow card above this box. Instead this conversation's
 // in-flight execution (running / user-interrupted / crash) is threaded into
@@ -255,6 +270,9 @@ export function ConversationReplyBox({
   originOnline,
   layout = "inline",
   controllableExecution,
+  agentUuid,
+  onlineConnections = [],
+  onSessionStarted,
 }: {
   // The open conversation's uuid — replies POST to its `/instruction` endpoint.
   sessionUuid: string;
@@ -265,11 +283,29 @@ export function ConversationReplyBox({
   // THIS conversation's controllable execution (running or user/crash-interrupted),
   // if any — hosted in the composer's action row (Interrupt / Resume / hint).
   controllableExecution?: ExecutionView | null;
+  // The conversation's agent — the target for the origin-offline escape hatch's
+  // ad-hoc start. Null when the origin connection isn't resolved (no escape hatch).
+  agentUuid?: string | null;
+  // The SAME agent's currently-online connections (the escape-hatch candidate set,
+  // fed straight to the ad-hoc picker). Empty when nothing else is online → no
+  // escape hatch is offered (plain read-only).
+  onlineConnections?: ConnectionView[];
+  // Auto-select the freshly-started conversation after an ad-hoc start.
+  onSessionStarted?: (session: SessionView) => void;
 }) {
   const t = useTranslations("agentConnections");
   const tc = useTranslations("daemonChat");
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
+  // The escape-hatch ad-hoc composer is collapsed by default — it appears only
+  // after the user opts in via the "Continue on an online directory" action, so
+  // the offline conversation isn't crowded by a picker the user may not want.
+  const [continueOpen, setContinueOpen] = useState(false);
+
+  // The origin-offline escape hatch is available only when the origin is offline
+  // AND the same agent has at least one OTHER online instance to dispatch to.
+  const canContinueElsewhere =
+    !originOnline && !!agentUuid && onlineConnections.length > 0;
 
   const send = async () => {
     const trimmed = value.trim();
@@ -300,18 +336,212 @@ export function ConversationReplyBox({
   };
 
   return (
-    <ComposeField
-      value={value}
-      onChange={setValue}
-      onSend={send}
-      pending={pending}
-      disabled={!originOnline}
-      disabledReason={!originOnline ? tc("originOfflineNote") : null}
-      placeholder={tc("replyPlaceholder")}
-      sendLabel={t("send")}
-      layout={layout}
-      controllableExecution={controllableExecution}
-    />
+    <div className="flex flex-col gap-2.5">
+      <ComposeField
+        value={value}
+        onChange={setValue}
+        onSend={send}
+        pending={pending}
+        disabled={!originOnline}
+        disabledReason={!originOnline ? tc("originOfflineNote") : null}
+        placeholder={tc("replyPlaceholder")}
+        sendLabel={t("send")}
+        layout={layout}
+        controllableExecution={controllableExecution}
+      />
+      {/* Origin-offline escape hatch — only when the same agent has another online
+          instance. This RE-POINTS the SAME conversation's origin onto a chosen online
+          (host, cwd) and sends a fresh turn there (same sessionId, cold start); the prior
+          turns stay as read-only history. It does NOT start a new conversation. */}
+      {canContinueElsewhere &&
+        (continueOpen ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-[12px] font-medium text-[#6B6B6B]">
+              {tc("continueOnlineHelp")}
+            </span>
+            <RepointForm
+              sessionUuid={sessionUuid}
+              onlineConnections={onlineConnections}
+              layout={layout}
+              onRepointed={onSessionStarted}
+            />
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setContinueOpen(true)}
+            className="h-8 w-fit gap-1.5 rounded-lg border-[#E5D5C6] bg-white text-[12px] font-medium text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#A65F3C]"
+          >
+            <MessageCirclePlus className="h-3.5 w-3.5" aria-hidden />
+            {tc("continueOnlineAction")}
+          </Button>
+        ))}
+    </div>
+  );
+}
+
+// =====================================================================
+// RepointForm — the origin-offline escape-hatch composer (T12). A connection picker
+// (the SAME agent's ONLINE instances) + compose surface that RE-POINTS the CURRENT
+// conversation's origin onto the chosen online instance and sends a fresh turn there,
+// via POST /api/daemon-sessions/{sessionUuid}/repoint. It KEEPS the same DaemonSession
+// (same uuid + sessionId): the server moves `originConnectionUuid` and creates a turn on
+// the SAME row; the daemon, finding no transcript at the new cwd, starts a fresh
+// transcript under the same id (cold start). On success `onRepointed` hands the SAME
+// (now online) session back so the chat keeps it selected and it flips read-only → live —
+// it does NOT auto-switch to a different conversation.
+//
+// Visually mirrors AdHocSendForm (the same picker + "Sending to …" confirmation + compose)
+// so the escape hatch reads identically; the ONLY difference is the endpoint + that it
+// re-points an existing conversation rather than starting a new one.
+// =====================================================================
+
+export function RepointForm({
+  sessionUuid,
+  onlineConnections,
+  layout,
+  onRepointed,
+}: {
+  // The CURRENT conversation's session uuid — the re-point targets THIS session (same id).
+  sessionUuid: string;
+  // The SAME agent's currently-online connections (the re-point candidate set). A live
+  // re-point requires online, so only the online set is shown; the server re-verifies
+  // same-agent + online on POST.
+  onlineConnections: ConnectionView[];
+  layout: "inline" | "stacked";
+  // Called with the SAME (now re-pointed, online) session after success, so the chat keeps
+  // this conversation selected and it flips read-only → live on the new origin.
+  onRepointed?: (session: SessionView) => void;
+}) {
+  const t = useTranslations("agentConnections");
+  const ta = useTranslations("assignInstance");
+  const tc = useTranslations("daemonChat");
+
+  // The picker's instance set: the ONLINE connection set only (a live re-point needs
+  // online). Mapped to the shared InstanceCandidate shape.
+  const instances: InstanceCandidate[] = useMemo(
+    () =>
+      onlineConnections.map((c) => ({
+        connectionUuid: c.uuid,
+        host: c.host ?? "",
+        cwd: c.cwd ?? null,
+        effectiveStatus: c.effectiveStatus,
+      })),
+    [onlineConnections],
+  );
+
+  // Default to the first ONLINE connection so the common single-other-daemon case needs no
+  // extra click. Live re-points require online, so the default never lands on an offline row.
+  const [connectionUuid, setConnectionUuid] = useState<string>(
+    onlineConnections[0]?.uuid ?? "",
+  );
+  const [value, setValue] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const selectedInstance =
+    instances.find(
+      (i) =>
+        i.connectionUuid === connectionUuid && i.effectiveStatus === "online",
+    ) ?? null;
+  const isMultiHost = useMemo(
+    () => new Set(instances.map((i) => i.host)).size > 1,
+    [instances],
+  );
+
+  const send = async () => {
+    const trimmed = value.trim();
+    // Block only no-connection / empty (both already disable Send); over-length goes to the
+    // server so its 400 reason toasts (no silent dead button).
+    if (!connectionUuid || trimmed.length === 0) {
+      return;
+    }
+    setPending(true);
+    try {
+      const res = await authFetch(
+        `/api/daemon-sessions/${sessionUuid}/repoint`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionUuid, instructionText: trimmed }),
+        },
+      );
+      if (!res.ok) {
+        toast.error(await extractError(res, t("instructionError")));
+        return;
+      }
+      // Surface the re-pointed session so the chat keeps it selected (same uuid) and it
+      // flips read-only → live. Tolerate a fieldless body (the toast still fires).
+      let repointedSession: SessionView | null = null;
+      try {
+        const json = await res.json();
+        if (json?.success && json.data?.session) {
+          repointedSession = json.data.session as SessionView;
+        }
+      } catch {
+        // Non-JSON success body — nothing to hand back, not an error.
+      }
+      toast.success(tc("continueOnlineStarted"));
+      setValue("");
+      if (repointedSession) onRepointed?.(repointedSession);
+    } catch (error) {
+      clientLogger.error("Failed to re-point daemon session:", error);
+      toast.error(t("instructionError"));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  // The send confirmation line — names the resolved (path · host) before re-pointing. Host
+  // is shown only when it disambiguates (the agent spans 2+ hosts). Hidden until an online
+  // instance is selected.
+  const sendingToLabel = (() => {
+    if (!selectedInstance) return null;
+    const cwd = formatCwd(selectedInstance.cwd);
+    const pathLabel = cwd.isUnknown ? ta(cwd.label) : cwd.label;
+    if (isMultiHost) {
+      const host = formatHost(selectedInstance.host);
+      const hostLabel = host.isUnknown ? ta(host.label) : host.label;
+      return ta("sendingToWithHost", { path: pathLabel, host: hostLabel });
+    }
+    return ta("sendingTo", { path: pathLabel });
+  })();
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#E5E0D8] bg-white p-4">
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+          {ta("workingDirectory")}
+        </span>
+        {/* Live re-point → online instances ONLY (offline is never a target). The server
+            still re-verifies same-agent + online on POST. */}
+        <InstancePicker
+          instances={instances}
+          selectedConnectionUuid={connectionUuid || null}
+          onSelect={(inst) => setConnectionUuid(inst.connectionUuid)}
+          ariaLabel={t("pickConnection")}
+        />
+      </div>
+      {/* Resolved-target confirmation, shown before the re-point fires. */}
+      {sendingToLabel && (
+        <div className="flex items-center gap-1.5 text-[11px] text-[#6B6B6B]">
+          <SendHorizonal className="h-3 w-3 shrink-0 text-[#9A9A9A]" aria-hidden />
+          <span className="min-w-0 truncate">{sendingToLabel}</span>
+        </div>
+      )}
+      <ComposeField
+        value={value}
+        onChange={setValue}
+        onSend={send}
+        pending={pending}
+        disabled={!selectedInstance}
+        disabledReason={!selectedInstance ? ta("offlineCantRun") : null}
+        placeholder={t("sendInstructionPlaceholder")}
+        sendLabel={t("send")}
+        layout={layout}
+      />
+    </div>
   );
 }
 
@@ -331,7 +561,10 @@ export function AdHocSendForm({
 }: {
   agentUuid: string;
   // Online connections of the SELECTED agent only (the picker never lists another
-  // agent's connections — the server re-verifies ownership + online on POST).
+  // agent's connections — the server re-verifies ownership + online on POST). The
+  // common single-daemon case auto-selects the sole online instance. A live send
+  // requires online, so the picker is fed the online set ONLY — an offline
+  // instance is never shown.
   onlineConnections: ConnectionView[];
   layout: "inline" | "stacked";
   // When the surrounding pane already carries its own heading (e.g. the chat's
@@ -342,14 +575,43 @@ export function AdHocSendForm({
   onStarted?: (session: SessionView) => void;
 }) {
   const t = useTranslations("agentConnections");
-  const clientTypeLabel = useClientTypeLabel();
-  // Default to the first online connection so the common single-daemon case needs
-  // no extra click; the user can re-pick when several are online.
+  const ta = useTranslations("assignInstance");
+
+  // The picker's instance set: the ONLINE connection set only (a live send needs
+  // online). Mapped to the shared InstanceCandidate shape.
+  const instances: InstanceCandidate[] = useMemo(
+    () =>
+      onlineConnections.map((c) => ({
+        connectionUuid: c.uuid,
+        host: c.host ?? "",
+        // null (and any missing self-report) → the "unknown path" instance.
+        cwd: c.cwd ?? null,
+        effectiveStatus: c.effectiveStatus,
+      })),
+    [onlineConnections],
+  );
+
+  // Default to the first ONLINE connection so the common single-daemon case needs
+  // no extra click (the picker also auto-selects a sole online instance). Live
+  // sends require online, so the default never lands on an offline row.
   const [connectionUuid, setConnectionUuid] = useState<string>(
     onlineConnections[0]?.uuid ?? "",
   );
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
+
+  // The resolved (online) instance, for the send confirmation footer. A live send
+  // is only ever to an online instance, so an unresolved/offline selection yields
+  // no footer (and Send is disabled).
+  const selectedInstance =
+    instances.find(
+      (i) =>
+        i.connectionUuid === connectionUuid && i.effectiveStatus === "online",
+    ) ?? null;
+  const isMultiHost = useMemo(
+    () => new Set(instances.map((i) => i.host)).size > 1,
+    [instances],
+  );
 
   const send = async () => {
     const trimmed = value.trim();
@@ -391,6 +653,21 @@ export function AdHocSendForm({
     }
   };
 
+  // The send confirmation line — names the resolved (path · host) before sending
+  // (cwd-addressable instances, T4). Host is shown only when it disambiguates
+  // (the agent spans 2+ hosts). Hidden until an online instance is selected.
+  const sendingToLabel = (() => {
+    if (!selectedInstance) return null;
+    const cwd = formatCwd(selectedInstance.cwd);
+    const pathLabel = cwd.isUnknown ? ta(cwd.label) : cwd.label;
+    if (isMultiHost) {
+      const host = formatHost(selectedInstance.host);
+      const hostLabel = host.isUnknown ? ta(host.label) : host.label;
+      return ta("sendingToWithHost", { path: pathLabel, host: hostLabel });
+    }
+    return ta("sendingTo", { path: pathLabel });
+  })();
+
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#E5E0D8] bg-white p-4">
       {!hideHeader && (
@@ -399,40 +676,40 @@ export function AdHocSendForm({
             {t("adHocTitle")}
           </span>
           <span className="text-[12px] leading-relaxed text-[#9A9A9A]">
-            {t("adHocBody")}
+            {ta("liveSendNote")}
           </span>
         </div>
       )}
       <div className="flex flex-col gap-1.5">
         <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
-          {t("pickConnection")}
+          {ta("workingDirectory")}
         </span>
-        <Select value={connectionUuid} onValueChange={setConnectionUuid}>
-          <SelectTrigger
-            aria-label={t("pickConnection")}
-            className="w-full rounded-lg border-[#E5E0D8] bg-white text-[13px] text-[#2C2C2C]"
-          >
-            <SelectValue placeholder={t("pickConnectionPlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>
-            {onlineConnections.map((conn) => (
-              <SelectItem key={conn.uuid} value={conn.uuid}>
-                {(conn.agentName?.trim() || t("unknownAgent")) +
-                  " · " +
-                  clientTypeLabel(conn.clientType) +
-                  (conn.host ? " · " + conn.host : "")}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Live send → online instances ONLY (offline is never a send target).
+            The server still re-verifies ownership + online on POST. */}
+        <InstancePicker
+          instances={instances}
+          selectedConnectionUuid={connectionUuid || null}
+          onSelect={(inst) => setConnectionUuid(inst.connectionUuid)}
+          ariaLabel={t("pickConnection")}
+        />
       </div>
+      {/* Resolved-target confirmation, shown before the live send fires. */}
+      {sendingToLabel && (
+        <div className="flex items-center gap-1.5 text-[11px] text-[#6B6B6B]">
+          <SendHorizonal className="h-3 w-3 shrink-0 text-[#9A9A9A]" aria-hidden />
+          <span className="min-w-0 truncate">{sendingToLabel}</span>
+        </div>
+      )}
       <ComposeField
         value={value}
         onChange={setValue}
         onSend={send}
         pending={pending}
-        disabled={false}
-        disabledReason={null}
+        // No online instance selected → hard-disable with a visible reason rather
+        // than a dead Send (e.g. the user picked an offline row, which the picker
+        // already blocks, or no online instance exists at all).
+        disabled={!selectedInstance}
+        disabledReason={!selectedInstance ? ta("offlineCantRun") : null}
         placeholder={t("sendInstructionPlaceholder")}
         sendLabel={t("startSession")}
         layout={layout}
@@ -463,7 +740,8 @@ export function SendInstructionBox({
   // The caller's visible daemon sessions (GET /api/daemon-sessions). Filtered here to the
   // selected connection's agent; the user may pick one to CONTINUE, or start a new one.
   sessions: SessionTarget[];
-  // The agent's currently-online connections, for the ad-hoc picker.
+  // The agent's currently-online connections — gates whether the ad-hoc path is offered
+  // AND is the ONLY instance set the ad-hoc picker renders (offline is never a target).
   onlineConnections: ConnectionView[];
   layout?: "inline" | "stacked";
 }) {

@@ -10,6 +10,7 @@ import * as activityService from "@/services/activity.service";
 import * as commentService from "@/services/comment.service";
 import * as sessionService from "@/services/session.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
+import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 
@@ -122,10 +123,10 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
 
-      // Check if the caller is the assignee (UUID comparison)
-      const isAssignee =
-        (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
-        (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+      // Check if the caller is the assignee. The shared helper also passes an
+      // `agent_instance` assignment owned by this agent (instance uuid resolved
+      // back to the owning agent first).
+      const isAssignee = await isAssignmentOwnedByActor(auth, task.assigneeType, task.assigneeUuid);
 
       if (!isAssignee) {
         return { content: [{ type: "text", text: "Only the assignee can release a task" }], isError: true };
@@ -177,10 +178,9 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
 
-      // Check if the caller is the assignee (UUID comparison)
-      const isAssignee =
-        (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
-        (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+      // Check if the caller is the assignee. The shared helper also passes an
+      // `agent_instance` assignment owned by this agent.
+      const isAssignee = await isAssignmentOwnedByActor(auth, task.assigneeType, task.assigneeUuid);
 
       if (!isAssignee) {
         return { content: [{ type: "text", text: "Only the assignee can submit for verification" }], isError: true };
@@ -231,9 +231,7 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
       // Verify caller is the assignee
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) return { content: [{ type: "text", text: "Task not found" }], isError: true };
-      const isAssignee =
-        (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
-        (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+      const isAssignee = await isAssignmentOwnedByActor(auth, task.assigneeType, task.assigneeUuid);
       if (!isAssignee) return { content: [{ type: "text", text: "Only the assignee can self-check acceptance criteria" }], isError: true };
 
       const result = await taskService.reportCriteriaSelfCheck(
@@ -267,10 +265,9 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
 
-      // Check if the caller is the assignee (UUID comparison)
-      const isAssignee =
-        (task.assigneeType === "agent" && task.assigneeUuid === auth.actorUuid) ||
-        (task.assigneeType === "user" && auth.ownerUuid && task.assigneeUuid === auth.ownerUuid);
+      // Check if the caller is the assignee. The shared helper also passes an
+      // `agent_instance` assignment owned by this agent.
+      const isAssignee = await isAssignmentOwnedByActor(auth, task.assigneeType, task.assigneeUuid);
 
       if (!isAssignee) {
         return { content: [{ type: "text", text: "Only the assignee can report work" }], isError: true };

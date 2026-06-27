@@ -18,10 +18,11 @@ import {
   LogOut,
   Menu,
 } from "lucide-react";
-import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
+import { authFetch, primeSessionCookie, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { AuthProvider } from "@/contexts/auth-context";
 import { AgentPresencePill } from "@/components/agent-presence-pill";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
@@ -176,18 +177,31 @@ export default function DashboardLayout({
       // and the server authenticates via the user_session httpOnly cookie.
       let response = await authFetch("/api/auth/session");
 
-      // If access token expired, try refreshing with the refresh token cookie
-      if (!response.ok) {
-        const refreshRes = await fetch("/api/auth/refresh", { method: "POST" });
-        if (refreshRes.ok) {
-          // Refresh succeeded — retry session check with new cookies
-          response = await authFetch("/api/auth/session");
-        }
+      // The session probe (/api/auth/session) is NOT covered by the middleware matcher,
+      // so it can't refresh the cookie itself. On a 401, prime the cookie via a
+      // matcher-covered request (primeSessionCookie → middleware refreshes from the refresh
+      // token) and retry once. This rescues the iOS bfcache/resume case where no server
+      // document request preceded this probe. (The old `/api/auth/refresh` retry here was a
+      // SuperAdmin-only endpoint — a no-op for OIDC users — so it never helped them.)
+      if (response.status === 401) {
+        await primeSessionCookie();
+        response = await authFetch("/api/auth/session");
+      }
+
+      // Session death is decided ONLY by a true 401 that survived the prime+retry — the
+      // same contract as auth-context.fetchSession. A transient/non-401 failure must NOT
+      // bounce the user (it would log out a still-valid session on a network blip, e.g.
+      // right after an iOS resume); leave session state untouched and let a later
+      // resume/navigation re-check.
+      if (response.status === 401) {
+        clearUserManager();
+        router.push("/login");
+        return;
       }
 
       if (!response.ok) {
-        clearUserManager();
-        router.push("/login");
+        // Transient/non-401 error — do not redirect; stop the loading gate and retry later.
+        setLoading(false);
         return;
       }
 
@@ -198,16 +212,12 @@ export default function DashboardLayout({
           email: data.data.user.email,
           name: data.data.user.name || data.data.user.email,
         });
-      } else {
-        clearUserManager();
-        router.push("/login");
-        return;
       }
+      // A non-success body without a 401 is treated as transient: don't bounce, just
+      // leave session state and let a later check resolve it.
     } catch (error) {
+      // Network/transient error — do NOT treat as session death, do not redirect.
       clientLogger.error("Session check failed:", error);
-      clearUserManager();
-      router.push("/login");
-      return;
     }
 
     setLoading(false);
@@ -480,6 +490,16 @@ export default function DashboardLayout({
 
   return (
     <NotificationProvider>
+    {/* AuthProvider exposes the current user via useAuth() to the whole shell.
+        It is mounted here (not the root layout) because only the authenticated
+        dashboard tree needs it: the comment mention badge's owner gate reads
+        useAuth().user.uuid. AuthProvider self-fetches /api/auth/session (the same
+        endpoint this layout already polls), so it is additive — the layout keeps
+        its own local `user` state for the sidebar; this provider serves consumers
+        deep in the tree that can't be prop-threaded (e.g. MentionBadge inside a
+        rendered comment body). Without it, useAuth() throws and any agent mention
+        in a comment crashes the comment area. */}
+    <AuthProvider>
     {/* AgentPresenceProvider is the single shell-level data spine for the
         sidebar presence pill + popover + modal. Mounted ONCE here, wrapping the
         whole shell (sidebar + main), so it survives route changes (does not
@@ -546,6 +566,7 @@ export default function DashboardLayout({
       )}
     </div>
     </AgentPresenceProvider>
+    </AuthProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
   );

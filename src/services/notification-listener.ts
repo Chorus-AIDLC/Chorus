@@ -6,6 +6,7 @@ import { eventBus } from "@/lib/event-bus";
 import { prisma } from "@/lib/prisma";
 import * as notificationService from "./notification.service";
 import type { NotificationCreateParams } from "./notification.service";
+import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import logger from "@/lib/logger";
 
 const nlLogger = logger.child({ module: "notification-listener" });
@@ -78,7 +79,7 @@ interface ActivityEvent {
 }
 
 interface Recipient {
-  type: string; // "user" | "agent"
+  type: string; // "user" | "agent" — agent_instance is always resolved to "agent"
   uuid: string;
 }
 
@@ -172,6 +173,25 @@ async function resolveAgentOwner(
   return null;
 }
 
+// Resolve an entity's polymorphic assignee into a wake/notification recipient.
+// For `agent_instance` the recipient MUST be the owning AGENT, never the instance
+// uuid — a daemon wake targets the agent, and the instance's assigneeUuid is an
+// AgentInstance.uuid that no agent recipient would ever match. Returns null when
+// the assignment is absent or an instance fails to resolve.
+async function resolveAssigneeRecipient(
+  companyUuid: string,
+  assigneeType: string | null,
+  assigneeUuid: string | null
+): Promise<Recipient | null> {
+  if (!assigneeType || !assigneeUuid) return null;
+  if (assigneeType === "agent_instance") {
+    const agentUuid = await resolveAssigneeAgentUuid(companyUuid, assigneeType, assigneeUuid);
+    if (!agentUuid) return null;
+    return { type: "agent", uuid: agentUuid };
+  }
+  return { type: assigneeType, uuid: assigneeUuid };
+}
+
 // ===== Recipient resolution per notification type =====
 
 async function resolveRecipients(
@@ -188,10 +208,8 @@ async function resolveRecipients(
         where: { uuid: targetUuid },
         select: { assigneeType: true, assigneeUuid: true },
       });
-      if (task?.assigneeType && task?.assigneeUuid) {
-        return [{ type: task.assigneeType, uuid: task.assigneeUuid }];
-      }
-      return [];
+      const recipient = await resolveAssigneeRecipient(companyUuid, task?.assigneeType ?? null, task?.assigneeUuid ?? null);
+      return recipient ? [recipient] : [];
     }
 
     case "task_status_changed": {
@@ -205,8 +223,9 @@ async function resolveRecipients(
       });
       if (!task) return [];
       const recipients: Recipient[] = [];
-      if (task.assigneeType && task.assigneeUuid) {
-        recipients.push({ type: task.assigneeType, uuid: task.assigneeUuid });
+      const assigneeRecipient = await resolveAssigneeRecipient(companyUuid, task.assigneeType, task.assigneeUuid);
+      if (assigneeRecipient) {
+        recipients.push(assigneeRecipient);
       }
       // Creator could be user or agent; resolve type
       const creatorType = await resolveActorType(task.createdByUuid);
@@ -242,10 +261,8 @@ async function resolveRecipients(
         where: { uuid: targetUuid },
         select: { assigneeType: true, assigneeUuid: true },
       });
-      if (task?.assigneeType && task?.assigneeUuid) {
-        return [{ type: task.assigneeType, uuid: task.assigneeUuid }];
-      }
-      return [];
+      const recipient = await resolveAssigneeRecipient(companyUuid, task?.assigneeType ?? null, task?.assigneeUuid ?? null);
+      return recipient ? [recipient] : [];
     }
 
     case "task_reopened": {
@@ -253,10 +270,8 @@ async function resolveRecipients(
         where: { uuid: targetUuid },
         select: { assigneeType: true, assigneeUuid: true },
       });
-      if (task?.assigneeType && task?.assigneeUuid) {
-        return [{ type: task.assigneeType, uuid: task.assigneeUuid }];
-      }
-      return [];
+      const recipient = await resolveAssigneeRecipient(companyUuid, task?.assigneeType ?? null, task?.assigneeUuid ?? null);
+      return recipient ? [recipient] : [];
     }
 
     case "proposal_approved":
@@ -281,9 +296,11 @@ async function resolveRecipients(
           // Notify idea creator
           { type: "user", uuid: idea.createdByUuid },
         ];
-        // Also notify the assignee (e.g., agent assigned via UI)
-        if (idea.assigneeType && idea.assigneeUuid) {
-          recipients.push({ type: idea.assigneeType as "user" | "agent", uuid: idea.assigneeUuid });
+        // Also notify the assignee (e.g., agent assigned via UI). An
+        // agent_instance assignee resolves to its owning agent.
+        const assigneeRecipient = await resolveAssigneeRecipient(companyUuid, idea.assigneeType, idea.assigneeUuid);
+        if (assigneeRecipient) {
+          recipients.push(assigneeRecipient);
         }
         return recipients;
       }
@@ -331,14 +348,18 @@ async function resolveRecipients(
         }
       }
 
-      // Assignee + (if agent) their owner.
-      if (reportIdea.assigneeType && reportIdea.assigneeUuid) {
-        reportRecipients.push({
-          type: reportIdea.assigneeType,
-          uuid: reportIdea.assigneeUuid,
-        });
-        if (reportIdea.assigneeType === "agent") {
-          const assigneeOwner = await resolveAgentOwner("agent", reportIdea.assigneeUuid);
+      // Assignee + (if agent) their owner. An agent_instance assignee resolves to
+      // its owning agent, so the wake targets the agent (never the instance uuid)
+      // and the owner-notify follows from the resolved agent uuid.
+      const assigneeRecipient = await resolveAssigneeRecipient(
+        companyUuid,
+        reportIdea.assigneeType,
+        reportIdea.assigneeUuid
+      );
+      if (assigneeRecipient) {
+        reportRecipients.push(assigneeRecipient);
+        if (assigneeRecipient.type === "agent") {
+          const assigneeOwner = await resolveAgentOwner("agent", assigneeRecipient.uuid);
           if (assigneeOwner) reportRecipients.push(assigneeOwner);
         }
       }
@@ -365,8 +386,9 @@ async function resolveRecipients(
       // But since resolveRecipients only sees notificationType, and both map to
       // "elaboration_answered", we include both assignee and creator, then
       // the dedup + actor-exclusion in handleActivity will filter correctly.
-      if (ansIdea.assigneeType && ansIdea.assigneeUuid) {
-        ansRecipients.push({ type: ansIdea.assigneeType, uuid: ansIdea.assigneeUuid });
+      const ansAssignee = await resolveAssigneeRecipient(companyUuid, ansIdea.assigneeType, ansIdea.assigneeUuid);
+      if (ansAssignee) {
+        ansRecipients.push(ansAssignee);
       }
       ansRecipients.push({ type: "user", uuid: ansIdea.createdByUuid });
       return ansRecipients;
@@ -384,8 +406,16 @@ async function resolveRecipients(
         where: { uuid: targetUuid },
         select: { assigneeType: true, assigneeUuid: true },
       });
-      if (verifiedIdea?.assigneeType === "agent" && verifiedIdea.assigneeUuid) {
-        return [{ type: "agent", uuid: verifiedIdea.assigneeUuid }];
+      // Resolve the assignee to its agent: an agent_instance idea wakes its owning
+      // agent (never the instance uuid). A human assignee resolves to a user
+      // recipient — filtered out below so the agent-only wake invariant holds.
+      const verifiedRecipient = await resolveAssigneeRecipient(
+        companyUuid,
+        verifiedIdea?.assigneeType ?? null,
+        verifiedIdea?.assigneeUuid ?? null
+      );
+      if (verifiedRecipient && verifiedRecipient.type === "agent") {
+        return [verifiedRecipient];
       }
       return [];
     }
@@ -404,8 +434,9 @@ async function resolveRecipients(
           },
         });
         if (task) {
-          if (task.assigneeType && task.assigneeUuid) {
-            recipients.push({ type: task.assigneeType, uuid: task.assigneeUuid });
+          const taskAssignee = await resolveAssigneeRecipient(companyUuid, task.assigneeType, task.assigneeUuid);
+          if (taskAssignee) {
+            recipients.push(taskAssignee);
           }
           const creatorType = await resolveActorType(task.createdByUuid);
           if (creatorType) {
@@ -422,8 +453,9 @@ async function resolveRecipients(
           },
         });
         if (idea) {
-          if (idea.assigneeType && idea.assigneeUuid) {
-            recipients.push({ type: idea.assigneeType, uuid: idea.assigneeUuid });
+          const ideaAssignee = await resolveAssigneeRecipient(companyUuid, idea.assigneeType, idea.assigneeUuid);
+          if (ideaAssignee) {
+            recipients.push(ideaAssignee);
           }
           recipients.push({ type: "user", uuid: idea.createdByUuid });
         }

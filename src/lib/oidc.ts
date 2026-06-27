@@ -30,7 +30,12 @@ export function createOidcSettings(config: OidcConfig): UserManagerSettings {
     post_logout_redirect_uri: `${baseUrl}/login`,
     response_type: "code", // Authorization Code flow
     scope: "openid profile email",
-    automaticSilentRenew: true, // Auto refresh tokens
+    // Single refresh authority: the Edge middleware (src/middleware.ts) renews the
+    // OIDC access-token cookie from the refresh-token cookie. The frontend must NOT
+    // run background silent renewal — two consumers of one (rotating) refresh token
+    // race to invalid_grant. oidc-client-ts is used here only for the initial
+    // authorization-code exchange, not for renewal.
+    automaticSilentRenew: false,
     silent_redirect_uri: `${baseUrl}/login/silent-refresh`,
     accessTokenExpiringNotificationTimeInSeconds: 60, // Notify 60s before expiry
     // PKCE is enabled by default in oidc-client-ts

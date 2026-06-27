@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { activityService } from "@/services";
+import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import {
   type QuestionInput,
   type AnswerInput,
@@ -13,6 +14,27 @@ import {
   type ElaborationQuestionResponse,
   type QuestionOption,
 } from "@/types/elaboration";
+
+// Ownership gate: is `actorUuid` the assigned agent of this idea?
+// Handles the `agent_instance` assignee type — its assigneeUuid is an
+// AgentInstance.uuid, so a flat `assigneeUuid === actorUuid` comparison would
+// never match an instance-pinned idea. Resolve instance → owning agent first.
+async function isIdeaAssignedToActor(
+  companyUuid: string,
+  idea: { assigneeType: string | null; assigneeUuid: string | null },
+  actorUuid: string
+): Promise<boolean> {
+  if (idea.assigneeUuid === actorUuid) return true;
+  if (idea.assigneeType === "agent_instance") {
+    const ownerAgentUuid = await resolveAssigneeAgentUuid(
+      companyUuid,
+      idea.assigneeType,
+      idea.assigneeUuid
+    );
+    return ownerAgentUuid !== null && ownerAgentUuid === actorUuid;
+  }
+  return false;
+}
 
 // ===== Start Elaboration =====
 
@@ -41,7 +63,7 @@ export async function startElaboration({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (idea.assigneeUuid !== actorUuid) {
+  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
     throw new Error("Only the assigned agent can start elaboration");
   }
   if (idea.status !== "elaborating" && idea.status !== "elaborated") {
@@ -288,7 +310,7 @@ export async function resolveElaboration({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (idea.assigneeUuid !== actorUuid) {
+  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
     throw new Error("Only the assigned agent can resolve elaboration");
   }
 
@@ -429,7 +451,7 @@ export async function skipElaboration({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (idea.assigneeUuid !== actorUuid) {
+  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
     throw new Error("Only the assigned agent can skip elaboration");
   }
   if (idea.status !== "elaborating") {

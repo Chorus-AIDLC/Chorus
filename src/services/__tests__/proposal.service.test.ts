@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Hoisted mocks (vi.mock factories are hoisted above all imports) =====
 
-const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCreateDoc, mockCreateTasks } = vi.hoisted(() => {
+const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockResolveAssigneeAgentUuid, mockCreateDoc, mockCreateTasks } = vi.hoisted(() => {
   const mockPrisma = {
     proposal: {
       create: vi.fn(),
@@ -56,9 +56,10 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCre
   const mockEventBus = { emitChange: vi.fn() };
   const mockFormatCreatedBy = vi.fn().mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" });
   const mockFormatReview = vi.fn().mockResolvedValue(null);
+  const mockResolveAssigneeAgentUuid = vi.fn().mockResolvedValue(null);
   const mockCreateDoc = vi.fn().mockResolvedValue({});
   const mockCreateTasks = vi.fn().mockResolvedValue({ draftToTaskUuidMap: new Map() });
-  return { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockCreateDoc, mockCreateTasks };
+  return { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockResolveAssigneeAgentUuid, mockCreateDoc, mockCreateTasks };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -72,6 +73,7 @@ vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/lib/uuid-resolver", () => ({
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
+  resolveAssigneeAgentUuid: mockResolveAssigneeAgentUuid,
 }));
 vi.mock("@/services/document.service", () => ({
   createDocumentFromProposal: mockCreateDoc,
@@ -1915,6 +1917,44 @@ describe("checkIdeasAssignee", () => {
         assigneeUuid: ACTOR_UUID,
       },
     ]);
+
+    const result = await checkIdeasAssignee(COMPANY_UUID, ["idea-1"], ACTOR_UUID, "agent");
+
+    expect(result.valid).toBe(false);
+    expect(result.unassignedIdeas).toEqual(["idea-1"]);
+  });
+
+  it("should treat an agent_instance idea owned by the actor as assigned (resolves instance → owning agent)", async () => {
+    const { checkIdeasAssignee } = await import("@/services/proposal.service");
+
+    mockPrisma.idea.findMany.mockResolvedValue([
+      {
+        uuid: "idea-1",
+        assigneeType: "agent_instance",
+        assigneeUuid: "inst-1",
+      },
+    ]);
+    // The instance resolves to the acting agent.
+    mockResolveAssigneeAgentUuid.mockResolvedValue(ACTOR_UUID);
+
+    const result = await checkIdeasAssignee(COMPANY_UUID, ["idea-1"], ACTOR_UUID, "agent");
+
+    expect(result.valid).toBe(true);
+    expect(result.unassignedIdeas).toHaveLength(0);
+    expect(mockResolveAssigneeAgentUuid).toHaveBeenCalledWith(COMPANY_UUID, "agent_instance", "inst-1");
+  });
+
+  it("should reject an agent_instance idea owned by a DIFFERENT agent", async () => {
+    const { checkIdeasAssignee } = await import("@/services/proposal.service");
+
+    mockPrisma.idea.findMany.mockResolvedValue([
+      {
+        uuid: "idea-1",
+        assigneeType: "agent_instance",
+        assigneeUuid: "inst-2",
+      },
+    ]);
+    mockResolveAssigneeAgentUuid.mockResolvedValue("other-agent-uuid");
 
     const result = await checkIdeasAssignee(COMPANY_UUID, ["idea-1"], ACTOR_UUID, "agent");
 

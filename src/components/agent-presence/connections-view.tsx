@@ -59,9 +59,11 @@ import {
   ExecutionRow,
   ExecutionSection,
   IdentityBlock,
+  PathChip,
   SendInstructionBox,
   StatusBadge,
   StatusDot,
+  onlineConnectionsOnly,
   useClientTypeLabel,
   useNowTick,
   useRelativeTime,
@@ -86,6 +88,23 @@ function StatTile({ label, value, mono }: { label: string; value: string; mono?:
         className={`mt-1.5 truncate text-[15px] font-medium text-[#2C2C2C] ${mono ? "font-mono" : ""}`}
       >
         {value}
+      </div>
+    </div>
+  );
+}
+
+// The connection's working-directory tile — path-first via the shared PathChip
+// (a null cwd renders the "unknown path" treatment, the full absolute path is
+// on hover). Uses a slightly larger char budget than a row chip since the tile
+// has room. The chip self-truncates so a long path never overflows the tile.
+function PathTile({ label, cwd }: { label: string; cwd: string | null }) {
+  return (
+    <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        {label}
+      </div>
+      <div className="mt-1.5 flex min-w-0">
+        <PathChip cwd={cwd} formatOptions={{ charBudget: 40 }} />
       </div>
     </div>
   );
@@ -254,11 +273,16 @@ function RailRow({
         <span className="shrink-0">
           <StatusDot online={online} size="md" />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[14px] font-semibold text-[#2C2C2C]">
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="truncate text-[14px] font-semibold text-[#2C2C2C]">
             {agentName}
           </span>
-          <span className="mt-0.5 flex items-center gap-1.5">
+          {/* Path-first: the connection's working directory is the primary
+              per-instance identity (a monospace path chip), so two connections
+              of one agent that differ only by cwd stay distinguishable in the
+              rail. The client type + host are demoted to a dimmed suffix. */}
+          <PathChip cwd={connection.cwd} />
+          <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
             <Badge
               variant="secondary"
               className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
@@ -364,6 +388,7 @@ function DetailContent({
   onlineConnections: ConnectionView[];
 }) {
   const t = useTranslations("agentConnections");
+  const td = useTranslations("agentPresence.drilldown");
   const formatRelative = useRelativeTime();
   const formatUptime = useUptimeMono();
   const online = connection.effectiveStatus === "online";
@@ -409,6 +434,7 @@ function DetailContent({
                   : t("startedUnknown")
               }
             />
+            <PathTile label={td("fieldPath")} cwd={connection.cwd} />
             <StatTile
               label={t("fieldHost")}
               value={connection.host === "" ? t("hostUnknown") : connection.host}
@@ -471,6 +497,7 @@ function DetailContent({
             }
           />
         </div>
+        <PathTile label={td("fieldPath")} cwd={connection.cwd} />
         <StatTile
           label={t("fieldHost")}
           value={connection.host === "" ? t("hostUnknown") : connection.host}
@@ -542,6 +569,19 @@ export function AgentConnectionsView() {
 
   const [selectedUuid, setSelectedUuid] = useState<string | null>(null);
 
+  // Online-only presence (T11 / qr2): this "View all" deck shows ONLY live
+  // instances — the same online-only contract as the pill popover. We derive the
+  // visible set once and feed it to the rail (desktop), the card list (mobile),
+  // the selection/derivation, and the rail count, so an offline instance
+  // (including a legacy null-cwd "unknown path" row) never appears and an agent
+  // with no online instance drops out entirely. The provider's raw `connections`
+  // is still the source of `onlineCount`/`status` (the no-silent-error gate) and
+  // of `selectedAgentOnlineConnections` (which independently filters online).
+  const visibleConnections = useMemo(
+    () => onlineConnectionsOnly(connections),
+    [connections],
+  );
+
   // "loading" only on the very first poll before any data has settled. Once the
   // provider has connections, an in-flight re-poll keeps showing the list.
   const loading = status === "loading";
@@ -559,10 +599,10 @@ export function AgentConnectionsView() {
   // one-frame flash of the "select a connection" prompt before an effect fires.
   const selected = useMemo(
     () =>
-      connections.find((c) => c.uuid === selectedUuid) ??
-      connections[0] ??
+      visibleConnections.find((c) => c.uuid === selectedUuid) ??
+      visibleConnections[0] ??
       null,
-    [connections, selectedUuid],
+    [visibleConnections, selectedUuid],
   );
   // Highlight the rail row that matches what the detail pane actually shows,
   // which is the derived selection (not the raw `selectedUuid`, which may be
@@ -606,11 +646,11 @@ export function AgentConnectionsView() {
     if (
       mobileDetailOpen &&
       selectedUuid &&
-      !connections.some((c) => c.uuid === selectedUuid)
+      !visibleConnections.some((c) => c.uuid === selectedUuid)
     ) {
       setMobileDetailOpen(false);
     }
-  }, [connections, mobileDetailOpen, selectedUuid]);
+  }, [visibleConnections, mobileDetailOpen, selectedUuid]);
 
   return (
     <div className="min-h-full bg-[#FAF8F4]">
@@ -665,11 +705,17 @@ export function AgentConnectionsView() {
               {t("subtitle")}
             </p>
           </div>
-          {!loading && connections.length > 0 && (
+          {!loading && visibleConnections.length > 0 && (
             <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E0D8] bg-white px-3.5 py-1.5">
               <StatusDot online={onlineCount > 0} size="md" />
+              {/* Online-only deck: `total` is the VISIBLE (online) count, not the
+                  raw connection count — offline rows are hidden, so claiming a
+                  higher total than the rendered rows would be misleading. */}
               <span className="text-[13px] font-medium text-[#2C2C2C]">
-                {t("summary", { online: onlineCount, total: connections.length })}
+                {t("summary", {
+                  online: onlineCount,
+                  total: visibleConnections.length,
+                })}
               </span>
             </div>
           )}
@@ -692,7 +738,7 @@ export function AgentConnectionsView() {
               {t("loadErrorBody")}
             </p>
           </Card>
-        ) : connections.length === 0 ? (
+        ) : visibleConnections.length === 0 ? (
           <Card className="items-center gap-4 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
               <RadioTower className="h-6 w-6 text-[#C67A52]" />
@@ -710,9 +756,9 @@ export function AgentConnectionsView() {
           </Card>
         ) : (
           <>
-            {/* MOBILE: stacked card list (< lg) */}
+            {/* MOBILE: stacked card list (< lg) — online instances only. */}
             <div className="flex flex-col gap-3 lg:hidden">
-              {connections.map((connection) => (
+              {visibleConnections.map((connection) => (
                 <MobileCard
                   key={connection.uuid}
                   connection={connection}
@@ -734,12 +780,12 @@ export function AgentConnectionsView() {
                     {t("railHeader")}
                   </span>
                   <span className="font-mono text-[11px] font-medium text-[#9A9A9A]">
-                    {connections.length}
+                    {visibleConnections.length}
                   </span>
                 </div>
                 <div className="h-px w-full bg-[#EFEBE4]" />
                 <div className="flex flex-col">
-                  {connections.map((connection, idx) => (
+                  {visibleConnections.map((connection, idx) => (
                     <div key={connection.uuid}>
                       <RailRow
                         connection={connection}
@@ -747,7 +793,7 @@ export function AgentConnectionsView() {
                         onSelect={() => setSelectedUuid(connection.uuid)}
                         nowMs={nowMs}
                       />
-                      {idx < connections.length - 1 && (
+                      {idx < visibleConnections.length - 1 && (
                         <div className="h-px w-full bg-[#F2EEE7]" />
                       )}
                     </div>

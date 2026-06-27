@@ -22,10 +22,33 @@ export {
 } from "./hooks";
 export { StatusDot, StatusBadge } from "./status";
 export { IdentityBlock } from "./identity-block";
+export {
+  groupConnectionsByAgent,
+  onlineConnectionsOnly,
+  deriveInstanceActivity,
+  useInstanceActivity,
+  AgentGroupHeader,
+  InstanceRow,
+  PathChip,
+  type AgentInstanceGroup,
+  type InstanceActivity,
+  type InstanceActivityState,
+} from "./instance-group";
+export {
+  InstancePicker,
+  filterOnlineInstances,
+  type InstancePickerProps,
+  type InstanceCandidate,
+} from "./instance-picker";
+export {
+  AssigneeInstanceLine,
+  type AssigneeInstanceLineProps,
+} from "./assignee-instance-line";
 export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export { AgentConnectionsView } from "./connections-view";
 export { AgentConnectionsModal } from "./connections-modal";
+export { MentionBadge, type MentionBadgeProps } from "./mention-badge";
 export {
   DaemonConnectCta,
   type DaemonConnectCtaVariant,

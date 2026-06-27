@@ -3,8 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, Loader2 } from "lucide-react";
+import { Bot, User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  ScrollableDialog,
+  ScrollableDialogTitle,
+} from "@/components/ui/scrollable-dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -15,11 +19,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  InstancePicker,
+  filterOnlineInstances,
+  type InstanceCandidate,
+} from "@/components/agent-presence/instance-picker";
+import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
+import {
   claimIdeaAction,
   claimIdeaToAgentAction,
   claimIdeaToUserAction,
   releaseIdeaAction,
   getPmAgentsAction,
+  getAgentInstancesAction,
 } from "./[ideaUuid]/actions";
 
 interface Idea {
@@ -71,6 +82,18 @@ export function AssignIdeaModal({
   const [agents, setAgents] = useState<Agent[]>([]);
   const [users, setUsers] = useState<CompanyUser[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // The selected agent's ONLINE (host, cwd) daemon instances for the idea-root
+  // pin. The idea is the authoritative pin ROOT — pinning it cascades to the
+  // proposal/tasks/wakes of the same agent. Only online instances are pinnable
+  // (an offline instance is not a wake target), so the picker is filtered to
+  // online; a fully-offline agent yields no picker and assigns the plain agent.
+  const [instances, setInstances] = useState<InstanceCandidate[]>([]);
+  const [isLoadingInstances, setIsLoadingInstances] = useState(false);
+  const [pinnedConnectionUuid, setPinnedConnectionUuid] = useState<string | null>(
+    null,
+  );
 
   const isAssigned = !!idea.assignee;
 
@@ -86,14 +109,76 @@ export function AssignIdeaModal({
     loadData();
   }, [currentUserUuid]);
 
+  // Load the selected agent's daemon instances whenever the agent changes (and
+  // the agent option is active). Resets the pin so a stale (host, cwd) from a
+  // previously-selected agent never leaks across agents (the re-assign path:
+  // agent → different agent re-loads the new agent's instances).
+  useEffect(() => {
+    if (selectedOption !== "agent" || !selectedAgentUuid) {
+      setInstances([]);
+      setPinnedConnectionUuid(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingInstances(true);
+    setPinnedConnectionUuid(null);
+    getAgentInstancesAction(selectedAgentUuid)
+      .then((res) => {
+        if (cancelled) return;
+        // Online-only: an offline instance is not a wake target, so it never
+        // appears in the picker. A fully-offline agent yields [] → no picker.
+        setInstances(filterOnlineInstances(res.instances));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingInstances(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOption, selectedAgentUuid]);
+
+  // The instance the owner pinned, resolved from the controlled connectionUuid.
+  // null → "inherit / plain agent" (revert-to-plain-agent is simply no pin).
+  const pinnedInstance =
+    instances.find((i) => i.connectionUuid === pinnedConnectionUuid) ?? null;
+  // Host is included in a target confirmation only when it disambiguates — i.e.
+  // the agent's instances span 2+ distinct hosts (same rule as the picker rows).
+  const isMultiHost = new Set(instances.map((i) => i.host)).size > 1;
+
+  // The CTA label names the resolved (path · host) of the pinned online instance;
+  // host only when it disambiguates (2+ hosts). No pin → the plain "Assign" label.
+  function resolvePinLabel(): string {
+    if (selectedOption !== "agent" || !pinnedInstance) {
+      return t("common.assign");
+    }
+    const cwd = formatCwd(pinnedInstance.cwd);
+    const pathLabel = cwd.isUnknown ? t(cwd.label) : cwd.label;
+    const host = formatHost(pinnedInstance.host);
+    const hostLabel = host.isUnknown ? t(host.label) : host.label;
+    if (isMultiHost) {
+      return t("assignInstance.assignToWithHost", {
+        path: pathLabel,
+        host: hostLabel,
+      });
+    }
+    return t("assignInstance.assignTo", { path: pathLabel });
+  }
+
   const handleSubmit = async () => {
     setIsLoading(true);
+    setError(null);
     let result;
 
     if (selectedOption === "self") {
       result = await claimIdeaAction(idea.uuid);
     } else if (selectedOption === "agent" && selectedAgentUuid) {
-      result = await claimIdeaToAgentAction(idea.uuid, selectedAgentUuid);
+      // Thread the DURABLE AgentInstance pin when the owner picked one — no pin
+      // (revert-to-plain-agent / inherit) → undefined assigns the plain agent.
+      result = await claimIdeaToAgentAction(
+        idea.uuid,
+        selectedAgentUuid,
+        pinnedInstance?.agentInstanceUuid ?? undefined,
+      );
     } else if (selectedOption === "user" && selectedUserUuid) {
       result = await claimIdeaToUserAction(idea.uuid, selectedUserUuid);
     } else if (selectedOption === "release") {
@@ -107,6 +192,8 @@ export function AssignIdeaModal({
     if (result?.success) {
       router.refresh();
       onClose();
+    } else if (result?.error) {
+      setError(result.error);
     }
   };
 
@@ -117,31 +204,52 @@ export function AssignIdeaModal({
     (selectedOption === "release" && isAssigned);
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/40"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-xl border border-[#E5E0D8]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#E5E0D8] px-6 py-5">
-          <h2 className="text-base font-semibold text-[#2C2C2C]">
-            {t("ideas.assignIdea")}
-          </h2>
-          <button
+    // Mobile-safe shell: ScrollableDialog (shadcn Dialog) keeps the title and the
+    // footer Cancel/Assign pinned and the body scrollable within a dynamic-viewport
+    // height cap. Conditionally mounted by the parent (no `open` prop there), so we
+    // render it always-open and route every close path back to onClose.
+    <ScrollableDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      className="bg-white sm:max-w-[400px]"
+      header={
+        <ScrollableDialogTitle className="text-base font-semibold text-[#2C2C2C]">
+          {t("ideas.assignIdea")}
+        </ScrollableDialogTitle>
+      }
+      footer={
+        <div className="flex w-full items-center justify-end gap-4">
+          <Button
+            variant="outline"
             onClick={onClose}
-            className="text-[#9A9A9A] hover:text-[#6B6B6B] transition-colors"
+            disabled={isLoading}
+            className="border-[#E5E0D8]"
           >
-            <X className="h-5 w-5" />
-          </button>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={isLoading || !canSubmit}
+            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : selectedOption === "release" ? (
+              t("common.release")
+            ) : (
+              // When an instance is pinned the CTA names the resolved (path · host)
+              // target; otherwise the plain label.
+              resolvePinLabel()
+            )}
+          </Button>
         </div>
-
-        {/* Body */}
-        <div className="p-6 space-y-4">
-          {/* Idea Info */}
+      }
+      bodyClassName="space-y-4"
+    >
+      {/* Body */}
+      {/* Idea Info */}
           <div className="rounded-lg bg-[#FAF8F4] p-3">
             <p className="text-[13px] font-medium text-[#2C2C2C]">{idea.title}</p>
             {idea.content && (
@@ -157,6 +265,12 @@ export function AssignIdeaModal({
               <p className="text-xs text-[#1976D2]">
                 {t("common.currentAssignee")}: <span className="font-medium">{idea.assignee?.name}</span>
               </p>
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-lg bg-[#FEE2E2] p-3">
+              <p className="text-xs text-[#D32F2F]">{error}</p>
             </div>
           )}
 
@@ -216,7 +330,7 @@ export function AssignIdeaModal({
                 </p>
 
                 {selectedOption === "agent" && (
-                  <div className="mt-3 ml-6">
+                  <div className="mt-3 ml-6 space-y-3">
                     <Select
                       value={selectedAgentUuid}
                       onValueChange={setSelectedAgentUuid}
@@ -224,7 +338,7 @@ export function AssignIdeaModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("ideas.selectPmAgent")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {agents.length > 0 ? (
                           agents.map((agent) => (
                             <SelectItem key={agent.uuid} value={agent.uuid}>
@@ -241,6 +355,45 @@ export function AssignIdeaModal({
                         )}
                       </SelectContent>
                     </Select>
+
+                    {/* Idea-root instance pin (the authoritative pin root for the
+                        whole conversation). ONLINE-only: an offline instance is
+                        not a wake target, so it is filtered out and never shown. A
+                        fully-offline agent yields no instances → no picker; the
+                        idea is assigned to the plain agent with no pin (the same
+                        path that reverts an instance-pinned idea back to a plain
+                        agent). The picker is a SECONDARY menu under the agent
+                        select — leaving it unselected keeps the plain agent. */}
+                    {selectedAgentUuid && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                          {t("assignInstance.workingDirectory")}
+                        </span>
+                        {isLoadingInstances ? (
+                          <div className="flex items-center gap-2 py-2 text-xs text-[#9A9A9A]">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {t("assignInstance.loadingInstances")}
+                          </div>
+                        ) : instances.length === 0 ? (
+                          <p className="rounded-lg bg-[#FAF8F4] p-2.5 text-[11px] leading-relaxed text-[#6B6B6B]">
+                            {t("assignInstance.noInstances")}
+                          </p>
+                        ) : (
+                          <InstancePicker
+                            instances={instances}
+                            selectedConnectionUuid={pinnedConnectionUuid}
+                            onSelect={(inst) =>
+                              setPinnedConnectionUuid(inst.connectionUuid)
+                            }
+                            ariaLabel={t("assignInstance.workingDirectory")}
+                          />
+                        )}
+                        <div className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A8C7E]">
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                          <span>{t("assignInstance.ideaPinNote")}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -272,7 +425,7 @@ export function AssignIdeaModal({
                       <SelectTrigger className="w-full border-[#E5E0D8]">
                         <SelectValue placeholder={t("tasks.selectUser")} />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="z-[120]">
                         {users.length > 0 ? (
                           users.map((user) => (
                             <SelectItem key={user.uuid} value={user.uuid}>
@@ -316,33 +469,6 @@ export function AssignIdeaModal({
               )}
             </RadioGroup>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-4 rounded-b-2xl bg-white px-6 py-6 border-t border-[#E5E0D8]">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            disabled={isLoading}
-            className="border-[#E5E0D8]"
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isLoading || !canSubmit}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : selectedOption === "release" ? (
-              t("common.release")
-            ) : (
-              t("common.assign")
-            )}
-          </Button>
-        </div>
-      </div>
-    </>
+    </ScrollableDialog>
   );
 }

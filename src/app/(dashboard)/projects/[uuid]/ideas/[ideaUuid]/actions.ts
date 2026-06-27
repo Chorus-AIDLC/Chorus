@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { assignIdea, releaseIdea, getIdeaByUuid } from "@/services/idea.service";
 import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
+import { listConnectionsForAgent } from "@/services/daemon-connection.service";
 import { createActivity } from "@/services/activity.service";
+import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
 
 export async function claimIdeaAction(ideaUuid: string) {
@@ -54,8 +56,19 @@ export async function claimIdeaAction(ideaUuid: string) {
   }
 }
 
-// Claim idea to a specific agent
-export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string) {
+// Claim idea to a specific agent, optionally pinning a DURABLE AgentInstance (the
+// (agent, host, cwd) place). The idea is the authoritative pin ROOT: when
+// `instanceUuid` is given the row is persisted as
+// assigneeType="agent_instance"/assigneeUuid=<that uuid> (validated company-scoped
+// in assignIdea), and proposals/tasks/wakes for the same agent inherit it.
+// Omitting it assigns the plain agent — which is also the path that REVERTS a
+// prior instance pin back to the plain agent on re-assignment. The InstancePicker
+// only offers ONLINE instances, so a pin is always to a reachable place.
+export async function claimIdeaToAgentAction(
+  ideaUuid: string,
+  agentUuid: string,
+  instanceUuid?: string | null,
+) {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
@@ -78,6 +91,7 @@ export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
+      instanceUuid: instanceUuid ?? undefined,
     });
 
     await createActivity({
@@ -88,7 +102,11 @@ export async function claimIdeaToAgentAction(ideaUuid: string, agentUuid: string
       actorType: "user",
       actorUuid: auth.actorUuid,
       action: "assigned",
-      value: { assigneeType: "agent", assigneeUuid: agentUuid },
+      value: {
+        assigneeType: "agent",
+        assigneeUuid: agentUuid,
+        ...(instanceUuid ? { instanceUuid } : {}),
+      },
     });
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
@@ -185,5 +203,36 @@ export async function getPmAgentsAction() {
   } catch (error) {
     logger.error({ err: error }, "Failed to get assignable agents");
     return { agents: [], users: [] };
+  }
+}
+
+// Get one agent's daemon instances so the assign-IDEA modal can pin which ONLINE
+// (host, cwd) place roots the conversation. Mirrors the task-side action: returns
+// online + offline candidates (each with effectiveStatus + the durable
+// agentInstanceUuid); the modal filters to ONLINE before rendering the picker.
+// Company-scoped; returns [] for any non-user caller or on error (the picker then
+// shows its own "no instances" empty state — never a silent throw).
+export async function getAgentInstancesAction(
+  agentUuid: string,
+): Promise<{ instances: InstanceCandidate[] }> {
+  const auth = await getServerAuthContext();
+  if (!auth || auth.type !== "user") {
+    return { instances: [] };
+  }
+
+  try {
+    const connections = await listConnectionsForAgent(auth.companyUuid, agentUuid);
+    return {
+      instances: connections.map((c) => ({
+        connectionUuid: c.uuid,
+        agentInstanceUuid: c.agentInstanceUuid,
+        host: c.host,
+        cwd: c.cwd,
+        effectiveStatus: c.effectiveStatus,
+      })),
+    };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to get agent instances");
+    return { instances: [] };
   }
 }
