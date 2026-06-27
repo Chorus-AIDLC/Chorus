@@ -61,6 +61,22 @@ export function bannerRows(info) {
 }
 
 /**
+ * The prominent warning shown at startup when the `claude` executable cannot be
+ * resolved. Mirrors `yoloWarningLine()`'s loud single-line style so a missing
+ * binary is visible in an unattended / systemd journal immediately, rather than
+ * only when a wake later fails. The daemon stays non-fatal — it still subscribes.
+ * @returns {string}
+ */
+export function claudeNotFoundWarningLine() {
+  return (
+    "⚠ claude CLI NOT FOUND on PATH — wakes will FAIL until you install `claude` " +
+    "or set CHORUS_CLAUDE_PATH. For a systemd/boot service, ensure the unit's PATH " +
+    "includes the directory holding `claude` (e.g. ~/.local/bin). The daemon will " +
+    "still subscribe, but every task dispatch errors until this is fixed."
+  );
+}
+
+/**
  * Format the startup banner. On a TTY, draws a Unicode box; otherwise emits
  * plain `label: value` lines (no box-drawing chars, no width math) so piped
  * output is clean. Never throws.

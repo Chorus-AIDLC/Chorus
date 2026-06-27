@@ -19,7 +19,7 @@ import {
   yoloWarningLine,
 } from "./daemon-permission-mode.mjs";
 import { resolveAgentType } from "./daemon-agent.mjs";
-import { formatBanner } from "./daemon-banner.mjs";
+import { formatBanner, claudeNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -444,6 +444,12 @@ export async function runDaemon(flags = {}, deps = {}) {
   // ⚠ warning on stderr (it also names --chorus-only as the reclaim switch).
   if (permissionMode === "yolo") {
     errLog(`[Chorus] ${yoloWarningLine()}`);
+  }
+  // A missing `claude` binary is non-fatal (the daemon still subscribes), but the
+  // banner row alone is easy to miss in a systemd journal — emit one loud ⚠ line
+  // on stderr so the operator sees it at startup, not only when a wake fails.
+  if (claudePath === null) {
+    errLog(`[Chorus] ${claudeNotFoundWarningLine()}`);
   }
 
   // Surface the served paths so an operator sees a multi-path daemon at a glance.

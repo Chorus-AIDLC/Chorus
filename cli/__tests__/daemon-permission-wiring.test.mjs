@@ -2,8 +2,8 @@
 // Covers the runDaemon wiring of daemon-permission-mode: default yolo (no
 // confirmation, always warns), --chorus-only restricted, and the permissionMode
 // threaded into build(). Also covers recordYoloAck (preserve creds) and login
-// clearing the ack — those helpers still exist even though the daemon path no
-// longer prompts/persists an ack.
+// PRESERVING the ack via field-level merge (daemon-config-field-merge) — those
+// helpers still exist even though the daemon path no longer prompts/persists an ack.
 import { describe, it, expect, vi } from "vitest";
 import { runDaemon } from "../daemon.mjs";
 import { recordYoloAck, writeLoginFile } from "../login.mjs";
@@ -72,17 +72,16 @@ describe("runDaemon — TTY yolo starts without confirmation", () => {
 describe("recordYoloAck — preserves credentials, adds ack", () => {
   it("merges yoloAckAt into the existing file without touching creds", () => {
     const existing = { url: "u", apiKey: "cho_x", agentUuid: "a", agentName: "n" };
-    let written;
+    let writtenContent;
     const path = recordYoloAck("2026-06-21T12:00:00.000Z", {
       path: "/p/daemon.json",
       read: () => JSON.stringify(existing),
-      write: (data, deps) => {
-        written = data;
-        return deps.path;
-      },
+      mkdir: () => {},
+      write: (_p, c) => { writtenContent = c; },
+      rename: () => {},
     });
     expect(path).toBe("/p/daemon.json");
-    expect(written).toEqual({ ...existing, yoloAckAt: "2026-06-21T12:00:00.000Z" });
+    expect(JSON.parse(writtenContent)).toEqual({ ...existing, yoloAckAt: "2026-06-21T12:00:00.000Z" });
   });
 });
 
@@ -117,36 +116,55 @@ describe("recordYoloAck — persists even with no prior login file (env/flag cre
   it("treats a missing login file as empty and still writes yoloAckAt", () => {
     // A TTY user whose creds came from env/flags has no ~/.chorus/daemon.json yet.
     // recordYoloAck must NOT throw on ENOENT — it must write a file carrying the ack.
-    let written;
+    let writtenContent;
     const path = recordYoloAck("2026-06-21T12:00:00.000Z", {
       path: "/p/daemon.json",
       read: () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
-      write: (data, deps) => { written = data; return deps.path; },
+      mkdir: () => {},
+      write: (_p, c) => { writtenContent = c; },
+      rename: () => {},
     });
     expect(path).toBe("/p/daemon.json");
-    expect(written).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
+    expect(JSON.parse(writtenContent)).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
   });
 
   it("treats a malformed login file as empty (does not throw)", () => {
-    let written;
+    let writtenContent;
     recordYoloAck("2026-06-21T12:00:00.000Z", {
       path: "/p/daemon.json",
       read: () => "}{ not json",
-      write: (data) => { written = data; return "/p/daemon.json"; },
+      mkdir: () => {},
+      write: (_p, c) => { writtenContent = c; },
+      rename: () => {},
     });
-    expect(written).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
+    expect(JSON.parse(writtenContent)).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
   });
 });
 
-describe("writeLoginFile — a re-login clears any prior ack", () => {
-  it("writing fresh credentials omits yoloAckAt (login data carries none)", () => {
+describe("writeLoginFile — a re-login PRESERVES any prior ack (field-level merge)", () => {
+  it("writing fresh credentials keeps a pre-existing yoloAckAt and cwds", () => {
+    // daemon-config-field-merge: login now merges, so the recorded yolo ack and
+    // the served cwds survive a re-login (supersedes the old clear-on-login).
+    const existing = { cwds: ["/a", "/b"], yoloAckAt: "2026-06-20T00:00:00.000Z" };
     let body;
     writeLoginFile(
       { url: "u2", apiKey: "cho_y", agentUuid: "a2", agentName: "n2" },
-      { path: "/p", mkdir: () => {}, write: (_p, c) => (body = c) }
+      {
+        path: "/p/daemon.json",
+        read: () => JSON.stringify(existing),
+        mkdir: () => {},
+        write: (_p, c) => (body = c),
+        rename: () => {},
+      }
     );
     const parsed = JSON.parse(body);
-    expect(parsed).not.toHaveProperty("yoloAckAt");
-    expect(parsed).toEqual({ url: "u2", apiKey: "cho_y", agentUuid: "a2", agentName: "n2" });
+    expect(parsed).toEqual({
+      cwds: ["/a", "/b"],
+      yoloAckAt: "2026-06-20T00:00:00.000Z",
+      url: "u2",
+      apiKey: "cho_y",
+      agentUuid: "a2",
+      agentName: "n2",
+    });
   });
 });

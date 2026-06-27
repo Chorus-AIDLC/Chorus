@@ -30,6 +30,13 @@ URL and a masked API key, validates them against the server, saves them to
 `~/.chorus/daemon.json` (mode `0600`), and continues starting up. You do not need
 a separate `chorus login` run.
 
+**Writes are field-level merges.** Both `chorus login` and the interactive
+completion above **merge** into `~/.chorus/daemon.json` rather than overwriting
+it — they touch only `url` / `apiKey` / `agentUuid` / `agentName` and leave every
+other field (`cwds`, `yoloAckAt`, `sigintTimeoutMs`, …) intact. You can safely
+re-run `chorus login` to rotate credentials without losing your served paths or
+your YOLO acknowledgement.
+
 **Non-interactive (systemd / nohup / CI).** When stdin is **not** a TTY and no
 credentials resolve, the daemon prints the actionable multi-source error and
 exits non-zero — it never blocks waiting on a prompt no one can answer. Provide
@@ -53,8 +60,9 @@ The woken agent's permission posture determines what it may do:
 **First-run confirmation (TTY).** The first time the daemon would start in YOLO
 on a terminal, it asks for a one-time `y/N` confirmation and remembers your
 answer as `yoloAckAt` in `~/.chorus/daemon.json`. Subsequent starts don't
-re-prompt. Running `chorus login` (a credential change) clears the acknowledgement,
-so you confirm once more after switching key/URL.
+re-prompt. Re-running `chorus login` **preserves** the acknowledgement (and your
+`cwds`) — every write to `~/.chorus/daemon.json` is a field-level merge, so a
+credential change no longer wipes unrelated fields.
 
 **Unattended (non-TTY).** When YOLO starts on a non-terminal (systemd / nohup /
 CI / the detached `-d` child), it runs directly and prints one prominent `⚠`
@@ -185,6 +193,8 @@ After=network-online.target
 
 [Service]
 Type=simple
+# PATH must include the dir holding `claude` (a unit does NOT inherit your shell PATH).
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/chorus daemon
 Restart=on-failure
 RestartSec=5
@@ -196,6 +206,29 @@ WantedBy=default.target
 To keep the service running after you log out:
 `loginctl enable-linger "$USER"`. Stop/disable with
 `systemctl --user disable --now chorus-daemon`. Logs: `journalctl --user -u chorus-daemon`.
+
+**Boot auto-start checklist (learned the hard way).** A systemd unit runs with a
+minimal environment — it does **not** source `~/.zshrc` / `~/.bashrc`. Two things
+bite operators who rely on their interactive shell setup:
+
+1. **Persist credentials with `chorus login`, not shell env.** If your
+   `CHORUS_URL` / `CHORUS_API_KEY` live only in `~/.zshrc`, the unit can't see
+   them and the daemon crash-loops (`Restart=on-failure` will retry forever).
+   Run `chorus login` once so the credentials land in `~/.chorus/daemon.json`,
+   which the daemon reads directly. (Re-running `chorus login` later is safe —
+   writes are field-level merges, so your `cwds` / `yoloAckAt` survive.)
+2. **Put `claude` on the unit's PATH.** The unit's PATH usually omits
+   `~/.local/bin`, where `claude` is commonly installed. Without it the daemon
+   starts and subscribes but every wake fails to spawn `claude` — and it now
+   prints a loud `⚠ claude CLI NOT FOUND` line at startup (visible in
+   `journalctl --user -u chorus-daemon`). Set `Environment=PATH=...` as above
+   (or `Environment=CHORUS_CLAUDE_PATH=/abs/path/to/claude`).
+
+Alternatively, declare credentials and paths explicitly on the unit instead of
+relying on the login file — e.g.
+`Environment=CHORUS_URL=… CHORUS_API_KEY=cho_… CHORUS_DAEMON_CWDS=/path/a:/path/b`
+and `ExecStart=/usr/local/bin/chorus daemon --chorus-only` for a restricted
+unattended posture.
 
 ---
 
