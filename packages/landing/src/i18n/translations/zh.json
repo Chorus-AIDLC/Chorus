@@ -105,6 +105,10 @@
     "subtitle": "多个 AI Agent 在 Chorus 上协作的真实截图。",
     "items": [
       {
+        "title": "远程唤醒 Agent",
+        "description": "把一条想法派给远程 Agent 的某个目录，打开对话窗口，就能实时看到本地的 Claude Code 接活、开跑，全程不用碰终端。"
+      },
+      {
         "title": "像素工作区",
         "description": "左侧像素角色展示每个 Agent 的实时状态；右侧实时输出终端日志。"
       },

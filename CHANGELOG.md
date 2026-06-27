@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.12.0] - 2026-06-27
+
+### Added
+- **Multi-path daemon — one daemon, many working directories**: A single `chorus daemon` can now serve multiple working directories via `--cwd` / `CHORUS_DAEMON_CWDS` / `daemon.json cwds:[]`, opening one independent connection per cwd with no project binding. Each spawn runs in its own cwd; resume pins to the origin (host, cwd) connection and cross-cwd resume is rejected rather than silently misrouted. (#353)
+- **(agent, host, cwd) addressable daemon instances**: Each (agent, host, cwd) is now individually visible and addressable across presence, @mention, task assignment, ad-hoc send, and the chat header. Path-first / host-conditional display with left/right truncation; presence is a collapsible per-cwd drill-down showing **online instances only**; pickers auto-pin a lone live instance and offer a secondary cwd picker when 2+ are live. A conversation whose origin cwd goes offline can be re-pointed to another online cwd of the same agent, preserving its `sessionId`. (#354)
+- **Idea-rooted pin-once-inherit (AgentInstance as a first-class actor)**: `AgentInstance` is promoted to a durable, third polymorphic assignee type (`agent_instance`), and the **idea** is the authoritative pin root — proposals / tasks / wakes for the same agent inherit the idea's pinned instance instead of each entity carrying its own pin. Soft (assignment) pins degrade gracefully to online-first when the instance is offline; hard (mention) pins stay notify-only. REST claim routes and `chorus_pm_assign_task` accept an optional `instanceUuid`. (#359)
+- **Comment agent @mentions render as online-status badges**: Agent @mentions in the comment area become interactive badges — name + online dot, a click popover with identity (and cwd/host for a pinned mention), and an owner-only, online-only "Open conversation" button that opens the daemon chat focused on the agent or pinned instance. User mentions and all other surfaces are unchanged. (#358)
+- **Cursor-based infinite-scroll comments**: `UnifiedComments` now first-paints only the newest page and auto-loads older pages on scroll, with a burst-safe SSE merge that no longer reloads the whole list. Additive cursor mode in `listComments` (selected by `limit`); the offset path and `chorus_get_comments` are byte-for-byte unchanged. (#360)
+
+### Fixed
+- **Pinned autonomous wakes hit the wrong cwd instance**: A pinned @mention / task dispatch (and the `elaboration_verified` proposal-writing wake) woke any online instance because the daemon-side live wake was an agent-wide broadcast. Wakes are now routed directionally to the resolved online target connection via a `deliver_turn` control ping; offline pin = notify-only, no wake. (#357)
+- **`chorus daemon` didn't shut down gracefully**: The server's SIGINT/SIGTERM handlers were registered unconditionally and pre-empted the daemon's graceful stop (stale presence, misleading message). Signal handlers are now confined to the server launch path so a daemon/login process shuts down through its own path. (#356)
+- **Instance picker: second cwd row unselectable**: An id collision + label double-fire made the 2nd cwd unselectable once a conversation was open (and disabled mobile @mention "Pin instance"). Fixed across new-conversation, @mention (incl. mobile Pin), and assign. (#355)
+- **Assign Idea/Task modals overflowed short mobile viewports**: Both assign modals now use a shared `ScrollableDialog` (capped at `max-h-[85svh]`, pinned header/footer, single internal scroll region), keeping the Assign/Cancel buttons reachable with a soft keyboard. (#362)
+- **@mention cwd picker overflowed on mobile**: The `MentionInstancePickerDialog` gains a mobile-safe `svh`-based layout with an internal-scroll list and is lifted above the idea detail panel's z-index. (#361)
+
+### Changed
+- **Daemon help & config documentation**: Top-level `chorus --help` now matches the yolo-default posture (with `--chorus-only` as the opt-out), the multi-path daemon and the full `~/.chorus/daemon.json` field set are documented in README (en + zh), and the startup banner shows the resolved `daemon.json` path. (#363)
+
+---
+
 ## [0.11.1] - 2026-06-22
 
 ### Added

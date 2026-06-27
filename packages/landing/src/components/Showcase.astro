@@ -12,6 +12,7 @@ const { lang } = Astro.props;
 const showcaseItems = tRaw(lang, 'showcase.items') as Array<{ title: string; description: string }>;
 
 const itemMeta = [
+  { src: "/images/agent-daemon-wake.gif", type: "image", alt: "Remote Agent Wake", wide: true },
   { src: "/images/pixcel-workspace.mp4", type: "video", alt: "Pixel Workspace", wide: false },
   { src: "/images/kanban-presence.mp4", type: "video", alt: "Kanban Auto Update", wide: false },
   { src: "/images/kanban-dag.png", type: "image", alt: "Kanban & DAG", wide: false },

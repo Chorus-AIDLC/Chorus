@@ -9,7 +9,7 @@ interface Props {
 const { lang } = Astro.props;
 const pre = langPrefix(lang);
 const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
-const dockerUrl = "https://hub.docker.com/repository/docker/chorusaidlc/chorus-app/general";
+const dockerUrl = "https://hub.docker.com/r/chorusaidlc/chorus-app";
 const altLang = lang === 'en' ? 'zh' : 'en';
 const altUrl = getAlternateUrl(Astro.url) + '?lang=' + altLang;
 const enUrl = (lang === 'en' ? Astro.url.pathname : getAlternateUrl(Astro.url)) + '?lang=en';
