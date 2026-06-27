@@ -79,16 +79,3 @@ reclaim the restricted posture.
   yolo confirmation is requested, and the woken Claude cannot run Bash or edit
   files
 
-### Requirement: Credential change clears the YOLO acknowledgement
-
-`chorus login` SHALL NOT carry over a previous `yoloAckAt` when it writes or
-overwrites `~/.chorus/daemon.json` (a credential change) — the written file SHALL
-omit the ack, so the next yolo TTY start re-confirms once.
-
-#### Scenario: Re-login forces one re-confirmation
-
-- **WHEN** the user runs `chorus login` and then starts the daemon in yolo on a
-  TTY
-- **THEN** the daemon prompts for the yolo confirmation again because the prior
-  `yoloAckAt` was cleared by the login write
-
