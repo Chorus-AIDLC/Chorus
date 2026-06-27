@@ -3,7 +3,7 @@
 // ~/.chorus/daemon.json (0600). On validation failure, nothing is written.
 // Plain ESM; the only dependency is the in-repo MCP SDK (via chorus-client).
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -49,56 +49,99 @@ export function prompt(query, opts = {}) {
 }
 
 /**
- * Persist credentials + identity to the login file with owner-only perms.
+ * Field-level merge update of the login file (`~/.chorus/daemon.json`) — the
+ * single read → merge → write(0600) helper every config writer routes through.
  *
- * Writing the file with a fresh credential object intentionally OMITS any
- * `yoloAckAt` that a previous file carried — a credential change (re-login)
- * clears the yolo acknowledgement, so the next yolo TTY start re-confirms once
- * (daemon-permission-mode spec). To preserve an existing ack across an
- * unrelated rewrite, the caller must read it first and pass it in `data`.
+ * Reads any existing file, shallow-merges `partial` over it (partial keys win,
+ * every other pre-existing field is preserved), and writes the result back with
+ * owner-only permissions. A shallow merge is correct because every field is a
+ * scalar or a flat array (`cwds`) — there are no nested objects to deep-merge.
  *
- * @param {{ url: string, apiKey: string, agentUuid: string, agentName: string, yoloAckAt?: string }} data
- * @param {{ path?: string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void }} [deps]
+ * The write is atomic: the JSON is written to a sibling `<path>.tmp` at 0600 and
+ * then `rename()`d over the target, so a crash mid-write never truncates the
+ * live file. A missing / unreadable / malformed existing file is treated as an
+ * empty object (defensive parse), so a re-login still produces a valid file
+ * rather than aborting on a corrupt one.
+ *
+ * Because writes now merge, NO field is ever silently dropped — in particular a
+ * `chorus login` preserves any pre-existing `cwds` / `yoloAckAt` /
+ * `sigintTimeoutMs` (daemon-config-field-merge change; supersedes the prior
+ * "credential change clears the yolo acknowledgement" behavior).
+ *
+ * @param {Record<string, unknown>} partial  The fields to set/overwrite.
+ * @param {{
+ *   path?: string,
+ *   read?: (p: string) => string,
+ *   write?: (p: string, c: string, o: object) => void,
+ *   mkdir?: (p: string, o: object) => void,
+ *   rename?: (from: string, to: string) => void,
+ * }} [deps]
+ * @returns {string} the file path written
  */
-export function writeLoginFile(data, deps = {}) {
+export function updateDaemonConfig(partial, deps = {}) {
   const path = deps.path ?? loginFilePath();
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
   const write = deps.write ?? writeFileSync;
   const mkdir = deps.mkdir ?? mkdirSync;
+  const rename = deps.rename ?? renameSync;
+
+  // Defensive read: missing / unreadable / malformed → start from empty so a
+  // re-login over a corrupt file still writes a valid one (no silent abort).
+  let current = {};
+  try {
+    const parsed = JSON.parse(read(path));
+    // Only a plain object is a valid config; arrays / scalars → start fresh.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+  } catch {
+    // treat as empty
+  }
+
+  const merged = { ...current, ...partial };
   mkdir(dirname(path), { recursive: true });
-  write(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  // Atomic write: temp file (0600) in the same dir, then rename over target.
+  const tmp = `${path}.tmp`;
+  write(tmp, JSON.stringify(merged, null, 2) + "\n", { mode: 0o600 });
+  rename(tmp, path);
   return path;
 }
 
 /**
- * Record (or refresh) the yolo acknowledgement in the existing login file,
- * preserving the credentials already on disk. Reads the current file, merges
- * `yoloAckAt`, and rewrites with 0600. Used by the daemon after an interactive
- * TTY yolo confirmation — it does NOT touch url/apiKey/identity.
+ * Persist credentials + identity to the login file with owner-only perms.
  *
- * No-silent-errors: a read/parse failure is surfaced to the caller (throws), so
- * the daemon can log it rather than silently losing the ack.
+ * Thin wrapper over {@link updateDaemonConfig}: it field-merges the given
+ * credential/identity fields over any existing file, so every OTHER pre-existing
+ * field (`cwds`, `yoloAckAt`, `sigintTimeoutMs`, …) is preserved across a
+ * `chorus login` or a daemon-start credential completion. It no longer omits
+ * `yoloAckAt` — a credential write never discards the recorded yolo ack.
+ *
+ * The `deps` seams (`path`, `write`, `mkdir`) are kept for callers/tests that
+ * inject IO; `write` is the low-level `(path, content, opts)` writer.
+ *
+ * @param {{ url: string, apiKey: string, agentUuid: string, agentName: string }} data
+ * @param {{ path?: string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void, read?: (p: string) => string, rename?: (from: string, to: string) => void }} [deps]
+ */
+export function writeLoginFile(data, deps = {}) {
+  return updateDaemonConfig(data, deps);
+}
+
+/**
+ * Record (or refresh) the yolo acknowledgement in the login file, preserving
+ * everything already on disk. Delegates to {@link updateDaemonConfig}, which
+ * reads the current file, merges `yoloAckAt`, and rewrites with 0600. Used by
+ * the daemon after an interactive TTY yolo confirmation — it does NOT touch
+ * url/apiKey/identity.
+ *
+ * A TTY user whose credentials come from env / flags has no login file yet, but
+ * the ack must still persist (else they'd re-confirm yolo on every start). A
+ * file carrying only `yoloAckAt` is harmless — resolveCredentials simply falls
+ * through it.
  *
  * @param {string} yoloAckAt  ISO-8601 timestamp of the confirmation.
- * @param {{ path?: string, read?: (p: string) => string, write?: typeof writeLoginFile }} [deps]
+ * @param {{ path?: string, read?: (p: string) => string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void, rename?: (from: string, to: string) => void }} [deps]
  * @returns {string} the file path written
  */
 export function recordYoloAck(yoloAckAt, deps = {}) {
-  const path = deps.path ?? loginFilePath();
-  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
-  const write = deps.write ?? writeLoginFile;
-  // Start from the existing file when present, else an empty object: a TTY user
-  // whose credentials come from env / flags has no login file yet, but the ack
-  // must still persist (else they'd re-confirm yolo on every start). A file
-  // carrying only `yoloAckAt` is harmless — resolveCredentials simply falls
-  // through it, and a later `chorus login` overwrites (clearing the ack).
-  let current = {};
-  try {
-    const parsed = JSON.parse(read(path));
-    if (parsed && typeof parsed === "object") current = parsed;
-  } catch {
-    // missing / unreadable / malformed → treat as empty (start fresh)
-  }
-  return write({ ...current, yoloAckAt }, { path });
+  return updateDaemonConfig({ yoloAckAt }, deps);
 }
 
 /**

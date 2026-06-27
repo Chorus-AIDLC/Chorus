@@ -3,6 +3,7 @@
 // daemon start (TTY only); non-TTY preserves the hard error.
 import { describe, it, expect, vi } from "vitest";
 import { runDaemon } from "../daemon.mjs";
+import { writeLoginFile } from "../login.mjs";
 
 const NO_CREDS = () => {
   throw new Error(
@@ -85,6 +86,46 @@ describe("runDaemon — TTY interactive credential completion", () => {
     expect(writeLoginFile).not.toHaveBeenCalled();
     expect(build).not.toHaveBeenCalled();
     expect(errs.join("\n")).toMatch(/NOT saved/i);
+  });
+
+  it("the completion write field-merges — preserves pre-existing cwds AND yoloAckAt (regression)", async () => {
+    // daemon.mjs preflight() writeCreds path: with the merge helper in place it must
+    // NOT clobber a daemon.json that already carries cwds/yoloAckAt (the idea's bug,
+    // second write site). Inject the REAL writeLoginFile over an in-memory store.
+    const store = { json: JSON.stringify({ cwds: ["/srv/a"], yoloAckAt: "2026-06-20T00:00:00.000Z" }) };
+    const realWriteCreds = (data) =>
+      writeLoginFile(data, {
+        path: "/p/daemon.json",
+        read: () => store.json,
+        mkdir: () => {},
+        write: (_p, c) => { store.tmp = c; },
+        rename: () => { store.json = store.tmp; },
+      });
+    const validate = vi.fn(async () => ({ uuid: "agent-9", name: "Bot" }));
+    const build = vi.fn(() => ({ async start() {}, async stop() {} }));
+
+    const code = await runDaemon(
+      {},
+      tailDeps({
+        isTTY: true,
+        resolve: NO_CREDS,
+        validate,
+        prompt: async (q) => (q.startsWith("Chorus URL") ? "https://typed" : "cho_typed"),
+        writeLoginFile: realWriteCreds,
+        build,
+      })
+    );
+
+    expect(code).toBe(0);
+    expect(build).toHaveBeenCalledOnce();
+    expect(JSON.parse(store.json)).toEqual({
+      cwds: ["/srv/a"],
+      yoloAckAt: "2026-06-20T00:00:00.000Z",
+      url: "https://typed",
+      apiKey: "cho_typed",
+      agentUuid: "agent-9",
+      agentName: "Bot",
+    });
   });
 
   it("aborts (no validate/write) when the user enters nothing", async () => {

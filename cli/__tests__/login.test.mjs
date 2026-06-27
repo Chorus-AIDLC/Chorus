@@ -3,6 +3,28 @@
 import { describe, it, expect, vi } from "vitest";
 import { runLogin, writeLoginFile, prompt } from "../login.mjs";
 
+/**
+ * An in-memory daemon.json backing store + a `write` dep shaped like the one
+ * runLogin calls (`write(data) => path`), but routed through the REAL
+ * writeLoginFile → updateDaemonConfig merge. Lets a test assert end-to-end that
+ * `chorus login` preserves pre-existing fields (the regression this change fixes).
+ */
+function mergeBackedWrite(initialJson) {
+  const store = { json: initialJson };
+  const write = (data) =>
+    writeLoginFile(data, {
+      path: "/p/daemon.json",
+      read: () => {
+        if (store.json === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return store.json;
+      },
+      mkdir: () => {},
+      write: (_p, c) => { store.tmp = c; },
+      rename: () => { store.json = store.tmp; },
+    });
+  return { store, write };
+}
+
 describe("runLogin success path", () => {
   it("validates, persists with identity, echoes name+uuid, returns 0", async () => {
     const written = [];
@@ -25,6 +47,32 @@ describe("runLogin success path", () => {
     ]);
     expect(logs.join("\n")).toContain("Daemon Bot");
     expect(logs.join("\n")).toContain("agent-123");
+  });
+});
+
+describe("runLogin — field-level merge preserves pre-existing fields (regression)", () => {
+  it("retains pre-existing cwds AND yoloAckAt, and gains the four credential fields", async () => {
+    // The exact bug the idea reported: a daemon.json carrying only cwds + yoloAckAt
+    // (creds previously in shell env). A `chorus login` must NOT wipe those.
+    const { store, write } = mergeBackedWrite(
+      JSON.stringify({ cwds: ["/srv/a", "/srv/b"], yoloAckAt: "2026-06-20T00:00:00.000Z" })
+    );
+    const validate = vi.fn(async () => ({ uuid: "agent-123", name: "Daemon Bot" }));
+
+    const code = await runLogin(
+      { url: "https://chorus.example", apiKey: "cho_valid" },
+      { validate, write, log: () => {}, errLog: () => {} }
+    );
+
+    expect(code).toBe(0);
+    expect(JSON.parse(store.json)).toEqual({
+      cwds: ["/srv/a", "/srv/b"],
+      yoloAckAt: "2026-06-20T00:00:00.000Z",
+      url: "https://chorus.example",
+      apiKey: "cho_valid",
+      agentUuid: "agent-123",
+      agentName: "Daemon Bot",
+    });
   });
 });
 
@@ -89,20 +137,27 @@ describe("runLogin interactive prompting", () => {
 });
 
 describe("writeLoginFile", () => {
-  it("creates the dir and writes JSON with 0600 mode", () => {
+  it("creates the dir and writes JSON with 0600 mode (atomic temp+rename)", () => {
     const mkdirCalls = [];
     const writeCalls = [];
+    const renameCalls = [];
     const path = writeLoginFile(
       { url: "u", apiKey: "k", agentUuid: "a", agentName: "n" },
       {
         path: "/home/u/.chorus/daemon.json",
+        // no prior file → defensive parse yields {}, so only the creds are written
+        read: () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
         mkdir: (p, o) => mkdirCalls.push([p, o]),
         write: (p, c, o) => writeCalls.push([p, c, o]),
+        rename: (from, to) => renameCalls.push([from, to]),
       }
     );
     expect(path).toBe("/home/u/.chorus/daemon.json");
     expect(mkdirCalls[0][1]).toEqual({ recursive: true });
+    // atomic write: to the temp path at 0600, then renamed over the target
+    expect(writeCalls[0][0]).toBe("/home/u/.chorus/daemon.json.tmp");
     expect(writeCalls[0][2]).toEqual({ mode: 0o600 });
+    expect(renameCalls[0]).toEqual(["/home/u/.chorus/daemon.json.tmp", "/home/u/.chorus/daemon.json"]);
     expect(JSON.parse(writeCalls[0][1])).toEqual({ url: "u", apiKey: "k", agentUuid: "a", agentName: "n" });
   });
 });
