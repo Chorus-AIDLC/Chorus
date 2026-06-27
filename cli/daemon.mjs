@@ -27,7 +27,8 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveClaudePath } from "./claude-spawner.mjs";
+import { selectSpawner } from "./spawner-select.mjs";
 import {
   createExecutionUploadHooks,
   createTranscriptUploadHooks,
@@ -95,9 +96,12 @@ function defaultLogger() {
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
   const permissionMode = deps.permissionMode ?? "chorus";
+  // The resolved agent backend selects which spawner the daemon injects
+  // (add-daemon-codex-backend). Defaults to claude-code, matching the prior
+  // hard-wired ClaudeSpawner. The spawn path below is backend-agnostic — it only
+  // ever calls the shared wake(...) contract.
+  const agentType = deps.agentType ?? "claude-code";
   // Per-wake verbose logging (daemon-startup-output), threaded into the Waker.
-  // agentType is currently display-only (banner/logs) — the spawn path is
-  // claude-code regardless (daemon-agent-selection reserves the slot only).
   const verbose = deps.verbose ?? false;
   // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
   // the layered resolver; falls back to the resolver's default here when not given,
@@ -112,7 +116,11 @@ export function buildDaemon(creds, deps = {}) {
   const lineage =
     deps.lineage ??
     new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
-  const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
+  // Inject the spawner for the resolved backend. claude-code → ClaudeSpawner
+  // (construction byte-identical to before); codex → CodexSpawner. `creds` are
+  // passed through so the Codex backend can export the daemon key into the woken
+  // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
+  const spawner = deps.spawner ?? selectSpawner(agentType, { logger, permissionMode, creds });
   // The WakeQueue serializes per DIRECT idea (keyFor's key). It is shared across all
   // path-connections: serialization-per-idea still holds, and maxConcurrency caps the
   // whole process's in-flight wakes rather than per-cwd — the right global budget.

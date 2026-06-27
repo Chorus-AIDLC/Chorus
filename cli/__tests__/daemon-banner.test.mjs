@@ -108,10 +108,15 @@ describe("resolveAgentType", () => {
     expect(resolveAgentType({ agent: "claude-code" }, { CHORUS_AGENT: "bogus" }).ok).toBe(true);
   });
 
+  it("accepts codex as a known backend", () => {
+    expect(resolveAgentType({ agent: "codex" }, {})).toEqual({ ok: true, agent: "codex" });
+    expect(KNOWN_AGENTS).toContain("codex");
+  });
+
   it("rejects an unknown agent with a non-silent actionable error", () => {
-    const r = resolveAgentType({ agent: "codex" }, {});
+    const r = resolveAgentType({ agent: "gemini" }, {});
     expect(r.ok).toBe(false);
-    expect(r.value).toBe("codex");
+    expect(r.value).toBe("gemini");
     expect(r.error).toContain("codex");
     expect(r.error).toContain("claude-code");
   });
