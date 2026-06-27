@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { verifyOidcAccessToken } from "@/lib/oidc-auth";
-import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
+import { getCookieOptions, getMaxAgeFromJwt, resolveRefreshCookieMaxAge } from "@/lib/cookie-utils";
 import logger from "@/lib/logger";
 
 // POST /api/auth/sync-token
@@ -31,9 +31,11 @@ export async function POST(request: NextRequest) {
     // Update the HTTP-only cookie with the new token
     response.cookies.set("oidc_access_token", accessToken, getCookieOptions(getMaxAgeFromJwt(accessToken)));
 
-    // Update refresh token if provided (e.g. after token rotation)
+    // Update refresh token if provided (e.g. after token rotation).
+    // This token comes from the client body, not an IdP token response, so we cannot
+    // observe refresh_expires_in here — use the centralized default lifetime.
     if (refreshToken && typeof refreshToken === "string") {
-      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(30 * 24 * 3600));
+      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(resolveRefreshCookieMaxAge()));
     }
 
     return response;

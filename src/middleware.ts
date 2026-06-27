@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 import { ACCESS_TOKEN_EXPIRY, ACCESS_TOKEN_MAX_AGE } from "@/lib/user-session";
-import { getCookieOptions } from "@/lib/cookie-utils";
+import { getCookieOptions, resolveRefreshCookieMaxAge } from "@/lib/cookie-utils";
 import { resolveIdeaRedirect } from "@/lib/idea-url-redirect";
 import logger from "@/lib/logger";
 
@@ -282,10 +282,14 @@ export async function middleware(request: NextRequest) {
     // Write the new access token to the response cookie for the browser
     response.cookies.set("oidc_access_token", newAccessToken, getCookieOptions(expiresIn));
 
-    // If the provider returned a new refresh token (token rotation), update it
+    // If the provider returned a new refresh token (token rotation), update it.
+    // This is the only cookie-write site that sees the IdP token response, so it can
+    // honor the IdP's stated refresh-token lifetime; falls back to the centralized
+    // default when the IdP omits refresh_expires_in.
     if (tokenData.refresh_token) {
+      const refreshMaxAge = resolveRefreshCookieMaxAge(tokenData.refresh_expires_in);
       request.cookies.set("oidc_refresh_token", tokenData.refresh_token);
-      response.cookies.set("oidc_refresh_token", tokenData.refresh_token, getCookieOptions(30 * 24 * 3600));
+      response.cookies.set("oidc_refresh_token", tokenData.refresh_token, getCookieOptions(refreshMaxAge));
     }
 
     return response;

@@ -50,7 +50,9 @@ describe('createOidcSettings', () => {
     expect(settings.post_logout_redirect_uri).toBe('http://localhost:3000/login');
     expect(settings.response_type).toBe('code');
     expect(settings.scope).toBe('openid profile email');
-    expect(settings.automaticSilentRenew).toBe(true);
+    // Single refresh authority: the Edge middleware renews the cookie; the frontend
+    // must NOT run background silent renewal (it would race the rotating refresh token).
+    expect(settings.automaticSilentRenew).toBe(false);
     expect(settings.silent_redirect_uri).toBe('http://localhost:3000/login/silent-refresh');
     expect(settings.accessTokenExpiringNotificationTimeInSeconds).toBe(60);
   });

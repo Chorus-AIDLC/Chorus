@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { findOrCreateUserByOidc, getCompanyByUuid } from "@/services/user.service";
-import { getCookieOptions, getMaxAgeFromJwt } from "@/lib/cookie-utils";
+import { getCookieOptions, getMaxAgeFromJwt, resolveRefreshCookieMaxAge, REFRESH_TOKEN_COOKIE_MAX_AGE } from "@/lib/cookie-utils";
 import logger from "@/lib/logger";
 
 // POST /api/auth/callback
@@ -62,17 +62,21 @@ export async function POST(request: NextRequest) {
       response.cookies.set("oidc_access_token", accessToken, getCookieOptions(getMaxAgeFromJwt(accessToken)));
     }
 
-    // Store refresh token for server-side token refresh (middleware)
-    if (refreshToken) {
-      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(30 * 24 * 3600));
+    // Store refresh token for server-side token refresh (middleware). This token comes
+    // from the client body (oidc-client-ts), not a server-side IdP token response, so
+    // refresh_expires_in is not observable here — use the centralized default lifetime.
+    if (refreshToken && typeof refreshToken === "string") {
+      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(resolveRefreshCookieMaxAge()));
     }
 
-    // Store client_id and issuer for server-side token refresh (middleware)
+    // Store client_id and issuer for server-side token refresh (middleware). These
+    // config cookies must live at least as long as the refresh token (the middleware
+    // needs them to perform a refresh), so they share its centralized lifetime.
     if (company.oidcClientId) {
-      response.cookies.set("oidc_client_id", company.oidcClientId, getCookieOptions(30 * 24 * 3600));
+      response.cookies.set("oidc_client_id", company.oidcClientId, getCookieOptions(REFRESH_TOKEN_COOKIE_MAX_AGE));
     }
     if (company.oidcIssuer) {
-      response.cookies.set("oidc_issuer", company.oidcIssuer, getCookieOptions(30 * 24 * 3600));
+      response.cookies.set("oidc_issuer", company.oidcIssuer, getCookieOptions(REFRESH_TOKEN_COOKIE_MAX_AGE));
     }
 
     return response;
