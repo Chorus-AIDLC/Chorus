@@ -12,6 +12,19 @@ export const KNOWN_AGENTS = ["claude-code", "codex"];
 export const DEFAULT_AGENT = "claude-code";
 
 /**
+ * Per-backend CLI descriptor: the executable name the daemon resolves/spawns and
+ * the env var that overrides its path. Drives the startup banner's "CLI" row and
+ * the not-found warning so they name the SELECTED backend (not always `claude`).
+ * Unknown / undefined falls back to the default (claude-code) descriptor.
+ * @param {string} agentType
+ * @returns {{ name: string, envVar: string }}
+ */
+export function backendCli(agentType) {
+  if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
+  return { name: "claude", envVar: "CHORUS_CLAUDE_PATH" };
+}
+
+/**
  * Resolve the agent type from flag → env → default, and validate it.
  * Precedence: explicit `--agent` flag > CHORUS_AGENT env > DEFAULT_AGENT.
  *

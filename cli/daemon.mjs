@@ -19,7 +19,7 @@ import {
   yoloWarningLine,
 } from "./daemon-permission-mode.mjs";
 import { resolveAgentType } from "./daemon-agent.mjs";
-import { formatBanner, claudeNotFoundWarningLine } from "./daemon-banner.mjs";
+import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -28,6 +28,7 @@ import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveCodexPath } from "./codex-spawner.mjs";
 import { selectSpawner } from "./spawner-select.mjs";
 import {
   createExecutionUploadHooks,
@@ -364,7 +365,11 @@ export async function runDaemon(flags = {}, deps = {}) {
   const askPrompt = deps.prompt ?? prompt;
   const writeCreds = deps.writeLoginFile ?? writeLoginFile;
   const version = deps.version ?? readVersion();
+  // Backend executable resolvers — injectable for tests. The SELECTED backend's
+  // resolver runs below (claude-code → findClaude, codex → findCodex), so the
+  // banner shows the right binary instead of always probing for `claude`.
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
+  const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
   // Resolve the agent backend (default claude-code). An unknown --agent /
@@ -418,10 +423,12 @@ export async function runDaemon(flags = {}, deps = {}) {
   if (typeof pf === "number") return pf;
   const { creds, identity, permissionMode } = pf;
 
-  // Detect the claude executable (non-fatal): the daemon still subscribes when
-  // it's missing; a wake surfaces the error visibly when one arrives. The
-  // resolved path (or absence) is shown in the banner below.
-  const claudePath = findClaude();
+  // Detect the SELECTED backend's executable (non-fatal): the daemon still
+  // subscribes when it's missing; a wake surfaces the error visibly when one
+  // arrives. The resolved path (or absence) is shown in the banner below. codex
+  // → resolveCodexPath, otherwise resolveClaudePath — so a `--agent codex` run
+  // probes (and the banner reports) `codex`, not `claude`.
+  const cliPath = agentType === "codex" ? findCodex() : findClaude();
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
@@ -440,7 +447,7 @@ export async function runDaemon(flags = {}, deps = {}) {
         permissionMode,
         credentialSource: creds.source,
         agentType,
-        claudePath,
+        cliPath,
         connection: "connecting…",
         configPath,
         configExists,
@@ -453,11 +460,13 @@ export async function runDaemon(flags = {}, deps = {}) {
   if (permissionMode === "yolo") {
     errLog(`[Chorus] ${yoloWarningLine()}`);
   }
-  // A missing `claude` binary is non-fatal (the daemon still subscribes), but the
+  // A missing backend binary is non-fatal (the daemon still subscribes), but the
   // banner row alone is easy to miss in a systemd journal — emit one loud ⚠ line
-  // on stderr so the operator sees it at startup, not only when a wake fails.
-  if (claudePath === null) {
-    errLog(`[Chorus] ${claudeNotFoundWarningLine()}`);
+  // on stderr so the operator sees it at startup, not only when a wake fails. The
+  // warning names the SELECTED backend (claude / CHORUS_CLAUDE_PATH or codex /
+  // CHORUS_CODEX_PATH).
+  if (cliPath === null) {
+    errLog(`[Chorus] ${agentNotFoundWarningLine(agentType)}`);
   }
 
   // Surface the served paths so an operator sees a multi-path daemon at a glance.
