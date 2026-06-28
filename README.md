@@ -96,7 +96,7 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 
 The `chorus daemon` connects your local machine to a remote Chorus server as an agent runtime and executes tasks assigned by Chorus.
 
-> **Current version:** Only **Claude Code** is supported. Support for other agent CLIs (Codex, Copilot, etc.) is planned for future releases.
+> **Agent backends:** **Claude Code** (default) and **Codex** are supported — select with `--agent codex` (or `CHORUS_AGENT=codex`). Support for other agent CLIs (Copilot, etc.) is planned for future releases.
 
 ```bash
 chorus login                     # Authenticate (opens browser)
@@ -110,7 +110,7 @@ chorus daemon logs               # View daemon logs
 
 **Key features:**
 
-- **Claude Code integration** — Auto-detects `claude` CLI on your PATH
+- **Claude Code & Codex backends** — Auto-detects the `claude` (or `codex`) CLI on your PATH; pick with `--agent codex`
 - **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
 - **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
 - **Multi-path** — Serve several working directories from one daemon with repeatable `--cwd` (see below)

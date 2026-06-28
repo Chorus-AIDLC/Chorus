@@ -18,8 +18,8 @@ import {
   resolvePermissionMode,
   yoloWarningLine,
 } from "./daemon-permission-mode.mjs";
-import { resolveAgentType } from "./daemon-agent.mjs";
-import { formatBanner, claudeNotFoundWarningLine } from "./daemon-banner.mjs";
+import { resolveAgentType, backendClientType } from "./daemon-agent.mjs";
+import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -27,7 +27,9 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveCodexPath } from "./codex-spawner.mjs";
+import { selectSpawner } from "./spawner-select.mjs";
 import {
   createExecutionUploadHooks,
   createTranscriptUploadHooks,
@@ -95,9 +97,12 @@ function defaultLogger() {
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
   const permissionMode = deps.permissionMode ?? "chorus";
+  // The resolved agent backend selects which spawner the daemon injects
+  // (add-daemon-codex-backend). Defaults to claude-code, matching the prior
+  // hard-wired ClaudeSpawner. The spawn path below is backend-agnostic — it only
+  // ever calls the shared wake(...) contract.
+  const agentType = deps.agentType ?? "claude-code";
   // Per-wake verbose logging (daemon-startup-output), threaded into the Waker.
-  // agentType is currently display-only (banner/logs) — the spawn path is
-  // claude-code regardless (daemon-agent-selection reserves the slot only).
   const verbose = deps.verbose ?? false;
   // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
   // the layered resolver; falls back to the resolver's default here when not given,
@@ -112,7 +117,11 @@ export function buildDaemon(creds, deps = {}) {
   const lineage =
     deps.lineage ??
     new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
-  const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
+  // Inject the spawner for the resolved backend. claude-code → ClaudeSpawner
+  // (construction byte-identical to before); codex → CodexSpawner. `creds` are
+  // passed through so the Codex backend can export the daemon key into the woken
+  // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
+  const spawner = deps.spawner ?? selectSpawner(agentType, { logger, permissionMode, creds });
   // The WakeQueue serializes per DIRECT idea (keyFor's key). It is shared across all
   // path-connections: serialization-per-idea still holds, and maxConcurrency caps the
   // whole process's in-flight wakes rather than per-cwd — the right global budget.
@@ -273,6 +282,9 @@ export function buildDaemon(creds, deps = {}) {
       makeSse({
         url: creds.url,
         apiKey: creds.apiKey,
+        // Self-report the SELECTED backend so the connection registry + presence UI
+        // label a codex daemon as `codex` (not the hardcoded `claude_code`).
+        clientType: backendClientType(agentType),
         // The working directory THIS connection serves (T3). `undefined` ⇒ the listener
         // reports its process cwd (single-path / HARD-1). It is just the served path.
         cwd,
@@ -356,7 +368,11 @@ export async function runDaemon(flags = {}, deps = {}) {
   const askPrompt = deps.prompt ?? prompt;
   const writeCreds = deps.writeLoginFile ?? writeLoginFile;
   const version = deps.version ?? readVersion();
+  // Backend executable resolvers — injectable for tests. The SELECTED backend's
+  // resolver runs below (claude-code → findClaude, codex → findCodex), so the
+  // banner shows the right binary instead of always probing for `claude`.
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
+  const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
   // Resolve the agent backend (default claude-code). An unknown --agent /
@@ -410,10 +426,12 @@ export async function runDaemon(flags = {}, deps = {}) {
   if (typeof pf === "number") return pf;
   const { creds, identity, permissionMode } = pf;
 
-  // Detect the claude executable (non-fatal): the daemon still subscribes when
-  // it's missing; a wake surfaces the error visibly when one arrives. The
-  // resolved path (or absence) is shown in the banner below.
-  const claudePath = findClaude();
+  // Detect the SELECTED backend's executable (non-fatal): the daemon still
+  // subscribes when it's missing; a wake surfaces the error visibly when one
+  // arrives. The resolved path (or absence) is shown in the banner below. codex
+  // → resolveCodexPath, otherwise resolveClaudePath — so a `--agent codex` run
+  // probes (and the banner reports) `codex`, not `claude`.
+  const cliPath = agentType === "codex" ? findCodex() : findClaude();
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
@@ -432,7 +450,7 @@ export async function runDaemon(flags = {}, deps = {}) {
         permissionMode,
         credentialSource: creds.source,
         agentType,
-        claudePath,
+        cliPath,
         connection: "connecting…",
         configPath,
         configExists,
@@ -445,11 +463,13 @@ export async function runDaemon(flags = {}, deps = {}) {
   if (permissionMode === "yolo") {
     errLog(`[Chorus] ${yoloWarningLine()}`);
   }
-  // A missing `claude` binary is non-fatal (the daemon still subscribes), but the
+  // A missing backend binary is non-fatal (the daemon still subscribes), but the
   // banner row alone is easy to miss in a systemd journal — emit one loud ⚠ line
-  // on stderr so the operator sees it at startup, not only when a wake fails.
-  if (claudePath === null) {
-    errLog(`[Chorus] ${claudeNotFoundWarningLine()}`);
+  // on stderr so the operator sees it at startup, not only when a wake fails. The
+  // warning names the SELECTED backend (claude / CHORUS_CLAUDE_PATH or codex /
+  // CHORUS_CODEX_PATH).
+  if (cliPath === null) {
+    errLog(`[Chorus] ${agentNotFoundWarningLine(agentType)}`);
   }
 
   // Surface the served paths so an operator sees a multi-path daemon at a glance.

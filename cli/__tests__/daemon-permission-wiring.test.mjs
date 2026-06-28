@@ -91,7 +91,9 @@ describe("runDaemon — --agent validation", () => {
     const build = vi.fn();
     const errs = [];
     const code = await runDaemon(
-      { agent: "codex" },
+      // `gemini` is genuinely unknown; `codex` is now a valid backend
+      // (add-daemon-codex-backend), so it would no longer take this error path.
+      { agent: "gemini" },
       baseDeps({ resolve, build, errLog: (m) => errs.push(m) })
     );
     expect(code).toBe(1);
@@ -109,6 +111,16 @@ describe("runDaemon — --agent validation", () => {
     );
     expect(code).toBe(0);
     expect(build.mock.calls[0][1].agentType).toBe("claude-code");
+  });
+
+  it("codex is a known --agent and threads agentType=codex into build()", async () => {
+    const build = vi.fn(() => ({ async start() {}, async stop() {} }));
+    const code = await runDaemon(
+      { agent: "codex" },
+      baseDeps({ isTTY: false, build })
+    );
+    expect(code).toBe(0);
+    expect(build.mock.calls[0][1].agentType).toBe("codex");
   });
 });
 

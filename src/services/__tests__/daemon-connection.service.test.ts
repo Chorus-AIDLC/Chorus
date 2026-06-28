@@ -76,8 +76,8 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("DAEMON_CLIENT_TYPES are exactly claude_code + openclaw", () => {
-    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw"]);
+  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex", () => {
+    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex"]);
   });
 
   it("STALE_THRESHOLD_MS is 90s (3x the 30s heartbeat)", () => {
@@ -198,6 +198,17 @@ describe("registerConnection", () => {
       mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
       const result = await registerConnection(companyUuid, agentUuid, {
         clientType: "openclaw",
+        host: "linux-box",
+        cwd: "/srv/work",
+      });
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("registers a codex clientType (codex daemon backend)", async () => {
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "codex",
         host: "linux-box",
         cwd: "/srv/work",
       });

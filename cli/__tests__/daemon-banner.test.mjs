@@ -2,7 +2,7 @@
 // Covers daemon-startup-output spec "Boxed startup banner" + daemon-agent-selection.
 import { describe, it, expect } from "vitest";
 import { formatBanner, bannerRows } from "../daemon-banner.mjs";
-import { resolveAgentType, KNOWN_AGENTS, DEFAULT_AGENT } from "../daemon-agent.mjs";
+import { resolveAgentType, KNOWN_AGENTS, DEFAULT_AGENT, backendCli } from "../daemon-agent.mjs";
 
 const INFO = {
   version: "0.11.0",
@@ -12,7 +12,7 @@ const INFO = {
   permissionMode: "yolo",
   credentialSource: "login-file",
   agentType: "claude-code",
-  claudePath: "/usr/bin/claude",
+  cliPath: "/usr/bin/claude",
   connection: "connecting…",
 };
 
@@ -33,6 +33,23 @@ describe("formatBanner — content", () => {
     }
   });
 
+  it("labels the CLI row for the SELECTED backend — claude-code → 'claude CLI'", () => {
+    const out = formatBanner(INFO, { isTTY: false });
+    expect(out).toContain("claude CLI");
+    expect(out).not.toContain("codex CLI");
+  });
+
+  it("labels the CLI row 'codex CLI' and shows the codex path when agentType is codex", () => {
+    const out = formatBanner(
+      { ...INFO, agentType: "codex", cliPath: "/home/u/.nvm/bin/codex" },
+      { isTTY: false }
+    );
+    expect(out).toContain("codex CLI");
+    expect(out).toContain("/home/u/.nvm/bin/codex");
+    // must NOT mislabel a codex run as claude
+    expect(out).not.toMatch(/claude CLI/);
+  });
+
   it("highlights yolo permission mode", () => {
     const out = formatBanner(INFO, { isTTY: false });
     expect(out).toMatch(/YOLO/);
@@ -44,9 +61,31 @@ describe("formatBanner — content", () => {
   });
 
   it("shows a clear not-found message when claude is missing", () => {
-    const out = formatBanner({ ...INFO, claudePath: null }, { isTTY: false });
+    const out = formatBanner({ ...INFO, cliPath: null }, { isTTY: false });
     expect(out).toMatch(/NOT FOUND/i);
     expect(out).toContain("CHORUS_CLAUDE_PATH");
+  });
+
+  it("not-found message names the CODEX override when the codex backend is missing", () => {
+    const out = formatBanner(
+      { ...INFO, agentType: "codex", cliPath: null },
+      { isTTY: false }
+    );
+    expect(out).toMatch(/NOT FOUND/i);
+    expect(out).toContain("CHORUS_CODEX_PATH");
+    expect(out).not.toContain("CHORUS_CLAUDE_PATH");
+  });
+});
+
+describe("backendCli — per-backend CLI descriptor", () => {
+  it("claude-code → claude binary + CHORUS_CLAUDE_PATH override", () => {
+    expect(backendCli("claude-code")).toEqual({ name: "claude", envVar: "CHORUS_CLAUDE_PATH" });
+  });
+  it("codex → codex binary + CHORUS_CODEX_PATH override", () => {
+    expect(backendCli("codex")).toEqual({ name: "codex", envVar: "CHORUS_CODEX_PATH" });
+  });
+  it("unknown/undefined falls back to the claude descriptor (default backend)", () => {
+    expect(backendCli(undefined)).toEqual({ name: "claude", envVar: "CHORUS_CLAUDE_PATH" });
   });
 });
 
@@ -108,10 +147,15 @@ describe("resolveAgentType", () => {
     expect(resolveAgentType({ agent: "claude-code" }, { CHORUS_AGENT: "bogus" }).ok).toBe(true);
   });
 
+  it("accepts codex as a known backend", () => {
+    expect(resolveAgentType({ agent: "codex" }, {})).toEqual({ ok: true, agent: "codex" });
+    expect(KNOWN_AGENTS).toContain("codex");
+  });
+
   it("rejects an unknown agent with a non-silent actionable error", () => {
-    const r = resolveAgentType({ agent: "codex" }, {});
+    const r = resolveAgentType({ agent: "gemini" }, {});
     expect(r.ok).toBe(false);
-    expect(r.value).toBe("codex");
+    expect(r.value).toBe("gemini");
     expect(r.error).toContain("codex");
     expect(r.error).toContain("claude-code");
   });

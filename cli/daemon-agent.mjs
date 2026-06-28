@@ -1,14 +1,40 @@
 // cli/daemon-agent.mjs
-// Pure resolution + validation of the daemon's `--agent <type>` selection. The
-// flag/env exist to RESERVE the extension point for future agent backends
-// (e.g. codex); only `claude-code` is implemented in this change. Resolving an
+// Pure resolution + validation of the daemon's `--agent <type>` selection.
+// `claude-code` (the default) and `codex` are both implemented backends
+// (add-daemon-codex-backend cashed in the reserved `codex` slot). Resolving an
 // unknown value is a hard error (no silent fallback). Zero dependencies.
 
-/** The agent backends the daemon recognizes. Only `claude-code` is implemented. */
-export const KNOWN_AGENTS = ["claude-code"];
+/** The agent backends the daemon recognizes. Both are implemented (claude-code
+ * via ClaudeSpawner, codex via CodexSpawner — see spawner-select.mjs). */
+export const KNOWN_AGENTS = ["claude-code", "codex"];
 
 /** The default agent backend when neither --agent nor CHORUS_AGENT is set. */
 export const DEFAULT_AGENT = "claude-code";
+
+/**
+ * Per-backend CLI descriptor: the executable name the daemon resolves/spawns and
+ * the env var that overrides its path. Drives the startup banner's "CLI" row and
+ * the not-found warning so they name the SELECTED backend (not always `claude`).
+ * Unknown / undefined falls back to the default (claude-code) descriptor.
+ * @param {string} agentType
+ * @returns {{ name: string, envVar: string }}
+ */
+export function backendCli(agentType) {
+  if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
+  return { name: "claude", envVar: "CHORUS_CLAUDE_PATH" };
+}
+
+/**
+ * Map the resolved agent backend to the `clientType` the daemon self-reports to
+ * the server (and that the connection registry + presence UI display). The server
+ * gates this against DAEMON_CLIENT_TYPES, so the values MUST match: `codex` →
+ * `codex`, `claude-code` → `claude_code`. Anything else falls back to claude_code.
+ * @param {string} agentType
+ * @returns {string}
+ */
+export function backendClientType(agentType) {
+  return agentType === "codex" ? "codex" : "claude_code";
+}
 
 /**
  * Resolve the agent type from flag → env → default, and validate it.
@@ -31,7 +57,7 @@ export function resolveAgentType(flags, env) {
       value: raw,
       error:
         `Unknown --agent "${raw}". Accepted: ${KNOWN_AGENTS.join(", ")}. ` +
-        `(Only ${DEFAULT_AGENT} is implemented; the flag reserves the slot for future agents.)`,
+        `(Default is ${DEFAULT_AGENT}.)`,
     };
   }
   return { ok: true, agent: raw };

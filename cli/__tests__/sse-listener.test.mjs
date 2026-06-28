@@ -229,6 +229,22 @@ describe("SseListener self-report URL", () => {
     listener.disconnect();
   });
 
+  it("defaults clientType to claude_code when none is given", async () => {
+    const { listener, fetchImpl } = captureUrl();
+    await listener.connect();
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.searchParams.get("clientType")).toBe("claude_code");
+    listener.disconnect();
+  });
+
+  it("reports clientType=codex when constructed for the codex backend", async () => {
+    const { listener, fetchImpl } = captureUrl({ clientType: "codex" });
+    await listener.connect();
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.searchParams.get("clientType")).toBe("codex");
+    listener.disconnect();
+  });
+
   it("re-sends the same self-report params on reconnect", async () => {
     vi.useFakeTimers();
     let call = 0;
