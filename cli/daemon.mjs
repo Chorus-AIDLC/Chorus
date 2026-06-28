@@ -140,6 +140,40 @@ export function buildDaemon(creds, deps = {}) {
       ? deps.cwds
       : [deps.cwd];
 
+  // ===== All-conflict exit latch (add-daemon-connection-conflict-skip, Q3) =====
+  // Each declared connection resolves to exactly one terminal outcome: REGISTERED
+  // (saw connection_registered → onConnectionId) or CONFLICTED (saw
+  // connection_conflict → onConflict). When EVERY declared connection has resolved
+  // AND none registered (≥1 conflicted, 0 survived), the daemon has nothing to serve,
+  // so we settle `allConflict` — runDaemon races this against waitForever and returns
+  // a non-zero exit. The latch is evaluated only after all connections resolve (R5):
+  // a path still mid-handshake leaves `resolved < total`, so a partial conflict never
+  // triggers the exit. A connection that registers (even after some conflicted) flips
+  // `anyRegistered`, so the exit never fires while at least one path serves.
+  const totalConnections = cwdSet.length;
+  let resolvedConnections = 0;
+  let anyRegistered = false;
+  let settleAllConflict; // resolver, wired into the promise below
+  // A promise that settles ONLY in the all-paths-conflicted case. It never rejects and
+  // never settles otherwise (a serving daemon simply keeps waiting on waitForever).
+  const allConflict = new Promise((resolve) => {
+    settleAllConflict = resolve;
+  });
+  // Record one connection's terminal outcome and, once all have resolved, decide whether
+  // the whole daemon should exit. Idempotent per connection BY CONSTRUCTION: the guard
+  // lives here (flips the connection's own `outcome.resolved`) so a reconnect's repeated
+  // connection_registered — or any future caller — can never double-count, no matter the
+  // call site. The first terminal signal for a connection wins; later ones are no-ops.
+  function recordConnectionOutcome(outcome, registered) {
+    if (outcome.resolved) return;
+    outcome.resolved = true;
+    resolvedConnections += 1;
+    if (registered) anyRegistered = true;
+    if (resolvedConnections === totalConnections && !anyRegistered) {
+      settleAllConflict();
+    }
+  }
+
   /**
    * Build ONE independent path-connection bound to `cwd` (one SSE stream → one
    * DaemonConnection row, keyed by that cwd server-side). All per-connection state —
@@ -157,6 +191,13 @@ export function buildDaemon(creds, deps = {}) {
     // doesn't matter. Per-connection so each path's wakes report against the right row.
     /** @type {{ connectionUuid: string|null }} */
     const connectionState = { connectionUuid: null };
+
+    // Per-connection terminal-outcome bookkeeping (add-daemon-connection-conflict-skip).
+    // `resolved` guards recordConnectionOutcome against double-counting a reconnect's
+    // repeated connection_registered. `skipped` marks a cwd surrendered to a live
+    // different-process daemon — purely informational (the listener is torn down, so it
+    // simply never reconnects), kept on the returned object for inspection/tests.
+    const outcome = { resolved: false, skipped: false };
 
     // Interrupt reporter (子3): REST POST with the daemon's Bearer key. Injectable for
     // tests (shared across connections when injected — tests use a single connection).
@@ -295,13 +336,37 @@ export function buildDaemon(creds, deps = {}) {
             `[Chorus] registered as connection ${connectionUuid}` +
               (cwd ? ` (cwd=${cwd})` : "")
           );
+          // Terminal outcome: this path registered. recordConnectionOutcome is idempotent
+          // per connection, so a reconnect's repeated connection_registered counts once.
+          recordConnectionOutcome(outcome, true);
+        },
+        // Connection conflict (add-daemon-connection-conflict-skip, Q3/Q4): the server
+        // refused to register THIS cwd because a live different-process daemon already
+        // holds the same (agent, host, cwd). Warn prominently, tear the listener down
+        // (disconnect clears the reconnect timer + aborts), and mark the path skipped —
+        // it is never reconnected/re-probed for the process lifetime. Takeover happens
+        // only on the NEXT daemon start/restart. Independent closures mean skipping this
+        // path never disturbs another connection's dispatch/control.
+        onConflict: (event) => {
+          const conflictCwd = (event && event.cwd) ?? cwd ?? process.cwd();
+          const conflictHost = (event && event.host) || "this host";
+          logger.warn(
+            `[Chorus] ⚠ connection conflict: a live daemon already serves ` +
+              `(host=${conflictHost}, cwd=${conflictCwd}) — skipping this path. ` +
+              `Stop the other daemon (or wait for it to go offline) and restart to take it over.`
+          );
+          outcome.skipped = true;
+          // Tear down THIS path's listener: no reconnect, no re-probe (Q4).
+          sseListener.disconnect?.();
+          // Terminal outcome: this path conflicted (idempotent — counts once).
+          recordConnectionOutcome(outcome, false);
         },
         onControl,
         onReconnect: backfill,
         logger,
       });
 
-    return { cwd, connectionState, waker, router, backfill, sseListener, hooks };
+    return { cwd, connectionState, waker, router, backfill, sseListener, hooks, outcome };
   }
 
   // Build one connection per declared cwd. The order is the declaration order; the
@@ -321,6 +386,10 @@ export function buildDaemon(creds, deps = {}) {
     router: primary.router,
     sseListener: primary.sseListener,
     connections,
+    // Settles ONLY when every declared connection resolved and none registered
+    // (all paths already served by a live daemon — Q3). runDaemon races this against
+    // waitForever to exit non-zero. Never settles for a serving daemon.
+    allConflict,
     async start() {
       // Connect every path-connection. Each fires its own onConnect hook + SSE connect;
       // the daemon process cwd is untouched (NFR-3).
@@ -502,8 +571,32 @@ export async function runDaemon(flags = {}, deps = {}) {
   await daemon.start();
   log("[Chorus] daemon running. Waiting for task dispatches (Ctrl+C to stop).");
 
-  // Keep the process alive for the long-lived SSE subscription.
-  await (deps.waitForever ?? (() => new Promise(() => {})))();
+  // Keep the process alive for the long-lived SSE subscription, but exit non-zero if
+  // EVERY declared path turns out to be already served by a live daemon
+  // (add-daemon-connection-conflict-skip, Q3). `daemon.allConflict` settles only in
+  // that all-paths-conflicted case; otherwise we wait forever on the subscription. A
+  // sentinel distinguishes the two so a waitForever that never settles can't be mistaken
+  // for the conflict exit.
+  const ALL_CONFLICT = Symbol("all-conflict");
+  const waitForever = deps.waitForever ?? (() => new Promise(() => {}));
+  // `daemon.allConflict` is present on the real buildDaemon output; guard for injected
+  // test fakes that don't provide it (those never settle the conflict branch). A
+  // never-settling fallback keeps the race purely waitForever-driven in that case.
+  const allConflictSignal =
+    daemon.allConflict ?? new Promise(() => {});
+  const outcome = await Promise.race([
+    waitForever().then(() => 0),
+    allConflictSignal.then(() => ALL_CONFLICT),
+  ]);
+  if (outcome === ALL_CONFLICT) {
+    const n = servedPaths.length;
+    errLog(
+      `[Chorus] all ${n} declared ${n === 1 ? "path is" : "paths are"} already served by a live daemon — nothing to do. ` +
+        `Stop the other daemon(s) or remove the conflicting path(s), then restart.`
+    );
+    await daemon.stop();
+    return 1;
+  }
   return 0;
 }
 

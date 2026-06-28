@@ -69,6 +69,40 @@ describe("runDaemon — TTY yolo starts without confirmation", () => {
   });
 });
 
+describe("runDaemon — all-conflict non-zero exit (add-daemon-connection-conflict-skip)", () => {
+  it("returns 1 and warns when daemon.allConflict settles (every path already served)", async () => {
+    const errs = [];
+    const stop = vi.fn(async () => {});
+    // A fake daemon whose allConflict is ALREADY settled → the all-paths-conflicted case.
+    const build = vi.fn(() => ({ async start() {}, stop, allConflict: Promise.resolve() }));
+    const code = await runDaemon(
+      {},
+      baseDeps({
+        isTTY: false,
+        build,
+        errLog: (m) => errs.push(m),
+        // waitForever never resolves, so the only way out is the allConflict branch.
+        waitForever: () => new Promise(() => {}),
+      })
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).toMatch(/already served by a live daemon/i);
+    // Cleanly stops the (zero-serving) daemon before exiting.
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 0 when allConflict never settles and the subscription ends normally (no false exit)", async () => {
+    // A serving daemon: allConflict never settles; waitForever resolving (e.g. test
+    // teardown) must yield a clean 0, never the conflict exit.
+    const build = vi.fn(() => ({ async start() {}, async stop() {}, allConflict: new Promise(() => {}) }));
+    const code = await runDaemon(
+      {},
+      baseDeps({ isTTY: false, build, waitForever: async () => {} })
+    );
+    expect(code).toBe(0);
+  });
+});
+
 describe("recordYoloAck — preserves credentials, adds ack", () => {
   it("merges yoloAckAt into the existing file without touching creds", () => {
     const existing = { url: "u", apiKey: "cho_x", agentUuid: "a", agentName: "n" };

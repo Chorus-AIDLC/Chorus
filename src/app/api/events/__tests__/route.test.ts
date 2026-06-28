@@ -31,6 +31,10 @@ vi.mock("@/lib/event-bus", () => ({
 vi.mock("@/services/daemon-connection.service", () => ({
   parseSelfReport: (...args: unknown[]) => mockParseSelfReport(...args),
   registerConnection: (...args: unknown[]) => mockRegisterConnection(...args),
+  // Faithful re-implementation of the real guard: a conflict result carries a
+  // `conflict` key (the route uses it to skip the per-connection lifecycle).
+  isConnectionConflict: (result: unknown) =>
+    result !== null && typeof result === "object" && "conflict" in (result as object),
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
   markDisconnected: (...args: unknown[]) => mockMarkDisconnected(...args),
 }));
@@ -207,6 +211,43 @@ describe("GET /api/events (change events SSE)", () => {
     handler({ companyUuid: "other-company", type: "x" });
     await flush();
     expect(chunks.length).toBe(before);
+  });
+
+  describe("registration conflict (symmetric with the notification route)", () => {
+    const conflictResult = { conflict: true, host: "mac.local", cwd: "/work/alpha" };
+    beforeEach(() => {
+      mockParseSelfReport.mockReturnValue({
+        clientType: "claude_code",
+        host: "mac.local",
+        cwd: "/work/alpha",
+        startedAt: new Date("2026-06-15T09:00:00.000Z"),
+      });
+      mockRegisterConnection.mockResolvedValue(conflictResult);
+    });
+
+    it("emits a connection_conflict event (with host+cwd) on conflict", async () => {
+      const res = await GET(makeRequest("clientType=claude_code&host=mac.local&cwd=/work/alpha"));
+      const { chunks } = await startStream(res);
+      const joined = chunks.join("");
+      expect(joined).toContain(": connected");
+      expect(joined).toContain('"type":"connection_conflict"');
+      expect(joined).toContain('"host":"mac.local"');
+      expect(joined).toContain('"cwd":"/work/alpha"');
+    });
+
+    it("skips the per-connection lifecycle on conflict (no heartbeat touch, no markDisconnected)", async () => {
+      vi.useFakeTimers();
+      const ac = new AbortController();
+      const res = await GET(makeRequest("clientType=claude_code", ac.signal));
+      await startStream(res);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockTouchConnection).not.toHaveBeenCalled();
+
+      ac.abort();
+      await Promise.resolve();
+      expect(mockMarkDisconnected).not.toHaveBeenCalled();
+    });
   });
 
   describe("no-clientType / browser connection", () => {

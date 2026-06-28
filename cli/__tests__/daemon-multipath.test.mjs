@@ -77,6 +77,7 @@ class MockSse {
   deliver(event) {
     if (event?.type === "connection_registered") return this.opts.onConnectionId?.(event.connectionUuid);
     if (event?.type === "control") return this.opts.onControl?.(event);
+    if (event?.type === "connection_conflict") return this.opts.onConflict?.(event);
     this.opts.onEvent(event);
   }
 }
@@ -385,5 +386,123 @@ describe("back-compat: deps.cwd (single value) maps to a one-element cwd set", (
     expect(daemon.connections).toHaveLength(1);
     expect(daemon.waker).toBe(daemon.connections[0].waker); // primary alias
     expect(daemon.waker.resolveCwd()).toBe("/legacy/single");
+  });
+});
+
+// ===== add-daemon-connection-conflict-skip: warn + skip + all-conflict exit =====
+describe("connection conflict — warn, skip, no-retry, all-conflict exit", () => {
+  /** Build a daemon over the given cwd set, capturing each MockSse + logger warns + wake spy. */
+  function buildWithConflict(cwds) {
+    const warns = [];
+    const wake = vi.fn(async (p) => ({ sessionId: p.sessionId, exitCode: 0, isNew: p.isNew }));
+    const daemon = buildDaemon(
+      { url: "https://c", apiKey: "cho_x" },
+      {
+        logger: { ...silent, warn: (m) => warns.push(m) },
+        mcpClient: mockMcp(),
+        fetchImpl: lineageFetch(),
+        spawner: { wake },
+        cwds,
+        makeSseListener: (o) => new MockSse(o),
+      }
+    );
+    return { daemon, warns, wake };
+  }
+
+  it("AC#1: on conflict the daemon warns (host+cwd), disconnects that listener, and never spawns", async () => {
+    const { daemon, warns, wake } = buildWithConflict(["/dev/repo-a"]);
+    const conn = daemon.connections[0];
+    expect(conn.sseListener.connected).toBe(false);
+    await daemon.start();
+    expect(conn.sseListener.connected).toBe(true);
+
+    conn.sseListener.deliver({ type: "connection_conflict", host: "mac.local", cwd: "/dev/repo-a" });
+
+    // Warned with host + cwd, listener torn down (no reconnect), path marked skipped.
+    expect(warns.join("")).toMatch(/conflict/i);
+    expect(warns.join("")).toContain("mac.local");
+    expect(warns.join("")).toContain("/dev/repo-a");
+    expect(conn.sseListener.connected).toBe(false);
+    expect(conn.outcome.skipped).toBe(true);
+    // A conflict is never a wake — no subprocess spawned.
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("AC#2: partial conflict — C1 conflicts (skipped) while C2 registers and still serves wakes", async () => {
+    const { daemon, wake } = buildWithConflict(["/dev/repo-a", "/dev/repo-b"]);
+    await daemon.start();
+    const [c1, c2] = daemon.connections;
+
+    c1.sseListener.deliver({ type: "connection_conflict", host: "h", cwd: "/dev/repo-a" });
+    c2.sseListener.deliver({ type: "connection_registered", connectionUuid: "conn-B" });
+
+    // C1 surrendered; C2 alive and owns its connection uuid.
+    expect(c1.outcome.skipped).toBe(true);
+    expect(c1.sseListener.connected).toBe(false);
+    expect(c2.outcome.skipped).toBe(false);
+    expect(c2.sseListener.connected).toBe(true);
+    expect(c2.connectionState.connectionUuid).toBe("conn-B");
+
+    // C2 still dispatches a wake (its serving path is undisturbed by C1's skip).
+    c2.sseListener.deliver({ type: "new_notification", notificationUuid: "notif-1" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(wake).toHaveBeenCalledTimes(1);
+  });
+
+  it("AC#2: a partial conflict does NOT settle allConflict (the daemon keeps running)", async () => {
+    const { daemon } = buildWithConflict(["/dev/repo-a", "/dev/repo-b"]);
+    await daemon.start();
+    const [c1, c2] = daemon.connections;
+
+    let settled = false;
+    daemon.allConflict.then(() => { settled = true; });
+
+    c1.sseListener.deliver({ type: "connection_conflict", host: "h", cwd: "/dev/repo-a" });
+    c2.sseListener.deliver({ type: "connection_registered", connectionUuid: "conn-B" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // One conflicted, one registered → at least one path serves → must NOT settle.
+    expect(settled).toBe(false);
+  });
+
+  it("AC#3: allConflict settles ONLY after EVERY path conflicts (not while one is mid-handshake)", async () => {
+    const { daemon } = buildWithConflict(["/dev/repo-a", "/dev/repo-b"]);
+    await daemon.start();
+    const [c1, c2] = daemon.connections;
+
+    let settled = false;
+    daemon.allConflict.then(() => { settled = true; });
+
+    // First path conflicts; second still handshaking → latch must NOT fire yet (R5).
+    c1.sseListener.deliver({ type: "connection_conflict", host: "h", cwd: "/dev/repo-a" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(settled).toBe(false);
+
+    // Second path also conflicts → now all resolved + none registered → settles.
+    c2.sseListener.deliver({ type: "connection_conflict", host: "h", cwd: "/dev/repo-b" });
+    await daemon.allConflict; // resolves, or the test times out if the latch is broken
+    expect(settled).toBe(true);
+  });
+
+  it("a reconnect's repeated connection_registered does not double-count the latch", async () => {
+    // Two paths: one registers (twice, simulating a reconnect), the other conflicts.
+    // The repeated registration must not flip the bookkeeping into a premature/incorrect
+    // all-conflict (it stays a partial → never settles).
+    const { daemon } = buildWithConflict(["/dev/repo-a", "/dev/repo-b"]);
+    await daemon.start();
+    const [c1, c2] = daemon.connections;
+
+    let settled = false;
+    daemon.allConflict.then(() => { settled = true; });
+
+    c1.sseListener.deliver({ type: "connection_registered", connectionUuid: "conn-A" });
+    c1.sseListener.deliver({ type: "connection_registered", connectionUuid: "conn-A" }); // reconnect re-emit
+    c2.sseListener.deliver({ type: "connection_conflict", host: "h", cwd: "/dev/repo-b" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // One real registration survives → never an all-conflict.
+    expect(settled).toBe(false);
+    expect(c1.outcome.skipped).toBe(false);
+    expect(c2.outcome.skipped).toBe(true);
   });
 });

@@ -91,7 +91,14 @@ type AssertContinuable = typeof import("@/services/daemon-session.service")["ass
 type SessionReadOnlyErrorT = typeof import("@/services/daemon-session.service")["SessionReadOnlyError"];
 type StaleThreshold = typeof import("@/services/daemon-connection.service")["STALE_THRESHOLD_MS"];
 
-let registerConnection: RegisterConnection;
+// Narrowed to handle|null: every registration in this e2e is a non-conflict
+// path (distinct cwds, no competing same-cwd live process), so the wrapper
+// asserts "not a conflict" and returns the handle|null shape the `.uuid`
+// assertions below expect.
+type RegisterConnectionNarrowed = (
+  ...args: Parameters<RegisterConnection>
+) => Promise<{ uuid: string; connectedAt: Date } | null>;
+let registerConnection: RegisterConnectionNarrowed;
 let listConnectionsForAgent: ListConnectionsForAgent;
 let parseSelfReport: ParseSelfReport;
 let maybeCreateTurnForWakeNotification: MaybeCreateTurn;
@@ -165,7 +172,13 @@ describeReal("daemon multi-path E2E — REAL Postgres (T4 integration checkpoint
     }));
 
     const connSvc = await import("@/services/daemon-connection.service");
-    registerConnection = connSvc.registerConnection;
+    registerConnection = async (...args) => {
+      const result = await connSvc.registerConnection(...args);
+      if (connSvc.isConnectionConflict(result)) {
+        throw new Error(`unexpected conflict result in a non-conflict test: ${JSON.stringify(result)}`);
+      }
+      return result;
+    };
     listConnectionsForAgent = connSvc.listConnectionsForAgent;
     parseSelfReport = connSvc.parseSelfReport;
     STALE_THRESHOLD_MS = connSvc.STALE_THRESHOLD_MS;
