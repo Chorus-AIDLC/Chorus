@@ -433,8 +433,8 @@ const OTHER_CONN = "conn-other-0002";
 // (add-agent-instance-addressing) references this uuid via assigneeType="agent_instance".
 const INSTANCE = "instance-pinned-0001";
 
-// A ConnectionView (the shape listConnectionsForAgent returns), online-first then
-// lastSeenAt desc per the registry contract. We build the list explicitly per test.
+// A ConnectionView (the shape listConnectionsForAgent returns), online-first with
+// stable identity ties per the registry contract. We build the list explicitly per test.
 function connView(overrides: Record<string, unknown> = {}) {
   return {
     uuid: PINNED_CONN,

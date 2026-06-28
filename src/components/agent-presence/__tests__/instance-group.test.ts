@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   groupConnectionsByAgent,
   onlineConnectionsOnly,
+  sortConnectionsForPresence,
   deriveInstanceActivity,
 } from "../instance-group";
 import type { ConnectionView, ExecutionView } from "../types";
@@ -52,11 +53,11 @@ function exec(overrides: Partial<ExecutionView> & { uuid: string }): ExecutionVi
 }
 
 describe("groupConnectionsByAgent", () => {
-  it("groups connections by agent, preserving first-appearance order", () => {
+  it("groups connections by agent in deterministic identity order", () => {
     const groups = groupConnectionsByAgent([
-      conn({ uuid: "a1", agentUuid: "A", agentName: "Alpha" }),
       conn({ uuid: "b1", agentUuid: "B", agentName: "Beta" }),
-      conn({ uuid: "a2", agentUuid: "A", agentName: "Alpha" }),
+      conn({ uuid: "a2", agentUuid: "A", agentName: "Alpha", cwd: "/z" }),
+      conn({ uuid: "a1", agentUuid: "A", agentName: "Alpha", cwd: "/a" }),
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0].agentUuid).toBe("A");
@@ -110,13 +111,13 @@ describe("groupConnectionsByAgent", () => {
 });
 
 describe("onlineConnectionsOnly", () => {
-  it("keeps only effectively-online connections (drops offline)", () => {
+  it("keeps only effectively-online connections (drops offline) and returns them sorted", () => {
     const result = onlineConnectionsOnly([
-      conn({ uuid: "a1", effectiveStatus: "online" }),
+      conn({ uuid: "a1", effectiveStatus: "online", cwd: "/z" }),
       conn({ uuid: "a2", effectiveStatus: "offline" }),
-      conn({ uuid: "a3", effectiveStatus: "online" }),
+      conn({ uuid: "a3", effectiveStatus: "online", cwd: "/a" }),
     ]);
-    expect(result.map((c) => c.uuid)).toEqual(["a1", "a3"]);
+    expect(result.map((c) => c.uuid)).toEqual(["a3", "a1"]);
   });
 
   it("drops a legacy null-cwd OFFLINE 'unknown path' connection from presence", () => {
@@ -139,14 +140,173 @@ describe("onlineConnectionsOnly", () => {
     expect(groupConnectionsByAgent(offlineOnly)).toHaveLength(0);
   });
 
-  it("preserves input order of the surviving online connections", () => {
+  it("sorts surviving online connections instead of preserving raw input order", () => {
     const result = onlineConnectionsOnly([
-      conn({ uuid: "a1", effectiveStatus: "online" }),
+      conn({ uuid: "a1", effectiveStatus: "online", cwd: "/c" }),
       conn({ uuid: "a2", effectiveStatus: "offline" }),
-      conn({ uuid: "a3", effectiveStatus: "online" }),
-      conn({ uuid: "a4", effectiveStatus: "online" }),
+      conn({ uuid: "a3", effectiveStatus: "online", cwd: "/a" }),
+      conn({ uuid: "a4", effectiveStatus: "online", cwd: "/b" }),
     ]);
-    expect(result.map((c) => c.uuid)).toEqual(["a1", "a3", "a4"]);
+    expect(result.map((c) => c.uuid)).toEqual(["a3", "a4", "a1"]);
+  });
+});
+
+describe("sortConnectionsForPresence", () => {
+  it("sorts by effective status, agent name, agent uuid, cwd, host, client type, and uuid", () => {
+    const input = [
+      conn({
+        uuid: "offline-alpha",
+        agentUuid: "agent-a",
+        agentName: "Alpha",
+        effectiveStatus: "offline",
+        cwd: "/a",
+      }),
+      conn({
+        uuid: "online-beta",
+        agentUuid: "agent-b",
+        agentName: "Beta",
+        cwd: "/a",
+      }),
+      conn({
+        uuid: "online-alpha-null",
+        agentUuid: "agent-a",
+        agentName: "alpha",
+        cwd: null,
+      }),
+      conn({
+        uuid: "online-alpha-a",
+        agentUuid: "agent-a",
+        agentName: "  ALPHA ",
+        cwd: "/a",
+      }),
+      conn({
+        uuid: "online-missing",
+        agentUuid: "agent-0",
+        agentName: null,
+        cwd: "/a",
+      }),
+    ];
+
+    expect(sortConnectionsForPresence(input).map((c) => c.uuid)).toEqual([
+      "online-alpha-a",
+      "online-alpha-null",
+      "online-beta",
+      "online-missing",
+      "offline-alpha",
+    ]);
+    // Pure helper: original array was not mutated.
+    expect(input.map((c) => c.uuid)).toEqual([
+      "offline-alpha",
+      "online-beta",
+      "online-alpha-null",
+      "online-alpha-a",
+      "online-missing",
+    ]);
+  });
+
+  it("tie-breaks agents with duplicate display names by agent uuid", () => {
+    const result = sortConnectionsForPresence([
+      conn({
+        uuid: "same-name-b",
+        agentUuid: "agent-b",
+        agentName: "Same Name",
+      }),
+      conn({
+        uuid: "same-name-a",
+        agentUuid: "agent-a",
+        agentName: "same name",
+      }),
+    ]);
+
+    expect(result.map((c) => c.uuid)).toEqual(["same-name-a", "same-name-b"]);
+  });
+
+  it("ranks running before queued before online idle before offline, then stable identity", () => {
+    const running = conn({
+      uuid: "running-z",
+      agentUuid: "agent-z",
+      agentName: "Zeta",
+    });
+    const queued = conn({
+      uuid: "queued-a",
+      agentUuid: "agent-a",
+      agentName: "Alpha",
+    });
+    const idle = conn({
+      uuid: "idle-a",
+      agentUuid: "agent-a",
+      agentName: "Alpha",
+      cwd: "/idle",
+    });
+    const offline = conn({
+      uuid: "offline-a",
+      agentUuid: "agent-a",
+      agentName: "Alpha",
+      effectiveStatus: "offline",
+    });
+
+    const result = sortConnectionsForPresence(
+      [offline, idle, queued, running],
+      {
+        [running.uuid]: [exec({ uuid: "run", connectionUuid: running.uuid, status: "running" })],
+        [queued.uuid]: [exec({ uuid: "queue", connectionUuid: queued.uuid, status: "queued" })],
+        [idle.uuid]: [],
+        [offline.uuid]: [exec({ uuid: "offline-run", connectionUuid: offline.uuid, status: "running" })],
+      },
+    );
+
+    expect(result.map((c) => c.uuid)).toEqual([
+      "running-z",
+      "queued-a",
+      "idle-a",
+      "offline-a",
+    ]);
+  });
+
+  it("orders groups by highest instance activity when execution state is provided", () => {
+    const betaRunning = conn({
+      uuid: "beta-running",
+      agentUuid: "agent-b",
+      agentName: "Beta",
+    });
+    const alphaIdle = conn({
+      uuid: "alpha-idle",
+      agentUuid: "agent-a",
+      agentName: "Alpha",
+    });
+
+    const groups = groupConnectionsByAgent(
+      [alphaIdle, betaRunning],
+      {
+        [betaRunning.uuid]: [
+          exec({ uuid: "run", connectionUuid: betaRunning.uuid, status: "running" }),
+        ],
+      },
+    );
+
+    expect(groups.map((g) => g.agentUuid)).toEqual(["agent-b", "agent-a"]);
+  });
+
+  it("returns the same order for equivalent shuffled refresh payloads", () => {
+    const a = [
+      conn({ uuid: "z", agentUuid: "agent-z", agentName: "Zeta", cwd: "/z" }),
+      conn({ uuid: "a-null", agentUuid: "agent-a", agentName: "Alpha", cwd: null }),
+      conn({ uuid: "a-a", agentUuid: "agent-a", agentName: "Alpha", cwd: "/a" }),
+    ];
+    const b = [
+      conn({ uuid: "a-a", agentUuid: "agent-a", agentName: "Alpha", cwd: "/a" }),
+      conn({ uuid: "z", agentUuid: "agent-z", agentName: "Zeta", cwd: "/z" }),
+      conn({ uuid: "a-null", agentUuid: "agent-a", agentName: "Alpha", cwd: null }),
+    ];
+
+    expect(sortConnectionsForPresence(a).map((c) => c.uuid)).toEqual([
+      "a-a",
+      "a-null",
+      "z",
+    ]);
+    expect(sortConnectionsForPresence(b).map((c) => c.uuid)).toEqual(
+      sortConnectionsForPresence(a).map((c) => c.uuid),
+    );
   });
 });
 

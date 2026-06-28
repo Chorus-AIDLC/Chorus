@@ -335,9 +335,11 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
   // from presence rather than lingering as an all-offline row). Because every
   // grouped connection is now online, each group's onlineCount equals its
   // instance count, so the `> 0` filter is just defensive (a group can't be
-  // empty). The service's online-first sort still orders the rows.
+  // empty). `onlineConnectionsOnly` also applies the stable identity sort, so
+  // raw refresh array order cannot make the popover jump.
   const onlineAgentGroups = groupConnectionsByAgent(
-    onlineConnectionsOnly(connections),
+    onlineConnectionsOnly(connections, executionsByConnection),
+    executionsByConnection,
   ).filter((g) => g.onlineCount > 0);
 
   return (

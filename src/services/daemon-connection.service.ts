@@ -206,17 +206,44 @@ function toConnectionView(row: DaemonConnectionRow): ConnectionView {
   };
 }
 
+const MISSING_NAME_SORT_KEY = "\uffff";
+const NULL_CWD_SORT_KEY = "\uffff";
+
+function normalizedTextSortKey(value: string | null): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.toLocaleLowerCase("en-US") : MISSING_NAME_SORT_KEY;
+}
+
+function cwdSortKey(value: string | null): string {
+  return value === null ? NULL_CWD_SORT_KEY : value;
+}
+
+function compareText(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 /**
- * Order the projected views online-first, then by `lastSeenAt` desc — the
- * most-relevant connections surface at the top. Sorts a copy; does not mutate
- * the input.
+ * Order the projected views deterministically for stable daemon presence UI.
+ *
+ * Timestamps remain display data only: `lastSeenAt` changes on heartbeat and
+ * therefore must not reorder an otherwise-equivalent connection set. Sorts a
+ * copy; never mutates the caller-owned array.
  */
-function sortConnectionViews(views: ConnectionView[]): ConnectionView[] {
+export function sortConnectionViews(views: ConnectionView[]): ConnectionView[] {
   return [...views].sort((a, b) => {
     if (a.effectiveStatus !== b.effectiveStatus) {
       return a.effectiveStatus === "online" ? -1 : 1;
     }
-    return b.lastSeenAt.localeCompare(a.lastSeenAt);
+    return (
+      compareText(normalizedTextSortKey(a.agentName), normalizedTextSortKey(b.agentName)) ||
+      compareText(a.agentUuid, b.agentUuid) ||
+      compareText(cwdSortKey(a.cwd), cwdSortKey(b.cwd)) ||
+      compareText(a.host, b.host) ||
+      compareText(a.clientType, b.clientType) ||
+      compareText(a.uuid, b.uuid)
+    );
   });
 }
 

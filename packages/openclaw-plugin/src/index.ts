@@ -107,7 +107,6 @@ export default definePluginEntry({
     //     into api.config/api.runtime (kept out of the client so it stays testable).
     //     `redispatch` resolves lineage for a synthetic resume so it continues the
     //     SAME session, then runs the wake; a delivered turn already carries its ids.
-    let daemonClient: OpenClawDaemonClient;
     const redispatch = (req: WakeRequest): void => {
       void (async () => {
         let enriched = req;
@@ -128,7 +127,7 @@ export default definePluginEntry({
         await daemonClient.runWake(enriched);
       })();
     };
-    daemonClient = new OpenClawDaemonClient({
+    const daemonClient = new OpenClawDaemonClient({
       restClient,
       resolveRunContext: () => resolveWakeRunContext(api, logger),
       redispatch,
