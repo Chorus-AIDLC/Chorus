@@ -108,8 +108,14 @@ export class SseListener {
     // cwd is supplied the daemon is single-path: report the process cwd (the directory
     // it was launched from), identical to today / an old daemon (HARD-1).
     this.cwd = opts.cwd ?? process.cwd();
+    // The daemon backend driving this connection (daemon-agent-selection): the
+    // server registers the row's `clientType` from this self-report, so a
+    // `--agent codex` daemon shows as `codex` instead of mislabelling itself
+    // `claude_code`. Defaults to claude_code (the default backend / an old
+    // single-backend daemon that never sets it).
+    this.clientType = opts.clientType ?? "claude_code";
     const params = new URLSearchParams({
-      clientType: "claude_code",
+      clientType: this.clientType,
       clientVersion: CLI_VERSION,
       host: hostname(),
       cwd: this.cwd,

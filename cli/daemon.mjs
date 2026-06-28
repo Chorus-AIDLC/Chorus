@@ -18,7 +18,7 @@ import {
   resolvePermissionMode,
   yoloWarningLine,
 } from "./daemon-permission-mode.mjs";
-import { resolveAgentType } from "./daemon-agent.mjs";
+import { resolveAgentType, backendClientType } from "./daemon-agent.mjs";
 import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
@@ -282,6 +282,9 @@ export function buildDaemon(creds, deps = {}) {
       makeSse({
         url: creds.url,
         apiKey: creds.apiKey,
+        // Self-report the SELECTED backend so the connection registry + presence UI
+        // label a codex daemon as `codex` (not the hardcoded `claude_code`).
+        clientType: backendClientType(agentType),
         // The working directory THIS connection serves (T3). `undefined` ⇒ the listener
         // reports its process cwd (single-path / HARD-1). It is just the served path.
         cwd,

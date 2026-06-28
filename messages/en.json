@@ -1382,6 +1382,7 @@
     "unknownAgent": "Unknown agent",
     "clientClaudeCode": "Claude Code",
     "clientOpenclaw": "OpenClaw",
+    "clientCodex": "Codex",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",

@@ -25,6 +25,18 @@ export function backendCli(agentType) {
 }
 
 /**
+ * Map the resolved agent backend to the `clientType` the daemon self-reports to
+ * the server (and that the connection registry + presence UI display). The server
+ * gates this against DAEMON_CLIENT_TYPES, so the values MUST match: `codex` →
+ * `codex`, `claude-code` → `claude_code`. Anything else falls back to claude_code.
+ * @param {string} agentType
+ * @returns {string}
+ */
+export function backendClientType(agentType) {
+  return agentType === "codex" ? "codex" : "claude_code";
+}
+
+/**
  * Resolve the agent type from flag → env → default, and validate it.
  * Precedence: explicit `--agent` flag > CHORUS_AGENT env > DEFAULT_AGENT.
  *

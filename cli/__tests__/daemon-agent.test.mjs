@@ -3,7 +3,7 @@
 // resolveAgentType now accepts BOTH claude-code and codex; unknown values are
 // still rejected non-zero with no silent fallback; default stays claude-code.
 import { describe, it, expect } from "vitest";
-import { resolveAgentType, KNOWN_AGENTS, DEFAULT_AGENT } from "../daemon-agent.mjs";
+import { resolveAgentType, KNOWN_AGENTS, DEFAULT_AGENT, backendClientType } from "../daemon-agent.mjs";
 
 describe("resolveAgentType — known backends", () => {
   it("defaults to claude-code with no flag and no env", () => {
@@ -50,5 +50,18 @@ describe("resolveAgentType — unknown rejected (no silent fallback)", () => {
     const r = resolveAgentType({}, { CHORUS_AGENT: "nope" });
     expect(r.ok).toBe(false);
     expect(r.value).toBe("nope");
+  });
+});
+
+describe("backendClientType — agentType → self-reported clientType", () => {
+  it("maps codex → codex", () => {
+    expect(backendClientType("codex")).toBe("codex");
+  });
+  it("maps claude-code → claude_code", () => {
+    expect(backendClientType("claude-code")).toBe("claude_code");
+  });
+  it("falls back to claude_code for unknown/undefined", () => {
+    expect(backendClientType(undefined)).toBe("claude_code");
+    expect(backendClientType("whatever")).toBe("claude_code");
   });
 });
