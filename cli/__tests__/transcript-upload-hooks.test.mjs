@@ -135,6 +135,61 @@ describe("extractTranscriptText — keep user/assistant text, drop everything el
   });
 });
 
+// ── Real captured codex `codex exec --json` event shapes (codex-cli 0.142.3) ──
+// Codex's stream is structurally different from Claude's: conversation/tool output
+// arrives as `item.completed` events whose `item.type` discriminates. Assistant
+// text is an `agent_message` item with a top-level `item.text` (verified live —
+// the user prompt is NOT echoed by codex; the chat UI renders it from the turn's
+// promptText instead, so the extractor only needs to surface assistant text).
+const CODEX_THREAD_STARTED = { type: "thread.started", thread_id: "019f0bf0-10b3-7b52-82ab-57e97481fbd1" };
+const CODEX_TURN_STARTED = { type: "turn.started" };
+const CODEX_AGENT_MESSAGE = {
+  type: "item.completed",
+  item: { id: "item_0", type: "agent_message", text: "The hostname is `ip-172`." },
+};
+const CODEX_TURN_COMPLETED = { type: "turn.completed", usage: { input_tokens: 13714, output_tokens: 6 } };
+const CODEX_REASONING = {
+  type: "item.completed",
+  item: { id: "item_1", type: "reasoning", text: "Let me think." },
+};
+const CODEX_COMMAND_EXEC = {
+  type: "item.completed",
+  item: { id: "item_2", type: "command_execution", command: "ls", aggregated_output: "a\nb\n" },
+};
+
+describe("extractTranscriptText — codex exec --json shape", () => {
+  it("keeps a codex agent_message item as assistant text", () => {
+    expect(extractTranscriptText(CODEX_AGENT_MESSAGE)).toEqual({
+      role: "assistant",
+      text: "The hostname is `ip-172`.",
+    });
+  });
+
+  it("drops codex lifecycle envelopes (thread.started / turn.started / turn.completed)", () => {
+    expect(extractTranscriptText(CODEX_THREAD_STARTED)).toBeNull();
+    expect(extractTranscriptText(CODEX_TURN_STARTED)).toBeNull();
+    expect(extractTranscriptText(CODEX_TURN_COMPLETED)).toBeNull();
+  });
+
+  it("drops a codex reasoning item (model thinking — not conversation text)", () => {
+    expect(extractTranscriptText(CODEX_REASONING)).toBeNull();
+  });
+
+  it("drops a codex command_execution item (tool activity, not assistant text)", () => {
+    expect(extractTranscriptText(CODEX_COMMAND_EXEC)).toBeNull();
+  });
+
+  it("drops a codex agent_message with only-whitespace text", () => {
+    const blank = { type: "item.completed", item: { type: "agent_message", text: "   " } };
+    expect(extractTranscriptText(blank)).toBeNull();
+  });
+
+  it("drops a codex item.completed with no item / missing text", () => {
+    expect(extractTranscriptText({ type: "item.completed" })).toBeNull();
+    expect(extractTranscriptText({ type: "item.completed", item: { type: "agent_message" } })).toBeNull();
+  });
+});
+
 /** A fake server: records every POST body and answers ok unless told otherwise. */
 function fakeServer({ ok = true, status = 200 } = {}) {
   const posts = [];

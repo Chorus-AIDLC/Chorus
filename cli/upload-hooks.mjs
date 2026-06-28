@@ -150,17 +150,41 @@ export function mergeUploadHooks(...args) {
 const CONVERSATION_TYPES = new Set(["user", "assistant"]);
 
 /**
- * Extract the plain user/assistant TEXT from one Claude Code stream-json object,
- * dropping everything that is not a conversation text block (system/result
- * envelopes, thinking, tool_use, tool_result). Returns null when the object is not a
- * keepable conversation message (so the caller can skip it). Never throws — a shape
- * it doesn't recognize yields null rather than an error (defensive against CLI drift).
+ * Extract the plain user/assistant TEXT from one stream object emitted by EITHER
+ * backend's headless stream, dropping everything that is not a conversation text
+ * block. Returns null when the object is not a keepable conversation message (so
+ * the caller can skip it). Never throws — a shape it doesn't recognize yields null
+ * rather than an error (defensive against CLI drift).
  *
- * @param {any} obj  One parsed stream-json NDJSON object.
+ * Two stream dialects are recognized (their top-level shapes are disjoint, so no
+ * backend flag is needed):
+ *  - Claude Code stream-json: `{ type: "user"|"assistant", message: { content … } }`.
+ *  - codex `codex exec --json`: conversation/tool output rides on `item.completed`
+ *    events discriminated by `item.type`; assistant text is an `agent_message`
+ *    item with a top-level `item.text` (verified against codex-cli 0.142.3). codex
+ *    does NOT echo the user prompt (the chat UI renders that from the turn's
+ *    promptText), and `reasoning` / `command_execution` / lifecycle envelopes are
+ *    not conversation text — all dropped.
+ *
+ * @param {any} obj  One parsed stream NDJSON object.
  * @returns {{ role: "user"|"assistant", text: string } | null}
  */
 export function extractTranscriptText(obj) {
   if (!obj || typeof obj !== "object") return null;
+
+  // ── codex `codex exec --json` dialect ──
+  // Only `item.completed` carries finished output; an `agent_message` item is the
+  // assistant's conversation text. Everything else (reasoning, command_execution,
+  // file_change, thread.started/turn.* lifecycle) is not user/assistant text.
+  if (obj.type === "item.completed") {
+    const item = obj.item;
+    if (!item || typeof item !== "object" || item.type !== "agent_message") return null;
+    const itemText = typeof item.text === "string" ? item.text : "";
+    if (!itemText.trim()) return null;
+    return { role: "assistant", text: itemText };
+  }
+
+  // ── Claude Code stream-json dialect ──
   if (!CONVERSATION_TYPES.has(obj.type)) return null;
 
   const message = obj.message;
