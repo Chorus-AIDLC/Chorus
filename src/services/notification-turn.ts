@@ -414,8 +414,8 @@ type OriginSelection =
  *        treated as a plain agent, so the agent's online-first connection wakes. Never
  *        notify-only, never a hang.
  *  - With no pin: the online-first selection (`effectiveStatus === "online"`, first entry —
- *    the list is already sorted online-first then lastSeenAt desc) → `online_first`,
- *    exactly as before this change. None online → `none`.
+ *    the list is already sorted by stable daemon presence identity) → `online_first`.
+ *    None online → `none`.
  *
  * A `directed`/`online_first` result carries the chosen ONLINE `ConnectionView`. An
  * `offline_pin`/`none` result carries no connection: the caller creates NO turn and the
@@ -447,9 +447,9 @@ function selectOriginConnection(
     // SOFT-pin degrade → fall through to the online-first selection.
   }
 
-  // No pin (or a degraded soft pin) → online-first (the existing behavior). The list is
-  // pre-sorted online-first, so the first online entry is the freshest connection. None
-  // online → no turn.
+  // No pin (or a degraded soft pin) → online-first. The list is pre-sorted
+  // online-first with stable identity ties, so heartbeats do not reorder an
+  // otherwise-equivalent connection set. None online → no turn.
   const onlineFirst = connections.find((c) => c.effectiveStatus === "online");
   return onlineFirst
     ? { kind: "online_first", connection: onlineFirst }
@@ -589,7 +589,7 @@ export async function createTurnAndResolveTarget(
   try {
     // (3) Resolve the agent's connections, then select the ONLINE origin (cwd-bound
     // transcript owner) honoring any pinned target instance. listConnectionsForAgent is
-    // sorted online-first, then lastSeenAt desc.
+    // sorted online-first with stable identity ties.
     const connections = await listConnectionsForAgent(
       ctx.companyUuid,
       ctx.recipientUuid,

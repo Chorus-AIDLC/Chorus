@@ -7,7 +7,7 @@
 // a presentational view that reads its dataset from the shell-level
 // `useAgentPresence()` spine instead of running its own poll + SSE. Capability
 // parity with the former page is a hard requirement:
-//   - master-detail connection list (online-first, as the service already sorts),
+//   - master-detail connection list (online-first with stable identity ties),
 //   - per-connection detail (client type + version, online/offline from
 //     `effectiveStatus`, host, last-active, uptime ONLY for online),
 //   - running/queued execution state + the `interrupted` executions the data
@@ -578,8 +578,8 @@ export function AgentConnectionsView() {
   // is still the source of `onlineCount`/`status` (the no-silent-error gate) and
   // of `selectedAgentOnlineConnections` (which independently filters online).
   const visibleConnections = useMemo(
-    () => onlineConnectionsOnly(connections),
-    [connections],
+    () => onlineConnectionsOnly(connections, executionsByConnection),
+    [connections, executionsByConnection],
   );
 
   // "loading" only on the very first poll before any data has settled. Once the

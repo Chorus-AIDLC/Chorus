@@ -65,11 +65,55 @@ export interface AgentInstanceGroup {
   singleHost: string | undefined;
 }
 
+const MISSING_NAME_SORT_KEY = "\uffff";
+const NULL_CWD_SORT_KEY = "\uffff";
+
+function normalizedTextSortKey(value: string | null): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.toLocaleLowerCase("en-US") : MISSING_NAME_SORT_KEY;
+}
+
+function cwdSortKey(value: string | null): string {
+  return value === null ? NULL_CWD_SORT_KEY : value;
+}
+
+function compareText(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 /**
- * Group a flat, already-sorted (online-first, lastSeenAt desc — see
- * `sortConnectionViews`) list of connections into one entry per agent,
- * preserving the input order of agents (first appearance wins) and of
- * connections within an agent. Pure: no side effects, safe in render/test.
+ * Stable defensive ordering for frontend presence views. The backend already
+ * returns deterministic order, but local derived surfaces can receive arrays
+ * from tests, cached state, or future transforms; normalize before grouping so
+ * equivalent refreshes cannot jump because of raw array order.
+ */
+export function sortConnectionsForPresence(
+  connections: ConnectionView[],
+  executionsByConnection: Record<string, ExecutionView[]> = {},
+): ConnectionView[] {
+  return [...connections].sort((a, b) => {
+    const activityRankDiff =
+      connectionActivityRank(a, executionsByConnection[a.uuid] ?? []) -
+      connectionActivityRank(b, executionsByConnection[b.uuid] ?? []);
+    return (
+      activityRankDiff ||
+      compareText(normalizedTextSortKey(a.agentName), normalizedTextSortKey(b.agentName)) ||
+      compareText(a.agentUuid, b.agentUuid) ||
+      compareText(cwdSortKey(a.cwd), cwdSortKey(b.cwd)) ||
+      compareText(a.host, b.host) ||
+      compareText(a.clientType, b.clientType) ||
+      compareText(a.uuid, b.uuid)
+    );
+  });
+}
+
+/**
+ * Group a flat list of connections into one entry per agent after applying the
+ * stable presence comparator. Agent group order and connection order within an
+ * agent are therefore deterministic rather than inherited from raw API/cache
+ * array order. Pure: no side effects, safe in render/test.
  *
  * `multiHost` is derived from the count of DISTINCT non-empty-considered host
  * strings across the agent's connections (the empty-string host counts as its
@@ -79,10 +123,15 @@ export interface AgentInstanceGroup {
  */
 export function groupConnectionsByAgent(
   connections: ConnectionView[],
+  executionsByConnection: Record<string, ExecutionView[]> = {},
 ): AgentInstanceGroup[] {
+  const orderedConnections = sortConnectionsForPresence(
+    connections,
+    executionsByConnection,
+  );
   const order: string[] = [];
   const byAgent = new Map<string, ConnectionView[]>();
-  for (const conn of connections) {
+  for (const conn of orderedConnections) {
     if (!byAgent.has(conn.agentUuid)) {
       byAgent.set(conn.agentUuid, []);
       order.push(conn.agentUuid);
@@ -123,8 +172,22 @@ export function groupConnectionsByAgent(
  */
 export function onlineConnectionsOnly(
   connections: ConnectionView[],
+  executionsByConnection: Record<string, ExecutionView[]> = {},
 ): ConnectionView[] {
-  return connections.filter((c) => c.effectiveStatus === "online");
+  return sortConnectionsForPresence(
+    connections.filter((c) => c.effectiveStatus === "online"),
+    executionsByConnection,
+  );
+}
+
+function connectionActivityRank(
+  connection: ConnectionView,
+  executions: ExecutionView[],
+): number {
+  if (connection.effectiveStatus !== "online") return 3;
+  if (executions.some((e) => e.status === "running")) return 0;
+  if (executions.some((e) => e.status === "queued")) return 1;
+  return 2;
 }
 
 // The derived activity state of one instance, used to drive both the subline

@@ -224,11 +224,10 @@ async function buildHarness(apiKey: string): Promise<Harness> {
     logger,
   });
 
-  let daemonClient: OpenClawDaemonClient;
   const redispatch = (req: WakeRequest): void => {
     void daemonClient.runWake(req);
   };
-  daemonClient = new OpenClawDaemonClient({
+  const daemonClient = new OpenClawDaemonClient({
     restClient,
     resolveRunContext: () => ({
       agent: fake.agent,
