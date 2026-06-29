@@ -66,6 +66,43 @@ export interface ConnectionHandle {
 }
 
 /**
+ * Returned by `registerConnection` when the registration is REJECTED because a
+ * live, different-process daemon already holds the same `(agentUuid, host, cwd)`
+ * identity (add-daemon-connection-conflict-skip). This is NOT an error and NOT a
+ * handle — it is a third, distinct outcome the caller (the SSE route) must
+ * recognize so it can emit a `connection_conflict` event instead of wiring up the
+ * per-connection lifecycle for a connection that was never written.
+ *
+ * The crucial contract: when this is returned, NOTHING was written — no
+ * `DaemonConnection` row was created/upserted/refreshed and no `AgentInstance`
+ * was materialized. Because the only process-identity discriminator is the
+ * self-reported `startedAt` (DEC-1), a rejected registration that wrote even
+ * `lastSeenAt` would corrupt the incumbent's own reconnect comparison.
+ *
+ * `host`/`cwd` echo the conflicting identity so the route can forward them to the
+ * daemon (which names them in its WARNING). `cwd` is always a real string here —
+ * conflict detection runs only on the real-cwd path; the `cwd=null` HARD-1 branch
+ * is exempt (Q5).
+ */
+export interface ConnectionConflict {
+  conflict: true;
+  host: string;
+  cwd: string;
+}
+
+/**
+ * Narrow a `registerConnection` result to the conflict sentinel. Callers use this
+ * to distinguish the three outcomes (success handle | conflict | null) without
+ * leaning on structural truthiness — a conflict object is truthy, so a naive
+ * `if (result)` would mistake it for a handle.
+ */
+export function isConnectionConflict(
+  result: ConnectionHandle | ConnectionConflict | null,
+): result is ConnectionConflict {
+  return result !== null && "conflict" in result;
+}
+
+/**
  * Read projection of a `DaemonConnection` row returned to callers of the read
  * API. The raw `status` and the timestamps are passed through so a client can
  * render uptime and last-active without re-implementing liveness; the
@@ -181,9 +218,22 @@ interface DaemonConnectionRow {
  * (this read path) can never drift. The boundary is inclusive: elapsed exactly
  * equal to the threshold still counts as fresh → "online".
  */
+/**
+ * The single liveness predicate shared by every consumer (the read projection,
+ * the instance-online derivation, AND the registration conflict check), so
+ * producer and consumer can never drift (Module Contract 4). A connection is
+ * *effectively online* iff its raw `status` is the literal "online" AND its
+ * `lastSeenAt` is within `STALE_THRESHOLD_MS` of `now`. The boundary is
+ * inclusive: elapsed exactly equal to the threshold still counts as fresh.
+ * `now` is injected (defaulting to `Date.now()`) so callers that already
+ * captured a timestamp can pass it for internal consistency.
+ */
+function isEffectivelyOnline(status: string, lastSeenAt: Date, now: number = Date.now()): boolean {
+  return status === "online" && now - lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
+}
+
 function toConnectionView(row: DaemonConnectionRow): ConnectionView {
-  const fresh = Date.now() - row.lastSeenAt.getTime() <= STALE_THRESHOLD_MS;
-  const effectiveStatus = row.status === "online" && fresh ? "online" : "offline";
+  const effectiveStatus = isEffectivelyOnline(row.status, row.lastSeenAt) ? "online" : "offline";
 
   return {
     uuid: row.uuid,
@@ -415,11 +465,93 @@ async function upsertAgentInstance(
   }
 }
 
+/**
+ * Result of the conflict pre-check: identifies the fresh incumbent that blocks the
+ * registration, so the caller can log it. `null` from `detectRegistrationConflict`
+ * means "no conflict — proceed to register".
+ */
+interface ConflictDetail {
+  incumbentStartedAt: Date | null;
+  incumbentClientType: string;
+}
+
+/**
+ * Decide whether registering at `(agentUuid, host, cwd)` would silently preempt a
+ * different live daemon process (add-daemon-connection-conflict-skip). Returns a
+ * `ConflictDetail` when it WOULD (the caller must skip + signal), or `null` when
+ * registration may proceed.
+ *
+ * Truth table over the existing rows at the `(agentUuid, host, cwd)` TRIPLE —
+ * evaluated ACROSS ALL clientTypes (Q2/DEC-2), so a fresh claude_code incumbent
+ * blocks a codex registration at the same path and vice-versa:
+ *  - no effectively-online incumbent → null (first connect OR stale takeover — a
+ *    stale/offline row is always takeable, regardless of startedAt);
+ *  - a fresh incumbent whose startedAt EQUALS the incoming startedAt → null (this
+ *    is the same process reconnecting; preserve reconnect semantics 1:1);
+ *  - a fresh incumbent whose startedAt DIFFERS from the incoming startedAt
+ *    (including the null-vs-non-null asymmetry in either direction) → CONFLICT.
+ *
+ * Liveness uses the shared `isEffectivelyOnline` predicate (Module Contract 4) so
+ * it can never drift from the read projection. `now` is the registration timestamp
+ * already captured by the caller, passed in for internal consistency.
+ *
+ * Read-only: this issues a single `findMany` and never writes — it runs before any
+ * mutation so the write-nothing invariant holds. It is invoked inside
+ * `registerConnection`'s try/catch, so a query failure propagates to that catch and
+ * degrades to the existing swallow-and-log "return null" (treated as "no conflict,
+ * but the subsequent write will also fail and be swallowed") rather than throwing.
+ */
+async function detectRegistrationConflict(
+  agentUuid: string,
+  host: string,
+  cwd: string,
+  incomingStartedAt: Date | null,
+  now: number,
+): Promise<ConflictDetail | null> {
+  // The composite unique is (agentUuid, clientType, host, cwd); querying the
+  // (agentUuid, host, cwd) SUBSET is intentionally non-unique so it spans every
+  // clientType at this path. Only liveness-relevant fields are selected.
+  const rows = await prisma.daemonConnection.findMany({
+    where: { agentUuid, host, cwd },
+    select: { status: true, lastSeenAt: true, startedAt: true, clientType: true },
+  });
+
+  for (const row of rows) {
+    if (!isEffectivelyOnline(row.status, row.lastSeenAt, now)) {
+      // Stale / offline incumbent — always takeable, never a conflict.
+      continue;
+    }
+    // Fresh incumbent. Same startedAt ⇒ same process reconnecting (not a conflict).
+    // - Both non-null and equal instants → same process → refresh.
+    // - One null, one non-null (either direction) → DIFFERENT → conflict (the
+    //   confirmed null-startedAt edge: a fresh row we cannot prove is "us" is
+    //   treated as someone else's, biasing toward non-preemption).
+    // - Both null → treated as "same" → refresh. This biases toward preserving
+    //   reconnect (DEC-1 fails safe toward today's behavior) and is practically
+    //   unreachable: this branch only runs on the real-cwd path, where every
+    //   feature-carrying daemon always self-reports startedAt, so an incoming
+    //   null here is not a real CLI. Two genuinely-different startedAt-less
+    //   daemons at one real cwd would be required to hit the preempt case — which
+    //   the real client never produces.
+    const bothNonNullEqual =
+      incomingStartedAt !== null &&
+      row.startedAt !== null &&
+      row.startedAt.getTime() === incomingStartedAt.getTime();
+    const bothNull = incomingStartedAt === null && row.startedAt === null;
+    if (bothNonNullEqual || bothNull) {
+      continue;
+    }
+    // Fresh + different process identity → conflict. Return the first such incumbent.
+    return { incumbentStartedAt: row.startedAt, incumbentClientType: row.clientType };
+  }
+  return null;
+}
+
 export async function registerConnection(
   companyUuid: string,
   agentUuid: string,
   report: SelfReport,
-): Promise<ConnectionHandle | null> {
+): Promise<ConnectionHandle | ConnectionConflict | null> {
   if (!isDaemonClientType(report.clientType)) {
     return null;
   }
@@ -431,6 +563,50 @@ export async function registerConnection(
   const now = new Date();
 
   try {
+    // ===== Conflict detection (add-daemon-connection-conflict-skip) =====
+    // Before writing ANYTHING, on the real-cwd path only, refuse to silently take
+    // over a connection that a *different live daemon process* already holds at the
+    // same (agentUuid, host, cwd). This is the one new branch; it must return BEFORE
+    // upsertAgentInstance and before any connection write (the write-nothing
+    // invariant — a rejected write would corrupt the incumbent's startedAt-based
+    // reconnect comparison, since startedAt is the only process discriminator, DEC-1).
+    //
+    // Scope is the (agentUuid, host, cwd) TRIPLE across ALL clientTypes (Q2/DEC-2),
+    // not the (agent, clientType, host, cwd) unique row — two backends in the same
+    // cwd would be woken by the same notification batch and double-execute, the very
+    // harm this guards. The cwd=null HARD-1 branch is EXEMPT (Q5): an old daemon
+    // neither self-reports startedAt nor can act on a conflict signal, so detecting
+    // there could only break its reconnect.
+    if (cwd !== null) {
+      const conflict = await detectRegistrationConflict(
+        agentUuid,
+        host,
+        cwd,
+        report.startedAt ?? null,
+        now.getTime(),
+      );
+      if (conflict) {
+        // Structured WARN (Q6) — distinct from the write-failure logger.error below;
+        // a conflict is an expected outcome, not a failure. Carries enough identity to
+        // diagnose a duplicate daemon even when the second process's stderr lands in a
+        // different journal.
+        logger.warn(
+          {
+            companyUuid,
+            agentUuid,
+            host,
+            cwd,
+            incumbentStartedAt: conflict.incumbentStartedAt,
+            incomingStartedAt: report.startedAt ?? null,
+            incumbentClientType: conflict.incumbentClientType,
+            incomingClientType: report.clientType,
+          },
+          "Skipping daemon connection registration: a live daemon already holds this (agent, host, cwd)",
+        );
+        return { conflict: true, host, cwd };
+      }
+    }
+
     // Materialize / reuse the durable AgentInstance for this identity FIRST, so we
     // can link the connection to it in the SAME write path. upsertAgentInstance
     // swallows its own errors and returns `null` on failure: an instance-table write
@@ -695,9 +871,7 @@ export async function listInstancesForAgent(
   });
 
   const views: InstanceView[] = rows.map((row) => {
-    const online = row.connections.some(
-      (c) => c.status === "online" && now - c.lastSeenAt.getTime() <= STALE_THRESHOLD_MS,
-    );
+    const online = row.connections.some((c) => isEffectivelyOnline(c.status, c.lastSeenAt, now));
     return {
       uuid: row.uuid,
       agentUuid: row.agentUuid,
