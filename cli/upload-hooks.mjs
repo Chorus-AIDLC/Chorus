@@ -145,9 +145,39 @@ export function mergeUploadHooks(...args) {
 // top-level type — otherwise a tool-result-only user message would leak. The server
 // ingest stores ONLY `user`/`assistant` text (see /api/daemon/transcript), so this
 // filter mirrors exactly what the server will persist.
+//
+// Harness-injected synthetic content: when the model loads a skill, the skill's full
+// markdown body is delivered as a SYNTHETIC user turn. On the live stream-json stdout
+// (verified against Claude Code CLI 2.1.195 by capturing real `claude -p
+// --output-format stream-json --verbose` output) that envelope is
+// `{ type:"user", isSynthetic:true, message:{ content:[{type:"text", text:"Base
+// directory for this skill: …"}] } }`. Because it's a plain `text` block, the
+// block-level filter alone would KEEP it and leak the whole skill body to Chorus, so
+// we drop `type:"user"` envelopes flagged `isSynthetic:true` outright. ⚠️ FIELD NAME:
+// the live stream marks this `isSynthetic`; the on-disk transcript JSONL
+// (~/.claude/projects/.../*.jsonl, which the daemon does NOT read) marks the SAME
+// message `isMeta` — keying on `isMeta` here would be a silent no-op. Genuine human
+// instructions and the agent's own replies never carry `isSynthetic`, so this is a
+// purely structural match (no size/content heuristic) and cannot drop real content.
+// MCP-server instructions, CLAUDE.md context, and the deferred-tool listing are folded
+// into the dropped `type:"system"` init envelope and never reach this filter. Scope is
+// the Claude Code dialect only — the codex (`item.completed`) path is unaffected.
 
 /** Top-level stream-json envelope types that carry a conversation message. */
 const CONVERSATION_TYPES = new Set(["user", "assistant"]);
+
+/**
+ * Remove `<system-reminder>…</system-reminder>` spans from a retained text block
+ * (defense-in-depth for harness-injected reminders that ride inside a kept text
+ * block). Structural tag match — not a size/content heuristic. Non-reminder text is
+ * left untouched; a message that is only a reminder collapses to empty and is then
+ * dropped by the caller's emptiness check.
+ * @param {string} s
+ * @returns {string}
+ */
+function stripSystemReminders(s) {
+  return s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
+}
 
 /**
  * Extract the plain user/assistant TEXT from one stream object emitted by EITHER
@@ -187,6 +217,12 @@ export function extractTranscriptText(obj) {
   // ── Claude Code stream-json dialect ──
   if (!CONVERSATION_TYPES.has(obj.type)) return null;
 
+  // Drop harness-injected synthetic content (e.g. a loaded skill body). Claude Code
+  // marks these user turns `isSynthetic:true` on the live stream (NOT the on-disk
+  // `isMeta` field). Gated on `type:"user"` so a synthetic *assistant* envelope, if one
+  // ever appears, is still treated as real assistant text. Structural match only.
+  if (obj.type === "user" && obj.isSynthetic === true) return null;
+
   const message = obj.message;
   if (!message || typeof message !== "object") return null;
   // The persisted role is the message's role; fall back to the envelope type (they
@@ -214,8 +250,13 @@ export function extractTranscriptText(obj) {
     return null;
   }
 
-  // A message with no text (e.g. a user message that was purely a tool_result, or an
-  // assistant message that was purely tool_use/thinking) is dropped — nothing to store.
+  // Strip any wrapped <system-reminder> spans (defense-in-depth) before deciding
+  // emptiness, so a reminder-only message collapses to nothing and is dropped.
+  text = stripSystemReminders(text);
+
+  // A message with no text (e.g. a user message that was purely a tool_result, an
+  // assistant message that was purely tool_use/thinking, or text that was only a
+  // system-reminder) is dropped — nothing to store.
   if (!text.trim()) return null;
   return { role, text };
 }

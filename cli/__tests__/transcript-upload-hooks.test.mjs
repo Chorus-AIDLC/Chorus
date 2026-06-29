@@ -55,6 +55,57 @@ const USER_TEXT_STRING = {
 };
 const RESULT_ENVELOPE = { type: "result", subtype: "success", session_id: SID, result: "done" };
 
+// ── Harness-injected synthetic content (Claude Code 2.1.195) ──
+// A loaded skill body is delivered to the model as a synthetic user turn. On the live
+// `claude -p --output-format stream-json --verbose` stdout the daemon reads, it is a
+// `type:"user"` envelope carrying a `text` block, marked `isSynthetic:true`. (The
+// on-disk JSONL marks the same message `isMeta:true` — a DIFFERENT field name; the
+// daemon reads the stream, so the guard keys on `isSynthetic`. Verified by capturing
+// real stdout from the installed CLI, not from memory.)
+const USER_SKILL_BODY_SYNTHETIC = {
+  type: "user",
+  session_id: SID,
+  isSynthetic: true,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "Base directory for this skill: /home/u/.claude/plugins/...\n\n# Idea Skill\n..." }],
+  },
+};
+// A human wake instruction is a NON-synthetic user text message — must still sync.
+const USER_HUMAN_INSTRUCTION = {
+  type: "user",
+  session_id: SID,
+  message: { role: "user", content: [{ type: "text", text: "[Chorus] New instruction from a human: please claim it." }] },
+};
+// A genuine assistant reply that merely QUOTES a skill string — must NOT be dropped
+// (proves the filter is structural on isSynthetic, not content-sniffing).
+const ASSISTANT_QUOTES_SKILL = {
+  type: "assistant",
+  session_id: SID,
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: 'I read the "Base directory for this skill" line and proceeded.' }],
+  },
+};
+// A retained, non-synthetic text block that wraps a <system-reminder> alongside real text.
+const USER_TEXT_WITH_REMINDER = {
+  type: "user",
+  session_id: SID,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "Real instruction.<system-reminder>internal note</system-reminder> Keep going." }],
+  },
+};
+// A message that is ONLY a system-reminder — nothing real remains after stripping.
+const USER_REMINDER_ONLY = {
+  type: "user",
+  session_id: SID,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "<system-reminder>ambient context, not user input</system-reminder>" }],
+  },
+};
+
 describe("extractTranscriptText — keep user/assistant text, drop everything else", () => {
   it("keeps an assistant text message", () => {
     expect(extractTranscriptText(ASSISTANT_TEXT)).toEqual({
@@ -132,6 +183,48 @@ describe("extractTranscriptText — keep user/assistant text, drop everything el
   it("falls back to the envelope type when message.role is absent", () => {
     const noRole = { type: "user", message: { content: [{ type: "text", text: "hi" }] } };
     expect(extractTranscriptText(noRole)).toEqual({ role: "user", text: "hi" });
+  });
+});
+
+describe("extractTranscriptText — exclude harness-injected synthetic content", () => {
+  it("drops a type:user isSynthetic:true skill-body message (no body leaks)", () => {
+    expect(extractTranscriptText(USER_SKILL_BODY_SYNTHETIC)).toBeNull();
+  });
+
+  it("keeps a NON-synthetic [Chorus] human instruction", () => {
+    expect(extractTranscriptText(USER_HUMAN_INSTRUCTION)).toEqual({
+      role: "user",
+      text: "[Chorus] New instruction from a human: please claim it.",
+    });
+  });
+
+  it("does NOT drop an assistant reply that merely quotes a skill string (structural, not content-sniffing)", () => {
+    expect(extractTranscriptText(ASSISTANT_QUOTES_SKILL)).toEqual({
+      role: "assistant",
+      text: 'I read the "Base directory for this skill" line and proceeded.',
+    });
+  });
+
+  it("does NOT drop a synthetic ASSISTANT message — the guard is gated on type:user only", () => {
+    // An assistant envelope marked isSynthetic must still be kept (real assistant text);
+    // the synthetic drop is scoped to user envelopes (where injected content rides).
+    const synthAssistant = {
+      type: "assistant",
+      isSynthetic: true,
+      message: { role: "assistant", content: [{ type: "text", text: "still my reply" }] },
+    };
+    expect(extractTranscriptText(synthAssistant)).toEqual({ role: "assistant", text: "still my reply" });
+  });
+
+  it("strips a <system-reminder> span from retained text but keeps the real text", () => {
+    expect(extractTranscriptText(USER_TEXT_WITH_REMINDER)).toEqual({
+      role: "user",
+      text: "Real instruction. Keep going.",
+    });
+  });
+
+  it("drops a message that is only a <system-reminder> after stripping", () => {
+    expect(extractTranscriptText(USER_REMINDER_ONLY)).toBeNull();
   });
 });
 
