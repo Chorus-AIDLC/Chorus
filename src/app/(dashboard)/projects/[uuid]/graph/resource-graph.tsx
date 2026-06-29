@@ -1,23 +1,19 @@
 "use client";
 
-// Project Resource Graph canvas — Wave 2 (rendering backbone).
+// Project Resource Graph canvas — Wave 3 (rich custom node + per-Idea
+// expand/collapse).
 //
-// Consumes the aggregation contract from src/services/resource-graph.service.ts
-// (GET /api/projects/[uuid]/resource-graph) and seeds force-directed positions
-// via src/lib/resource-graph-layout.ts, then renders nodes + edges with the
-// existing @xyflow/react 12 stack (Background + Controls), following the
-// setup pattern in src/components/task-dag.tsx.
-//
-// Scope of THIS task (per the assignment):
-//   - rendering backbone (nodes/edges/zoom/pan)
-//   - three visually-distinct, directional edge kinds
-//   - 4-type filter that excludes hidden nodes from BOTH layout and render
-//   - minimal placeholder node renderer (title + type color)
-//
-// Out of scope (next task 18d974e1):
-//   - rich custom node visual (count pill, chevron)
-//   - per-Idea expand/collapse interaction
-//   - presence highlight, side-panel wiring
+// Builds on Wave 2's rendering backbone: fetch + 4-type filter + layout +
+// ReactFlow setup stay the same. Wave 3 adds:
+//   - Rich custom node renderer (./resource-graph-node) replacing the
+//     placeholder inline component.
+//   - Client state Set<expandedIdeaUuid> — default empty → all Ideas
+//     collapsed → only Idea hubs visible.
+//   - Visible-set computation via computeVisibleSet (pure, unit-tested in
+//     src/lib/__tests__/resource-graph-visible-set.test.ts).
+//   - Idea-click toggles expand/collapse; the visible set recomputes and
+//     layoutResourceGraph re-runs SEEDED with the prior positions so the
+//     graph settles incrementally instead of re-randomizing.
 //
 // Edge direction mirrors the aggregation contract — `from` → source,
 // `to` → target — so the arrowhead lands on the downstream entity in every
@@ -26,18 +22,15 @@
 //   derive  : source     -> derivative    (neutral #CFC6B6)
 //   depends : dependsOn  -> dependent     (amber   #E8833A)
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   Panel,
-  Handle,
-  Position,
   MarkerType,
   type Node,
   type Edge,
-  type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useTranslations } from "next-intl";
@@ -47,36 +40,17 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
-import { layoutResourceGraph } from "@/lib/resource-graph-layout";
-
-// --- Aggregation payload types ---------------------------------------------
-// Mirrors src/services/resource-graph.service.ts. Re-declared here as a
-// minimal client-side shape so the client bundle doesn't import the server
-// service. The set of node types + edge kinds is kept in lockstep with the
-// service via tsc — a service change that drops a kind would break this file.
-
-type NodeType = "idea" | "proposal" | "task" | "document";
-type EdgeKind = "derive" | "lineage" | "depends";
-
-interface ApiNode {
-  uuid: string;
-  type: NodeType;
-  title: string;
-  parentIdeaUuid?: string | null;
-  proposalUuid?: string | null;
-  sourceIdeaUuids?: string[];
-}
-
-interface ApiEdge {
-  from: string;
-  to: string;
-  kind: EdgeKind;
-}
-
-interface ApiGraph {
-  nodes: ApiNode[];
-  edges: ApiEdge[];
-}
+import { layoutResourceGraph, type Position } from "@/lib/resource-graph-layout";
+import { computeVisibleSet } from "@/lib/resource-graph-visible-set";
+import type {
+  ResourceGraphResult,
+  ResourceGraphNodeType as NodeType,
+  ResourceGraphEdgeKind as EdgeKind,
+} from "@/services/resource-graph.service";
+import {
+  resourceGraphNodeTypes,
+  type ResourceGraphNodeData,
+} from "./resource-graph-node";
 
 // --- Visual tokens ----------------------------------------------------------
 // Colors come straight from docs/design.pen "NOTE Graph View — main":
@@ -94,82 +68,14 @@ const EDGE_STYLES: Record<
   depends: { stroke: "#E8833A", strokeWidth: 2 },
 };
 
-interface NodeTypeStyle {
-  chipFill: string; // background of the type chip
-  chipText: string; // hex color of the type eyebrow text + icon
-  border: string; // node card border at rest
-  Icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
-}
-
-const NODE_STYLES: Record<NodeType, NodeTypeStyle> = {
-  idea: { chipFill: "#7C4DFF14", chipText: "#7C4DFF", border: "#EAE4DB", Icon: Lightbulb },
-  proposal: { chipFill: "#2563EB14", chipText: "#2563EB", border: "#EAE4DB", Icon: ClipboardList },
-  task: { chipFill: "#E8833A14", chipText: "#E8833A", border: "#EAE4DB", Icon: CheckSquare },
-  document: { chipFill: "#00897B14", chipText: "#00897B", border: "#EAE4DB", Icon: FileText },
+// Per-type filter swatch (just a small color dot). The rich type colors
+// live inside the node renderer; this is purely for the filter UI.
+const FILTER_SWATCH: Record<NodeType, { color: string; Icon: typeof Lightbulb }> = {
+  idea: { color: "#7C4DFF", Icon: Lightbulb },
+  proposal: { color: "#2563EB", Icon: ClipboardList },
+  task: { color: "#E8833A", Icon: CheckSquare },
+  document: { color: "#00897B", Icon: FileText },
 };
-
-// Minimal placeholder node renderer for THIS task. The rich custom node + the
-// expand/collapse pill lands in 18d974e1 — keep this simple but visually
-// type-distinguishable (chip color + eyebrow + title).
-const NODE_WIDTH = 208;
-
-interface ResourceGraphNodeData {
-  type: NodeType;
-  title: string;
-  typeLabel: string;
-  [key: string]: unknown;
-}
-
-function ResourceGraphNode({ data }: NodeProps<Node<ResourceGraphNodeData>>) {
-  const style = NODE_STYLES[data.type];
-  const Icon = style.Icon;
-  return (
-    <div
-      className="rounded-[12px] bg-white px-3 py-2.5 shadow-sm flex items-center gap-2.5"
-      style={{
-        borderColor: style.border,
-        borderWidth: 1,
-        borderStyle: "solid",
-        width: NODE_WIDTH,
-      }}
-    >
-      {/* Source + target handles are intentionally invisible — d3-force layout
-          places nodes and xyflow draws straight edges between centers; handle
-          UI would be misleading on a force graph (no manual connect). */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!opacity-0 !pointer-events-none"
-      />
-      <div
-        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]"
-        style={{ backgroundColor: style.chipFill }}
-      >
-        <Icon className="h-4 w-4" style={{ color: style.chipText }} />
-      </div>
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span
-          className="font-mono text-[10px] tracking-wider"
-          style={{ color: style.chipText }}
-        >
-          {data.typeLabel}
-        </span>
-        <span className="truncate text-xs font-medium text-[#2C2C2C]">
-          {data.title}
-        </span>
-      </div>
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!opacity-0 !pointer-events-none"
-      />
-    </div>
-  );
-}
-
-// Memoize the lookup so ReactFlow doesn't tear down node instances when its
-// parent re-renders (xyflow caches by reference identity).
-const nodeTypes = { resource: ResourceGraphNode };
 
 // --- Component -------------------------------------------------------------
 
@@ -189,9 +95,21 @@ const ALL_VISIBLE: VisibleTypes = {
 export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
   const t = useTranslations();
 
-  const [graph, setGraph] = useState<ApiGraph | null>(null);
+  const [graph, setGraph] = useState<ResourceGraphResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState<VisibleTypes>(ALL_VISIBLE);
+  // Set<ideaUuid> of currently-expanded Ideas. Empty default = every Idea
+  // is collapsed (only Idea hubs render). Storing as Set (not array) so
+  // toggle is O(1); React change detection relies on the wrapper Set being
+  // a fresh reference on each mutation.
+  const [expandedIdeas, setExpandedIdeas] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  // prevPositions is a ref (not state) so seeding the next layout doesn't
+  // depend on a render cycle and doesn't itself trigger one. The layout
+  // memo writes the freshly-computed positions back here each time.
+  const prevPositionsRef = useRef<Map<string, Position> | null>(null);
 
   // Fetch the aggregation payload. Single GET per mount — there's no live
   // update wiring in this task; structural live update lands later.
@@ -199,14 +117,21 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
     const ac = new AbortController();
     setError(null);
     setGraph(null);
+    // Re-mounting on a different project resets the expand state — there is
+    // no UX value to carrying over expanded UUIDs from a different graph.
+    setExpandedIdeas(new Set());
+    prevPositionsRef.current = null;
 
     (async () => {
       try {
         const res = await fetch(`/api/projects/${projectUuid}/resource-graph`, {
           signal: ac.signal,
         });
-        const json: { success: boolean; data?: ApiGraph; error?: string } =
-          await res.json();
+        const json: {
+          success: boolean;
+          data?: ResourceGraphResult;
+          error?: string;
+        } = await res.json();
         if (ac.signal.aborted) return;
         if (!res.ok || !json.success || !json.data) {
           setError(json.error ?? t("graph.loadFailed"));
@@ -230,26 +155,57 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
     setVisible((prev) => ({ ...prev, [type]: !prev[type] }));
   }, []);
 
-  // Filter -> layout -> ReactFlow data. The filter must exclude hidden nodes
-  // from BOTH the layout pass and the render set (acceptance criterion 3).
+  const toggleIdeaExpand = useCallback((ideaUuid: string) => {
+    setExpandedIdeas((prev) => {
+      const next = new Set(prev);
+      if (next.has(ideaUuid)) {
+        next.delete(ideaUuid);
+      } else {
+        next.add(ideaUuid);
+      }
+      return next;
+    });
+  }, []);
+
+  // Filter -> expand/collapse visible set -> layout -> ReactFlow data.
+  //
+  // Order matters: the type filter is applied AFTER the expand/collapse
+  // visible set is computed, so hiding e.g. all Tasks doesn't change the
+  // derivative count shown on an Idea's pill (the pill counts *direct*
+  // derivatives by structure, not by what's currently rendered — matches
+  // the spec scenario "a count of its hidden direct derivatives").
   const { rfNodes, rfEdges, isEmpty } = useMemo(() => {
     if (!graph) {
-      return { rfNodes: [] as Node<ResourceGraphNodeData>[], rfEdges: [] as Edge[], isEmpty: true };
+      return {
+        rfNodes: [] as Node<ResourceGraphNodeData>[],
+        rfEdges: [] as Edge[],
+        isEmpty: true,
+      };
     }
 
-    const visibleNodes = graph.nodes.filter((n) => visible[n.type]);
-    const visibleUuids = new Set(visibleNodes.map((n) => n.uuid));
-    const visibleEdges = graph.edges.filter(
-      (e) => visibleUuids.has(e.from) && visibleUuids.has(e.to)
-    );
+    const { visibleNodeUuids, visibleEdgeIndices, derivativeCountByIdea } =
+      computeVisibleSet(graph, expandedIdeas);
 
-    // Layout is intentionally re-seeded from scratch each render in this task
-    // — there is no expand/collapse yet to need incremental settling. The
-    // module's deterministic seed gives a stable layout for the same input.
+    // Apply the type filter to the visible set. Ideas count is unaffected
+    // (Ideas are always in visibleNodeUuids), but unchecking "Ideas" will
+    // hide them, etc.
+    const visibleNodes = graph.nodes.filter(
+      (n) => visibleNodeUuids.has(n.uuid) && visible[n.type],
+    );
+    const visibleUuids = new Set(visibleNodes.map((n) => n.uuid));
+    const visibleEdges = visibleEdgeIndices
+      .map((i) => graph.edges[i])
+      .filter((e) => visibleUuids.has(e.from) && visibleUuids.has(e.to));
+
+    // Seed layout with the previous positions so expand/collapse settles
+    // incrementally instead of re-randomizing (AC #3). First run has no
+    // prior positions and falls back to fresh phyllotaxis.
     const positions = layoutResourceGraph(
       visibleNodes.map((n) => ({ uuid: n.uuid })),
-      visibleEdges.map((e) => ({ from: e.from, to: e.to }))
+      visibleEdges.map((e) => ({ from: e.from, to: e.to })),
+      prevPositionsRef.current,
     );
+    prevPositionsRef.current = positions;
 
     const labelOf: Record<NodeType, string> = {
       idea: t("graph.nodeType.idea"),
@@ -260,11 +216,20 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
 
     const nodesOut: Node<ResourceGraphNodeData>[] = visibleNodes.map((n) => {
       const pos = positions.get(n.uuid) ?? { x: 0, y: 0 };
+      const data: ResourceGraphNodeData = {
+        type: n.type,
+        title: n.title,
+        typeLabel: labelOf[n.type],
+      };
+      if (n.type === "idea") {
+        data.expanded = expandedIdeas.has(n.uuid);
+        data.derivativeCount = derivativeCountByIdea.get(n.uuid) ?? 0;
+      }
       return {
         id: n.uuid,
         type: "resource",
         position: pos,
-        data: { type: n.type, title: n.title, typeLabel: labelOf[n.type] },
+        data,
       };
     });
 
@@ -272,10 +237,10 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
       const styleSpec = EDGE_STYLES[e.kind];
       return {
         id: `e-${i}`,
-        // Aggregation contract: `from` is the upstream/source endpoint, `to`
-        // is the downstream/target endpoint. Map straight through — the
-        // arrowhead on xyflow lands on `target`, which is the downstream
-        // entity in every kind:
+        // Aggregation contract: `from` is the upstream/source endpoint,
+        // `to` is the downstream/target endpoint. Map straight through —
+        // arrowhead lands on `target`, the downstream entity in every
+        // kind:
         //   lineage  parentIdea -> childIdea
         //   derive   source     -> derivative
         //   depends  dependsOn  -> dependent
@@ -305,7 +270,25 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
       rfEdges: edgesOut,
       isEmpty: visibleNodes.length === 0,
     };
-  }, [graph, visible, t]);
+  }, [graph, expandedIdeas, visible, t]);
+
+  // Node click: only Idea nodes toggle expand/collapse in this task. Click
+  // handling for the other types (open side panel) is the downstream task
+  // d2681a81 — keep this handler narrow so adding that later doesn't
+  // collide.
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node<ResourceGraphNodeData>) => {
+      if (node.data.type === "idea") {
+        // Leaf Ideas (no derivatives) get no affordance and shouldn't
+        // toggle — guard so a click is a no-op rather than a phantom state
+        // change.
+        const count = node.data.derivativeCount ?? 0;
+        if (count === 0) return;
+        toggleIdeaExpand(node.id);
+      }
+    },
+    [toggleIdeaExpand],
+  );
 
   // --- Render ---
 
@@ -329,11 +312,6 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
     );
   }
 
-  // The page chrome (header) sits above a fixed-height canvas container so
-  // ReactFlow has a real layout box to size to. The dashboard layout already
-  // gives this route an h-full content area; we hand the canvas a 75vh
-  // minimum so it works in both the standard layout and the side-panel-
-  // docked-open layout.
   return (
     <div className="flex h-full min-h-0 flex-col p-4 md:p-8">
       <Header t={t} />
@@ -357,7 +335,8 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
-          nodeTypes={nodeTypes}
+          nodeTypes={resourceGraphNodeTypes}
+          onNodeClick={handleNodeClick}
           fitView
           fitViewOptions={{ padding: 0.25 }}
           minZoom={0.3}
@@ -379,7 +358,7 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
               </p>
               <div className="flex flex-col gap-2">
                 {(["idea", "proposal", "task", "document"] as NodeType[]).map((type) => {
-                  const style = NODE_STYLES[type];
+                  const swatch = FILTER_SWATCH[type];
                   const id = `graph-filter-${type}`;
                   return (
                     <div key={type} className="flex items-center gap-2">
@@ -390,7 +369,7 @@ export function ResourceGraph({ projectUuid }: ResourceGraphProps) {
                       />
                       <span
                         className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: style.chipText }}
+                        style={{ backgroundColor: swatch.color }}
                       />
                       <Label htmlFor={id} className="cursor-pointer text-xs text-[#2C2C2C]">
                         {t(`graph.filters.${type}` as const)}
@@ -419,4 +398,3 @@ function Header({ t }: { t: ReturnType<typeof useTranslations> }) {
     </div>
   );
 }
-
