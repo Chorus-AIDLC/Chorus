@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.1] - 2026-06-29
+
+### Added
+- **Codex daemon backend (`chorus daemon --agent codex`)**: A remote-dispatched wake can now spawn a local headless **Codex** instead of Claude Code. Codex generates its own `thread_id` (persisted per-anchor for `codex exec resume`), permission posture is subcommand-aware (yolo → bypass-approvals-and-sandbox; chorus → read-only sandbox), MCP comes from the user's `~/.codex/config.toml` with the daemon key passed via the configured `bearer_token_env_var`, and interrupt parity is preserved via a detached process group. The Claude Code path is byte-unchanged. (#370)
+- **Conflicting daemon connections warn + skip instead of silent takeover**: A second `chorus daemon` registering at the same (agent, host, cwd) as a live different-process daemon previously upserted (silently took over) the connection row, racing two processes on the same dispatch/control channel. The server now detects a fresh different-process incumbent and returns a conflict that writes nothing; the daemon warns and permanently skips that cwd, exiting non-zero only if every declared path conflicts. Stale/crash incumbents and same-process reconnects still take over / refresh as before. (#372)
+
+### Fixed
+- **Skill bodies leaked into daemon transcripts**: A loaded skill body is delivered to the headless Claude Code session as a synthetic user turn (`type:"user"` + `isSynthetic:true`), and the block-level text filter kept it — leaking the full skill body into the Chorus transcript. These envelopes are now dropped (structural match only, so real human instructions and agent replies are never affected), with defense-in-depth stripping of `<system-reminder>` spans. (#373)
+- **Daemon presence list jittered on every refresh**: Connection order was driven by `lastSeenAt` (which changes on each heartbeat), so equivalent refreshes reshuffled the agent list and per-cwd rows. Ordering is now online-first then by stable identity, with `lastSeenAt` display-only; a defensive frontend comparator prevents re-introducing jitter. (#371)
+- **Root route / login bounced already-authenticated users**: After a long idle, reopening onto the root route (`/`) could bounce a still-valid session to `/login`, and `/login` never checked auth state so the user was stranded on the form. The root route now uses the same prime-and-retry session contract as the dashboard layout (redirecting only on a true post-prime 401), and `/login` redirects an already-authenticated visitor straight into the app.
+- **`chorus login` clobbered `daemon.json`**: `chorus login` and the daemon's TTY credential-completion path overwrote the entire `~/.chorus/daemon.json`, destroying pre-existing `cwds` / `yoloAckAt` (a crash-loop + re-prompt footgun when running the daemon as a boot service). Every config write now goes through a single read → shallow-merge → atomic write helper, and a loud `claude`-not-found warning is emitted at startup. (#367)
+
+### Changed
+- **Landing page integrations refreshed**: The "Plug Into Your Agent Stack" section now lists Claude Code, Codex, OpenClaw, and the universal skill as four equal cards (was three, no Codex), with corrected counts and capabilities (Codex backend, OpenClaw embedded-agent wake + interrupt/resume).
+
+---
+
 ## [0.12.0] - 2026-06-27
 
 ### Added

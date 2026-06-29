@@ -76,21 +76,20 @@
   "integration": {
     "label": "原生集成",
     "title": "接入你的 Agent 技术栈",
-    "subtitle": "Claude Code 和 OpenClaw 开箱即用 —— 不需要胶水代码，不需要额外封装。",
+    "subtitle": "Claude Code、Codex、OpenClaw 开箱即用，外加一份兼容任意 MCP Agent 的通用 Skill —— 不需要胶水代码，不需要额外封装。",
     "claudeCode": {
       "title": "Claude Code 插件",
-      "description": "11 个生命周期 Hook、6 套工作流 Skill、2 个独立 Review Agent —— Claude Code Agent Teams 的完整 Harness。",
-      "lifecycleTitle": "生命周期 Hook",
-      "lifecycleDesc": "Session 创建/复用/关闭、任务签入/签出、心跳 —— 全自动。Sub-agent 启动时自动注入完整工作流上下文。",
-      "reviewTitle": "Review Sub-Agent",
-      "reviewDesc": "提案提交或任务验收后自动 spawn。只读 Agent 专找作者遗漏的问题，发布结构化 VERDICT 评论。",
-      "skillsTitle": "工作流 Skill",
-      "skillsDesc": "覆盖 AI-DLC 全流程的阶段性指引 —— 从 Idea 细化到任务验收。",
+      "description": "13 个生命周期 Hook、9 套工作流 Skill、3 个独立 Review Agent —— Claude Code Agent Teams 的完整 Harness。",
       "installComment": "# 从插件市场安装"
+    },
+    "codex": {
+      "title": "Codex 插件",
+      "description": "独立的 Codex CLI 插件，提供同样的 AI-DLC Skill（`$` 前缀斜杠命令）、3 个只读 Reviewer 子 Agent，以及 Session 感知的 Hook。一键安装脚本把 Chorus MCP Server 接入 Codex。",
+      "installComment": "# Codex 一键安装"
     },
     "openclaw": {
       "title": "OpenClaw 插件",
-      "description": "SSE 长连接 + MCP 工具桥接。事件实时推送触发 Agent 唤醒 —— 任务分配、@提及、细化回复、提案审批，全自动响应。",
+      "description": "SSE 长连接 + 原生 MCP 桥接。事件推送唤醒内嵌 Agent（runEmbeddedAgent）—— 任务分配、@提及、细化回复、提案审批全自动响应，并支持通过反向控制通道在运行中打断 / 恢复。",
       "installComment": "# 安装插件"
     },
     "skills": {
