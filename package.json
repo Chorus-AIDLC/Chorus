@@ -110,6 +110,7 @@
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-force-graph-2d": "^1.29.1",
     "remark-docx": "^0.3.26",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

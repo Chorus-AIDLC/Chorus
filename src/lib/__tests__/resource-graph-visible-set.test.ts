@@ -21,7 +21,7 @@
 import { describe, it, expect } from "vitest";
 import { computeVisibleSet } from "../resource-graph-visible-set";
 import type { ResourceGraphResult } from "@/services/resource-graph.service";
-import { shouldShowExpandAffordance } from "@/app/(dashboard)/projects/[uuid]/graph/resource-graph-node";
+import { shouldShowExpandAffordance } from "@/app/(dashboard)/projects/[uuid]/graph/expand-affordance";
 
 // --- Fixtures ---------------------------------------------------------------
 // A small graph mirroring the AI-DLC shape:

@@ -38,16 +38,7 @@
 //   depends : dependsOn  -> dependent     (amber   #E8833A)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  Panel,
-  MarkerType,
-  type Node,
-  type Edge,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { Lightbulb, ClipboardList, CheckSquare, FileText } from "lucide-react";
 
@@ -57,41 +48,36 @@ import { Label } from "@/components/ui/label";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { usePanelUrl } from "@/hooks/use-panel-url";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
-import { layoutResourceGraph, type Position } from "@/lib/resource-graph-layout";
 import { computeVisibleSet } from "@/lib/resource-graph-visible-set";
+import { shouldShowExpandAffordance } from "./expand-affordance";
 import type {
   ResourceGraphResult,
   ResourceGraphNodeType as NodeType,
-  ResourceGraphEdgeKind as EdgeKind,
 } from "@/services/resource-graph.service";
 import { clientLogger } from "@/lib/logger-client";
 import { IdeaDetailPanel } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/idea-detail-panel";
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
 import { DocumentPanel } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/document-panel";
 import { getTaskAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
-import {
-  resourceGraphNodeTypes,
-  type ResourceGraphNodeData,
-} from "./resource-graph-node";
+import type { ForceNode, ForceLink } from "./force-graph-canvas";
 
-// --- Visual tokens ----------------------------------------------------------
-// Colors come straight from docs/design.pen "NOTE Graph View — main":
-//   derive  neutral #CFC6B6
-//   lineage violet  #7C4DFF
-//   depends amber   #E8833A
-// and the per-type chip palette from the Tech Design "Node rendering" section.
-
-const EDGE_STYLES: Record<
-  EdgeKind,
-  { stroke: string; strokeWidth: number; strokeDasharray?: string }
-> = {
-  derive: { stroke: "#CFC6B6", strokeWidth: 1.5 },
-  lineage: { stroke: "#7C4DFF", strokeWidth: 2 },
-  depends: { stroke: "#E8833A", strokeWidth: 2 },
-};
+// react-force-graph-2d touches window/document at import time, so the canvas
+// must be client-only. Dynamic import with ssr:false keeps it out of the
+// server bundle; the rest of this component (data, panels, filter) is SSR-safe.
+const ForceGraphCanvas = dynamic(
+  () => import("./force-graph-canvas").then((m) => m.ForceGraphCanvas),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="absolute inset-0 flex items-center justify-center text-sm text-[#6B6B6B]">
+        …
+      </div>
+    ),
+  },
+);
 
 // Per-type filter swatch (just a small color dot). The rich type colors
-// live inside the node renderer; this is purely for the filter UI.
+// live inside the node painter; this is purely for the filter UI.
 const FILTER_SWATCH: Record<NodeType, { color: string; Icon: typeof Lightbulb }> = {
   idea: { color: "#7C4DFF", Icon: Lightbulb },
   proposal: { color: "#2563EB", Icon: ClipboardList },
@@ -222,16 +208,11 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     () => new Set(),
   );
 
-  // prevPositions is a ref (not state) so seeding the next layout doesn't
-  // depend on a render cycle and doesn't itself trigger one. The layout
-  // memo writes the freshly-computed positions back here each time.
-  //
-  // For live structural updates (this task): a re-fetch triggered by an
-  // SSE entity-change event must NOT clear prevPositionsRef — surviving
-  // nodes' positions are seeded into the next layout pass so the graph
-  // settles incrementally instead of re-randomizing (AC #2). It's reset
-  // only on project change, where the entire graph is foreign anyway.
-  const prevPositionsRef = useRef<Map<string, Position> | null>(null);
+  // Node positions are owned by the live force-graph canvas, which retains
+  // each node's x/y across renders by id (so expand/collapse + live updates
+  // settle incrementally rather than re-randomizing). This component no
+  // longer pre-computes layout — it only decides which nodes/links are
+  // visible and hands them down.
 
   // Track the most recent in-flight fetch so a slower stale response can't
   // overwrite a fresher one. Each call bumps the token; only the call that
@@ -272,11 +253,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         return;
       }
       const next = json.data;
-      // Prune expand state + prevPositions to the surviving uuids so a
-      // deleted node doesn't keep its old position cached and an Idea that
-      // was deleted while expanded doesn't linger in expandedIdeas. The
-      // visible-set computation already tolerates stale uuids defensively;
-      // this is hygiene, not correctness.
+      // Prune expand state to the surviving uuids so an Idea deleted while
+      // expanded doesn't linger in expandedIdeas. (The canvas prunes its own
+      // retained positions by id; the visible-set computation also tolerates
+      // stale uuids defensively — this is hygiene, not correctness.)
       const aliveUuids = new Set(next.nodes.map((n) => n.uuid));
       setExpandedIdeas((prev) => {
         let mutated = false;
@@ -287,15 +267,6 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         }
         return mutated ? out : prev;
       });
-      if (prevPositionsRef.current) {
-        // No state change needed — prevPositionsRef is a ref. We mutate the
-        // map in place; the next layout pass reads it directly and seeds
-        // d3-force with only the surviving positions.
-        const positions = prevPositionsRef.current;
-        for (const u of Array.from(positions.keys())) {
-          if (!aliveUuids.has(u)) positions.delete(u);
-        }
-      }
       setError(null);
       setGraph(next);
     } catch (err) {
@@ -311,15 +282,14 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, [projectUuid, t]);
 
   // Initial / project-change fetch. Full reset path: clears the current
-  // graph + expand state + prevPositions because the entire graph is
-  // foreign on a project switch. The reconcile path (SSE handlers below)
-  // does NOT come through here — it calls reloadGraph() directly so
-  // expandedIdeas + prevPositionsRef survive across the refetch.
+  // graph + expand state because the entire graph is foreign on a project
+  // switch. The reconcile path (SSE handlers below) does NOT come through
+  // here — it calls reloadGraph() directly so expandedIdeas survives across
+  // the refetch.
   useEffect(() => {
     setError(null);
     setGraph(null);
     setExpandedIdeas(new Set());
-    prevPositionsRef.current = null;
     void reloadGraph();
     return () => {
       abortRef.current?.abort();
@@ -368,18 +338,22 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     });
   }, []);
 
-  // Filter -> expand/collapse visible set -> layout -> ReactFlow data.
+  // Filter -> expand/collapse visible set -> ForceGraph data.
   //
   // Order matters: the type filter is applied AFTER the expand/collapse
   // visible set is computed, so hiding e.g. all Tasks doesn't change the
   // derivative count shown on an Idea's pill (the pill counts *direct*
   // derivatives by structure, not by what's currently rendered — matches
   // the spec scenario "a count of its hidden direct derivatives").
-  const { rfNodes, rfEdges, isEmpty } = useMemo(() => {
+  //
+  // No layout call here: the force-graph canvas runs a LIVE d3-force
+  // simulation and owns node positions (retaining them across renders by id),
+  // so the graph settles + animates rather than being pre-solved statically.
+  const { forceNodes, forceLinks, isEmpty } = useMemo(() => {
     if (!graph) {
       return {
-        rfNodes: [] as Node<ResourceGraphNodeData>[],
-        rfEdges: [] as Edge[],
+        forceNodes: [] as ForceNode[],
+        forceLinks: [] as ForceLink[],
         isEmpty: true,
       };
     }
@@ -387,9 +361,6 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     const { visibleNodeUuids, visibleEdgeIndices, derivativeCountByIdea } =
       computeVisibleSet(graph, expandedIdeas);
 
-    // Apply the type filter to the visible set. Ideas count is unaffected
-    // (Ideas are always in visibleNodeUuids), but unchecking "Ideas" will
-    // hide them, etc.
     const visibleNodes = graph.nodes.filter(
       (n) => visibleNodeUuids.has(n.uuid) && visible[n.type],
     );
@@ -398,80 +369,35 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       .map((i) => graph.edges[i])
       .filter((e) => visibleUuids.has(e.from) && visibleUuids.has(e.to));
 
-    // Seed layout with the previous positions so expand/collapse settles
-    // incrementally instead of re-randomizing (AC #3). First run has no
-    // prior positions and falls back to fresh phyllotaxis.
-    const positions = layoutResourceGraph(
-      visibleNodes.map((n) => ({ uuid: n.uuid })),
-      visibleEdges.map((e) => ({ from: e.from, to: e.to })),
-      prevPositionsRef.current,
-    );
-    prevPositionsRef.current = positions;
-
-    const labelOf: Record<NodeType, string> = {
-      idea: t("graph.nodeType.idea"),
-      proposal: t("graph.nodeType.proposal"),
-      task: t("graph.nodeType.task"),
-      document: t("graph.nodeType.document"),
-    };
-
-    const nodesOut: Node<ResourceGraphNodeData>[] = visibleNodes.map((n) => {
-      const pos = positions.get(n.uuid) ?? { x: 0, y: 0 };
-      const data: ResourceGraphNodeData = {
-        type: n.type,
-        title: n.title,
-        typeLabel: labelOf[n.type],
-      };
-      if (n.type === "idea") {
-        data.expanded = expandedIdeas.has(n.uuid);
-        data.derivativeCount = derivativeCountByIdea.get(n.uuid) ?? 0;
-      }
+    const nodesOut: ForceNode[] = visibleNodes.map((n) => {
+      const derivativeCount =
+        n.type === "idea" ? derivativeCountByIdea.get(n.uuid) ?? 0 : undefined;
       return {
         id: n.uuid,
-        type: "resource",
-        position: pos,
-        data,
+        type: n.type,
+        title: n.title,
+        derivativeCount,
+        expanded: n.type === "idea" ? expandedIdeas.has(n.uuid) : undefined,
+        hasAffordance: shouldShowExpandAffordance(n.type, derivativeCount),
       };
     });
 
-    const edgesOut: Edge[] = visibleEdges.map((e, i) => {
-      const styleSpec = EDGE_STYLES[e.kind];
-      return {
-        id: `e-${i}`,
-        // Aggregation contract: `from` is the upstream/source endpoint,
-        // `to` is the downstream/target endpoint. Map straight through —
-        // arrowhead lands on `target`, the downstream entity in every
-        // kind:
-        //   lineage  parentIdea -> childIdea
-        //   derive   source     -> derivative
-        //   depends  dependsOn  -> dependent
-        source: e.from,
-        target: e.to,
-        type: "default",
-        style: {
-          stroke: styleSpec.stroke,
-          strokeWidth: styleSpec.strokeWidth,
-          ...(styleSpec.strokeDasharray
-            ? { strokeDasharray: styleSpec.strokeDasharray }
-            : {}),
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: styleSpec.stroke,
-          width: 16,
-          height: 16,
-        },
-        // Identify the relationship kind for debugging + future styling hooks.
-        data: { kind: e.kind },
-      };
-    });
+    // Aggregation contract: `from` is upstream/source, `to` is downstream/
+    // target — map straight through so the arrowhead lands on the downstream
+    // entity (lineage parent→child, derive source→derivative, depends
+    // dependsOn→dependent).
+    const linksOut: ForceLink[] = visibleEdges.map((e) => ({
+      source: e.from,
+      target: e.to,
+      kind: e.kind,
+    }));
 
     return {
-      rfNodes: nodesOut,
-      rfEdges: edgesOut,
+      forceNodes: nodesOut,
+      forceLinks: linksOut,
       isEmpty: visibleNodes.length === 0,
     };
-  }, [graph, expandedIdeas, visible, t]);
+  }, [graph, expandedIdeas, visible]);
 
   // Open the Task panel by fetching the full task by UUID. Mirrors the
   // openTask flow in dashboard/panels/idea-detail-panel.tsx: clear any
@@ -559,11 +485,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   // Node click router. Three behaviours, in priority order:
   //
   // 1. Click on the expand/collapse affordance (the "N ›" pill or the
-  //    chevron-down on an Idea) → toggle the subgraph. Detection is via the
-  //    affordance's data-testid set in resource-graph-node.tsx. We can't
-  //    rely on stopPropagation inside the node because xyflow surfaces the
-  //    click on the wrapper, not the inner element — instead we inspect
-  //    the actual DOM target.
+  //    chevron-down on an Idea) → toggle the subgraph. The canvas reports
+  //    `onAffordance` by hit-testing the click against the affordance's
+  //    hot-zone (right edge of the Idea card) in graph coordinates.
   //
   // 2. Otherwise: open the appropriate side panel for this node's type.
   //    Idea / Proposal go through usePanelUrl (?panel=…[&tab=proposal]);
@@ -573,27 +497,21 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   //    project-scoped proposals — the aggregation pre-filters) silently
   //    no-ops; logged for visibility.
   const handleNodeClick = useCallback(
-    (event: React.MouseEvent, node: Node<ResourceGraphNodeData>) => {
-      const target = event.target as HTMLElement | null;
-      const onAffordance =
-        target?.closest(
-          '[data-testid="affordance-collapsed"], [data-testid="affordance-expanded"]',
-        ) ?? null;
-
-      if (node.data.type === "idea" && onAffordance) {
-        // Belt-and-braces guard — the affordance only renders when count > 0
-        // so this branch implies a non-leaf Idea.
-        toggleIdeaExpand(node.id);
+    (id: string, type: NodeType, onAffordance: boolean) => {
+      if (type === "idea" && onAffordance) {
+        // The affordance only renders when count > 0, so this implies a
+        // non-leaf Idea — toggle its subgraph instead of opening a panel.
+        toggleIdeaExpand(id);
         return;
       }
 
-      switch (node.data.type) {
+      switch (type) {
         case "idea": {
           // Open the IdeaDetailPanel via ?panel=<uuid>. The hasRenderedRef
           // gate inside usePanelUrl keeps the seed from leaking; we pass
           // null to initialSelectedId for the same reason — no SSR seed
           // to begin with on the graph route.
-          openPanel(node.id);
+          openPanel(id);
           return;
         }
         case "proposal": {
@@ -602,12 +520,12 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           // aggregation already filters sourceIdeaUuids to project-local
           // ideas, so the first entry is the right project-local source.
           const ideaUuid = (
-            graph?.nodes.find((n) => n.uuid === node.id)?.sourceIdeaUuids ?? []
+            graph?.nodes.find((n) => n.uuid === id)?.sourceIdeaUuids ?? []
           )[0];
           if (!ideaUuid) {
             clientLogger.warn(
               "[resource-graph] proposal node has no project-local source idea; cannot open panel",
-              { proposalUuid: node.id },
+              { proposalUuid: id },
             );
             return;
           }
@@ -615,7 +533,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           return;
         }
         case "task": {
-          openTask(node.id);
+          openTask(id);
           return;
         }
         case "document": {
@@ -624,13 +542,16 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           setSelectedTaskUuid(null);
           setSelectedTask(null);
           setSelectedDoc(null);
-          setSelectedDocUuid(node.id);
+          setSelectedDocUuid(id);
           return;
         }
       }
     },
     [graph, openPanel, openTask, toggleIdeaExpand],
   );
+
+  // Which node keeps a selection ring while a panel is open.
+  const selectedNodeId = urlPanelUuid ?? selectedTaskUuid ?? selectedDocUuid;
 
   // Reset doc-trigger when the selected doc is closed (keeps re-clicking
   // the same document from being a no-op because setSelectedDocUuid === id).
@@ -641,11 +562,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
 
   // --- Render ---
 
-  // Side panels are rendered as portals/fixed-position overlays at the end
-  // of the component tree, so the graph canvas itself stays mounted while
-  // any panel is open (AC #2). The clicked node's selection ring is
-  // already rendered inside resource-graph-node.tsx via xyflow's `selected`
-  // prop — we don't manage that here.
+  // Side panels are rendered as fixed-position overlays at the end of the
+  // component tree, so the graph canvas itself stays mounted while any panel
+  // is open. The clicked node's selection ring is drawn by the canvas from
+  // the `selectedId` prop (computed above as selectedNodeId).
   const panels = (
     <>
       {urlPanelUuid && (
@@ -724,55 +644,47 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           </AnimatedEmptyState>
         )}
 
-        <ReactFlow
-          nodes={rfNodes}
-          edges={rfEdges}
-          nodeTypes={resourceGraphNodeTypes}
-          onNodeClick={handleNodeClick}
-          fitView
-          fitViewOptions={{ padding: 0.25 }}
-          minZoom={0.3}
-          maxZoom={1.5}
-          proOptions={{ hideAttribution: true }}
-          nodesDraggable
-          nodesConnectable={false}
-          elementsSelectable
-          panOnDrag
-          zoomOnScroll
-        >
-          <Background color="#E5E0D8" gap={20} />
-          <Controls className="[&>button]:border-[#E5E0D8] [&>button]:bg-white [&>button]:text-[#2C2C2C] [&>button:hover]:bg-[#FAF8F4]" />
+        {/* Live force-directed canvas. Hidden (but mounted) when empty so the
+            filter overlay still toggles types back on. */}
+        {!isEmpty && (
+          <ForceGraphCanvas
+            nodes={forceNodes}
+            links={forceLinks}
+            selectedId={selectedNodeId}
+            onNodeClick={handleNodeClick}
+          />
+        )}
 
-          <Panel position="top-right">
-            <Card className="border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
-              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[#6B6B6B]">
-                {t("graph.filters.heading")}
-              </p>
-              <div className="flex flex-col gap-2">
-                {(["idea", "proposal", "task", "document"] as NodeType[]).map((type) => {
-                  const swatch = FILTER_SWATCH[type];
-                  const id = `graph-filter-${type}`;
-                  return (
-                    <div key={type} className="flex items-center gap-2">
-                      <Checkbox
-                        id={id}
-                        checked={visible[type]}
-                        onCheckedChange={() => toggleType(type)}
-                      />
-                      <span
-                        className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: swatch.color }}
-                      />
-                      <Label htmlFor={id} className="cursor-pointer text-xs text-[#2C2C2C]">
-                        {t(`graph.filters.${type}` as const)}
-                      </Label>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          </Panel>
-        </ReactFlow>
+        {/* Type filter — absolutely positioned overlay (top-right). */}
+        <div className="absolute right-3 top-3 z-10">
+          <Card className="border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[#6B6B6B]">
+              {t("graph.filters.heading")}
+            </p>
+            <div className="flex flex-col gap-2">
+              {(["idea", "proposal", "task", "document"] as NodeType[]).map((type) => {
+                const swatch = FILTER_SWATCH[type];
+                const id = `graph-filter-${type}`;
+                return (
+                  <div key={type} className="flex items-center gap-2">
+                    <Checkbox
+                      id={id}
+                      checked={visible[type]}
+                      onCheckedChange={() => toggleType(type)}
+                    />
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: swatch.color }}
+                    />
+                    <Label htmlFor={id} className="cursor-pointer text-xs text-[#2C2C2C]">
+                      {t(`graph.filters.${type}` as const)}
+                    </Label>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
       </div>
       {panels}
     </div>
