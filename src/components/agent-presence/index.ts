@@ -25,6 +25,7 @@ export { IdentityBlock } from "./identity-block";
 export {
   groupConnectionsByAgent,
   onlineConnectionsOnly,
+  sortConnectionsForPresence,
   deriveInstanceActivity,
   useInstanceActivity,
   AgentGroupHeader,

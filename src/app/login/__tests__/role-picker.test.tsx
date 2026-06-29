@@ -42,6 +42,14 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
+// auth-client's authFetch/primeSessionCookie are used by the page's mount-time
+// already-authenticated check. Delegate authFetch to global.fetch (which each test
+// stubs) so the URL-based stubs drive it; primeSessionCookie is a no-op here.
+vi.mock("@/lib/auth-client", () => ({
+  authFetch: (url: string, init?: RequestInit) => fetch(url, init),
+  primeSessionCookie: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Use real translations so the test asserts on user-visible copy.
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
@@ -112,6 +120,18 @@ function installFetch(handlers: {
     }
     if (url === "/api/agents") {
       return { ok: true, json: { success: true, data: [] } };
+    }
+    // The mount-time already-authenticated check (root-reopen fix): default to NOT
+    // authenticated so the login form renders as before. admin session not-success,
+    // user session not-success, keepalive prime is a no-op here.
+    if (url === "/api/admin/session") {
+      return { ok: true, json: { success: false } };
+    }
+    if (url === "/api/auth/session") {
+      return { ok: true, json: { success: false } };
+    }
+    if (url === "/api/keepalive") {
+      return { ok: true, json: { ok: true } };
     }
     throw new Error(`Unexpected fetch in test: ${url}`);
   };
@@ -378,5 +398,68 @@ describe("LoginPage role picker — Trigger B (identify multi_role)", () => {
       expect(screen.queryByText("Sign in as Super Admin")).toBeNull();
     });
     expect(screen.getByPlaceholderText("you@company.com")).toBeTruthy();
+  });
+});
+
+describe("LoginPage — already-authenticated redirect (root-reopen fix)", () => {
+  // Install a fetch stub where the user session probe reports an authenticated user,
+  // so the mount-time check should redirect into the app instead of showing the form.
+  function installAuthedFetch(opts: { admin?: boolean } = {}) {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const u = typeof input === "string" ? input : String(input);
+      if (u === "/api/admin/session") {
+        return { ok: true, json: async () => ({ success: !!opts.admin }) } as Response;
+      }
+      if (u === "/api/auth/session") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: { user: { uuid: "u1", email: "a@b.c" } } }),
+        } as Response;
+      }
+      if (u === "/api/keepalive") {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (u === "/api/auth/check-default") {
+        return { ok: true, json: async () => ({ success: true, data: { enabled: false } }) } as Response;
+      }
+      throw new Error(`Unexpected fetch in test: ${u}`);
+    }) as unknown as typeof fetch;
+  }
+
+  it("redirects an already-logged-in user to /projects instead of showing the form", async () => {
+    installAuthedFetch();
+
+    render(<LoginPage />);
+
+    await waitFor(() => {
+      expect(mockRouterReplace).toHaveBeenCalledWith("/projects");
+    });
+    // (In production router.replace unmounts this page; jsdom does not navigate, so we
+    // assert on the redirect call itself — the page-level contract — not DOM teardown.)
+  });
+
+  it("redirects an authenticated super admin to /admin", async () => {
+    installAuthedFetch({ admin: true });
+
+    render(<LoginPage />);
+
+    await waitFor(() => {
+      expect(mockRouterReplace).toHaveBeenCalledWith("/admin");
+    });
+  });
+
+  it("shows the login form for an unauthenticated visitor (no redirect)", async () => {
+    // Default installFetch: admin session + user session both not-success.
+    installFetch({
+      checkDefault: { success: true, data: { enabled: false } },
+    });
+
+    render(<LoginPage />);
+
+    // The email/SSO form renders (the normal unauthenticated path).
+    expect(await screen.findByPlaceholderText("you@company.com")).toBeTruthy();
+    expect(mockRouterReplace).not.toHaveBeenCalledWith("/projects");
+    expect(mockRouterReplace).not.toHaveBeenCalledWith("/admin");
   });
 });

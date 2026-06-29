@@ -29,6 +29,10 @@ vi.mock("@/lib/event-bus", () => ({
 vi.mock("@/services/daemon-connection.service", () => ({
   parseSelfReport: (...args: unknown[]) => mockParseSelfReport(...args),
   registerConnection: (...args: unknown[]) => mockRegisterConnection(...args),
+  // Faithful re-implementation of the real guard: a conflict result carries a
+  // `conflict` key (the route uses it to skip the per-connection lifecycle).
+  isConnectionConflict: (result: unknown) =>
+    result !== null && typeof result === "object" && "conflict" in (result as object),
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
   markDisconnected: (...args: unknown[]) => mockMarkDisconnected(...args),
 }));
@@ -211,6 +215,64 @@ describe("GET /api/events/notifications (notification SSE)", () => {
       `notification:agent:${actorUuid}`,
       expect.any(Function),
     );
+  });
+
+  describe("registration conflict (a live different-process daemon holds this (agent,host,cwd))", () => {
+    const conflictResult = { conflict: true, host: "mac.local", cwd: "/work/alpha" };
+    beforeEach(() => {
+      mockParseSelfReport.mockReturnValue({
+        clientType: "claude_code",
+        host: "mac.local",
+        cwd: "/work/alpha",
+        startedAt: new Date("2026-06-15T09:00:00.000Z"),
+      });
+      mockRegisterConnection.mockResolvedValue(conflictResult);
+    });
+
+    it("emits a single connection_conflict event (with host+cwd) and NOT connection_registered", async () => {
+      const res = await GET(makeRequest("clientType=claude_code&host=mac.local&cwd=/work/alpha"));
+      const { chunks } = await startStream(res);
+      const joined = chunks.join("");
+
+      expect(joined).toContain(": connected");
+      expect(joined).toContain('"type":"connection_conflict"');
+      expect(joined).toContain('"host":"mac.local"');
+      expect(joined).toContain('"cwd":"/work/alpha"');
+      // Must NOT also tell the daemon it registered — no row was written.
+      expect(joined).not.toContain("connection_registered");
+    });
+
+    it("wires up NO per-connection lifecycle on conflict (no control sub, no heartbeat touch, no markDisconnected)", async () => {
+      vi.useFakeTimers();
+      const ac = new AbortController();
+      const res = await GET(makeRequest("clientType=claude_code", ac.signal));
+      await startStream(res);
+
+      // No control channel subscription (that is keyed on a real connection uuid).
+      const controlOn = mockEventBus.on.mock.calls.find((c) => String(c[0]).startsWith("control:"));
+      expect(controlOn).toBeUndefined();
+
+      // Heartbeat frame still flows (keep-alive) but it must NOT touch a registry row.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockTouchConnection).not.toHaveBeenCalled();
+
+      // Abort must not mark a (nonexistent) row disconnected.
+      ac.abort();
+      await Promise.resolve();
+      expect(mockMarkDisconnected).not.toHaveBeenCalled();
+      const controlOff = mockEventBus.off.mock.calls.find((c) => String(c[0]).startsWith("control:"));
+      expect(controlOff).toBeUndefined();
+    });
+
+    it("still subscribes the per-user notification channel on conflict (the user keeps getting notifications)", async () => {
+      const res = await GET(makeRequest("clientType=claude_code"));
+      await startStream(res);
+      const onCall = mockEventBus.on.mock.calls.find((c) =>
+        String(c[0]).startsWith("notification:"),
+      );
+      expect(onCall).toBeDefined();
+      expect(onCall![0]).toBe(`notification:agent:${actorUuid}`);
+    });
   });
 
   describe("no-clientType / browser connection", () => {

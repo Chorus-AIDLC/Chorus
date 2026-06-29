@@ -55,6 +55,57 @@ const USER_TEXT_STRING = {
 };
 const RESULT_ENVELOPE = { type: "result", subtype: "success", session_id: SID, result: "done" };
 
+// ── Harness-injected synthetic content (Claude Code 2.1.195) ──
+// A loaded skill body is delivered to the model as a synthetic user turn. On the live
+// `claude -p --output-format stream-json --verbose` stdout the daemon reads, it is a
+// `type:"user"` envelope carrying a `text` block, marked `isSynthetic:true`. (The
+// on-disk JSONL marks the same message `isMeta:true` — a DIFFERENT field name; the
+// daemon reads the stream, so the guard keys on `isSynthetic`. Verified by capturing
+// real stdout from the installed CLI, not from memory.)
+const USER_SKILL_BODY_SYNTHETIC = {
+  type: "user",
+  session_id: SID,
+  isSynthetic: true,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "Base directory for this skill: /home/u/.claude/plugins/...\n\n# Idea Skill\n..." }],
+  },
+};
+// A human wake instruction is a NON-synthetic user text message — must still sync.
+const USER_HUMAN_INSTRUCTION = {
+  type: "user",
+  session_id: SID,
+  message: { role: "user", content: [{ type: "text", text: "[Chorus] New instruction from a human: please claim it." }] },
+};
+// A genuine assistant reply that merely QUOTES a skill string — must NOT be dropped
+// (proves the filter is structural on isSynthetic, not content-sniffing).
+const ASSISTANT_QUOTES_SKILL = {
+  type: "assistant",
+  session_id: SID,
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: 'I read the "Base directory for this skill" line and proceeded.' }],
+  },
+};
+// A retained, non-synthetic text block that wraps a <system-reminder> alongside real text.
+const USER_TEXT_WITH_REMINDER = {
+  type: "user",
+  session_id: SID,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "Real instruction.<system-reminder>internal note</system-reminder> Keep going." }],
+  },
+};
+// A message that is ONLY a system-reminder — nothing real remains after stripping.
+const USER_REMINDER_ONLY = {
+  type: "user",
+  session_id: SID,
+  message: {
+    role: "user",
+    content: [{ type: "text", text: "<system-reminder>ambient context, not user input</system-reminder>" }],
+  },
+};
+
 describe("extractTranscriptText — keep user/assistant text, drop everything else", () => {
   it("keeps an assistant text message", () => {
     expect(extractTranscriptText(ASSISTANT_TEXT)).toEqual({
@@ -132,6 +183,103 @@ describe("extractTranscriptText — keep user/assistant text, drop everything el
   it("falls back to the envelope type when message.role is absent", () => {
     const noRole = { type: "user", message: { content: [{ type: "text", text: "hi" }] } };
     expect(extractTranscriptText(noRole)).toEqual({ role: "user", text: "hi" });
+  });
+});
+
+describe("extractTranscriptText — exclude harness-injected synthetic content", () => {
+  it("drops a type:user isSynthetic:true skill-body message (no body leaks)", () => {
+    expect(extractTranscriptText(USER_SKILL_BODY_SYNTHETIC)).toBeNull();
+  });
+
+  it("keeps a NON-synthetic [Chorus] human instruction", () => {
+    expect(extractTranscriptText(USER_HUMAN_INSTRUCTION)).toEqual({
+      role: "user",
+      text: "[Chorus] New instruction from a human: please claim it.",
+    });
+  });
+
+  it("does NOT drop an assistant reply that merely quotes a skill string (structural, not content-sniffing)", () => {
+    expect(extractTranscriptText(ASSISTANT_QUOTES_SKILL)).toEqual({
+      role: "assistant",
+      text: 'I read the "Base directory for this skill" line and proceeded.',
+    });
+  });
+
+  it("does NOT drop a synthetic ASSISTANT message — the guard is gated on type:user only", () => {
+    // An assistant envelope marked isSynthetic must still be kept (real assistant text);
+    // the synthetic drop is scoped to user envelopes (where injected content rides).
+    const synthAssistant = {
+      type: "assistant",
+      isSynthetic: true,
+      message: { role: "assistant", content: [{ type: "text", text: "still my reply" }] },
+    };
+    expect(extractTranscriptText(synthAssistant)).toEqual({ role: "assistant", text: "still my reply" });
+  });
+
+  it("strips a <system-reminder> span from retained text but keeps the real text", () => {
+    expect(extractTranscriptText(USER_TEXT_WITH_REMINDER)).toEqual({
+      role: "user",
+      text: "Real instruction. Keep going.",
+    });
+  });
+
+  it("drops a message that is only a <system-reminder> after stripping", () => {
+    expect(extractTranscriptText(USER_REMINDER_ONLY)).toBeNull();
+  });
+});
+
+// ── Real captured codex `codex exec --json` event shapes (codex-cli 0.142.3) ──
+// Codex's stream is structurally different from Claude's: conversation/tool output
+// arrives as `item.completed` events whose `item.type` discriminates. Assistant
+// text is an `agent_message` item with a top-level `item.text` (verified live —
+// the user prompt is NOT echoed by codex; the chat UI renders it from the turn's
+// promptText instead, so the extractor only needs to surface assistant text).
+const CODEX_THREAD_STARTED = { type: "thread.started", thread_id: "019f0bf0-10b3-7b52-82ab-57e97481fbd1" };
+const CODEX_TURN_STARTED = { type: "turn.started" };
+const CODEX_AGENT_MESSAGE = {
+  type: "item.completed",
+  item: { id: "item_0", type: "agent_message", text: "The hostname is `ip-172`." },
+};
+const CODEX_TURN_COMPLETED = { type: "turn.completed", usage: { input_tokens: 13714, output_tokens: 6 } };
+const CODEX_REASONING = {
+  type: "item.completed",
+  item: { id: "item_1", type: "reasoning", text: "Let me think." },
+};
+const CODEX_COMMAND_EXEC = {
+  type: "item.completed",
+  item: { id: "item_2", type: "command_execution", command: "ls", aggregated_output: "a\nb\n" },
+};
+
+describe("extractTranscriptText — codex exec --json shape", () => {
+  it("keeps a codex agent_message item as assistant text", () => {
+    expect(extractTranscriptText(CODEX_AGENT_MESSAGE)).toEqual({
+      role: "assistant",
+      text: "The hostname is `ip-172`.",
+    });
+  });
+
+  it("drops codex lifecycle envelopes (thread.started / turn.started / turn.completed)", () => {
+    expect(extractTranscriptText(CODEX_THREAD_STARTED)).toBeNull();
+    expect(extractTranscriptText(CODEX_TURN_STARTED)).toBeNull();
+    expect(extractTranscriptText(CODEX_TURN_COMPLETED)).toBeNull();
+  });
+
+  it("drops a codex reasoning item (model thinking — not conversation text)", () => {
+    expect(extractTranscriptText(CODEX_REASONING)).toBeNull();
+  });
+
+  it("drops a codex command_execution item (tool activity, not assistant text)", () => {
+    expect(extractTranscriptText(CODEX_COMMAND_EXEC)).toBeNull();
+  });
+
+  it("drops a codex agent_message with only-whitespace text", () => {
+    const blank = { type: "item.completed", item: { type: "agent_message", text: "   " } };
+    expect(extractTranscriptText(blank)).toBeNull();
+  });
+
+  it("drops a codex item.completed with no item / missing text", () => {
+    expect(extractTranscriptText({ type: "item.completed" })).toBeNull();
+    expect(extractTranscriptText({ type: "item.completed", item: { type: "agent_message" } })).toBeNull();
   });
 });
 

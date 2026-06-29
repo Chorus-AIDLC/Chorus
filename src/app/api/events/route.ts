@@ -7,6 +7,7 @@ import { eventBus, type RealtimeEvent, type PresenceEvent } from "@/lib/event-bu
 import {
   parseSelfReport,
   registerConnection,
+  isConnectionConflict,
   touchConnection,
   markDisconnected,
 } from "@/services/daemon-connection.service";
@@ -40,7 +41,12 @@ export async function GET(request: NextRequest) {
   // null, the lifecycle below is skipped and the route behaves exactly as before
   // (no DaemonConnection row is written).
   const report = parseSelfReport(request.nextUrl.searchParams);
-  const conn = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+  const registration = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+  // Tri-state split (mirrors /api/events/notifications): a conflict wrote NO row, so
+  // it gets a single `connection_conflict` event and NO per-connection lifecycle; a
+  // handle gets the full lifecycle as before; a null registration leaves both null.
+  const conflict = isConnectionConflict(registration) ? registration : null;
+  const conn = isConnectionConflict(registration) ? null : registration;
 
   // Resolve which daemon connections this caller may see (owner/self scoped) so
   // the stream can forward their per-connection `execution:{uuid}` events. The
@@ -82,6 +88,17 @@ export async function GET(request: NextRequest) {
 
       // Send initial connection confirmation
       send(": connected\n\n");
+
+      // On a registration conflict (a live different-process daemon already holds this
+      // (agent, host, cwd)), emit a single `connection_conflict` event so a daemon on
+      // this endpoint warns + skips that cwd. No row was written, so NO per-connection
+      // execution/transcript lifecycle is wired below (all gated on `conn`). Browser
+      // clients ignore the unrecognized `type`. Symmetric with the notification route.
+      if (conflict) {
+        send(
+          `data: ${JSON.stringify({ type: "connection_conflict", host: conflict.host, cwd: conflict.cwd })}\n\n`,
+        );
+      }
 
       // Subscribe to change events
       const handler = (event: RealtimeEvent) => {

@@ -76,27 +76,26 @@
   "integration": {
     "label": "Native Integrations",
     "title": "Plug Into Your Agent Stack",
-    "subtitle": "First-class plugins for Claude Code and OpenClaw — no glue code, no wrappers.",
+    "subtitle": "First-class plugins for Claude Code, Codex, and OpenClaw — plus a universal skill for any MCP agent. No glue code, no wrappers.",
     "claudeCode": {
       "title": "Claude Code Plugin",
-      "description": "11 lifecycle hooks, 6 workflow skills, and 2 independent review agents — a complete harness for Claude Code and Agent Teams.",
-      "lifecycleTitle": "Lifecycle Hooks",
-      "lifecycleDesc": "Session create/reuse/close, task checkin/checkout, heartbeat — all automated. Sub-agents get full workflow context injected on spawn.",
-      "reviewTitle": "Review Sub-Agents",
-      "reviewDesc": "Auto-spawned after proposal submission or task verification. Read-only agents that find what the author missed and post structured VERDICT comments.",
-      "skillsTitle": "Workflow Skills",
-      "skillsDesc": "Stage-specific guidance for the full AI-DLC pipeline — from idea elaboration to task verification.",
+      "description": "13 lifecycle hooks, 9 workflow skills, and 3 independent review agents — a complete harness for Claude Code and Agent Teams.",
       "installComment": "# Install from Plugin Marketplace"
+    },
+    "codex": {
+      "title": "Codex Plugin",
+      "description": "A standalone Codex CLI plugin with the same AI-DLC skills (`$`-prefixed slash commands), 3 read-only reviewer subagents, and session-aware hooks. One-shot installer wires the Chorus MCP server into Codex.",
+      "installComment": "# One-shot install for Codex"
     },
     "openclaw": {
       "title": "OpenClaw Plugin",
-      "description": "Persistent SSE connection + MCP tool bridge. Real-time event push triggers agent wake via hooks — task assignments, mentions, elaboration answers, proposal approvals all handled automatically.",
+      "description": "Persistent SSE connection + native MCP bridge. Event push wakes an embedded agent (runEmbeddedAgent) on task assignments, mentions, elaboration answers, and proposal approvals — with mid-run interrupt / resume over a reverse control channel.",
       "installComment": "# Install the plugin"
     },
     "skills": {
-      "title": "Universal Skills",
-      "description": "Downloadable SKILL.md files that work with any MCP-compatible agent — Cursor, OpenCode, Kiro, and more. No plugin required, just point your agent to the skill URL.",
-      "installComment": "# Fetch a skill from any Chorus instance"
+      "title": "Universal Skill",
+      "description": "A downloadable SKILL.md that works with any MCP-compatible agent — Cursor, OpenCode, Kiro, and more. No plugin required, just point your agent to the skill URL.",
+      "installComment": "# Fetch the skill from any Chorus instance"
     }
   },
   "showcase": {

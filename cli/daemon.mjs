@@ -18,8 +18,8 @@ import {
   resolvePermissionMode,
   yoloWarningLine,
 } from "./daemon-permission-mode.mjs";
-import { resolveAgentType } from "./daemon-agent.mjs";
-import { formatBanner } from "./daemon-banner.mjs";
+import { resolveAgentType, backendClientType } from "./daemon-agent.mjs";
+import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -27,7 +27,9 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { ClaudeSpawner, resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveCodexPath } from "./codex-spawner.mjs";
+import { selectSpawner } from "./spawner-select.mjs";
 import {
   createExecutionUploadHooks,
   createTranscriptUploadHooks,
@@ -95,9 +97,12 @@ function defaultLogger() {
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
   const permissionMode = deps.permissionMode ?? "chorus";
+  // The resolved agent backend selects which spawner the daemon injects
+  // (add-daemon-codex-backend). Defaults to claude-code, matching the prior
+  // hard-wired ClaudeSpawner. The spawn path below is backend-agnostic — it only
+  // ever calls the shared wake(...) contract.
+  const agentType = deps.agentType ?? "claude-code";
   // Per-wake verbose logging (daemon-startup-output), threaded into the Waker.
-  // agentType is currently display-only (banner/logs) — the spawn path is
-  // claude-code regardless (daemon-agent-selection reserves the slot only).
   const verbose = deps.verbose ?? false;
   // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
   // the layered resolver; falls back to the resolver's default here when not given,
@@ -112,7 +117,11 @@ export function buildDaemon(creds, deps = {}) {
   const lineage =
     deps.lineage ??
     new LineageResolver({ url: creds.url, apiKey: creds.apiKey, logger, fetchImpl: deps.fetchImpl });
-  const spawner = deps.spawner ?? new ClaudeSpawner({ logger, permissionMode });
+  // Inject the spawner for the resolved backend. claude-code → ClaudeSpawner
+  // (construction byte-identical to before); codex → CodexSpawner. `creds` are
+  // passed through so the Codex backend can export the daemon key into the woken
+  // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
+  const spawner = deps.spawner ?? selectSpawner(agentType, { logger, permissionMode, creds });
   // The WakeQueue serializes per DIRECT idea (keyFor's key). It is shared across all
   // path-connections: serialization-per-idea still holds, and maxConcurrency caps the
   // whole process's in-flight wakes rather than per-cwd — the right global budget.
@@ -131,6 +140,40 @@ export function buildDaemon(creds, deps = {}) {
       ? deps.cwds
       : [deps.cwd];
 
+  // ===== All-conflict exit latch (add-daemon-connection-conflict-skip, Q3) =====
+  // Each declared connection resolves to exactly one terminal outcome: REGISTERED
+  // (saw connection_registered → onConnectionId) or CONFLICTED (saw
+  // connection_conflict → onConflict). When EVERY declared connection has resolved
+  // AND none registered (≥1 conflicted, 0 survived), the daemon has nothing to serve,
+  // so we settle `allConflict` — runDaemon races this against waitForever and returns
+  // a non-zero exit. The latch is evaluated only after all connections resolve (R5):
+  // a path still mid-handshake leaves `resolved < total`, so a partial conflict never
+  // triggers the exit. A connection that registers (even after some conflicted) flips
+  // `anyRegistered`, so the exit never fires while at least one path serves.
+  const totalConnections = cwdSet.length;
+  let resolvedConnections = 0;
+  let anyRegistered = false;
+  let settleAllConflict; // resolver, wired into the promise below
+  // A promise that settles ONLY in the all-paths-conflicted case. It never rejects and
+  // never settles otherwise (a serving daemon simply keeps waiting on waitForever).
+  const allConflict = new Promise((resolve) => {
+    settleAllConflict = resolve;
+  });
+  // Record one connection's terminal outcome and, once all have resolved, decide whether
+  // the whole daemon should exit. Idempotent per connection BY CONSTRUCTION: the guard
+  // lives here (flips the connection's own `outcome.resolved`) so a reconnect's repeated
+  // connection_registered — or any future caller — can never double-count, no matter the
+  // call site. The first terminal signal for a connection wins; later ones are no-ops.
+  function recordConnectionOutcome(outcome, registered) {
+    if (outcome.resolved) return;
+    outcome.resolved = true;
+    resolvedConnections += 1;
+    if (registered) anyRegistered = true;
+    if (resolvedConnections === totalConnections && !anyRegistered) {
+      settleAllConflict();
+    }
+  }
+
   /**
    * Build ONE independent path-connection bound to `cwd` (one SSE stream → one
    * DaemonConnection row, keyed by that cwd server-side). All per-connection state —
@@ -148,6 +191,13 @@ export function buildDaemon(creds, deps = {}) {
     // doesn't matter. Per-connection so each path's wakes report against the right row.
     /** @type {{ connectionUuid: string|null }} */
     const connectionState = { connectionUuid: null };
+
+    // Per-connection terminal-outcome bookkeeping (add-daemon-connection-conflict-skip).
+    // `resolved` guards recordConnectionOutcome against double-counting a reconnect's
+    // repeated connection_registered. `skipped` marks a cwd surrendered to a live
+    // different-process daemon — purely informational (the listener is torn down, so it
+    // simply never reconnects), kept on the returned object for inspection/tests.
+    const outcome = { resolved: false, skipped: false };
 
     // Interrupt reporter (子3): REST POST with the daemon's Bearer key. Injectable for
     // tests (shared across connections when injected — tests use a single connection).
@@ -273,6 +323,9 @@ export function buildDaemon(creds, deps = {}) {
       makeSse({
         url: creds.url,
         apiKey: creds.apiKey,
+        // Self-report the SELECTED backend so the connection registry + presence UI
+        // label a codex daemon as `codex` (not the hardcoded `claude_code`).
+        clientType: backendClientType(agentType),
         // The working directory THIS connection serves (T3). `undefined` ⇒ the listener
         // reports its process cwd (single-path / HARD-1). It is just the served path.
         cwd,
@@ -283,13 +336,37 @@ export function buildDaemon(creds, deps = {}) {
             `[Chorus] registered as connection ${connectionUuid}` +
               (cwd ? ` (cwd=${cwd})` : "")
           );
+          // Terminal outcome: this path registered. recordConnectionOutcome is idempotent
+          // per connection, so a reconnect's repeated connection_registered counts once.
+          recordConnectionOutcome(outcome, true);
+        },
+        // Connection conflict (add-daemon-connection-conflict-skip, Q3/Q4): the server
+        // refused to register THIS cwd because a live different-process daemon already
+        // holds the same (agent, host, cwd). Warn prominently, tear the listener down
+        // (disconnect clears the reconnect timer + aborts), and mark the path skipped —
+        // it is never reconnected/re-probed for the process lifetime. Takeover happens
+        // only on the NEXT daemon start/restart. Independent closures mean skipping this
+        // path never disturbs another connection's dispatch/control.
+        onConflict: (event) => {
+          const conflictCwd = (event && event.cwd) ?? cwd ?? process.cwd();
+          const conflictHost = (event && event.host) || "this host";
+          logger.warn(
+            `[Chorus] ⚠ connection conflict: a live daemon already serves ` +
+              `(host=${conflictHost}, cwd=${conflictCwd}) — skipping this path. ` +
+              `Stop the other daemon (or wait for it to go offline) and restart to take it over.`
+          );
+          outcome.skipped = true;
+          // Tear down THIS path's listener: no reconnect, no re-probe (Q4).
+          sseListener.disconnect?.();
+          // Terminal outcome: this path conflicted (idempotent — counts once).
+          recordConnectionOutcome(outcome, false);
         },
         onControl,
         onReconnect: backfill,
         logger,
       });
 
-    return { cwd, connectionState, waker, router, backfill, sseListener, hooks };
+    return { cwd, connectionState, waker, router, backfill, sseListener, hooks, outcome };
   }
 
   // Build one connection per declared cwd. The order is the declaration order; the
@@ -309,6 +386,10 @@ export function buildDaemon(creds, deps = {}) {
     router: primary.router,
     sseListener: primary.sseListener,
     connections,
+    // Settles ONLY when every declared connection resolved and none registered
+    // (all paths already served by a live daemon — Q3). runDaemon races this against
+    // waitForever to exit non-zero. Never settles for a serving daemon.
+    allConflict,
     async start() {
       // Connect every path-connection. Each fires its own onConnect hook + SSE connect;
       // the daemon process cwd is untouched (NFR-3).
@@ -356,7 +437,11 @@ export async function runDaemon(flags = {}, deps = {}) {
   const askPrompt = deps.prompt ?? prompt;
   const writeCreds = deps.writeLoginFile ?? writeLoginFile;
   const version = deps.version ?? readVersion();
+  // Backend executable resolvers — injectable for tests. The SELECTED backend's
+  // resolver runs below (claude-code → findClaude, codex → findCodex), so the
+  // banner shows the right binary instead of always probing for `claude`.
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
+  const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
   // Resolve the agent backend (default claude-code). An unknown --agent /
@@ -410,10 +495,12 @@ export async function runDaemon(flags = {}, deps = {}) {
   if (typeof pf === "number") return pf;
   const { creds, identity, permissionMode } = pf;
 
-  // Detect the claude executable (non-fatal): the daemon still subscribes when
-  // it's missing; a wake surfaces the error visibly when one arrives. The
-  // resolved path (or absence) is shown in the banner below.
-  const claudePath = findClaude();
+  // Detect the SELECTED backend's executable (non-fatal): the daemon still
+  // subscribes when it's missing; a wake surfaces the error visibly when one
+  // arrives. The resolved path (or absence) is shown in the banner below. codex
+  // → resolveCodexPath, otherwise resolveClaudePath — so a `--agent codex` run
+  // probes (and the banner reports) `codex`, not `claude`.
+  const cliPath = agentType === "codex" ? findCodex() : findClaude();
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
@@ -432,7 +519,7 @@ export async function runDaemon(flags = {}, deps = {}) {
         permissionMode,
         credentialSource: creds.source,
         agentType,
-        claudePath,
+        cliPath,
         connection: "connecting…",
         configPath,
         configExists,
@@ -444,6 +531,14 @@ export async function runDaemon(flags = {}, deps = {}) {
   // ⚠ warning on stderr (it also names --chorus-only as the reclaim switch).
   if (permissionMode === "yolo") {
     errLog(`[Chorus] ${yoloWarningLine()}`);
+  }
+  // A missing backend binary is non-fatal (the daemon still subscribes), but the
+  // banner row alone is easy to miss in a systemd journal — emit one loud ⚠ line
+  // on stderr so the operator sees it at startup, not only when a wake fails. The
+  // warning names the SELECTED backend (claude / CHORUS_CLAUDE_PATH or codex /
+  // CHORUS_CODEX_PATH).
+  if (cliPath === null) {
+    errLog(`[Chorus] ${agentNotFoundWarningLine(agentType)}`);
   }
 
   // Surface the served paths so an operator sees a multi-path daemon at a glance.
@@ -476,8 +571,32 @@ export async function runDaemon(flags = {}, deps = {}) {
   await daemon.start();
   log("[Chorus] daemon running. Waiting for task dispatches (Ctrl+C to stop).");
 
-  // Keep the process alive for the long-lived SSE subscription.
-  await (deps.waitForever ?? (() => new Promise(() => {})))();
+  // Keep the process alive for the long-lived SSE subscription, but exit non-zero if
+  // EVERY declared path turns out to be already served by a live daemon
+  // (add-daemon-connection-conflict-skip, Q3). `daemon.allConflict` settles only in
+  // that all-paths-conflicted case; otherwise we wait forever on the subscription. A
+  // sentinel distinguishes the two so a waitForever that never settles can't be mistaken
+  // for the conflict exit.
+  const ALL_CONFLICT = Symbol("all-conflict");
+  const waitForever = deps.waitForever ?? (() => new Promise(() => {}));
+  // `daemon.allConflict` is present on the real buildDaemon output; guard for injected
+  // test fakes that don't provide it (those never settle the conflict branch). A
+  // never-settling fallback keeps the race purely waitForever-driven in that case.
+  const allConflictSignal =
+    daemon.allConflict ?? new Promise(() => {});
+  const outcome = await Promise.race([
+    waitForever().then(() => 0),
+    allConflictSignal.then(() => ALL_CONFLICT),
+  ]);
+  if (outcome === ALL_CONFLICT) {
+    const n = servedPaths.length;
+    errLog(
+      `[Chorus] all ${n} declared ${n === 1 ? "path is" : "paths are"} already served by a live daemon — nothing to do. ` +
+        `Stop the other daemon(s) or remove the conflicting path(s), then restart.`
+    );
+    await daemon.stop();
+    return 1;
+  }
   return 0;
 }
 

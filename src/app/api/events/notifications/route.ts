@@ -7,6 +7,7 @@ import { eventBus, controlEventName } from "@/lib/event-bus";
 import {
   parseSelfReport,
   registerConnection,
+  isConnectionConflict,
   touchConnection,
   markDisconnected,
 } from "@/services/daemon-connection.service";
@@ -30,7 +31,16 @@ export async function GET(request: NextRequest) {
   // null, the lifecycle below is skipped and the route behaves exactly as before
   // (no DaemonConnection row is written).
   const report = parseSelfReport(request.nextUrl.searchParams);
-  const conn = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+  const registration = await registerConnection(auth.companyUuid, auth.actorUuid, report);
+  // Split the tri-state result into two narrow bindings:
+  //  - `conflict`: a live different-process daemon already holds this (agent, host, cwd).
+  //    NO row was written, so we wire up NO per-connection lifecycle; instead the stream
+  //    emits a single `connection_conflict` event so the daemon can warn + skip that cwd.
+  //  - `conn`: a real registered connection (handle) — the full lifecycle is wired as
+  //    before. `null` registration (non-daemon clientType / swallowed write failure)
+  //    leaves both null and the route behaves exactly as before this change.
+  const conflict = isConnectionConflict(registration) ? registration : null;
+  const conn = isConnectionConflict(registration) ? null : registration;
 
   const userKey = `${auth.type}:${auth.actorUuid}`;
   const encoder = new TextEncoder();
@@ -48,13 +58,21 @@ export async function GET(request: NextRequest) {
       // Send initial connection confirmation
       send(": connected\n\n");
 
-      // Tell a self-reporting daemon which DaemonConnection it registered as, so
-      // it can attribute its execution-state snapshots to this connection
-      // (POST /api/daemon/execution-state requires the connectionUuid). Emitted
-      // as a normal data event the daemon's SSE listener parses; browser clients
-      // ignore the unrecognized `type`. Only sent when a connection row was
-      // actually registered (conn is null for non-daemon clientTypes).
-      if (conn) {
+      // First data event tells the daemon how its registration resolved. Exactly
+      // one of three outcomes:
+      //  - conflict → a single `connection_conflict` event carrying the conflicting
+      //    host + cwd, so the daemon warns and skips that cwd (it must NOT also get a
+      //    `connection_registered`, since no row was written).
+      //  - registered → the usual `connection_registered` with the connectionUuid the
+      //    daemon attributes its execution-state snapshots to.
+      //  - neither (non-daemon clientType) → no handshake event at all, as before.
+      // Browser clients ignore both unrecognized `type`s (same as today's
+      // connection_registered / control).
+      if (conflict) {
+        send(
+          `data: ${JSON.stringify({ type: "connection_conflict", host: conflict.host, cwd: conflict.cwd })}\n\n`,
+        );
+      } else if (conn) {
         send(
           `data: ${JSON.stringify({ type: "connection_registered", connectionUuid: conn.uuid })}\n\n`,
         );

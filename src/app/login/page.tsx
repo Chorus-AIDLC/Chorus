@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createUserManager, storeOidcConfig, type OidcConfig } from "@/lib/oidc";
+import { authFetch, primeSessionCookie } from "@/lib/auth-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [defaultAuth, setDefaultAuth] = useState<DefaultAuthInfo | null>(null);
   const [defaultAuthChecked, setDefaultAuthChecked] = useState(false);
+  // Until we've confirmed the visitor is NOT already logged in, hold the form back so an
+  // already-authenticated user (e.g. bounced here after an iOS reopen) is redirected into
+  // the app instead of being stranded on the login form. See the auth-check effect below.
+  const [authChecked, setAuthChecked] = useState(false);
   const [showSsoForm, setShowSsoForm] = useState(false);
   // When non-null, the role picker is shown instead of any auth form. Seeded by
   // a check-default superAdminCollision (Trigger A) or an identify multi_role
@@ -57,6 +62,49 @@ export default function LoginPage() {
     }
     checkDefaultAuth();
   }, []);
+
+  // If the visitor is ALREADY logged in, send them into the app instead of showing the
+  // login form. This is the other half of the iOS-reopen fix: when a still-valid session
+  // gets bounced to /login (e.g. a root-route probe that 401'd before the cookie was
+  // refreshed), /login previously had no auth check and stranded the user on the form.
+  // We prime the cookie (matcher-covered request → middleware refreshes from the refresh
+  // token) and then probe; an admin session goes to /admin, a user session to /projects.
+  // A 401 / transient failure just falls through to render the form (the normal path).
+  useEffect(() => {
+    let cancelled = false;
+    async function redirectIfAuthenticated() {
+      try {
+        // Admin session first (mirrors the root route's precedence).
+        const adminRes = await fetch("/api/admin/session");
+        const adminData = await adminRes.json().catch(() => ({}));
+        if (!cancelled && adminData?.success) {
+          router.replace("/admin");
+          return;
+        }
+
+        let res = await authFetch("/api/auth/session");
+        if (res.status === 401) {
+          await primeSessionCookie();
+          res = await authFetch("/api/auth/session");
+        }
+        if (!cancelled && res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data?.success && data?.data?.user) {
+            router.replace("/projects");
+            return;
+          }
+        }
+      } catch {
+        // Not authenticated / transient — fall through and show the login form.
+      } finally {
+        if (!cancelled) setAuthChecked(true);
+      }
+    }
+    redirectIfAuthenticated();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,7 +252,10 @@ export default function LoginPage() {
     setShowSsoForm(false);
   };
 
-  if (!defaultAuthChecked) {
+  // Hold the form until BOTH checks resolve: default-auth config AND the
+  // already-authenticated probe. This prevents the login form from flashing before an
+  // already-logged-in visitor is redirected into the app.
+  if (!defaultAuthChecked || !authChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-muted-foreground">{t("common.loading")}</div>

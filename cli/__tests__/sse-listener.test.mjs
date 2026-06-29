@@ -167,6 +167,84 @@ describe("SseListener parsing", () => {
     listener.disconnect();
   });
 
+  it("forks a type:connection_conflict event to onConflict and NEVER to onEvent (no wake)", async () => {
+    const events = [];
+    const conflicts = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        ": connected\n\n",
+        'data: {"type":"connection_conflict","host":"mac.local","cwd":"/work/alpha"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"n1"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      onConflict: (e) => conflicts.push(e),
+      logger: silentLogger,
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The conflict event went to onConflict ONLY, carrying host + cwd.
+    expect(conflicts).toEqual([
+      { type: "connection_conflict", host: "mac.local", cwd: "/work/alpha" },
+    ]);
+    // onEvent saw the real notification but NEVER the conflict event (no wake path).
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "n1" }]);
+    listener.disconnect();
+  });
+
+  it("a throwing onConflict callback does not crash the stream", async () => {
+    const warns = [];
+    const events = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        'data: {"type":"connection_conflict","host":"h","cwd":"/w"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"after"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      onConflict: () => { throw new Error("conflict boom"); },
+      logger: { ...silentLogger, warn: (m) => warns.push(m) },
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+    // The next event still flows despite the throwing conflict handler.
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "after" }]);
+    expect(warns.join("")).toMatch(/onConflict callback error/);
+    listener.disconnect();
+  });
+
+  it("defaults onConflict to a no-op: a connection_conflict with no handler does not crash or reach onEvent", async () => {
+    const events = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        'data: {"type":"connection_conflict","host":"h","cwd":"/w"}\n\n',
+        'data: {"type":"new_notification","notificationUuid":"n1"}\n\n',
+      ])
+    );
+    // No onConflict supplied → constructor defaults it to a no-op.
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (e) => events.push(e),
+      logger: silentLogger,
+      fetchImpl,
+    });
+    await listener.connect();
+    await new Promise((r) => setTimeout(r, 10));
+    // Conflict is swallowed by the default no-op; only the real notification reaches onEvent.
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "n1" }]);
+    listener.disconnect();
+  });
+
   it("tolerates malformed data line without throwing", async () => {
     const events = [];
     const warns = [];
@@ -226,6 +304,22 @@ describe("SseListener self-report URL", () => {
     expect(Number.isNaN(Date.parse(startedAt))).toBe(false);
     expect(new Date(startedAt).toISOString()).toBe(startedAt);
 
+    listener.disconnect();
+  });
+
+  it("defaults clientType to claude_code when none is given", async () => {
+    const { listener, fetchImpl } = captureUrl();
+    await listener.connect();
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.searchParams.get("clientType")).toBe("claude_code");
+    listener.disconnect();
+  });
+
+  it("reports clientType=codex when constructed for the codex backend", async () => {
+    const { listener, fetchImpl } = captureUrl({ clientType: "codex" });
+    await listener.connect();
+    const url = new URL(fetchImpl.mock.calls[0][0]);
+    expect(url.searchParams.get("clientType")).toBe("codex");
     listener.disconnect();
   });
 

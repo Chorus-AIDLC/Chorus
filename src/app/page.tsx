@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { authFetch, primeSessionCookie } from "@/lib/auth-client";
 
 export default function Home() {
   const t = useTranslations();
@@ -21,8 +22,20 @@ export default function Home() {
           return;
         }
 
-        // Check user session (works for both OIDC and default auth via cookie)
-        const userResponse = await fetch("/api/auth/session");
+        // Check user session (works for both OIDC and default auth via cookie).
+        // The session probe (/api/auth/session) is NOT covered by the middleware
+        // matcher, so it can't refresh the cookie itself. When the page is reopened
+        // after a long idle (iOS bfcache/frozen-tab restore), the access cookie may
+        // have expired with no preceding middleware-covered request — so a first probe
+        // would 401 even though the refresh token is still valid. Prime the cookie via
+        // a matcher-covered request and retry once before deciding. Mirrors the contract
+        // in (dashboard)/layout.tsx checkSession and auth-context.fetchSession.
+        let userResponse = await authFetch("/api/auth/session");
+        if (userResponse.status === 401) {
+          await primeSessionCookie();
+          userResponse = await authFetch("/api/auth/session");
+        }
+
         if (userResponse.ok) {
           const userData = await userResponse.json();
           if (userData.success) {
@@ -31,10 +44,15 @@ export default function Home() {
           }
         }
 
-        // Not logged in, redirect to login
-        router.replace("/login");
+        // Redirect to login ONLY on a true 401 that survived the prime+retry — a
+        // genuine "not logged in" signal. A transient/non-401 failure must NOT bounce
+        // a still-valid session (e.g. a network blip right after an iOS resume); stay
+        // on this lightweight loading screen and let a retry / navigation resolve it.
+        if (userResponse.status === 401) {
+          router.replace("/login");
+        }
       } catch {
-        router.replace("/login");
+        // Network/transient error — do NOT treat as logged-out; do not redirect.
       }
     };
 

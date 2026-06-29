@@ -91,7 +91,14 @@ type AssertContinuable = typeof import("@/services/daemon-session.service")["ass
 type SessionReadOnlyErrorT = typeof import("@/services/daemon-session.service")["SessionReadOnlyError"];
 type StaleThreshold = typeof import("@/services/daemon-connection.service")["STALE_THRESHOLD_MS"];
 
-let registerConnection: RegisterConnection;
+// Narrowed to handle|null: every registration in this e2e is a non-conflict
+// path (distinct cwds, no competing same-cwd live process), so the wrapper
+// asserts "not a conflict" and returns the handle|null shape the `.uuid`
+// assertions below expect.
+type RegisterConnectionNarrowed = (
+  ...args: Parameters<RegisterConnection>
+) => Promise<{ uuid: string; connectedAt: Date } | null>;
+let registerConnection: RegisterConnectionNarrowed;
 let listConnectionsForAgent: ListConnectionsForAgent;
 let parseSelfReport: ParseSelfReport;
 let maybeCreateTurnForWakeNotification: MaybeCreateTurn;
@@ -165,7 +172,13 @@ describeReal("daemon multi-path E2E — REAL Postgres (T4 integration checkpoint
     }));
 
     const connSvc = await import("@/services/daemon-connection.service");
-    registerConnection = connSvc.registerConnection;
+    registerConnection = async (...args) => {
+      const result = await connSvc.registerConnection(...args);
+      if (connSvc.isConnectionConflict(result)) {
+        throw new Error(`unexpected conflict result in a non-conflict test: ${JSON.stringify(result)}`);
+      }
+      return result;
+    };
     listConnectionsForAgent = connSvc.listConnectionsForAgent;
     parseSelfReport = connSvc.parseSelfReport;
     STALE_THRESHOLD_MS = connSvc.STALE_THRESHOLD_MS;
@@ -327,22 +340,16 @@ describeReal("daemon multi-path E2E — REAL Postgres (T4 integration checkpoint
       expect(connA).not.toBeNull();
       expect(connB).not.toBeNull();
 
-      // listConnectionsForAgent sorts online-first then lastSeenAt desc. connB was
-      // registered last, so it is the freshest → the dispatch chokepoint would pin a
-      // NEW session to connB. To make the test deterministic about WHICH cwd is the
-      // origin, age connB slightly so connA is the freshest online row, pinning origin
-      // to cwdA. (This is the realistic case: the session began on cwdA.)
-      await realPrisma.daemonConnection.update({
-        where: { uuid: connB!.uuid },
-        data: { lastSeenAt: new Date(Date.now() - 5_000) },
-      });
+      // listConnectionsForAgent sorts online-first, then stable identity fields.
+      // The temp cwdA prefix sorts before cwdB, so the dispatch chokepoint pins a
+      // NEW session to cwdA without depending on heartbeat timestamps.
 
       // Drive the REAL dispatch chokepoint: it selects the origin connection by
       // (company, agent) only and stamps it on the session. The session id = DIRECT_IDEA.
       const turn = await maybeCreateTurnForWakeNotification(wakeCtx());
       expect(turn).not.toBeNull();
 
-      // The session was pinned to cwdA's connection (the freshest online row).
+      // The session was pinned to cwdA's connection (the first stable identity row).
       const session = await realPrisma.daemonSession.findFirst({
         where: { companyUuid, agentUuid, sessionId: DIRECT_IDEA },
         select: { uuid: true, originConnectionUuid: true },
@@ -433,12 +440,12 @@ describeReal("daemon multi-path E2E — REAL Postgres (T4 integration checkpoint
       });
       expect(session).not.toBeNull();
       // The chosen origin is one of the agent's real connections (deterministically the
-      // freshest online one) — never a fabricated / project-derived target.
+      // first stable identity row) — never a fabricated / project-derived target.
       const validUuids = [c1!.uuid, c2!.uuid, cNull!.uuid];
       expect(validUuids).toContain(session.originConnectionUuid);
-      // It is the LAST-registered (freshest) online row, confirming the online-first +
-      // lastSeenAt-desc selection still holds with mixed cwd/null rows present.
-      expect(session.originConnectionUuid).toBe(cNull!.uuid);
+      // It is the first cwd in deterministic path order, confirming online-first +
+      // stable identity selection with mixed cwd/null rows present.
+      expect(session.originConnectionUuid).toBe(c1!.uuid);
 
       // Structural guard against project→cwd inference: the chokepoint's selection input
       // never references a project; the Project model carries no cwd. We assert the
@@ -590,8 +597,8 @@ describeReal("daemon multi-path E2E — REAL Postgres (T4 integration checkpoint
       expect(upgradedRow.uuid).toBe(upgraded!.uuid);
 
       // (c) Functionality does NOT regress: a NEW session created after the upgrade pins
-      // to the upgraded (cwd-bearing) connection — it is the freshest online row — and
-      // resumes correctly off the real cwd.
+      // to the upgraded (cwd-bearing) connection — it sorts before the legacy null-cwd
+      // row by stable identity — and resumes correctly off the real cwd.
       DIRECT_IDEA = "idea-e2e-0000-0000-0000-00000000002"; // a distinct post-upgrade session
       const postTurn = await maybeCreateTurnForWakeNotification(wakeCtx());
       expect(postTurn).not.toBeNull();

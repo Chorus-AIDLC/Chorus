@@ -69,6 +69,13 @@ const PROCESS_STARTED_AT = new Date();
  *   wake: the control event is forked here BEFORE `onEvent`, so the router / WakeQueue
  *   never sees it and it can never spawn a new Claude. The handler verifies the target
  *   connection + entity and interrupts the running subprocess (see control-handler.mjs).
+ * @property {(event: Record<string, unknown>) => void} [onConflict]  Called for a
+ *   `type:"connection_conflict"` data event (add-daemon-connection-conflict-skip): the
+ *   server refused to register THIS cwd because a live different-process daemon already
+ *   holds the same (agent, host, cwd). Like `control`, it is forked BEFORE `onEvent` so
+ *   it can NEVER reach the router / WakeQueue — a conflict is not a wake. The daemon's
+ *   handler warns and permanently tears down this cwd's listener (it does not reconnect).
+ *   The event carries `{ host, cwd }` of the conflicting identity.
  * @property {() => Promise<void>} [onReconnect]  Called after a reconnect so the
  *   caller can back-fill notifications missed during the gap.
  * @property {string} [cwd]  The working directory THIS connection serves (T3 — 单
@@ -91,6 +98,7 @@ export class SseListener {
     this.onEvent = opts.onEvent;
     this.onConnectionId = opts.onConnectionId ?? (() => {});
     this.onControl = opts.onControl ?? (() => {});
+    this.onConflict = opts.onConflict ?? (() => {});
     this.onReconnect = opts.onReconnect ?? (async () => {});
     /** @type {string|null} The connection this stream registered as (once reported). */
     this.connectionUuid = null;
@@ -108,8 +116,14 @@ export class SseListener {
     // cwd is supplied the daemon is single-path: report the process cwd (the directory
     // it was launched from), identical to today / an old daemon (HARD-1).
     this.cwd = opts.cwd ?? process.cwd();
+    // The daemon backend driving this connection (daemon-agent-selection): the
+    // server registers the row's `clientType` from this self-report, so a
+    // `--agent codex` daemon shows as `codex` instead of mislabelling itself
+    // `claude_code`. Defaults to claude_code (the default backend / an old
+    // single-backend daemon that never sets it).
+    this.clientType = opts.clientType ?? "claude_code";
     const params = new URLSearchParams({
-      clientType: "claude_code",
+      clientType: this.clientType,
       clientVersion: CLI_VERSION,
       host: hostname(),
       cwd: this.cwd,
@@ -252,6 +266,20 @@ export class SseListener {
             this.onControl(event);
           } catch (err) {
             this.logger.warn(`[Chorus] onControl callback error: ${err}`);
+          }
+          continue;
+        }
+        // Connection conflict (add-daemon-connection-conflict-skip): the server refused
+        // to register THIS cwd because a live different-process daemon already holds the
+        // same (agent, host, cwd). Like `control`, fork it to onConflict and `continue`
+        // — it MUST NEVER fall through to onEvent (the router / WakeQueue), or a conflict
+        // would be mistaken for a wake and could spawn a subprocess. A conflict is not a
+        // wake; the daemon's handler warns and tears down this cwd's listener.
+        if (event && event.type === "connection_conflict") {
+          try {
+            this.onConflict(event);
+          } catch (err) {
+            this.logger.warn(`[Chorus] onConflict callback error: ${err}`);
           }
           continue;
         }

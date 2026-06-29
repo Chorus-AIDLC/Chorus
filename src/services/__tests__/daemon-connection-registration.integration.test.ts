@@ -52,7 +52,14 @@ type RegisterConnection = typeof import("@/services/daemon-connection.service")[
 type ListConnectionsForAgent =
   typeof import("@/services/daemon-connection.service")["listConnectionsForAgent"];
 type ParseSelfReport = typeof import("@/services/daemon-connection.service")["parseSelfReport"];
-let registerConnection: RegisterConnection;
+// Narrowed to the handle|null result: every scenario in THIS file is a
+// non-conflict registration (reports carry no startedAt, so a null-vs-null
+// incumbent refreshes rather than conflicts). The wrapper asserts that and
+// returns the handle|null shape so existing `.uuid` assertions keep compiling.
+type RegisterConnectionNarrowed = (
+  ...args: Parameters<RegisterConnection>
+) => Promise<{ uuid: string; connectedAt: Date } | null>;
+let registerConnection: RegisterConnectionNarrowed;
 let listConnectionsForAgent: ListConnectionsForAgent;
 let parseSelfReport: ParseSelfReport;
 
@@ -80,7 +87,13 @@ describeReal("registerConnection — REAL Postgres (cwd-aware registry)", () => 
     }));
 
     const svc = await import("@/services/daemon-connection.service");
-    registerConnection = svc.registerConnection;
+    registerConnection = async (...args) => {
+      const result = await svc.registerConnection(...args);
+      if (svc.isConnectionConflict(result)) {
+        throw new Error(`unexpected conflict result in a non-conflict test: ${JSON.stringify(result)}`);
+      }
+      return result;
+    };
     listConnectionsForAgent = svc.listConnectionsForAgent;
     parseSelfReport = svc.parseSelfReport;
 

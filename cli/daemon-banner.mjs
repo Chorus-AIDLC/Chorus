@@ -6,7 +6,10 @@
 //
 // SECURITY: the banner shows the credential SOURCE, never the raw API key
 // (owner decision: no masking needed because the key is simply not displayed).
-// Zero dependencies — ships in the npm package alongside chorus.mjs.
+// Zero dependencies (beyond the pure backendCli descriptor) — ships in the npm
+// package alongside chorus.mjs.
+
+import { backendCli } from "./daemon-agent.mjs";
 
 /**
  * @typedef {Object} BannerInfo
@@ -16,8 +19,8 @@
  * @property {string} agentUuid        authenticated agent uuid.
  * @property {"yolo"|"chorus"} permissionMode
  * @property {string} credentialSource resolved credential source (flag/env/login-file/…).
- * @property {string} agentType        local agent backend (e.g. claude-code).
- * @property {string|null} claudePath  resolved claude path, or null when not found.
+ * @property {string} agentType        local agent backend (claude-code | codex) — drives the CLI row label.
+ * @property {string|null} cliPath     resolved path of the SELECTED backend's CLI, or null when not found.
  * @property {string} [connection]     connection state line (default "connecting…").
  * @property {string} [configPath]     absolute path to the daemon.json the CLI reads.
  * @property {boolean} [configExists]  whether that daemon.json exists on disk.
@@ -39,7 +42,12 @@ export function bannerRows(info) {
     info.permissionMode === "yolo"
       ? "YOLO ⚠  (full autonomy — Bash/write/any command)"
       : "chorus-only (Chorus MCP tools only)";
-  const claude = info.claudePath ? `found: ${info.claudePath}` : "NOT FOUND — install `claude` or set CHORUS_CLAUDE_PATH";
+  // The CLI row names the SELECTED backend (claude-code → "claude", codex →
+  // "codex") so a `--agent codex` run never mislabels itself as claude.
+  const cli = backendCli(info.agentType);
+  const cliValue = info.cliPath
+    ? `found: ${info.cliPath}`
+    : `NOT FOUND — install \`${cli.name}\` or set ${cli.envVar}`;
   const rows = [
     ["Version", `chorus v${info.version}`],
     ["Server", info.url],
@@ -48,7 +56,7 @@ export function bannerRows(info) {
     ["Permission", permission],
     ["Credentials", `source: ${info.credentialSource}`],
     ["Connection", info.connection ?? "connecting…"],
-    ["claude CLI", claude],
+    [`${cli.name} CLI`, cliValue],
   ];
   // Config file row — shown only when the path is known. Tells the operator
   // exactly which daemon.json the CLI read (and whether it exists), so a
@@ -58,6 +66,36 @@ export function bannerRows(info) {
     rows.push(["Config", `${info.configPath}${exists}`]);
   }
   return rows;
+}
+
+/**
+ * The prominent warning shown at startup when the SELECTED backend's executable
+ * cannot be resolved. Mirrors `yoloWarningLine()`'s loud single-line style so a
+ * missing binary is visible in an unattended / systemd journal immediately,
+ * rather than only when a wake later fails. The daemon stays non-fatal — it still
+ * subscribes. Names the backend's own binary + override env var (claude /
+ * CHORUS_CLAUDE_PATH, or codex / CHORUS_CODEX_PATH).
+ * @param {string} agentType
+ * @returns {string}
+ */
+export function agentNotFoundWarningLine(agentType) {
+  const { name, envVar } = backendCli(agentType);
+  return (
+    `⚠ ${name} CLI NOT FOUND on PATH — wakes will FAIL until you install \`${name}\` ` +
+    `or set ${envVar}. For a systemd/boot service, ensure the unit's PATH ` +
+    "includes the directory holding the binary (e.g. ~/.local/bin). The daemon will " +
+    "still subscribe, but every task dispatch errors until this is fixed."
+  );
+}
+
+/**
+ * Back-compat alias — the original claude-only warning. Delegates to
+ * {@link agentNotFoundWarningLine} for the default claude-code backend so older
+ * imports keep working.
+ * @returns {string}
+ */
+export function claudeNotFoundWarningLine() {
+  return agentNotFoundWarningLine("claude-code");
 }
 
 /**

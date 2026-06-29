@@ -145,23 +145,83 @@ export function mergeUploadHooks(...args) {
 // top-level type — otherwise a tool-result-only user message would leak. The server
 // ingest stores ONLY `user`/`assistant` text (see /api/daemon/transcript), so this
 // filter mirrors exactly what the server will persist.
+//
+// Harness-injected synthetic content: when the model loads a skill, the skill's full
+// markdown body is delivered as a SYNTHETIC user turn. On the live stream-json stdout
+// (verified against Claude Code CLI 2.1.195 by capturing real `claude -p
+// --output-format stream-json --verbose` output) that envelope is
+// `{ type:"user", isSynthetic:true, message:{ content:[{type:"text", text:"Base
+// directory for this skill: …"}] } }`. Because it's a plain `text` block, the
+// block-level filter alone would KEEP it and leak the whole skill body to Chorus, so
+// we drop `type:"user"` envelopes flagged `isSynthetic:true` outright. ⚠️ FIELD NAME:
+// the live stream marks this `isSynthetic`; the on-disk transcript JSONL
+// (~/.claude/projects/.../*.jsonl, which the daemon does NOT read) marks the SAME
+// message `isMeta` — keying on `isMeta` here would be a silent no-op. Genuine human
+// instructions and the agent's own replies never carry `isSynthetic`, so this is a
+// purely structural match (no size/content heuristic) and cannot drop real content.
+// MCP-server instructions, CLAUDE.md context, and the deferred-tool listing are folded
+// into the dropped `type:"system"` init envelope and never reach this filter. Scope is
+// the Claude Code dialect only — the codex (`item.completed`) path is unaffected.
 
 /** Top-level stream-json envelope types that carry a conversation message. */
 const CONVERSATION_TYPES = new Set(["user", "assistant"]);
 
 /**
- * Extract the plain user/assistant TEXT from one Claude Code stream-json object,
- * dropping everything that is not a conversation text block (system/result
- * envelopes, thinking, tool_use, tool_result). Returns null when the object is not a
- * keepable conversation message (so the caller can skip it). Never throws — a shape
- * it doesn't recognize yields null rather than an error (defensive against CLI drift).
+ * Remove `<system-reminder>…</system-reminder>` spans from a retained text block
+ * (defense-in-depth for harness-injected reminders that ride inside a kept text
+ * block). Structural tag match — not a size/content heuristic. Non-reminder text is
+ * left untouched; a message that is only a reminder collapses to empty and is then
+ * dropped by the caller's emptiness check.
+ * @param {string} s
+ * @returns {string}
+ */
+function stripSystemReminders(s) {
+  return s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
+}
+
+/**
+ * Extract the plain user/assistant TEXT from one stream object emitted by EITHER
+ * backend's headless stream, dropping everything that is not a conversation text
+ * block. Returns null when the object is not a keepable conversation message (so
+ * the caller can skip it). Never throws — a shape it doesn't recognize yields null
+ * rather than an error (defensive against CLI drift).
  *
- * @param {any} obj  One parsed stream-json NDJSON object.
+ * Two stream dialects are recognized (their top-level shapes are disjoint, so no
+ * backend flag is needed):
+ *  - Claude Code stream-json: `{ type: "user"|"assistant", message: { content … } }`.
+ *  - codex `codex exec --json`: conversation/tool output rides on `item.completed`
+ *    events discriminated by `item.type`; assistant text is an `agent_message`
+ *    item with a top-level `item.text` (verified against codex-cli 0.142.3). codex
+ *    does NOT echo the user prompt (the chat UI renders that from the turn's
+ *    promptText), and `reasoning` / `command_execution` / lifecycle envelopes are
+ *    not conversation text — all dropped.
+ *
+ * @param {any} obj  One parsed stream NDJSON object.
  * @returns {{ role: "user"|"assistant", text: string } | null}
  */
 export function extractTranscriptText(obj) {
   if (!obj || typeof obj !== "object") return null;
+
+  // ── codex `codex exec --json` dialect ──
+  // Only `item.completed` carries finished output; an `agent_message` item is the
+  // assistant's conversation text. Everything else (reasoning, command_execution,
+  // file_change, thread.started/turn.* lifecycle) is not user/assistant text.
+  if (obj.type === "item.completed") {
+    const item = obj.item;
+    if (!item || typeof item !== "object" || item.type !== "agent_message") return null;
+    const itemText = typeof item.text === "string" ? item.text : "";
+    if (!itemText.trim()) return null;
+    return { role: "assistant", text: itemText };
+  }
+
+  // ── Claude Code stream-json dialect ──
   if (!CONVERSATION_TYPES.has(obj.type)) return null;
+
+  // Drop harness-injected synthetic content (e.g. a loaded skill body). Claude Code
+  // marks these user turns `isSynthetic:true` on the live stream (NOT the on-disk
+  // `isMeta` field). Gated on `type:"user"` so a synthetic *assistant* envelope, if one
+  // ever appears, is still treated as real assistant text. Structural match only.
+  if (obj.type === "user" && obj.isSynthetic === true) return null;
 
   const message = obj.message;
   if (!message || typeof message !== "object") return null;
@@ -190,8 +250,13 @@ export function extractTranscriptText(obj) {
     return null;
   }
 
-  // A message with no text (e.g. a user message that was purely a tool_result, or an
-  // assistant message that was purely tool_use/thinking) is dropped — nothing to store.
+  // Strip any wrapped <system-reminder> spans (defense-in-depth) before deciding
+  // emptiness, so a reminder-only message collapses to nothing and is dropped.
+  text = stripSystemReminders(text);
+
+  // A message with no text (e.g. a user message that was purely a tool_result, an
+  // assistant message that was purely tool_use/thinking, or text that was only a
+  // system-reminder) is dropped — nothing to store.
   if (!text.trim()) return null;
   return { role, text };
 }

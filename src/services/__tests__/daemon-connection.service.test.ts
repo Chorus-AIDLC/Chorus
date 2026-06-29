@@ -42,14 +42,17 @@ import {
   DAEMON_CLIENT_TYPES,
   STALE_THRESHOLD_MS,
   parseSelfReport,
-  registerConnection,
+  registerConnection as registerConnectionRaw,
+  isConnectionConflict,
   markDisconnected,
   touchConnection,
   listConnectionsForOwner,
   listConnectionsForAgent,
+  sortConnectionViews,
   resolveInstanceByTuple,
   resolveInstanceForConnection,
   listInstancesForAgent,
+  type ConnectionView,
   type SelfReport,
 } from "@/services/daemon-connection.service";
 
@@ -59,6 +62,21 @@ const agentUuid = "agent-0000-0000-0000-000000000001";
 const connectionUuid = "conn-0000-0000-0000-000000000001";
 const connectedAt = new Date("2026-06-15T03:00:00.000Z");
 const handle = { uuid: connectionUuid, connectedAt };
+
+// registerConnection now returns a tri-state (handle | conflict | null). Every
+// pre-existing test below exercises a non-conflict path, so this wrapper asserts
+// "not a conflict" once and narrows the result back to `handle | null` for those
+// call sites. The dedicated conflict-detection suite calls `registerConnectionRaw`
+// directly to assert the conflict outcome.
+const registerConnection = async (
+  ...args: Parameters<typeof registerConnectionRaw>
+): Promise<{ uuid: string; connectedAt: Date } | null> => {
+  const result = await registerConnectionRaw(...args);
+  if (isConnectionConflict(result)) {
+    throw new Error(`unexpected conflict result in a non-conflict test: ${JSON.stringify(result)}`);
+  }
+  return result;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,12 +90,16 @@ beforeEach(() => {
   mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: instanceUuid });
   mockPrisma.agentInstance.create.mockResolvedValue({ uuid: instanceUuid });
   mockPrisma.agentInstance.update.mockResolvedValue({ uuid: instanceUuid });
+  // Conflict detection (real-cwd path) issues a findMany over (agentUuid, host, cwd)
+  // BEFORE any write. Default it to "no incumbent" so existing tests register as
+  // before; the conflict suite overrides this per-case.
+  mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
 });
 
 // ===== Constants =====
 describe("constants", () => {
-  it("DAEMON_CLIENT_TYPES are exactly claude_code + openclaw", () => {
-    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw"]);
+  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex", () => {
+    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex"]);
   });
 
   it("STALE_THRESHOLD_MS is 90s (3x the 30s heartbeat)", () => {
@@ -198,6 +220,17 @@ describe("registerConnection", () => {
       mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
       const result = await registerConnection(companyUuid, agentUuid, {
         clientType: "openclaw",
+        host: "linux-box",
+        cwd: "/srv/work",
+      });
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("registers a codex clientType (codex daemon backend)", async () => {
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+      const result = await registerConnection(companyUuid, agentUuid, {
+        clientType: "codex",
         host: "linux-box",
         cwd: "/srv/work",
       });
@@ -397,6 +430,179 @@ describe("registerConnection", () => {
       expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
       expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ===== Conflict detection: warn + skip a live different-process daemon =====
+//
+// add-daemon-connection-conflict-skip. Before any write, on the REAL-cwd path only,
+// registerConnection refuses to silently take over a connection a DIFFERENT live
+// daemon process already holds at the same (agentUuid, host, cwd) — judged across
+// ALL clientTypes (Q2/DEC-2), discriminated by the self-reported startedAt (Q1/DEC-1).
+// Truth table: none/stale → register; fresh+same startedAt → refresh (reconnect);
+// fresh+different startedAt (incl. null-vs-non-null) → conflict (skip, write nothing).
+describe("registerConnection → conflict detection (warn + skip)", () => {
+  const host = "mac.local";
+  const cwd = "/work/alpha";
+  const incumbentStartedAt = new Date("2026-06-15T03:00:00.000Z");
+  const incomingStartedAt = new Date("2026-06-15T09:00:00.000Z");
+  const freshLastSeen = new Date(); // now → within STALE_THRESHOLD_MS
+
+  // Build an incumbent row as returned by the detection findMany (only the selected
+  // liveness fields). `lastSeenAt` defaults to "now" (fresh); pass an old date for stale.
+  const incumbent = (over: Partial<{ status: string; lastSeenAt: Date; startedAt: Date | null; clientType: string }> = {}) => ({
+    status: "online",
+    lastSeenAt: freshLastSeen,
+    startedAt: incumbentStartedAt,
+    clientType: "claude_code",
+    ...over,
+  });
+
+  const report = (over: Partial<SelfReport> = {}): SelfReport => ({
+    clientType: "claude_code",
+    host,
+    cwd,
+    startedAt: incomingStartedAt,
+    ...over,
+  });
+
+  const expectNoWrite = () => {
+    expect(mockPrisma.daemonConnection.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonConnection.update).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonConnection.create).not.toHaveBeenCalled();
+    // The AgentInstance must also be untouched — conflict returns BEFORE upsertAgentInstance.
+    expect(mockPrisma.agentInstance.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.agentInstance.create).not.toHaveBeenCalled();
+    expect(mockPrisma.agentInstance.update).not.toHaveBeenCalled();
+  };
+
+  it("AC#1: fresh incumbent + DIFFERENT startedAt → conflict sentinel, writes NOTHING", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent()]);
+
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+
+    expect(isConnectionConflict(result)).toBe(true);
+    expect(result).toEqual({ conflict: true, host, cwd });
+    expectNoWrite();
+    // The detection query targets the (agentUuid, host, cwd) SUBSET (cross-clientType),
+    // NOT the unique (agent, clientType, host, cwd) row.
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledWith({
+      where: { agentUuid, host, cwd },
+      select: { status: true, lastSeenAt: true, startedAt: true, clientType: true },
+    });
+  });
+
+  it("AC#1: incumbent startedAt=null vs incoming non-null → conflict (the null-startedAt edge)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent({ startedAt: null })]);
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+    expect(result).toEqual({ conflict: true, host, cwd });
+    expectNoWrite();
+  });
+
+  it("AC#1: incumbent non-null vs incoming startedAt=null → conflict (null edge, other direction)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent()]);
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report({ startedAt: null }));
+    expect(result).toEqual({ conflict: true, host, cwd });
+    expectNoWrite();
+  });
+
+  it("AC#2: cross-clientType — a fresh claude_code incumbent makes a codex registration a conflict", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent({ clientType: "claude_code" })]);
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report({ clientType: "codex" }));
+    expect(result).toEqual({ conflict: true, host, cwd });
+    expectNoWrite();
+  });
+
+  it("AC#4: conflict emits ONE structured warn (not the write-failure error path)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent()]);
+    await registerConnectionRaw(companyUuid, agentUuid, report());
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    const [ctx] = mockLogger.warn.mock.calls[0];
+    expect(ctx).toMatchObject({
+      companyUuid,
+      agentUuid,
+      host,
+      cwd,
+      incumbentStartedAt,
+      incomingStartedAt,
+      incumbentClientType: "claude_code",
+      incomingClientType: "claude_code",
+    });
+  });
+
+  it("AC#3: fresh incumbent + SAME startedAt → NOT a conflict, refreshes (reconnect)", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([incumbent({ startedAt: incomingStartedAt })]);
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+
+    expect(isConnectionConflict(result)).toBe(false);
+    expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+    expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it("AC#3: STALE incumbent (lastSeenAt older than threshold) → takeover regardless of startedAt", async () => {
+    const stale = new Date(Date.now() - STALE_THRESHOLD_MS - 1_000);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      incumbent({ lastSeenAt: stale, startedAt: incumbentStartedAt }),
+    ]);
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+
+    expect(isConnectionConflict(result)).toBe(false);
+    expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+    expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("AC#3: incumbent status=offline (fresh lastSeenAt) → takeover, not a conflict", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      incumbent({ status: "offline", startedAt: incumbentStartedAt }),
+    ]);
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+    expect(isConnectionConflict(result)).toBe(false);
+    expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("AC#3: NO incumbent at all → first-connect registers normally", async () => {
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+    expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+    expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stale + a fresh-same-process row coexisting → still NOT a conflict (reconnect wins over the stale ghost)", async () => {
+    const stale = new Date(Date.now() - STALE_THRESHOLD_MS - 1_000);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      incumbent({ lastSeenAt: stale, startedAt: new Date("2000-01-01T00:00:00.000Z") }),
+      incumbent({ startedAt: incomingStartedAt }), // fresh, same process as incoming
+    ]);
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+    const result = await registerConnectionRaw(companyUuid, agentUuid, report());
+    expect(isConnectionConflict(result)).toBe(false);
+  });
+
+  it("AC#3 (Q5): the cwd=null branch is EXEMPT — never runs detection, refreshes the old-daemon row", async () => {
+    // An old daemon: no cwd. Detection must NOT run (findMany not called on the null path);
+    // the existing findFirst→update/create compatibility path handles it.
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "old-null-row" });
+    mockPrisma.daemonConnection.update.mockResolvedValue({ uuid: "old-null-row", connectedAt });
+
+    const result = await registerConnectionRaw(companyUuid, agentUuid, {
+      clientType: "claude_code",
+      host,
+      cwd: null,
+      startedAt: null,
+    });
+
+    expect(isConnectionConflict(result)).toBe(false);
+    expect(result).toEqual({ uuid: "old-null-row", connectedAt });
+    // Detection's findMany is real-cwd-only — it must not be consulted for cwd=null.
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -674,6 +880,8 @@ const ownerUuid = "owner-0000-0000-0000-000000000001";
 function makeRow(
   overrides: {
     uuid?: string;
+    agentUuid?: string;
+    clientType?: string;
     status?: string;
     agoMs?: number; // how long before NOW lastSeenAt was
     startedAt?: Date | null;
@@ -688,8 +896,8 @@ function makeRow(
   const agoMs = overrides.agoMs ?? 0;
   return {
     uuid: overrides.uuid ?? connectionUuid,
-    agentUuid,
-    clientType: "claude_code",
+    agentUuid: overrides.agentUuid ?? agentUuid,
+    clientType: overrides.clientType ?? "claude_code",
     // Use `in` (not `??`) for the nullable fields so an explicit null override
     // is honored rather than falling through to the default.
     clientVersion: "clientVersion" in overrides ? overrides.clientVersion : "0.11.0",
@@ -865,7 +1073,7 @@ describe("T3 dispatch selection across multi-cwd + null-cwd connections", () => 
     });
   });
 
-  it("the dispatch chokepoint's 'first online' selection is unaffected by cwd (online-first sort)", async () => {
+  it("the dispatch chokepoint's 'first online' selection is unaffected by cwd (online-first deterministic sort)", async () => {
     // One OFFLINE repo-a row + two ONLINE rows (repo-b, then null). The first-online pick
     // must land an ONLINE connection regardless of cwd — selection is by online status,
     // never by cwd or project.
@@ -879,9 +1087,9 @@ describe("T3 dispatch selection across multi-cwd + null-cwd connections", () => 
     const origin = result.find((c) => c.effectiveStatus === "online");
     expect(origin).toBeTruthy();
     expect(origin!.effectiveStatus).toBe("online");
-    // Online-first, then lastSeenAt desc: the freshest online (null-cwd, agoMs 1000) leads
-    // the offline repo-a row — i.e. a null-cwd connection is fully selectable as origin.
-    expect(origin!.uuid).toBe("conn-null-online");
+    // Online-first, then stable cwd identity: the real-cwd row leads the null-cwd
+    // row regardless of lastSeenAt, and both lead the offline row.
+    expect(origin!.uuid).toBe("conn-b-online");
   });
 
   it("a null-cwd (old daemon) connection is selectable as the sole online connection (HARD-1)", async () => {
@@ -951,27 +1159,51 @@ describe("ordering", () => {
     vi.setSystemTime(NOW);
   });
 
-  it("sorts online-first, then lastSeenAt desc", async () => {
+  it("sorts online-first, then stable identity fields instead of lastSeenAt", async () => {
     // Build rows out of final order:
-    //  - offlineOld:  offline, lastSeenAt 1h ago
-    //  - onlineOld:   online + fresh, lastSeenAt 60s ago
-    //  - onlineNew:   online + fresh, lastSeenAt now
-    //  - offlineNew:  offline, lastSeenAt 30s ago
+    //  - offline zeta: newest timestamp, but name sorts after Alpha
+    //  - online beta:  newest timestamp, but name sorts after Alpha
+    //  - online alpha: older timestamp, but identity sorts first
+    //  - offline alpha: older timestamp, but identity sorts first in offline group
     mockPrisma.daemonConnection.findMany.mockResolvedValue([
-      makeRow({ uuid: "offline-old", status: "offline", agoMs: 60 * 60 * 1000 }),
-      makeRow({ uuid: "online-old", status: "online", agoMs: 60_000 }),
-      makeRow({ uuid: "online-new", status: "online", agoMs: 0 }),
-      makeRow({ uuid: "offline-new", status: "offline", agoMs: 30_000 }),
+      makeRow({
+        uuid: "offline-zeta-new",
+        status: "offline",
+        agoMs: 0,
+        agentUuid: "agent-z",
+        agent: { name: "Zeta", ownerUuid },
+      }),
+      makeRow({
+        uuid: "online-beta-new",
+        status: "online",
+        agoMs: 0,
+        agentUuid: "agent-b",
+        agent: { name: "Beta", ownerUuid },
+      }),
+      makeRow({
+        uuid: "online-alpha-old",
+        status: "online",
+        agoMs: 60_000,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+      }),
+      makeRow({
+        uuid: "offline-alpha-old",
+        status: "offline",
+        agoMs: 30_000,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+      }),
     ]);
 
     const result = await listConnectionsForOwner(companyUuid, ownerUuid);
 
-    // Online (newest lastSeenAt first), then offline (newest lastSeenAt first).
+    // Online first, then stable identity; timestamps do not drive the order.
     expect(result.map((v) => v.uuid)).toEqual([
-      "online-new",
-      "online-old",
-      "offline-new",
-      "offline-old",
+      "online-alpha-old",
+      "online-beta-new",
+      "offline-alpha-old",
+      "offline-zeta-new",
     ]);
     expect(result.map((v) => v.effectiveStatus)).toEqual([
       "online",
@@ -991,6 +1223,178 @@ describe("ordering", () => {
     const result = await listConnectionsForOwner(companyUuid, ownerUuid);
     expect(result.map((v) => v.uuid)).toEqual(["fresh-online", "stale-online"]);
     expect(result.map((v) => v.effectiveStatus)).toEqual(["online", "offline"]);
+  });
+
+  it("returns identical order for shuffled equivalent inputs and heartbeat-only timestamp changes", async () => {
+    const first = [
+      makeRow({
+        uuid: "conn-z",
+        status: "online",
+        agoMs: 1_000,
+        agentUuid: "agent-z",
+        agent: { name: "Zeta", ownerUuid },
+        cwd: "/work/z",
+      }),
+      makeRow({
+        uuid: "conn-a",
+        status: "online",
+        agoMs: 60_000,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+        cwd: "/work/a",
+      }),
+      makeRow({
+        uuid: "conn-null",
+        status: "online",
+        agoMs: 10_000,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+        cwd: null,
+      }),
+      makeRow({
+        uuid: "conn-offline",
+        status: "offline",
+        agoMs: 0,
+        agentUuid: "agent-b",
+        agent: { name: "Beta", ownerUuid },
+        cwd: "/work/b",
+      }),
+    ];
+    const second = [
+      makeRow({
+        uuid: "conn-offline",
+        status: "offline",
+        agoMs: 70_000,
+        agentUuid: "agent-b",
+        agent: { name: "Beta", ownerUuid },
+        cwd: "/work/b",
+      }),
+      makeRow({
+        uuid: "conn-null",
+        status: "online",
+        agoMs: 5_000,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+        cwd: null,
+      }),
+      makeRow({
+        uuid: "conn-a",
+        status: "online",
+        agoMs: 0,
+        agentUuid: "agent-a",
+        agent: { name: "Alpha", ownerUuid },
+        cwd: "/work/a",
+      }),
+      makeRow({
+        uuid: "conn-z",
+        status: "online",
+        agoMs: 30_000,
+        agentUuid: "agent-z",
+        agent: { name: "Zeta", ownerUuid },
+        cwd: "/work/z",
+      }),
+    ];
+
+    mockPrisma.daemonConnection.findMany.mockResolvedValueOnce(first);
+    const firstResult = await listConnectionsForOwner(companyUuid, ownerUuid);
+    mockPrisma.daemonConnection.findMany.mockResolvedValueOnce(second);
+    const secondResult = await listConnectionsForOwner(companyUuid, ownerUuid);
+
+    expect(firstResult.map((v) => v.uuid)).toEqual([
+      "conn-a",
+      "conn-null",
+      "conn-z",
+      "conn-offline",
+    ]);
+    expect(secondResult.map((v) => v.uuid)).toEqual(firstResult.map((v) => v.uuid));
+  });
+
+  it("tie-breaks duplicate and missing agent names by agent uuid, cwd, host, clientType, then uuid", () => {
+    const input = [
+      {
+        uuid: "conn-missing-name",
+        agentUuid: "agent-0",
+        agentName: null,
+        ownerUuid,
+        clientType: "codex",
+        clientVersion: null,
+        host: "host-b",
+        cwd: "/work/a",
+        startedAt: null,
+        status: "online",
+        effectiveStatus: "online",
+        connectedAt: NOW.toISOString(),
+        lastSeenAt: new Date(NOW.getTime() - 1_000).toISOString(),
+        disconnectedAt: null,
+        agentInstanceUuid: null,
+      },
+      {
+        uuid: "conn-agent-2",
+        agentUuid: "agent-2",
+        agentName: "Alpha",
+        ownerUuid,
+        clientType: "claude_code",
+        clientVersion: null,
+        host: "host-a",
+        cwd: "/work/a",
+        startedAt: null,
+        status: "online",
+        effectiveStatus: "online",
+        connectedAt: NOW.toISOString(),
+        lastSeenAt: NOW.toISOString(),
+        disconnectedAt: null,
+        agentInstanceUuid: null,
+      },
+      {
+        uuid: "conn-agent-1-null-cwd",
+        agentUuid: "agent-1",
+        agentName: "alpha",
+        ownerUuid,
+        clientType: "claude_code",
+        clientVersion: null,
+        host: "host-a",
+        cwd: null,
+        startedAt: null,
+        status: "online",
+        effectiveStatus: "online",
+        connectedAt: NOW.toISOString(),
+        lastSeenAt: NOW.toISOString(),
+        disconnectedAt: null,
+        agentInstanceUuid: null,
+      },
+      {
+        uuid: "conn-agent-1-a",
+        agentUuid: "agent-1",
+        agentName: "  ALPHA ",
+        ownerUuid,
+        clientType: "claude_code",
+        clientVersion: null,
+        host: "host-a",
+        cwd: "/work/a",
+        startedAt: null,
+        status: "online",
+        effectiveStatus: "online",
+        connectedAt: NOW.toISOString(),
+        lastSeenAt: NOW.toISOString(),
+        disconnectedAt: null,
+        agentInstanceUuid: null,
+      },
+    ] satisfies ConnectionView[];
+
+    const sorted = sortConnectionViews(input);
+
+    expect(sorted.map((v) => v.uuid)).toEqual([
+      "conn-agent-1-a",
+      "conn-agent-1-null-cwd",
+      "conn-agent-2",
+      "conn-missing-name",
+    ]);
+    expect(input.map((v) => v.uuid)).toEqual([
+      "conn-missing-name",
+      "conn-agent-2",
+      "conn-agent-1-null-cwd",
+      "conn-agent-1-a",
+    ]);
   });
 });
 
