@@ -150,6 +150,7 @@
     "documents": "Documents",
     "proposals": "Proposals",
     "tasks": "Tasks",
+    "graph": "Graph",
     "activity": "Activity",
     "logout": "Sign out",
     "newProject": "New Project",
@@ -1570,5 +1571,12 @@
     "confirm": "Pin instance",
     "cancel": "Cancel",
     "noInstances": "No live instances"
+  },
+  "graph": {
+    "title": "Graph",
+    "subtitle": "A knowledge graph of this project's Ideas, Proposals, Tasks, and Documents.",
+    "emptyTitle": "Nothing to graph yet",
+    "emptyDesc": "Once this project has Ideas, Proposals, Tasks, or Documents, they will appear here as a connected knowledge graph.",
+    "comingSoon": "Graph canvas coming soon"
   }
 }
