@@ -36,6 +36,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+import { PresenceIndicator } from "@/components/ui/presence-indicator";
+
 export type ResourceGraphNodeType = "idea" | "proposal" | "task" | "document";
 
 export interface ResourceGraphNodeData {
@@ -90,6 +92,7 @@ export function shouldShowExpandAffordance(
 }
 
 export function ResourceGraphNode({
+  id,
   data,
   selected,
 }: NodeProps<Node<ResourceGraphNodeData>>) {
@@ -103,75 +106,89 @@ export function ResourceGraphNode({
 
   // The selection ring is rendered as a CSS outline so it doesn't shift
   // the node's layout when toggled. Mirrors how PresenceIndicator handles
-  // the same problem in src/components/ui/presence-indicator.tsx.
+  // the same problem in src/components/ui/presence-indicator.tsx. Presence
+  // highlighting (added by PresenceIndicator below) uses the SAME outline
+  // mechanism — selection outlines sit OUTSIDE the card (offset +2), while
+  // PresenceIndicator's outline sits INSIDE the wrapper (offset -2), so the
+  // two don't fight for the same pixel.
   const outline = selected
     ? { outline: `2px solid ${style.accent}`, outlineOffset: "2px" }
     : undefined;
 
+  // Map node.type → presence entityType. The four ResourceGraphNodeType
+  // values ("idea" | "proposal" | "task" | "document") are already the same
+  // strings the presence subsystem uses for entityType (see PresenceEvent
+  // in src/contexts/realtime-context.tsx and the classification map in
+  // src/mcp/tools/presence.ts) — so this is a direct pass-through, not a
+  // re-encoding. The xyflow node id is the entity UUID (set by the canvas
+  // at id: n.uuid in resource-graph.tsx) so it can be passed straight to
+  // PresenceIndicator as entityUuid.
   return (
-    <div
-      className="rounded-[12px] bg-white px-3 py-2.5 shadow-sm flex items-center gap-2.5 border border-[#EAE4DB]"
-      style={{ width: NODE_WIDTH, ...outline }}
-      data-node-type={data.type}
-      data-testid={`resource-node-${data.type}`}
-    >
-      {/* d3-force lays out nodes by their centers; the handle UI itself is
-          invisible — xyflow just needs source/target anchors to draw edges
-          between. Mirrors the pattern Wave 2's placeholder renderer used. */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!opacity-0 !pointer-events-none"
-      />
-
+    <PresenceIndicator entityType={data.type} entityUuid={id} badgeInside>
       <div
-        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]"
-        style={{ backgroundColor: style.chipBg }}
+        className="rounded-[12px] bg-white px-3 py-2.5 shadow-sm flex items-center gap-2.5 border border-[#EAE4DB]"
+        style={{ width: NODE_WIDTH, ...outline }}
+        data-node-type={data.type}
+        data-testid={`resource-node-${data.type}`}
       >
-        <Icon className="h-4 w-4 text-white" />
-      </div>
+        {/* d3-force lays out nodes by their centers; the handle UI itself is
+            invisible — xyflow just needs source/target anchors to draw edges
+            between. Mirrors the pattern Wave 2's placeholder renderer used. */}
+        <Handle
+          type="target"
+          position={Position.Top}
+          className="!opacity-0 !pointer-events-none"
+        />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span
-          className="font-mono text-[10px] uppercase tracking-wider"
-          style={{ color: style.accent }}
+        <div
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]"
+          style={{ backgroundColor: style.chipBg }}
         >
-          {data.typeLabel}
-        </span>
-        <span className="truncate text-xs font-medium text-[#2C2C2C]">
-          {data.title}
-        </span>
-      </div>
+          <Icon className="h-4 w-4 text-white" />
+        </div>
 
-      {showAffordance ? (
-        data.expanded ? (
-          <ChevronDown
-            className="h-4 w-4 shrink-0"
-            style={{ color: style.accent }}
-            aria-label="expanded"
-            data-testid="affordance-expanded"
-          />
-        ) : (
-          // Collapsed pill: "N ›" — uses the type's accent color, set in a
-          // small chip so it reads as a tappable affordance, not a label.
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
-            style={{ backgroundColor: `${style.accent}1A`, color: style.accent }}
-            aria-label={`collapsed-${data.derivativeCount ?? 0}`}
-            data-testid="affordance-collapsed"
+            className="font-mono text-[10px] uppercase tracking-wider"
+            style={{ color: style.accent }}
           >
-            {data.derivativeCount ?? 0}
-            <ChevronRight className="h-3 w-3" aria-hidden />
+            {data.typeLabel}
           </span>
-        )
-      ) : null}
+          <span className="truncate text-xs font-medium text-[#2C2C2C]">
+            {data.title}
+          </span>
+        </div>
 
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!opacity-0 !pointer-events-none"
-      />
-    </div>
+        {showAffordance ? (
+          data.expanded ? (
+            <ChevronDown
+              className="h-4 w-4 shrink-0"
+              style={{ color: style.accent }}
+              aria-label="expanded"
+              data-testid="affordance-expanded"
+            />
+          ) : (
+            // Collapsed pill: "N ›" — uses the type's accent color, set in a
+            // small chip so it reads as a tappable affordance, not a label.
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+              style={{ backgroundColor: `${style.accent}1A`, color: style.accent }}
+              aria-label={`collapsed-${data.derivativeCount ?? 0}`}
+              data-testid="affordance-collapsed"
+            >
+              {data.derivativeCount ?? 0}
+              <ChevronRight className="h-3 w-3" aria-hidden />
+            </span>
+          )
+        ) : null}
+
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="!opacity-0 !pointer-events-none"
+        />
+      </div>
+    </PresenceIndicator>
   );
 }
 

@@ -24,6 +24,40 @@ vi.mock("@xyflow/react", () => ({
   Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
 }));
 
+// Mock PresenceIndicator with a transparent pass-through that records the
+// (entityType, entityUuid) props it received on the DOM. The real component
+// is unit-tested separately under src/components/ui/__tests__/, and would
+// transitively pull in RealtimeContext + SSE; here we only need to assert
+// the NODE wires the right props through, not re-test the indicator itself.
+vi.mock("@/components/ui/presence-indicator", () => ({
+  PresenceIndicator: ({
+    entityType,
+    entityUuid,
+    subEntityType,
+    subEntityUuid,
+    badgeInside,
+    children,
+  }: {
+    entityType: string;
+    entityUuid: string;
+    subEntityType?: string;
+    subEntityUuid?: string;
+    badgeInside?: boolean;
+    children: React.ReactNode;
+  }) => (
+    <div
+      data-testid="presence-indicator-stub"
+      data-entity-type={entityType}
+      data-entity-uuid={entityUuid}
+      data-sub-entity-type={subEntityType ?? ""}
+      data-sub-entity-uuid={subEntityUuid ?? ""}
+      data-badge-inside={badgeInside ? "true" : "false"}
+    >
+      {children}
+    </div>
+  ),
+}));
+
 import {
   ResourceGraphNode,
   type ResourceGraphNodeData,
@@ -31,9 +65,9 @@ import {
 
 // Build a minimal NodeProps payload. Most fields are unused by the renderer
 // (xyflow passes a lot of metadata); we only fill the surface we touch.
-function makeProps(data: ResourceGraphNodeData, selected = false) {
+function makeProps(data: ResourceGraphNodeData, selected = false, id = "n1") {
   return {
-    id: "n1",
+    id,
     type: "resource",
     data,
     selected,
@@ -171,5 +205,67 @@ describe("ResourceGraphNode renderer", () => {
       expect(node).not.toBeNull();
       unmount();
     }
+  });
+});
+
+describe("ResourceGraphNode presence wiring", () => {
+  // AC #2: node.type maps 1:1 to presence entityType for all four kinds.
+  // AC #3: tests cover the type→entityType mapping.
+  //
+  // The four ResourceGraphNodeType strings are already the same identifiers
+  // the presence subsystem uses (PresenceEvent.entityType in
+  // src/contexts/realtime-context.tsx), so the wiring is a direct pass-
+  // through. These tests pin that contract so a future rename on either
+  // side would fail loud here.
+  it.each([
+    ["idea"],
+    ["proposal"],
+    ["task"],
+    ["document"],
+  ] as const)("maps type=%s → presence entityType=%s and passes node id as entityUuid", (type) => {
+    const ENTITY_UUID = `uuid-${type}`;
+    render(
+      <ResourceGraphNode
+        {...makeProps(
+          {
+            type,
+            title: `${type} title`,
+            typeLabel: type.toUpperCase(),
+          },
+          false,
+          ENTITY_UUID,
+        )}
+      />,
+    );
+    const stub = screen.getByTestId("presence-indicator-stub");
+    expect(stub.getAttribute("data-entity-type")).toBe(type);
+    expect(stub.getAttribute("data-entity-uuid")).toBe(ENTITY_UUID);
+    // No sub-entity at graph-node granularity — each node IS the entity.
+    expect(stub.getAttribute("data-sub-entity-type")).toBe("");
+    expect(stub.getAttribute("data-sub-entity-uuid")).toBe("");
+    // The card is compact and sits inside its own rounded shell, so the
+    // badge must render INSIDE the outline to avoid overflow on the
+    // narrow node footprint — same convention used by the idea-lineage
+    // tree (idea-lineage-tree.tsx) and proposal-view drafts.
+    expect(stub.getAttribute("data-badge-inside")).toBe("true");
+  });
+
+  it("renders the node body inside the PresenceIndicator (wrapper, not sibling)", () => {
+    render(
+      <ResourceGraphNode
+        {...makeProps(
+          { type: "task", title: "A task", typeLabel: "TASK" },
+          false,
+          "task-uuid",
+        )}
+      />,
+    );
+    const stub = screen.getByTestId("presence-indicator-stub");
+    // The card with data-node-type lives INSIDE the indicator wrapper,
+    // which is what gives presence the right anchor for its outline +
+    // badge overlay. If a future refactor accidentally renders them as
+    // siblings, this assertion will catch it.
+    const card = stub.querySelector('[data-node-type="task"]');
+    expect(card).not.toBeNull();
   });
 });
