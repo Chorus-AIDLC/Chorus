@@ -1,17 +1,11 @@
 // src/mcp/tools/council.ts
-// Sovereign multi-model council deliberation — wires council-engine into every Chorus agent.
-//
-// Every Chorus agent (with public-tool access) can call chorus_council_deliberate before
-// executing irreversible actions, approving proposals, or resolving ambiguous tasks.
-// The council fans out to N independent AI models, synthesizes a verdict, and returns
-// an Ed25519 receipt hash proving model independence (receipts-not-vibes).
-//
-// Council-engine runs locally at COUNCIL_ENGINE_URL (default: http://127.0.0.1:8778).
-// Fails gracefully if the council is unreachable — never blocks Chorus operation.
+// Optional external deliberation tool backed by a locally configured council engine.
+// The tool is permission-gated and fails closed when the council service is absent.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
+import { registerPermissionedTool } from "./register-helpers";
 
 const COUNCIL_URL = process.env.COUNCIL_ENGINE_URL ?? "http://127.0.0.1:8778";
 const COUNCIL_TIMEOUT_MS = 120_000;
@@ -36,16 +30,18 @@ interface CouncilQueryResponse {
   };
 }
 
-export function registerCouncilTools(server: McpServer, _auth: AgentAuthContext) {
-  server.registerTool(
+export function registerCouncilTools(server: McpServer, auth: AgentAuthContext) {
+  registerPermissionedTool(
+    server,
+    auth,
+    "proposal:write",
     "chorus_council_deliberate",
     {
       description: [
-        "Ask the sovereign multi-model council to deliberate on a prompt and return a synthesized verdict.",
-        "The council fans out to multiple independent AI models; their responses are synthesized into a single structured verdict.",
-        "Returns: verdict text, agreements, disagreements, knowledge gaps, blind spots, and an Ed25519 receipt hash proving model independence.",
-        "Use before: executing irreversible actions, approving proposals, resolving ambiguous requirements, or whenever a second opinion is needed that cannot be gamed by a single model.",
-        "The receipt_hash in the response can be cryptographically verified — it proves which models participated and what they said.",
+        "Ask the configured council engine to deliberate on a prompt and return a synthesized verdict.",
+        "Use before approving proposals, resolving ambiguous requirements, or taking high-stakes project actions.",
+        "Returns verdict text plus any agreements, disagreements, structured notes, model scores, and receipt hash supplied by the council service.",
+        "Requires proposal:write because prompts can contain project/proposal context and may leave Chorus for the configured council endpoint.",
       ].join(" "),
       inputSchema: z.object({
         prompt: z
@@ -55,10 +51,7 @@ export function registerCouncilTools(server: McpServer, _auth: AgentAuthContext)
         strategy: z
           .enum(["fanout", "compete"])
           .default("fanout")
-          .describe(
-            "fanout: all models answer independently then synthesize (default). " +
-            "compete: models debate and score each other — higher signal, slower."
-          ),
+          .describe("fanout: independent answers then synthesis. compete: higher-signal comparison when supported by the council service."),
       }),
     },
     async ({ prompt, strategy }) => {

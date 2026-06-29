@@ -37,6 +37,7 @@ export const TOOL_PERMISSIONS = {
   // `chorus_pm_validate_elaboration` (reused, not a new tool).
   chorus_pm_validate_elaboration: "idea:admin",
   // Proposal writes
+  chorus_council_deliberate: "proposal:write",
   chorus_pm_create_proposal: "proposal:write",
   chorus_pm_validate_proposal: "proposal:write",
   chorus_pm_submit_proposal: "proposal:write",

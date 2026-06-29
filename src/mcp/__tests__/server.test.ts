@@ -33,6 +33,7 @@ import { registerPmTools } from "@/mcp/tools/pm";
 import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
 import { registerPublicTools } from "@/mcp/tools/public";
+import { registerCouncilTools } from "@/mcp/tools/council";
 import { TOOL_PERMISSIONS } from "@/mcp/tools/permission-map";
 
 // Minimal McpServer stand-in: records every tool name that gets registered.
@@ -74,6 +75,8 @@ function registeredFor(permissions: Permission[]): Set<string> {
   registerAdminTools(server as any, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerPublicTools(server as any, auth);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerCouncilTools(server as any, auth);
   const gated = new Set(Object.keys(TOOL_PERMISSIONS));
   return new Set(names.filter((n) => gated.has(n)));
 }
@@ -218,6 +221,9 @@ describe("MCP tool permission wiring", () => {
         // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
         // Both pm_agent and admin_agent carry idea:write, so it is visible to both.
         "chorus_edit_idea",
+        // Optional council deliberation is proposal:write-gated, so admin_agent
+        // sees it through the proposal-write permission.
+        "chorus_council_deliberate",
       ]);
       expect(registered).toEqual(expected);
     });

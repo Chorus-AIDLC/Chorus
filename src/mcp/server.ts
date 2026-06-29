@@ -28,7 +28,7 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
   // Public tools — available to every authenticated agent (no permission gating)
   registerPublicTools(server, auth);
   registerSessionTools(server, auth);
-  registerCouncilTools(server, auth); // sovereign multi-model deliberation, no permission gate
+  registerCouncilTools(server, auth);
 
   // Permission-gated tools. Each register function calls registerPermissionedTool
   // per tool, which checks auth.permissions.includes(required) before registering.
