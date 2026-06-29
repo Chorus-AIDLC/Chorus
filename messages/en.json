@@ -1577,6 +1577,26 @@
     "subtitle": "A knowledge graph of this project's Ideas, Proposals, Tasks, and Documents.",
     "emptyTitle": "Nothing to graph yet",
     "emptyDesc": "Once this project has Ideas, Proposals, Tasks, or Documents, they will appear here as a connected knowledge graph.",
-    "comingSoon": "Graph canvas coming soon"
+    "comingSoon": "Graph canvas coming soon",
+    "loading": "Loading graph…",
+    "loadFailed": "Could not load the project graph.",
+    "filters": {
+      "heading": "Show",
+      "idea": "Ideas",
+      "proposal": "Proposals",
+      "task": "Tasks",
+      "document": "Documents"
+    },
+    "nodeType": {
+      "idea": "IDEA",
+      "proposal": "PROPOSAL",
+      "task": "TASK",
+      "document": "DOCUMENT"
+    },
+    "edgeKind": {
+      "derive": "Derive",
+      "lineage": "Lineage",
+      "depends": "Depends"
+    }
   }
 }

@@ -1,14 +1,13 @@
 // src/app/(dashboard)/projects/[uuid]/graph/page.tsx
 // Server Component - project resource graph route shell.
-// The canvas itself (force-directed knowledge graph) lands in a sibling task;
-// this page wires the route + page chrome + empty-state placeholder. The page
-// mounts within the project-scoped RealtimeProvider via the dashboard layout
-// so presence is available to the canvas once it arrives.
+// Mounts the ResourceGraph client component within the project-scoped
+// RealtimeProvider supplied by the dashboard layout, so the canvas has
+// presence available when the next task wires the highlight in.
 
 import { redirect } from "next/navigation";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { projectExists } from "@/services/project.service";
-import { ResourceGraphPlaceholder } from "./resource-graph-placeholder";
+import { ResourceGraph } from "./resource-graph";
 
 interface PageProps {
   params: Promise<{ uuid: string }>;
@@ -28,5 +27,5 @@ export default async function GraphPage({ params }: PageProps) {
     redirect("/projects");
   }
 
-  return <ResourceGraphPlaceholder projectUuid={projectUuid} />;
+  return <ResourceGraph projectUuid={projectUuid} />;
 }

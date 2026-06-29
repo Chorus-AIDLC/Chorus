@@ -102826,27 +102826,6 @@
                 },
                 {
                   "type": "path",
-                  "id": "z3oVP",
-                  "x": 0,
-                  "y": 0,
-                  "name": "e-derive-pt2",
-                  "geometry": "M687.5 321l115.9 174.8m-8.8-5l8.8 5-1.3-10",
-                  "viewBox": [
-                    0,
-                    0,
-                    1120,
-                    716
-                  ],
-                  "fill": "#00000000",
-                  "width": 1120,
-                  "height": 716,
-                  "stroke": "#CFC6B6",
-                  "strokeWidth": 1.5,
-                  "strokeLinejoin": "round",
-                  "strokeLinecap": "round"
-                },
-                {
-                  "type": "path",
                   "id": "Jt3sU",
                   "x": 0,
                   "y": 0,
@@ -103693,7 +103672,7 @@
       "name": "NOTE Graph View — main",
       "width": 900,
       "height": 0,
-      "content": "Project Resource Graph (idea d30ec9fa · Chorus 0.13.0) — V1 design (FINAL, R4 q11=a):\n\nLOOK = knowledge graph: an organic node-link web, NOT a rigid tree. Ideas are hubs; everything is laid out by d3-force (force-directed). @xyflow has no built-in force layout → add pure-JS dependency d3-force (~10KB, no native bindings, CLAUDE.md pitfall #9). Re-run the simulation on expand/collapse, preserving existing node positions.\n\nRELATIONSHIPS (3 kinds, distinguished by edge color + arrowhead — Pencil can't render dashed paths, real impl may dash):\n• derive  Idea →→ Proposal →→ Task + Document   (quiet neutral #CFC6B6)\n• lineage Idea →→ Idea  (parentUuid)             (violet #7C4DFF)\n• depends Task →→ Task  (TaskDependency DAG)      (amber #E8833A)\n\nEXPAND-TO-DERIVE (signature; ties q3=b 'collapse by idea'):\n• Collapsed node = hub showing a type-colored count pill 'N ›' = N hidden derivatives.\n• Click → its derivatives bloom as a local sub-cluster (chevron flips to ⌄), wrapped by a soft violet halo = the 'grouped by idea' subgraph. Idea A here stays collapsed ('2 ›') to show both states at once.\n• Leaf nodes (Document, the 2nd Task) show no affordance.\n\nNODES: type = chip color + IBM Plex Mono eyebrow (IDEA/PROPOSAL/TASK/DOCUMENT); no status badge (q5=c).\nPRESENCE (q4 add-on; R2 q7=a/q8=a/q9=a): reuse presence-indicator. Eye badge + thin ring = agent viewing; pencil badge + ring & glow = agent editing (mutate). Any agent via PresenceEvent/usePresence (~2s throttle).\nCONTROLS: zoom/pan + type filter; click node = expand + open side panel (q4=a, q6=b)."
+      "content": "Project Resource Graph (idea d30ec9fa · Chorus 0.13.0) — V1 design (FINAL):\n\nLOOK = knowledge graph: an organic node-link web, NOT a rigid tree. Ideas are hubs; everything is laid out by d3-force (force-directed). @xyflow has no built-in force layout → add pure-JS dependency d3-force (~10KB, no native bindings, CLAUDE.md pitfall #9). Re-run the simulation on expand/collapse, preserving existing node positions.\n\nRELATIONSHIPS (3 kinds, by edge color + arrowhead):\n• derive  Idea →→ Proposal →→ Task + Document   (quiet neutral #CFC6B6)\n• lineage Idea →→ Idea  (parentUuid)             (violet #7C4DFF)\n• depends Task →→ Task  (TaskDependency DAG)      (amber #E8833A)\n\n⚠ ROOT-TASK-ONLY (R5 q12=a): a Proposal draws a derive edge ONLY to its ROOT tasks (no in-proposal dependency / indegree 0). Dependent tasks are reached transitively via the depends chain — NOT a second edge back to the Proposal — else the graph becomes a hairball. Here: Proposal → Task1 (root) + Document; Task1 →(depends)→ Task2; Task2 has NO direct proposal edge. proposal→document covers every document.\n\nEXPAND-TO-DERIVE (signature; ties q3=b 'collapse by idea'):\n• Collapsed node = hub showing a type-colored count pill 'N ›' = N hidden derivatives.\n• Click → its derivatives bloom as a local sub-cluster (chevron flips to ⌄), wrapped by a soft violet halo. Idea A here stays collapsed ('2 ›') to show both states at once.\n• Leaf nodes show no affordance.\n\nNODES: type = chip color + IBM Plex Mono eyebrow (IDEA/PROPOSAL/TASK/DOCUMENT); no status badge (q5=c).\nPRESENCE (q4 add-on; R2 q7=a/q8=a/q9=a): reuse presence-indicator. Eye badge + thin ring = agent viewing; pencil badge + ring & glow = agent editing (mutate). Any agent via PresenceEvent/usePresence (~2s throttle).\nLIVE STRUCTURAL UPDATE (R5 q13=a): same SSE stream that feeds presence also feeds entity-change events — create/delete/update + dependency/lineage changes re-draw the graph live (add/remove nodes+edges, update titles), surviving nodes keep force positions (prevPositions incremental settle), expand/collapse state preserved. Reuse RealtimeProvider/RealtimeContext, no new transport.\nCONTROLS: zoom/pan + type filter; click node = expand + open side panel (q4=a, q6=b)."
     },
     {
       "type": "frame",
@@ -104579,27 +104558,6 @@
                   "width": 1120,
                   "height": 716,
                   "stroke": "#E8833A",
-                  "strokeWidth": 2,
-                  "strokeLinejoin": "round",
-                  "strokeLinecap": "round"
-                },
-                {
-                  "type": "path",
-                  "id": "ekkCR",
-                  "x": 0,
-                  "y": 0,
-                  "name": "e-derive-pt2",
-                  "geometry": "M687.5 321l115.9 174.8m-8.8-5l8.8 5-1.3-10",
-                  "viewBox": [
-                    0,
-                    0,
-                    1120,
-                    716
-                  ],
-                  "fill": "#00000000",
-                  "width": 1120,
-                  "height": 716,
-                  "stroke": "#7C4DFF",
                   "strokeWidth": 2,
                   "strokeLinejoin": "round",
                   "strokeLinecap": "round"
@@ -106512,7 +106470,7 @@
       "name": "NOTE Graph View — node selected",
       "width": 900,
       "height": 0,
-      "content": "Node click → side panel (q6=b). REUSE existing panels, don't rebuild:\n• Idea / Task → their existing detail panels (Task panel docked here; opened via usePanelUrl ?panel=).\n• Proposal → opens the idea-tracker Proposal tab (?panel=<ideaUuid>&tab=proposal).\n• Document → the standalone doc side-panel (extracted from idea-tracker's 2nd-level expand).\nSelected node keeps its terracotta highlight ring (here: 'Side-panel preview' task + its violet selection edge); the force graph stays mounted so exploration continues while the panel is docked."
+      "content": "Node click → side panel (q6=b). REUSE existing panels, don't rebuild:\n• Idea / Task → their existing detail panels (Task panel docked here; opened via usePanelUrl ?panel=).\n• Proposal → opens the idea-tracker Proposal tab (?panel=<ideaUuid>&tab=proposal).\n• Document → the standalone doc side-panel (extracted from idea-tracker's 2nd-level expand).\nSelected node keeps its terracotta highlight ring (here: 'Side-panel preview' task); the force graph stays mounted so exploration continues while the panel is docked.\n\nNote on edges: Task2 ('Side-panel preview') has NO direct proposal edge — it depends on Task1, so under the root-task-only rule it's reached via the amber depends edge. The terracotta ring (not an edge) conveys selection."
     }
   ],
   "themes": {
