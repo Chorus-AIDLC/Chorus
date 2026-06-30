@@ -163,7 +163,19 @@ export function ForceGraphCanvas({
         existing.ownerId = n.ownerId;
         return existing;
       }
+      // New node. SEED it at its owner's CURRENT position (+ a small jitter)
+      // instead of letting d3 drop it at the origin and fly it across the
+      // canvas on expand — that fly-in was the main "整个图乱跳". Because the
+      // two-level model only ever reveals children of an already-visible hub,
+      // the owner is already positioned in `map`. Children then fan out
+      // locally via the collide + cluster forces, so the rest of the graph
+      // barely moves.
       const created: SimNode = { ...n };
+      const owner = n.ownerId ? map.get(n.ownerId) : undefined;
+      if (owner && owner.x != null && owner.y != null) {
+        created.x = owner.x + (Math.random() - 0.5) * 30;
+        created.y = owner.y + (Math.random() - 0.5) * 30;
+      }
       map.set(n.id, created);
       return created;
     });
@@ -199,47 +211,44 @@ export function ForceGraphCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Tune the live force simulation for an airy, non-overlapping, CLUSTERED
-  // layout. The defining structural force is the per-tick "cluster tether"
-  // (see clusterForce): every resource is gently pulled toward its owner hub
-  // (task/doc → proposal → idea), so each idea's resources group around it.
-  // Cross-cluster separation then falls out of the global charge for free —
-  // two groups that drift together get pushed apart.
+  // Configure the force simulation ONCE (forces persist across graphData
+  // updates in force-graph). Re-configuring + hard-reheating on every expand
+  // was what made the graph fling around. The goal here is a CALM, stable
+  // canvas: new nodes appear next to their parent and existing nodes barely
+  // move.
   //
-  //  - moderate repulsion (too strong scatters disconnected components off
-  //    to infinity; too weak lets clusters overlap)
-  //  - per-kind link distance: lineage (idea→idea) is LONG so blood-related
-  //    idea clusters sit adjacent, not merged; derive/depends are short so a
-  //    cluster's own resources stay tight
-  //  - rectangular collision (cards are wide) so nothing overlaps
-  //  - cluster tether — the grouping force (owner-following, see below)
-  //  - gentle x/y centering so the whole constellation stays framed (weaker
-  //    now that clustering provides most of the cohesion)
+  //  - high velocity decay (friction) → nodes settle quickly without
+  //    overshooting/oscillating (the main fix for "太敏感")
+  //  - WEAK cluster tether → a gentle grouping nudge, not a yank
+  //  - per-kind link distance: lineage long+weak (blood-related ideas sit
+  //    adjacent, not merged); derive/depends short (a cluster stays tight)
+  //  - rectangular collision so wide cards don't overlap
+  //  - gentle x/y centering keeps the constellation framed
+  const configuredRef = useRef(false);
   useEffect(() => {
     const fg = fgRef.current;
-    if (!fg) return;
-    fg.d3Force("charge")?.strength(-480).distanceMax(700);
+    if (!fg || configuredRef.current) return;
+    configuredRef.current = true;
+    fg.d3Force("charge")?.strength(-300).distanceMax(500);
     fg.d3Force("link")
-      ?.distance((l: SimLink) => (l.kind === "lineage" ? 260 : 120))
-      .strength((l: SimLink) => (l.kind === "lineage" ? 0.12 : 0.35));
-    fg.d3Force("collide", forceCollide(CARD_W * 0.6));
-    fg.d3Force("cluster", clusterForce(0.85));
-    fg.d3Force("x", forceX(0).strength(0.035));
-    fg.d3Force("y", forceY(0).strength(0.045));
-    fg.d3ReheatSimulation();
+      ?.distance((l: SimLink) => (l.kind === "lineage" ? 220 : 110))
+      .strength((l: SimLink) => (l.kind === "lineage" ? 0.08 : 0.2));
+    fg.d3Force("collide", forceCollide(CARD_W * 0.58).strength(0.9));
+    fg.d3Force("cluster", clusterForce(0.12));
+    fg.d3Force("x", forceX(0).strength(0.03));
+    fg.d3Force("y", forceY(0).strength(0.04));
   }, [graphData]);
 
-  // Frame the whole graph once it settles, and whenever the node count changes.
+  // One-time camera fit when the graph first has nodes. We deliberately do NOT
+  // re-fit on every expand/collapse — auto-rescaling the viewport on each
+  // click was part of the jarring feel. New children are seeded next to their
+  // (already on-screen) parent, so they appear in view without a camera jump.
+  const fittedRef = useRef(false);
   const handleEngineStop = useCallback(() => {
-    fgRef.current?.zoomToFit(500, 90);
+    if (fittedRef.current) return;
+    fittedRef.current = true;
+    fgRef.current?.zoomToFit(400, 90);
   }, []);
-
-  // Also fit shortly after the data changes (expand/collapse adds/removes
-  // nodes) — engine-stop alone can lag a frame behind a fresh node set.
-  useEffect(() => {
-    const id = setTimeout(() => fgRef.current?.zoomToFit(500, 90), 900);
-    return () => clearTimeout(id);
-  }, [graphData, dims]);
 
   // --- Node painter ---------------------------------------------------------
   const paintNode = useCallback(
@@ -468,9 +477,16 @@ export function ForceGraphCanvas({
         linkDirectionalParticleWidth={2.5}
         linkDirectionalParticleColor={(l) => EDGE_COLOR[(l as SimLink).kind]}
         linkDirectionalParticleSpeed={0.006}
-        cooldownTicks={120}
+        // Calm, stable layout. High friction (velocityDecay) + faster alpha
+        // decay + short cooldown make nodes settle quickly without
+        // overshooting, so expanding a hub or dragging a node nudges the graph
+        // gently instead of flinging it around. warmupTicks pre-settles the
+        // FIRST layout off-screen so the initial paint isn't a fly-in.
+        cooldownTicks={80}
+        d3VelocityDecay={0.6}
+        d3AlphaDecay={0.045}
+        warmupTicks={60}
         onEngineStop={handleEngineStop}
-        d3VelocityDecay={0.32}
       />
     </div>
   );
