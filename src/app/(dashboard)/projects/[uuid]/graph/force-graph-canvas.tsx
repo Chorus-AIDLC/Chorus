@@ -74,10 +74,14 @@ const EDGE_COLOR: Record<EdgeKind, string> = {
 };
 
 // Canvas paint geometry (graph-space units; zoom scales them).
-const CARD_W = 188;
+const CARD_W = 200;
 const CARD_H = 46;
 const CARD_R = 12;
 const CHIP = 30;
+// The expand/collapse control is a dedicated button occupying the right
+// portion of the card — a big, easy-to-hit target (the small chevron was
+// unclickable). BTN_W is its width; the click hit-test uses the same value.
+const BTN_W = 40;
 
 // --- Public data shapes (what ResourceGraph hands us) -----------------------
 
@@ -85,11 +89,11 @@ export interface ForceNode {
   id: string;
   type: NodeType;
   title: string;
-  /** Idea-only: number of hidden direct derivatives (drives the "N ›" pill). */
-  derivativeCount?: number;
-  /** Idea-only: whether currently expanded (drives chevron vs pill). */
+  /** Hub-only (Idea or Proposal): number of direct children. */
+  childCount?: number;
+  /** Hub-only: whether currently expanded (drives +/− button glyph). */
   expanded?: boolean;
-  /** True when this node should show an expand/collapse affordance. */
+  /** True when this node should show an expand/collapse button. */
   hasAffordance?: boolean;
 }
 
@@ -146,7 +150,7 @@ export function ForceGraphCanvas({
         // Refresh derived display fields but keep x/y/vx/vy identity.
         existing.type = n.type;
         existing.title = n.title;
-        existing.derivativeCount = n.derivativeCount;
+        existing.childCount = n.childCount;
         existing.expanded = n.expanded;
         existing.hasAffordance = n.hasAffordance;
         return existing;
@@ -296,54 +300,71 @@ export function ForceGraphCanvas({
       ctx.textBaseline = "middle";
       ctx.fillText(TYPE_GLYPH[type], chipX + CHIP / 2, chipY + CHIP / 2 + 0.5);
 
-      // Text column.
+      // Text column. When the node is an expandable hub, reserve the right
+      // BTN_W strip for the +/- button so the title never runs under it.
+      const hasBtn = !!node.hasAffordance;
       const textX = chipX + CHIP + 10;
-      const textRight = left + CARD_W - 12;
-      const textW = textRight - textX;
+      const contentRight = left + CARD_W - (hasBtn ? BTN_W : 12);
+      const textW = contentRight - textX;
       // Eyebrow (type label).
       ctx.textAlign = "left";
       ctx.fillStyle = color;
       ctx.font = "600 9px ui-monospace, monospace";
       ctx.fillText(type.toUpperCase(), textX, y - 8);
-      // Title (truncated to card width).
+      // Title (truncated to the text column width).
       ctx.fillStyle = "#2C2C2C";
       ctx.font = "500 12px ui-sans-serif, system-ui";
-      ctx.fillText(truncate(ctx, node.title, textW - affordanceWidth(node)), textX, y + 7);
+      ctx.fillText(truncate(ctx, node.title, textW - 4), textX, y + 7);
 
-      // Expand affordance (Idea hubs only): collapsed "N ›" pill or chevron.
-      if (node.hasAffordance) {
-        const pillR = 9;
-        const cx = textRight - 8;
-        const cy = y;
-        if (node.expanded) {
-          // chevron-down
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.moveTo(cx - 5, cy - 2);
-          ctx.lineTo(cx, cy + 3);
-          ctx.lineTo(cx + 5, cy - 2);
-          ctx.stroke();
-        } else {
-          // "N ›" pill
-          const label = `${node.derivativeCount ?? 0}`;
-          ctx.font = "600 10px ui-sans-serif, system-ui";
-          const lw = ctx.measureText(label).width;
-          const pillW = lw + 18;
-          ctx.fillStyle = hexWithAlpha(color, 0.12);
-          roundRect(ctx, cx - pillW, cy - pillR, pillW, pillR * 2, pillR);
-          ctx.fill();
+      // Expand/collapse button — a dedicated, easy-to-hit control occupying the
+      // right BTN_W of the card (the old tiny chevron was unclickable). A
+      // hairline divider separates it from the text; a tinted square holds a
+      // big +/- glyph and, when collapsed, the child count below it.
+      if (hasBtn) {
+        const btnLeft = left + CARD_W - BTN_W;
+        // Divider.
+        ctx.strokeStyle = "#EFEAE2";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(btnLeft, top + 7);
+        ctx.lineTo(btnLeft, top + CARD_H - 7);
+        ctx.stroke();
+        // Tinted hit-zone background (subtle; brighter on hover).
+        ctx.fillStyle = hexWithAlpha(color, isHovered ? 0.16 : 0.08);
+        roundRect(
+          ctx,
+          btnLeft + 4,
+          top + 6,
+          BTN_W - 10,
+          CARD_H - 12,
+          8,
+        );
+        ctx.fill();
+        const bx = btnLeft + BTN_W / 2 - 1;
+        const collapsed = !node.expanded;
+        const count = node.childCount ?? 0;
+        // +/- glyph, drawn as strokes (crisp at any zoom).
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        const gy = collapsed && count > 0 ? y - 4 : y; // lift glyph to make room for count
+        const arm = 5;
+        ctx.beginPath();
+        ctx.moveTo(bx - arm, gy);
+        ctx.lineTo(bx + arm, gy);
+        if (collapsed) {
+          // vertical stroke → "+"
+          ctx.moveTo(bx, gy - arm);
+          ctx.lineTo(bx, gy + arm);
+        }
+        ctx.stroke();
+        // Child count under the "+" when collapsed.
+        if (collapsed && count > 0) {
           ctx.fillStyle = color;
-          ctx.textAlign = "left";
-          ctx.fillText(label, cx - pillW + 7, cy + 0.5);
-          // chevron-right
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          ctx.moveTo(cx - 7, cy - 3);
-          ctx.lineTo(cx - 3, cy);
-          ctx.lineTo(cx - 7, cy + 3);
-          ctx.stroke();
+          ctx.font = "600 9px ui-sans-serif, system-ui";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(`${count}`, bx, y + 9);
         }
       }
 
@@ -367,15 +388,17 @@ export function ForceGraphCanvas({
 
   const handleClick = useCallback(
     (node: SimNode, event: MouseEvent) => {
-      // Determine whether the click landed on the affordance region (right
-      // edge of an Idea card). We translate the screen click into graph coords
-      // and test against the affordance hot-zone.
+      // Determine whether the click landed on the +/- button (the right BTN_W
+      // strip of the card). Translate the screen click into graph coords and
+      // test against the button zone — the same geometry the painter uses.
       let onAff = false;
       if (node.hasAffordance && fgRef.current) {
         const gc = fgRef.current.screen2GraphCoords(event.offsetX, event.offsetY);
         const right = (node.x ?? 0) + CARD_W / 2;
-        // affordance occupies ~36px at the right edge of the card
-        if (gc.x >= right - 40 && Math.abs(gc.y - (node.y ?? 0)) <= CARD_H / 2) {
+        if (
+          gc.x >= right - BTN_W &&
+          Math.abs(gc.y - (node.y ?? 0)) <= CARD_H / 2
+        ) {
           onAff = true;
         }
       }
@@ -466,10 +489,6 @@ function truncate(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
     else hi = mid - 1;
   }
   return text.slice(0, lo) + "…";
-}
-
-function affordanceWidth(node: ForceNode): number {
-  return node.hasAffordance ? 34 : 0;
 }
 
 function hexWithAlpha(hex: string, alpha: number): string {

@@ -1,44 +1,39 @@
-// Unit tests for the per-Idea expand/collapse visible-set logic.
+// Unit tests for the TWO-LEVEL expand/collapse visible-set logic.
 //
-// What's covered (mirroring Wave 3 task ACs):
-//   1. Count correctness — N pill shows direct derivative count regardless
-//      of current expand state, and direct = proposals listing this Idea
-//      in sourceIdeaUuids (NOT the recursive subtree).
-//   2. Leaf detection — Tasks/Documents never carry a derivative count;
-//      they're not Ideas. Verified indirectly: only Ideas get an entry in
-//      derivativeCountByIdea. The renderer's leaf-detection helper has
-//      its own assertion below.
-//   3. Lineage-always-visible — Idea→Idea lineage edges render even when
-//      both endpoints are collapsed (since both endpoints are Ideas, which
-//      are always in the visible set).
-//   4. Default = all collapsed → only Idea hubs visible.
-//   5. Expanding an Idea reveals its proposal + the proposal's
-//      tasks/documents — including tasks reached only through depends
-//      (the root-tasks-only proposal-derive rule is not the source of
-//      visibility; node.proposalUuid is).
-//   6. Multi-parent proposal: visible iff ANY source Idea is expanded.
+// Model under test:
+//   Idea  --(expand)-->  its Proposals          (level 1)
+//   Proposal --(expand)-->  its Tasks + Docs     (level 2)
+//
+// What's covered:
+//   1. Default = all collapsed → only Idea hubs (+ orphans) visible.
+//   2. Expanding an Idea reveals ONLY its proposals — NOT the proposals'
+//      tasks/documents (those need the proposal itself expanded).
+//   3. Expanding a Proposal (with its Idea also expanded) reveals its tasks
+//      + documents, including tasks reached only through `depends`
+//      (root-tasks-only derive rule ≠ source of visibility; node.proposalUuid is).
+//   4. Lineage edges between collapsed Ideas stay visible.
+//   5. Child counts: Idea→#proposals, Proposal→#(tasks+docs).
+//   6. Multi-parent proposal visible iff ANY source Idea expanded.
 
 import { describe, it, expect } from "vitest";
 import { computeVisibleSet } from "../resource-graph-visible-set";
 import type { ResourceGraphResult } from "@/services/resource-graph.service";
 import { shouldShowExpandAffordance } from "@/app/(dashboard)/projects/[uuid]/graph/expand-affordance";
 
+const EMPTY: ReadonlySet<string> = new Set();
+
 // --- Fixtures ---------------------------------------------------------------
-// A small graph mirroring the AI-DLC shape:
-//
 //   idea-root ──lineage──▶ idea-child
-//        │                       │
-//        ▼ derive                ▼ derive
+//        │ derive               │ derive
+//        ▼                      ▼
 //   proposal-A             proposal-B
-//        │ derive (root-task)         │ derive
-//        ▼                            ▼
-//   task-a1 ──depends──▶ task-a2  doc-b1
-//        │
+//        │ derive (root)        │ derive
+//        ▼                      ▼
+//   task-a1 ──depends──▶ task-a2     doc-b1
 //        └─ derive ──▶ doc-a1
 //
-// Plus:
-//   - orphan-task (no proposal) — should always be visible.
-//   - manual-proposal (no source Ideas) — should always be visible.
+//   orphan-task (no proposal) — always visible.
+//   manual-proposal (no source Ideas) — always visible.
 
 function buildGraph(): ResourceGraphResult {
   return {
@@ -78,8 +73,6 @@ function buildGraph(): ResourceGraphResult {
       { from: "idea-root", to: "idea-child", kind: "lineage" },
       { from: "idea-root", to: "proposal-A", kind: "derive" },
       { from: "idea-child", to: "proposal-B", kind: "derive" },
-      // ROOT-TASKS-ONLY rule: only task-a1 (the root task within proposal-A)
-      // gets a direct derive edge. task-a2 is reached via the depends arrow.
       { from: "proposal-A", to: "task-a1", kind: "derive" },
       { from: "task-a1", to: "task-a2", kind: "depends" },
       { from: "proposal-A", to: "doc-a1", kind: "derive" },
@@ -88,91 +81,63 @@ function buildGraph(): ResourceGraphResult {
   };
 }
 
-describe("computeVisibleSet", () => {
-  it("collapses every Idea by default — only Ideas + orphans visible", () => {
+describe("computeVisibleSet (two-level)", () => {
+  it("collapses everything by default — only Ideas + orphans visible", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set());
+    const r = computeVisibleSet(g, EMPTY, EMPTY);
 
     expect(r.visibleNodeUuids.has("idea-root")).toBe(true);
     expect(r.visibleNodeUuids.has("idea-child")).toBe(true);
 
-    // Proposals with an Idea parent are hidden by default.
     expect(r.visibleNodeUuids.has("proposal-A")).toBe(false);
     expect(r.visibleNodeUuids.has("proposal-B")).toBe(false);
-
-    // Tasks/Documents underneath hidden Proposals are hidden too.
     expect(r.visibleNodeUuids.has("task-a1")).toBe(false);
-    expect(r.visibleNodeUuids.has("task-a2")).toBe(false);
     expect(r.visibleNodeUuids.has("doc-a1")).toBe(false);
-    expect(r.visibleNodeUuids.has("doc-b1")).toBe(false);
 
-    // Orphan task (no proposal) — always visible.
+    // Orphans (no collapsing parent) — always visible.
     expect(r.visibleNodeUuids.has("orphan-task")).toBe(true);
-    // Manual proposal (no source Idea) — always visible.
     expect(r.visibleNodeUuids.has("manual-proposal")).toBe(true);
   });
 
   it("keeps Idea→Idea lineage edges visible when both Ideas are collapsed", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set());
-
+    const r = computeVisibleSet(g, EMPTY, EMPTY);
     const visibleEdges = r.visibleEdgeIndices.map((i) => g.edges[i]);
-    const lineage = visibleEdges.find(
-      (e) => e.kind === "lineage" && e.from === "idea-root" && e.to === "idea-child",
-    );
-    expect(lineage).toBeDefined();
+    expect(
+      visibleEdges.find(
+        (e) => e.kind === "lineage" && e.from === "idea-root" && e.to === "idea-child",
+      ),
+    ).toBeDefined();
   });
 
-  it("reports direct-derivative count = # of proposals citing this Idea", () => {
+  it("expanding an Idea reveals ONLY its proposals, NOT their tasks/docs", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set());
+    const r = computeVisibleSet(g, new Set(["idea-root"]), EMPTY);
 
-    // Each idea has exactly one direct proposal in this fixture. The count
-    // is unaffected by what's currently visible — it's a structural fact.
-    expect(r.derivativeCountByIdea.get("idea-root")).toBe(1);
-    expect(r.derivativeCountByIdea.get("idea-child")).toBe(1);
-
-    // Non-Idea nodes don't get an entry — count is Idea-only.
-    expect(r.derivativeCountByIdea.has("proposal-A")).toBe(false);
-    expect(r.derivativeCountByIdea.has("task-a1")).toBe(false);
-  });
-
-  it("derivative count is stable across expand state", () => {
-    const g = buildGraph();
-    const collapsed = computeVisibleSet(g, new Set());
-    const expanded = computeVisibleSet(g, new Set(["idea-root"]));
-
-    expect(expanded.derivativeCountByIdea.get("idea-root")).toBe(
-      collapsed.derivativeCountByIdea.get("idea-root"),
-    );
-  });
-
-  it("expanding an Idea reveals proposals + tasks (incl. depends-only) + documents", () => {
-    const g = buildGraph();
-    const r = computeVisibleSet(g, new Set(["idea-root"]));
-
-    // Proposal A is now visible.
+    // Level 1: proposal appears.
     expect(r.visibleNodeUuids.has("proposal-A")).toBe(true);
 
-    // BOTH tasks of proposal A are visible — task-a2 is reachable only
-    // through a depends edge from task-a1 (no direct derive edge from
-    // proposal-A to task-a2 because of the root-tasks-only rule), but
-    // visibility is driven by node.proposalUuid, not the derive edge.
-    expect(r.visibleNodeUuids.has("task-a1")).toBe(true);
-    expect(r.visibleNodeUuids.has("task-a2")).toBe(true);
+    // Level 2 stays hidden — the proposal itself is not expanded yet.
+    expect(r.visibleNodeUuids.has("task-a1")).toBe(false);
+    expect(r.visibleNodeUuids.has("task-a2")).toBe(false);
+    expect(r.visibleNodeUuids.has("doc-a1")).toBe(false);
 
-    // Document under proposal A.
-    expect(r.visibleNodeUuids.has("doc-a1")).toBe(true);
-
-    // Proposal B + its derivatives remain hidden (only idea-root is expanded).
+    // Other idea's proposal stays hidden.
     expect(r.visibleNodeUuids.has("proposal-B")).toBe(false);
-    expect(r.visibleNodeUuids.has("doc-b1")).toBe(false);
   });
 
-  it("includes the depends edge when both endpoints become visible", () => {
+  it("expanding the Proposal reveals its tasks + docs (incl. depends-only task)", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set(["idea-root"]));
+    const r = computeVisibleSet(g, new Set(["idea-root"]), new Set(["proposal-A"]));
 
+    expect(r.visibleNodeUuids.has("proposal-A")).toBe(true);
+    // task-a2 has NO direct derive edge (root-tasks-only) — reached via depends —
+    // but visibility is driven by node.proposalUuid, so it still appears.
+    expect(r.visibleNodeUuids.has("task-a1")).toBe(true);
+    expect(r.visibleNodeUuids.has("task-a2")).toBe(true);
+    expect(r.visibleNodeUuids.has("doc-a1")).toBe(true);
+
+    // depends edge between the two now-visible tasks renders.
     const visibleEdges = r.visibleEdgeIndices.map((i) => g.edges[i]);
     expect(
       visibleEdges.find(
@@ -181,19 +146,43 @@ describe("computeVisibleSet", () => {
     ).toBeDefined();
   });
 
-  it("hides the depends edge again when the Idea collapses", () => {
+  it("expanding a Proposal whose Idea is collapsed does nothing (parent gates it)", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set()); // all collapsed
-
-    const visibleEdges = r.visibleEdgeIndices.map((i) => g.edges[i]);
-    expect(
-      visibleEdges.find(
-        (e) => e.kind === "depends" && e.from === "task-a1" && e.to === "task-a2",
-      ),
-    ).toBeUndefined();
+    // proposal-A expanded but idea-root NOT expanded → proposal itself hidden,
+    // so its children stay hidden too.
+    const r = computeVisibleSet(g, EMPTY, new Set(["proposal-A"]));
+    expect(r.visibleNodeUuids.has("proposal-A")).toBe(false);
+    expect(r.visibleNodeUuids.has("task-a1")).toBe(false);
   });
 
-  it("treats a proposal cited by multiple Ideas as visible when ANY of them is expanded", () => {
+  it("reports child counts: Idea→#proposals, Proposal→#(tasks+docs)", () => {
+    const g = buildGraph();
+    const r = computeVisibleSet(g, EMPTY, EMPTY);
+
+    expect(r.childCountByHub.get("idea-root")).toBe(1); // proposal-A
+    expect(r.childCountByHub.get("idea-child")).toBe(1); // proposal-B
+    // proposal-A has task-a1, task-a2, doc-a1 = 3 children.
+    expect(r.childCountByHub.get("proposal-A")).toBe(3);
+    // proposal-B has doc-b1 = 1.
+    expect(r.childCountByHub.get("proposal-B")).toBe(1);
+    // Tasks/Docs are leaves — no hub entry.
+    expect(r.childCountByHub.has("task-a1")).toBe(false);
+  });
+
+  it("child count is stable across expand state", () => {
+    const g = buildGraph();
+    const collapsed = computeVisibleSet(g, EMPTY, EMPTY);
+    const expanded = computeVisibleSet(
+      g,
+      new Set(["idea-root"]),
+      new Set(["proposal-A"]),
+    );
+    expect(expanded.childCountByHub.get("proposal-A")).toBe(
+      collapsed.childCountByHub.get("proposal-A"),
+    );
+  });
+
+  it("treats a proposal cited by multiple Ideas as visible when ANY is expanded", () => {
     const g: ResourceGraphResult = {
       nodes: [
         { uuid: "idea-1", type: "idea", title: "I1", parentIdeaUuid: null },
@@ -211,39 +200,25 @@ describe("computeVisibleSet", () => {
       ],
     };
 
-    // Neither expanded → hidden.
     expect(
-      computeVisibleSet(g, new Set()).visibleNodeUuids.has("proposal-shared"),
+      computeVisibleSet(g, EMPTY, EMPTY).visibleNodeUuids.has("proposal-shared"),
     ).toBe(false);
-
-    // Just idea-2 expanded → visible.
     expect(
-      computeVisibleSet(g, new Set(["idea-2"])).visibleNodeUuids.has(
+      computeVisibleSet(g, new Set(["idea-2"]), EMPTY).visibleNodeUuids.has(
         "proposal-shared",
       ),
     ).toBe(true);
 
-    // Both expanded → visible (no double-count, just visible).
-    expect(
-      computeVisibleSet(g, new Set(["idea-1", "idea-2"])).visibleNodeUuids.has(
-        "proposal-shared",
-      ),
-    ).toBe(true);
-
-    // Both Ideas show derivativeCount=1 (each "directly derives" the shared
-    // proposal — the count is per-Idea, not deduped across Ideas).
-    const r = computeVisibleSet(g, new Set());
-    expect(r.derivativeCountByIdea.get("idea-1")).toBe(1);
-    expect(r.derivativeCountByIdea.get("idea-2")).toBe(1);
+    // Each idea counts the shared proposal once (per-Idea, not deduped).
+    const r = computeVisibleSet(g, EMPTY, EMPTY);
+    expect(r.childCountByHub.get("idea-1")).toBe(1);
+    expect(r.childCountByHub.get("idea-2")).toBe(1);
   });
 
   it("does not emit edges where one endpoint is hidden", () => {
     const g = buildGraph();
-    const r = computeVisibleSet(g, new Set()); // every Idea collapsed
-
+    const r = computeVisibleSet(g, EMPTY, EMPTY);
     const visibleEdges = r.visibleEdgeIndices.map((i) => g.edges[i]);
-    // The idea→proposal derive edges should all be hidden because the
-    // proposal side is invisible.
     expect(
       visibleEdges.find(
         (e) => e.kind === "derive" && e.from === "idea-root" && e.to === "proposal-A",
@@ -252,30 +227,29 @@ describe("computeVisibleSet", () => {
   });
 
   it("handles the empty graph without crashing", () => {
-    const r = computeVisibleSet({ nodes: [], edges: [] }, new Set());
+    const r = computeVisibleSet({ nodes: [], edges: [] }, EMPTY, EMPTY);
     expect(r.visibleNodeUuids.size).toBe(0);
     expect(r.visibleEdgeIndices).toEqual([]);
-    expect(r.derivativeCountByIdea.size).toBe(0);
+    expect(r.childCountByHub.size).toBe(0);
   });
 });
 
-// The leaf-detection symmetry: the renderer's expand-affordance gate must
-// reflect the visible-set's structural definition — only Ideas with N > 0
-// derivatives show an affordance. Tasks/Documents/Proposals never do.
-describe("shouldShowExpandAffordance (renderer leaf detection)", () => {
-  it("returns true only for Ideas with derivativeCount > 0", () => {
+// Leaf-detection symmetry: the renderer's affordance gate must mirror the
+// visible-set's structural definition — Idea AND Proposal hubs with children
+// show the +/- button; Tasks/Documents never do.
+describe("shouldShowExpandAffordance (two-level hub detection)", () => {
+  it("returns true for Ideas and Proposals with children", () => {
     expect(shouldShowExpandAffordance("idea", 2)).toBe(true);
-    expect(shouldShowExpandAffordance("idea", 1)).toBe(true);
+    expect(shouldShowExpandAffordance("proposal", 3)).toBe(true);
   });
 
-  it("returns false for a leaf Idea (count = 0) — no children to expand", () => {
+  it("returns false for a childless hub", () => {
     expect(shouldShowExpandAffordance("idea", 0)).toBe(false);
-    expect(shouldShowExpandAffordance("idea", undefined)).toBe(false);
+    expect(shouldShowExpandAffordance("proposal", undefined)).toBe(false);
   });
 
-  it("returns false for non-Idea node types regardless of count", () => {
-    expect(shouldShowExpandAffordance("proposal", 5)).toBe(false);
-    expect(shouldShowExpandAffordance("task", 0)).toBe(false);
+  it("returns false for leaf node types regardless of count", () => {
+    expect(shouldShowExpandAffordance("task", 5)).toBe(false);
     expect(shouldShowExpandAffordance("document", 99)).toBe(false);
   });
 });

@@ -189,22 +189,18 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   const [selectedTask, setSelectedTask] = useState<TaskForPanel | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentForPanel | null>(null);
 
-  // Wide screen detection for side-by-side mode on task / document panels.
-  // Mirrors the same MQL used by dashboard/panels/idea-detail-panel.tsx so
-  // the layout breaks the same way across surfaces.
-  const [isWideScreen, setIsWideScreen] = useState(false);
-  useEffect(() => {
-    const mql = window.matchMedia("(min-width: 960px)");
-    setIsWideScreen(mql.matches);
-    const handler = (e: MediaQueryListEvent) => setIsWideScreen(e.matches);
-    mql.addEventListener("change", handler);
-    return () => mql.removeEventListener("change", handler);
-  }, []);
   // Set<ideaUuid> of currently-expanded Ideas. Empty default = every Idea
   // is collapsed (only Idea hubs render). Storing as Set (not array) so
   // toggle is O(1); React change detection relies on the wrapper Set being
   // a fresh reference on each mutation.
   const [expandedIdeas, setExpandedIdeas] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  // Two-level expand model: an expanded Idea reveals its Proposals (level 1);
+  // an expanded Proposal reveals its Tasks + Documents (level 2). Tracked in a
+  // separate Set so each proposal expands independently of its idea.
+  const [expandedProposals, setExpandedProposals] = useState<Set<string>>(
     () => new Set(),
   );
 
@@ -258,7 +254,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       // retained positions by id; the visible-set computation also tolerates
       // stale uuids defensively — this is hygiene, not correctness.)
       const aliveUuids = new Set(next.nodes.map((n) => n.uuid));
-      setExpandedIdeas((prev) => {
+      const pruneToAlive = (prev: Set<string>) => {
         let mutated = false;
         const out = new Set<string>();
         for (const u of prev) {
@@ -266,7 +262,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           else mutated = true;
         }
         return mutated ? out : prev;
-      });
+      };
+      setExpandedIdeas(pruneToAlive);
+      setExpandedProposals(pruneToAlive);
       setError(null);
       setGraph(next);
     } catch (err) {
@@ -290,6 +288,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     setError(null);
     setGraph(null);
     setExpandedIdeas(new Set());
+    setExpandedProposals(new Set());
     void reloadGraph();
     return () => {
       abortRef.current?.abort();
@@ -326,17 +325,51 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     setVisible((prev) => ({ ...prev, [type]: !prev[type] }));
   }, []);
 
-  const toggleIdeaExpand = useCallback((ideaUuid: string) => {
-    setExpandedIdeas((prev) => {
-      const next = new Set(prev);
-      if (next.has(ideaUuid)) {
-        next.delete(ideaUuid);
-      } else {
-        next.add(ideaUuid);
+  // Toggle a hub's expand state. Routes by type: Ideas expand to Proposals
+  // (level 1), Proposals expand to Tasks + Documents (level 2). Collapsing an
+  // Idea also collapses every Proposal underneath it, so re-expanding the
+  // Idea shows its proposals collapsed again (no stale level-2 state lingers).
+  const toggleHubExpand = useCallback(
+    (id: string, type: NodeType) => {
+      if (type === "idea") {
+        setExpandedIdeas((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) {
+            next.delete(id);
+            // Collapse child proposals of this idea too.
+            const childProposalUuids = (graph?.nodes ?? [])
+              .filter(
+                (n) =>
+                  n.type === "proposal" &&
+                  (n.sourceIdeaUuids ?? []).includes(id),
+              )
+              .map((n) => n.uuid);
+            if (childProposalUuids.length > 0) {
+              setExpandedProposals((p) => {
+                let mutated = false;
+                const out = new Set(p);
+                for (const u of childProposalUuids) {
+                  if (out.delete(u)) mutated = true;
+                }
+                return mutated ? out : p;
+              });
+            }
+          } else {
+            next.add(id);
+          }
+          return next;
+        });
+      } else if (type === "proposal") {
+        setExpandedProposals((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
       }
-      return next;
-    });
-  }, []);
+    },
+    [graph],
+  );
 
   // Filter -> expand/collapse visible set -> ForceGraph data.
   //
@@ -358,8 +391,8 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       };
     }
 
-    const { visibleNodeUuids, visibleEdgeIndices, derivativeCountByIdea } =
-      computeVisibleSet(graph, expandedIdeas);
+    const { visibleNodeUuids, visibleEdgeIndices, childCountByHub } =
+      computeVisibleSet(graph, expandedIdeas, expandedProposals);
 
     const visibleNodes = graph.nodes.filter(
       (n) => visibleNodeUuids.has(n.uuid) && visible[n.type],
@@ -370,15 +403,24 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       .filter((e) => visibleUuids.has(e.from) && visibleUuids.has(e.to));
 
     const nodesOut: ForceNode[] = visibleNodes.map((n) => {
-      const derivativeCount =
-        n.type === "idea" ? derivativeCountByIdea.get(n.uuid) ?? 0 : undefined;
+      // Both Idea and Proposal are expandable hubs (two-level model). Their
+      // child count + expanded state drive the +/- button; Tasks/Documents
+      // are leaves.
+      const isHub = n.type === "idea" || n.type === "proposal";
+      const childCount = isHub ? childCountByHub.get(n.uuid) ?? 0 : undefined;
+      const expanded =
+        n.type === "idea"
+          ? expandedIdeas.has(n.uuid)
+          : n.type === "proposal"
+            ? expandedProposals.has(n.uuid)
+            : undefined;
       return {
         id: n.uuid,
         type: n.type,
         title: n.title,
-        derivativeCount,
-        expanded: n.type === "idea" ? expandedIdeas.has(n.uuid) : undefined,
-        hasAffordance: shouldShowExpandAffordance(n.type, derivativeCount),
+        childCount,
+        expanded,
+        hasAffordance: shouldShowExpandAffordance(n.type, childCount),
       };
     });
 
@@ -397,7 +439,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       forceLinks: linksOut,
       isEmpty: visibleNodes.length === 0,
     };
-  }, [graph, expandedIdeas, visible]);
+  }, [graph, expandedIdeas, expandedProposals, visible]);
 
   // Open the Task panel by fetching the full task by UUID. Mirrors the
   // openTask flow in dashboard/panels/idea-detail-panel.tsx: clear any
@@ -498,10 +540,11 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   //    no-ops; logged for visibility.
   const handleNodeClick = useCallback(
     (id: string, type: NodeType, onAffordance: boolean) => {
-      if (type === "idea" && onAffordance) {
-        // The affordance only renders when count > 0, so this implies a
-        // non-leaf Idea — toggle its subgraph instead of opening a panel.
-        toggleIdeaExpand(id);
+      if (onAffordance && (type === "idea" || type === "proposal")) {
+        // Click landed on the +/- button of an expandable hub — toggle its
+        // children (Idea→Proposals, Proposal→Tasks+Docs) instead of opening
+        // a panel. The button only renders when the hub has children.
+        toggleHubExpand(id, type);
         return;
       }
 
@@ -547,7 +590,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         }
       }
     },
-    [graph, openPanel, openTask, toggleIdeaExpand],
+    [graph, openPanel, openTask, toggleHubExpand],
   );
 
   // Which node keeps a selection ring while a panel is open.
@@ -579,11 +622,16 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         />
       )}
       {selectedTaskUuid && selectedTask && (
+        // Always "overlay" (flush-right + backdrop). The graph view has no
+        // primary right-edge panel to dock beside, so "sidebyside" — which
+        // offsets the panel LEFT by one panel-width to sit beside an anchoring
+        // IdeaDetailPanel (the dashboard host's two-panel stack) — would leave
+        // it floating mid-screen with a gap on the right. Standalone = overlay.
         <TaskDetailPanel
           task={selectedTask}
           projectUuid={projectUuid}
           currentUserUuid={currentUserUuid}
-          mode={isWideScreen ? "sidebyside" : "overlay"}
+          mode="overlay"
           onClose={() => {
             setSelectedTaskUuid(null);
             setSelectedTask(null);
@@ -595,7 +643,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           title={selectedDoc.title}
           type={selectedDoc.type}
           content={selectedDoc.content}
-          mode={isWideScreen ? "sidebyside" : "overlay"}
+          mode="overlay"
           onClose={handleCloseDocPanel}
         />
       )}
