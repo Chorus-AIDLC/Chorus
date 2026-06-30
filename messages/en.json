@@ -1602,6 +1602,9 @@
     "outline": {
       "expand": "Expand {count} children",
       "collapse": "Collapse children"
+    },
+    "tooltip": {
+      "loading": "Loading…"
     }
   }
 }
