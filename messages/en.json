@@ -1605,6 +1605,9 @@
     },
     "tooltip": {
       "loading": "Loading…"
+    },
+    "status": {
+      "unknown": "Unknown"
     }
   }
 }

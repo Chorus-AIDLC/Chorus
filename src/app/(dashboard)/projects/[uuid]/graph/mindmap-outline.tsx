@@ -42,6 +42,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { usePresence } from "@/hooks/use-presence";
@@ -49,6 +50,7 @@ import { getAgentColor } from "@/lib/agent-color";
 import { computeTreeLayout } from "@/lib/resource-graph-tree-layout";
 import type { ResourceGraphNodeType as NodeType } from "@/services/resource-graph.service";
 import type { ForceNode, ForceLink } from "./mindmap-canvas";
+import { resolveNodeStatusVisual } from "./node-status";
 
 // --- Visual tokens (kept in lockstep with mindmap-canvas.tsx) ---------------
 
@@ -72,6 +74,16 @@ const TYPE_ICON: Record<NodeType, LucideIcon> = {
 // Horizontal indentation per derivation level (px). Mirrors the desktop tree's
 // left → right depth as a top → bottom indented hierarchy.
 const INDENT_STEP = 22;
+
+// The reconciled node payload (`ResourceGraphNode`) carries a per-node `status`
+// string (idea→derived badgeHint, proposal/task→raw lifecycle status,
+// document→Document.type), populated by the resource-graph service. The
+// canvas `ForceNode` shape that this outline consumes is structurally
+// compatible and gains `status` as the renderer side of the foundation work
+// lands. We read it through a local widen so the status pipeline is decoupled
+// from the canvas's exported type, and an absent `status` falls through to the
+// shared resolver's neutral UNKNOWN_FALLBACK (no crash on a stale payload).
+type OutlineForceNode = ForceNode & { status?: string };
 
 interface MindMapOutlineProps {
   nodes: ForceNode[];
@@ -121,7 +133,7 @@ export function MindMapOutline({
           return (
             <OutlineRow
               key={entry.id}
-              node={node}
+              node={node as OutlineForceNode}
               depth={entry.depth}
               selected={node.id === selectedId}
               presence={getPresence(node.type, node.id)}
@@ -138,7 +150,7 @@ export function MindMapOutline({
 // --- Row --------------------------------------------------------------------
 
 interface OutlineRowProps {
-  node: ForceNode;
+  node: OutlineForceNode;
   depth: number;
   selected: boolean;
   presence: ReturnType<ReturnType<typeof usePresence>["getPresence"]>;
@@ -156,6 +168,13 @@ function OutlineRow({
 }: OutlineRowProps) {
   const color = TYPE_COLOR[node.type];
   const Icon = TYPE_ICON[node.type];
+
+  // Status badge — resolved through the SHARED `node-status.ts` resolver so
+  // the outline's pill is color-identical to the canvas's status pill on the
+  // card eyebrow (canvas paints raw hex via Path2D; we mount a shadcn <Badge>
+  // with the matching `bg-[#..] text-[#..]` Tailwind pair). An unmapped value
+  // resolves to UNKNOWN_FALLBACK so the badge renders safely.
+  const statusVisual = resolveNodeStatusVisual(node.type, node.status ?? "");
 
   // Presence highlight: mutate (solid) takes precedence over view (dashed),
   // mirroring the canvas + PresenceIndicator convention. The primary agent
@@ -212,6 +231,21 @@ function OutlineRow({
             </span>
           </span>
         </Button>
+
+        {/* Status badge — sits AFTER the title block (so the title gets the
+            flex space and truncates first) and BEFORE the presence pill +
+            expand affordance. `shrink-0` keeps the badge intact on a narrow
+            viewport; the title region above is `min-w-0 flex-1` so it absorbs
+            the squeeze instead. */}
+        <Badge
+          data-testid="outline-status-badge"
+          className={cn(
+            "shrink-0 max-w-[110px] truncate px-1.5 py-0 text-[10px] font-medium",
+            statusVisual.colorClass,
+          )}
+        >
+          {t(statusVisual.labelKey)}
+        </Badge>
 
         {/* Acting-agent label — names who is operating on this entity. */}
         {primary && presenceColor && (

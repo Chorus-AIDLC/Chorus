@@ -50,7 +50,10 @@ import type {
   ResourceGraphNodeType as NodeType,
   ResourceGraphEdgeKind as EdgeKind,
 } from "@/services/resource-graph.service";
-import { useNodeDetail } from "./use-node-detail";
+import {
+  resolveNodeStatusVisual,
+  type NodeStatusVisual,
+} from "./node-status";
 import { NodeTooltip } from "./node-tooltip";
 
 // --- Public data shapes (Tech Design D5) ------------------------------------
@@ -58,7 +61,16 @@ import { NodeTooltip } from "./node-tooltip";
 // Preserved historical names. They alias the layout module's input types so
 // `resource-graph.tsx` and the live-update test keep importing
 // `{ ForceNode, ForceLink } from "./mindmap-canvas"` unchanged.
-export type ForceNode = TreeLayoutNode;
+//
+// `status` is the per-node string consumed by the shared `node-status.ts`
+// resolver (Tech Design D1) — added here so both the canvas painter and the
+// outline row (which also imports `ForceNode` from this module) see the same
+// shape with one extra field. The status semantics per node type are owned by
+// `resource-graph.service.ts`; this layer is purely a presentation pass-through.
+export type ForceNode = TreeLayoutNode & {
+  /** Per-node status string (idea badgeHint / proposal status / task status / document type). */
+  status?: string;
+};
 export type ForceLink = TreeLayoutLink;
 
 interface MindMapCanvasProps {
@@ -197,19 +209,40 @@ export function MindMapCanvas({
     [t],
   );
 
+  // Per-node status pill resolver. The painter is pure (cannot call t()) so it
+  // receives a `(node) → { bg, fg, label } | null` resolver instead. Resolution
+  // routes through the shared `node-status.ts` module so the canvas pill stays
+  // color- and label-identical to the outline badge (Tech Design D1/D2). A node
+  // with an unmapped or sentinel status resolves to `UNKNOWN_FALLBACK`; we still
+  // paint the pill (so users see a neutral chip rather than a hole) using its
+  // translated `graph.status.unknown` label.
+  const resolveStatusPill = useCallback(
+    (node: ForceNode): { bg: string; fg: string; label: string } | null => {
+      if (!node.status) return null;
+      const visual: NodeStatusVisual = resolveNodeStatusVisual(
+        node.type,
+        node.status,
+      );
+      return { bg: visual.bg, fg: visual.fg, label: t(visual.labelKey) };
+    },
+    [t],
+  );
+
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [dims, setDims] = useState({ width: 800, height: 600 });
 
   const [hoverId, setHoverId] = useState<string | null>(null);
 
-  // --- Hover tooltip (Tech Design D1/D2/D4) ---------------------------------
-  // Additive overlay: the hovered node's full title + a status/type badge,
-  // fetched on demand via useNodeDetail (debounced + cached). The anchor is a
-  // screen-pixel position recomputed from the live rendered center + the view
-  // transform on each paint while a node is hovered (see renderFrame). Stored as
-  // state so the DOM tooltip re-renders as the camera/card moves. This is purely
-  // additive — it does NOT touch hoverId-driven focusLineage below.
+  // --- Hover tooltip (Tech Design D3) ---------------------------------------
+  // Title-only overlay: the hovered node's FULL untruncated title (the one
+  // thing the card can't show after its own truncation). No per-entity fetch,
+  // no badge — status now lives on the card itself (the eyebrow-row pill). The
+  // anchor is a screen-pixel position recomputed from the live rendered center
+  // + the view transform on each paint while a node is hovered (see
+  // renderFrame). Stored as state so the DOM tooltip re-renders as the
+  // camera/card moves. This is purely additive — it does NOT touch hoverId-
+  // driven focusLineage below.
   const [tooltipAnchor, setTooltipAnchor] = useState<{
     x: number;
     y: number;
@@ -233,14 +266,9 @@ export function MindMapCanvas({
     return m;
   }, [nodes]);
 
-  // The hovered node + its type drive the tooltip's fetch-on-hover detail. The
-  // hook is debounced + cached + abort-safe; passing null when nothing is
-  // hovered clears it. The title shown comes straight from the node payload.
+  // The hovered node drives the title-only tooltip overlay (Tech Design D3).
+  // The title is already in the node payload, so no per-entity fetch is needed.
   const hoveredNode = hoverId ? nodeById.get(hoverId) ?? null : null;
-  const { detail: hoverDetail, loading: hoverLoading } = useNodeDetail(
-    hoverId,
-    hoveredNode?.type ?? null,
-  );
 
   // --- Directed tree-spine maps -------------------------------------------
   // The layout resolves exactly one tree-spine parent per non-root node (idea
@@ -478,6 +506,7 @@ export function MindMapCanvas({
         focusLineage,
         getPresence,
         typeLabels,
+        resolveStatusPill,
       });
     }
 
@@ -526,7 +555,7 @@ export function MindMapCanvas({
       scheduleRender();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, getPresence, nodes, typeLabels]);
+  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, getPresence, nodes, typeLabels, resolveStatusPill]);
 
   const renderFrameRef = useRef(renderFrame);
   renderFrameRef.current = renderFrame;
@@ -706,17 +735,15 @@ export function MindMapCanvas({
         onPointerLeave={() => setHoverId(null)}
         onWheel={handleWheel}
       />
-      {/* Hover tooltip — a DOM overlay above the canvas (Tech Design D1).
-          Mounts only while a node is hovered AND its anchor is resolved; the
-          hook's debounce gives the short appear-delay, and a mouse-out
-          (hoverId → null) unmounts it. pointer-events-none lives on the tooltip
-          root so it never intercepts a canvas click. */}
+      {/* Hover tooltip — a DOM overlay above the canvas (Tech Design D3).
+          Title-only: shows the hovered node's FULL untruncated title (the one
+          thing the card can't show after its own truncation). Mounts only while
+          a node is hovered AND its anchor is resolved; mouse-out (hoverId →
+          null) unmounts it. pointer-events-none lives on the tooltip root so it
+          never intercepts a canvas click. */}
       {hoveredNode && tooltipAnchor && (
         <NodeTooltip
           title={hoveredNode.title}
-          type={hoveredNode.type}
-          detail={hoverDetail}
-          loading={hoverLoading}
           x={tooltipAnchor.x}
           y={tooltipAnchor.y}
         />
@@ -743,6 +770,14 @@ interface PaintNodeOpts {
   getPresence: ReturnType<typeof usePresence>["getPresence"];
   /** Localized type-eyebrow labels, resolved via t() in the component. */
   typeLabels: Record<NodeType, string>;
+  /**
+   * Per-node status pill resolver — returns the raw hex pair + the already-
+   * translated label, or null when no status is set on the node. Resolved
+   * upstream in the component so the painter stays pure and i18n-driven.
+   */
+  resolveStatusPill: (
+    node: ForceNode,
+  ) => { bg: string; fg: string; label: string } | null;
 }
 
 function paintNode(
@@ -759,6 +794,7 @@ function paintNode(
     focusLineage,
     getPresence,
     typeLabels,
+    resolveStatusPill,
   } = opts;
   const type = node.type;
   const color = TYPE_COLOR[type];
@@ -859,15 +895,63 @@ function paintNode(
   const textX = chipX + CHIP + 10;
   const contentRight = left + CARD_W - (hasBtn ? BTN_W : 12);
   const textW = contentRight - textX;
-  // Eyebrow (localized type label — matches the mobile outline's
-  // t(`graph.nodeType.${type}`), so a zh user sees 想法/提案/任务/文档).
+
+  // Eyebrow row composition (Tech Design D2): left-aligned localized type label
+  // (`graph.nodeType.<type>`, so a zh user sees 想法/提案/任务/文档) PLUS a
+  // right-aligned status pill (idea badgeHint / proposal status / task status /
+  // document type) painted from the shared `node-status.ts` `{ bg, fg }` hex +
+  // its translated label. The pill is ellipsis-truncated to whatever width
+  // remains beside the type label so a long badgeHint (e.g. "Review Proposal")
+  // never overflows the ~200px card or collides with the title below.
+  const EYEBROW_Y = center.y - 8;
+  const PILL_GAP = 6; // gap between the type label and the status pill
+  const PILL_PAD_X = 5; // horizontal padding inside the pill
+  const PILL_H = 12; // pill height (eyebrow row is ~9px text + breathing room)
+  const PILL_R = 5; // pill corner radius
+  const PILL_FONT = "600 9px ui-sans-serif, system-ui";
+
   ctx.textAlign = "left";
-  ctx.fillStyle = color;
+  ctx.textBaseline = "alphabetic";
   ctx.font = "600 9px ui-monospace, monospace";
-  ctx.fillText(typeLabels[type], textX, center.y - 8);
-  // Title (truncated to the text column width).
+  ctx.fillStyle = color;
+  ctx.fillText(typeLabels[type], textX, EYEBROW_Y);
+  const typeLabelW = ctx.measureText(typeLabels[type]).width;
+
+  // Status pill — paint AFTER the type label so the type label always wins for
+  // space; the pill claims whatever's left and is ellipsis-truncated to fit.
+  const pill = resolveStatusPill(node);
+  if (pill) {
+    const pillSlotLeft = textX + typeLabelW + PILL_GAP;
+    const pillSlotRight = contentRight;
+    const pillSlotW = pillSlotRight - pillSlotLeft;
+    // Render the pill only when there's enough room for at least the ellipsis
+    // glyph plus padding — otherwise hiding it cleanly is better than painting
+    // a 4px sliver.
+    if (pillSlotW >= PILL_PAD_X * 2 + 6) {
+      const maxTextW = pillSlotW - PILL_PAD_X * 2;
+      ctx.font = PILL_FONT;
+      const truncated = truncate(ctx, pill.label, maxTextW);
+      const textWMeasured = ctx.measureText(truncated).width;
+      const pillW = Math.min(pillSlotW, textWMeasured + PILL_PAD_X * 2);
+      // Right-align the pill within its slot so it sits flush against the
+      // content-right edge (just to the left of the +/- button strip on hubs).
+      const pillX = pillSlotRight - pillW;
+      const pillY = EYEBROW_Y - PILL_H + 2; // align baseline-ish with eyebrow text
+      ctx.fillStyle = pill.bg;
+      roundRect(ctx, pillX, pillY, pillW, PILL_H, PILL_R);
+      ctx.fill();
+      ctx.fillStyle = pill.fg;
+      ctx.textBaseline = "middle";
+      ctx.fillText(truncated, pillX + PILL_PAD_X, pillY + PILL_H / 2 + 0.5);
+      ctx.textBaseline = "alphabetic";
+    }
+  }
+
+  // Title (truncated to the text column width). Painted AFTER the eyebrow so it
+  // sits on its own row below — no interference with the type label / pill.
   ctx.fillStyle = "#2C2C2C";
   ctx.font = "500 12px ui-sans-serif, system-ui";
+  ctx.textAlign = "left";
   ctx.fillText(truncate(ctx, node.title, textW - 4), textX, center.y + 7);
 
   // Expand/collapse button — a dedicated, easy-to-hit control on the right.

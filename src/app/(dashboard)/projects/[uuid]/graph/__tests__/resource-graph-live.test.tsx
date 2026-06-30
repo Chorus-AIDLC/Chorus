@@ -41,16 +41,25 @@ vi.mock("next/dynamic", () => ({
 }));
 
 // Capture the nodes/links the canvas receives on each render so tests can
-// assert reconcile behavior via a stable data-testid count.
+// assert reconcile behavior. The mock serializes `id:status` per node so a
+// status-only change (no count change) is observable from the DOM.
 function MockForceGraphCanvas({
   nodes,
 }: {
-  nodes: { id: string }[];
+  nodes: { id: string; status?: string }[];
   links: unknown[];
   selectedId: string | null;
   onNodeClick: (id: string, type: string, onAffordance: boolean) => void;
 }) {
-  return <div data-testid="force-canvas" data-node-count={nodes.length} />;
+  return (
+    <div
+      data-testid="force-canvas"
+      data-node-count={nodes.length}
+      data-node-statuses={nodes
+        .map((n) => `${n.id}:${n.status ?? ""}`)
+        .join(",")}
+    />
+  );
 }
 
 // usePanelUrl: ResourceGraph uses it for Idea/Proposal panels; we don't
@@ -205,6 +214,62 @@ describe("ResourceGraph — live structural updates", () => {
     // Second paint: 3 nodes (the new task arrived).
     await waitFor(() => {
       expect(getByTestId("force-canvas").getAttribute("data-node-count")).toBe("3");
+    });
+  });
+
+  it("a status change on a SURVIVING node is reflected after the refetch (Tech Design D4, AC #4)", async () => {
+    // Same node set before and after — only `status` flips. The reconcile must
+    // carry the new field through (the parent rebuilds forceNodes from the
+    // freshly fetched aggregation, replacing node objects wholesale, so this
+    // works automatically — the test pins that the contract holds).
+    const BEFORE = {
+      nodes: [
+        {
+          uuid: "task-1",
+          type: "task",
+          title: "Task A",
+          status: "in_progress",
+          proposalUuid: null,
+        },
+      ],
+      edges: [],
+    };
+    const AFTER = {
+      nodes: [
+        {
+          uuid: "task-1",
+          type: "task",
+          title: "Task A",
+          status: "done",
+          proposalUuid: null,
+        },
+      ],
+      edges: [],
+    };
+    const fetchMock = mockFetchSequence([BEFORE, AFTER]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getByTestId } = render(
+      <ResourceGraph projectUuid={PROJECT} currentUserUuid={USER} />,
+    );
+
+    // First paint: task-1 in_progress.
+    await waitFor(() => {
+      expect(getByTestId("force-canvas").getAttribute("data-node-statuses")).toBe(
+        "task-1:in_progress",
+      );
+    });
+
+    // SSE fires → re-fetch returns the same node with a new status.
+    await act(async () => {
+      await realtimeCallbacks.get("task")?.();
+    });
+
+    // Second paint: same node count, new status carried through.
+    await waitFor(() => {
+      expect(getByTestId("force-canvas").getAttribute("data-node-statuses")).toBe(
+        "task-1:done",
+      );
     });
   });
 

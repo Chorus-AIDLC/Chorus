@@ -34,17 +34,17 @@ beforeEach(() => {
 describe("getProjectResourceGraph — node types", () => {
   it("returns the four entity types as typed nodes (with title + uuid + type-specific fields)", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "i1", title: "Idea 1", parentUuid: null },
-      { uuid: "i2", title: "Idea 2 (child)", parentUuid: "i1" },
+      { uuid: "i1", title: "Idea 1", parentUuid: null, status: "open", elaborationStatus: null },
+      { uuid: "i2", title: "Idea 2 (child)", parentUuid: "i1", status: "open", elaborationStatus: null },
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "Proposal 1", inputType: "idea", inputUuids: ["i1"] },
+      { uuid: "p1", title: "Proposal 1", inputType: "idea", inputUuids: ["i1"], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "t1", title: "Task 1", proposalUuid: "p1" },
+      { uuid: "t1", title: "Task 1", proposalUuid: "p1", status: "open" },
     ]);
     mockPrisma.document.findMany.mockResolvedValue([
-      { uuid: "d1", title: "Doc 1", proposalUuid: "p1" },
+      { uuid: "d1", title: "Doc 1", proposalUuid: "p1", type: "prd" },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -68,8 +68,8 @@ describe("getProjectResourceGraph — node types", () => {
 describe("getProjectResourceGraph — edge kinds and direction", () => {
   it("emits a 'lineage' edge from parent Idea to child Idea (parentUuid -> uuid)", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "parent", title: "Parent", parentUuid: null },
-      { uuid: "child", title: "Child", parentUuid: "parent" },
+      { uuid: "parent", title: "Parent", parentUuid: null, status: "open", elaborationStatus: null },
+      { uuid: "child", title: "Child", parentUuid: "parent", status: "open", elaborationStatus: null },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -81,10 +81,10 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
 
   it("emits a 'derive' edge from Idea to Proposal when Proposal.inputType==='idea' and inputUuids includes a project-local idea", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "i1", title: "Idea", parentUuid: null },
+      { uuid: "i1", title: "Idea", parentUuid: null, status: "open", elaborationStatus: null },
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "Proposal", inputType: "idea", inputUuids: ["i1"] },
+      { uuid: "p1", title: "Proposal", inputType: "idea", inputUuids: ["i1"], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -95,12 +95,12 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
 
   it("does NOT emit Idea→Proposal derive when Proposal.inputType is 'document'", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
-      { uuid: "i1", title: "Idea", parentUuid: null },
+      { uuid: "i1", title: "Idea", parentUuid: null, status: "open", elaborationStatus: null },
     ]);
     mockPrisma.proposal.findMany.mockResolvedValue([
       // Even if inputUuids accidentally contained an idea UUID, inputType
       // gates the edge — a document-input proposal contributes no lineage.
-      { uuid: "p1", title: "Doc-input proposal", inputType: "document", inputUuids: ["i1"] },
+      { uuid: "p1", title: "Doc-input proposal", inputType: "document", inputUuids: ["i1"], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -114,15 +114,15 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
 
   it("emits 'derive' edges from Proposal to Task and Proposal to Document (proposalUuid -> entity)", async () => {
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "P", inputType: "idea", inputUuids: [] },
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: [], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
       // t1 is a root task within p1 (no TaskDependency rows below), so it
       // gets a direct proposal→task derive edge per the root-tasks-only rule.
-      { uuid: "t1", title: "T", proposalUuid: "p1" },
+      { uuid: "t1", title: "T", proposalUuid: "p1", status: "open" },
     ]);
     mockPrisma.document.findMany.mockResolvedValue([
-      { uuid: "d1", title: "D", proposalUuid: "p1" },
+      { uuid: "d1", title: "D", proposalUuid: "p1", type: "prd" },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -138,12 +138,12 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
     // ONLY to tRoot. tMid and tLeaf must NOT have a direct proposal edge;
     // they are reachable transitively through `depends` edges.
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "P", inputType: "idea", inputUuids: [] },
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: [], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "tRoot", title: "Root", proposalUuid: "p1" },
-      { uuid: "tMid", title: "Mid", proposalUuid: "p1" },
-      { uuid: "tLeaf", title: "Leaf", proposalUuid: "p1" },
+      { uuid: "tRoot", title: "Root", proposalUuid: "p1", status: "open" },
+      { uuid: "tMid", title: "Mid", proposalUuid: "p1", status: "open" },
+      { uuid: "tLeaf", title: "Leaf", proposalUuid: "p1", status: "open" },
     ]);
     mockPrisma.taskDependency.findMany.mockResolvedValue([
       { taskUuid: "tMid", dependsOnUuid: "tRoot" }, // tMid depends on tRoot
@@ -169,12 +169,12 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
     // so it MUST still get a direct p2→tDownstream derive edge. The
     // cross-proposal `depends` arrow is preserved separately.
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "P1", inputType: "idea", inputUuids: [] },
-      { uuid: "p2", title: "P2", inputType: "idea", inputUuids: [] },
+      { uuid: "p1", title: "P1", inputType: "idea", inputUuids: [], status: "draft", createdAt: new Date("2026-01-01") },
+      { uuid: "p2", title: "P2", inputType: "idea", inputUuids: [], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "tUpstream", title: "Up", proposalUuid: "p1" },
-      { uuid: "tDownstream", title: "Down", proposalUuid: "p2" },
+      { uuid: "tUpstream", title: "Up", proposalUuid: "p1", status: "open" },
+      { uuid: "tDownstream", title: "Down", proposalUuid: "p2", status: "open" },
     ]);
     mockPrisma.taskDependency.findMany.mockResolvedValue([
       { taskUuid: "tDownstream", dependsOnUuid: "tUpstream" },
@@ -200,8 +200,8 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
 
   it("emits a 'depends' edge from dependsOn task to dependent task (upstream -> downstream)", async () => {
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "tA", title: "A", proposalUuid: null },
-      { uuid: "tB", title: "B", proposalUuid: null },
+      { uuid: "tA", title: "A", proposalUuid: null, status: "open" },
+      { uuid: "tB", title: "B", proposalUuid: null, status: "open" },
     ]);
     // Task B depends on task A — A must finish first. Graph edge must point
     // from A (upstream) to B (downstream) per the documented convention.
@@ -219,7 +219,7 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
     // Only tB is project-local. tA lives in another project (not in the task
     // findMany result), so the edge would dangle — the service must drop it.
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "tB", title: "B", proposalUuid: null },
+      { uuid: "tB", title: "B", proposalUuid: null, status: "open" },
     ]);
     mockPrisma.taskDependency.findMany.mockResolvedValue([
       { taskUuid: "tB", dependsOnUuid: "tA-foreign" },
@@ -234,7 +234,7 @@ describe("getProjectResourceGraph — edge kinds and direction", () => {
     // Proposal claims to derive from idea-foreign, but that idea isn't in
     // this project's idea set; the edge must be dropped.
     mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i-foreign"] },
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i-foreign"], status: "draft", createdAt: new Date("2026-01-01") },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -249,7 +249,7 @@ describe("getProjectResourceGraph — orphans", () => {
   it("returns an entity with no relationships as a standalone node (no incident edges)", async () => {
     mockPrisma.task.findMany.mockResolvedValue([
       // Manual task (no proposalUuid) and no TaskDependency rows.
-      { uuid: "lone", title: "Lone task", proposalUuid: null },
+      { uuid: "lone", title: "Lone task", proposalUuid: null, status: "open" },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -265,7 +265,7 @@ describe("getProjectResourceGraph — orphans", () => {
     // appears as a node — the field is preserved — but the derive edge is
     // dropped to keep the graph closed.
     mockPrisma.task.findMany.mockResolvedValue([
-      { uuid: "t1", title: "T", proposalUuid: "p-foreign" },
+      { uuid: "t1", title: "T", proposalUuid: "p-foreign", status: "open" },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -330,8 +330,8 @@ describe("getProjectResourceGraph — defensive coding", () => {
     mockPrisma.proposal.findMany.mockResolvedValue([
       // inputUuids is Json — a row with a null/object value (e.g. legacy
       // data) must not break the whole aggregation.
-      { uuid: "p1", title: "P", inputType: "idea", inputUuids: null },
-      { uuid: "p2", title: "P2", inputType: "idea", inputUuids: { not: "an array" } },
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: null, status: "draft", createdAt: new Date("2026-01-01") },
+      { uuid: "p2", title: "P2", inputType: "idea", inputUuids: { not: "an array" }, status: "draft", createdAt: new Date("2026-01-01") },
     ]);
 
     const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
@@ -339,5 +339,154 @@ describe("getProjectResourceGraph — defensive coding", () => {
     expect(result.nodes.find((n) => n.uuid === "p1")?.sourceIdeaUuids).toEqual([]);
     expect(result.nodes.find((n) => n.uuid === "p2")?.sourceIdeaUuids).toEqual([]);
     expect(result.edges.filter((e) => e.kind === "derive")).toEqual([]);
+  });
+});
+
+describe("getProjectResourceGraph — per-node status", () => {
+  // The aggregation must attach a `status` string to every node:
+  //   - idea     → derived `badgeHint` via computeDerivedStatus (same rule
+  //                as getIdeasWithDerivedStatus) — null badgeHint becomes
+  //                the "unknown" sentinel so the field stays a string.
+  //   - proposal → raw Proposal.status
+  //   - task     → raw Task.status
+  //   - document → Document.type
+  // These tests pin the derivation against the same inputs the idea tracker
+  // would use; T1 must NOT re-implement the rule, only feed computeDerivedStatus.
+
+  it("attaches raw status to proposal / task and type to document", async () => {
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: [], status: "pending", createdAt: new Date("2026-01-01") },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "t1", title: "T", proposalUuid: "p1", status: "in_progress" },
+    ]);
+    mockPrisma.document.findMany.mockResolvedValue([
+      { uuid: "d1", title: "D", proposalUuid: "p1", type: "tech_design" },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+
+    const byUuid = Object.fromEntries(result.nodes.map((n) => [n.uuid, n]));
+    expect(byUuid.p1.status).toBe("pending");
+    expect(byUuid.t1.status).toBe("in_progress");
+    expect(byUuid.d1.status).toBe("tech_design");
+  });
+
+  it("derives idea badgeHint from its latest approved proposal + tasks: mixed tasks → 'building'", async () => {
+    // Idea i1 with an approved proposal whose tasks are 'open' + 'in_progress'
+    // → not all-done, no to_verify → badgeHint 'building'.
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "I", parentUuid: null, status: "elaborated", elaborationStatus: null },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i1"], status: "approved", createdAt: new Date("2026-01-01") },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "tA", title: "A", proposalUuid: "p1", status: "open" },
+      { uuid: "tB", title: "B", proposalUuid: "p1", status: "in_progress" },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+
+    const idea = result.nodes.find((n) => n.uuid === "i1")!;
+    expect(idea.status).toBe("building");
+  });
+
+  it("derives idea badgeHint = 'verify_work' when any task is to_verify", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "I", parentUuid: null, status: "elaborated", elaborationStatus: null },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i1"], status: "approved", createdAt: new Date("2026-01-01") },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "tA", title: "A", proposalUuid: "p1", status: "done" },
+      { uuid: "tB", title: "B", proposalUuid: "p1", status: "to_verify" },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+    expect(result.nodes.find((n) => n.uuid === "i1")?.status).toBe("verify_work");
+  });
+
+  it("derives idea badgeHint = 'done' when all tasks under the latest approved proposal are done/closed", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "I", parentUuid: null, status: "elaborated", elaborationStatus: null },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i1"], status: "approved", createdAt: new Date("2026-01-01") },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "tA", title: "A", proposalUuid: "p1", status: "done" },
+      { uuid: "tB", title: "B", proposalUuid: "p1", status: "closed" },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+    expect(result.nodes.find((n) => n.uuid === "i1")?.status).toBe("done");
+  });
+
+  it("derives idea badgeHint = 'review_proposal' when a pending proposal exists (overrides approved chain)", async () => {
+    // elaborated + pending proposal → human action: review_proposal.
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "I", parentUuid: null, status: "elaborated", elaborationStatus: null },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p1", title: "P", inputType: "idea", inputUuids: ["i1"], status: "pending", createdAt: new Date("2026-01-01") },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+    expect(result.nodes.find((n) => n.uuid === "i1")?.status).toBe("review_proposal");
+  });
+
+  it("idea badgeHint is a defined string for plain 'open' ideas (no null leak)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "I", parentUuid: null, status: "open", elaborationStatus: null },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+    const idea = result.nodes.find((n) => n.uuid === "i1")!;
+    // computeDerivedStatus returns badgeHint='open' for ideaStatus='open',
+    // so the node carries the concrete value (NOT the unknown sentinel).
+    expect(typeof idea.status).toBe("string");
+    expect(idea.status).toBe("open");
+  });
+
+});
+
+// The `BadgeHint` type explicitly allows `null`; the service contract is to
+// translate that null into a defined string sentinel so `status` stays a
+// `string`. computeDerivedStatus's current switch never returns null in
+// practice (every arm has a concrete badgeHint), but the type is permissive
+// and the sentinel is a safety net for a future hint = null case. To pin the
+// mapping we mock computeDerivedStatus to force null and assert the service
+// writes the sentinel.
+describe("getProjectResourceGraph — null badgeHint → sentinel (separately-mocked)", () => {
+  it("writes the UNKNOWN sentinel string to the idea node when computeDerivedStatus returns null", async () => {
+    vi.resetModules();
+    const sharedPrisma = {
+      idea: { findMany: vi.fn().mockResolvedValue([
+        { uuid: "i1", title: "I", parentUuid: null, status: "open", elaborationStatus: null },
+      ]) },
+      proposal: { findMany: vi.fn().mockResolvedValue([]) },
+      task: { findMany: vi.fn().mockResolvedValue([]) },
+      document: { findMany: vi.fn().mockResolvedValue([]) },
+      taskDependency: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    vi.doMock("@/lib/prisma", () => ({ prisma: sharedPrisma }));
+    vi.doMock("@/services/idea.service", () => ({
+      computeDerivedStatus: () => ({ derivedStatus: "todo", badgeHint: null }),
+    }));
+    const { getProjectResourceGraph: getGraph } = await import(
+      "@/services/resource-graph.service"
+    );
+    const { STATUS_UNKNOWN_SENTINEL } = await import(
+      "@/app/(dashboard)/projects/[uuid]/graph/node-status"
+    );
+
+    const result = await getGraph(COMPANY_UUID, PROJECT_UUID);
+    expect(result.nodes.find((n) => n.uuid === "i1")?.status).toBe(STATUS_UNKNOWN_SENTINEL);
+
+    vi.doUnmock("@/services/idea.service");
+    vi.doUnmock("@/lib/prisma");
+    vi.resetModules();
   });
 });

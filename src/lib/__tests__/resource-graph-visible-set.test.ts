@@ -38,36 +38,43 @@ const EMPTY: ReadonlySet<string> = new Set();
 function buildGraph(): ResourceGraphResult {
   return {
     nodes: [
-      { uuid: "idea-root", type: "idea", title: "Root idea", parentIdeaUuid: null },
+      // Visibility tests don't care about per-node status values; we set a
+      // benign string on every node so the fixtures satisfy the (required)
+      // `status` field on ResourceGraphNode without affecting any assertion.
+      { uuid: "idea-root", type: "idea", title: "Root idea", status: "open", parentIdeaUuid: null },
       {
         uuid: "idea-child",
         type: "idea",
         title: "Child idea",
+        status: "open",
         parentIdeaUuid: "idea-root",
       },
       {
         uuid: "proposal-A",
         type: "proposal",
         title: "Proposal A",
+        status: "draft",
         sourceIdeaUuids: ["idea-root"],
       },
       {
         uuid: "proposal-B",
         type: "proposal",
         title: "Proposal B",
+        status: "draft",
         sourceIdeaUuids: ["idea-child"],
       },
       {
         uuid: "manual-proposal",
         type: "proposal",
         title: "Manual proposal",
+        status: "draft",
         sourceIdeaUuids: [],
       },
-      { uuid: "task-a1", type: "task", title: "Task A1", proposalUuid: "proposal-A" },
-      { uuid: "task-a2", type: "task", title: "Task A2", proposalUuid: "proposal-A" },
-      { uuid: "doc-a1", type: "document", title: "Doc A1", proposalUuid: "proposal-A" },
-      { uuid: "doc-b1", type: "document", title: "Doc B1", proposalUuid: "proposal-B" },
-      { uuid: "orphan-task", type: "task", title: "Orphan", proposalUuid: null },
+      { uuid: "task-a1", type: "task", title: "Task A1", status: "open", proposalUuid: "proposal-A" },
+      { uuid: "task-a2", type: "task", title: "Task A2", status: "open", proposalUuid: "proposal-A" },
+      { uuid: "doc-a1", type: "document", title: "Doc A1", status: "prd", proposalUuid: "proposal-A" },
+      { uuid: "doc-b1", type: "document", title: "Doc B1", status: "prd", proposalUuid: "proposal-B" },
+      { uuid: "orphan-task", type: "task", title: "Orphan", status: "open", proposalUuid: null },
     ],
     edges: [
       { from: "idea-root", to: "idea-child", kind: "lineage" },
@@ -185,12 +192,13 @@ describe("computeVisibleSet (two-level)", () => {
   it("treats a proposal cited by multiple Ideas as visible when ANY is expanded", () => {
     const g: ResourceGraphResult = {
       nodes: [
-        { uuid: "idea-1", type: "idea", title: "I1", parentIdeaUuid: null },
-        { uuid: "idea-2", type: "idea", title: "I2", parentIdeaUuid: null },
+        { uuid: "idea-1", type: "idea", title: "I1", status: "open", parentIdeaUuid: null },
+        { uuid: "idea-2", type: "idea", title: "I2", status: "open", parentIdeaUuid: null },
         {
           uuid: "proposal-shared",
           type: "proposal",
           title: "Shared",
+          status: "draft",
           sourceIdeaUuids: ["idea-1", "idea-2"],
         },
       ],

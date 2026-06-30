@@ -1606,6 +1606,9 @@
     },
     "tooltip": {
       "loading": "加载中…"
+    },
+    "status": {
+      "unknown": "未知"
     }
   }
 }
