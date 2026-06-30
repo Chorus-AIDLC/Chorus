@@ -50,6 +50,8 @@ import type {
   ResourceGraphNodeType as NodeType,
   ResourceGraphEdgeKind as EdgeKind,
 } from "@/services/resource-graph.service";
+import { useNodeDetail } from "./use-node-detail";
+import { NodeTooltip } from "./node-tooltip";
 
 // --- Public data shapes (Tech Design D5) ------------------------------------
 //
@@ -137,6 +139,17 @@ const BTN_W = 40;
 const TWEEN_MS = 300; // coordinate tween + fade duration (Tech Design D2)
 const BG = "#FAF8F4";
 
+// Hover-tooltip anchor geometry (screen pixels). The tooltip is anchored beside
+// the hovered card (Tech Design D2): preferred to the card's right edge with a
+// small gap, vertically centered; flipped to the left / clamped inside the
+// container on overflow. These are coarse layout estimates of the DOM tooltip's
+// box (its real size varies with the title) used only to choose a side and to
+// clamp — the tooltip itself is `max-w-[260px]`.
+const TOOLTIP_GAP = 12; // px gap between the card edge and the tooltip
+const TOOLTIP_EST_W = 260; // matches the tooltip's max width (for flip/clamp)
+const TOOLTIP_EST_H = 64; // approximate height (title + badge row)
+const TOOLTIP_MARGIN = 8; // keep this far from the container edges when clamping
+
 // --- Tween bookkeeping ------------------------------------------------------
 //
 // One animation record per visible node. `from`/`to` are graph-space target
@@ -190,6 +203,23 @@ export function MindMapCanvas({
 
   const [hoverId, setHoverId] = useState<string | null>(null);
 
+  // --- Hover tooltip (Tech Design D1/D2/D4) ---------------------------------
+  // Additive overlay: the hovered node's full title + a status/type badge,
+  // fetched on demand via useNodeDetail (debounced + cached). The anchor is a
+  // screen-pixel position recomputed from the live rendered center + the view
+  // transform on each paint while a node is hovered (see renderFrame). Stored as
+  // state so the DOM tooltip re-renders as the camera/card moves. This is purely
+  // additive — it does NOT touch hoverId-driven focusLineage below.
+  const [tooltipAnchor, setTooltipAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  // Mirror of tooltipAnchor read inside the rAF painter — lets the painter clear
+  // a stale anchor without listing tooltipAnchor as a renderFrame dependency
+  // (which would rebuild the painter every time the anchor nudges).
+  const tooltipAnchorRef = useRef(tooltipAnchor);
+  tooltipAnchorRef.current = tooltipAnchor;
+
   // --- Deterministic layout (Tech Design D1) --------------------------------
   // Pure: identical visible node/link sets + expand state → identical coords.
   const layout = useMemo(
@@ -202,6 +232,15 @@ export function MindMapCanvas({
     for (const n of nodes) m.set(n.id, n);
     return m;
   }, [nodes]);
+
+  // The hovered node + its type drive the tooltip's fetch-on-hover detail. The
+  // hook is debounced + cached + abort-safe; passing null when nothing is
+  // hovered clears it. The title shown comes straight from the node payload.
+  const hoveredNode = hoverId ? nodeById.get(hoverId) ?? null : null;
+  const { detail: hoverDetail, loading: hoverLoading } = useNodeDetail(
+    hoverId,
+    hoveredNode?.type ?? null,
+  );
 
   // --- Directed tree-spine maps -------------------------------------------
   // The layout resolves exactly one tree-spine parent per non-root node (idea
@@ -442,6 +481,47 @@ export function MindMapCanvas({
       });
     }
 
+    // 3) Hover-tooltip anchor (Tech Design D2). Compute the hovered card's
+    // SCREEN position from its LIVE rendered center + the view transform (the
+    // inverse of screenToGraph), then anchor the DOM tooltip beside the card:
+    // preferred to the right edge with a gap, vertically centered; flipped to
+    // the left and/or clamped inside the container when it would overflow.
+    // Reading the live `rendered` center keeps the anchor attached while the
+    // card tweens/pans/zooms. Written to React state only on meaningful change
+    // (epsilon-guarded) so the DOM tooltip follows without per-frame churn.
+    const hovered = hoverId ? rendered.get(hoverId) : undefined;
+    const hoveredExiting = hoverId ? anims.get(hoverId)?.exit : false;
+    if (hovered && !hoveredExiting) {
+      const centerX = hovered.x * view.scale + view.tx;
+      const centerY = hovered.y * view.scale + view.ty;
+      const halfW = (CARD_W / 2) * view.scale;
+      // Prefer the right side. Flip to the left if the right placement would run
+      // past the container's right edge.
+      const rightX = centerX + halfW + TOOLTIP_GAP;
+      const leftX = centerX - halfW - TOOLTIP_GAP - TOOLTIP_EST_W;
+      let ax =
+        rightX + TOOLTIP_EST_W <= width - TOOLTIP_MARGIN ? rightX : leftX;
+      // Final horizontal clamp inside the container (covers the degenerate case
+      // where neither side fully fits).
+      ax = Math.max(
+        TOOLTIP_MARGIN,
+        Math.min(ax, width - TOOLTIP_EST_W - TOOLTIP_MARGIN),
+      );
+      // Vertically centered on the card, then clamped inside the container.
+      let ay = centerY - TOOLTIP_EST_H / 2;
+      ay = Math.max(
+        TOOLTIP_MARGIN,
+        Math.min(ay, height - TOOLTIP_EST_H - TOOLTIP_MARGIN),
+      );
+      setTooltipAnchor((prev) =>
+        prev && Math.abs(prev.x - ax) < 0.5 && Math.abs(prev.y - ay) < 0.5
+          ? prev
+          : { x: ax, y: ay },
+      );
+    } else if (tooltipAnchorRef.current !== null) {
+      setTooltipAnchor(null);
+    }
+
     if (animating || hasActivePresence(getPresence, nodes)) {
       scheduleRender();
     }
@@ -626,6 +706,21 @@ export function MindMapCanvas({
         onPointerLeave={() => setHoverId(null)}
         onWheel={handleWheel}
       />
+      {/* Hover tooltip — a DOM overlay above the canvas (Tech Design D1).
+          Mounts only while a node is hovered AND its anchor is resolved; the
+          hook's debounce gives the short appear-delay, and a mouse-out
+          (hoverId → null) unmounts it. pointer-events-none lives on the tooltip
+          root so it never intercepts a canvas click. */}
+      {hoveredNode && tooltipAnchor && (
+        <NodeTooltip
+          title={hoveredNode.title}
+          type={hoveredNode.type}
+          detail={hoverDetail}
+          loading={hoverLoading}
+          x={tooltipAnchor.x}
+          y={tooltipAnchor.y}
+        />
+      )}
     </div>
   );
 }

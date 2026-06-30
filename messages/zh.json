@@ -1603,6 +1603,9 @@
     "outline": {
       "expand": "展开 {count} 个子节点",
       "collapse": "收起子节点"
+    },
+    "tooltip": {
+      "loading": "加载中…"
     }
   }
 }
