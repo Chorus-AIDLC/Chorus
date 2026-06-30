@@ -322,3 +322,226 @@ describe("ResourceGraph — mobile vertical outline & responsive switch", () => 
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// T3 — status Badge per row
+//
+// The outline row renders a shadcn <Badge> driven by the SHARED
+// node-status.ts resolver, so its color+label match the canvas pill for the
+// same (type, statusValue). We test MindMapOutline DIRECTLY here (rather than
+// through ResourceGraph) to control `node.status` precisely and to isolate
+// from the parent's reconciliation pipeline.
+//
+// Coverage:
+//   - AC #1: every row renders a Badge with the correct per-type label
+//            (idea badgeHint / proposal / task / document type)
+//   - AC #1/#4: badge uses the shadcn <Badge> primitive (data-slot="badge"),
+//            not a raw HTML element
+//   - AC #2: the badge does not break the row's title, expand affordance,
+//            presence pill, or tap-to-open-panel behavior
+//   - AC #3: a status change in the node payload updates the row's badge
+//            (the outline renders from the reconciled payload — re-rendering
+//            with a new `status` swaps the label without remount)
+// ---------------------------------------------------------------------------
+
+import { MindMapOutline } from "../mindmap-outline";
+import type { ForceNode, ForceLink } from "../mindmap-canvas";
+
+// `ForceNode` does not yet carry `status` in its exported type (the canvas
+// renderer's plumbing for that is the sibling task); the runtime payload from
+// resource-graph.tsx will set it. We attach it via a structural widen so the
+// test can drive the field today.
+type OutlineNode = ForceNode & { status?: string };
+function makeNode(n: OutlineNode): ForceNode {
+  return n as ForceNode;
+}
+
+describe("MindMapOutline — per-row status Badge", () => {
+  // Make sure no leftover presence colors the row from a prior test.
+  beforeEach(() => {
+    _resetPresenceStore();
+  });
+
+  it("renders a shadcn Badge with the correct localized label for each node type (AC #1)", () => {
+    // One node per type, each carrying a representative concrete status. All
+    // four nodes are flat roots (no edges), so each gets its own outline row.
+    const nodes: ForceNode[] = [
+      makeNode({ id: "idea-1", type: "idea", title: "Idea one", status: "building" }),
+      makeNode({
+        id: "prop-1",
+        type: "proposal",
+        title: "Proposal one",
+        status: "pending",
+      }),
+      makeNode({
+        id: "task-1",
+        type: "task",
+        title: "Task A",
+        status: "in_progress",
+      }),
+      makeNode({
+        id: "doc-1",
+        type: "document",
+        title: "Doc one",
+        status: "prd",
+      }),
+    ];
+    const links: ForceLink[] = [];
+
+    const { getAllByTestId } = render(
+      <MindMapOutline
+        nodes={nodes}
+        links={links}
+        selectedId={null}
+        onNodeClick={vi.fn()}
+      />,
+    );
+
+    const badges = getAllByTestId("outline-status-badge");
+    expect(badges).toHaveLength(4);
+
+    // Labels: idea → ideaTracker.badge.*, proposal/task → status.*, doc → documents.type*.
+    expect(badges[0].textContent).toBe("ideaTracker.badge.building");
+    expect(badges[1].textContent).toBe("status.pendingReview");
+    expect(badges[2].textContent).toBe("status.inProgress");
+    expect(badges[3].textContent).toBe("documents.typePrd");
+
+    // Each row's badge carries a Tailwind `bg-[#..] text-[#..]` color pair —
+    // that's the same shape the canvas pill uses, so the two surfaces stay
+    // visually consistent.
+    for (const b of badges) {
+      expect(b.className).toMatch(/bg-\[#/);
+      expect(b.className).toMatch(/text-\[#/);
+    }
+  });
+
+  it("renders the badge with the shadcn <Badge> primitive (data-slot=\"badge\"), not a raw element (AC #4)", () => {
+    const nodes: ForceNode[] = [
+      makeNode({ id: "task-1", type: "task", title: "T", status: "done" }),
+    ];
+    const { getByTestId } = render(
+      <MindMapOutline
+        nodes={nodes}
+        links={[]}
+        selectedId={null}
+        onNodeClick={vi.fn()}
+      />,
+    );
+    const badge = getByTestId("outline-status-badge");
+    // The shadcn Badge primitive stamps `data-slot="badge"` on its root.
+    expect(badge.getAttribute("data-slot")).toBe("badge");
+  });
+
+  it("an unknown/missing status resolves to the neutral fallback label (no crash)", () => {
+    const nodes: ForceNode[] = [
+      // No status — simulates a stale or pre-foundation payload.
+      makeNode({ id: "task-x", type: "task", title: "T" }),
+      // Bogus status value — simulates a server we haven't taught yet.
+      makeNode({
+        id: "task-y",
+        type: "task",
+        title: "U",
+        status: "definitely_not_a_real_value",
+      }),
+    ];
+    const { getAllByTestId } = render(
+      <MindMapOutline
+        nodes={nodes}
+        links={[]}
+        selectedId={null}
+        onNodeClick={vi.fn()}
+      />,
+    );
+    const badges = getAllByTestId("outline-status-badge");
+    expect(badges).toHaveLength(2);
+    for (const b of badges) {
+      expect(b.textContent).toBe("graph.status.unknown");
+    }
+  });
+
+  it("does not break the row's title, tap-to-open-panel, or expand affordance (AC #2)", () => {
+    // An idea hub with one proposal child — the hub gets the +/- affordance.
+    const onNodeClick = vi.fn();
+    const nodes: ForceNode[] = [
+      makeNode({
+        id: "idea-1",
+        type: "idea",
+        title: "Idea one",
+        status: "building",
+        childCount: 1,
+        expanded: false,
+        hasAffordance: true,
+      }),
+    ];
+
+    const { getByText, getByRole, getByTestId } = render(
+      <MindMapOutline
+        nodes={nodes}
+        links={[]}
+        selectedId={null}
+        onNodeClick={onNodeClick}
+      />,
+    );
+
+    // Title is still rendered and readable (i.e. the badge did not displace it).
+    expect(getByText("Idea one")).toBeTruthy();
+
+    // Status badge is present alongside the title region.
+    expect(getByTestId("outline-status-badge").textContent).toBe(
+      "ideaTracker.badge.building",
+    );
+
+    // Expand affordance is still there, with its existing aria-label intact.
+    const expandBtn = getByRole("button", { name: "graph.outline.expand:1" });
+    expect(expandBtn).toBeTruthy();
+
+    // Tapping the row body still routes through the SAME onNodeClick contract
+    // (id, type, onAffordance=false) — adding the badge did not regress that.
+    fireEvent.click(getByText("Idea one"));
+    expect(onNodeClick).toHaveBeenCalledWith("idea-1", "idea", false);
+
+    // Tapping the expand affordance still routes the SAME way (onAffordance=true).
+    fireEvent.click(expandBtn);
+    expect(onNodeClick).toHaveBeenCalledWith("idea-1", "idea", true);
+  });
+
+  it("a status change in the node payload updates the row's badge label without remount (AC #3)", () => {
+    // Drive the badge from `status` on the same id across a rerender — this
+    // mirrors the live-reconcile path where SSE refetches the aggregation and
+    // the outline receives the SAME id with a NEW status string.
+    const initial: ForceNode[] = [
+      makeNode({ id: "task-1", type: "task", title: "Task A", status: "open" }),
+    ];
+    const { getByTestId, rerender } = render(
+      <MindMapOutline
+        nodes={initial}
+        links={[]}
+        selectedId={null}
+        onNodeClick={vi.fn()}
+      />,
+    );
+    expect(getByTestId("outline-status-badge").textContent).toBe("status.open");
+
+    // Same id, new status — the reconciled payload from the live refetch.
+    const next: ForceNode[] = [
+      makeNode({
+        id: "task-1",
+        type: "task",
+        title: "Task A",
+        status: "in_progress",
+      }),
+    ];
+    rerender(
+      <MindMapOutline
+        nodes={next}
+        links={[]}
+        selectedId={null}
+        onNodeClick={vi.fn()}
+      />,
+    );
+    // Badge label flipped to the new status, no manual refresh needed.
+    expect(getByTestId("outline-status-badge").textContent).toBe(
+      "status.inProgress",
+    );
+  });
+});

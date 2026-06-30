@@ -19,12 +19,17 @@ The project left navigation SHALL include a "Graph" entry that links to a per-pr
 
 ### Requirement: Project resource aggregation across four entity types
 
-The system SHALL provide a project-scoped aggregation that returns the project's Ideas, Proposals, Tasks, and Documents as graph nodes, and their relationships as typed graph edges, scoped strictly by company and project so no entity from another company or project is ever returned. Each node SHALL carry its UUID, entity type, and title. Each edge SHALL carry a relationship kind of `derive`, `lineage`, or `depends`. An entity with no relationships SHALL still be returned as a standalone node. To keep the graph legible, a Proposal SHALL emit a `derive` edge to a Task only when that Task is a **root task** of the proposal — i.e. it has no dependency on another task within the same proposal; non-root tasks SHALL be reached only transitively through `depends` edges and SHALL NOT receive a direct Proposal→Task `derive` edge. A Proposal SHALL emit a `derive` edge to every Document it materialized.
+The system SHALL provide a project-scoped aggregation that returns the project's Ideas, Proposals, Tasks, and Documents as graph nodes, and their relationships as typed graph edges, scoped strictly by company and project so no entity from another company or project is ever returned. Each node SHALL carry its UUID, entity type, title, and a **status value** describing the entity's state for display on the node. The status value SHALL be: for an Idea, its derived pipeline status (the same derivation the idea tracker uses, reflecting the idea's proposals and tasks, not merely its stored three-state value); for a Proposal, its lifecycle status; for a Task, its lifecycle status; for a Document, its document type (a Document has no lifecycle status). The status value SHALL be computed server-side from existing columns with no additional per-entity query (no N+1). Each edge SHALL carry a relationship kind of `derive`, `lineage`, or `depends`. An entity with no relationships SHALL still be returned as a standalone node. To keep the graph legible, a Proposal SHALL emit a `derive` edge to a Task only when that Task is a **root task** of the proposal — i.e. it has no dependency on another task within the same proposal; non-root tasks SHALL be reached only transitively through `depends` edges and SHALL NOT receive a direct Proposal→Task `derive` edge. A Proposal SHALL emit a `derive` edge to every Document it materialized.
 
 #### Scenario: Aggregation returns the four entity types as nodes
 
 - **WHEN** the aggregation runs for a project containing ideas, proposals, tasks, and documents
-- **THEN** it returns one node per entity, each tagged with its type (`idea`, `proposal`, `task`, or `document`) and title
+- **THEN** it returns one node per entity, each tagged with its type (`idea`, `proposal`, `task`, or `document`), title, and status value
+
+#### Scenario: Node status reflects the entity's state per type
+
+- **WHEN** the aggregation builds a node
+- **THEN** an Idea node's status is its derived pipeline status (computed from its proposals and tasks), a Proposal node's status is its lifecycle status, a Task node's status is its lifecycle status, and a Document node's status is its document type
 
 #### Scenario: Aggregation derives the three relationship kinds
 
@@ -44,7 +49,7 @@ The system SHALL provide a project-scoped aggregation that returns the project's
 #### Scenario: Orphan entity appears as a standalone node
 
 - **WHEN** a project contains an entity with no relationships to any other entity
-- **THEN** the aggregation returns it as a node with no incident edges
+- **THEN** the aggregation returns it as a node with no incident edges, still carrying its status value
 
 ### Requirement: Per-Idea expand and collapse of derivative subgraphs
 
@@ -80,12 +85,22 @@ Ideas remain visible as subtrees of their parent Idea.
 
 ### Requirement: Type-based node styling and entity-type filtering
 
-Each node SHALL encode its entity type by color and icon and a type label, and SHALL NOT display an entity status badge on the node itself. The graph SHALL provide a filter that toggles the visibility of each of the four entity types.
+Each node SHALL encode its entity type by color and icon and a type label, and SHALL display a **status indicator** drawn from the node's status value. The status indicator SHALL show: for an Idea, Proposal, or Task, a label and color reflecting the entity's status; for a Document, a label and color reflecting its document type. The status indicator's labels and colors SHALL reuse the application's existing status/type vocabulary (the idea tracker's pipeline-status labels and colors for Ideas; the established proposal, task, and document-type labels and colors for the others) so a node reads consistently with the rest of the app, and SHALL be visually consistent between the horizontal canvas and the vertical outline renderings. The status indicator SHALL be placed so it does not overflow the card or obscure the node's title (a long label may be truncated). The graph SHALL provide a filter that toggles the visibility of each of the four entity types.
 
-#### Scenario: Node styling encodes type, not status
+#### Scenario: Node shows type and status
 
 - **WHEN** the graph renders a node
-- **THEN** the node shows a type-specific color, icon, and label, and does not show a status badge
+- **THEN** the node shows a type-specific color, icon, and label, plus a status indicator whose label and color reflect the entity's status (or, for a Document, its document type)
+
+#### Scenario: Status indicator updates live on entity change
+
+- **WHEN** an entity shown in the graph changes status (for example a task moves to done, or a proposal is approved) while a user has the graph open
+- **THEN** the affected node's status indicator updates without a manual page refresh
+
+#### Scenario: Status indication is consistent across renderings
+
+- **WHEN** the same node is shown in the horizontal canvas and in the vertical outline
+- **THEN** its status indicator conveys the same status with a consistent label and color in both renderings
 
 #### Scenario: Filtering hides a node type
 
@@ -240,37 +255,17 @@ lose the user's expansion.
 
 ### Requirement: Desktop hover tooltip previewing a node's title and status
 
-On the desktop (canvas) rendering of the resource graph, hovering a node SHALL,
-after a short delay, display a tooltip anchored beside that node's card. The
-tooltip SHALL show the entity's full (untruncated) title and a single badge
-conveying the entity's state: for an Idea, Proposal, or Task the badge SHALL
-show that entity's lifecycle status; for a Document, which has no lifecycle
-status, the badge SHALL show its document type. The tooltip's detail SHALL be
-fetched on demand per entity (reusing the existing per-entity read endpoints)
-rather than carried in the project aggregation payload, and repeated fetches for
-the same node SHALL be avoided (cached for the duration of the view) and a fast
-hover sweep across nodes SHALL NOT issue a request for every node passed over.
-The tooltip SHALL be anchored to the node card (not tracking the cursor), SHALL
-NOT occlude the hovered card, SHALL disappear when the pointer leaves the node,
-and SHALL NOT interfere with the existing hover lineage-highlight or with
-clicking a node. This tooltip is desktop-only; the mobile vertical outline SHALL
-NOT show it. All user-facing text in the tooltip SHALL be localized in both
-supported locales.
+On the desktop (canvas) rendering of the resource graph, hovering a node SHALL, after a short delay, display a tooltip anchored beside that node's card showing the entity's full (untruncated) title. Because the node card itself already shows the entity's status, the tooltip SHALL NOT show a status badge — its sole purpose is to reveal the full title that the card may truncate. The tooltip SHALL be anchored to the node card (not tracking the cursor), SHALL NOT occlude the hovered card, SHALL disappear when the pointer leaves the node, and SHALL NOT interfere with the existing hover lineage-highlight or with clicking a node. The title shown by the tooltip SHALL come from data already present in the graph payload, so the tooltip SHALL NOT issue a per-entity network request on hover. This tooltip is desktop-only; the mobile vertical outline SHALL NOT show it. All user-facing text in the tooltip SHALL be localized in both supported locales.
 
-#### Scenario: Hovering a node shows its title and status badge
+#### Scenario: Hovering a node shows its full title
 
 - **WHEN** a user hovers a node on the desktop graph canvas and pauses briefly
-- **THEN** a tooltip appears beside that node's card showing the entity's full title and a badge with its lifecycle status (or, for a Document, its document type)
+- **THEN** a tooltip appears beside that node's card showing the entity's full, untruncated title and no status badge
 
-#### Scenario: Tooltip detail is fetched on demand and reused
+#### Scenario: Tooltip does not fetch on hover
 
-- **WHEN** a node is hovered for the first time
-- **THEN** the tooltip's status/type detail is fetched for that single entity via the existing per-entity read endpoint, and hovering the same node again reuses the cached detail without re-fetching
-
-#### Scenario: A fast hover sweep does not fire a request per node
-
-- **WHEN** the pointer moves quickly across many nodes without pausing
-- **THEN** no per-node detail request is issued for nodes merely passed over (the fetch is debounced until the hover settles)
+- **WHEN** a user hovers nodes on the desktop graph canvas
+- **THEN** no per-entity detail network request is issued for the tooltip (the title is taken from the already-loaded graph payload)
 
 #### Scenario: Tooltip clears on mouse-out and does not block interaction
 

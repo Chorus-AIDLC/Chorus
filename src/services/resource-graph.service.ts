@@ -57,6 +57,8 @@
 //                      independent of the root-tasks-only proposal filter.
 
 import { prisma } from "@/lib/prisma";
+import { computeDerivedStatus } from "@/services/idea.service";
+import { STATUS_UNKNOWN_SENTINEL } from "@/app/(dashboard)/projects/[uuid]/graph/node-status";
 
 export type ResourceGraphNodeType = "idea" | "proposal" | "task" | "document";
 export type ResourceGraphEdgeKind = "derive" | "lineage" | "depends";
@@ -65,6 +67,19 @@ export interface ResourceGraphNode {
   uuid: string;
   type: ResourceGraphNodeType;
   title: string;
+  // Per-node status string consumed by the renderer's shared `node-status.ts`
+  // resolver. The semantics per type are:
+  //   - idea     → derived `badgeHint` (8 values, e.g. "building",
+  //                "review_proposal"), computed via `computeDerivedStatus`
+  //                from the idea's latest approved proposal + tasks (same
+  //                derivation as `getIdeasWithDerivedStatus`). A null
+  //                badgeHint maps to `STATUS_UNKNOWN_SENTINEL` so this field
+  //                is always a defined string.
+  //   - proposal → raw `Proposal.status`
+  //   - task     → raw `Task.status`
+  //   - document → `Document.type` (documents have no lifecycle status, so
+  //                their type carries the badge slot)
+  status: string;
   // Idea-only: the lineage parent (null for top-level ideas). Used by the
   // client to build collapse groupings and to walk Idea→Idea lineage.
   parentIdeaUuid?: string | null;
@@ -109,19 +124,40 @@ export async function getProjectResourceGraph(
   const [ideas, proposals, tasks, documents, dependencies] = await Promise.all([
     prisma.idea.findMany({
       where: { companyUuid, projectUuid },
-      select: { uuid: true, title: true, parentUuid: true },
+      // status + elaborationStatus feed `computeDerivedStatus` for the idea
+      // node's `status` (derived badgeHint).
+      select: {
+        uuid: true,
+        title: true,
+        parentUuid: true,
+        status: true,
+        elaborationStatus: true,
+      },
     }),
     prisma.proposal.findMany({
       where: { companyUuid, projectUuid },
-      select: { uuid: true, title: true, inputType: true, inputUuids: true },
+      // status feeds two things: (1) the proposal node's own raw `status`
+      // (badge), (2) the per-idea pending/approved partition used to derive
+      // each idea's badgeHint — same shape as `getIdeasWithDerivedStatus`.
+      select: {
+        uuid: true,
+        title: true,
+        inputType: true,
+        inputUuids: true,
+        status: true,
+        createdAt: true,
+      },
     }),
     prisma.task.findMany({
       where: { companyUuid, projectUuid },
-      select: { uuid: true, title: true, proposalUuid: true },
+      // status feeds both the task node's badge AND each idea's badgeHint
+      // (via the tasks-under-latest-approved-proposal grouping below).
+      select: { uuid: true, title: true, proposalUuid: true, status: true },
     }),
     prisma.document.findMany({
       where: { companyUuid, projectUuid },
-      select: { uuid: true, title: true, proposalUuid: true },
+      // type stands in for status on documents (no lifecycle status).
+      select: { uuid: true, title: true, proposalUuid: true, type: true },
     }),
     // TaskDependency has no companyUuid / projectUuid of its own — scope
     // through the related task. The dependsOn task is filtered separately
@@ -143,13 +179,73 @@ export async function getProjectResourceGraph(
   const proposalUuidSet = new Set(proposals.map((p) => p.uuid));
   const taskUuidSet = new Set(tasks.map((t) => t.uuid));
 
+  // --- Idea badgeHint derivation (mirror `getIdeasWithDerivedStatus`) ------
+  //
+  // For each idea, `computeDerivedStatus(...)` needs:
+  //   - hasPendingProposal:  any proposal in this project whose inputUuids
+  //                          contains the idea AND status === "pending"
+  //   - hasApprovedProposal: same but status === "approved"
+  //   - taskStatuses:        statuses of tasks whose `proposalUuid` is the
+  //                          idea's LATEST approved proposal (the one
+  //                          getIdeasWithDerivedStatus picks: max createdAt)
+  //
+  // The aggregation already loaded every proposal + task for the project, so
+  // we derive everything in memory — no new query, no N+1. We re-use the
+  // already-loaded sets and apply the same partitioning as
+  // getIdeasWithDerivedStatus.
+  const ideaToLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
+  const ideasWithPendingProposal = new Set<string>();
+  for (const proposal of proposals) {
+    if (proposal.inputType !== "idea") continue;
+    if (proposal.status !== "pending" && proposal.status !== "approved") continue;
+    const rawIds = Array.isArray(proposal.inputUuids) ? (proposal.inputUuids as string[]) : [];
+    for (const ideaUuid of rawIds) {
+      if (proposal.status === "pending") {
+        ideasWithPendingProposal.add(ideaUuid);
+      } else {
+        const existing = ideaToLatestApproved.get(ideaUuid);
+        if (!existing || proposal.createdAt > existing.createdAt) {
+          ideaToLatestApproved.set(ideaUuid, {
+            uuid: proposal.uuid,
+            createdAt: proposal.createdAt,
+          });
+        }
+      }
+    }
+  }
+  // Tasks grouped by their proposalUuid (only proposals that are some idea's
+  // latest-approved are actually consulted, but a single pass keeps it simple).
+  const tasksByProposal = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (!task.proposalUuid) continue;
+    const arr = tasksByProposal.get(task.proposalUuid);
+    if (arr) arr.push(task.status);
+    else tasksByProposal.set(task.proposalUuid, [task.status]);
+  }
+
   const nodes: ResourceGraphNode[] = [
-    ...ideas.map<ResourceGraphNode>((i) => ({
-      uuid: i.uuid,
-      type: "idea",
-      title: i.title,
-      parentIdeaUuid: i.parentUuid ?? null,
-    })),
+    ...ideas.map<ResourceGraphNode>((i) => {
+      const latestApproved = ideaToLatestApproved.get(i.uuid);
+      const taskStatuses = latestApproved
+        ? tasksByProposal.get(latestApproved.uuid) ?? []
+        : [];
+      const { badgeHint } = computeDerivedStatus({
+        ideaStatus: i.status,
+        elaborationStatus: i.elaborationStatus,
+        hasPendingProposal: ideasWithPendingProposal.has(i.uuid),
+        hasApprovedProposal: !!latestApproved,
+        taskStatuses,
+      });
+      return {
+        uuid: i.uuid,
+        type: "idea",
+        title: i.title,
+        // null badgeHint → defined sentinel so `status` is always a string
+        // and the renderer's node-status resolver has a defined value to map.
+        status: badgeHint ?? STATUS_UNKNOWN_SENTINEL,
+        parentIdeaUuid: i.parentUuid ?? null,
+      };
+    }),
     ...proposals.map<ResourceGraphNode>((p) => {
       // inputUuids is a Json column; cast to string[] (matches the existing
       // convention in proposal.service.ts:201/249/422). Defensive guard so
@@ -163,6 +259,7 @@ export async function getProjectResourceGraph(
         uuid: p.uuid,
         type: "proposal",
         title: p.title,
+        status: p.status,
         sourceIdeaUuids,
       };
     }),
@@ -170,12 +267,16 @@ export async function getProjectResourceGraph(
       uuid: t.uuid,
       type: "task",
       title: t.title,
+      status: t.status,
       proposalUuid: t.proposalUuid ?? null,
     })),
     ...documents.map<ResourceGraphNode>((d) => ({
       uuid: d.uuid,
       type: "document",
       title: d.title,
+      // Documents have no lifecycle status; type carries the badge slot
+      // (the design doc decision; see PRD/Tech Design).
+      status: d.type,
       proposalUuid: d.proposalUuid ?? null,
     })),
   ];

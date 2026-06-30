@@ -500,6 +500,12 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         id: n.uuid,
         type: n.type,
         title: n.title,
+        // Pass-through of the per-node status string from the aggregation
+        // payload (idea badgeHint / proposal status / task status / document
+        // type). The renderers resolve label + color via the shared
+        // node-status.ts module. The SSE reconcile re-fetch carries the new
+        // status onto surviving nodes automatically (Tech Design D4).
+        status: n.status,
         childCount,
         expanded,
         hasAffordance: shouldShowExpandAffordance(n.type, childCount),
