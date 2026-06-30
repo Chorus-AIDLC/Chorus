@@ -633,11 +633,13 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
 
       switch (type) {
         case "idea": {
-          // Open the IdeaDetailPanel via ?panel=<uuid>. The hasRenderedRef
-          // gate inside usePanelUrl keeps the seed from leaking; we pass
-          // null to initialSelectedId for the same reason — no SSR seed
-          // to begin with on the graph route.
-          openPanel(id);
+          // Open the IdeaDetailPanel via ?panel=<uuid>, focused on the
+          // Elaboration tab — that's the AI-DLC stage an Idea node represents
+          // (clarifying requirements), so it's the most useful landing tab from
+          // the graph. The panel reads ?tab from the URL (idea-detail-panel
+          // urlTab), and "elaboration" is always a visible tab. The
+          // hasRenderedRef gate inside usePanelUrl keeps the seed from leaking.
+          openPanel(id, "elaboration");
           return;
         }
         case "proposal": {
