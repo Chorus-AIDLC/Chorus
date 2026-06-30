@@ -119,7 +119,12 @@ export default function DashboardLayout({
     pathname === "/settings" ||
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
-  const isFullWidthPage = pathname.match(/^\/projects\/[a-f0-9-]{36}\/tasks(\/|$)/);
+  // Pages that opt out of the centered max-w-[1200px] container and use the
+  // full main width — they have wide horizontal content (the task kanban
+  // board, the resource graph mind-map).
+  const isFullWidthPage = pathname.match(
+    /^\/projects\/[a-f0-9-]{36}\/(tasks|graph)(\/|$)/,
+  );
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { checkSession(); }, []);
