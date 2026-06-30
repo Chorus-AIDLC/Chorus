@@ -95,6 +95,13 @@ export interface ForceNode {
   expanded?: boolean;
   /** True when this node should show an expand/collapse button. */
   hasAffordance?: boolean;
+  /**
+   * Nesting parent for the cluster force: a proposal's owner is its source
+   * idea; a task/document's owner is its proposal. Idea hubs (+ orphans) have
+   * none. Drives the per-tick tether that groups each idea's resources
+   * around it so multiple expanded ideas don't blur together.
+   */
+  ownerId?: string;
 }
 
 export interface ForceLink {
@@ -153,6 +160,7 @@ export function ForceGraphCanvas({
         existing.childCount = n.childCount;
         existing.expanded = n.expanded;
         existing.hasAffordance = n.hasAffordance;
+        existing.ownerId = n.ownerId;
         return existing;
       }
       const created: SimNode = { ...n };
@@ -191,24 +199,33 @@ export function ForceGraphCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Tune the live force simulation for an airy, non-overlapping, COHESIVE
-  // layout — the single biggest fix vs. the old clumped/scattered graph.
+  // Tune the live force simulation for an airy, non-overlapping, CLUSTERED
+  // layout. The defining structural force is the per-tick "cluster tether"
+  // (see clusterForce): every resource is gently pulled toward its owner hub
+  // (task/doc → proposal → idea), so each idea's resources group around it.
+  // Cross-cluster separation then falls out of the global charge for free —
+  // two groups that drift together get pushed apart.
   //
   //  - moderate repulsion (too strong scatters disconnected components off
-  //    to infinity, which is exactly what the first cut did)
-  //  - comfortable link distance so connected nodes breathe
+  //    to infinity; too weak lets clusters overlap)
+  //  - per-kind link distance: lineage (idea→idea) is LONG so blood-related
+  //    idea clusters sit adjacent, not merged; derive/depends are short so a
+  //    cluster's own resources stay tight
   //  - rectangular collision (cards are wide) so nothing overlaps
-  //  - x/y centering gravity so disconnected components (e.g. standalone
-  //    Idea hubs with no lineage) are gently pulled toward the middle instead
-  //    of drifting away — keeps the whole graph in one readable frame
+  //  - cluster tether — the grouping force (owner-following, see below)
+  //  - gentle x/y centering so the whole constellation stays framed (weaker
+  //    now that clustering provides most of the cohesion)
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.d3Force("charge")?.strength(-520).distanceMax(620);
-    fg.d3Force("link")?.distance(150).strength(0.3);
-    fg.d3Force("collide", forceCollide(CARD_W * 0.62));
-    fg.d3Force("x", forceX(0).strength(0.06));
-    fg.d3Force("y", forceY(0).strength(0.08));
+    fg.d3Force("charge")?.strength(-480).distanceMax(700);
+    fg.d3Force("link")
+      ?.distance((l: SimLink) => (l.kind === "lineage" ? 260 : 120))
+      .strength((l: SimLink) => (l.kind === "lineage" ? 0.12 : 0.35));
+    fg.d3Force("collide", forceCollide(CARD_W * 0.6));
+    fg.d3Force("cluster", clusterForce(0.85));
+    fg.d3Force("x", forceX(0).strength(0.035));
+    fg.d3Force("y", forceY(0).strength(0.045));
     fg.d3ReheatSimulation();
   }, [graphData]);
 
@@ -457,6 +474,47 @@ export function ForceGraphCanvas({
       />
     </div>
   );
+}
+
+// --- cluster tether force ---------------------------------------------------
+//
+// A custom d3-force that, each tick, nudges every node with an `ownerId`
+// toward its owner node's CURRENT position. Because d3-force's built-in
+// forceX/forceY take a fixed target (sampled once), they can't follow a
+// moving owner — so grouping around a live, drifting idea hub needs this
+// hand-written force. Owners resolve transitively: a task tethers to its
+// proposal, which itself tethers to its idea, yielding nested two-level
+// clusters. Strength scales with alpha (standard d3 idiom) so it relaxes as
+// the simulation cools.
+type SimNodeWithVel = NodeObject<ForceNode> & {
+  vx?: number;
+  vy?: number;
+};
+
+function clusterForce(strength: number) {
+  let nodes: SimNodeWithVel[] = [];
+  let byId = new Map<string, SimNodeWithVel>();
+
+  const force = (alpha: number) => {
+    const k = strength * alpha;
+    for (const n of nodes) {
+      const ownerId = n.ownerId;
+      if (!ownerId) continue;
+      const owner = byId.get(ownerId);
+      if (!owner || owner === n) continue;
+      const ox = owner.x ?? 0;
+      const oy = owner.y ?? 0;
+      n.vx = (n.vx ?? 0) + (ox - (n.x ?? 0)) * k;
+      n.vy = (n.vy ?? 0) + (oy - (n.y ?? 0)) * k;
+    }
+  };
+
+  force.initialize = (ns: SimNodeWithVel[]) => {
+    nodes = ns;
+    byId = new Map(ns.map((n) => [n.id, n]));
+  };
+
+  return force;
 }
 
 // --- canvas helpers ---------------------------------------------------------

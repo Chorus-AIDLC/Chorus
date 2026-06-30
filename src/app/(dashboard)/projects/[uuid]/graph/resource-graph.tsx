@@ -402,6 +402,39 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       .map((i) => graph.edges[i])
       .filter((e) => visibleUuids.has(e.from) && visibleUuids.has(e.to));
 
+    // Sets used to resolve each node's nesting OWNER for the canvas's cluster
+    // force (so each idea's resources group around it). Built from the FULL
+    // graph (not just visible) so the owner is stable regardless of expand
+    // state. Idea hub = cluster root; proposal nests under its first
+    // project-local source idea; task/document nests under its proposal.
+    const ideaUuidSet = new Set(
+      graph.nodes.filter((n) => n.type === "idea").map((n) => n.uuid),
+    );
+    const proposalSourceIdea = new Map<string, string | undefined>();
+    for (const n of graph.nodes) {
+      if (n.type !== "proposal") continue;
+      const firstLocal = (n.sourceIdeaUuids ?? []).find((u) =>
+        ideaUuidSet.has(u),
+      );
+      proposalSourceIdea.set(n.uuid, firstLocal);
+    }
+    const proposalUuidSet = new Set(proposalSourceIdea.keys());
+
+    const ownerOf = (n: (typeof visibleNodes)[number]): string | undefined => {
+      if (n.type === "proposal") {
+        // Nest the proposal directly under its source idea hub.
+        return proposalSourceIdea.get(n.uuid);
+      }
+      if (n.type === "task" || n.type === "document") {
+        // Nest under the proposal (the proposal in turn nests under the idea,
+        // giving a two-level cluster). Only if the proposal is a graph node.
+        const p = n.proposalUuid ?? undefined;
+        return p && proposalUuidSet.has(p) ? p : undefined;
+      }
+      // idea hubs (and any orphan) have no owner — they are cluster roots.
+      return undefined;
+    };
+
     const nodesOut: ForceNode[] = visibleNodes.map((n) => {
       // Both Idea and Proposal are expandable hubs (two-level model). Their
       // child count + expanded state drive the +/- button; Tasks/Documents
@@ -421,6 +454,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         childCount,
         expanded,
         hasAffordance: shouldShowExpandAffordance(n.type, childCount),
+        ownerId: ownerOf(n),
       };
     });
 
