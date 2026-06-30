@@ -37,6 +37,7 @@
 // other import breaks (Tech Design D5).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { usePresence } from "@/hooks/use-presence";
 import { getAgentColor } from "@/lib/agent-color";
@@ -136,6 +137,21 @@ export function MindMapCanvas({
   onNodeClick,
 }: MindMapCanvasProps) {
   const { getPresence } = usePresence();
+  const t = useTranslations();
+
+  // Localized type-eyebrow labels (e.g. zh 想法/提案/任务/文档). The painter is a
+  // plain function and can't call the t() hook, so resolve the four labels here
+  // and pass them down — keeps the canvas eyebrow on the same i18n contract as
+  // the mobile outline (which uses t(`graph.nodeType.${type}`)).
+  const typeLabels = useMemo<Record<NodeType, string>>(
+    () => ({
+      idea: t("graph.nodeType.idea"),
+      proposal: t("graph.nodeType.proposal"),
+      task: t("graph.nodeType.task"),
+      document: t("graph.nodeType.document"),
+    }),
+    [t],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -391,6 +407,7 @@ export function MindMapCanvas({
         selectedId,
         focusLineage,
         getPresence,
+        typeLabels,
       });
     }
 
@@ -398,7 +415,7 @@ export function MindMapCanvas({
       scheduleRender();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, getPresence, nodes]);
+  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, getPresence, nodes, typeLabels]);
 
   const renderFrameRef = useRef(renderFrame);
   renderFrameRef.current = renderFrame;
@@ -598,6 +615,8 @@ interface PaintNodeOpts {
   selectedId: string | null;
   focusLineage: Set<string> | null;
   getPresence: ReturnType<typeof usePresence>["getPresence"];
+  /** Localized type-eyebrow labels, resolved via t() in the component. */
+  typeLabels: Record<NodeType, string>;
 }
 
 function paintNode(
@@ -606,8 +625,15 @@ function paintNode(
   center: { x: number; y: number },
   opts: PaintNodeOpts,
 ) {
-  const { opacity, scale, hoverId, selectedId, focusLineage, getPresence } =
-    opts;
+  const {
+    opacity,
+    scale,
+    hoverId,
+    selectedId,
+    focusLineage,
+    getPresence,
+    typeLabels,
+  } = opts;
   const type = node.type;
   const color = TYPE_COLOR[type];
 
@@ -650,6 +676,27 @@ function paintNode(
     roundRect(ctx, left - 4, top - 4, CARD_W + 8, CARD_H + 8, CARD_R + 3);
     ctx.stroke();
     ctx.restore();
+
+    // Identify the acting agent (spec: presence highlight "SHALL identify the
+    // acting agent" in BOTH renderers — the mobile outline shows a name pill,
+    // so the canvas paints the agent's name on a colored chip above the card).
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.font = "600 9px ui-sans-serif, system-ui";
+    const label = primary.agentName;
+    const padX = 6;
+    const labelW = ctx.measureText(label).width + padX * 2;
+    const pillH = 15;
+    const pillX = left;
+    const pillY = top - 4 - pillH - 3;
+    ctx.fillStyle = ringColor;
+    roundRect(ctx, pillX, pillY, labelW, pillH, 5);
+    ctx.fill();
+    ctx.fillStyle = "#FFFFFF";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, pillX + padX, pillY + pillH / 2 + 0.5);
+    ctx.restore();
   }
 
   // Soft type-colored glow behind the card on hover/selection.
@@ -690,11 +737,12 @@ function paintNode(
   const textX = chipX + CHIP + 10;
   const contentRight = left + CARD_W - (hasBtn ? BTN_W : 12);
   const textW = contentRight - textX;
-  // Eyebrow (type label).
+  // Eyebrow (localized type label — matches the mobile outline's
+  // t(`graph.nodeType.${type}`), so a zh user sees 想法/提案/任务/文档).
   ctx.textAlign = "left";
   ctx.fillStyle = color;
   ctx.font = "600 9px ui-monospace, monospace";
-  ctx.fillText(type.toUpperCase(), textX, center.y - 8);
+  ctx.fillText(typeLabels[type], textX, center.y - 8);
   // Title (truncated to the text column width).
   ctx.fillStyle = "#2C2C2C";
   ctx.font = "500 12px ui-sans-serif, system-ui";
