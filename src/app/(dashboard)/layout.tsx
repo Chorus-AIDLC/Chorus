@@ -17,6 +17,7 @@ import {
   Settings,
   LogOut,
   Menu,
+  Network,
 } from "lucide-react";
 import { authFetch, primeSessionCookie, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
@@ -118,7 +119,12 @@ export default function DashboardLayout({
     pathname === "/settings" ||
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
-  const isFullWidthPage = pathname.match(/^\/projects\/[a-f0-9-]{36}\/tasks(\/|$)/);
+  // Pages that opt out of the centered max-w-[1200px] container and use the
+  // full main width — they have wide horizontal content (the task kanban
+  // board, the resource graph mind-map).
+  const isFullWidthPage = pathname.match(
+    /^\/projects\/[a-f0-9-]{36}\/(tasks|graph)(\/|$)/,
+  );
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { checkSession(); }, []);
@@ -253,6 +259,7 @@ export default function DashboardLayout({
     { href: `/projects/${projectUuid}/documents`, label: t("nav.documents"), icon: FileText },
     { href: `/projects/${projectUuid}/proposals`, label: t("nav.proposals"), icon: Tags },
     { href: `/projects/${projectUuid}/tasks`, label: t("nav.tasks"), icon: CheckSquare },
+    { href: `/projects/${projectUuid}/graph`, label: t("nav.graph"), icon: Network },
     { href: `/projects/${projectUuid}/activity`, label: t("nav.activity"), icon: Activity },
   ];
 

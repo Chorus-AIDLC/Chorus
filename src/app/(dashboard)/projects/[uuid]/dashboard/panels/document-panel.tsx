@@ -52,17 +52,16 @@ export function DocumentPanel({ title, type, content, mode = "overlay", onClose,
         />
       )}
 
-      {/* Panel */}
+      {/* Panel — full-width on mobile, fixed 480px from md (768px) up. Matches
+          the idea-detail-panel sidebar's `w-full md:w-[480px]` convention so all
+          three panels share one breakpoint. */}
       <div
-        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
           isSideBySide
             ? `z-40 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
             : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
         }`}
-        style={{
-          width: `min(100%, ${PANEL_WIDTH_PX}px)`,
-          ...(isSideBySide ? { right: `${PANEL_WIDTH_PX}px` } : {}),
-        }}
+        style={isSideBySide ? { right: `${PANEL_WIDTH_PX}px` } : undefined}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">

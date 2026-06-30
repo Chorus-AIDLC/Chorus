@@ -1148,6 +1148,28 @@ export async function addTaskDependency(
     data: { taskUuid, dependsOnUuid },
   });
 
+  // Notify live consumers (project Resource Graph + any other list/canvas
+  // tracking the task DAG) that the dependency set changed. We use the
+  // existing `task:updated` channel — same shape every other task mutation
+  // already emits — rather than introducing a new event type. Emitting for
+  // BOTH endpoints lets a per-entity subscriber (`useRealtimeEntityEvent`)
+  // wake on either side of the edge; entity-type subscribers see a single
+  // type and de-dup naturally.
+  eventBus.emitChange({
+    companyUuid: task.companyUuid,
+    projectUuid: task.projectUuid,
+    entityType: "task",
+    entityUuid: taskUuid,
+    action: "updated",
+  });
+  eventBus.emitChange({
+    companyUuid: dependsOnTask.companyUuid,
+    projectUuid: dependsOnTask.projectUuid,
+    entityType: "task",
+    entityUuid: dependsOnUuid,
+    action: "updated",
+  });
+
   return { taskUuid: dep.taskUuid, dependsOnUuid: dep.dependsOnUuid, createdAt: dep.createdAt };
 }
 
@@ -1161,9 +1183,38 @@ export async function removeTaskDependency(
   const task = await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid } });
   if (!task) throw new Error("Task not found");
 
+  // Look up the other endpoint so we can emit for both (and to fence
+  // cross-project / cross-company removal — symmetry with addTaskDependency).
+  const dependsOnTask = await prisma.task.findFirst({
+    where: { uuid: dependsOnUuid, companyUuid },
+  });
+
   await prisma.taskDependency.deleteMany({
     where: { taskUuid, dependsOnUuid },
   });
+
+  // Mirror addTaskDependency: emit `task:updated` for both endpoints so the
+  // Resource Graph (and other live consumers of the task DAG) re-fetch and
+  // the removed edge disappears in real time. We emit for the dependsOn
+  // endpoint only when it was resolvable in the caller's company — a
+  // dangling dependsOnUuid (already deleted task, cross-company) skips the
+  // second emit but still emits for the surviving task.
+  eventBus.emitChange({
+    companyUuid: task.companyUuid,
+    projectUuid: task.projectUuid,
+    entityType: "task",
+    entityUuid: taskUuid,
+    action: "updated",
+  });
+  if (dependsOnTask) {
+    eventBus.emitChange({
+      companyUuid: dependsOnTask.companyUuid,
+      projectUuid: dependsOnTask.projectUuid,
+      entityType: "task",
+      entityUuid: dependsOnUuid,
+      action: "updated",
+    });
+  }
 }
 
 // Get task dependencies
