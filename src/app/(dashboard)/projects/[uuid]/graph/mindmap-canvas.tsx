@@ -81,11 +81,42 @@ const TYPE_COLOR: Record<NodeType, string> = {
   document: "#00897B",
 };
 
-const TYPE_GLYPH: Record<NodeType, string> = {
-  idea: "💡",
-  proposal: "📋",
-  task: "✓",
-  document: "📄",
+// Lucide icon geometry per type, matching the lucide-react components the rest
+// of the app uses for these entity types (Lightbulb / ClipboardList /
+// SquareCheckBig / FileText — see the filter swatches in resource-graph.tsx).
+// Canvas 2D can't mount React components, so we stroke the icons' raw SVG path
+// data (extracted verbatim from lucide-react@0.563, 24×24 viewBox, stroke-based)
+// via Path2D — a faithful vector render, not an emoji. Each entry is the list
+// of sub-path `d` strings that make up the glyph.
+const TYPE_ICON_PATHS: Record<NodeType, string[]> = {
+  // Lightbulb
+  idea: [
+    "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5",
+    "M9 18h6",
+    "M10 22h4",
+  ],
+  // ClipboardList (the top rect is expressed as a rounded-rect path)
+  proposal: [
+    "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
+    "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
+    "M12 11h4",
+    "M12 16h4",
+    "M8 11h.01",
+    "M8 16h.01",
+  ],
+  // SquareCheckBig
+  task: [
+    "M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344",
+    "m9 11 3 3L22 4",
+  ],
+  // FileText
+  document: [
+    "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+    "M14 2v5a1 1 0 0 0 1 1h5",
+    "M10 9H8",
+    "M16 13H8",
+    "M16 17H8",
+  ],
 };
 
 const EDGE_COLOR: Record<EdgeKind, string> = {
@@ -725,12 +756,8 @@ function paintNode(
   ctx.fillStyle = color;
   roundRect(ctx, chipX, chipY, CHIP, CHIP, 9);
   ctx.fill();
-  // Glyph inside chip.
-  ctx.fillStyle = "#FFFFFF";
-  ctx.font = `${type === "task" ? 16 : 14}px ui-sans-serif, system-ui`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(TYPE_GLYPH[type], chipX + CHIP / 2, chipY + CHIP / 2 + 0.5);
+  // Lucide icon inside the chip (stroked white), replacing the old emoji glyph.
+  paintLucideIcon(ctx, TYPE_ICON_PATHS[type], chipX, chipY, CHIP);
 
   // Text column. Reserve the right BTN_W strip for the +/- button on hubs.
   const hasBtn = !!node.hasAffordance;
@@ -906,6 +933,34 @@ function drawElbow(
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.bezierCurveTo(midX, sy, midX, ty, tx, ty);
+}
+
+// Paint a lucide icon (stroke-based, 24×24 viewBox) into a square chip via
+// Path2D. Canvas 2D can't mount a React component, so we stroke the icon's raw
+// SVG path data — a faithful vector render. The icon is centered in the chip
+// with a small inset and stroked white (round cap/join, matching lucide's
+// default 2px stroke scaled to the chip).
+function paintLucideIcon(
+  ctx: CanvasRenderingContext2D,
+  paths: string[],
+  chipX: number,
+  chipY: number,
+  chip: number,
+) {
+  const inset = chip * 0.22; // padding inside the chip
+  const drawn = chip - inset * 2; // glyph box edge
+  const scale = drawn / 24; // lucide viewBox is 24×24
+  ctx.save();
+  ctx.translate(chipX + inset, chipY + inset);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = 2; // lucide default stroke-width (in 24-unit space)
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const d of paths) {
+    ctx.stroke(new Path2D(d));
+  }
+  ctx.restore();
 }
 
 // Dashed overlay connector: a center-to-center quadratic curve, bowed so it
