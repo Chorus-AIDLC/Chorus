@@ -1575,12 +1575,13 @@
   },
   "graph": {
     "title": "图谱",
-    "subtitle": "本项目中想法、提案、任务与文档的知识图谱。",
+    "subtitle": "本项目想法、提案、任务与文档的思维导图。",
     "emptyTitle": "暂时没有可绘制的内容",
-    "emptyDesc": "当本项目出现想法、提案、任务或文档后，它们将以连线的知识图谱形式展现在这里。",
-    "comingSoon": "图谱画布即将上线",
+    "emptyDesc": "当本项目出现想法、提案、任务或文档后，它们将以相互连接的思维导图展现在这里。",
     "loading": "正在加载图谱…",
     "loadFailed": "无法加载项目图谱。",
+    "expandAll": "全部展开",
+    "collapseAll": "全部收起",
     "filters": {
       "heading": "显示",
       "idea": "想法",
@@ -1598,6 +1599,10 @@
       "derive": "派生",
       "lineage": "脉络",
       "depends": "依赖"
+    },
+    "outline": {
+      "expand": "展开 {count} 个子节点",
+      "collapse": "收起子节点"
     }
   }
 }

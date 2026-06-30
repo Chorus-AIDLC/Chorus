@@ -1574,12 +1574,13 @@
   },
   "graph": {
     "title": "Graph",
-    "subtitle": "A knowledge graph of this project's Ideas, Proposals, Tasks, and Documents.",
+    "subtitle": "A mind-map of this project's Ideas, Proposals, Tasks, and Documents.",
     "emptyTitle": "Nothing to graph yet",
-    "emptyDesc": "Once this project has Ideas, Proposals, Tasks, or Documents, they will appear here as a connected knowledge graph.",
-    "comingSoon": "Graph canvas coming soon",
+    "emptyDesc": "Once this project has Ideas, Proposals, Tasks, or Documents, they will appear here as a connected mind-map.",
     "loading": "Loading graph…",
     "loadFailed": "Could not load the project graph.",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
     "filters": {
       "heading": "Show",
       "idea": "Ideas",
@@ -1597,6 +1598,10 @@
       "derive": "Derive",
       "lineage": "Lineage",
       "depends": "Depends"
+    },
+    "outline": {
+      "expand": "Expand {count} children",
+      "collapse": "Collapse children"
     }
   }
 }

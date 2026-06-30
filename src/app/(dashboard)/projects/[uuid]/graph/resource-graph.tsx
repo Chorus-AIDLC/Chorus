@@ -40,16 +40,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
-import { Lightbulb, ClipboardList, CheckSquare, FileText } from "lucide-react";
+import {
+  Lightbulb,
+  ClipboardList,
+  CheckSquare,
+  FileText,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { usePanelUrl } from "@/hooks/use-panel-url";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { computeVisibleSet } from "@/lib/resource-graph-visible-set";
 import { shouldShowExpandAffordance } from "./expand-affordance";
+import { MindMapOutline } from "./mindmap-outline";
 import type {
   ResourceGraphResult,
   ResourceGraphNodeType as NodeType,
@@ -59,13 +69,14 @@ import { IdeaDetailPanel } from "@/app/(dashboard)/projects/[uuid]/dashboard/pan
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
 import { DocumentPanel } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/document-panel";
 import { getTaskAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
-import type { ForceNode, ForceLink } from "./force-graph-canvas";
+import type { ForceNode, ForceLink } from "./mindmap-canvas";
 
-// react-force-graph-2d touches window/document at import time, so the canvas
-// must be client-only. Dynamic import with ssr:false keeps it out of the
-// server bundle; the rest of this component (data, panels, filter) is SSR-safe.
+// The mind-map canvas paints to a DOM <canvas> and uses ResizeObserver at
+// mount, so it must be client-only. Dynamic import with ssr:false keeps it out
+// of the server bundle; the rest of this component (data, panels, filter) is
+// SSR-safe.
 const ForceGraphCanvas = dynamic(
-  () => import("./force-graph-canvas").then((m) => m.ForceGraphCanvas),
+  () => import("./mindmap-canvas").then((m) => m.ForceGraphCanvas),
   {
     ssr: false,
     loading: () => (
@@ -155,6 +166,15 @@ interface DocumentForPanel {
 export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphProps) {
   const t = useTranslations();
 
+  // Responsive renderer switch (Tech Design D2/D3). Reuses the project's
+  // existing breakpoint convention — the `useIsMobile` hook matches
+  // `(max-width: 767px)`, the same boundary the dashboard layout uses for its
+  // mobile chrome. On a narrow viewport we render the DOM vertical indented
+  // outline; on a wide viewport, the Canvas-2D mind-map. Both consume the SAME
+  // forceNodes/forceLinks + the SAME shared expand state, so flipping size
+  // preserves the user's expansion (it lives here, not in either renderer).
+  const isMobile = useIsMobile();
+
   const [graph, setGraph] = useState<ResourceGraphResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState<VisibleTypes>(ALL_VISIBLE);
@@ -204,9 +224,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     () => new Set(),
   );
 
-  // Node positions are owned by the live force-graph canvas, which retains
-  // each node's x/y across renders by id (so expand/collapse + live updates
-  // settle incrementally rather than re-randomizing). This component no
+  // Layout is owned by the mind-map canvas, which computes deterministic
+  // d3-hierarchy tree coordinates from the visible node/link set and tweens
+  // nodes to them (surviving nodes glide old→new, so expand/collapse + live
+  // updates settle smoothly rather than re-randomizing). This component no
   // longer pre-computes layout — it only decides which nodes/links are
   // visible and hands them down.
 
@@ -371,6 +392,34 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     [graph],
   );
 
+  // Whether anything is currently expanded — drives the single toolbar button's
+  // mode (Expand all when fully collapsed, Collapse all otherwise).
+  const anyExpanded = expandedIdeas.size > 0 || expandedProposals.size > 0;
+
+  // Expand / collapse EVERYTHING in one action. "Expand all" reveals every hub
+  // at both levels — every Idea (so its Proposals show) and every Proposal (so
+  // its Tasks + Documents show). We expand all Ideas/Proposals present in the
+  // aggregation regardless of the current type filter (the filter only hides
+  // already-revealed nodes; it must not silently strand a hub collapsed). The
+  // visible-set computation gates child visibility on the parent being visible,
+  // so over-including here is safe. "Collapse all" just clears both sets.
+  const expandAll = useCallback(() => {
+    if (!graph) return;
+    const ideaUuids = new Set<string>();
+    const proposalUuids = new Set<string>();
+    for (const n of graph.nodes) {
+      if (n.type === "idea") ideaUuids.add(n.uuid);
+      else if (n.type === "proposal") proposalUuids.add(n.uuid);
+    }
+    setExpandedIdeas(ideaUuids);
+    setExpandedProposals(proposalUuids);
+  }, [graph]);
+
+  const collapseAll = useCallback(() => {
+    setExpandedIdeas(new Set());
+    setExpandedProposals(new Set());
+  }, []);
+
   // Filter -> expand/collapse visible set -> ForceGraph data.
   //
   // Order matters: the type filter is applied AFTER the expand/collapse
@@ -379,9 +428,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   // derivatives by structure, not by what's currently rendered — matches
   // the spec scenario "a count of its hidden direct derivatives").
   //
-  // No layout call here: the force-graph canvas runs a LIVE d3-force
-  // simulation and owns node positions (retaining them across renders by id),
-  // so the graph settles + animates rather than being pre-solved statically.
+  // No layout call here: the mind-map canvas computes deterministic tree
+  // coordinates from this visible node/link set (via computeTreeLayout) and
+  // tweens nodes to them — no physics, so identical inputs settle identically.
   const { forceNodes, forceLinks, isEmpty } = useMemo(() => {
     if (!graph) {
       return {
@@ -714,8 +763,8 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         {isEmpty && (
           // Either the project has no entities at all, OR all four type-toggles
           // are off. Either way, the user sees the same explanation; the
-          // ReactFlow canvas + filter panel remain mounted below so toggling
-          // a type back on immediately restores the view.
+          // mind-map renderer (canvas or outline) + filter panel remain mounted
+          // below so toggling a type back on immediately restores the view.
           <AnimatedEmptyState>
             <Card className="m-12 flex flex-col items-center justify-center border-[#E5E0D8] p-8 text-center">
               <h3 className="mb-2 text-base font-medium text-[#2C2C2C]">
@@ -726,18 +775,34 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
           </AnimatedEmptyState>
         )}
 
-        {/* Live force-directed canvas. Hidden (but mounted) when empty so the
-            filter overlay still toggles types back on. */}
-        {!isEmpty && (
-          <ForceGraphCanvas
-            nodes={forceNodes}
-            links={forceLinks}
-            selectedId={selectedNodeId}
-            onNodeClick={handleNodeClick}
-          />
-        )}
+        {/* Renderer. Hidden (but the container stays) when empty so the filter
+            overlay still toggles types back on. On a narrow viewport the DOM
+            vertical indented outline renders; on a wide viewport the Canvas-2D
+            mind-map. Both take the same nodes/links + onNodeClick contract and
+            read the same shared expand state, so resizing preserves expansion. */}
+        {!isEmpty &&
+          (isMobile ? (
+            <MindMapOutline
+              nodes={forceNodes}
+              links={forceLinks}
+              selectedId={selectedNodeId}
+              onNodeClick={handleNodeClick}
+            />
+          ) : (
+            <ForceGraphCanvas
+              nodes={forceNodes}
+              links={forceLinks}
+              selectedId={selectedNodeId}
+              onNodeClick={handleNodeClick}
+            />
+          ))}
 
-        {/* Type filter — absolutely positioned overlay (top-right). */}
+        {/* Control panel — single top-right overlay combining the type filter
+            and the expand-all/collapse-all action. Consolidated into one card
+            (rather than a separate left-side button) so nothing overlays the
+            graph/outline content on mobile, where the outline rows start at the
+            left edge. The expand toggle drives the shared expand state, so it
+            affects both the canvas and the mobile outline. */}
         <div className="absolute right-3 top-3 z-10">
           <Card className="border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[#6B6B6B]">
@@ -765,6 +830,26 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                 );
               })}
             </div>
+            {/* Expand-all / collapse-all — flips mode based on current state.
+                Hidden when empty (nothing to expand). */}
+            {!isEmpty && (
+              <>
+                <div className="my-2 h-px bg-[#EFEAE2]" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-center gap-2"
+                  onClick={anyExpanded ? collapseAll : expandAll}
+                >
+                  {anyExpanded ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                  {anyExpanded ? t("graph.collapseAll") : t("graph.expandAll")}
+                </Button>
+              </>
+            )}
           </Card>
         </div>
       </div>

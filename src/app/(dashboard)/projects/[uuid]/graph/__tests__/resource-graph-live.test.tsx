@@ -5,11 +5,11 @@
 // expand/collapse survivor state is preserved across a live refetch (NOT
 // cleared like the initial-mount / project-change path does).
 //
-// Rendering is delegated to the dynamically-imported ForceGraphCanvas (live
-// d3-force). We mock that canvas so the test runs headless and can assert on
-// the exact node/link set it receives — which is the data contract that
-// matters here (the canvas's own painting is its concern). The signals under
-// test:
+// Rendering is delegated to the dynamically-imported mind-map canvas (exported
+// under the preserved `ForceGraphCanvas` alias). We mock that canvas so the
+// test runs headless and can assert on the exact node/link set it receives —
+// which is the data contract that matters here (the canvas's own deterministic
+// painting is its concern). The signals under test:
 //   - useRealtimeEntityTypeEvent is subscribed for all four entity types
 //   - firing any subscriber triggers exactly one re-fetch through the SAME
 //     aggregation endpoint (no new transport)
