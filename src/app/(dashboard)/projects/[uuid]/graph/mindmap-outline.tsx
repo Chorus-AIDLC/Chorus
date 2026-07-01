@@ -29,7 +29,7 @@
 // the project UI rules. Keyboard activation is native to <button>; the IME
 // composition guard does not apply (there is no Enter-submit text input here).
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   Lightbulb,
@@ -96,6 +96,16 @@ interface MindMapOutlineProps {
    * than the row body (→ open panel).
    */
   onNodeClick: (id: string, type: NodeType, onAffordance: boolean) => void;
+  // --- Node search (shared state from the parent resource-graph.tsx) ---------
+  // Same shared-search props the canvas receives, so a viewport resize preserves
+  // the query/matches/cursor (both renderers read the same parent state). The
+  // outline's visual consumption (row highlight/dim, current-match accent,
+  // scroll-into-view) is a sibling task; these are OPTIONAL so the plumbing can
+  // land first. Absent = "no active search".
+  /** Match set when searching (highlight matches / dim the rest); null/absent = not searching. */
+  matchIds?: ReadonlySet<string> | null;
+  /** The current-match cursor id (distinct accent; scrolled into view). */
+  currentMatchId?: string | null;
 }
 
 export function MindMapOutline({
@@ -103,6 +113,8 @@ export function MindMapOutline({
   links,
   selectedId,
   onNodeClick,
+  matchIds = null,
+  currentMatchId = null,
 }: MindMapOutlineProps) {
   const t = useTranslations();
   const { getPresence } = usePresence();
@@ -121,6 +133,30 @@ export function MindMapOutline({
     [nodes, links],
   );
 
+  // Search dim is active only for a NON-empty match set (Q2=a: an empty result
+  // must NOT dim the whole tree, and a null match set means "not searching").
+  // This mirrors the canvas's `resolveFocusAlpha` rule-2/rule-3 boundary.
+  const searchDimActive = matchIds != null && matchIds.size > 0;
+
+  // Per-row DOM refs (keyed by node id) so the scroll-into-view effect can bring
+  // the current match into view — the outline's analog of the canvas camera
+  // centering. Rebuilt each render from the live row set; stale ids are pruned
+  // implicitly because we only set refs for rendered rows.
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
+
+  // Scroll the current match into view (block:center) when it changes (D5).
+  // Keyed on currentMatchId so stepping prev/next re-scrolls; guarded so a
+  // not-searching / no-current state does nothing.
+  useEffect(() => {
+    if (!currentMatchId) return;
+    const el = rowRefs.current.get(currentMatchId);
+    // Guard the call itself (not just `el`): some environments — jsdom, certain
+    // SSR/test runtimes — don't implement scrollIntoView on the element.
+    if (typeof el?.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "center" });
+    }
+  }, [currentMatchId]);
+
   return (
     <div
       className="absolute inset-0 overflow-y-auto overflow-x-hidden bg-[#FAF8F4] px-2 py-2"
@@ -130,12 +166,25 @@ export function MindMapOutline({
         {outline.map((entry) => {
           const node = nodeById.get(entry.id);
           if (!node) return null;
+          // Match-highlight / non-match-dim treatment (the outline had none).
+          // When a search is active with hits: matching rows stay opaque, the
+          // rest dim. No active search (or zero hits) → no dim.
+          const isMatch = matchIds?.has(node.id) ?? false;
+          const dimmed = searchDimActive && !isMatch;
+          const isCurrentMatch =
+            currentMatchId != null && node.id === currentMatchId;
           return (
             <OutlineRow
               key={entry.id}
+              rowRef={(el) => {
+                if (el) rowRefs.current.set(node.id, el);
+                else rowRefs.current.delete(node.id);
+              }}
               node={node as OutlineForceNode}
               depth={entry.depth}
               selected={node.id === selectedId}
+              dimmed={dimmed}
+              isCurrentMatch={isCurrentMatch}
               presence={getPresence(node.type, node.id)}
               onNodeClick={onNodeClick}
               t={t}
@@ -153,15 +202,29 @@ interface OutlineRowProps {
   node: OutlineForceNode;
   depth: number;
   selected: boolean;
+  /** True when a search is active (with hits) and this row is NOT a match. */
+  dimmed: boolean;
+  /** True when this row is the prev/next current-match cursor. */
+  isCurrentMatch: boolean;
+  /** Per-row ref callback so the parent can scroll the current match into view. */
+  rowRef: (el: HTMLLIElement | null) => void;
   presence: ReturnType<ReturnType<typeof usePresence>["getPresence"]>;
   onNodeClick: (id: string, type: NodeType, onAffordance: boolean) => void;
   t: ReturnType<typeof useTranslations>;
 }
 
+// Current-match accent — kept in lockstep with the canvas current-match ring
+// (mindmap-canvas.tsx CURRENT_MATCH_RING_COLOR). A saturated pink, distinct from
+// the selection border (the node's type color) and from a plain match (no ring).
+const CURRENT_MATCH_RING_COLOR = "#EC4899";
+
 function OutlineRow({
   node,
   depth,
   selected,
+  dimmed,
+  isCurrentMatch,
+  rowRef,
   presence,
   onNodeClick,
   t,
@@ -190,13 +253,34 @@ function OutlineRow({
   const rowStyle: React.CSSProperties = {
     marginLeft: depth * INDENT_STEP,
   };
+  // Presence highlight wins the row OUTLINE channel (it signals a live agent and
+  // is rarer/more urgent than the search cursor); the current-match cursor uses
+  // a RING (box-shadow) channel instead, so the two never fight for the same
+  // CSS property and can co-exist on one row.
   if (presenceColor) {
     rowStyle.outline = `2px ${mutating ? "solid" : "dashed"} ${presenceColor}`;
     rowStyle.outlineOffset = "-2px";
   }
+  if (isCurrentMatch) {
+    // A distinct accent ring on the current match — separate from the `selected`
+    // border (type color) and from a plain match (no ring). Drawn as a 2px
+    // box-shadow ring so it layers over the card border without shifting layout.
+    rowStyle.boxShadow = `0 0 0 2px ${CURRENT_MATCH_RING_COLOR}`;
+    rowStyle.borderRadius = 10;
+  }
 
   return (
-    <li style={rowStyle} className="relative">
+    <li
+      ref={rowRef}
+      style={rowStyle}
+      className={cn(
+        "relative transition-opacity",
+        // Non-match dim while a search is active (the outline had no dim before).
+        dimmed && "opacity-40",
+      )}
+      data-match={isCurrentMatch ? "current" : undefined}
+      data-dimmed={dimmed ? "true" : undefined}
+    >
       <div
         className={cn(
           "flex items-center gap-1 rounded-[10px] border bg-white pr-1",
