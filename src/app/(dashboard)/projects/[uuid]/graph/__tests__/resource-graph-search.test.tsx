@@ -9,9 +9,10 @@
 //   - prev/next step the cursor with wrap-around (AC #3);
 //   - a zero-hit query shows the localized no-matches hint + disables stepping
 //     and dims nothing (AC #3);
-//   - clearing the query (clear button / Esc) restores the PRE-search expand
-//     snapshot, collapsing search-forced expansion while preserving the user's
-//     manual expansion (AC #2);
+//   - clearing the query (clear button / Esc) is STICKY (Q3=a): hubs the search
+//     auto-expanded stay open so the located branch remains visible, and only
+//     the search visual state (match set + count/nav) is cleared; a hub can then
+//     be manually collapsed (AC #1, #2, #3);
 //   - the Esc-to-clear handler is IME-guarded (no clear while composing) (AC #1).
 //
 // The graph now renders the Canvas-2D mind-map on EVERY viewport (the mobile
@@ -276,42 +277,70 @@ describe("ResourceGraph — node search state + controls", () => {
     expect(visibleIds(view)).not.toContain("prop-1");
   });
 
-  it("clearing restores the pre-search snapshot, preserving manual expansion (AC #2)", async () => {
+  it("clearing keeps search-expanded hubs open (sticky) and clears only the search visual state (Q3=a, AC #1, #2)", async () => {
     const view = renderGraph();
     await waitFor(() => view.getByTestId("force-canvas"));
 
-    // Manually expand idea-1 BEFORE searching (reveals its proposal, level 1).
-    await act(async () => {
-      fireEvent.click(view.getByTestId("expand-idea-1"));
-    });
-    await waitFor(() => expect(visibleIds(view)).toContain("prop-1"));
-    // prop-1 is NOT manually expanded — its tasks stay hidden.
+    // Nothing manually expanded: prop-1 + its tasks are hidden under idea-1.
+    expect(visibleIds(view)).not.toContain("prop-1");
     expect(visibleIds(view)).not.toContain("task-1");
 
-    // Search: auto-expands prop-1 (level 2) so the deep tasks appear.
+    // Search: auto-expands idea-1 → prop-1 so the deep tasks appear.
+    await act(async () => {
+      fireEvent.change(view.getByTestId("graph-search-input"), {
+        target: { value: "find me" },
+      });
+    });
+    await waitFor(() => {
+      expect(visibleIds(view)).toContain("task-1");
+      expect(view.getByTestId("force-canvas").getAttribute("data-match-count")).toBe("2");
+    });
+
+    // Clear via the X button → STICKY: the hubs the search opened stay open, so
+    // the located branch (task-1/task-2) remains visible. Only the search visual
+    // state (match set + count/nav) is cleared.
+    await act(async () => {
+      fireEvent.click(view.getByTestId("graph-search-clear"));
+    });
+
+    await waitFor(() => {
+      // search-forced expansion is PRESERVED, not collapsed.
+      expect(visibleIds(view)).toContain("task-1");
+      expect(visibleIds(view)).toContain("prop-1");
+    });
+    // The search session is over: match set null, count/nav gone, query cleared.
+    expect(view.getByTestId("force-canvas").getAttribute("data-match-count")).toBe("null");
+    expect(view.queryByTestId("graph-search-nav")).toBeNull();
+    expect(
+      (view.getByTestId("graph-search-input") as HTMLInputElement).value,
+    ).toBe("");
+  });
+
+  it("a hub expanded by search can be manually collapsed after clearing (AC #3)", async () => {
+    const view = renderGraph();
+    await waitFor(() => view.getByTestId("force-canvas"));
+
+    // Search auto-expands idea-1 → prop-1, then clear (sticky keeps them open).
     await act(async () => {
       fireEvent.change(view.getByTestId("graph-search-input"), {
         target: { value: "find me" },
       });
     });
     await waitFor(() => expect(visibleIds(view)).toContain("task-1"));
-
-    // Clear via the X button → restore snapshot { ideas: [idea-1], proposals: [] }.
     await act(async () => {
       fireEvent.click(view.getByTestId("graph-search-clear"));
     });
+    await waitFor(() => expect(visibleIds(view)).toContain("prop-1"));
 
-    await waitFor(() => {
-      // search-forced level-2 expansion collapsed again.
-      expect(visibleIds(view)).not.toContain("task-1");
-      // manual level-1 expansion preserved.
-      expect(visibleIds(view)).toContain("prop-1");
+    // Manually collapse prop-1 (affordance tap) → its tasks hide, ordinary
+    // user-controlled expand state with no search snapshot overriding it.
+    await act(async () => {
+      fireEvent.click(view.getByTestId("expand-prop-1"));
     });
-    // The search session is over: count/nav gone, query cleared.
-    expect(view.queryByTestId("graph-search-nav")).toBeNull();
-    expect(
-      (view.getByTestId("graph-search-input") as HTMLInputElement).value,
-    ).toBe("");
+    await waitFor(() => expect(visibleIds(view)).not.toContain("task-1"));
+    // prop-1 itself is still visible (idea-1 stays expanded); only its subtree
+    // collapsed.
+    expect(visibleIds(view)).toContain("prop-1");
   });
 
   it("Enter steps to the next match (wrap-around), but is IME-guarded while composing", async () => {

@@ -260,20 +260,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   // never touches searchQuery / visible / the expand sets.
   const [panelOpen, setPanelOpen] = useState(false);
 
-  // Live mirrors of the expand sets so the snapshot effect can read the CURRENT
-  // values at the blank→non-blank edge without listing them as deps (which would
-  // re-run the effect on every auto-expand). Refs, not deps — capture-on-demand.
-  const expandedIdeasRef = useRef(expandedIdeas);
-  expandedIdeasRef.current = expandedIdeas;
-  const expandedProposalsRef = useRef(expandedProposals);
-  expandedProposalsRef.current = expandedProposals;
-  // Snapshot of the expand sets captured when a search session BEGINS, restored
-  // when it ends (Q4=a). null = no active snapshot. `wasSearchingRef` tracks the
-  // previous searching state so the snapshot effect fires only on the edges.
-  const expandSnapshotRef = useRef<{
-    ideas: Set<string>;
-    proposals: Set<string>;
-  } | null>(null);
+  // Tracks the previous "is searching" state so the sticky-clear effect fires
+  // its cursor/camera reset only on the trailing edge (search just ended), not
+  // on every keystroke.
   const wasSearchingRef = useRef(false);
 
   // Layout is owned by the mind-map canvas, which computes deterministic
@@ -363,11 +352,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     setExpandedIdeas(new Set());
     setExpandedProposals(new Set());
     // Reset the search session too — the whole graph is foreign on a project
-    // switch, so any active query/snapshot is meaningless.
+    // switch, so any active query is meaningless.
     setSearchQuery("");
     setCurrentMatchIndex(0);
     setCenterNodeId(null);
-    expandSnapshotRef.current = null;
     wasSearchingRef.current = false;
     void reloadGraph();
     return () => {
@@ -606,7 +594,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, [graph, searchQuery, visible]);
 
   // `null` = not searching (no dim, no count); a non-null Set (even empty) means
-  // a search is active. Used to drive snapshot/restore + the count UI.
+  // a search is active. Drives the sticky-clear cursor reset + the count UI.
   const isSearching = matchIds !== null;
 
   // Ordered match list for prev/next: pre-order DFS outline order over the
@@ -673,30 +661,18 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     }
   }, [graph, matchIds]);
 
-  // Snapshot / restore expand state around a search session (Q4=a, D3).
-  // On the blank→non-blank render this captures the PRE-search expand sets. The
-  // expand refs are assigned in the render body from COMMITTED state, and the
-  // auto-expand effect's setState only takes effect on a LATER render — so the
-  // refs still hold pre-search values when this effect runs, regardless of which
-  // effect is declared first. On non-blank→blank it restores the snapshot,
-  // collapsing any search-forced expansion while preserving the user's manual
-  // one, and resets the match cursor.
+  // Sticky expand on search-clear (Q3=a, D6). Search auto-expansion is add-only
+  // (the effect above never removes a hub), and clearing a search now KEEPS
+  // every expanded hub expanded — including ones the search opened to reveal a
+  // match — so the located branch stays put instead of snapping shut. There is
+  // no pre-search snapshot and no restore. On the trailing edge (search just
+  // ended) we reset ONLY the pure-search cursor/camera state; the expand sets
+  // are left entirely untouched, so highlight/dim/count/cursor clear while the
+  // tree's expansion is preserved. (Manual collapse afterwards works normally —
+  // expansion is now ordinary user-controlled state with nothing overriding it.)
   useEffect(() => {
     const was = wasSearchingRef.current;
-    if (isSearching && !was) {
-      // Leading edge: capture once. Don't overwrite on later keystrokes.
-      expandSnapshotRef.current = {
-        ideas: new Set(expandedIdeasRef.current),
-        proposals: new Set(expandedProposalsRef.current),
-      };
-    } else if (!isSearching && was) {
-      // Trailing edge: restore + drop the snapshot, reset the cursor.
-      const snap = expandSnapshotRef.current;
-      if (snap) {
-        setExpandedIdeas(new Set(snap.ideas));
-        setExpandedProposals(new Set(snap.proposals));
-        expandSnapshotRef.current = null;
-      }
+    if (!isSearching && was) {
       setCurrentMatchIndex(0);
       setCenterNodeId(null);
     }
@@ -746,8 +722,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, []);
 
   // Clear the search (clear button / Esc / empty query all funnel here): just
-  // blank the query — the snapshot/restore effect handles collapsing the
-  // search-forced expansion.
+  // blank the query. Expansion is STICKY (Q3=a) — the sticky-clear effect resets
+  // only the match cursor/camera and leaves every expanded hub open, so the
+  // located branch stays visible after clearing.
   const clearSearch = useCallback(() => {
     setSearchQuery("");
   }, []);
