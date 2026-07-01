@@ -1603,6 +1603,14 @@
       "expand": "Expand {count} children",
       "collapse": "Collapse children"
     },
+    "search": {
+      "placeholder": "Search nodes…",
+      "clear": "Clear search",
+      "noMatches": "No matches",
+      "count": "{current} / {total}",
+      "prev": "Previous match",
+      "next": "Next match"
+    },
     "tooltip": {
       "loading": "Loading…"
     },

@@ -47,17 +47,29 @@ import {
   FileText,
   Maximize2,
   Minimize2,
+  Search,
+  X,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { usePanelUrl } from "@/hooks/use-panel-url";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { isImeComposing } from "@/lib/ime";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { computeVisibleSet } from "@/lib/resource-graph-visible-set";
+import {
+  computeSearchMatches,
+  expandAncestorsForMatches,
+  orderMatchIdsByOutline,
+} from "@/lib/resource-graph-search";
+import { computeTreeLayout } from "@/lib/resource-graph-tree-layout";
 import { shouldShowExpandAffordance } from "./expand-affordance";
 import { MindMapOutline } from "./mindmap-outline";
 import type {
@@ -224,6 +236,39 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     () => new Set(),
   );
 
+  // --- Node search state (Tech Design D1/D3/D5/D6) --------------------------
+  // The search state lives HERE (not in either renderer) for the same reason
+  // expand state does: both the canvas and the mobile outline must read the
+  // SAME query, match set, and current-match cursor, so flipping viewport size
+  // preserves the active search. `searchQuery` is the raw input; the derived
+  // match set + ordered match list + current-match id are computed below
+  // (after the visible-set memo, since ordering follows the layout outline).
+  const [searchQuery, setSearchQuery] = useState("");
+  // Index into the OUTLINE-ORDERED match list (normalized with wrap-around on
+  // read, so prev/next can freely increment/decrement past the ends).
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  // Debounced "center the camera on this node" signal handed to the canvas.
+  // Set on query-settle (first match) and on each prev/next step; the canvas
+  // reacts to a change by centering. (The canvas centering itself is wired in a
+  // sibling task; here we only own + pass the signal.)
+  const [centerNodeId, setCenterNodeId] = useState<string | null>(null);
+
+  // Live mirrors of the expand sets so the snapshot effect can read the CURRENT
+  // values at the blank→non-blank edge without listing them as deps (which would
+  // re-run the effect on every auto-expand). Refs, not deps — capture-on-demand.
+  const expandedIdeasRef = useRef(expandedIdeas);
+  expandedIdeasRef.current = expandedIdeas;
+  const expandedProposalsRef = useRef(expandedProposals);
+  expandedProposalsRef.current = expandedProposals;
+  // Snapshot of the expand sets captured when a search session BEGINS, restored
+  // when it ends (Q4=a). null = no active snapshot. `wasSearchingRef` tracks the
+  // previous searching state so the snapshot effect fires only on the edges.
+  const expandSnapshotRef = useRef<{
+    ideas: Set<string>;
+    proposals: Set<string>;
+  } | null>(null);
+  const wasSearchingRef = useRef(false);
+
   // Layout is owned by the mind-map canvas, which computes deterministic
   // d3-hierarchy tree coordinates from the visible node/link set and tweens
   // nodes to them (surviving nodes glide old→new, so expand/collapse + live
@@ -310,6 +355,13 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     setGraph(null);
     setExpandedIdeas(new Set());
     setExpandedProposals(new Set());
+    // Reset the search session too — the whole graph is foreign on a project
+    // switch, so any active query/snapshot is meaningless.
+    setSearchQuery("");
+    setCurrentMatchIndex(0);
+    setCenterNodeId(null);
+    expandSnapshotRef.current = null;
+    wasSearchingRef.current = false;
     void reloadGraph();
     return () => {
       abortRef.current?.abort();
@@ -529,6 +581,190 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
       isEmpty: visibleNodes.length === 0,
     };
   }, [graph, expandedIdeas, expandedProposals, visible]);
+
+  // --- Search: match set, ordering, current-match cursor (D1/D2/D5) ---------
+  //
+  // Match set is computed over the TYPE-FILTERED nodes of the WHOLE graph — NOT
+  // the expand-filtered `visibleNodes` the renderer receives. This is required
+  // by the spec ("auto-expand the ancestor hubs … so that every match becomes
+  // visible even when it was hidden under a collapsed hub"): if we matched only
+  // expand-visible nodes, a deep match under a collapsed hub could never be
+  // found, so its ancestors would never be expanded, so it would never be
+  // revealed. Restricting to type-filtered nodes still satisfies Q7=a (a
+  // filtered-out type cannot match) and never touches the filter checkboxes.
+  const matchIds = useMemo<Set<string> | null>(() => {
+    if (!graph) return null;
+    const typeFiltered = graph.nodes.filter((n) => visible[n.type]);
+    return computeSearchMatches(typeFiltered, searchQuery);
+  }, [graph, searchQuery, visible]);
+
+  // `null` = not searching (no dim, no count); a non-null Set (even empty) means
+  // a search is active. Used to drive snapshot/restore + the count UI.
+  const isSearching = matchIds !== null;
+
+  // Ordered match list for prev/next: pre-order DFS outline order over the
+  // CURRENTLY laid-out (post-auto-expand) nodes. Once auto-expand settles every
+  // match is laid out, so this equals the full match set in spatial order.
+  const orderedMatchIds = useMemo<string[]>(() => {
+    if (matchIds === null || matchIds.size === 0) return [];
+    const { outline } = computeTreeLayout(forceNodes, forceLinks);
+    return orderMatchIdsByOutline(matchIds, outline);
+  }, [matchIds, forceNodes, forceLinks]);
+
+  const totalMatches = orderedMatchIds.length;
+  // Normalize the index with wrap-around on read so prev/next can freely
+  // over/under-shoot and a shrinking match set can't point out of range.
+  const normalizedMatchIndex =
+    totalMatches > 0
+      ? ((currentMatchIndex % totalMatches) + totalMatches) % totalMatches
+      : 0;
+  const currentMatchId =
+    totalMatches > 0 ? orderedMatchIds[normalizedMatchIndex] : null;
+
+  // Refs so the debounced camera effect + prev/next handlers read the LATEST
+  // ordered list / index without re-subscribing.
+  const orderedMatchIdsRef = useRef(orderedMatchIds);
+  orderedMatchIdsRef.current = orderedMatchIds;
+  const currentMatchIndexRef = useRef(currentMatchIndex);
+  currentMatchIndexRef.current = currentMatchIndex;
+
+  // Auto-expand-to-reveal (D2): union each match's ancestor hubs into the live
+  // expand sets. Add-only — never removes a user's manual expansion. Guarded so
+  // a blank ("not searching") or zero-hit query expands nothing.
+  useEffect(() => {
+    if (!graph) return;
+    if (matchIds === null || matchIds.size === 0) return;
+    const { ideaUuids, proposalUuids } = expandAncestorsForMatches(
+      graph,
+      matchIds,
+    );
+    if (ideaUuids.size > 0) {
+      setExpandedIdeas((prev) => {
+        let mutated = false;
+        const out = new Set(prev);
+        for (const u of ideaUuids) {
+          if (!out.has(u)) {
+            out.add(u);
+            mutated = true;
+          }
+        }
+        return mutated ? out : prev;
+      });
+    }
+    if (proposalUuids.size > 0) {
+      setExpandedProposals((prev) => {
+        let mutated = false;
+        const out = new Set(prev);
+        for (const u of proposalUuids) {
+          if (!out.has(u)) {
+            out.add(u);
+            mutated = true;
+          }
+        }
+        return mutated ? out : prev;
+      });
+    }
+  }, [graph, matchIds]);
+
+  // Snapshot / restore expand state around a search session (Q4=a, D3).
+  // On the blank→non-blank render this captures the PRE-search expand sets. The
+  // expand refs are assigned in the render body from COMMITTED state, and the
+  // auto-expand effect's setState only takes effect on a LATER render — so the
+  // refs still hold pre-search values when this effect runs, regardless of which
+  // effect is declared first. On non-blank→blank it restores the snapshot,
+  // collapsing any search-forced expansion while preserving the user's manual
+  // one, and resets the match cursor.
+  useEffect(() => {
+    const was = wasSearchingRef.current;
+    if (isSearching && !was) {
+      // Leading edge: capture once. Don't overwrite on later keystrokes.
+      expandSnapshotRef.current = {
+        ideas: new Set(expandedIdeasRef.current),
+        proposals: new Set(expandedProposalsRef.current),
+      };
+    } else if (!isSearching && was) {
+      // Trailing edge: restore + drop the snapshot, reset the cursor.
+      const snap = expandSnapshotRef.current;
+      if (snap) {
+        setExpandedIdeas(new Set(snap.ideas));
+        setExpandedProposals(new Set(snap.proposals));
+        expandSnapshotRef.current = null;
+      }
+      setCurrentMatchIndex(0);
+      setCenterNodeId(null);
+    }
+    wasSearchingRef.current = isSearching;
+  }, [isSearching]);
+
+  // On every query change, reset the match cursor to the first match
+  // immediately (the "current" indicator should never show a stale match # for
+  // a brand-new query). The CAMERA recenter is separately debounced below.
+  useEffect(() => {
+    setCurrentMatchIndex(0);
+  }, [searchQuery]);
+
+  // Debounced camera recenter (D6): ~200ms after the query settles, center on
+  // the CURRENT match. Reads the latest ordered list + cursor via refs so it
+  // picks up matches revealed by the just-applied auto-expand. On a brand-new
+  // query `currentMatchIndex` was just reset to 0 (effect above), so this still
+  // centers the first match; but if the user stepped (next/Enter) inside the
+  // debounce window, we center the match the ring + count now point at rather
+  // than snapping the camera back to #0 (avoids a camera/ring desync).
+  // Highlight/dim + count update immediately (above); only the camera move waits.
+  useEffect(() => {
+    if (matchIds === null) return; // not searching
+    const handle = setTimeout(() => {
+      const list = orderedMatchIdsRef.current;
+      if (list.length === 0) {
+        setCenterNodeId(null);
+        return;
+      }
+      const idx =
+        ((currentMatchIndexRef.current % list.length) + list.length) %
+        list.length;
+      setCenterNodeId(list[idx]);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [searchQuery, matchIds]);
+
+  // Step the current-match cursor by ±1 with wrap-around, and signal the
+  // renderers to bring the new current match into view. Reads latest via refs.
+  const stepMatch = useCallback((delta: number) => {
+    const list = orderedMatchIdsRef.current;
+    const n = list.length;
+    if (n === 0) return;
+    const next = (((currentMatchIndexRef.current + delta) % n) + n) % n;
+    setCurrentMatchIndex(next);
+    setCenterNodeId(list[next]);
+  }, []);
+
+  // Clear the search (clear button / Esc / empty query all funnel here): just
+  // blank the query — the snapshot/restore effect handles collapsing the
+  // search-forced expansion.
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+  }, []);
+
+  // Search-box key handling, IME-guarded (project rule: route any submit/
+  // clear/advance-on-key handler through isImeComposing and early-return while
+  // composing, so a CJK candidate-confirming Enter/Esc doesn't hijack it):
+  //   - Enter  → jump to the next match (wrap-around), like a find-in-editor
+  //     box. A no-op when there are no matches (stepMatch guards on an empty
+  //     list). Shift+Enter steps to the previous match for symmetry.
+  //   - Escape → clear the query (ends the search session).
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeComposing(e)) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        stepMatch(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        clearSearch();
+      }
+    },
+    [clearSearch, stepMatch],
+  );
 
   // Open the Task panel by fetching the full task by UUID. Mirrors the
   // openTask flow in dashboard/panels/idea-detail-panel.tsx: clear any
@@ -795,6 +1031,8 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               links={forceLinks}
               selectedId={selectedNodeId}
               onNodeClick={handleNodeClick}
+              matchIds={matchIds}
+              currentMatchId={currentMatchId}
             />
           ) : (
             <ForceGraphCanvas
@@ -802,6 +1040,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               links={forceLinks}
               selectedId={selectedNodeId}
               onNodeClick={handleNodeClick}
+              matchIds={matchIds}
+              currentMatchId={currentMatchId}
+              centerNodeId={centerNodeId}
             />
           ))}
 
@@ -812,7 +1053,94 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
             left edge. The expand toggle drives the shared expand state, so it
             affects both the canvas and the mobile outline. */}
         <div className="absolute right-3 top-3 z-10">
-          <Card className="border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+          <Card className="w-[224px] border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+            {/* Node search (Tech Design D8). Hidden when empty — nothing to
+                search. Sits above the type filter on the same control card. */}
+            {!isEmpty && (
+              <div className="mb-3" data-testid="graph-search">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9A9A9A]"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={handleSearchKeyDown}
+                    placeholder={t("graph.search.placeholder")}
+                    aria-label={t("graph.search.placeholder")}
+                    data-testid="graph-search-input"
+                    className="h-8 pl-8 pr-8 text-xs"
+                  />
+                  {searchQuery !== "" && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={clearSearch}
+                      aria-label={t("graph.search.clear")}
+                      data-testid="graph-search-clear"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6B6B6B]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+
+                {/* Count + prev/next + no-matches hint — only while searching. */}
+                {isSearching && (
+                  <div
+                    className="mt-2 flex items-center justify-between gap-2"
+                    data-testid="graph-search-nav"
+                  >
+                    {totalMatches > 0 ? (
+                      <span
+                        className="text-[11px] tabular-nums text-[#6B6B6B]"
+                        data-testid="graph-search-count"
+                      >
+                        {t("graph.search.count", {
+                          current: normalizedMatchIndex + 1,
+                          total: totalMatches,
+                        })}
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[11px] text-[#B07B00]"
+                        data-testid="graph-search-no-matches"
+                      >
+                        {t("graph.search.noMatches")}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => stepMatch(-1)}
+                        disabled={totalMatches === 0}
+                        aria-label={t("graph.search.prev")}
+                        data-testid="graph-search-prev"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => stepMatch(1)}
+                        disabled={totalMatches === 0}
+                        aria-label={t("graph.search.next")}
+                        data-testid="graph-search-next"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[#6B6B6B]">
               {t("graph.filters.heading")}
             </p>

@@ -84,6 +84,19 @@ interface MindMapCanvasProps {
    * (→ open panel).
    */
   onNodeClick: (id: string, type: NodeType, onAffordance: boolean) => void;
+  // --- Node search (search state lives in the parent resource-graph.tsx) -----
+  // These are the shared-search props both renderers receive. The parent owns
+  // the search query, match set, and current-match cursor; this canvas consumes
+  // them for highlight/dim, the current-match ring, and camera centering. They
+  // are OPTIONAL so the prop plumbing can land before the canvas's visual
+  // consumption (that is a sibling task); an absent prop = "no active search".
+  /** Match set when searching: full opacity for matches, dim for the rest;
+   *  `null`/absent = not searching (no dim). */
+  matchIds?: ReadonlySet<string> | null;
+  /** The current-match cursor id (distinct ring; does NOT drive focusLineage). */
+  currentMatchId?: string | null;
+  /** Center-camera signal: when this id changes, center the camera on it. */
+  centerNodeId?: string | null;
 }
 
 // --- Visual tokens (design.pen "Chorus - Project Graph View") ---------------
@@ -139,6 +152,63 @@ const EDGE_COLOR: Record<EdgeKind, string> = {
   depends: "#E8833A",
 };
 
+// The single dim alpha shared by the hover lineage-focus AND the search
+// non-match dim (Tech Design D4 — "reuse the same dim alpha for visual
+// consistency"). One constant so both code paths can never drift apart.
+const DIM_ALPHA = 0.18;
+
+// Current-match ring color (Tech Design D5). Deliberately NOT any of the four
+// type colors (violet/blue/amber/teal) and NOT the selection ring (which uses
+// the node's own type color) — a saturated pink reads as the search cursor and
+// can't be confused with either.
+const CURRENT_MATCH_RING_COLOR = "#EC4899";
+
+/**
+ * Per-node opacity multiplier, composing the hover/selection lineage focus with
+ * the search match set in priority order (Tech Design D4 / Q3=a). Pure +
+ * exported so the precedence is unit-testable without a canvas:
+ *
+ *   1. A hover/selection lineage is active (`focusLineage` non-null) → dim by
+ *      lineage exactly as before: in-lineage 1.0, else DIM_ALPHA. Hover TAKES
+ *      OVER — the match set gets no say in this state.
+ *   2. Else an active, NON-EMPTY search match set → match 1.0, non-match
+ *      DIM_ALPHA.
+ *   3. Else (nothing focused; not searching; OR an empty match set) → 1.0 for
+ *      everyone. An empty match set must NOT dim the whole tree (Q2=a).
+ *
+ * Note `currentMatchId` is intentionally NOT a parameter: the current-match
+ * cursor drives only the ring + camera, never the dim, and never lineage.
+ */
+export function resolveFocusAlpha(
+  nodeId: string,
+  focusLineage: ReadonlySet<string> | null,
+  matchIds: ReadonlySet<string> | null,
+): number {
+  if (focusLineage) return focusLineage.has(nodeId) ? 1 : DIM_ALPHA;
+  if (matchIds && matchIds.size > 0) {
+    return matchIds.has(nodeId) ? 1 : DIM_ALPHA;
+  }
+  return 1;
+}
+
+/**
+ * The view transform that centers `pos` (a node's settled graph-space center)
+ * in a viewport of `dims`, KEEPING the current `scale` (Tech Design D5 — center
+ * without refitting). Same centering math `fitToView` uses; pure + exported so
+ * the camera move is unit-testable without a canvas.
+ */
+export function centerTransformFor(
+  pos: { x: number; y: number },
+  dims: { width: number; height: number },
+  scale: number,
+): ViewTransform {
+  return {
+    scale,
+    tx: dims.width / 2 - pos.x * scale,
+    ty: dims.height / 2 - pos.y * scale,
+  };
+}
+
 // Canvas paint geometry (graph-space units; the view transform scales them).
 const CARD_W = 200;
 const CARD_H = 46;
@@ -191,6 +261,9 @@ export function MindMapCanvas({
   links,
   selectedId,
   onNodeClick,
+  matchIds = null,
+  currentMatchId = null,
+  centerNodeId = null,
 }: MindMapCanvasProps) {
   const { getPresence } = usePresence();
   const t = useTranslations();
@@ -504,6 +577,8 @@ export function MindMapCanvas({
         hoverId,
         selectedId,
         focusLineage,
+        matchIds,
+        currentMatchId,
         getPresence,
         typeLabels,
         resolveStatusPill,
@@ -555,7 +630,7 @@ export function MindMapCanvas({
       scheduleRender();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, getPresence, nodes, typeLabels, resolveStatusPill]);
+  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, matchIds, currentMatchId, getPresence, nodes, typeLabels, resolveStatusPill]);
 
   const renderFrameRef = useRef(renderFrame);
   renderFrameRef.current = renderFrame;
@@ -565,11 +640,40 @@ export function MindMapCanvas({
   }, []);
   // expose to the layout effect (declared before it via hoisting of the const)
 
-  // Repaint when presence / hover / selection / size change (these alter the
-  // painted frame even when no tween is running).
+  // Repaint when presence / hover / selection / size / search state change
+  // (these alter the painted frame even when no tween is running).
   useEffect(() => {
     scheduleRender();
-  }, [hoverId, selectedId, focusLineage, dims, getPresence, scheduleRender]);
+  }, [
+    hoverId,
+    selectedId,
+    focusLineage,
+    matchIds,
+    currentMatchId,
+    dims,
+    getPresence,
+    scheduleRender,
+  ]);
+
+  // Camera centering on the current match (Tech Design D5/D6, Q5=b). When the
+  // parent bumps `centerNodeId` (debounced on query-settle + on each prev/next
+  // step), center the camera on that node's SETTLED layout position — not its
+  // mid-tween rendered center, so we don't chase a moving target while an
+  // auto-expand tween is in flight. Keeps the current scale (no refit) and
+  // schedules a repaint. Reads layout.positions (the tween target), matching
+  // fitToView's source of truth.
+  useEffect(() => {
+    if (!centerNodeId) return;
+    if (dims.width <= 1 || dims.height <= 1) return;
+    const pos = layout.positions.get(centerNodeId);
+    if (!pos) return; // not laid out (yet) — a later center signal will catch it
+    viewRef.current = centerTransformFor(
+      pos,
+      dims,
+      viewRef.current.scale,
+    );
+    scheduleRender();
+  }, [centerNodeId, layout, dims, scheduleRender]);
 
   useEffect(() => {
     return () => {
@@ -767,6 +871,10 @@ interface PaintNodeOpts {
   hoverId: string | null;
   selectedId: string | null;
   focusLineage: Set<string> | null;
+  /** Active search match set (null = not searching); drives the non-match dim. */
+  matchIds: ReadonlySet<string> | null;
+  /** The current-match cursor id (distinct ring; never feeds focus/lineage). */
+  currentMatchId: string | null;
   getPresence: ReturnType<typeof usePresence>["getPresence"];
   /** Localized type-eyebrow labels, resolved via t() in the component. */
   typeLabels: Record<NodeType, string>;
@@ -792,6 +900,8 @@ function paintNode(
     hoverId,
     selectedId,
     focusLineage,
+    matchIds,
+    currentMatchId,
     getPresence,
     typeLabels,
     resolveStatusPill,
@@ -799,15 +909,18 @@ function paintNode(
   const type = node.type;
   const color = TYPE_COLOR[type];
 
-  // Lineage focus: when a node is focused, only its up/down-stream (ancestors to
-  // the root + descendants + itself) stays fully opaque; everyone else dims. No
-  // focus → everyone opaque.
-  const inLineage = focusLineage ? focusLineage.has(node.id) : true;
-  const focusAlpha = inLineage ? 1 : 0.18;
+  // Per-node opacity composes hover/selection lineage focus with the search
+  // match set, in priority order (Tech Design D4 / Q3=a): a live lineage dims by
+  // lineage (hover takes over), else a non-empty match set dims non-matches,
+  // else everyone is opaque. The current-match cursor never affects opacity.
+  const focusAlpha = resolveFocusAlpha(node.id, focusLineage, matchIds);
   const alpha = opacity * focusAlpha;
 
   const isSelected = node.id === selectedId;
   const isHovered = node.id === hoverId;
+  // Current-match cursor — drives ONLY the distinct ring below; deliberately
+  // does not set selection or feed focusLineage (stepping never lights lineage).
+  const isCurrentMatch = currentMatchId != null && node.id === currentMatchId;
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -880,6 +993,22 @@ function paintNode(
   roundRect(ctx, left, top, CARD_W, CARD_H, CARD_R);
   ctx.fill();
   ctx.stroke();
+
+  // Current-match ring (Tech Design D5) — a distinct outset ring on the prev/
+  // next cursor, visually separate from the selection ring (which recolors the
+  // card border in the node's type color) and from a plain match (full opacity,
+  // no ring). It is the only thing the current-match cursor draws; it does not
+  // change the dim composition above or trigger any lineage highlight. Painted
+  // at full alpha (ignoring the match dim) so the cursor always reads clearly.
+  if (isCurrentMatch) {
+    ctx.save();
+    ctx.globalAlpha = opacity; // ignore focus dim; keep only enter/exit fade
+    ctx.strokeStyle = CURRENT_MATCH_RING_COLOR;
+    ctx.lineWidth = 2.5;
+    roundRect(ctx, left - 3, top - 3, CARD_W + 6, CARD_H + 6, CARD_R + 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Type chip.
   const chipX = left + 8;
