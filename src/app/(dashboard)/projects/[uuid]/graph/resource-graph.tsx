@@ -178,13 +178,12 @@ interface DocumentForPanel {
 export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphProps) {
   const t = useTranslations();
 
-  // Responsive renderer switch (Tech Design D2/D3). Reuses the project's
-  // existing breakpoint convention — the `useIsMobile` hook matches
-  // `(max-width: 767px)`, the same boundary the dashboard layout uses for its
-  // mobile chrome. On a narrow viewport we render the DOM vertical indented
-  // outline; on a wide viewport, the Canvas-2D mind-map. Both consume the SAME
-  // forceNodes/forceLinks + the SAME shared expand state, so flipping size
-  // preserves the user's expansion (it lives here, not in either renderer).
+  // Narrow-viewport signal. Reuses the project's existing breakpoint convention
+  // — the `useIsMobile` hook matches `(max-width: 767px)`, the same boundary the
+  // dashboard layout uses for its mobile chrome. The Canvas-2D mind-map renders
+  // on every viewport now (the DOM outline was abandoned); this flag only drives
+  // the mobile control-panel collapse (the fixed card would otherwise overlay
+  // the canvas on a narrow screen).
   const isMobile = useIsMobile();
 
   const [graph, setGraph] = useState<ResourceGraphResult | null>(null);
@@ -237,12 +236,11 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   );
 
   // --- Node search state (Tech Design D1/D3/D5/D6) --------------------------
-  // The search state lives HERE (not in either renderer) for the same reason
-  // expand state does: both the canvas and the mobile outline must read the
-  // SAME query, match set, and current-match cursor, so flipping viewport size
-  // preserves the active search. `searchQuery` is the raw input; the derived
-  // match set + ordered match list + current-match id are computed below
-  // (after the visible-set memo, since ordering follows the layout outline).
+  // The search state lives HERE (in the parent, not the canvas) for the same
+  // reason the expand state does: it is shared component state the renderer
+  // reads from. `searchQuery` is the raw input; the derived match set + ordered
+  // match list + current-match id are computed below (after the visible-set
+  // memo, since ordering follows the layout outline order).
   const [searchQuery, setSearchQuery] = useState("");
   // Index into the OUTLINE-ORDERED match list (normalized with wrap-around on
   // read, so prev/next can freely increment/decrement past the ends).
@@ -991,8 +989,8 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         {isEmpty && (
           // Either the project has no entities at all, OR all four type-toggles
           // are off. Either way, the user sees the same explanation; the
-          // mind-map renderer (canvas or outline) + filter panel remain mounted
-          // below so toggling a type back on immediately restores the view.
+          // canvas mind-map renderer + filter panel remain mounted below so
+          // toggling a type back on immediately restores the view.
           <AnimatedEmptyState>
             <Card className="m-12 flex flex-col items-center justify-center border-[#E5E0D8] p-8 text-center">
               <h3 className="mb-2 text-base font-medium text-[#2C2C2C]">

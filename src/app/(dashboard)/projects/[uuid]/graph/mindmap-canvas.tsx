@@ -314,8 +314,8 @@ export function MindMapCanvas({
 
   // Localized type-eyebrow labels (e.g. zh 想法/提案/任务/文档). The painter is a
   // plain function and can't call the t() hook, so resolve the four labels here
-  // and pass them down — keeps the canvas eyebrow on the same i18n contract as
-  // the mobile outline (which uses t(`graph.nodeType.${type}`)).
+  // and pass them down — the canvas eyebrow uses the `graph.nodeType.${type}`
+  // i18n keys.
   const typeLabels = useMemo<Record<NodeType, string>>(
     () => ({
       idea: t("graph.nodeType.idea"),
@@ -328,9 +328,9 @@ export function MindMapCanvas({
 
   // Per-node status pill resolver. The painter is pure (cannot call t()) so it
   // receives a `(node) → { bg, fg, label } | null` resolver instead. Resolution
-  // routes through the shared `node-status.ts` module so the canvas pill stays
-  // color- and label-identical to the outline badge (Tech Design D1/D2). A node
-  // with an unmapped or sentinel status resolves to `UNKNOWN_FALLBACK`; we still
+  // routes through the shared `node-status.ts` module for one source of truth on
+  // the label key + color pair (Tech Design D1/D2). A node with an unmapped or
+  // sentinel status resolves to `UNKNOWN_FALLBACK`; we still
   // paint the pill (so users see a neutral chip rather than a hole) using its
   // translated `graph.status.unknown` label.
   const resolveStatusPill = useCallback(
@@ -1188,8 +1188,8 @@ function paintNode(
     ctx.restore();
 
     // Identify the acting agent (spec: presence highlight "SHALL identify the
-    // acting agent" in BOTH renderers — the mobile outline shows a name pill,
-    // so the canvas paints the agent's name on a colored chip above the card).
+    // acting agent") — the canvas paints the agent's name on a colored chip
+    // above the card.
     ctx.save();
     ctx.setLineDash([]);
     ctx.font = "600 9px ui-sans-serif, system-ui";
