@@ -209,6 +209,50 @@ export function centerTransformFor(
   };
 }
 
+// Zoom bounds — shared by the wheel, pinch, and double-tap paths so all three
+// clamp scale identically (Tech Design D1/D3).
+const SCALE_MIN = 0.2;
+const SCALE_MAX = 2.5;
+
+// Double-tap disambiguation window (Tech Design D2). A second tap within this
+// time AND distance of the first is a double-tap (zoom), not a node click.
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_DIST = 30; // screen px between the two taps
+const DOUBLE_TAP_ZOOM_FACTOR = 2; // zoom-in target = fit scale × this (clamped)
+
+/**
+ * The view transform for a two-finger pinch (Tech Design D1, Q2=a). Given the
+ * gesture START (screen-space midpoint of the two fingers, their distance, and
+ * the view transform at gesture start) plus the LIVE midpoint + distance,
+ * returns the new transform. Scale is `startScale × liveDist/startDist` clamped
+ * to [SCALE_MIN, SCALE_MAX]; the graph point that was under the START midpoint
+ * is pinned under the LIVE midpoint, so the tree both scales AND pans to follow
+ * the fingers (map-like feel). Pure + exported so the math is unit-testable
+ * without a canvas (mirrors centerTransformFor).
+ */
+export function pinchTransform(
+  start: {
+    midpoint: { x: number; y: number };
+    dist: number;
+    view: ViewTransform;
+  },
+  live: { midpoint: { x: number; y: number }; dist: number },
+): ViewTransform {
+  const nextScale = Math.min(
+    SCALE_MAX,
+    Math.max(SCALE_MIN, start.view.scale * (live.dist / start.dist)),
+  );
+  // Graph point under the START midpoint — kept under the LIVE midpoint so the
+  // pan-follow is folded into the anchor math (no separate translation term).
+  const gx = (start.midpoint.x - start.view.tx) / start.view.scale;
+  const gy = (start.midpoint.y - start.view.ty) / start.view.scale;
+  return {
+    scale: nextScale,
+    tx: live.midpoint.x - gx * nextScale,
+    ty: live.midpoint.y - gy * nextScale,
+  };
+}
+
 // Canvas paint geometry (graph-space units; the view transform scales them).
 const CARD_W = 200;
 const CARD_H = 46;
@@ -270,8 +314,8 @@ export function MindMapCanvas({
 
   // Localized type-eyebrow labels (e.g. zh 想法/提案/任务/文档). The painter is a
   // plain function and can't call the t() hook, so resolve the four labels here
-  // and pass them down — keeps the canvas eyebrow on the same i18n contract as
-  // the mobile outline (which uses t(`graph.nodeType.${type}`)).
+  // and pass them down — the canvas eyebrow uses the `graph.nodeType.${type}`
+  // i18n keys.
   const typeLabels = useMemo<Record<NodeType, string>>(
     () => ({
       idea: t("graph.nodeType.idea"),
@@ -284,9 +328,9 @@ export function MindMapCanvas({
 
   // Per-node status pill resolver. The painter is pure (cannot call t()) so it
   // receives a `(node) → { bg, fg, label } | null` resolver instead. Resolution
-  // routes through the shared `node-status.ts` module so the canvas pill stays
-  // color- and label-identical to the outline badge (Tech Design D1/D2). A node
-  // with an unmapped or sentinel status resolves to `UNKNOWN_FALLBACK`; we still
+  // routes through the shared `node-status.ts` module for one source of truth on
+  // the label key + color pair (Tech Design D1/D2). A node with an unmapped or
+  // sentinel status resolves to `UNKNOWN_FALLBACK`; we still
   // paint the pill (so users see a neutral chip rather than a hole) using its
   // translated `graph.status.unknown` label.
   const resolveStatusPill = useCallback(
@@ -686,6 +730,12 @@ export function MindMapCanvas({
         // would never paint (white screen).
         rafRef.current = null;
       }
+      // Drop a deferred touch-tap timer so it can't fire onNodeClick after
+      // unmount.
+      if (pendingTapRef.current != null) {
+        clearTimeout(pendingTapRef.current);
+        pendingTapRef.current = null;
+      }
     };
   }, []);
 
@@ -697,6 +747,52 @@ export function MindMapCanvas({
     origTy: number;
     moved: boolean;
   } | null>(null);
+
+  // Active touch/pointer points, keyed by pointerId, in canvas-local screen
+  // coords (Tech Design D1). Drives gesture arbitration: 1 point → drag/tap;
+  // 2 points → pinch. Non-touch (mouse) never keeps more than one entry.
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  // Pinch gesture start snapshot (null when not pinching). Captured when the
+  // second pointer joins; cleared when a pointer lifts.
+  const pinchRef = useRef<{
+    midpoint: { x: number; y: number };
+    dist: number;
+    view: ViewTransform;
+  } | null>(null);
+  // True once a touch sequence reached two fingers, until ALL fingers lift.
+  // Guards the final finger-up (after pinchRef is already cleared) from being
+  // misread as a tap → node click.
+  const multiTouchRef = useRef(false);
+  // Last clean tap (for double-tap detection, Tech Design D2): screen coords +
+  // timestamp. A second tap within DOUBLE_TAP_MS / DOUBLE_TAP_DIST is a
+  // double-tap (zoom), not a node click.
+  const lastTapRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  // Deferred single-tap timer (touch only, D2). A touch tap that hits a node
+  // schedules its onNodeClick DOUBLE_TAP_MS later; if a second tap lands inside
+  // the window it's cancelled and the gesture becomes a zoom, so a fast
+  // double-tap never both navigates and zooms. Mouse/pen clicks are NOT
+  // deferred (desktop stays instant + unchanged).
+  const pendingTapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPendingTap = useCallback(() => {
+    if (pendingTapRef.current !== null) {
+      clearTimeout(pendingTapRef.current);
+      pendingTapRef.current = null;
+    }
+  }, []);
+
+  // Distance + midpoint of the two currently-active pointers (screen coords).
+  // Returns null unless exactly two pointers are down.
+  const twoPointerGeometry = useCallback(() => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length !== 2) return null;
+    const [a, b] = pts;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    return {
+      midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      dist: Math.hypot(dx, dy) || 1,
+    };
+  }, []);
 
   const screenToGraph = useCallback((sx: number, sy: number) => {
     const v = viewRef.current;
@@ -725,20 +821,41 @@ export function MindMapCanvas({
     return null;
   }, []);
 
-  const handlePointerDown = useCallback((ev: React.PointerEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const sx = ev.clientX - rect.left;
-    const sy = ev.clientY - rect.top;
-    dragRef.current = {
-      startX: sx,
-      startY: sy,
-      origTx: viewRef.current.tx,
-      origTy: viewRef.current.ty,
-      moved: false,
-    };
-    (ev.target as Element).setPointerCapture?.(ev.pointerId);
-  }, []);
+  const handlePointerDown = useCallback(
+    (ev: React.PointerEvent) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const sx = ev.clientX - rect.left;
+      const sy = ev.clientY - rect.top;
+      pointersRef.current.set(ev.pointerId, { x: sx, y: sy });
+      (ev.target as Element).setPointerCapture?.(ev.pointerId);
+
+      if (pointersRef.current.size >= 2) {
+        // Second finger down → enter pinch. Snapshot the gesture start and
+        // cancel any single-pointer drag/tap so the leftover finger neither
+        // pans nor fires a click when the gesture ends (D1).
+        multiTouchRef.current = true;
+        const geo = twoPointerGeometry();
+        if (geo) {
+          pinchRef.current = { ...geo, view: { ...viewRef.current } };
+        }
+        if (dragRef.current) dragRef.current.moved = true; // consume the tap
+        cancelPendingTap(); // a deferred single-tap is void once 2 fingers land
+        return;
+      }
+
+      // First pointer → begin a potential drag/tap (unchanged single-pointer
+      // path).
+      dragRef.current = {
+        startX: sx,
+        startY: sy,
+        origTx: viewRef.current.tx,
+        origTy: viewRef.current.ty,
+        moved: false,
+      };
+    },
+    [twoPointerGeometry, cancelPendingTap],
+  );
 
   const handlePointerMove = useCallback(
     (ev: React.PointerEvent) => {
@@ -746,6 +863,26 @@ export function MindMapCanvas({
       if (!rect) return;
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
+
+      // Keep the tracked point fresh (only if this pointer is down — a hover
+      // move from a mouse has no entry and must fall through to hit-testing).
+      if (pointersRef.current.has(ev.pointerId)) {
+        pointersRef.current.set(ev.pointerId, { x: sx, y: sy });
+      }
+
+      // Two-finger pinch (D1, Q2=a): scale by the live/start distance ratio and
+      // pan so the graph point under the start midpoint tracks the live
+      // midpoint (map-like combined zoom + move).
+      const pinch = pinchRef.current;
+      if (pinch) {
+        const geo = twoPointerGeometry();
+        if (geo) {
+          viewRef.current = pinchTransform(pinch, geo);
+          scheduleRender();
+        }
+        return;
+      }
+
       const drag = dragRef.current;
       if (drag) {
         const dx = sx - drag.startX;
@@ -767,12 +904,49 @@ export function MindMapCanvas({
       const nextHover = hit ? hit.id : null;
       setHoverId((prev) => (prev === nextHover ? prev : nextHover));
     },
-    [hitTest, screenToGraph, scheduleRender],
+    [hitTest, screenToGraph, scheduleRender, twoPointerGeometry],
+  );
+
+  // Zoom in centered on a tapped screen point (double-tap, D2). Reuses the
+  // wheel anchor math with the tap as the focus so the tapped point stays put.
+  const zoomInAt = useCallback(
+    (sx: number, sy: number) => {
+      const v = viewRef.current;
+      const fit = fitTransformFor(layout, dims);
+      const target = Math.min(
+        SCALE_MAX,
+        (fit?.scale ?? v.scale) * DOUBLE_TAP_ZOOM_FACTOR,
+      );
+      const gx = (sx - v.tx) / v.scale;
+      const gy = (sy - v.ty) / v.scale;
+      viewRef.current = {
+        scale: target,
+        tx: sx - gx * target,
+        ty: sy - gy * target,
+      };
+      scheduleRender();
+    },
+    [layout, dims, scheduleRender],
   );
 
   const handlePointerUp = useCallback(
     (ev: React.PointerEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
+      // Drop this pointer from the active set.
+      pointersRef.current.delete(ev.pointerId);
+      (ev.target as Element).releasePointerCapture?.(ev.pointerId);
+      // Any pointer lift ends a pinch; the remaining finger (if any) must NOT
+      // resume a pan mid-gesture, so clear the drag start (D1).
+      if (pointersRef.current.size < 2) pinchRef.current = null;
+      // A multi-touch sequence (2+ fingers seen) consumes the WHOLE gesture:
+      // neither the second finger's up nor the final finger's up becomes a tap.
+      // Cleared only once every finger has lifted.
+      if (multiTouchRef.current) {
+        dragRef.current = null;
+        if (pointersRef.current.size === 0) multiTouchRef.current = false;
+        return;
+      }
+
       const drag = dragRef.current;
       dragRef.current = null;
       if (!rect) return;
@@ -781,6 +955,32 @@ export function MindMapCanvas({
 
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
+
+      // Double-tap detection (D2): a second clean tap within the time + distance
+      // window is a zoom toggle, NOT a node click. Toggle = zoom in on the tap
+      // point if we're at (approximately) the fit scale, else reset to fit.
+      const now = performance.now();
+      const prevTap = lastTapRef.current;
+      if (
+        prevTap &&
+        now - prevTap.t <= DOUBLE_TAP_MS &&
+        Math.hypot(sx - prevTap.x, sy - prevTap.y) <= DOUBLE_TAP_DIST
+      ) {
+        lastTapRef.current = null; // consume; a triple-tap starts fresh
+        cancelPendingTap(); // drop the first tap's deferred node click
+        const fit = fitTransformFor(layout, dims);
+        const atFit =
+          fit !== null && Math.abs(viewRef.current.scale - fit.scale) < 0.01;
+        if (atFit) {
+          zoomInAt(sx, sy);
+        } else if (fit) {
+          viewRef.current = fit;
+          scheduleRender();
+        }
+        return; // double-tap consumed — no node click
+      }
+      lastTapRef.current = { x: sx, y: sy, t: now };
+
       const g = screenToGraph(sx, sy);
       const hit = hitTest(g.x, g.y);
       if (!hit) return;
@@ -800,10 +1000,44 @@ export function MindMapCanvas({
           }
         }
       }
+      // Touch taps defer the click by DOUBLE_TAP_MS so a follow-up tap can
+      // cancel it (turning the pair into a zoom). Mouse/pen fire immediately —
+      // desktop click stays instant and unchanged. An affordance (+/-) tap also
+      // fires immediately: expand/collapse is not a double-tap target.
+      if (ev.pointerType === "touch" && !onAff) {
+        cancelPendingTap();
+        const { id, type } = hit;
+        pendingTapRef.current = setTimeout(() => {
+          pendingTapRef.current = null;
+          onNodeClick(id, type, false);
+        }, DOUBLE_TAP_MS);
+        return;
+      }
       onNodeClick(hit.id, hit.type, onAff);
     },
-    [hitTest, screenToGraph, onNodeClick],
+    [
+      hitTest,
+      screenToGraph,
+      onNodeClick,
+      layout,
+      dims,
+      zoomInAt,
+      scheduleRender,
+      cancelPendingTap,
+    ],
   );
+
+  // A cancelled pointer (OS gesture takeover, etc.) must clean up the same way
+  // an up does, or a stuck pointer would leave the canvas wedged in pinch mode.
+  const handlePointerCancel = useCallback((ev: React.PointerEvent) => {
+    pointersRef.current.delete(ev.pointerId);
+    (ev.target as Element).releasePointerCapture?.(ev.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) {
+      dragRef.current = null;
+      multiTouchRef.current = false;
+    }
+  }, []);
 
   const handleWheel = useCallback(
     (ev: React.WheelEvent) => {
@@ -813,7 +1047,7 @@ export function MindMapCanvas({
       const sy = ev.clientY - rect.top;
       const v = viewRef.current;
       const factor = Math.exp(-ev.deltaY * 0.0015);
-      const nextScale = Math.min(2.5, Math.max(0.2, v.scale * factor));
+      const nextScale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, v.scale * factor));
       // Zoom around the cursor: keep the graph point under the cursor fixed.
       const gx = (sx - v.tx) / v.scale;
       const gy = (sy - v.ty) / v.scale;
@@ -836,6 +1070,7 @@ export function MindMapCanvas({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onPointerLeave={() => setHoverId(null)}
         onWheel={handleWheel}
       />
@@ -953,8 +1188,8 @@ function paintNode(
     ctx.restore();
 
     // Identify the acting agent (spec: presence highlight "SHALL identify the
-    // acting agent" in BOTH renderers — the mobile outline shows a name pill,
-    // so the canvas paints the agent's name on a colored chip above the card).
+    // acting agent") — the canvas paints the agent's name on a colored chip
+    // above the card.
     ctx.save();
     ctx.setLineDash([]);
     ctx.font = "600 9px ui-sans-serif, system-ui";
@@ -1374,11 +1609,17 @@ function hasActivePresence(
 // One-time: frame the whole forest with a small margin, centered. Writes into
 // the shared viewRef. Never called again on expand/collapse (Tech Design:
 // "do not auto-refit").
-function fitToView(
+/**
+ * The view transform that frames the WHOLE tree in `dims` (the one-time
+ * first-load fit, and the double-tap reset target). Pure — returns the
+ * transform or null when the layout is empty — so the double-tap toggle can
+ * read the fit transform without mutating the view. `fitToView` writes it into
+ * the ref for the first-load fit path.
+ */
+export function fitTransformFor(
   layout: ReturnType<typeof computeTreeLayout>,
   dims: { width: number; height: number },
-  viewRef: React.MutableRefObject<ViewTransform>,
-) {
+): ViewTransform | null {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -1389,7 +1630,7 @@ function fitToView(
     if (pos.y - CARD_H / 2 < minY) minY = pos.y - CARD_H / 2;
     if (pos.y + CARD_H / 2 > maxY) maxY = pos.y + CARD_H / 2;
   }
-  if (!Number.isFinite(minX)) return;
+  if (!Number.isFinite(minX)) return null;
   const margin = 60;
   const contentW = maxX - minX || 1;
   const contentH = maxY - minY || 1;
@@ -1405,9 +1646,18 @@ function fitToView(
   );
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
-  viewRef.current = {
+  return {
     scale,
     tx: dims.width / 2 - cx * scale,
     ty: dims.height / 2 - cy * scale,
   };
+}
+
+function fitToView(
+  layout: ReturnType<typeof computeTreeLayout>,
+  dims: { width: number; height: number },
+  viewRef: React.MutableRefObject<ViewTransform>,
+) {
+  const next = fitTransformFor(layout, dims);
+  if (next) viewRef.current = next;
 }

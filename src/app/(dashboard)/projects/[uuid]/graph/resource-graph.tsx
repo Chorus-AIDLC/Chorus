@@ -51,6 +51,7 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,6 @@ import {
 } from "@/lib/resource-graph-search";
 import { computeTreeLayout } from "@/lib/resource-graph-tree-layout";
 import { shouldShowExpandAffordance } from "./expand-affordance";
-import { MindMapOutline } from "./mindmap-outline";
 import type {
   ResourceGraphResult,
   ResourceGraphNodeType as NodeType,
@@ -178,13 +178,12 @@ interface DocumentForPanel {
 export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphProps) {
   const t = useTranslations();
 
-  // Responsive renderer switch (Tech Design D2/D3). Reuses the project's
-  // existing breakpoint convention — the `useIsMobile` hook matches
-  // `(max-width: 767px)`, the same boundary the dashboard layout uses for its
-  // mobile chrome. On a narrow viewport we render the DOM vertical indented
-  // outline; on a wide viewport, the Canvas-2D mind-map. Both consume the SAME
-  // forceNodes/forceLinks + the SAME shared expand state, so flipping size
-  // preserves the user's expansion (it lives here, not in either renderer).
+  // Narrow-viewport signal. Reuses the project's existing breakpoint convention
+  // — the `useIsMobile` hook matches `(max-width: 767px)`, the same boundary the
+  // dashboard layout uses for its mobile chrome. The Canvas-2D mind-map renders
+  // on every viewport now (the DOM outline was abandoned); this flag only drives
+  // the mobile control-panel collapse (the fixed card would otherwise overlay
+  // the canvas on a narrow screen).
   const isMobile = useIsMobile();
 
   const [graph, setGraph] = useState<ResourceGraphResult | null>(null);
@@ -237,12 +236,11 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   );
 
   // --- Node search state (Tech Design D1/D3/D5/D6) --------------------------
-  // The search state lives HERE (not in either renderer) for the same reason
-  // expand state does: both the canvas and the mobile outline must read the
-  // SAME query, match set, and current-match cursor, so flipping viewport size
-  // preserves the active search. `searchQuery` is the raw input; the derived
-  // match set + ordered match list + current-match id are computed below
-  // (after the visible-set memo, since ordering follows the layout outline).
+  // The search state lives HERE (in the parent, not the canvas) for the same
+  // reason the expand state does: it is shared component state the renderer
+  // reads from. `searchQuery` is the raw input; the derived match set + ordered
+  // match list + current-match id are computed below (after the visible-set
+  // memo, since ordering follows the layout outline order).
   const [searchQuery, setSearchQuery] = useState("");
   // Index into the OUTLINE-ORDERED match list (normalized with wrap-around on
   // read, so prev/next can freely increment/decrement past the ends).
@@ -253,20 +251,16 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   // sibling task; here we only own + pass the signal.)
   const [centerNodeId, setCenterNodeId] = useState<string | null>(null);
 
-  // Live mirrors of the expand sets so the snapshot effect can read the CURRENT
-  // values at the blank→non-blank edge without listing them as deps (which would
-  // re-run the effect on every auto-expand). Refs, not deps — capture-on-demand.
-  const expandedIdeasRef = useRef(expandedIdeas);
-  expandedIdeasRef.current = expandedIdeas;
-  const expandedProposalsRef = useRef(expandedProposals);
-  expandedProposalsRef.current = expandedProposals;
-  // Snapshot of the expand sets captured when a search session BEGINS, restored
-  // when it ends (Q4=a). null = no active snapshot. `wasSearchingRef` tracks the
-  // previous searching state so the snapshot effect fires only on the edges.
-  const expandSnapshotRef = useRef<{
-    ideas: Set<string>;
-    proposals: Set<string>;
-  } | null>(null);
+  // Control-panel collapse (D5, q6=a). On a narrow viewport the top-right card
+  // (search + type filter + expand-all) would overlay the canvas — which now
+  // renders on mobile too — so it collapses to a single icon button and expands
+  // on tap. Desktop always shows the full panel. Local UI state only: toggling
+  // never touches searchQuery / visible / the expand sets.
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // Tracks the previous "is searching" state so the sticky-clear effect fires
+  // its cursor/camera reset only on the trailing edge (search just ended), not
+  // on every keystroke.
   const wasSearchingRef = useRef(false);
 
   // Layout is owned by the mind-map canvas, which computes deterministic
@@ -356,11 +350,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     setExpandedIdeas(new Set());
     setExpandedProposals(new Set());
     // Reset the search session too — the whole graph is foreign on a project
-    // switch, so any active query/snapshot is meaningless.
+    // switch, so any active query is meaningless.
     setSearchQuery("");
     setCurrentMatchIndex(0);
     setCenterNodeId(null);
-    expandSnapshotRef.current = null;
     wasSearchingRef.current = false;
     void reloadGraph();
     return () => {
@@ -599,7 +592,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, [graph, searchQuery, visible]);
 
   // `null` = not searching (no dim, no count); a non-null Set (even empty) means
-  // a search is active. Used to drive snapshot/restore + the count UI.
+  // a search is active. Drives the sticky-clear cursor reset + the count UI.
   const isSearching = matchIds !== null;
 
   // Ordered match list for prev/next: pre-order DFS outline order over the
@@ -666,30 +659,18 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     }
   }, [graph, matchIds]);
 
-  // Snapshot / restore expand state around a search session (Q4=a, D3).
-  // On the blank→non-blank render this captures the PRE-search expand sets. The
-  // expand refs are assigned in the render body from COMMITTED state, and the
-  // auto-expand effect's setState only takes effect on a LATER render — so the
-  // refs still hold pre-search values when this effect runs, regardless of which
-  // effect is declared first. On non-blank→blank it restores the snapshot,
-  // collapsing any search-forced expansion while preserving the user's manual
-  // one, and resets the match cursor.
+  // Sticky expand on search-clear (Q3=a, D6). Search auto-expansion is add-only
+  // (the effect above never removes a hub), and clearing a search now KEEPS
+  // every expanded hub expanded — including ones the search opened to reveal a
+  // match — so the located branch stays put instead of snapping shut. There is
+  // no pre-search snapshot and no restore. On the trailing edge (search just
+  // ended) we reset ONLY the pure-search cursor/camera state; the expand sets
+  // are left entirely untouched, so highlight/dim/count/cursor clear while the
+  // tree's expansion is preserved. (Manual collapse afterwards works normally —
+  // expansion is now ordinary user-controlled state with nothing overriding it.)
   useEffect(() => {
     const was = wasSearchingRef.current;
-    if (isSearching && !was) {
-      // Leading edge: capture once. Don't overwrite on later keystrokes.
-      expandSnapshotRef.current = {
-        ideas: new Set(expandedIdeasRef.current),
-        proposals: new Set(expandedProposalsRef.current),
-      };
-    } else if (!isSearching && was) {
-      // Trailing edge: restore + drop the snapshot, reset the cursor.
-      const snap = expandSnapshotRef.current;
-      if (snap) {
-        setExpandedIdeas(new Set(snap.ideas));
-        setExpandedProposals(new Set(snap.proposals));
-        expandSnapshotRef.current = null;
-      }
+    if (!isSearching && was) {
       setCurrentMatchIndex(0);
       setCenterNodeId(null);
     }
@@ -739,8 +720,9 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, []);
 
   // Clear the search (clear button / Esc / empty query all funnel here): just
-  // blank the query — the snapshot/restore effect handles collapsing the
-  // search-forced expansion.
+  // blank the query. Expansion is STICKY (Q3=a) — the sticky-clear effect resets
+  // only the match cursor/camera and leaves every expanded hub open, so the
+  // located branch stays visible after clearing.
   const clearSearch = useCallback(() => {
     setSearchQuery("");
   }, []);
@@ -1007,8 +989,8 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         {isEmpty && (
           // Either the project has no entities at all, OR all four type-toggles
           // are off. Either way, the user sees the same explanation; the
-          // mind-map renderer (canvas or outline) + filter panel remain mounted
-          // below so toggling a type back on immediately restores the view.
+          // canvas mind-map renderer + filter panel remain mounted below so
+          // toggling a type back on immediately restores the view.
           <AnimatedEmptyState>
             <Card className="m-12 flex flex-col items-center justify-center border-[#E5E0D8] p-8 text-center">
               <h3 className="mb-2 text-base font-medium text-[#2C2C2C]">
@@ -1020,40 +1002,58 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         )}
 
         {/* Renderer. Hidden (but the container stays) when empty so the filter
-            overlay still toggles types back on. On a narrow viewport the DOM
-            vertical indented outline renders; on a wide viewport the Canvas-2D
-            mind-map. Both take the same nodes/links + onNodeClick contract and
-            read the same shared expand state, so resizing preserves expansion. */}
-        {!isEmpty &&
-          (isMobile ? (
-            <MindMapOutline
-              nodes={forceNodes}
-              links={forceLinks}
-              selectedId={selectedNodeId}
-              onNodeClick={handleNodeClick}
-              matchIds={matchIds}
-              currentMatchId={currentMatchId}
-            />
-          ) : (
-            <ForceGraphCanvas
-              nodes={forceNodes}
-              links={forceLinks}
-              selectedId={selectedNodeId}
-              onNodeClick={handleNodeClick}
-              matchIds={matchIds}
-              currentMatchId={currentMatchId}
-              centerNodeId={centerNodeId}
-            />
-          ))}
+            overlay still toggles types back on. The Canvas-2D mind-map renders
+            on EVERY viewport now — the mobile vertical outline was abandoned, so
+            phones use the same touch-zoomable canvas (with the one-time
+            fit-to-view framing the whole tree on first load). */}
+        {!isEmpty && (
+          <ForceGraphCanvas
+            nodes={forceNodes}
+            links={forceLinks}
+            selectedId={selectedNodeId}
+            onNodeClick={handleNodeClick}
+            matchIds={matchIds}
+            currentMatchId={currentMatchId}
+            centerNodeId={centerNodeId}
+          />
+        )}
 
-        {/* Control panel — single top-right overlay combining the type filter
-            and the expand-all/collapse-all action. Consolidated into one card
-            (rather than a separate left-side button) so nothing overlays the
-            graph/outline content on mobile, where the outline rows start at the
-            left edge. The expand toggle drives the shared expand state, so it
-            affects both the canvas and the mobile outline. */}
+        {/* Control panel — single top-right overlay combining node search, the
+            type filter, and the expand-all/collapse-all action. Now that the
+            canvas renders on mobile too, this fixed card would overlay the graph
+            on a narrow viewport, so there it collapses to a single icon button
+            (D5, q6=a) and expands on tap. Desktop always shows the full card. */}
         <div className="absolute right-3 top-3 z-10">
+          {isMobile && !panelOpen ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setPanelOpen(true)}
+              aria-label={t("graph.controls.open")}
+              data-testid="graph-controls-toggle"
+              className="bg-white/95 shadow-sm backdrop-blur"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </Button>
+          ) : (
           <Card className="w-[224px] border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+            {/* Collapse control — mobile only; desktop keeps the panel pinned. */}
+            {isMobile && (
+              <div className="mb-2 flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => setPanelOpen(false)}
+                  aria-label={t("graph.controls.close")}
+                  data-testid="graph-controls-collapse"
+                  className="text-[#6B6B6B]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
             {/* Node search (Tech Design D8). Hidden when empty — nothing to
                 search. Sits above the type filter on the same control card. */}
             {!isEmpty && (
@@ -1187,6 +1187,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               </>
             )}
           </Card>
+          )}
         </div>
       </div>
       {panels}

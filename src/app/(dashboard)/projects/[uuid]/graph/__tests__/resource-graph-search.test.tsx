@@ -1,21 +1,25 @@
 // @vitest-environment jsdom
 //
-// Node-search state + control UI in resource-graph.tsx (proposal task 2).
-// Verifies the parent's search orchestration end-to-end through the real
-// visible-set → outline pipeline (the helpers themselves are unit-tested in
+// Node-search state + control UI in resource-graph.tsx. Verifies the parent's
+// search orchestration end-to-end through the real visible-set pipeline (the
+// helpers themselves are unit-tested in
 // src/lib/__tests__/resource-graph-search.test.ts):
 //   - typing a query updates the current/total count (AC #3) and auto-expands
 //     the ancestor hubs of a DEEP match so it becomes visible (AC #1);
 //   - prev/next step the cursor with wrap-around (AC #3);
 //   - a zero-hit query shows the localized no-matches hint + disables stepping
 //     and dims nothing (AC #3);
-//   - clearing the query (clear button / Esc) restores the PRE-search expand
-//     snapshot, collapsing search-forced expansion while preserving the user's
-//     manual expansion (AC #2);
+//   - clearing the query (clear button / Esc) is STICKY (Q3=a): hubs the search
+//     auto-expanded stay open so the located branch remains visible, and only
+//     the search visual state (match set + count/nav) is cleared; a hub can then
+//     be manually collapsed (AC #1, #2, #3);
 //   - the Esc-to-clear handler is IME-guarded (no clear while composing) (AC #1).
 //
-// jsdom mocking mirrors resource-graph-outline.test.tsx (matchMedia polyfill,
-// ResizeObserver stub, next/dynamic + panel stubs, module-level translator).
+// The graph now renders the Canvas-2D mind-map on EVERY viewport (the mobile
+// vertical outline was removed). The canvas is a Canvas-2D painter, not DOM, so
+// this test drives search through a MockCanvas that surfaces the visible node
+// set + the shared search props as data attributes, and exposes a per-node
+// expand trigger (mirroring an affordance tap → onNodeClick(id, type, true)).
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -35,29 +39,44 @@ vi.mock("next/dynamic", () => ({
     return MockCanvas;
   },
 }));
+
+// MockCanvas mirrors the real canvas' prop contract and exposes what the tests
+// need to observe: the visible node ids (so auto-expand / collapse is
+// observable without a DOM tree), the shared search props, and a per-node
+// expand trigger that calls onNodeClick with the affordance flag set (an
+// expandable hub's +/- tap).
 function MockCanvas({
   nodes,
   matchIds,
   currentMatchId,
   centerNodeId,
+  onNodeClick,
 }: {
-  nodes: { id: string }[];
+  nodes: { id: string; type: string; title: string; hasAffordance?: boolean }[];
   matchIds?: ReadonlySet<string> | null;
   currentMatchId?: string | null;
   centerNodeId?: string | null;
+  onNodeClick: (id: string, type: string, onAffordance: boolean) => void;
 }) {
-  // Expose the shared search props so a test can assert they survive the
-  // outline→canvas swap on resize (the canvas reads the SAME parent state) and
-  // that the debounced camera signal (centerNodeId) stays in sync with the
-  // current-match cursor.
   return (
     <div
       data-testid="force-canvas"
       data-node-count={nodes.length}
+      data-visible-ids={nodes.map((n) => n.id).join(",")}
       data-match-count={matchIds ? matchIds.size : "null"}
       data-current-match={currentMatchId ?? ""}
       data-center-node={centerNodeId ?? ""}
-    />
+    >
+      {nodes.map((n) => (
+        <button
+          key={n.id}
+          data-testid={`expand-${n.id}`}
+          onClick={() => onNodeClick(n.id, n.type, true)}
+        >
+          {n.title}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -84,10 +103,8 @@ vi.mock("@/components/animated-empty-state", () => ({
   AnimatedEmptyState: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 
-// Stable translator: interpolate {current}/{total} for the search count and
-// {count} for the outline expand aria-label; otherwise echo the key. Kept at
-// module scope so `t` identity is stable (a fresh closure would churn the
-// parent's fetch effect).
+// Stable translator: interpolate {current}/{total} for the search count;
+// otherwise echo the key. Kept at module scope so `t` identity is stable.
 const stableTranslator = (key: string, vars?: Record<string, unknown>) => {
   if (vars && "current" in vars && "total" in vars) {
     return `${vars.current} / ${vars.total}`;
@@ -122,44 +139,23 @@ const PAYLOAD = {
   ],
 };
 
-// matchMedia polyfill (narrow = mobile outline path so visible rows are DOM).
-interface FakeMql {
-  matches: boolean;
-  listeners: ((e: { matches: boolean }) => void)[];
-}
-const liveMqls: FakeMql[] = [];
+// The canvas renders on all viewports now; matchMedia is polyfilled to a stable
+// (desktop) value so useIsMobile is inert — search behavior is viewport-agnostic.
 function setViewport(narrow: boolean) {
-  liveMqls.length = 0;
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     configurable: true,
-    value: vi.fn().mockImplementation((query: string) => {
-      const mql: FakeMql = { matches: narrow, listeners: [] };
-      liveMqls.push(mql);
-      return {
-        get matches() {
-          return mql.matches;
-        },
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: (_: string, cb: (e: { matches: boolean }) => void) =>
-          mql.listeners.push(cb),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      };
-    }),
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: narrow,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
   });
-}
-
-// Flip every live MediaQueryList to the given match state and fire `change`
-// (a real viewport resize on the same mounted instance).
-function resizeViewport(narrow: boolean) {
-  for (const mql of liveMqls) {
-    mql.matches = narrow;
-    for (const cb of mql.listeners) cb({ matches: narrow });
-  }
 }
 
 class ResizeObserverStub {
@@ -171,7 +167,7 @@ class ResizeObserverStub {
 beforeEach(() => {
   realtimeCallbacks.clear();
   vi.restoreAllMocks();
-  // jsdom lacks scrollIntoView; the outline calls it for the current match.
+  setViewport(false); // desktop → full control panel is always shown
   (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView =
     function () {};
   (globalThis as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
@@ -188,14 +184,19 @@ beforeEach(() => {
 });
 
 function renderGraph() {
-  setViewport(true); // narrow → outline rows observable
   return render(<ResourceGraph projectUuid={PROJECT} currentUserUuid={USER} />);
+}
+
+// Convenience: the comma-joined visible node ids the canvas received.
+function visibleIds(view: ReturnType<typeof render>): string[] {
+  const attr = view.getByTestId("force-canvas").getAttribute("data-visible-ids") ?? "";
+  return attr === "" ? [] : attr.split(",");
 }
 
 describe("ResourceGraph — node search state + controls", () => {
   it("renders the search box on the control card once the graph loads (AC #1)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
     const input = view.getByTestId("graph-search-input");
     // It is a real shadcn <input> (data-slot), not a raw element.
     expect(input.getAttribute("data-slot")).toBe("input");
@@ -205,11 +206,11 @@ describe("ResourceGraph — node search state + controls", () => {
 
   it("typing a deep query auto-expands ancestor hubs and shows current/total count (AC #1, #3)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
 
     // Collapsed by default: the deep matches are hidden under collapsed hubs.
-    expect(view.queryByText("Find me one")).toBeNull();
-    expect(view.queryByText("Alpha proposal")).toBeNull();
+    expect(visibleIds(view)).not.toContain("task-1");
+    expect(visibleIds(view)).not.toContain("prop-1");
 
     await act(async () => {
       fireEvent.change(view.getByTestId("graph-search-input"), {
@@ -219,15 +220,15 @@ describe("ResourceGraph — node search state + controls", () => {
 
     // Auto-expand reveals both deep matches; count settles at "1 / 2".
     await waitFor(() => {
-      expect(view.queryByText("Find me one")).not.toBeNull();
-      expect(view.queryByText("Find me two")).not.toBeNull();
+      expect(visibleIds(view)).toContain("task-1");
+      expect(visibleIds(view)).toContain("task-2");
       expect(view.getByTestId("graph-search-count").textContent).toBe("1 / 2");
     });
   });
 
   it("prev/next step the current-match cursor with wrap-around (AC #3)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
 
     await act(async () => {
       fireEvent.change(view.getByTestId("graph-search-input"), {
@@ -254,7 +255,7 @@ describe("ResourceGraph — node search state + controls", () => {
 
   it("a zero-hit query shows the no-matches hint and disables stepping (AC #3)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
 
     await act(async () => {
       fireEvent.change(view.getByTestId("graph-search-input"), {
@@ -273,50 +274,78 @@ describe("ResourceGraph — node search state + controls", () => {
       (view.getByTestId("graph-search-next") as HTMLButtonElement).disabled,
     ).toBe(true);
     // No auto-expand on a zero-hit query: the deep hub stays collapsed.
-    expect(view.queryByText("Alpha proposal")).toBeNull();
+    expect(visibleIds(view)).not.toContain("prop-1");
   });
 
-  it("clearing restores the pre-search snapshot, preserving manual expansion (AC #2)", async () => {
+  it("clearing keeps search-expanded hubs open (sticky) and clears only the search visual state (Q3=a, AC #1, #2)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
 
-    // Manually expand idea-1 BEFORE searching (reveals its proposal, level 1).
-    await act(async () => {
-      fireEvent.click(view.getByRole("button", { name: "graph.outline.expand:1" }));
-    });
-    await waitFor(() => expect(view.queryByText("Alpha proposal")).not.toBeNull());
-    // prop-1 is NOT manually expanded — its tasks stay hidden.
-    expect(view.queryByText("Find me one")).toBeNull();
+    // Nothing manually expanded: prop-1 + its tasks are hidden under idea-1.
+    expect(visibleIds(view)).not.toContain("prop-1");
+    expect(visibleIds(view)).not.toContain("task-1");
 
-    // Search: auto-expands prop-1 (level 2) so the deep tasks appear.
+    // Search: auto-expands idea-1 → prop-1 so the deep tasks appear.
     await act(async () => {
       fireEvent.change(view.getByTestId("graph-search-input"), {
         target: { value: "find me" },
       });
     });
-    await waitFor(() => expect(view.queryByText("Find me one")).not.toBeNull());
+    await waitFor(() => {
+      expect(visibleIds(view)).toContain("task-1");
+      expect(view.getByTestId("force-canvas").getAttribute("data-match-count")).toBe("2");
+    });
 
-    // Clear via the X button → restore snapshot { ideas: [idea-1], proposals: [] }.
+    // Clear via the X button → STICKY: the hubs the search opened stay open, so
+    // the located branch (task-1/task-2) remains visible. Only the search visual
+    // state (match set + count/nav) is cleared.
     await act(async () => {
       fireEvent.click(view.getByTestId("graph-search-clear"));
     });
 
     await waitFor(() => {
-      // search-forced level-2 expansion collapsed again.
-      expect(view.queryByText("Find me one")).toBeNull();
-      // manual level-1 expansion preserved.
-      expect(view.queryByText("Alpha proposal")).not.toBeNull();
+      // search-forced expansion is PRESERVED, not collapsed.
+      expect(visibleIds(view)).toContain("task-1");
+      expect(visibleIds(view)).toContain("prop-1");
     });
-    // The search session is over: count/nav gone, query cleared.
+    // The search session is over: match set null, count/nav gone, query cleared.
+    expect(view.getByTestId("force-canvas").getAttribute("data-match-count")).toBe("null");
     expect(view.queryByTestId("graph-search-nav")).toBeNull();
     expect(
       (view.getByTestId("graph-search-input") as HTMLInputElement).value,
     ).toBe("");
   });
 
+  it("a hub expanded by search can be manually collapsed after clearing (AC #3)", async () => {
+    const view = renderGraph();
+    await waitFor(() => view.getByTestId("force-canvas"));
+
+    // Search auto-expands idea-1 → prop-1, then clear (sticky keeps them open).
+    await act(async () => {
+      fireEvent.change(view.getByTestId("graph-search-input"), {
+        target: { value: "find me" },
+      });
+    });
+    await waitFor(() => expect(visibleIds(view)).toContain("task-1"));
+    await act(async () => {
+      fireEvent.click(view.getByTestId("graph-search-clear"));
+    });
+    await waitFor(() => expect(visibleIds(view)).toContain("prop-1"));
+
+    // Manually collapse prop-1 (affordance tap) → its tasks hide, ordinary
+    // user-controlled expand state with no search snapshot overriding it.
+    await act(async () => {
+      fireEvent.click(view.getByTestId("expand-prop-1"));
+    });
+    await waitFor(() => expect(visibleIds(view)).not.toContain("task-1"));
+    // prop-1 itself is still visible (idea-1 stays expanded); only its subtree
+    // collapsed.
+    expect(visibleIds(view)).toContain("prop-1");
+  });
+
   it("Enter steps to the next match (wrap-around), but is IME-guarded while composing", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
     const input = view.getByTestId("graph-search-input") as HTMLInputElement;
 
     await act(async () => {
@@ -365,7 +394,7 @@ describe("ResourceGraph — node search state + controls", () => {
 
   it("Esc clears the query when not composing, but is IME-guarded while composing (AC #1, #2)", async () => {
     const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    await waitFor(() => view.getByTestId("force-canvas"));
     const input = view.getByTestId("graph-search-input") as HTMLInputElement;
 
     await act(async () => {
@@ -393,14 +422,13 @@ describe("ResourceGraph — node search state + controls", () => {
   });
 });
 
-// Integration convergence (proposal task 5): the two spec scenarios that span
-// MORE than one renderer / control and weren't covered above — Q7=a type-filter
-// exclusion through the live component, and search-state survival across the
-// canvas↔outline viewport swap.
-describe("ResourceGraph — search integration (type filter + viewport resize)", () => {
+// Integration convergence: the two spec scenarios that span more than one
+// control — Q7=a type-filter exclusion through the live component, and the
+// debounced camera centering on the CURRENT match.
+describe("ResourceGraph — search integration (type filter + camera)", () => {
   it("excludes a filtered-out type from matches WITHOUT flipping the filter checkboxes (Q7=a)", async () => {
-    const view = renderGraph(); // narrow → outline
-    await waitFor(() => view.getByTestId("mindmap-outline"));
+    const view = renderGraph();
+    await waitFor(() => view.getByTestId("force-canvas"));
 
     // Baseline: "find me" matches the two deep TASK nodes → 1 / 2.
     await act(async () => {
@@ -439,43 +467,9 @@ describe("ResourceGraph — search integration (type filter + viewport resize)",
     ).toBe("true");
   });
 
-  it("preserves the active query/matches/current-match across a viewport resize (canvas↔outline)", async () => {
-    // Start narrow (outline), search, step to the 2nd match.
-    const view = renderGraph();
-    await waitFor(() => view.getByTestId("mindmap-outline"));
-    await act(async () => {
-      fireEvent.change(view.getByTestId("graph-search-input"), {
-        target: { value: "find me" },
-      });
-    });
-    await waitFor(() =>
-      expect(view.getByTestId("graph-search-count").textContent).toBe("1 / 2"),
-    );
-    await act(async () => fireEvent.click(view.getByTestId("graph-search-next")));
-    expect(view.getByTestId("graph-search-count").textContent).toBe("2 / 2");
-
-    // Resize to WIDE → the canvas renders from the SAME parent state.
-    await act(async () => {
-      resizeViewport(false);
-    });
-    await waitFor(() => view.getByTestId("force-canvas"));
-    expect(view.queryByTestId("mindmap-outline")).toBeNull();
-
-    // The query/count survive the swap (control card is shared)…
-    expect(
-      (view.getByTestId("graph-search-input") as HTMLInputElement).value,
-    ).toBe("find me");
-    expect(view.getByTestId("graph-search-count").textContent).toBe("2 / 2");
-    // …and the canvas receives the SAME match set + current-match cursor.
-    const canvas = view.getByTestId("force-canvas");
-    expect(canvas.getAttribute("data-match-count")).toBe("2");
-    expect(canvas.getAttribute("data-current-match")).not.toBe("");
-  });
-
   it("debounced camera centers on the CURRENT match, not a stale first match, when stepping inside the debounce window", async () => {
     vi.useFakeTimers();
     try {
-      setViewport(false); // wide → canvas, so centerNodeId is observable
       const view = render(
         <ResourceGraph projectUuid={PROJECT} currentUserUuid={USER} />,
       );

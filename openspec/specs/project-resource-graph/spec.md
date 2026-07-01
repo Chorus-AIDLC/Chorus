@@ -85,7 +85,7 @@ Ideas remain visible as subtrees of their parent Idea.
 
 ### Requirement: Type-based node styling and entity-type filtering
 
-Each node SHALL encode its entity type by color and icon and a type label, and SHALL display a **status indicator** drawn from the node's status value. The status indicator SHALL show: for an Idea, Proposal, or Task, a label and color reflecting the entity's status; for a Document, a label and color reflecting its document type. The status indicator's labels and colors SHALL reuse the application's existing status/type vocabulary (the idea tracker's pipeline-status labels and colors for Ideas; the established proposal, task, and document-type labels and colors for the others) so a node reads consistently with the rest of the app, and SHALL be visually consistent between the horizontal canvas and the vertical outline renderings. The status indicator SHALL be placed so it does not overflow the card or obscure the node's title (a long label may be truncated). The graph SHALL provide a filter that toggles the visibility of each of the four entity types.
+Each node SHALL encode its entity type by color and icon and a type label, and SHALL display a status indicator drawn from the node's status value. The status indicator SHALL show: for an Idea, Proposal, or Task, a label and color reflecting the entity's status; for a Document, a label and color reflecting its document type. The status indicator's labels and colors SHALL reuse the application's existing status/type vocabulary (the idea tracker's pipeline-status labels and colors for Ideas; the established proposal, task, and document-type labels and colors for the others) so a node reads consistently with the rest of the app. The status indicator SHALL be placed so it does not overflow the card or obscure the node's title (a long label may be truncated). The graph SHALL provide a filter that toggles the visibility of each of the four entity types.
 
 #### Scenario: Node shows type and status
 
@@ -97,11 +97,6 @@ Each node SHALL encode its entity type by color and icon and a type label, and S
 - **WHEN** an entity shown in the graph changes status (for example a task moves to done, or a proposal is approved) while a user has the graph open
 - **THEN** the affected node's status indicator updates without a manual page refresh
 
-#### Scenario: Status indication is consistent across renderings
-
-- **WHEN** the same node is shown in the horizontal canvas and in the vertical outline
-- **THEN** its status indicator conveys the same status with a consistent label and color in both renderings
-
 #### Scenario: Filtering hides a node type
 
 - **WHEN** a user toggles off an entity type in the filter
@@ -109,15 +104,7 @@ Each node SHALL encode its entity type by color and icon and a type label, and S
 
 ### Requirement: Agent-presence node highlighting
 
-A graph node SHALL highlight in real time when any agent operates on its
-corresponding entity, reusing the existing per-entity presence signal and
-presence indicator. A node being viewed by an agent SHALL be highlighted with
-the read (dashed) treatment; a node being mutated by an agent SHALL be
-highlighted with the write (solid) treatment; when both occur for a node, the
-write treatment SHALL take precedence. The highlight SHALL identify the acting
-agent. When no agent is operating on an entity, its node SHALL show no presence
-highlight. The highlight SHALL apply in both the horizontal canvas and the
-vertical outline renderings.
+A graph node SHALL highlight in real time when any agent operates on its corresponding entity, reusing the existing per-entity presence signal and presence indicator. A node being viewed by an agent SHALL be highlighted with the read (dashed) treatment; a node being mutated by an agent SHALL be highlighted with the write (solid) treatment; when both occur for a node, the write treatment SHALL take precedence. The highlight SHALL identify the acting agent. When no agent is operating on an entity, its node SHALL show no presence highlight. The highlight SHALL apply in the canvas rendering.
 
 #### Scenario: Viewing agent highlights a node with the read treatment
 
@@ -189,27 +176,17 @@ Clicking a node SHALL open a side preview panel for that entity, reusing the exi
 
 ### Requirement: Mind-map tree rendering
 
-The graph view SHALL render the aggregated nodes and edges as a deterministic,
-collapsible **mind-map tree** rather than a force-directed layout. On a
-wide (desktop) viewport the tree SHALL be laid out horizontally — root Ideas on
-the left with derivation growing rightward, so a node's horizontal depth encodes
-its derivation level — and multiple root Ideas SHALL stack vertically. Node
-coordinates SHALL be computed deterministically (a tree layout, not a physics
-simulation), so that identical inputs and expand state produce identical
-positions and no node moves except in response to an expand, collapse, or user
-action. The view SHALL support zoom and pan. The `derive` and `lineage` edges
-form the tree's connectors and SHALL be drawn as solid links that convey
-direction toward the derived node. The `depends` edges and any multi-source
-proposal links are NOT tree edges: they SHALL be drawn as a distinct
-dashed-style overlay that does not affect the tree layout, SHALL be visually
-quiet by default, and SHALL emphasize only when a node they connect is hovered
-or selected. The three relationship kinds SHALL remain visually distinguishable
-from one another.
+The graph view SHALL render the aggregated nodes and edges as a deterministic, collapsible mind-map tree on every viewport; there is no separate narrow-viewport rendering. The tree SHALL be laid out horizontally on all viewports — root Ideas on the left with derivation growing rightward, so a node's horizontal depth encodes its derivation level — and multiple root Ideas SHALL stack vertically. Node coordinates SHALL be computed deterministically (a tree layout, not a physics simulation), so that identical inputs and expand state produce identical positions and no node moves except in response to an expand, collapse, or user action. The view SHALL support zoom and pan; on a device with a mouse this is the wheel-to-zoom and drag-to-pan behavior, and on a touch device this is the pinch, double-tap, and drag behavior defined by the touch-gesture requirement. On the first non-empty layout the view SHALL fit the whole tree to the viewport exactly once, so that on any viewport (including a small phone screen) the user initially sees the entire tree before zooming in, and the view SHALL NOT auto-refit on later updates. The `derive` and `lineage` edges form the tree's connectors and SHALL be drawn as solid links that convey direction toward the derived node. The `depends` edges and any multi-source proposal links are NOT tree edges: they SHALL be drawn as a distinct dashed-style overlay that does not affect the tree layout, SHALL be visually quiet by default, and SHALL emphasize only when a node they connect is hovered or selected. The three relationship kinds SHALL remain visually distinguishable from one another.
 
-#### Scenario: Tree renders horizontally with pan and zoom on desktop
+#### Scenario: Tree renders horizontally with pan and zoom on any viewport
 
-- **WHEN** a user opens the graph view for a project with entities on a wide viewport
-- **THEN** the entities render as a horizontal mind-map tree with root Ideas on the left and derivatives to the right, and the user can zoom and pan the canvas
+- **WHEN** a user opens the graph view for a project with entities on any viewport
+- **THEN** the entities render as a horizontal mind-map tree with root Ideas on the left and derivatives to the right, and the user can zoom and pan the view
+
+#### Scenario: Graph fits the whole tree to the viewport on first load
+
+- **WHEN** the graph view first renders a non-empty tree on any viewport, including a narrow phone screen
+- **THEN** the view is fit once so the entire tree is visible, and it is not automatically refit on subsequent updates
 
 #### Scenario: Layout is deterministic and does not jitter
 
@@ -226,45 +203,18 @@ from one another.
 - **WHEN** no node is hovered or selected
 - **THEN** the `depends` / multi-source overlay edges are visually quiet, and hovering or selecting a node they connect emphasizes those edges
 
-### Requirement: Responsive vertical outline on narrow viewports
-
-On a narrow (mobile) viewport the graph SHALL render the same tree — with the
-same expand/collapse state — as a **vertical indented outline** that scrolls
-top-to-bottom, instead of the horizontal canvas. Each visible node SHALL appear
-as a row indented in proportion to its derivation depth, preserving the
-left-to-right desktop hierarchy as a top-to-bottom indented hierarchy. The
-outline SHALL present the same expand/collapse affordance and the same
-node-activation behavior (opening the node's side panel) as the desktop view,
-operating on the same shared expand state so switching viewport size does not
-lose the user's expansion.
-
-#### Scenario: Narrow viewport renders a vertical indented outline
-
-- **WHEN** a user opens the graph view on a narrow (mobile) viewport
-- **THEN** the tree renders as a vertical, top-to-bottom indented outline where each node's indentation reflects its derivation depth, rather than the horizontal canvas
-
-#### Scenario: Expand state is shared across viewport sizes
-
-- **WHEN** a user expands a node and the viewport changes between wide and narrow
-- **THEN** the same nodes remain expanded in both the horizontal canvas and the vertical outline, because both render from the same expand state
-
-#### Scenario: Outline supports expand and panel-open
-
-- **WHEN** a user activates a node's expand affordance, or activates the node body, in the vertical outline
-- **THEN** the affordance toggles that node's subtree, and activating the body opens the same per-entity side panel the desktop view opens
-
 ### Requirement: Desktop hover tooltip previewing a node's title and status
 
-On the desktop (canvas) rendering of the resource graph, hovering a node SHALL, after a short delay, display a tooltip anchored beside that node's card showing the entity's full (untruncated) title. Because the node card itself already shows the entity's status, the tooltip SHALL NOT show a status badge — its sole purpose is to reveal the full title that the card may truncate. The tooltip SHALL be anchored to the node card (not tracking the cursor), SHALL NOT occlude the hovered card, SHALL disappear when the pointer leaves the node, and SHALL NOT interfere with the existing hover lineage-highlight or with clicking a node. The title shown by the tooltip SHALL come from data already present in the graph payload, so the tooltip SHALL NOT issue a per-entity network request on hover. This tooltip is desktop-only; the mobile vertical outline SHALL NOT show it. All user-facing text in the tooltip SHALL be localized in both supported locales.
+On the canvas rendering of the resource graph, hovering a node with a pointer SHALL, after a short delay, display a tooltip anchored beside that node's card showing the entity's full (untruncated) title. Because the node card itself already shows the entity's status, the tooltip SHALL NOT show a status badge — its sole purpose is to reveal the full title that the card may truncate. The tooltip SHALL be anchored to the node card (not tracking the cursor), SHALL NOT occlude the hovered card, SHALL disappear when the pointer leaves the node, and SHALL NOT interfere with the existing hover lineage-highlight or with clicking a node. The title shown by the tooltip SHALL come from data already present in the graph payload, so the tooltip SHALL NOT issue a per-entity network request on hover. Because it is driven by a hovering pointer, the tooltip appears only on a device with a mouse; on a touch device, where there is no hover, the tooltip SHALL NOT appear, and a tap SHALL instead open the node's side panel so the full title is read there. All user-facing text in the tooltip SHALL be localized in both supported locales.
 
 #### Scenario: Hovering a node shows its full title
 
-- **WHEN** a user hovers a node on the desktop graph canvas and pauses briefly
+- **WHEN** a user hovers a node on the graph canvas with a pointer and pauses briefly
 - **THEN** a tooltip appears beside that node's card showing the entity's full, untruncated title and no status badge
 
 #### Scenario: Tooltip does not fetch on hover
 
-- **WHEN** a user hovers nodes on the desktop graph canvas
+- **WHEN** a user hovers nodes on the graph canvas
 - **THEN** no per-entity detail network request is issued for the tooltip (the title is taken from the already-loaded graph payload)
 
 #### Scenario: Tooltip clears on mouse-out and does not block interaction
@@ -272,10 +222,10 @@ On the desktop (canvas) rendering of the resource graph, hovering a node SHALL, 
 - **WHEN** the pointer leaves the hovered node
 - **THEN** the tooltip disappears, and while shown it neither occludes the hovered card nor intercepts clicks intended for the canvas
 
-#### Scenario: Tooltip is desktop-only
+#### Scenario: Tooltip does not appear on touch
 
-- **WHEN** the graph is rendered as the mobile vertical outline (narrow viewport)
-- **THEN** no hover tooltip is shown (tapping a row opens the entity's side panel instead)
+- **WHEN** the graph is used on a touch device, where there is no hover
+- **THEN** no hover tooltip is shown, and tapping a node opens that entity's side panel instead
 
 ### Requirement: Node search with highlight, dim, and auto-expand to matches
 
@@ -327,7 +277,7 @@ While a search is active, the hover (and selection) lineage-highlight SHALL take
 
 ### Requirement: Match count and previous/next navigation centered on each match
 
-The search controls SHALL display a match count and SHALL support stepping through matches. The controls SHALL show the current position and total number of matches (for example `3 / 12`), and SHALL provide previous and next actions that move a current-match cursor through the matches in their top-to-bottom reading order, wrapping around from the last match to the first and from the first to the last. Pressing Enter in the search input SHALL step to the next match and pressing Shift+Enter SHALL step to the previous match, using the same wrap-around cursor as the previous/next actions; this key handling SHALL be suppressed while an IME composition is in progress so confirming a candidate word does not advance the match. Activating a match as current SHALL bring it into view — on the desktop canvas by centering the camera on that node, and on the mobile vertical outline by scrolling that row into view. The current match SHALL receive a distinct visual indication separate from the plain-match highlight and from the selection indication. Recentering the camera in response to query edits SHALL be debounced so the view does not jump on every keystroke.
+The search controls SHALL display a match count and SHALL support stepping through matches. The controls SHALL show the current position and total number of matches (for example `3 / 12`), and SHALL provide previous and next actions that move a current-match cursor through the matches in their top-to-bottom reading order, wrapping around from the last match to the first and from the first to the last. Pressing Enter in the search input SHALL step to the next match and pressing Shift+Enter SHALL step to the previous match, using the same wrap-around cursor as the previous/next actions; this key handling SHALL be suppressed while an IME composition is in progress so confirming a candidate word does not advance the match. Activating a match as current SHALL bring it into view by centering the camera on that node; because the graph renders as a canvas on all viewports, camera centering is the single bring-into-view behavior. The current match SHALL receive a distinct visual indication separate from the plain-match highlight and from the selection indication. Recentering the camera in response to query edits SHALL be debounced so the view does not jump on every keystroke.
 
 #### Scenario: Count shows current position and total
 
@@ -349,41 +299,85 @@ The search controls SHALL display a match count and SHALL support stepping throu
 - **WHEN** the user presses Enter to confirm an IME candidate word in the search input
 - **THEN** the match cursor does not advance (the key handling is suppressed while composing)
 
-#### Scenario: Current match is centered in both renderings
+#### Scenario: Current match is centered on the canvas
 
 - **WHEN** a match becomes the current match
-- **THEN** the desktop canvas centers the camera on that node and the mobile outline scrolls that row into view
+- **THEN** the canvas centers the camera on that node so it is brought into view
 
 #### Scenario: Empty result shows a no-matches hint and disables stepping
 
 - **WHEN** a query matches no nodes
 - **THEN** the controls show a localized no-matches hint, the count shows zero, the previous/next actions are disabled, and all nodes remain at normal opacity (the tree is not dimmed)
 
-### Requirement: Search restores the pre-search expand state on exit
+### Requirement: Touch pinch, double-tap, and drag gestures on the canvas
 
-The graph SHALL restore the user's expand/collapse layout when a search ends. When a search begins (the query goes from blank to non-blank), the graph SHALL snapshot the current set of expanded ideas and proposals; when the search ends (the query is cleared via the clear control, the Escape key, or by becoming blank), the graph SHALL restore that snapshot, so any hubs expanded solely to reveal matches are collapsed again and the user's manual expansion is preserved. While the search is active, auto-expansion SHALL only add expanded hubs and SHALL NOT collapse a hub the user had expanded.
+The canvas mind-map SHALL be zoomable and pannable by touch on a touch device, reusing the same view transform (scale plus translation) and the same zoom clamp the mouse-wheel path uses. A two-finger pinch SHALL zoom the tree — spreading the fingers zooms in and pinching them together zooms out — anchored on the midpoint between the two touch points so the graph point under that midpoint stays under it during the gesture; while the two fingers move, the tree SHALL also pan to follow the midpoint, giving a map-like feel where the graph both scales and moves with the fingers. A double-tap SHALL zoom in centered on the tapped point, and a subsequent double-tap SHALL reset the zoom, so a double-tap toggles between a zoomed-in view and the fit view. A single-finger drag SHALL pan the tree as it does today. The resulting scale SHALL be clamped to the same minimum and maximum bounds the wheel zoom uses. These touch gestures SHALL NOT change the existing mouse behavior (wheel zoom, drag pan) on a pointer device.
 
-#### Scenario: Exiting search collapses search-forced expansion
+#### Scenario: Two-finger pinch zooms around the midpoint
 
-- **WHEN** a search expanded hubs to reveal matches and the user then clears the query
-- **THEN** those search-forced expansions are collapsed and the expand/collapse layout returns to what it was before the search began
+- **WHEN** a user places two fingers on the canvas and spreads them apart or pinches them together
+- **THEN** the tree zooms in or out around the midpoint between the fingers, staying within the same minimum and maximum zoom bounds as the wheel zoom
 
-#### Scenario: Manual expansion is preserved during search
+#### Scenario: Pinch follows the two-finger midpoint
 
-- **WHEN** the user had a hub expanded before searching
-- **THEN** that hub remains expanded throughout the search and after the query is cleared
+- **WHEN** a user moves two fingers across the canvas during a pinch
+- **THEN** the tree pans to follow the midpoint of the two fingers while zooming, giving a map-like combined zoom-and-move
 
-### Requirement: Node search is available in both the canvas and the outline renderings
+#### Scenario: Double-tap zooms in and toggles back
 
-Node search SHALL be available in both the desktop canvas and the mobile vertical outline renderings, operating on the same shared search and expand state. Both renderings SHALL apply the match highlight and non-match dim, SHALL bring the current match into view when it changes (camera centering on the canvas, scroll-into-view on the outline), and SHALL present the same match count and previous/next controls. Because both renderings read the same shared state, changing the viewport size SHALL preserve the active query, the match set, and the current-match position.
+- **WHEN** a user double-taps a point on the canvas
+- **THEN** the view zooms in centered on that point, and a further double-tap resets the view to the fit zoom
 
-#### Scenario: Search works in the mobile outline
+#### Scenario: Single-finger drag still pans
 
-- **WHEN** a user searches on a narrow viewport
-- **THEN** the vertical outline highlights matching rows, dims non-matching rows, scrolls the current match into view, and shows the same count and previous/next controls
+- **WHEN** a user drags with one finger on the canvas
+- **THEN** the tree pans, unchanged from the existing single-pointer pan behavior
 
-#### Scenario: Search state is shared across viewport sizes
+#### Scenario: Mouse behavior is unchanged
 
-- **WHEN** a user has an active search and the viewport changes between wide and narrow
-- **THEN** the query, the matches, and the current-match position carry over because both renderings render from the same shared search state
+- **WHEN** a user uses a mouse wheel or a drag on a pointer device
+- **THEN** zoom and pan behave exactly as they did before the touch gestures were added
+
+### Requirement: Collapsible control panel on narrow viewports
+
+The graph's control panel (the top-right card holding the node-search input, the entity-type filter, and the expand-all / collapse-all action) SHALL, on a narrow (mobile) viewport, collapse by default to a single compact control (an icon button) so it does not obscure the canvas, and SHALL expand to reveal the full panel only when the user activates that control. On a wide (desktop) viewport the panel SHALL remain shown as it is today. When expanded on a narrow viewport the panel SHALL offer all the same controls (search, type filter, expand / collapse-all) as the desktop panel, and the user SHALL be able to collapse it again. Collapsing or expanding the panel SHALL NOT change the search query, the type-filter selections, or the expand / collapse state of the tree.
+
+#### Scenario: Panel is collapsed to an icon on a narrow viewport
+
+- **WHEN** a user opens the graph view on a narrow (mobile) viewport
+- **THEN** the control panel is collapsed to a single compact control that does not obscure the canvas
+
+#### Scenario: Activating the control expands the full panel
+
+- **WHEN** a user activates the collapsed control on a narrow viewport
+- **THEN** the full panel opens with the search input, the type filter, and the expand / collapse-all action, and the user can collapse it again
+
+#### Scenario: Desktop panel is unchanged
+
+- **WHEN** a user opens the graph view on a wide (desktop) viewport
+- **THEN** the control panel is shown expanded as before, not collapsed to an icon
+
+#### Scenario: Toggling the panel preserves state
+
+- **WHEN** a user collapses or expands the panel while a search query, a type-filter change, or a tree expansion is active
+- **THEN** the query, the filter selections, and the tree expand / collapse state are all preserved
+
+### Requirement: Clearing search preserves search-expanded nodes
+
+When a search ends, the graph SHALL keep every currently expanded node expanded — including hubs that were auto-expanded to reveal matches — rather than collapsing back to the pre-search layout. Clearing the query (via the clear control, the Escape key, or the query becoming blank) SHALL clear only the pure-search visual state — the match highlight, the non-match dim, the match count, and the current-match navigation cursor — and SHALL NOT collapse any expanded hub. The graph SHALL NOT snapshot the pre-search expand state and SHALL NOT restore it on exit. Auto-expansion during a search SHALL continue to only add expanded hubs and SHALL never collapse a hub the user had expanded.
+
+#### Scenario: Cleared search keeps the nodes it expanded
+
+- **WHEN** a search auto-expanded hubs to reveal matches and the user then clears the query
+- **THEN** those hubs stay expanded and the located branches remain visible, rather than collapsing back to the pre-search layout
+
+#### Scenario: Clearing search removes only the search visual state
+
+- **WHEN** the user clears the query
+- **THEN** the match highlight, the non-match dim, the match count, and the current-match cursor are removed, while the expand / collapse state of every node is left unchanged
+
+#### Scenario: Manual collapse still works after clearing
+
+- **WHEN** the user clears a search and then collapses a hub that had been expanded to reveal a match
+- **THEN** that hub collapses normally, because expansion is now ordinary user-controlled state with no search snapshot overriding it
 
