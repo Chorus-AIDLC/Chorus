@@ -1,10 +1,11 @@
 // src/app/(dashboard)/projects/[uuid]/graph/node-status.ts
 //
-// Shared status presentation for resource-graph nodes. Both renderers — the
-// canvas painter (mindmap-canvas.tsx) and the outline row (mindmap-outline.tsx)
-// — consume `(type, statusValue)` and need ONE source of truth for the label
-// key and color pair, so canvas (which paints raw hex via Path2D) and DOM
-// (which mounts a shadcn <Badge> with Tailwind classes) stay color-identical.
+// Shared status presentation for resource-graph nodes. The canvas painter
+// (mindmap-canvas.tsx) consumes `(type, statusValue)` and needs ONE source of
+// truth for the label key and color pair. (The DOM outline renderer that also
+// consumed this was removed when the canvas became the sole rendering on all
+// viewports; the resolver stays shared so any future consumer remains
+// color-identical to the canvas, which paints raw hex via Path2D.)
 //
 // Vocabularies (verbatim from the existing per-entity surfaces — do not
 // re-pick colors here):

@@ -1599,9 +1599,9 @@
       "lineage": "Lineage",
       "depends": "Depends"
     },
-    "outline": {
-      "expand": "Expand {count} children",
-      "collapse": "Collapse children"
+    "controls": {
+      "open": "Show graph controls",
+      "close": "Hide graph controls"
     },
     "search": {
       "placeholder": "Search nodes…",

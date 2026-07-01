@@ -1600,9 +1600,9 @@
       "lineage": "脉络",
       "depends": "依赖"
     },
-    "outline": {
-      "expand": "展开 {count} 个子节点",
-      "collapse": "收起子节点"
+    "controls": {
+      "open": "显示图谱控制面板",
+      "close": "隐藏图谱控制面板"
     },
     "search": {
       "placeholder": "搜索节点…",

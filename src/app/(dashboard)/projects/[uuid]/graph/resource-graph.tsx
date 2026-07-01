@@ -51,6 +51,7 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,6 @@ import {
 } from "@/lib/resource-graph-search";
 import { computeTreeLayout } from "@/lib/resource-graph-tree-layout";
 import { shouldShowExpandAffordance } from "./expand-affordance";
-import { MindMapOutline } from "./mindmap-outline";
 import type {
   ResourceGraphResult,
   ResourceGraphNodeType as NodeType,
@@ -252,6 +252,13 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   // reacts to a change by centering. (The canvas centering itself is wired in a
   // sibling task; here we only own + pass the signal.)
   const [centerNodeId, setCenterNodeId] = useState<string | null>(null);
+
+  // Control-panel collapse (D5, q6=a). On a narrow viewport the top-right card
+  // (search + type filter + expand-all) would overlay the canvas — which now
+  // renders on mobile too — so it collapses to a single icon button and expands
+  // on tap. Desktop always shows the full panel. Local UI state only: toggling
+  // never touches searchQuery / visible / the expand sets.
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // Live mirrors of the expand sets so the snapshot effect can read the CURRENT
   // values at the blank→non-blank edge without listing them as deps (which would
@@ -1020,40 +1027,58 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
         )}
 
         {/* Renderer. Hidden (but the container stays) when empty so the filter
-            overlay still toggles types back on. On a narrow viewport the DOM
-            vertical indented outline renders; on a wide viewport the Canvas-2D
-            mind-map. Both take the same nodes/links + onNodeClick contract and
-            read the same shared expand state, so resizing preserves expansion. */}
-        {!isEmpty &&
-          (isMobile ? (
-            <MindMapOutline
-              nodes={forceNodes}
-              links={forceLinks}
-              selectedId={selectedNodeId}
-              onNodeClick={handleNodeClick}
-              matchIds={matchIds}
-              currentMatchId={currentMatchId}
-            />
-          ) : (
-            <ForceGraphCanvas
-              nodes={forceNodes}
-              links={forceLinks}
-              selectedId={selectedNodeId}
-              onNodeClick={handleNodeClick}
-              matchIds={matchIds}
-              currentMatchId={currentMatchId}
-              centerNodeId={centerNodeId}
-            />
-          ))}
+            overlay still toggles types back on. The Canvas-2D mind-map renders
+            on EVERY viewport now — the mobile vertical outline was abandoned, so
+            phones use the same touch-zoomable canvas (with the one-time
+            fit-to-view framing the whole tree on first load). */}
+        {!isEmpty && (
+          <ForceGraphCanvas
+            nodes={forceNodes}
+            links={forceLinks}
+            selectedId={selectedNodeId}
+            onNodeClick={handleNodeClick}
+            matchIds={matchIds}
+            currentMatchId={currentMatchId}
+            centerNodeId={centerNodeId}
+          />
+        )}
 
-        {/* Control panel — single top-right overlay combining the type filter
-            and the expand-all/collapse-all action. Consolidated into one card
-            (rather than a separate left-side button) so nothing overlays the
-            graph/outline content on mobile, where the outline rows start at the
-            left edge. The expand toggle drives the shared expand state, so it
-            affects both the canvas and the mobile outline. */}
+        {/* Control panel — single top-right overlay combining node search, the
+            type filter, and the expand-all/collapse-all action. Now that the
+            canvas renders on mobile too, this fixed card would overlay the graph
+            on a narrow viewport, so there it collapses to a single icon button
+            (D5, q6=a) and expands on tap. Desktop always shows the full card. */}
         <div className="absolute right-3 top-3 z-10">
+          {isMobile && !panelOpen ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setPanelOpen(true)}
+              aria-label={t("graph.controls.open")}
+              data-testid="graph-controls-toggle"
+              className="bg-white/95 shadow-sm backdrop-blur"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </Button>
+          ) : (
           <Card className="w-[224px] border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+            {/* Collapse control — mobile only; desktop keeps the panel pinned. */}
+            {isMobile && (
+              <div className="mb-2 flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => setPanelOpen(false)}
+                  aria-label={t("graph.controls.close")}
+                  data-testid="graph-controls-collapse"
+                  className="text-[#6B6B6B]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
             {/* Node search (Tech Design D8). Hidden when empty — nothing to
                 search. Sits above the type filter on the same control card. */}
             {!isEmpty && (
@@ -1187,6 +1212,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               </>
             )}
           </Card>
+          )}
         </div>
       </div>
       {panels}
