@@ -39,19 +39,24 @@ function MockCanvas({
   nodes,
   matchIds,
   currentMatchId,
+  centerNodeId,
 }: {
   nodes: { id: string }[];
   matchIds?: ReadonlySet<string> | null;
   currentMatchId?: string | null;
+  centerNodeId?: string | null;
 }) {
   // Expose the shared search props so a test can assert they survive the
-  // outline→canvas swap on resize (the canvas reads the SAME parent state).
+  // outline→canvas swap on resize (the canvas reads the SAME parent state) and
+  // that the debounced camera signal (centerNodeId) stays in sync with the
+  // current-match cursor.
   return (
     <div
       data-testid="force-canvas"
       data-node-count={nodes.length}
       data-match-count={matchIds ? matchIds.size : "null"}
       data-current-match={currentMatchId ?? ""}
+      data-center-node={centerNodeId ?? ""}
     />
   );
 }
@@ -465,5 +470,47 @@ describe("ResourceGraph — search integration (type filter + viewport resize)",
     const canvas = view.getByTestId("force-canvas");
     expect(canvas.getAttribute("data-match-count")).toBe("2");
     expect(canvas.getAttribute("data-current-match")).not.toBe("");
+  });
+
+  it("debounced camera centers on the CURRENT match, not a stale first match, when stepping inside the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      setViewport(false); // wide → canvas, so centerNodeId is observable
+      const view = render(
+        <ResourceGraph projectUuid={PROJECT} currentUserUuid={USER} />,
+      );
+      // Drain the mount fetch + effects under fake timers.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        fireEvent.change(view.getByTestId("graph-search-input"), {
+          target: { value: "find me" },
+        });
+      });
+
+      // Step to match #2 BEFORE the 200ms camera debounce fires (the race window).
+      await act(async () => {
+        fireEvent.click(view.getByTestId("graph-search-next"));
+      });
+      expect(view.getByTestId("graph-search-count").textContent).toBe("2 / 2");
+      const currentAfterStep = view
+        .getByTestId("force-canvas")
+        .getAttribute("data-current-match");
+
+      // Now let the debounce fire. It must recenter on the CURRENT match (#2),
+      // not snap the camera back to the first match — otherwise the pink ring +
+      // count (on #2) and the camera (on #1) desync.
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+      const canvas = view.getByTestId("force-canvas");
+      expect(canvas.getAttribute("data-center-node")).toBe(currentAfterStep);
+      // And the count/ring did not move.
+      expect(view.getByTestId("graph-search-count").textContent).toBe("2 / 2");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

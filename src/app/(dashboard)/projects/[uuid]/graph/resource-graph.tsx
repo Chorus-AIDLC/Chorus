@@ -704,14 +704,25 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
   }, [searchQuery]);
 
   // Debounced camera recenter (D6): ~200ms after the query settles, center on
-  // the first match. Reads the latest ordered list via ref so it picks up
-  // matches revealed by the just-applied auto-expand. Highlight/dim + count
-  // update immediately (above); only the camera move waits.
+  // the CURRENT match. Reads the latest ordered list + cursor via refs so it
+  // picks up matches revealed by the just-applied auto-expand. On a brand-new
+  // query `currentMatchIndex` was just reset to 0 (effect above), so this still
+  // centers the first match; but if the user stepped (next/Enter) inside the
+  // debounce window, we center the match the ring + count now point at rather
+  // than snapping the camera back to #0 (avoids a camera/ring desync).
+  // Highlight/dim + count update immediately (above); only the camera move waits.
   useEffect(() => {
     if (matchIds === null) return; // not searching
     const handle = setTimeout(() => {
-      const first = orderedMatchIdsRef.current[0] ?? null;
-      setCenterNodeId(first);
+      const list = orderedMatchIdsRef.current;
+      if (list.length === 0) {
+        setCenterNodeId(null);
+        return;
+      }
+      const idx =
+        ((currentMatchIndexRef.current % list.length) + list.length) %
+        list.length;
+      setCenterNodeId(list[idx]);
     }, 200);
     return () => clearTimeout(handle);
   }, [searchQuery, matchIds]);
