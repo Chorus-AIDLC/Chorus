@@ -299,4 +299,5 @@ This is a soft heuristic, not a rule — use judgment. Cycle prevention is autom
 
 - Once elaboration is resolved, use the `proposal-chorus` skill (`<BASE_URL>/skill/proposal-chorus/SKILL.md`) to create a Proposal with document and task drafts
 - **Human "Verify Elaborate" handoff:** when a human clicks **Verify Elaborate** on the idea-detail panel, Chorus resolves the elaboration and wakes the Idea's assigned daemon agent to write the proposal — so the woken agent picks up this idea→proposal handoff automatically (no human-authored proposal needed).
+- **Human "Start Development" handoff:** once the proposal is approved and unfinished tasks remain, the idea-detail panel shows a **Start Development** button (enabled while the assignee agent is online). A `start_development` wake means: claim and execute ALL remaining tasks of the idea's approved proposal in dependency order until none are claimable — not just one task.
 - For platform overview and shared tools, see the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`)

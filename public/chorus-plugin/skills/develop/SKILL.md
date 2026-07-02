@@ -436,4 +436,5 @@ chorus_add_comment({ targetType: "task", targetUuid: "<task-uuid>", content: "Re
 ## Next
 
 - After submitting for verification, an Admin reviews using `/review`
+- **Human "Start Development" wake:** a `start_development` wake (the human clicked **Start Development** on the idea-detail panel) means: claim and execute ALL remaining tasks of the idea's approved proposal in dependency order — loop this workflow until no claimable task remains, leaving `to_verify` and other-session tasks untouched.
 - For platform overview and shared tools, see `/chorus`
