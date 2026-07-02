@@ -59,6 +59,12 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { usePanelUrl } from "@/hooks/use-panel-url";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -1037,10 +1043,10 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
           ) : (
-          <Card className="w-[224px] border-[#E5E0D8] bg-white/95 p-3 shadow-sm backdrop-blur">
+          <Card className="w-[208px] border-[#E5E0D8] bg-white/95 p-2.5 shadow-sm backdrop-blur">
             {/* Collapse control — mobile only; desktop keeps the panel pinned. */}
             {isMobile && (
-              <div className="mb-2 flex justify-end">
+              <div className="mb-1.5 flex justify-end">
                 <Button
                   type="button"
                   variant="ghost"
@@ -1057,41 +1063,78 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
             {/* Node search (Tech Design D8). Hidden when empty — nothing to
                 search. Sits above the type filter on the same control card. */}
             {!isEmpty && (
-              <div className="mb-3" data-testid="graph-search">
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9A9A9A]"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={handleSearchKeyDown}
-                    placeholder={t("graph.search.placeholder")}
-                    aria-label={t("graph.search.placeholder")}
-                    data-testid="graph-search-input"
-                    className="h-8 pl-8 pr-8 text-xs"
-                  />
-                  {searchQuery !== "" && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={clearSearch}
-                      aria-label={t("graph.search.clear")}
-                      data-testid="graph-search-clear"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6B6B6B]"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
+              <div className="mb-2" data-testid="graph-search">
+                {/* Search input + expand-all share one row: the input takes the
+                    remaining width and the expand-all / collapse-all toggle sits
+                    at its right. The action carries only an icon (no inline
+                    label) — a hover tooltip explains it, so the row stays short
+                    and we drop the separate "Show" heading entirely. */}
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <Search
+                      className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#9A9A9A]"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={handleSearchKeyDown}
+                      placeholder={t("graph.search.placeholder")}
+                      aria-label={t("graph.search.placeholder")}
+                      data-testid="graph-search-input"
+                      className="h-8 pl-8 pr-8 text-xs"
+                    />
+                    {searchQuery !== "" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={clearSearch}
+                        aria-label={t("graph.search.clear")}
+                        data-testid="graph-search-clear"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6B6B6B]"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={anyExpanded ? collapseAll : expandAll}
+                          aria-label={
+                            anyExpanded
+                              ? t("graph.collapseAll")
+                              : t("graph.expandAll")
+                          }
+                          data-testid="graph-expand-toggle"
+                          className="shrink-0 text-[#6B6B6B]"
+                        >
+                          {anyExpanded ? (
+                            <Minimize2 className="h-3.5 w-3.5" />
+                          ) : (
+                            <Maximize2 className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {anyExpanded
+                          ? t("graph.collapseAll")
+                          : t("graph.expandAll")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
 
                 {/* Count + prev/next + no-matches hint — only while searching. */}
                 {isSearching && (
                   <div
-                    className="mt-2 flex items-center justify-between gap-2"
+                    className="mt-1.5 flex items-center justify-between gap-2"
                     data-testid="graph-search-nav"
                   >
                     {totalMatches > 0 ? (
@@ -1141,22 +1184,24 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               </div>
             )}
 
-            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[#6B6B6B]">
-              {t("graph.filters.heading")}
-            </p>
-            <div className="flex flex-col gap-2">
+            {/* Type filter — a 2×2 grid (was a 4-row vertical stack) so the four
+                toggles read as a compact legend and halve the card's height. The
+                explanatory "Show" heading row was dropped: the color swatches +
+                labels are self-evident, and the expand-all action moved up onto
+                the search row, so no heading is needed here. */}
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
               {(["idea", "proposal", "task", "document"] as NodeType[]).map((type) => {
                 const swatch = FILTER_SWATCH[type];
                 const id = `graph-filter-${type}`;
                 return (
-                  <div key={type} className="flex items-center gap-2">
+                  <div key={type} className="flex items-center gap-1.5">
                     <Checkbox
                       id={id}
                       checked={visible[type]}
                       onCheckedChange={() => toggleType(type)}
                     />
                     <span
-                      className="h-2 w-2 rounded-full"
+                      className="h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: swatch.color }}
                     />
                     <Label htmlFor={id} className="cursor-pointer text-xs text-[#2C2C2C]">
@@ -1166,26 +1211,6 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                 );
               })}
             </div>
-            {/* Expand-all / collapse-all — flips mode based on current state.
-                Hidden when empty (nothing to expand). */}
-            {!isEmpty && (
-              <>
-                <div className="my-2 h-px bg-[#EFEAE2]" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-center gap-2"
-                  onClick={anyExpanded ? collapseAll : expandAll}
-                >
-                  {anyExpanded ? (
-                    <Minimize2 className="h-3.5 w-3.5" />
-                  ) : (
-                    <Maximize2 className="h-3.5 w-3.5" />
-                  )}
-                  {anyExpanded ? t("graph.collapseAll") : t("graph.expandAll")}
-                </Button>
-              </>
-            )}
           </Card>
           )}
         </div>
