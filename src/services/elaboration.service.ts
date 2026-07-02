@@ -6,6 +6,11 @@ import { eventBus } from "@/lib/event-bus";
 import { activityService } from "@/services";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import {
+  executeStageAdvance,
+  StageAdvanceError,
+  type StageAdvanceDefinition,
+} from "@/services/stage-advance.service";
+import {
   type QuestionInput,
   type AnswerInput,
   type ElaborationDepth,
@@ -372,6 +377,45 @@ export async function resolveElaboration({
  * so the downstream wake can tell "human verified → write proposal" apart from
  * "agent self-validated."
  */
+const ELABORATION_VERIFIED_STAGE: StageAdvanceDefinition = {
+  action: "elaboration_verified",
+  // Same structural precondition as resolveElaboration: at least one round and
+  // every round answered (a round counts as answered once it leaves
+  // `pending_answers`; legacy `validated` rounds count the same as `answered`).
+  precondition: async ({ companyUuid, ideaUuid }) => {
+    const rounds = await prisma.elaborationRound.findMany({
+      where: { ideaUuid, companyUuid },
+    });
+    if (rounds.length === 0) {
+      throw new StageAdvanceError(
+        "PRECONDITION_FAILED",
+        "Cannot resolve: the Idea has no elaboration rounds",
+        "no_rounds"
+      );
+    }
+    const unanswered = rounds.filter((r) => r.status === "pending_answers");
+    if (unanswered.length > 0) {
+      throw new StageAdvanceError(
+        "PRECONDITION_FAILED",
+        `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`,
+        "pending_answers"
+      );
+    }
+    return { totalRounds: rounds.length };
+  },
+  // Same state transition as resolveElaboration (Idea-level; round statuses
+  // untouched).
+  transition: async ({ ideaUuid }) => {
+    await prisma.idea.update({
+      where: { uuid: ideaUuid },
+      data: { status: "elaborated", elaborationStatus: "resolved" },
+    });
+  },
+  // Resolution is never blocked by daemon liveness: an offline agent's wake is
+  // recovered by the reconnect notification-backfill.
+  offlinePolicy: "queue",
+};
+
 export async function verifyElaboration({
   companyUuid,
   ideaUuid,
@@ -383,51 +427,12 @@ export async function verifyElaboration({
   actorUuid: string;
   actorType: string;
 }): Promise<ElaborationResponse> {
-  // Scope the Idea by company. Unlike resolveElaboration, the actor is NOT
-  // required to be the assignee — the human verifier is a company user, not
-  // the assigned daemon agent.
-  const idea = await prisma.idea.findFirst({
-    where: { uuid: ideaUuid, companyUuid },
-  });
-  if (!idea) throw new Error("Idea not found");
-
-  // Same structural precondition as resolveElaboration: at least one round and
-  // every round answered (a round counts as answered once it leaves
-  // `pending_answers`; legacy `validated` rounds count the same as `answered`).
-  const rounds = await prisma.elaborationRound.findMany({
-    where: { ideaUuid, companyUuid },
-  });
-  if (rounds.length === 0) {
-    throw new Error("Cannot resolve: the Idea has no elaboration rounds");
-  }
-  const unanswered = rounds.filter((r) => r.status === "pending_answers");
-  if (unanswered.length > 0) {
-    throw new Error(
-      `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`
-    );
-  }
-
-  // Same state transition as resolveElaboration (Idea-level; round statuses
-  // untouched).
-  await prisma.idea.update({
-    where: { uuid: ideaUuid },
-    data: { status: "elaborated", elaborationStatus: "resolved" },
-  });
-
-  await activityService.createActivity({
+  await executeStageAdvance(ELABORATION_VERIFIED_STAGE, {
     companyUuid,
-    projectUuid: idea.projectUuid,
-    targetType: "idea",
-    targetUuid: ideaUuid,
-    actorType,
+    ideaUuid,
     actorUuid,
-    action: "elaboration_verified",
-    value: {
-      totalRounds: rounds.length,
-    },
+    actorType,
   });
-
-  eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
   return getElaboration({ companyUuid, ideaUuid });
 }
