@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { startDevelopment } from "@/services/start-development.service";
+import {
+  startDevelopment,
+  START_DEVELOPMENT_REASONS,
+} from "@/services/start-development.service";
 import { StageAdvanceError } from "@/services/stage-advance.service";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -31,8 +34,10 @@ function toErrorCode(error: unknown): StartDevelopmentErrorCode {
       case "AGENT_OFFLINE":
         return "agent_offline";
       case "PRECONDITION_FAILED":
-        if (error.reason === "no_approved_proposal") return "no_approved_proposal";
-        if (error.reason === "no_unfinished_tasks") return "no_unfinished_tasks";
+        if (error.reason === START_DEVELOPMENT_REASONS.NO_APPROVED_PROPOSAL)
+          return "no_approved_proposal";
+        if (error.reason === START_DEVELOPMENT_REASONS.NO_UNFINISHED_TASKS)
+          return "no_unfinished_tasks";
         return "unknown";
     }
   }
@@ -72,7 +77,16 @@ export async function startDevelopmentAction(
 
     return { success: true };
   } catch (error) {
-    logger.error({ err: error, ideaUuid }, "Failed to start development");
+    // Expected, user-visible rejections (offline agent, stale button state)
+    // are not errors — keep them at info so error logs stay meaningful.
+    if (error instanceof StageAdvanceError) {
+      logger.info(
+        { code: error.code, reason: error.reason, ideaUuid },
+        "Start development rejected"
+      );
+    } else {
+      logger.error({ err: error, ideaUuid }, "Failed to start development");
+    }
     return { success: false, errorCode: toErrorCode(error) };
   }
 }
