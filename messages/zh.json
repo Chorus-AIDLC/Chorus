@@ -1583,7 +1583,6 @@
     "expandAll": "全部展开",
     "collapseAll": "全部收起",
     "filters": {
-      "heading": "显示",
       "idea": "想法",
       "proposal": "提案",
       "task": "任务",

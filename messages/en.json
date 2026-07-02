@@ -1582,7 +1582,6 @@
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
     "filters": {
-      "heading": "Show",
       "idea": "Ideas",
       "proposal": "Proposals",
       "task": "Tasks",
