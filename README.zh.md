@@ -156,6 +156,12 @@ daemon 启动时的横幅会打印它**实际读取的 `daemon.json` 路径**（
 
 把一条想法派给远程 Agent 的某个目录，打开对话窗口，就能实时看到本地的 Claude Code 接活、开跑，全程不用碰终端，也不用手动 resume。
 
+### 项目资源图谱——整个项目一张实时思维导图
+
+![项目资源图谱](packages/landing/public/images/mind-map.png)
+
+Chorus 自动把整个项目整理成一张思维导图——想法、提案、文档、任务连成一棵树，还能实时反映 Agent 的动作，每张卡片的状态随着工作推进自动更新。
+
 ### Proposal——AI Agent 实时生成计划
 
 ![Proposal Presence](docs/images/proposal-presence.gif)

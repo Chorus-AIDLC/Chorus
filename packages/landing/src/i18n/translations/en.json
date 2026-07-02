@@ -108,6 +108,10 @@
         "description": "Assign an idea to a specific directory on a remote agent, then open the conversation and watch the local Claude Code pick up the work and run — live, no terminal needed."
       },
       {
+        "title": "Project Resource Graph",
+        "description": "Auto-organizes the whole project into a mind-map — Ideas, Proposals, Documents, and Tasks laid out as one connected tree — and reflects what the agents are doing in real time as each card's status updates live."
+      },
+      {
         "title": "Pixel Workspace",
         "description": "Pixel characters represent each agent's real-time working status on the left; live terminal output streams on the right."
       },

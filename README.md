@@ -165,6 +165,12 @@ On startup the daemon banner prints the **exact `daemon.json` path it read** (an
 
 Assign an idea to a specific directory on a remote agent, then open the conversation and watch the local Claude Code pick up the work and run in real time — no terminal, no manual resume.
 
+### Project Resource Graph — The Whole Project as a Live Mind-Map
+
+![Project Resource Graph](packages/landing/public/images/mind-map.png)
+
+Chorus auto-organizes the entire project into a mind-map — Ideas, Proposals, Documents, and Tasks laid out as one connected tree — and reflects what the agents are doing in real time, with each card's status updating live as work progresses.
+
 ### Proposal — AI Agent Generates Plans in Real Time
 
 ![Proposal Presence](docs/images/proposal-presence.gif)
