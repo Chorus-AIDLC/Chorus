@@ -472,10 +472,25 @@ export function MentionInstancePickerDialog({
   const t = useTranslations("mentionInstance");
   const [selected, setSelected] = useState<InstanceCandidate | null>(null);
 
-  // Reset the local selection whenever a new pick opens the dialog.
+  // Default-select the FIRST instance whenever a new pick opens the dialog, so
+  // the picker is keyboard-complete: Pin is enabled immediately (no click), and
+  // Radix RadioGroup's roving focus lands on a concrete row that Up/Down then
+  // move between. (The dialog only opens for 2+ instances — see selectMentionable.)
   useEffect(() => {
-    if (open) setSelected(null);
+    if (open) setSelected(instances[0] ?? null);
   }, [open, instances]);
+
+  // Enter confirms the current selection — the keyboard counterpart to clicking
+  // Pin. Scoped to the list region (below) so it never double-fires with the
+  // footer's Cancel / Pin buttons, which own their native Enter activation. The
+  // isImeComposing guard is mandatory (CLAUDE.md IME rule): a CJK/JP/KR user
+  // pressing Enter to CONFIRM an IME candidate must not accidentally pin.
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" || isImeComposing(e)) return;
+    if (!selected) return;
+    e.preventDefault();
+    onConfirm(selected);
+  };
 
   const distinctHosts = new Set(instances.map((i) => i.host)).size;
 
@@ -500,7 +515,10 @@ export function MentionInstancePickerDialog({
             even when the instance list is tall or the soft keyboard shrinks the
             viewport. `min-h-0` lets this flex child shrink below its content height
             so it actually scrolls instead of pushing the footer off-screen. */}
-        <div className="min-h-0 flex-1 overflow-y-auto py-3">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto py-3"
+          onKeyDown={handleListKeyDown}
+        >
           <InstancePicker
             instances={instances}
             selectedConnectionUuid={selected?.connectionUuid ?? null}
