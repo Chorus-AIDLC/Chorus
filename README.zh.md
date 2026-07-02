@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.13.0](https://chorus-ai.dev/zh/blog/chorus-v0.13.0-release/)** — 项目资源思维导图：新增 Graph 视图，把每个项目的想法、提案、文档、任务连成一棵可折叠的树，从项目自身结构自动生成。每张卡片都标着当前状态（想法用想法列表那套派生状态），标题搜索会自动展开命中节点的上游并高亮/调暗、配上下切换定位，同一张可缩放可拖动的图在桌面与手机上通用（捏合 + 双击缩放）。
+
 **[v0.12.0](https://chorus-ai.dev/zh/blog/chorus-v0.12.0-release/)** — 可寻址的 daemon 实例：一个 `chorus daemon` 可同时守多个工作目录（`--cwd`），每一个 `(agent, 主机, 目录)` 都成为一个能单独看见、单独点名的实例，贯穿 presence、@-mention 与任务指派。在想法上钉一次实例，其下的提案、任务与唤醒都会继承；带钉的唤醒被精确投递到那个实例，而非全员广播。评论区的 Agent @-mention 渲染为实时在线状态徽章，评论列表改为游标式无限滚动。
 
 **[v0.11.0](https://chorus-ai.dev/zh/blog/chorus-v0.11.0-release/)** — Chorus Daemon：`chorus daemon` 将本机变为常驻 Agent 运行时，在每次派发时唤起本地 Claude Code。Agent Connections 界面提供实时可观测与控制：流式 transcript、指令注入、打断 / 恢复；新增"完成细化"按钮，唤起被指派的 Agent 撰写提案。

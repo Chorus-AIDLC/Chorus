@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — Per-project resource mind-map: a new Graph view wires each project's Ideas, Proposals, Documents, and Tasks into one collapsible tree, generated from the project's own structure. Every card carries its current status (ideas show the derived pipeline status the idea tracker uses), a title search auto-expands the path to every match with highlight/dim and prev/next navigation, and the same zoom/pan canvas renders on desktop and mobile (pinch + double-tap).
+
 **[v0.12.0](https://chorus-ai.dev/blog/chorus-v0.12.0-release/)** — Addressable daemon instances: one `chorus daemon` can serve multiple working directories (`--cwd`), and each `(agent, host, cwd)` becomes an individually visible, individually targetable instance across presence, @-mention, and assignment. Pin an instance once on an idea and its proposals, tasks, and wakes inherit it; pinned wakes are delivered to exactly that instance instead of broadcast. Comment @-mentions render as live online-status badges, and comments switch to cursor-based infinite scroll.
 
 **[v0.11.0](https://chorus-ai.dev/blog/chorus-v0.11.0-release/)** — The Chorus Daemon: `chorus daemon` turns your machine into a resident agent runtime that wakes a local Claude Code on each dispatch. An Agent Connections surface gives live observability and control — streaming transcripts, instruction injection, and interrupt / resume — and a "Verify Elaborate" button wakes the assigned agent to write the proposal.
