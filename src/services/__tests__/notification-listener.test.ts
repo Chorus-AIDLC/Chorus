@@ -1078,6 +1078,83 @@ describe("notification-listener", () => {
     });
   });
 
+  describe("start_development (human start-development → agent wake)", () => {
+    it("should target ONLY the Idea's assigned agent with the start_development action and message", async () => {
+      mockPrisma.idea.findUnique.mockImplementation((opts: any) => {
+        if (opts.select?.title) return Promise.resolve({ title: "My Idea" });
+        return Promise.resolve({
+          createdByUuid: "user-creator",
+          assigneeType: "agent",
+          assigneeUuid: "dev-agent",
+        });
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "start_development",
+        actorType: "user",
+        actorUuid: "user-clicker",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call).toHaveLength(1);
+      expect(call[0].recipientType).toBe("agent");
+      expect(call[0].recipientUuid).toBe("dev-agent");
+      expect(call[0].action).toBe("start_development");
+      expect(call[0].message).toContain("started development");
+      expect(call[0].message).toContain("claim and execute the remaining tasks");
+    });
+
+    it("should NOT surface in any human's notification bell (no user recipient is produced)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "dev-agent",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "start_development",
+        actorType: "user",
+        actorUuid: "user-clicker",
+      });
+      await handleActivity(event);
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.every((n: any) => n.recipientType !== "user")).toBe(true);
+    });
+
+    it("should produce NO notification when the Idea's assignee is a human (only daemons can be woken)", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "user",
+        assigneeUuid: "human-assignee",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "start_development",
+        actorType: "user",
+        actorUuid: "user-clicker",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("should bypass PREF_FIELD_MAP — the agent wake is never preference-gated", async () => {
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        createdByUuid: "user-creator",
+        assigneeType: "agent",
+        assigneeUuid: "dev-agent",
+      });
+      const event = makeEvent({
+        targetType: "idea",
+        action: "start_development",
+        actorType: "user",
+        actorUuid: "user-clicker",
+      });
+      await handleActivity(event);
+      expect(mockNotificationService.getPreferences).not.toHaveBeenCalled();
+      expect(mockNotificationService.createBatch).toHaveBeenCalled();
+    });
+  });
+
   describe("recipient resolution edge cases", () => {
     it("should handle comment_added excluding comment author", async () => {
       mockPrisma.task.findUnique.mockResolvedValue({

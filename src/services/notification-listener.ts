@@ -37,6 +37,11 @@ function resolveNotificationType(action: string, targetType: string): string | n
     // write the proposal. Recipient is the agent (resolved in resolveRecipients);
     // deliberately NOT in PREF_FIELD_MAP so the agent wake is never preference-gated.
     "idea:elaboration_verified": "elaboration_verified",
+    // Human clicked Start Development → wake the Idea's assigned daemon agent to
+    // claim and execute ALL remaining tasks. Same agent-only wake shape as
+    // elaboration_verified; deliberately NOT in PREF_FIELD_MAP so the agent wake
+    // is never preference-gated.
+    "idea:start_development": "start_development",
     // elaboration_followup is no longer emitted (the validate/follow-up
     // mechanism was removed); mapping retained for legacy activity rows.
     "idea:elaboration_followup": "elaboration_requested",
@@ -394,14 +399,18 @@ async function resolveRecipients(
       return ansRecipients;
     }
 
-    case "elaboration_verified": {
-      // Human verified the elaboration → wake ONLY the Idea's assigned daemon agent
-      // to write the proposal. This is an agent-only wake: the recipient list
-      // deliberately excludes the human creator (and any human), so it never
-      // surfaces in a human's notification bell. If the Idea has no assigned agent
-      // (or the assignee is a human), return [] — there is no daemon to wake — which
-      // the chokepoint already treats as a no-op (no silent error: the activity is
-      // still recorded, there is simply no wake recipient).
+    case "elaboration_verified":
+    case "start_development": {
+      // Human stage-advance wakes (Verify Elaborate → write the proposal;
+      // Start Development → claim and execute the remaining tasks): wake ONLY
+      // the Idea's assigned daemon agent. These are agent-only wakes: the
+      // recipient list deliberately excludes the human creator (and any human),
+      // so they never surface in a human's notification bell. If the Idea has
+      // no assigned agent (or the assignee is a human), return [] — there is no
+      // daemon to wake — which the chokepoint already treats as a no-op (no
+      // silent error: the activity is still recorded, there is simply no wake
+      // recipient). start_development additionally validated agent liveness at
+      // the server action, so an empty result here is a rare race, not a path.
       const verifiedIdea = await prisma.idea.findUnique({
         where: { uuid: targetUuid },
         select: { assigneeType: true, assigneeUuid: true },
@@ -549,6 +558,8 @@ function buildMessage(
       return `${actorName} answered elaboration questions for idea "${entityTitle}"`;
     case "elaboration_verified":
       return `${actorName} verified elaboration for idea "${entityTitle}" — write the proposal`;
+    case "start_development":
+      return `${actorName} started development for idea "${entityTitle}" — claim and execute the remaining tasks`;
     case "report_created":
       return `${actorName} generated a new report on idea "${entityTitle}"`;
     default:

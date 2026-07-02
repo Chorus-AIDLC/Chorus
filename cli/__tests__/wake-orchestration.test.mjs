@@ -104,6 +104,35 @@ describe("buildPrompt", () => {
     expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
   });
 
+  it("start_development wakes the agent to EXECUTE ALL remaining tasks, never stopping after one (add-stage-advance-start-development)", () => {
+    expect(WAKE_ACTIONS.has("start_development")).toBe(true);
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "start_development",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("idea-9"); // the idea uuid
+    expect(p).toContain("proj-1"); // project uuid for context
+    // The execute-all contract (elaboration decision Q1):
+    expect(p).toContain("ALL remaining tasks");
+    expect(p).toContain("dependency");
+    expect(p).toContain("Do NOT stop after one task");
+    // The develop-flow loop tools:
+    expect(p).toContain("chorus_get_unblocked_tasks");
+    expect(p).toContain("chorus_claim_task");
+    expect(p).toContain("chorus_submit_for_verify");
+    // Boundaries: leave to_verify / foreign-claimed tasks; end benignly.
+    expect(p).toContain("to_verify");
+    expect(p.toLowerCase()).toContain("other sessions");
+    expect(p.toLowerCase()).toContain("status comment");
+    // It must NOT instruct proposal authoring — that's the elaboration_verified wake.
+    expect(p).not.toContain("chorus_pm_create_proposal");
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
+  });
+
   it("WAKE_ACTIONS covers the agent-relevant server notifications and excludes the noisy ones", () => {
     for (const a of [
       "task_assigned",
@@ -111,6 +140,7 @@ describe("buildPrompt", () => {
       "elaboration_requested",
       "elaboration_answered",
       "elaboration_verified",
+      "start_development",
       "proposal_rejected",
       "proposal_approved",
       "idea_claimed",

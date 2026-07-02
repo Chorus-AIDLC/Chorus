@@ -118,6 +118,12 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
   // PROPOSAL. Distinct from the elaboration request/answer triggers ("answer the
   // questions") so the daemon prompt can tell the two intents apart.
   elaboration_verified: "elaboration_verified",
+  // Human clicked Start Development → wake the assigned daemon agent to CLAIM AND
+  // EXECUTE ALL REMAINING TASKS. Its OWN trigger — deliberately NOT collapsed into
+  // task_assigned (that collapse was the anti-pattern behind the 0.13.0 random-cwd
+  // wake defect) — so turns stay observable and the session-origin upgrade applies
+  // by design.
+  start_development: "start_development",
   // Human-typed instruction (子2 UI send box). Canonical text on the turn; the
   // notification carries a denormalized copy in `instructionText`.
   human_instruction: "human_instruction",
@@ -164,6 +170,9 @@ const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   "task_assigned",
   "elaboration",
   "elaboration_verified",
+  // Start Development is a human stage-advance on an idea — the wake must land
+  // where that idea's conversation already runs (elaboration decision Q2).
+  "start_development",
 ]);
 
 /**
