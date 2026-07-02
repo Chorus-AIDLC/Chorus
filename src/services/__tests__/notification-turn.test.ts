@@ -961,6 +961,30 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     expect(targetConnectionUuid).toBe(ideaOriginConn);
   });
 
+  it("start_development whose idea session origin is OFFLINE falls back to online-first (no ping, no target)", async () => {
+    // Residual divergence (proposal review note 3): the server action validated
+    // "any connection online", but the idea's session ORIGIN may still be offline.
+    // The wake must then fall back to online-first instead of pinging a dead origin.
+    const onlineFirst = "conn-online-first";
+    const offlineIdeaOrigin = "conn-idea-origin-offline";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: offlineIdeaOrigin, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: offlineIdeaOrigin });
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "start_development", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
   it("start_development with NO existing idea session falls back to online-first (no ping, no target)", async () => {
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
