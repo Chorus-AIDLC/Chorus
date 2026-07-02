@@ -7,7 +7,7 @@
 // never drift. Display is optimistic — the server action re-validates every
 // precondition (including agent liveness) authoritatively.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Play } from "lucide-react";
@@ -59,6 +59,19 @@ export function StartDevelopmentButton({
   const connections = useAgentPresenceOptional()?.connections ?? [];
   const [isStarting, setIsStarting] = useState(false);
   const [started, setStarted] = useState(false);
+
+  // The started hint is transient: it clears when the panel moves to another
+  // idea, and — because a wake normally flips a task to in_progress quickly —
+  // also after a short delay so the button can re-appear for a re-kick if the
+  // preconditions still hold (e.g. the woken run ended early).
+  useEffect(() => {
+    setStarted(false);
+  }, [ideaUuid]);
+  useEffect(() => {
+    if (!started) return;
+    const timer = setTimeout(() => setStarted(false), 30_000);
+    return () => clearTimeout(timer);
+  }, [started]);
 
   // Any effectively-online connection of the assignee's owning agent qualifies —
   // the server's session-origin upgrade picks the right cwd, not the client.

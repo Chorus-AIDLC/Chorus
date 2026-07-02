@@ -35,6 +35,7 @@ import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/pane
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction, verifyElaborationAction } from "./[ideaUuid]/elaboration-actions";
 import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
+import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
@@ -188,18 +189,22 @@ export function IdeaDetailPanel({
       setSdTasks([]);
       return;
     }
-    const result = await getProposalsForIdeaAction(projectUuid, idea.uuid);
-    if (!result.success || !result.data) return;
-    setSdProposals(result.data.map((p) => ({ status: p.status })));
-    const approved = result.data.filter((p) => p.status === "approved");
-    const taskResults = await Promise.all(
-      approved.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
-    );
-    setSdTasks(
-      taskResults.flatMap((r) =>
-        r.success && r.data ? r.data.map((task) => ({ status: (task as { status: string }).status })) : []
-      )
-    );
+    try {
+      const result = await getProposalsForIdeaAction(projectUuid, idea.uuid);
+      if (!result.success || !result.data) return;
+      setSdProposals(result.data.map((p) => ({ status: p.status })));
+      const approved = result.data.filter((p) => p.status === "approved");
+      const taskResults = await Promise.all(
+        approved.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+      );
+      setSdTasks(
+        taskResults.flatMap((r) =>
+          r.success && r.data ? r.data.map((task) => ({ status: (task as { status: string }).status })) : []
+        )
+      );
+    } catch (e) {
+      clientLogger.error("Failed to load start-development gating data:", e);
+    }
   }, [idea.uuid, idea.status, projectUuid]);
 
   useEffect(() => {
