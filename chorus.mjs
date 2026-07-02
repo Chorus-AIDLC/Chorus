@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execSync, fork } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
 import {
   existsSync,
@@ -38,6 +38,15 @@ import {
 // (`chorus daemon` / `chorus login`) never registers the server's handlers.
 // Pure module → unit-testable without this entry's import-time side effects.
 import { installServerSignalHandlers } from "./cli/server-signal-handlers.mjs";
+// Embedded-PGlite launch (child-exit capture + port-conflict fail-fast). Extracted
+// into a pure, dependency-injected module so it is unit-testable with fakes — see
+// cli/embedded-db.mjs and its __tests__ (GitHub #379).
+import {
+  launchEmbeddedPglite,
+  isPrismaAuthFailure,
+  formatMigrationAuthDiagnostic,
+  maskDbUrl,
+} from "./cli/embedded-db.mjs";
 
 /** Read the package version once for help/version output. */
 function pkgVersion() {
@@ -247,6 +256,27 @@ function waitForTcp(host, tcpPort, maxRetries = 30, intervalMs = 500) {
   });
 }
 
+// Quick one-shot probe: is something ALREADY listening on host:port right now?
+// Used as a pre-flight before forking embedded PGlite so we never fork onto a port
+// held by a foreign process (e.g. a real Postgres) and then mistake it for our own
+// PGlite. Resolves true if a TCP connection succeeds, false otherwise. (GitHub #379)
+function isPortOccupied(host, tcpPort, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host, port: tcpPort });
+    let settled = false;
+    const done = (occupied) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(occupied);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
 function ensureSecret() {
   const secretPath = join(dataDir, ".secret");
   if (process.env.NEXTAUTH_SECRET) return;
@@ -311,34 +341,52 @@ async function main() {
     const pgliteSocketEntry = resolveOrDie("@electric-sql/pglite-socket");
     const serverScript = resolve(dirname(pgliteSocketEntry), "scripts", "server.js");
 
-    pgliteProcess = fork(serverScript, [
-      `--db=${join(dataDir, "pglite")}`,
-      `--port=${PGLITE_PORT}`,
-      "--max-connections=10",
-    ], { stdio: "ignore", detached: false });
-
-    pgliteProcess.on("error", (err) => {
-      // MODULE_NOT_FOUND is unreachable after the resolveOrDie fix above, but
-      // guard against regressions (see issue #214).
-      if (err.code === "MODULE_NOT_FOUND") {
-        console.error(`PGlite server script unreachable: ${err.message}`);
-      } else {
-        console.error("PGlite process error:", err.message);
-      }
-      process.exit(1);
+    // Launch via the pure, dependency-injected module so a foreign listener on
+    // PGLITE_PORT can never be mistaken for our PGlite (GitHub #379): it pre-flights
+    // the port, then treats the child exiting before ready as fatal (any exit code,
+    // incl. the reproduced EADDRINUSE -> exit 0), instead of trusting "someone is
+    // listening". `waitForTcp`/`isPortOccupied` are injected so the logic unit-tests
+    // with fakes (see cli/embedded-db.mjs + __tests__).
+    const launch = await launchEmbeddedPglite({
+      host: "localhost",
+      port: PGLITE_PORT,
+      fork: () =>
+        fork(serverScript, [
+          `--db=${join(dataDir, "pglite")}`,
+          `--port=${PGLITE_PORT}`,
+          "--max-connections=10",
+        ], { stdio: "ignore", detached: false }),
+      waitForTcp,
+      preflightCheck: isPortOccupied,
+      logger: console,
     });
 
-    try {
-      await waitForTcp("localhost", PGLITE_PORT);
-    } catch (err) {
-      console.error(`\nERROR: ${err.message}`);
-      console.error(`\nPossible causes:`);
-      console.error(`  - Port ${PGLITE_PORT} is already in use`);
-      console.error(`  - Corrupt data in ${join(dataDir, "pglite")}/`);
+    if (!launch.ok) {
+      if (launch.reason === "child-exited") {
+        // The child (our PGlite) exited before the port was confirmed ready. The most
+        // common cause is the port being occupied by another process the child could
+        // not bind (EADDRINUSE), which PGlite catches and exits 0 — so key the message
+        // off the failure, not the exit code.
+        console.error(
+          `\nERROR: Embedded PostgreSQL (PGlite) exited before it was ready ` +
+            `(exit code ${launch.exitInfo?.code ?? "unknown"}).`
+        );
+        console.error(`\nMost likely port ${PGLITE_PORT} is already in use by another process`);
+        console.error(`(e.g. a real PostgreSQL). Free the port, or run on a different one:`);
+        console.error(`  chorus --pglite-port <port>`);
+      } else if (launch.reason === "not-ready") {
+        console.error(`\nERROR: ${launch.error?.message ?? "PGlite failed to start."}`);
+        console.error(`\nPossible causes:`);
+        console.error(`  - Port ${PGLITE_PORT} is already in use`);
+        console.error(`  - Corrupt data in ${join(dataDir, "pglite")}/`);
+      } else if (launch.reason === "child-error") {
+        console.error("PGlite process error:", launch.error?.message ?? String(launch.error));
+      }
+      // reason === "port-occupied" already logged the actionable message in the module.
       process.exit(1);
     }
 
-    console.log(`PGlite ready on port ${PGLITE_PORT}.`);
+    pgliteProcess = launch.child;
     process.env.DATABASE_URL = `postgresql://postgres:postgres@localhost:${PGLITE_PORT}/postgres?sslmode=disable`;
   }
 
@@ -350,14 +398,49 @@ async function main() {
   // 3. Run database migrations
   console.log("Running database migrations...");
   const prismaBin = resolveOrDie("prisma/build/index.js");
-  try {
-    execSync(`"${process.execPath}" "${prismaBin}" migrate deploy`, {
+  // Tee the migrate output: stream each chunk to the parent's stdout/stderr LIVE (so
+  // "Applying migration …" progress appears as it happens, not batched at the end) AND
+  // buffer it so an authentication failure can be classified and rewritten into an
+  // actionable Chorus diagnostic (GitHub #379).
+  const migrateResult = await new Promise((resolveMigrate) => {
+    const child = spawn(process.execPath, [prismaBin, "migrate", "deploy"], {
       cwd: __dirname,
-      stdio: "inherit",
       env: { ...process.env },
+      stdio: ["inherit", "pipe", "pipe"],
     });
-  } catch {
-    console.error("ERROR: Database migration failed.");
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+      process.stdout.write(chunk); // live echo
+    });
+    child.stderr.on("data", (chunk) => {
+      err += chunk;
+      process.stderr.write(chunk); // live echo
+    });
+    child.on("error", (e) => resolveMigrate({ status: 1, stdout: out, stderr: `${err}\n${e.message}` }));
+    child.on("close", (code, signal) => {
+      // A null exit code means the migrate process was killed by a signal — treat that
+      // as a failure (status 1), never as success, so we don't start the server against
+      // a half-migrated database.
+      resolveMigrate({ status: code === null ? 1 : code, stdout: out, stderr: err });
+    });
+  });
+  if (migrateResult.status !== 0) {
+    const combined = `${migrateResult.stdout ?? ""}\n${migrateResult.stderr ?? ""}`;
+    if (isPrismaAuthFailure(combined)) {
+      // Replace the bare Prisma P1000 (the last thing the user would otherwise see)
+      // with a self-explaining, path-appropriate diagnostic.
+      console.error(
+        formatMigrationAuthDiagnostic({
+          effectiveUrl: process.env.DATABASE_URL,
+          startedEmbedded: startEmbeddedPglite,
+          pglitePort: PGLITE_PORT,
+        })
+      );
+    } else {
+      console.error("ERROR: Database migration failed.");
+    }
     process.exit(1);
   }
   console.log("Migrations completed.");
@@ -389,11 +472,12 @@ async function main() {
   console.log("");
   console.log(`  URL:       http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${port}`);
   console.log(`  Data:      ${dataDir}`);
-  const dbLabel = usePglite
-    ? (startEmbeddedPglite
-        ? "PGlite (embedded, pg.Pool max=1)"
-        : "PGlite (external, pg.Pool max=1)")
-    : "external PostgreSQL";
+  // When embedded PGlite was skipped, DATABASE_URL is what we actually connected to —
+  // name its host:port (credentials masked) so a residual/unintended export is visible
+  // rather than silent (GitHub #379, D4). Precedence semantics are unchanged.
+  const dbLabel = startEmbeddedPglite
+    ? "PGlite (embedded, pg.Pool max=1)"
+    : `${usePglite ? "PGlite (external, pg.Pool max=1)" : "external PostgreSQL"} (from DATABASE_URL: ${maskDbUrl(process.env.DATABASE_URL)})`;
   console.log(`  Database:  ${dbLabel}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
   const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"

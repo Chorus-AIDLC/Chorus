@@ -150,6 +150,7 @@
     "documents": "Documents",
     "proposals": "Proposals",
     "tasks": "Tasks",
+    "graph": "Graph",
     "activity": "Activity",
     "logout": "Sign out",
     "newProject": "New Project",
@@ -1570,5 +1571,50 @@
     "confirm": "Pin instance",
     "cancel": "Cancel",
     "noInstances": "No live instances"
+  },
+  "graph": {
+    "title": "Graph",
+    "subtitle": "A mind-map of this project's Ideas, Proposals, Tasks, and Documents.",
+    "emptyTitle": "Nothing to graph yet",
+    "emptyDesc": "Once this project has Ideas, Proposals, Tasks, or Documents, they will appear here as a connected mind-map.",
+    "loading": "Loading graph…",
+    "loadFailed": "Could not load the project graph.",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "filters": {
+      "idea": "Ideas",
+      "proposal": "Proposals",
+      "task": "Tasks",
+      "document": "Documents"
+    },
+    "nodeType": {
+      "idea": "IDEA",
+      "proposal": "PROPOSAL",
+      "task": "TASK",
+      "document": "DOCUMENT"
+    },
+    "edgeKind": {
+      "derive": "Derive",
+      "lineage": "Lineage",
+      "depends": "Depends"
+    },
+    "controls": {
+      "open": "Show graph controls",
+      "close": "Hide graph controls"
+    },
+    "search": {
+      "placeholder": "Search nodes…",
+      "clear": "Clear search",
+      "noMatches": "No matches",
+      "count": "{current} / {total}",
+      "prev": "Previous match",
+      "next": "Next match"
+    },
+    "tooltip": {
+      "loading": "Loading…"
+    },
+    "status": {
+      "unknown": "Unknown"
+    }
   }
 }

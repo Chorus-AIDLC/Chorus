@@ -1538,3 +1538,232 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });
+
+// ===== Generalized idea-session-origin upgrade (fix-proposal-wake-session-origin) =====
+//
+// The session-origin upgrade — re-pointing an `online_first` selection to the idea's
+// existing DaemonSession origin — used to be gated on `trigger === "elaboration_verified"`
+// ONLY, so a proposal_approved / proposal_rejected wake (mapped to task_assigned) fanned out
+// to an arbitrary online cwd. It is now generalized to the AUTONOMOUS IDEA-ANCHORED trigger
+// family `{ task_assigned, elaboration, elaboration_verified }`, still gated on
+// `selection.kind === "online_first"` so it never overrides a hard/soft pin, and STILL
+// EXCLUDING `mentioned` (broadcast / no-target contract) and `human_instruction` (owns its
+// own directed delivery in daemon-instruction.service).
+describe("createTurnAndResolveTarget — generalized idea-session-origin upgrade", () => {
+  const ideaOriginConn = "conn-idea-origin";
+
+  // Two online connections; the idea's session lives on the SECOND (not online-first), so a
+  // correct upgrade must select it over the first entry.
+  function twoOnlineWithIdeaOrigin() {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+  }
+
+  // ----- proposal_approved / proposal_rejected → directed to the idea session origin -----
+
+  for (const action of ["proposal_approved", "proposal_rejected"]) {
+    it(`${action} routes an un-pinned idea's wake to its existing ONLINE session origin (ping + target)`, async () => {
+      twoOnlineWithIdeaOrigin();
+
+      const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+        ctx({ action, entityType: "proposal", entityUuid: "proposal-1" }),
+      );
+
+      // The session lookup is keyed on the idea anchor derived from the proposal lineage.
+      expect(mockDaemonSessionFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ companyUuid, agentUuid, sessionId: ideaUuid }),
+        }),
+      );
+      // Directed to the idea's existing origin, NOT the online-first entry.
+      expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+      );
+      expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+        expect.objectContaining({ originConnectionUuid: ideaOriginConn, turnUuid: turn?.uuid }),
+      );
+      expect(targetConnectionUuid).toBe(ideaOriginConn);
+      expect(suppressWake).toBe(false);
+      expect(mockLoggerError).not.toHaveBeenCalled();
+    });
+  }
+
+  // ----- idea_claimed (no instance pin) → directed to the idea session origin -----
+
+  it("idea_claimed routes to the idea's existing session origin when the idea has no instance pin", async () => {
+    // idea entity, plain-agent assignee (default) → no pin → online_first → upgrade applies.
+    twoOnlineWithIdeaOrigin();
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "idea_claimed", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
+  });
+
+  // ----- plain idea-anchored task_assigned → directed to the idea session origin -----
+
+  it("a plain idea-anchored task_assigned (task lineage → idea) routes to the idea's session origin", async () => {
+    // Task and root idea are both plain agents (defaults) → no pin → online_first → upgrade.
+    twoOnlineWithIdeaOrigin();
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", entityType: "task", entityUuid: taskUuid }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
+  });
+
+  // ----- PRIORITY PRESERVED: an instance pin still beats the session-origin upgrade -----
+
+  it("an instance-pinned idea takes the pin over the session origin for proposal_approved (upgrade skipped)", async () => {
+    // The root idea is pinned to an ONLINE instance; its existing session lives on a DIFFERENT
+    // online connection. The pin must win — selection is already `directed` so the upgrade is
+    // skipped (it only runs in the online_first branch).
+    const pinnedHost = "pin-host";
+    const pinnedCwd = "/home/u/dev/pinned";
+    const pinnedConnUuid = "conn-pinned";
+    pinIdeaToInstance(pinnedHost, pinnedCwd);
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+      onlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "proposal_approved", entityType: "proposal", entityUuid: "proposal-1" }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+  });
+
+  // ----- FALLBACKS: no session / offline origin → online-first, no target -----
+
+  it("proposal_approved with NO existing idea session falls back to online-first (no ping, no target)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+    // Default mockDaemonSessionFindFirst → null (no existing idea session).
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "proposal_approved", entityType: "proposal", entityUuid: "proposal-1" }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("proposal_approved whose idea session origin is OFFLINE falls back to online-first (no ping, no target)", async () => {
+    const onlineFirst = "conn-online-first";
+    const offlineOrigin = "conn-idea-origin-offline";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: offlineOrigin, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: offlineOrigin });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "proposal_approved", entityType: "proposal", entityUuid: "proposal-1" }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  // ----- NO-LINEAGE NO-OP: a standalone task_assigned (directIdeaUuid null) stays online-first -----
+
+  it("a standalone task_assigned with NO idea lineage (directIdeaUuid null) stays online-first (null-guard)", async () => {
+    // The entity resolves to no idea anchor. Even with an (irrelevant) session row present,
+    // resolveIdeaSessionOriginTarget's null-guard short-circuits → online-first, no target.
+    mockResolveDirectIdeaUuid.mockResolvedValue(null);
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", entityType: "task", entityUuid: taskUuid }),
+    );
+
+    expect(turn?.status).toBe("pending");
+    // Ad-hoc session keyed on the entity uuid, pinned online-first.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: taskUuid, directIdeaUuid: null, originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  // ----- EXCLUSIONS: mentioned + human_instruction are NOT upgraded even with a session -----
+
+  it("an un-pinned mentioned wake is NOT redirected to the idea session origin (broadcast, no target)", async () => {
+    // A resolvable idea session exists, but `mentioned` is excluded from the upgrade set: the
+    // wake must stay online-first with no target (the un-pinned broadcast contract).
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("a human_instruction wake is NOT upgraded to the idea session origin even when one exists", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "human_instruction", entityType: "idea", entityUuid: ideaUuid, instructionText: "do it" }),
+    );
+
+    // human_instruction resolves its own delivery elsewhere; the chokepoint must not upgrade it.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(targetConnectionUuid).toBeNull();
+  });
+});

@@ -170,7 +170,30 @@ describe("MentionInstancePickerDialog — mobile-safe layout", () => {
     expect(scroll.contains(header)).toBe(false);
   });
 
-  it("keeps the Pin button disabled until a cwd row is selected, then enables it", () => {
+  it("default-selects the first cwd row on open, so Pin is enabled with no click", () => {
+    // Keyboard-completeness: the picker opens with the FIRST instance pre-selected
+    // (radio checked, Pin enabled). This is what lets Up/Down navigate from a
+    // concrete row and Enter confirm without a preceding pointer click.
+    const instances = makeInstances(3);
+    render(
+      <MentionInstancePickerDialog
+        open
+        agentName="Test Agent"
+        instances={instances}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const pin = screen.getByRole("button", { name: "Pin instance" }) as HTMLButtonElement;
+    expect(pin.disabled).toBe(false);
+
+    // The first radio is the checked one; the rest are not.
+    const radios = screen.getAllByRole("radio") as HTMLElement[];
+    expect(radios[0].getAttribute("aria-checked")).toBe("true");
+    expect(radios[1].getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("lets a different cwd row be selected, then enables Pin for it", () => {
     render(
       <MentionInstancePickerDialog
         open
@@ -181,9 +204,7 @@ describe("MentionInstancePickerDialog — mobile-safe layout", () => {
       />,
     );
     const pin = screen.getByRole("button", { name: "Pin instance" }) as HTMLButtonElement;
-    expect(pin.disabled).toBe(true);
-
-    // Select the second row (multi-instance: no auto-select).
+    // Select the second row — Pin stays enabled and now targets that row.
     const radios = screen.getAllByRole("radio");
     fireEvent.click(radios[1]);
     expect(pin.disabled).toBe(false);
@@ -207,5 +228,68 @@ describe("MentionInstancePickerDialog — mobile-safe layout", () => {
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ connectionUuid: instances[2].connectionUuid }),
     );
+  });
+
+  it("confirms the current selection when Enter is pressed inside the list", () => {
+    // Enter is the keyboard counterpart of clicking Pin. On open the first row is
+    // pre-selected; arrow-select the second, then Enter confirms THAT one.
+    const onConfirm = vi.fn();
+    const instances = makeInstances(3);
+    render(
+      <MentionInstancePickerDialog
+        open
+        agentName="Test Agent"
+        instances={instances}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    const radios = screen.getAllByRole("radio");
+    fireEvent.click(radios[1]);
+    // Enter dispatched from within the radio group (bubbles to the list handler).
+    fireEvent.keyDown(radios[1], { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionUuid: instances[1].connectionUuid }),
+    );
+  });
+
+  it("Enter on open (first row pre-selected) confirms the first instance", () => {
+    const onConfirm = vi.fn();
+    const instances = makeInstances(3);
+    render(
+      <MentionInstancePickerDialog
+        open
+        agentName="Test Agent"
+        instances={instances}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getAllByRole("radio")[0], { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionUuid: instances[0].connectionUuid }),
+    );
+  });
+
+  it("does NOT confirm on Enter while an IME candidate is being composed", () => {
+    // CLAUDE.md IME rule: a CJK/JP/KR user pressing Enter to confirm an IME
+    // candidate must not accidentally pin. isComposing suppresses the confirm.
+    const onConfirm = vi.fn();
+    render(
+      <MentionInstancePickerDialog
+        open
+        agentName="Test Agent"
+        instances={makeInstances(3)}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getAllByRole("radio")[0], {
+      key: "Enter",
+      isComposing: true,
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

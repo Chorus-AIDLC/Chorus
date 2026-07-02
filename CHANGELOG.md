@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0] - 2026-07-02
+
+### Added
+- **Per-project resource mind-map**: A new per-project graph view renders the Idea → Proposal → Document/Task lineage as a deterministic, collapsible mind-map tree (d3-hierarchy) on a Canvas-2D renderer that works on every viewport, including two-finger pinch and double-tap zoom on touch. Every node card shows the entity's status at a glance — ideas carry the 8-state derived badge that mirrors the idea tracker, proposals/tasks show native lifecycle status, documents show their type — updating live via the existing SSE full-refetch. A title search box auto-expands the ancestor hubs of every match, highlights hits while dimming the rest, and offers current/total count with prev/next navigation that centers each match (Enter / Shift+Enter step through, IME-guarded); clearing the query drops only the search visuals and leaves the located branches expanded. Desktop nodes gain a hover tooltip with the full untruncated title, and a compact top-right control card holds search, the type filter/legend, and expand-all (folding to an icon button on narrow viewports). (#376, #377, #378, #380, #383, #386)
+
+### Fixed
+- **Proposal approve/reject wakes hit a random cwd instead of the idea's session origin**: `proposal_approved` / `proposal_rejected` map to the `task_assigned` turn trigger, so they missed the session-origin upgrade that was gated only on `elaboration_verified` and fell back to online-first (a random online cwd) instead of the connection where the idea's conversation lives. The upgrade is now generalized to the autonomous idea-anchored trigger family (`task_assigned`, `elaboration`, `elaboration_verified`), which also fixes `idea_claimed` and task wakes. (#381)
+- **First-run P1000 when the embedded PGlite port was occupied**: A first `chorus` run hit Prisma P1000 when a foreign Postgres already held the embedded PGlite port — the forked PGlite child died of `EADDRINUSE` but exited code 0, so `waitForTcp` mistook the foreign listener for PGlite, printed a false "PGlite ready", and migrate failed auth (a residual `DATABASE_URL` hit the same wall). The launch is extracted into a pure, dependency-injected `cli/embedded-db.mjs` with a pre-flight port probe and a child-exit latch that is fatal for any exit code. (#384)
+- **@mention cwd picker wasn't keyboard-completable**: The secondary cwd picker (`MentionInstancePickerDialog`) opened with nothing selected, so the keyboard couldn't confirm and Pin was disabled until a click. It now default-selects the first cwd on open (Pin enabled immediately, roving focus lands on a concrete row), and Enter confirms the current selection — scoped to the list region so it never double-fires with the footer, and IME-guarded per the CLAUDE.md rule. (#385)
+
+---
+
 ## [0.12.1] - 2026-06-29
 
 ### Added

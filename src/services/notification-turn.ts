@@ -140,6 +140,33 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
 const LINEAGE_ENTITY_TYPES = new Set<string>(["task", "document", "proposal", "idea"]);
 
 /**
+ * The AUTONOMOUS, idea-anchored triggers eligible for the idea-session-origin upgrade
+ * (fix-proposal-wake-session-origin): when the connection selection is still
+ * `online_first` and the wake resolves to an idea anchor, the upgrade re-points it to the
+ * idea's existing `DaemonSession` origin (where that idea's conversation already lives)
+ * instead of fanning out to an arbitrary online cwd.
+ *
+ * These are exactly the wakes the daemon raises autonomously against idea-lineage work:
+ *   - `task_assigned` — the collapse target for `proposal_approved` / `proposal_rejected`
+ *     (the random-cwd defect being fixed), `idea_claimed`, `task_verified`, `task_reopened`.
+ *   - `elaboration` — elaboration request / answer wakes on an idea.
+ *   - `elaboration_verified` — the human "Verify Elaborate" → write-the-proposal wake (the
+ *     original, now-generalized, home of this upgrade).
+ *
+ * `mentioned` and `human_instruction` are DELIBERATELY EXCLUDED: an un-pinned `mentioned`
+ * wake is contractually a broadcast → online-first (stamping no target), a pinned mention
+ * is resolved as a HARD pin before this branch, and `human_instruction` resolves its own
+ * exact target + `deliver_turn` ping in `daemon-instruction.service` — upgrading it here
+ * would double-deliver or mis-route. Both carry their own target resolution, so the
+ * heuristic session-origin upgrade must never touch them.
+ */
+const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
+  "task_assigned",
+  "elaboration",
+  "elaboration_verified",
+]);
+
+/**
  * Resolve the trigger for a notification action, or null when the action is not
  * wake-triggering (so the caller skips turn creation entirely).
  */
@@ -457,7 +484,7 @@ function selectOriginConnection(
 }
 
 /**
- * Resolve the directed ONLINE target for an `elaboration_verified` wake: the connection
+ * Resolve the directed ONLINE target for an AUTONOMOUS IDEA-ANCHORED wake: the connection
  * that OWNS the idea's existing daemon session (`DaemonSession.originConnectionUuid` for
  * the idea-anchored session), when that connection is ONLINE.
  *
@@ -468,13 +495,21 @@ function selectOriginConnection(
  * online-first) selection and therefore SKIPS this upgrade. When no idea-anchored session
  * exists yet (the idea was elaborated entirely in the UI and the daemon was never woken on
  * it), or that origin is not currently online, this returns null → the caller falls back
- * to online-first (NO directed delivery), exactly as the pre-change proposal-writing wake.
+ * to online-first (NO directed delivery), byte-identical to the pre-change wake.
+ *
+ * Shared by every trigger in `IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS` — originally the
+ * `elaboration_verified` proposal-writing wake, now generalized so `proposal_approved` /
+ * `proposal_rejected` / `idea_claimed` / task wakes (all mapped to `task_assigned`) and the
+ * `elaboration` wakes land where the idea's conversation already runs instead of a random
+ * online cwd (fix-proposal-wake-session-origin).
  *
  * `directIdeaUuid` is the idea anchor (the session business key for an idea-anchored
- * session). `connections` is the agent's live registry, already resolved by the caller.
- * A query failure propagates to the caller's failure-isolation guard.
+ * session); a null anchor (a non-idea-anchored wake, e.g. a standalone task) short-circuits
+ * to null so the widened gate cannot mis-fire. `connections` is the agent's live registry,
+ * already resolved by the caller. A query failure propagates to the caller's
+ * failure-isolation guard.
  */
-async function resolveElaborationVerifiedTarget(
+async function resolveIdeaSessionOriginTarget(
   companyUuid: string,
   agentUuid: string,
   directIdeaUuid: string | null,
@@ -614,16 +649,24 @@ export async function createTurnAndResolveTarget(
       );
     }
 
-    // (4) elaboration_verified: the idea's `agent_instance` assignee is the HIGHER-priority
-    // soft pin already resolved in step 3 (resolvePinnedTarget reads the root idea's
-    // assignee). When the idea IS instance-pinned and that instance is online, selection is
-    // already `directed` — this upgrade is SKIPPED (the instance wins). ONLY when the idea
-    // has no assignee-instance (or its soft pin degraded because the instance is offline)
-    // does selection stay `online_first`, and THEN the LOWER-priority session-origin
-    // heuristic upgrades to the idea's existing ONLINE session origin (where the idea's
-    // conversation already lives). No session, or an offline origin → stays online-first.
-    if (trigger === "elaboration_verified" && selection.kind === "online_first") {
-      const ideaTarget = await resolveElaborationVerifiedTarget(
+    // (4) Idea-session-origin upgrade for AUTONOMOUS idea-anchored wakes (the family in
+    // IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS: task_assigned — into which proposal_approved /
+    // proposal_rejected / idea_claimed / task_* collapse — plus elaboration /
+    // elaboration_verified). The idea's `agent_instance` assignee is the HIGHER-priority soft
+    // pin already resolved in step 3 (resolvePinnedTarget reads the root/own idea's assignee).
+    // When the idea IS instance-pinned and that instance is online, selection is already
+    // `directed` — this upgrade is SKIPPED (the instance wins). ONLY when the idea has no
+    // assignee-instance (or its soft pin degraded because the instance is offline) does
+    // selection stay `online_first`, and THEN this LOWER-priority session-origin heuristic
+    // upgrades to the idea's existing ONLINE session origin (where the idea's conversation
+    // already lives), fixing the proposal approve/reject random-cwd wake. No session, an
+    // offline origin, or a non-idea-anchored wake (directIdeaUuid null) → stays online-first.
+    // `mentioned` / `human_instruction` are excluded from the set (they own their own target).
+    if (
+      IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS.has(trigger) &&
+      selection.kind === "online_first"
+    ) {
+      const ideaTarget = await resolveIdeaSessionOriginTarget(
         ctx.companyUuid,
         ctx.recipientUuid,
         directIdeaUuid,
