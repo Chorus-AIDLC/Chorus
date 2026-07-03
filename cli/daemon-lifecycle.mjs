@@ -101,8 +101,9 @@ export function readPid(io = defaultIO()) {
  * occupying `pid`. One subprocess invocation, argument arrays only (no
  * `shell:true`), pure JS:
  *   - POSIX: `ps -p <pid> -o lstart=,args=` (lstart is second-resolution and
- *     stable across probes of the same process). busybox `ps` rejects `-o
- *     lstart` → retry `ps -o args= -p <pid>` for cmdline-only verification.
+ *     stable across probes of the same process). busybox `ps` rejects `-p` and
+ *     `-o lstart` → retry `ps -o pid=,args=` (full-table) and filter by the
+ *     pid column for cmdline-only verification.
  *   - Windows: PowerShell `Get-CimInstance Win32_Process` (wmic is deprecated).
  * @param {number} pid @param {object} [io]
  * @returns {{ cmdline: string, startedAt: string|null }|null} null = query failed
