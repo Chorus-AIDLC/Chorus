@@ -351,6 +351,26 @@ describe("event-router — directed autonomous pending-turn re-dispatch (dispatc
     expect(n.action).toBe("elaboration_verified");
   });
 
+  it("AC-4b: re-dispatches a `start_development` pending turn (matched by trigger + idea anchor)", async () => {
+    const startDevNotif = mentionNotif({
+      uuid: "ni-start-dev",
+      action: "start_development",
+    });
+    const { enqueued, waker, router } = wirePending([startDevNotif]);
+    router.dispatchPendingTurn({
+      turnUuid: "turn-sd1",
+      sessionId: DIRECT_IDEA,
+      directIdeaUuid: DIRECT_IDEA,
+      trigger: "start_development",
+      promptText: null,
+    });
+    await flush();
+
+    expect(enqueued).toHaveLength(1);
+    const [n] = waker.markQueued.mock.calls[0];
+    expect(n.action).toBe("start_development");
+  });
+
   it("AC-4 DEDUP: the broadcast copy (target==me) then the deliver_turn delivery collapse to ONE wake", async () => {
     const seen = new Set();
     const { enqueued, waker, router } = wirePending([mentionNotif()], { seen });

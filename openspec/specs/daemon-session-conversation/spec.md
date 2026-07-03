@@ -33,7 +33,7 @@ The server SHALL define a Prisma model `DaemonSession` representing one persiste
 
 ### Requirement: Every daemon wake SHALL be recorded as a turn on its DaemonSession
 
-The server SHALL define a Prisma model `DaemonSessionTurn` representing one wake on a conversation. It SHALL carry at least: `uuid`, `sessionUuid` (referencing `DaemonSession.uuid`), `seq` (monotonic per session), `trigger` (one of `task_assigned`, `mentioned`, `elaboration`, `resume`, `human_instruction`), `promptText` (nullable — the free-text instruction body for a `human_instruction` turn, null for autonomous triggers), `status` (`pending` | `running` | `ended`), `startedAt` (nullable), `endedAt` (nullable), and `createdAt`. Every wake-triggering event — whether an autonomous dispatch (task assignment, @mention, elaboration request, resume) or a human-typed instruction — SHALL produce exactly one turn on the corresponding `DaemonSession`, distinguished only by `trigger`. A turn SHALL reference the live execution it corresponds to (so the conversation turn and the `DaemonExecution` row are linked) without altering `DaemonExecution` reconcile semantics.
+The server SHALL define a Prisma model `DaemonSessionTurn` representing one wake on a conversation. It SHALL carry at least: `uuid`, `sessionUuid` (referencing `DaemonSession.uuid`), `seq` (monotonic per session), `trigger` (one of `task_assigned`, `mentioned`, `elaboration`, `elaboration_verified`, `start_development`, `resume`, `human_instruction`), `promptText` (nullable — the free-text instruction body for a `human_instruction` turn, null for autonomous triggers), `status` (`pending` | `running` | `ended`), `startedAt` (nullable), `endedAt` (nullable), and `createdAt`. Every wake-triggering event — whether an autonomous dispatch (task assignment, @mention, elaboration request, elaboration verified, start development, resume) or a human-typed instruction — SHALL produce exactly one turn on the corresponding `DaemonSession`, distinguished only by `trigger`. A turn SHALL reference the live execution it corresponds to (so the conversation turn and the `DaemonExecution` row are linked) without altering `DaemonExecution` reconcile semantics. The `trigger` field is a free-form string column; extending the enumeration SHALL NOT require a data-mutating migration.
 
 #### Scenario: An autonomous task dispatch records a turn
 
@@ -46,6 +46,18 @@ The server SHALL define a Prisma model `DaemonSessionTurn` representing one wake
 - **GIVEN** a human submits a free-text instruction to session I
 - **WHEN** the server records it
 - **THEN** a `DaemonSessionTurn` MUST be created on session I with `trigger = "human_instruction"` and `promptText` set to the submitted text
+
+#### Scenario: An elaboration-verified wake records a turn
+
+- **GIVEN** a human verifies the elaboration of an idea-anchored session I
+- **WHEN** the server records the wake
+- **THEN** a `DaemonSessionTurn` MUST be created on session I with `trigger = "elaboration_verified"`
+
+#### Scenario: A start-development wake records a turn
+
+- **GIVEN** a human clicks Start Development for an idea anchored to session I
+- **WHEN** the server records the wake
+- **THEN** a `DaemonSessionTurn` MUST be created on session I with `trigger = "start_development"`
 
 #### Scenario: Turn trigger distinguishes wake kinds on one conversation
 

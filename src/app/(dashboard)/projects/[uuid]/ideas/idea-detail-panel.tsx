@@ -34,6 +34,9 @@ import { AssignIdeaModal } from "./assign-idea-modal";
 import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction, verifyElaborationAction } from "./[ideaUuid]/elaboration-actions";
+import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
+import { clientLogger } from "@/lib/logger-client";
+import { StartDevelopmentButton } from "@/components/start-development-button";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
@@ -173,6 +176,45 @@ export function IdeaDetailPanel({
 
   // Subscribe to SSE events to refresh elaboration when idea changes
   useRealtimeEntityTypeEvent("idea", reloadElaboration);
+
+  // Start-Development gating data (add-stage-advance-start-development). This
+  // panel doesn't otherwise load proposals/tasks, so fetch just the statuses the
+  // shared predicate needs — only once the idea is elaborated (before that no
+  // approved proposal can exist, so the fetch is skipped entirely).
+  const [sdProposals, setSdProposals] = useState<{ status: string }[]>([]);
+  const [sdTasks, setSdTasks] = useState<{ status: string }[]>([]);
+  const reloadStartDevData = useCallback(async () => {
+    if (idea.status !== "elaborated") {
+      setSdProposals([]);
+      setSdTasks([]);
+      return;
+    }
+    try {
+      const result = await getProposalsForIdeaAction(projectUuid, idea.uuid);
+      if (!result.success || !result.data) return;
+      setSdProposals(result.data.map((p) => ({ status: p.status })));
+      const approved = result.data.filter((p) => p.status === "approved");
+      const taskResults = await Promise.all(
+        approved.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+      );
+      setSdTasks(
+        taskResults.flatMap((r) =>
+          r.success && r.data ? r.data.map((task) => ({ status: (task as { status: string }).status })) : []
+        )
+      );
+    } catch (e) {
+      clientLogger.error("Failed to load start-development gating data:", e);
+    }
+  }, [idea.uuid, idea.status, projectUuid]);
+
+  useEffect(() => {
+    reloadStartDevData();
+  }, [reloadStartDevData]);
+
+  // Task/proposal state changes (approve, claim, verify) shift the button's
+  // preconditions — refresh on their SSE events.
+  useRealtimeEntityTypeEvent("proposal", reloadStartDevData);
+  useRealtimeEntityTypeEvent("task", reloadStartDevData);
 
   // Skip elaboration state
   const [showSkipDialog, setShowSkipDialog] = useState(false);
@@ -657,6 +699,19 @@ export function IdeaDetailPanel({
                   {verifyError && (
                     <span className="text-[11px] text-destructive">{verifyError}</span>
                   )}
+                  {/* Start Development — human "the plan is approved, go build
+                      it" action (add-stage-advance-start-development). Same
+                      shared-predicate contract as Verify Elaborate; presence
+                      gating + per-error-code toasts live in the component. */}
+                  <StartDevelopmentButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={sdProposals}
+                    tasks={sdTasks}
+                    onStarted={() => {
+                      router.refresh();
+                    }}
+                  />
                   {idea.status === "elaborating" && !elaborationResolved && !canVerify && !verified && !canSkipElaboration && (
                     <span className="text-[11px] text-[#9A9A9A]">
                       {t("elaboration.elaborationRequiredHint")}

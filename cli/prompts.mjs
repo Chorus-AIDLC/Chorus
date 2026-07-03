@@ -138,6 +138,22 @@ function buildPromptBody(n) {
         `chorus_get_elaboration, then author the proposal via the existing proposal flow ` +
         `(chorus_pm_create_proposal / the proposal skill).\n${mentionGuidance(n, "idea")}`
       );
+    case "start_development":
+      // A human clicked "Start Development" (add-stage-advance-start-development). The
+      // idea's proposal is approved and unfinished tasks remain. The agent's job on this
+      // wake is the WHOLE remaining execute stage — loop over every claimable task until
+      // none remain (elaboration decision Q1), never stopping after a single task.
+      return (
+        `[Chorus] A human started DEVELOPMENT for idea '${n.entityTitle}' ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). The idea's proposal is approved and ` +
+        `unfinished tasks remain. Claim and execute ALL remaining tasks of that proposal in dependency ` +
+        `order, following the develop workflow: repeatedly find claimable tasks (chorus_get_unblocked_tasks ` +
+        `with projectUuid: "${n.projectUuid}"), claim one (chorus_claim_task), implement it, self-check its ` +
+        `acceptance criteria (chorus_report_criteria_self_check), and submit it (chorus_submit_for_verify) — ` +
+        `then loop until NO claimable task remains. Do NOT stop after one task. Leave tasks already in ` +
+        `to_verify (awaiting human verification) and tasks claimed by other sessions untouched. If nothing ` +
+        `is claimable, post a brief status comment on the idea and end the turn.\n${mentionGuidance(n, "idea")}`
+      );
     case "proposal_rejected":
       return (
         `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, ` +
@@ -253,6 +269,11 @@ export const WAKE_ACTIONS = new Set([
   // idea-rooted like the other elaboration wakes, so the session anchor/resume contract is
   // unchanged. See buildPrompt's `elaboration_verified` case for the write-proposal prompt.
   "elaboration_verified",
+  // add-stage-advance-start-development: a human clicked "Start Development" — the idea's
+  // proposal is approved and unfinished tasks remain. Wakes the assigned daemon agent to
+  // CLAIM AND EXECUTE ALL remaining tasks (dedicated trigger, session-origin-pinned like
+  // elaboration_verified). See buildPrompt's `start_development` case.
+  "start_development",
   "proposal_rejected",
   "proposal_approved",
   "idea_claimed",

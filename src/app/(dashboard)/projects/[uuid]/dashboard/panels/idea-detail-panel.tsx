@@ -42,6 +42,7 @@ import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-
 import type { IdeaResponse } from "@/services/idea.service";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
+import { StartDevelopmentButton } from "@/components/start-development-button";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
@@ -84,6 +85,9 @@ interface TaskForPanel {
     name: string;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
+    // Present only when type === "agent_instance": the pinned (host, cwd) place +
+    // owning agent uuid (used by the Start Development presence gate).
+    instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
   dependsOn?: { uuid: string; title: string; status: string }[];
   dependedBy?: { uuid: string; title: string; status: string }[];
@@ -944,6 +948,19 @@ export function IdeaDetailPanel({
                   {verifyError && (
                     <span className="text-[11px] text-destructive">{verifyError}</span>
                   )}
+                  {/* Start Development — human "the plan is approved, go build
+                      it" action (add-stage-advance-start-development). Same
+                      shared-predicate contract as Verify Elaborate; presence
+                      gating + per-error-code toasts live in the component. */}
+                  <StartDevelopmentButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={proposals}
+                    tasks={tasks}
+                    onStarted={() => {
+                      fetchIdea();
+                    }}
+                  />
                   {showHelpText && (
                     <span className="text-[11px] text-[#9A9A9A]">
                       {t("elaboration.elaborationRequiredHint")}

@@ -525,3 +525,11 @@ export function useAgentPresence(): AgentPresenceValue {
   }
   return ctx;
 }
+
+// Non-throwing variant for components that can render outside the dashboard
+// shell (e.g. panels mounted in isolated tests): an absent provider reads as
+// "no presence data" (null), not a wiring bug. Consumers must treat null as
+// offline/unknown, never as online.
+export function useAgentPresenceOptional(): AgentPresenceValue | null {
+  return useContext(AgentPresenceContext);
+}
