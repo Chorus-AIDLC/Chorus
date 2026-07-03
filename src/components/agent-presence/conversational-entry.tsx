@@ -241,33 +241,34 @@ export function ConversationalEntry({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Agent select — hidden when only one agent is online (it is implied). */}
-      {agentGroups.length > 1 && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
-            {t("agentLabel")}
-          </span>
-          <Select
-            value={selectedAgent?.agentUuid ?? ""}
-            onValueChange={(v) => {
-              setPickedAgentUuid(v);
-              // The instance choice belongs to the previous agent — reset it.
-              setPickedConnectionUuid(null);
-            }}
-          >
-            <SelectTrigger aria-label={t("agentLabel")}>
-              <SelectValue placeholder={t("agentPlaceholder")} />
-            </SelectTrigger>
-            <SelectContent>
-              {agentGroups.map((g) => (
-                <SelectItem key={g.agentUuid} value={g.agentUuid}>
-                  {g.agentName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
+      {/* Agent select — ALWAYS rendered, even with a single online agent, so the
+          user sees WHO they are about to talk to (owner feedback: the target's
+          name must never be implicit). A sole agent is preselected and the
+          Select simply has one option. */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+          {t("agentLabel")}
+        </span>
+        <Select
+          value={selectedAgent?.agentUuid ?? ""}
+          onValueChange={(v) => {
+            setPickedAgentUuid(v);
+            // The instance choice belongs to the previous agent — reset it.
+            setPickedConnectionUuid(null);
+          }}
+        >
+          <SelectTrigger aria-label={t("agentLabel")}>
+            <SelectValue placeholder={t("agentPlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>
+            {agentGroups.map((g) => (
+              <SelectItem key={g.agentUuid} value={g.agentUuid}>
+                {g.agentName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* Instance picker for the selected agent (online instances only; a sole
           instance auto-selects). No agent selected yet → prompt instead. */}

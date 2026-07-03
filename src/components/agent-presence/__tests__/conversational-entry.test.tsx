@@ -195,14 +195,16 @@ describe("ConversationalEntry — offline gating", () => {
 });
 
 describe("ConversationalEntry — selection", () => {
-  it("sole agent + sole instance: no agent Select, instance auto-selected, Send enabled once text present", async () => {
+  it("sole agent + sole instance: agent Select still shows the agent's NAME, instance auto-selected, Send enabled once text present", async () => {
     setPresence([conn({ uuid: "c1" })]);
     respondOk();
     render(
       <ConversationalEntry buildInstruction={(t) => t} onStarted={vi.fn()} />,
     );
-    // No agent Select rendered for the single-agent case.
-    expect(screen.queryByLabelText("Agent")).toBeNull();
+    // The agent Select is ALWAYS rendered — even a sole agent's name must be
+    // visible (owner feedback), preselected in the trigger.
+    const trigger = screen.getByLabelText("Agent");
+    expect(trigger.textContent).toContain("Alpha");
     const send = screen.getByRole("button", { name: /Send to agent/ });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
