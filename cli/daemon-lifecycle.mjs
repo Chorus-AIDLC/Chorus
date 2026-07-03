@@ -292,14 +292,24 @@ export function startBackground(spec, io = defaultIO()) {
 
 /**
  * Stop the recorded background daemon: signal it, then remove the pidfile.
- * @param {object} [io]
- * @returns {{ stopped: boolean, pid: number|null, reason: "stopped"|"not-running"|"stale-cleared"|"error", message: string }}
+ *
+ * `opts.force` (the `chorus daemon stop --force` escape hatch): best-effort
+ * SIGTERM (failure ignored), then unlink the pidfile UNCONDITIONALLY — for
+ * stuck states the identity probe cannot resolve (e.g. an unverifiable pid the
+ * operator knows is not the daemon).
+ * @param {object} [io] @param {{ force?: boolean }} [opts]
+ * @returns {{ stopped: boolean, pid: number|null, reason: "stopped"|"not-running"|"stale-cleared"|"forced"|"error", message: string }}
  */
-export function stopDaemon(io = defaultIO()) {
+export function stopDaemon(io = defaultIO(), opts = {}) {
   const pidFile = pidFilePath(io);
   const status = isRunning(io);
   if (status.pid == null) {
     return { stopped: false, pid: null, reason: "not-running", message: "no daemon is running (no pidfile)" };
+  }
+  if (opts.force) {
+    try { io.kill(status.pid, "SIGTERM"); } catch { /* best-effort by design */ }
+    try { io.unlinkSync(pidFile); } catch { /* best-effort */ }
+    return { stopped: true, pid: status.pid, reason: "forced", message: `forced cleanup: signalled pid ${status.pid} (best-effort) and removed the pidfile` };
   }
   if (!status.running) {
     // Stale pidfile — clean it up, report clearly (no silent failure).

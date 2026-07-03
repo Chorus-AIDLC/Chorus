@@ -36,11 +36,12 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(parseClientFlags(["--agent=codex"]).agent).toBe("codex");
   });
 
-  it("parses boolean --chorus-only / --verbose / -d / --detach", () => {
+  it("parses boolean --chorus-only / --verbose / -d / --detach / --force", () => {
     expect(parseClientFlags(["--chorus-only"]).chorusOnly).toBe(true);
     expect(parseClientFlags(["--verbose"]).verbose).toBe(true);
     expect(parseClientFlags(["-d"]).detach).toBe(true);
     expect(parseClientFlags(["--detach"]).detach).toBe(true);
+    expect(parseClientFlags(["--force"]).force).toBe(true);
   });
 
   it("parses --help / -h into help:true", () => {
@@ -55,6 +56,7 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(f.verbose).toBeUndefined();
     expect(f.detach).toBeUndefined();
     expect(f.agent).toBeUndefined();
+    expect(f.force).toBeUndefined();
     expect(f.help).toBeUndefined();
   });
 
@@ -108,6 +110,7 @@ describe("daemonHelpText", () => {
       "status",
       "restart",
       "logs",
+      "stop --force",
     ]) {
       expect(help).toContain(token);
     }

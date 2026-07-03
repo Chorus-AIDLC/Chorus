@@ -96,6 +96,7 @@ chorus login                     # 认证（打开浏览器）
 chorus daemon                    # 前台启动 daemon
 chorus daemon -d                 # 后台启动 daemon（分离模式）
 chorus daemon stop               # 停止后台 daemon
+chorus daemon stop --force       # pid 卡死时强制清理 pidfile
 chorus daemon status             # 查看 daemon 状态
 chorus daemon restart            # 重启后台 daemon
 chorus daemon logs               # 查看 daemon 日志

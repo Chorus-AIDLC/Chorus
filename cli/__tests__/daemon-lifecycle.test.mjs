@@ -342,6 +342,31 @@ describe("stopDaemon", () => {
     expect(PID in io._files).toBe(false);
   });
 
+  it("force: best-effort signal + unconditional pidfile removal even when kill fails", () => {
+    // Identity matches (probe would say running) but kill EPERMs — force wins.
+    const io = fakeIO({
+      files: { [PID]: jsonPid(10, T1, "/x/chorus.mjs daemon") },
+      epermPids: new Set([10]),
+      identities: { 10: { startedAt: T1, cmdline: "/usr/bin/node /x/chorus.mjs daemon" } },
+    });
+    const r = stopDaemon(io, { force: true });
+    expect(r).toMatchObject({ stopped: true, pid: 10, reason: "forced" });
+    expect(r.message).toMatch(/forced cleanup/);
+    expect(PID in io._files).toBe(false);
+  });
+
+  it("force: signals a genuinely live daemon too, then removes the pidfile", () => {
+    const io = fakeIO({ files: { [PID]: "10" }, alivePids: new Set([10]) });
+    const r = stopDaemon(io, { force: true });
+    expect(r).toMatchObject({ stopped: true, pid: 10, reason: "forced" });
+    expect(PID in io._files).toBe(false);
+  });
+
+  it("force with no pidfile still reports not-running", () => {
+    const r = stopDaemon(fakeIO({ files: {} }), { force: true });
+    expect(r).toMatchObject({ stopped: false, reason: "not-running" });
+  });
+
   it("a real SIGTERM failure keeps the pidfile and names stop --force", () => {
     // Probe says running (identity matches), but the actual SIGTERM races into
     // EPERM. The pidfile must survive; the message must guide recovery.
