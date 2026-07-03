@@ -42,7 +42,7 @@ const bodySchema = z.object({
   entityUuid: z.string().min(1),
 });
 
-// POST /api/daemon/resume — resume a user-interrupted wake.
+// POST /api/daemon/resume — resume an interrupted wake (user- or crash-interrupted).
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await getAuthContext(request);
   if (!auth) {
