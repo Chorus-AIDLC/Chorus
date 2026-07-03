@@ -3,9 +3,13 @@
 // New-idea dialog — static form by default, plus (add-conversational-idea-entry)
 // an explicit switch into a CONVERSATIONAL mode when an online daemon exists:
 // instead of filling the form, the user describes the idea to a chosen agent
-// instance; the woken agent creates the idea itself (pure conversational,
-// elaboration q2=a — the frontend never POSTs /ideas in that mode) and the UI
-// hands off to the daemon chat focused on the new session.
+// instance. The dispatch (add-conversational-idea-root-session) POSTs
+// /api/ideas/conversational, which PRE-CREATES the Idea (createdBy = this user,
+// placeholder title, instance-assigned, elaborating) and its root daemon session
+// anchored to the idea from birth (sessionId = directIdeaUuid = ideaUuid) — the
+// server composes the wake instruction (the template needs the ideaUuid, which
+// only the server knows pre-creation). The UI hands off to the daemon chat
+// focused on the new idea-anchored session.
 //
 // Mode rules (elaboration q3=b + q6=b):
 //   - "form" is ALWAYS the default; the switch is an explicit tab.
@@ -32,9 +36,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isImeComposing } from "@/lib/ime";
+import { authFetch } from "@/lib/auth-client";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
-import { ConversationalEntry, DaemonConnectCta } from "@/components/agent-presence";
-import { buildIdeaInstruction } from "./build-idea-instruction";
+import {
+  ConversationalEntry,
+  ConversationalDispatchError,
+  DaemonConnectCta,
+} from "@/components/agent-presence";
+import type { SessionView } from "@/services/daemon-session.service";
 
 interface NewIdeaDialogProps {
   open: boolean;
@@ -46,8 +55,9 @@ interface NewIdeaDialogProps {
   parentUuid?: string | null;
   /** Display title of the parent, shown in the derive subtitle for context. */
   parentTitle?: string;
-  /** Project display name, threaded into the conversational instruction
-   *  template (display sugar — the template degrades to uuid-only without it). */
+  /** Project display name. No longer threaded into the dispatch (the server
+   *  resolves the project name itself for the instruction template); kept in
+   *  the props contract for existing call sites. */
   projectName?: string;
 }
 
@@ -60,7 +70,8 @@ export function NewIdeaDialog({
   onCreated,
   parentUuid,
   parentTitle,
-  projectName,
+  // `projectName` intentionally not destructured — the server resolves the
+  // project name itself for the conversational instruction template.
 }: NewIdeaDialogProps) {
   const t = useTranslations("ideaTracker");
   const tLineage = useTranslations("ideaTracker.lineage");
@@ -184,16 +195,62 @@ export function NewIdeaDialog({
     </>
   );
 
-  // Conversational pane: the reusable entry with the create-idea template. On a
-  // successful dispatch: close this dialog and land the user in the daemon chat
-  // on the new session. `onCreated` is deliberately NOT called — no Idea entity
-  // exists at dispatch time (the woken agent creates it).
+  // Conversational pane: the reusable entry with a consumer-owned dispatch that
+  // POSTs the RAW description to /api/ideas/conversational — the server
+  // pre-creates the Idea and composes the instruction (no client template). On
+  // success: close this dialog and land the user in the daemon chat on the new
+  // idea-anchored session (it already carries directIdeaUuid, so the chat list
+  // presents it as the idea's conversation). `onCreated` is deliberately NOT
+  // called — the idea list refreshes via the SSE change event, and calling it
+  // would navigate away from the chat handoff.
+  const conversationalDispatch = async (args: {
+    agentUuid: string;
+    connectionUuid: string;
+    userText: string;
+  }): Promise<SessionView> => {
+    const res = await authFetch("/api/ideas/conversational", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectUuid,
+        agentUuid: args.agentUuid,
+        connectionUuid: args.connectionUuid,
+        descriptionText: args.userText,
+      }),
+    });
+    if (!res.ok) {
+      // Surface the server reason through the component's status-aware error
+      // mapping (409 → retryable offline copy + connection re-poll).
+      let serverMessage: string | null = null;
+      try {
+        const json = await res.json();
+        if (typeof json?.error === "string" && json.error) {
+          serverMessage = json.error;
+        }
+      } catch {
+        // Non-JSON error body — fall back to the component's generic copy.
+      }
+      throw new ConversationalDispatchError(res.status, serverMessage);
+    }
+    let session: SessionView | null = null;
+    try {
+      const json = await res.json();
+      if (json?.success && json.data?.session) {
+        session = json.data.session as SessionView;
+      }
+    } catch {
+      // Non-JSON success body — treated as a failed dispatch below.
+    }
+    if (!session) {
+      throw new ConversationalDispatchError(res.status, null);
+    }
+    return session;
+  };
+
   const conversationPane = (
     <div className="py-2">
       <ConversationalEntry
-        buildInstruction={(userText) =>
-          buildIdeaInstruction(projectUuid, projectName, userText)
-        }
+        dispatch={conversationalDispatch}
         onStarted={(session) => {
           onOpenChange(false);
           presence?.openChatForSession(session);

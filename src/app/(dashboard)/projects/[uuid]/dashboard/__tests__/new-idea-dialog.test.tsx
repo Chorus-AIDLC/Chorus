@@ -55,19 +55,32 @@ vi.mock("@/contexts/agent-presence-context", () => ({
 }));
 
 // ConversationalEntry is mocked at the barrel seam the dialog imports from; the
-// mock exposes its props so the test can assert template threading and drive
-// onStarted. DaemonConnectCta renders its marker so the offline hint is
-// assertable without pulling the real CTA tree.
+// mock exposes its props so the test can assert the dispatch contract and drive
+// onStarted. The REAL ConversationalDispatchError class is re-exported (the
+// dialog's dispatch throws it; asserting instanceof against the same class the
+// dialog uses keeps the seam honest). DaemonConnectCta renders its marker so
+// the offline hint is assertable without pulling the real CTA tree.
 const entryProps = vi.fn();
-vi.mock("@/components/agent-presence", () => ({
-  ConversationalEntry: (props: {
-    buildInstruction: (t: string) => string;
-    onStarted: (s: unknown) => void;
-  }) => {
-    entryProps(props);
-    return <div>conversational-entry-pane</div>;
-  },
-  DaemonConnectCta: () => <div>daemon-connect-cta</div>,
+vi.mock("@/components/agent-presence", async () => {
+  const { ConversationalDispatchError } = await import(
+    "@/components/agent-presence/conversational-entry"
+  );
+  return {
+    ConversationalEntry: (props: {
+      dispatch: (args: unknown) => Promise<unknown>;
+      onStarted: (s: unknown) => void;
+    }) => {
+      entryProps(props);
+      return <div>conversational-entry-pane</div>;
+    },
+    ConversationalDispatchError,
+    DaemonConnectCta: () => <div>daemon-connect-cta</div>,
+  };
+});
+
+const mockAuthFetch = vi.fn();
+vi.mock("@/lib/auth-client", () => ({
+  authFetch: (...args: unknown[]) => mockAuthFetch(...args),
 }));
 
 import { NewIdeaDialog } from "../new-idea-dialog";
@@ -118,19 +131,72 @@ describe("NewIdeaDialog — mode gating", () => {
     expect(screen.queryByText("daemon-connect-cta")).toBeNull();
   });
 
-  it("switching to the conversational tab swaps the pane and threads the create-idea template", async () => {
+  it("switching to the conversational tab swaps the pane and supplies the conversational-idea dispatch (raw text, no client template)", async () => {
     setPresence(true);
     const user = userEvent.setup();
     renderDialog();
     await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
     expect(screen.getByText("conversational-entry-pane")).toBeTruthy();
     expect(screen.queryByLabelText("Title")).toBeNull();
-    // The dialog passed ITS template (project uuid + name) to the entry.
+
+    // The dialog supplies a dispatch (no buildInstruction — the server composes
+    // the template around the pre-created ideaUuid). Driving it POSTs the RAW
+    // description to the conversational-idea endpoint and returns the session.
     const props = entryProps.mock.calls[0][0];
-    expect(props.buildInstruction("my idea")).toContain(
-      'for project "Chorus" (projectUuid: proj-1)',
-    );
-    expect(props.buildInstruction("my idea")).toContain("my idea");
+    expect(props.buildInstruction).toBeUndefined();
+    const session = { uuid: "s-1", sessionId: "idea-1", directIdeaUuid: "idea-1" };
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { session } }),
+    });
+    const returned = await props.dispatch({
+      agentUuid: "agent-1",
+      connectionUuid: "c1",
+      userText: "my idea",
+    });
+    expect(returned).toEqual(session);
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockAuthFetch.mock.calls[0];
+    expect(url).toBe("/api/ideas/conversational");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      projectUuid: "proj-1",
+      agentUuid: "agent-1",
+      connectionUuid: "c1",
+      descriptionText: "my idea",
+    });
+  });
+
+  it("the dispatch maps failures to ConversationalDispatchError carrying status + server reason", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    const props = entryProps.mock.calls[0][0];
+
+    // Failure with a server reason.
+    mockAuthFetch.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ success: false, error: "Connection is offline" }),
+    });
+    await expect(
+      props.dispatch({ agentUuid: "a", connectionUuid: "c", userText: "x" }),
+    ).rejects.toMatchObject({
+      name: "ConversationalDispatchError",
+      status: 409,
+      serverMessage: "Connection is offline",
+    });
+
+    // 2xx without a session payload — a failed dispatch, never a silent close.
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {} }),
+    });
+    await expect(
+      props.dispatch({ agentUuid: "a", connectionUuid: "c", userText: "x" }),
+    ).rejects.toMatchObject({ name: "ConversationalDispatchError" });
   });
 
   it("successful dispatch closes the dialog and opens the chat on the session — never onCreated", async () => {
