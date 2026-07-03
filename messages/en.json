@@ -1405,7 +1405,7 @@
     "execInterrupted": "Interrupted",
     "execInterruptedUser": "Interrupted",
     "execInterruptedCrash": "Crashed",
-    "execCrashAutoRecovers": "Auto-recovers",
+    "execCrashExited": "Exited with error",
     "execWaiting": "Waiting",
     "execLoading": "Loading execution state...",
     "execElapsedLabel": "Elapsed since started",

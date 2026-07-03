@@ -1406,7 +1406,7 @@
     "execInterrupted": "已打断",
     "execInterruptedUser": "已打断",
     "execInterruptedCrash": "已崩溃",
-    "execCrashAutoRecovers": "自动恢复",
+    "execCrashExited": "异常退出",
     "execWaiting": "等待中",
     "execLoading": "正在加载执行状态...",
     "execElapsedLabel": "已运行时长",

@@ -658,16 +658,20 @@ describe("Daemon chat modal — opening + conversation list", () => {
     });
   });
 
-  it("shows the crash 'auto-recovers' hint (no Resume) for a crash-interrupted conversation", async () => {
+  it("shows the 'exited with error' label + Resume for a crash-interrupted conversation (add-crash-execution-resume)", async () => {
     await openShipLogin({
       turnStatus: "ended",
       executions: [adHocExec({ status: "interrupted", interruptedReason: "crash" })],
     });
+    // A crash is manually resumable: error label + the same Resume control as a
+    // user interrupt sit in the composer action row; no "auto-recovers" claim.
     await waitFor(() =>
-      expect(screen.getAllByText("Auto-recovers").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("Exited with error").length).toBeGreaterThan(0),
     );
-    // Crash recovers via reconnect-backfill — no manual Resume affordance.
-    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: /resume/i }).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Auto-recovers")).toBeNull();
   });
 
   it("opening Interrupt in the action row shows its confirmation dialog before any request", async () => {
