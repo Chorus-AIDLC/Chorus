@@ -38,8 +38,13 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *                                            (null until the SSE handshake reports it).
  *   killer?: (child: any, opts: any) => Promise<any>,  Injectable; defaults to killProcessTree.
  *   sigintTimeoutMs?: number,                           Layered-resolved escalation window.
- *   redispatchResume?: (entityType: string, entityUuid: string) => void,  Re-run a wake
- *                                            for a resumed entity (子3); injected by the daemon.
+ *   redispatchResume?: (entityType: string, entityUuid: string, resumeReason?: string) => void,
+ *                                            Re-run a wake for a resumed entity (子3); injected
+ *                                            by the daemon. `resumeReason` ("user" | "crash",
+ *                                            add-crash-execution-resume) is the row's prior
+ *                                            interruptedReason from the control event — it
+ *                                            selects the continue-instruction variant; absent
+ *                                            or unknown degrades to the user-resume prompt.
  *   deliverTurn?: (turnUuid?: string) => void, Dispatch a PRECISE pending turn by uuid
  *                                            (子2 — origin-only live delivery). On a
  *                                            `deliver_turn` control event (after the Check-1
@@ -134,11 +139,23 @@ export function createControlHandler(deps) {
 
       // --- resume: re-dispatch the wake for this entity (子3). No running-child
       //     check — the subprocess is gone (it was interrupted); the wake path will
-      //     re-spawn and `--resume` the existing session. ---
+      //     re-spawn and `--resume` the existing session. `resumeReason` (the row's
+      //     prior interruptedReason, add-crash-execution-resume) is threaded through
+      //     so the wake prompt can state a crash explicitly; anything but the two
+      //     known values (or an older server sending none) degrades to undefined →
+      //     the existing user-resume prompt. ---
       if (command === "resume") {
-        logger.info(`[Chorus] control: resuming ${entityType}:${entityUuid} (re-dispatch wake)`);
+        const resumeReason =
+          event.resumeReason === "user" || event.resumeReason === "crash"
+            ? event.resumeReason
+            : undefined;
+        logger.info(
+          `[Chorus] control: resuming ${entityType}:${entityUuid} (re-dispatch wake` +
+            (resumeReason ? `, reason=${resumeReason}` : "") +
+            `)`
+        );
         try {
-          redispatchResume?.(entityType, entityUuid);
+          redispatchResume?.(entityType, entityUuid, resumeReason);
         } catch (err) {
           logger.warn(`[Chorus] control: resume re-dispatch failed for ${entityType}:${entityUuid}: ${err}`);
         }

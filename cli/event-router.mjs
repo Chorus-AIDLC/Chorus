@@ -220,7 +220,12 @@ export class EventRouter {
    * per-direct-idea serialization holds and the spawner's on-disk transcript probe
    * naturally selects `claude --resume <directIdeaUuid>` (the session already
    * exists). Synchronous + non-throwing, mirroring `dispatch`.
-   * @param {{ entityType?: string, entityUuid?: string }} target
+   *
+   * `resumeReason` (add-crash-execution-resume) is the interrupted row's prior
+   * reason ("user" | "crash") threaded from the control event; it is stamped on the
+   * synthetic notification as `resumedFrom` so the prompt builder can state a crash
+   * explicitly. Absent/unknown → not stamped → the user-resume prompt.
+   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string }} target
    */
   dispatchResume(target) {
     const entityType = target?.entityType;
@@ -229,7 +234,16 @@ export class EventRouter {
       this.logger.warn("[Chorus] resume dispatch missing entityType/entityUuid, skipping");
       return;
     }
-    const n = { action: "resource_resumed", entityType, entityUuid };
+    const resumedFrom =
+      target?.resumeReason === "user" || target?.resumeReason === "crash"
+        ? target.resumeReason
+        : undefined;
+    const n = {
+      action: "resource_resumed",
+      entityType,
+      entityUuid,
+      ...(resumedFrom ? { resumedFrom } : {}),
+    };
     this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
       this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);
     });

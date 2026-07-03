@@ -79,6 +79,36 @@ describe("buildPrompt", () => {
     expect(pi).toContain("idea-7");
   });
 
+  it("resource_resumed with resumedFrom=crash injects the crash-specific continue instruction (add-crash-execution-resume)", () => {
+    const p = buildPrompt({
+      action: "resource_resumed",
+      entityType: "task",
+      entityUuid: "task-1",
+      resumedFrom: "crash",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("task-1");
+    // States the abnormal exit and instructs verify-state-then-continue.
+    expect(p).toContain("EXITED ABNORMALLY");
+    expect(p).toContain("chorus_get_task");
+    expect(p.toLowerCase()).toContain("re-check the current state");
+    expect(p.toLowerCase()).toContain("continue the unfinished work");
+    // It is a DIFFERENT text from the user-resume prompt.
+    expect(p).not.toContain("RESUMED after an interrupt");
+  });
+
+  it("resource_resumed with resumedFrom=user, absent, or unknown keeps the user-resume prompt (graceful degradation)", () => {
+    const base = { action: "resource_resumed", entityType: "task", entityUuid: "task-1" };
+    const userText = buildPrompt({ ...base, resumedFrom: "user" });
+    const absentText = buildPrompt(base);
+    const unknownText = buildPrompt({ ...base, resumedFrom: "meteor" });
+    expect(userText).toContain("RESUMED after an interrupt");
+    // Absent (older server) and unknown values degrade to the SAME user text.
+    expect(absentText).toBe(userText);
+    expect(unknownText).toBe(userText);
+    expect(userText).not.toContain("EXITED ABNORMALLY");
+  });
+
   it("elaboration_verified wakes the agent to WRITE the proposal, not answer questions (add-elaboration-verify-wake)", () => {
     expect(WAKE_ACTIONS.has("elaboration_verified")).toBe(true);
     const p = buildPrompt({
@@ -606,6 +636,32 @@ describe("EventRouter dispatch", () => {
 
     expect(spawner.wake).toHaveBeenCalledTimes(2);
     expect(maxConcurrent).toBe(1); // same direct idea → never concurrent
+  });
+
+  it("dispatchResume stamps resumedFrom on the synthetic wake only for known reasons (add-crash-execution-resume)", async () => {
+    const enqueued = [];
+    const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
+    const attribution = { key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA };
+    const waker = {
+      keyFor: vi.fn(async () => attribution),
+      markQueued: vi.fn(),
+      wake: vi.fn(async () => {}),
+    };
+    const { router } = makeRouter([], waker, queue);
+
+    router.dispatchResume({ entityType: "task", entityUuid: "task-1", resumeReason: "crash" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-2", resumeReason: "user" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-3" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-4", resumeReason: "meteor" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(enqueued).toHaveLength(4);
+    const wakes = waker.markQueued.mock.calls.map((c) => c[0]);
+    expect(wakes[0]).toMatchObject({ action: "resource_resumed", entityUuid: "task-1", resumedFrom: "crash" });
+    expect(wakes[1]).toMatchObject({ action: "resource_resumed", entityUuid: "task-2", resumedFrom: "user" });
+    // Absent / unknown reasons are NOT stamped — buildPrompt then falls back to the user text.
+    expect(wakes[2]).not.toHaveProperty("resumedFrom");
+    expect(wakes[3]).not.toHaveProperty("resumedFrom");
   });
 });
 

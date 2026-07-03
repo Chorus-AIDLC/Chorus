@@ -118,9 +118,9 @@ function ComposeField({
   sendLabel: string;
   layout: "inline" | "stacked";
   // THIS conversation's in-flight execution, if any — a `running` one (→ Interrupt
-  // beside Send) or a `user`-interrupted one (→ Resume). A `crash`-interrupted one is
-  // also accepted and renders the static "auto-recovers" hint (no Resume). The
-  // Interrupt/Resume controls are the SAME shipped components the connection deck
+  // beside Send) or an interrupted one (→ Resume; a `crash`-interrupted one adds an
+  // "exited with error" label beside the same Resume — add-crash-execution-resume).
+  // The Interrupt/Resume controls are the SAME shipped components the connection deck
   // renders — same AlertDialog confirm, same endpoints, same wiring. Null/undefined
   // when the conversation is idle (just Send).
   controllableExecution?: ExecutionView | null;
@@ -163,10 +163,12 @@ function ComposeField({
 
   // The state-driven control that joins Send in the action row, mirroring the
   // standalone ExecutionRow's trailing controls byte-for-byte:
-  //   running                       → Interrupt (with its AlertDialog confirm)
-  //   interrupted + reason === user → Resume
-  //   interrupted + reason === crash → a static "auto-recovers" hint (no Resume),
-  //                                    since a crash recovers via reconnect-backfill.
+  //   running                        → Interrupt (with its AlertDialog confirm)
+  //   interrupted + reason === user  → Resume
+  //   interrupted + reason === crash → an "exited with error" label + the SAME Resume
+  //                                    (add-crash-execution-resume: a crash is manually
+  //                                    resumable — backfill only auto-recovers it if
+  //                                    the daemon restarts, not while it stays online).
   const exec = controllableExecution ?? null;
   const execControl = exec
     ? exec.status === "running"
@@ -175,9 +177,12 @@ function ComposeField({
         ? <ResumeButton exec={exec} />
         : exec.status === "interrupted" && exec.interruptedReason === "crash"
           ? (
-              <span className="text-[11px] font-medium text-[#9A8C7E]">
-                {tc("execCrashAutoRecovers")}
-              </span>
+              <>
+                <span className="text-[11px] font-medium text-[#B45309]">
+                  {tc("execCrashExited")}
+                </span>
+                <ResumeButton exec={exec} />
+              </>
             )
           : null
     : null;

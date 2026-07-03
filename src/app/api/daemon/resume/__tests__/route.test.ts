@@ -54,7 +54,7 @@ beforeEach(() => {
   mockGetAuthContext.mockResolvedValue(ownerUserAuth);
   mockHasPermission.mockReturnValue(false);
   mockAuthorizeConnectionControl.mockResolvedValue({ ok: true, target: { agentUuid, ownerUuid } });
-  mockResumeExecution.mockResolvedValue({ ok: true });
+  mockResumeExecution.mockResolvedValue({ ok: true, resumedFrom: "user" });
   mockPublishExecutionChange.mockResolvedValue(undefined);
   mockIsConnectionLive.mockResolvedValue(true);
 });
@@ -77,13 +77,30 @@ describe("POST /api/daemon/resume", () => {
     const res = await POST(postRequest(validBody), emptyCtx);
     expect(res.status).toBe(200);
     expect(mockResumeExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1);
-    // The daemon is told to re-spawn via the SAME control channel as interrupt.
+    // The daemon is told to re-spawn via the SAME control channel as interrupt, with
+    // the prior reason threaded through so it can branch the continue instruction.
     expect(mockDispatchControl).toHaveBeenCalledWith({
       companyUuid,
       targetConnectionUuid: connectionUuid,
       command: "resume",
       entityType: "task",
       entityUuid: t1,
+      resumeReason: "user",
+    });
+    expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
+  });
+
+  it("resumes a crash-interrupted row and forwards resumeReason=crash (add-crash-execution-resume)", async () => {
+    mockResumeExecution.mockResolvedValue({ ok: true, resumedFrom: "crash" });
+    const res = await POST(postRequest(validBody), emptyCtx);
+    expect(res.status).toBe(200);
+    expect(mockDispatchControl).toHaveBeenCalledWith({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "resume",
+      entityType: "task",
+      entityUuid: t1,
+      resumeReason: "crash",
     });
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
@@ -122,12 +139,12 @@ describe("POST /api/daemon/resume", () => {
     expect(mockDispatchControl).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for a not-resumable row (e.g. crash-interrupted) and dispatches nothing", async () => {
+  it("returns 400 for a not-resumable row (e.g. still running) and dispatches nothing", async () => {
     mockResumeExecution.mockResolvedValue({
       ok: false,
       reason: "not_resumable",
-      status: "interrupted",
-      interruptedReason: "crash",
+      status: "running",
+      interruptedReason: null,
     });
     const res = await POST(postRequest(validBody), emptyCtx);
     expect(res.status).toBe(400);
