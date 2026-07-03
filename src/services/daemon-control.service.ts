@@ -177,7 +177,12 @@ export async function authorizeConnectionControl(params: {
  *
  * The params are a discriminated union on `command`:
  *  - `interrupt`/`resume` carry `entityType`/`entityUuid` (they target a specific
- *    running/resumable resource), and the wire event carries them too.
+ *    running/resumable resource), and the wire event carries them too. A `resume`
+ *    additionally carries `resumeReason` — the row's PRIOR `interruptedReason`
+ *    ("user" | "crash") — so the daemon can inject a crash-specific continue
+ *    instruction into the resumed wake (add-crash-execution-resume). Older daemons
+ *    ignore the extra field; it is meaningless (and omitted by callers) for
+ *    `interrupt`.
  *  - `deliver_turn` carries `targetConnectionUuid` + the precise `turnUuid` to run; the
  *    wire event omits the entity fields entirely (the daemon reads the turn by uuid).
  */
@@ -188,6 +193,7 @@ export type DispatchControlParams =
       command: EntityBearingControlCommand;
       entityType: ControlEntityType;
       entityUuid: string;
+      resumeReason?: "user" | "crash";
     }
   | {
       companyUuid: string;
@@ -214,6 +220,9 @@ export function dispatchControl(params: DispatchControlParams): void {
           targetConnectionUuid: params.targetConnectionUuid,
           entityType: params.entityType,
           entityUuid: params.entityUuid,
+          // Only a resume carries a reason; spread-if-present keeps the interrupt
+          // wire shape byte-identical to before.
+          ...(params.resumeReason ? { resumeReason: params.resumeReason } : {}),
         };
   eventBus.emit(controlEventName(params.targetConnectionUuid), event);
 }

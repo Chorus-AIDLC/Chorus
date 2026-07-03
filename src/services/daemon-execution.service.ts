@@ -867,9 +867,11 @@ export async function filterValidExecutionEntities(
 // in the daemon (control channel → process-killer); these functions only record the
 // resulting state transition the daemon reports back.
 
-/** Outcome of `resumeExecution` so the route maps a precise status code. */
+/** Outcome of `resumeExecution` so the route maps a precise status code. `resumedFrom`
+ * is the row's PRIOR `interruptedReason` — the route forwards it as the control event's
+ * `resumeReason` so the daemon can build a crash-specific continue instruction. */
 export type ResumeExecutionResult =
-  | { ok: true }
+  | { ok: true; resumedFrom: InterruptReason }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "not_resumable"; status: string; interruptedReason: string | null };
 
@@ -877,8 +879,10 @@ export type ResumeExecutionResult =
  * Mark a connection's execution row for `(entityType, entityUuid)` as `interrupted`
  * with the given reason. Called (via the daemon's report-interrupt endpoint) after
  * a wake's subprocess exits in an interrupted/crashed state:
- *   - `user`  — an authorized user-requested interrupt (manually resumable), or
- *   - `crash` — an unexpected exit (auto-recovered via reconnect-backfill).
+ *   - `user`  — an authorized user-requested interrupt, or
+ *   - `crash` — an unexpected exit (auto-recovered when the daemon reconnects).
+ * Both reasons are manually resumable via `resumeExecution` (add-crash-execution-resume);
+ * a crash additionally auto-recovers through reconnect-backfill if the daemon restarts.
  *
  * Scoped to companyUuid + connectionUuid (the route fences the connection's
  * ownership first). Idempotent: re-reporting the same outcome is a no-op update.
@@ -901,13 +905,17 @@ export async function reportExecutionInterrupt(
 }
 
 /**
- * Resume a user-interrupted execution: the daemon re-dispatches the wake for the
+ * Resume an interrupted execution: the daemon re-dispatches the wake for the
  * entity, so this transitions the sticky `interrupted` row back to `running` and
- * clears `interruptedReason`. ONLY a row that is `interrupted` with
- * `interruptedReason === "user"` is resumable — a `crash` is auto-recovered by the
- * daemon's reconnect-backfill, never manually (q7=a). companyUuid + connectionUuid
- * scoped (the route fences ownership first). Returns a discriminated result so the
- * route maps not-found → 404 and not-resumable → 400. A query failure propagates.
+ * clears `interruptedReason`. A row is resumable when it is `interrupted` with
+ * `interruptedReason` of "user" OR "crash" (add-crash-execution-resume — a crash is
+ * ALSO manually resumable, covering the daemon-still-online case reconnect-backfill
+ * never reaches; a daemon restart still auto-recovers a crash via backfill).
+ * running/queued/ended rows and unknown reasons are rejected. companyUuid +
+ * connectionUuid scoped (the route fences ownership first). Returns a discriminated
+ * result so the route maps not-found → 404 and not-resumable → 400; the ok arm
+ * carries `resumedFrom` (the prior reason) for the control event. A query failure
+ * propagates.
  *
  * NOTE: the actual re-spawn of Claude is the daemon's job (it receives a resume
  * dispatch and continues via `claude --resume`); this only records the row's
@@ -925,7 +933,8 @@ export async function resumeExecution(
     select: { id: true, status: true, interruptedReason: true },
   });
   if (!row) return { ok: false, reason: "not_found" };
-  if (row.status !== INTERRUPTED_EXECUTION_STATUS || row.interruptedReason !== "user") {
+  const resumedFrom = INTERRUPT_REASONS.find((r) => r === row.interruptedReason);
+  if (row.status !== INTERRUPTED_EXECUTION_STATUS || !resumedFrom) {
     return {
       ok: false,
       reason: "not_resumable",
@@ -941,7 +950,7 @@ export async function resumeExecution(
       startedAt: new Date(),
     },
   });
-  return { ok: true };
+  return { ok: true, resumedFrom };
 }
 
 // ===== SSE event publish =====

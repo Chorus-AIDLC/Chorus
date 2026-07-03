@@ -1,13 +1,17 @@
 // src/app/api/daemon/resume/route.ts
-// User-triggered resume of a user-interrupted wake (子3 — daemon-interrupt-resume).
+// User-triggered resume of an interrupted wake (子3 — daemon-interrupt-resume;
+// widened by add-crash-execution-resume).
 //
-// The Agent Connections UI calls this when a user clicks "Resume" on an
-// interrupted execution row. It (1) validates the row is `interrupted` with
-// reason `user` (a `crash` is auto-recovered by reconnect-backfill, never manually
-// resumable — q7=a), (2) records the row's transition back to `running`, and
-// (3) dispatches a `resume` control command to the daemon over the same
-// per-connection control channel as interrupt, so the daemon re-spawns and
-// continues the session via `claude --resume <directIdeaUuid>`.
+// The Agent Connections UI and the daemon chat window call this when a user clicks
+// "Resume" on an interrupted execution row. It (1) validates the row is
+// `interrupted` with reason `user` OR `crash` (a crash is manually resumable too —
+// that covers a subprocess crash while the daemon stays online, which
+// reconnect-backfill never reaches; a daemon restart still auto-recovers a crash),
+// (2) records the row's transition back to `running`, and (3) dispatches a `resume`
+// control command — carrying the prior reason as `resumeReason` so the daemon can
+// inject a crash-specific continue instruction — over the same per-connection
+// control channel as interrupt, so the daemon re-spawns and continues the session
+// via `claude --resume <directIdeaUuid>`.
 //
 // Entity-generic + connection-targeted (task / idea / proposal / document), so it
 // lives on the daemon surface keyed by connection + entity — NOT a Task-level
@@ -85,24 +89,26 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  // Record the row transition. Only a user-interrupted row is resumable; a crash
-  // (auto-recovered) or any non-interrupted row is rejected with a precise error.
+  // Record the row transition. An interrupted row (reason user OR crash) is
+  // resumable; any non-interrupted row is rejected with a precise error.
   const result = await resumeExecution(auth.companyUuid, connectionUuid, entityType, entityUuid);
   if (!result.ok) {
     if (result.reason === "not_found") return errors.notFound("Execution");
     return errors.badRequest(
-      `Execution is not user-resumable (status=${result.status}, reason=${result.interruptedReason ?? "none"})`,
+      `Execution is not resumable (status=${result.status}, reason=${result.interruptedReason ?? "none"})`,
     );
   }
 
   // Tell the daemon to re-spawn and continue the session, then push the updated
-  // active set so the UI reflects the resumed row immediately.
+  // active set so the UI reflects the resumed row immediately. `resumeReason` is the
+  // row's prior interruptedReason — the daemon branches its continue instruction on it.
   dispatchControl({
     companyUuid: auth.companyUuid,
     targetConnectionUuid: connectionUuid,
     command: "resume",
     entityType,
     entityUuid,
+    resumeReason: result.resumedFrom,
   });
   await publishExecutionChange(auth.companyUuid, connectionUuid);
 
