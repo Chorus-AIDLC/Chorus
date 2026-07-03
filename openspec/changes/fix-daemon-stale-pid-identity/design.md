@@ -57,7 +57,7 @@ stopDaemon({ force }) →
 
 One injectable `queryProcessIdentity(pid, io)` seam (like the existing `io.kill`), implemented with `spawnSync` and argument arrays (no shell):
 
-- **POSIX (linux/darwin)**: `ps -p <pid> -o lstart=,args=` — one invocation returns start time (second resolution) and full command line. `lstart` is supported by both GNU ps and BSD/macOS ps. **busybox fallback**: minimal `ps` implementations (Alpine/busybox) reject `-o lstart`; on failure retry with `ps -o args= -p <pid>` (busybox-supported) and return `{ cmdline, startedAt: null }` — the probe then verifies by cmdline alone, so identity checking still functions where only start-time is unavailable.
+- **POSIX (linux/darwin)**: `ps -p <pid> -o lstart=,args=` — one invocation returns start time (second resolution) and full command line. `lstart` is supported by both GNU ps and BSD/macOS ps. **busybox fallback**: minimal `ps` implementations (Alpine/busybox 1.36, verified on a real binary) reject **both** `-p` and `-o lstart` (busybox ps knows only `-o` and `-T`); on failure retry with `ps -o pid=,args=` (full-table listing) and filter by the pid column caller-side, returning `{ cmdline, startedAt: null }` — the probe then verifies by cmdline alone, so identity checking still functions where only start-time is unavailable.
 - **Windows**: `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter 'ProcessId=<pid>' | Select-Object CommandLine,CreationDate | ConvertTo-Json"` — `wmic` is deprecated/removed on modern Windows; PowerShell is present on all supported Windows versions.
 - Returns `null` on any failure (command missing, non-zero exit, unparsable output) — the probe then degrades conservatively (see below).
 

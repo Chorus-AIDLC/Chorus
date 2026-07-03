@@ -138,10 +138,17 @@ export function queryProcessIdentity(pid, io = defaultIO()) {
         if (cmdline) return { cmdline, startedAt };
       }
     }
-    // busybox fallback: args-only (cmdline verification still possible).
-    const argsOnly = io.spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" });
-    if (argsOnly && argsOnly.status === 0 && argsOnly.stdout && argsOnly.stdout.trim()) {
-      return { cmdline: argsOnly.stdout.trim(), startedAt: null };
+    // busybox fallback: busybox ps rejects -p AND -o lstart (it only knows -o
+    // and -T), so list every process as "pid args" and filter by the pid
+    // column ourselves. Cmdline verification still possible; no start time.
+    const argsOnly = io.spawnSync("ps", ["-o", "pid=,args="], { encoding: "utf8" });
+    if (argsOnly && argsOnly.status === 0 && argsOnly.stdout) {
+      for (const line of argsOnly.stdout.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(.+)$/);
+        if (m && Number.parseInt(m[1], 10) === pid) {
+          return { cmdline: m[2].trim(), startedAt: null };
+        }
+      }
     }
     return null;
   } catch {
@@ -182,7 +189,12 @@ export function processAlive(record, io = defaultIO()) {
   const hasRecordedIdentity = Boolean(rec.startedAt || rec.argsHint);
   if (hasRecordedIdentity) {
     if (identity === null) return true; // unverifiable → conservative: running
-    if (rec.argsHint && !identity.cmdline.includes(rec.argsHint)) return false;
+    // Collapse whitespace on both sides: the ps parse re-joins fields with
+    // single spaces, so an argsHint containing consecutive spaces must not
+    // read as a mismatch (false-stale is the dangerous direction).
+    const liveCmd = identity.cmdline.replace(/\s+/g, " ");
+    const hint = rec.argsHint ? rec.argsHint.replace(/\s+/g, " ") : null;
+    if (hint && !liveCmd.includes(hint)) return false;
     if (rec.startedAt && identity.startedAt !== null && identity.startedAt !== rec.startedAt) return false;
     return true;
   }

@@ -18,17 +18,18 @@ import {
 
 /**
  * A fake IO over an in-memory file map + controllable process table.
- * `identities`: pid → { lstartLine?, argsLine? } drives the fake `ps`;
- * a pid absent from `identities` makes every ps invocation fail (status 1),
- * modelling busybox-without-info / missing ps. `psRejectsLstart` simulates
- * busybox (lstart query fails, args-only succeeds).
+ * `identities`: pid → { startedAt?, cmdline } drives the fake `ps`;
+ * a pid absent from `identities` makes every ps invocation return nothing,
+ * modelling a vanished process / missing ps. `busybox: true` models real
+ * busybox 1.36 behavior: any `-p` or `-o lstart` invocation errors (status 1),
+ * while `ps -o pid=,args=` lists the whole table for caller-side filtering.
  */
 function fakeIO({
   files = {},
   alivePids = new Set(),
   epermPids = new Set(),
   identities = {},
-  psRejectsLstart = false,
+  busybox = false,
   platform = "linux",
   spawnPid = 4242,
 } = {}) {
@@ -53,24 +54,29 @@ function fakeIO({
     },
     spawnSync: (cmd, args, opts) => {
       spawnSyncCalls.push({ cmd, args, opts });
-      // ps passes the pid after "-p"; powershell embeds it in the command string.
-      const pIdx = args.indexOf("-p");
-      const pid = pIdx >= 0
-        ? Number.parseInt(String(args[pIdx + 1]), 10)
-        : Number.parseInt((args.join(" ").match(/ProcessId=(\d+)/) ?? [])[1] ?? "", 10);
-      const id = identities[pid];
       if (cmd === "powershell") {
+        const pid = Number.parseInt((args.join(" ").match(/ProcessId=(\d+)/) ?? [])[1] ?? "", 10);
+        const id = identities[pid];
         if (!id) return { status: 1, stdout: "" };
         return { status: 0, stdout: JSON.stringify({ CommandLine: id.cmdline, CreationDate: id.startedAt ?? null }) };
       }
-      // POSIX ps
+      // POSIX ps. Real busybox 1.36 rejects -p and -o lstart outright.
+      const hasP = args.includes("-p");
       const wantsLstart = args.some((a) => String(a).includes("lstart"));
-      if (!id) return { status: 1, stdout: "" };
-      if (wantsLstart) {
-        if (psRejectsLstart || !id.startedAt) return { status: 1, stdout: "" };
-        return { status: 0, stdout: `${id.startedAt} ${id.cmdline}\n` };
+      if (busybox && (hasP || wantsLstart)) return { status: 1, stdout: "", stderr: "ps: invalid option -- 'p'" };
+      if (hasP) {
+        const pid = Number.parseInt(String(args[args.indexOf("-p") + 1]), 10);
+        const id = identities[pid];
+        if (!id) return { status: 1, stdout: "" }; // ps -p exits 1 when the pid is gone
+        if (wantsLstart) {
+          if (!id.startedAt) return { status: 1, stdout: "" };
+          return { status: 0, stdout: `${id.startedAt} ${id.cmdline}\n` };
+        }
+        return { status: 0, stdout: `${id.cmdline}\n` };
       }
-      return { status: 0, stdout: `${id.cmdline}\n` };
+      // Full-table listing (`ps -o pid=,args=`): the busybox path.
+      const rows = Object.entries(identities).map(([pid, id]) => `${String(pid).padStart(5)} ${id.cmdline}`);
+      return { status: 0, stdout: rows.join("\n") + "\n" };
     },
     kill: (pid) => {
       if (epermPids.has(pid)) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
@@ -119,10 +125,20 @@ describe("queryProcessIdentity", () => {
     expect(io._spawnSyncCalls[0].opts.shell).toBeUndefined(); // argument arrays, never shell:true
   });
 
-  it("POSIX busybox fallback: lstart rejected → args-only retry, startedAt:null", () => {
-    const io = fakeIO({ psRejectsLstart: true, identities: { 10: { cmdline: "/usr/bin/node /x/chorus.mjs daemon" } } });
+  it("POSIX busybox fallback: -p/lstart rejected → full-table pid=,args= listing filtered by pid, startedAt:null", () => {
+    const io = fakeIO({
+      busybox: true,
+      identities: {
+        10: { cmdline: "/usr/bin/node /x/chorus.mjs daemon" },
+        99: { cmdline: "/usr/sbin/sshd" },
+      },
+    });
     expect(queryProcessIdentity(10, io)).toEqual({ cmdline: "/usr/bin/node /x/chorus.mjs daemon", startedAt: null });
     expect(io._spawnSyncCalls).toHaveLength(2);
+    // The retry must NOT use -p (real busybox rejects it) — pid=,args= only.
+    expect(io._spawnSyncCalls[1].args).toEqual(["-o", "pid=,args="]);
+    // A pid absent from the table → null, not another process's cmdline.
+    expect(queryProcessIdentity(42, io)).toBeNull();
   });
 
   it("Windows: PowerShell Get-CimInstance branch (no shell:true)", () => {
@@ -170,9 +186,9 @@ describe("processAlive — identity-verified probe decision table", () => {
   });
 
   it("identity record + busybox (startedAt unavailable live) ⇒ cmdline alone decides", () => {
-    const io = fakeIO({ psRejectsLstart: true, epermPids: new Set([12]), identities: { 12: { cmdline: `/usr/bin/node ${HINT}` } } });
+    const io = fakeIO({ busybox: true, epermPids: new Set([12]), identities: { 12: { cmdline: `/usr/bin/node ${HINT}` } } });
     expect(processAlive({ pid: 12, startedAt: T1, argsHint: HINT }, io)).toBe(true);
-    const io2 = fakeIO({ psRejectsLstart: true, epermPids: new Set([12]), identities: { 12: { cmdline: "/usr/sbin/dockerd" } } });
+    const io2 = fakeIO({ busybox: true, epermPids: new Set([12]), identities: { 12: { cmdline: "/usr/sbin/dockerd" } } });
     expect(processAlive({ pid: 12, startedAt: T1, argsHint: HINT }, io2)).toBe(false);
   });
 
