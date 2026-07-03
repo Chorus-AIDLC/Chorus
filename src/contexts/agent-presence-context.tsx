@@ -167,6 +167,11 @@ export interface AgentPresenceValue {
   openChatForSession: (session: SessionView) => void;
   // Consume the one-shot focus target (called by `DaemonChat` after it focuses).
   clearChatFocusTarget: () => void;
+  // On-demand re-poll of the connection list (same fetch the 15s loop runs).
+  // Callers use it to re-sync immediately after a server verdict contradicts the
+  // rendered list (e.g. an ad-hoc dispatch 409s because the picked connection
+  // just went offline) instead of waiting out the poll interval.
+  refreshConnections: () => void;
 }
 
 const AgentPresenceContext = createContext<AgentPresenceValue | null>(null);
@@ -517,6 +522,7 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       openChatForAgent,
       openChatForSession,
       clearChatFocusTarget,
+      refreshConnections: fetchConnections,
     }),
     [
       status,
@@ -531,6 +537,7 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       openChatForAgent,
       openChatForSession,
       clearChatFocusTarget,
+      fetchConnections,
     ],
   );
 

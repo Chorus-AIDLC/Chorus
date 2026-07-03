@@ -1558,6 +1558,19 @@
     "cwdAriaLabel": "工作目录",
     "hostAriaLabel": "主机"
   },
+  "conversationalEntry": {
+    "noOnlineDaemon": "当前没有在线的智能体守护进程。启动一个即可用对话方式描述你的想法：",
+    "agentLabel": "智能体",
+    "agentPlaceholder": "选择智能体",
+    "instanceLabel": "工作目录",
+    "pickAgentFirst": "先选择一个智能体，查看它在线的工作目录。",
+    "placeholder": "描述你想做什么——接下来交给智能体…",
+    "charCounter": "{count} / {max}",
+    "connectionWentOffline": "该守护进程刚刚离线了。请换一个实例后重试。",
+    "sendError": "无法联系到智能体，请重试。",
+    "send": "发送给智能体",
+    "retry": "重试"
+  },
   "daemonConnectCta": {
     "headline": "下一步：让你的智能体保持在线",
     "body": "运行一个常驻守护进程，让你的智能体保持在线并自动接收派发的工作。",
