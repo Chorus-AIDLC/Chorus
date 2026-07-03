@@ -55,6 +55,31 @@ import type { SessionView } from "@/services/daemon-session.service";
 // round-trip. The server remains authoritative; this only avoids a doomed POST.
 export const MAX_INSTRUCTION_CHARS = 4000;
 
+// Map an agent's ONLINE `ConnectionView[]` to the shared `InstanceCandidate` shape
+// the picker renders. One canonical mapping for every live-send surface (the ad-hoc
+// form here, the conversational entry) so the "" / null sentinels never drift.
+export function connectionsToInstanceCandidates(
+  connections: ConnectionView[],
+): InstanceCandidate[] {
+  return connections.map((c) => ({
+    connectionUuid: c.uuid,
+    host: c.host ?? "",
+    // null (and any missing self-report) → the "unknown path" instance.
+    cwd: c.cwd ?? null,
+    effectiveStatus: c.effectiveStatus,
+  }));
+}
+
+// Resolve a failed Response into its server-provided `error` reason, falling back
+// to the caller's localized generic message. Exported for the other live-send
+// surface (conversational entry) so error extraction stays identical.
+export async function extractInstructionError(
+  res: Response,
+  fallback: string,
+): Promise<string> {
+  return extractError(res, fallback);
+}
+
 // The session-targeting row shape from GET /api/daemon-sessions (the subset the
 // send box needs). Mirrors `SessionTargetView` (daemon-instruction.service.ts).
 export interface SessionTarget {
@@ -585,14 +610,7 @@ export function AdHocSendForm({
   // The picker's instance set: the ONLINE connection set only (a live send needs
   // online). Mapped to the shared InstanceCandidate shape.
   const instances: InstanceCandidate[] = useMemo(
-    () =>
-      onlineConnections.map((c) => ({
-        connectionUuid: c.uuid,
-        host: c.host ?? "",
-        // null (and any missing self-report) → the "unknown path" instance.
-        cwd: c.cwd ?? null,
-        effectiveStatus: c.effectiveStatus,
-      })),
+    () => connectionsToInstanceCandidates(onlineConnections),
     [onlineConnections],
   );
 

@@ -174,7 +174,9 @@ function setPresence(over: Partial<AgentPresenceValue>) {
     subscribeTranscript: vi.fn(() => () => {}),
     focusTarget: null,
     openChatForAgent: vi.fn(),
+    openChatForSession: vi.fn(),
     clearChatFocusTarget: vi.fn(),
+    refreshConnections: vi.fn(),
     ...over,
   };
   mockPresence.mockReturnValue(value);

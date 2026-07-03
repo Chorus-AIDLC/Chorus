@@ -1222,7 +1222,10 @@
       "ideaTitle": "Title",
       "titlePlaceholder": "What's the idea?",
       "description": "Description",
-      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea..."
+      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea...",
+      "modeForm": "Fill a form",
+      "modeConversation": "Describe to an agent",
+      "modeConversationOfflineHint": "Describing to an agent needs an online daemon."
     },
     "error": {
       "loadFailed": "Failed to load ideas",
@@ -1556,6 +1559,19 @@
   "transcriptHeader": {
     "cwdAriaLabel": "Working directory",
     "hostAriaLabel": "Host"
+  },
+  "conversationalEntry": {
+    "noOnlineDaemon": "No agent daemon is online right now. Start one to describe your idea in a conversation:",
+    "agentLabel": "Agent",
+    "agentPlaceholder": "Pick an agent",
+    "instanceLabel": "Working directory",
+    "pickAgentFirst": "Pick an agent to see its online working directories.",
+    "placeholder": "Describe what you want — the agent will pick it up from here…",
+    "charCounter": "{count} / {max}",
+    "connectionWentOffline": "That daemon went offline just now. Pick another instance and retry.",
+    "sendError": "Failed to reach the agent. Please retry.",
+    "send": "Send to agent",
+    "retry": "Retry"
   },
   "daemonConnectCta": {
     "headline": "Next step: keep your agent online",

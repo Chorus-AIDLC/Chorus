@@ -601,24 +601,6 @@ export function DaemonChat() {
     setMobileDetailOpen(true);
   }, []);
 
-  // Consume a one-shot chat focus target (seeded by `openChatForAgent`, e.g. the
-  // comment mention badge's "Open conversation" action): pin the left rail to the
-  // focused agent and clear any prior conversation selection so the owner lands on
-  // that agent's conversation list / composer. Per the Tech Design contract
-  // (elaboration q3), focusing the agent is sufficient — for a pinned mention the
-  // `(host, cwd)` instance belongs to the SAME agentUuid, so focusing the agent
-  // already lands the owner on the right surface; precise past-session
-  // auto-selection is intentionally not done here. ADDITIVE: this only seeds the
-  // existing `pickedAgentUuid` selection state and does not touch
-  // `setOpenSession`/`subscribeTranscript`. The target is consumed (cleared) so a
-  // later manual modal open is not re-hijacked.
-  useEffect(() => {
-    if (!focusTarget) return;
-    setPickedAgentUuid(focusTarget.agentUuid);
-    setSelectedSessionUuid(null);
-    clearChatFocusTarget();
-  }, [focusTarget, clearChatFocusTarget]);
-
   // A freshly-started ad-hoc session OR a RE-POINTED existing conversation (T12): pull/patch
   // it into the list immediately (so it appears / flips online without waiting for the 15s
   // poll) and (re)select it.
@@ -688,6 +670,36 @@ export function DaemonChat() {
     },
     [fetchSessions],
   );
+
+  // Consume a one-shot chat focus target: pin the left rail to the focused agent,
+  // then either land on that agent's conversation list / composer (agent-only
+  // target, seeded by `openChatForAgent` — e.g. the comment mention badge's "Open
+  // conversation" action; per the q3 contract, focusing the agent is sufficient and
+  // precise past-session auto-selection is intentionally not done) or — when the
+  // target carries a session (seeded by `openChatForSession`, e.g. the
+  // conversational create-idea entry right after dispatching) — select THAT
+  // conversation and slide its live transcript into view. The session path routes
+  // through `handleSessionStarted` with the target's seeded SessionView, so a
+  // session created moments ago (not yet in the fetched list) is prepended and
+  // selectable immediately, and selection drives `setOpenSession` as usual. The
+  // target is consumed (cleared) so a later manual modal open is not re-hijacked.
+  useEffect(() => {
+    if (!focusTarget) return;
+    setPickedAgentUuid(focusTarget.agentUuid);
+    if (focusTarget.sessionSeed) {
+      handleSessionStarted(focusTarget.sessionSeed);
+      // The seeded conversation must also open on the MOBILE breakpoint, where a
+      // selection only shows once the drill-down is open.
+      setMobileDetailOpen(true);
+    } else if (focusTarget.sessionUuid) {
+      // Session focus without a seed — select it if/when the list has it.
+      setSelectedSessionUuid(focusTarget.sessionUuid);
+      setMobileDetailOpen(true);
+    } else {
+      setSelectedSessionUuid(null);
+    }
+    clearChatFocusTarget();
+  }, [focusTarget, clearChatFocusTarget, handleSessionStarted]);
 
   // ===== States =====
   const loading = status === "loading" && listStatus === "loading";

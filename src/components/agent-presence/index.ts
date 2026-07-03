@@ -47,6 +47,11 @@ export {
 } from "./assignee-instance-line";
 export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
+export {
+  ConversationalEntry,
+  USER_TEXT_MAX_CHARS,
+  type ConversationalEntryProps,
+} from "./conversational-entry";
 export { AgentConnectionsView } from "./connections-view";
 export { AgentConnectionsModal } from "./connections-modal";
 export { MentionBadge, type MentionBadgeProps } from "./mention-badge";

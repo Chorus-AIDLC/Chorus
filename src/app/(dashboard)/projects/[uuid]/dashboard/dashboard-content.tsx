@@ -45,6 +45,7 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
         <Suspense fallback={<div className="h-full" />}>
           <IdeaTracker
             projectUuid={projectUuid}
+            projectName={project.name}
             currentUserUuid={currentUserUuid}
             initialTrackerData={trackerData}
             initialStatsData={{ stats, recentActivities: activities }}
