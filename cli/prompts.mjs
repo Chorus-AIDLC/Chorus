@@ -188,6 +188,21 @@ function buildPromptBody(n) {
       // daemon's isNewSession probe selects `claude --resume <directIdeaUuid>`
       // automatically, so the woken Claude continues the SAME session where it left
       // off. It intentionally has no @mention (a self-resume has no actor to address).
+      //
+      // `resumedFrom` (add-crash-execution-resume) distinguishes the resume kind:
+      // "crash" gets an explicit exited-abnormally instruction — the previous run may
+      // have died mid-edit, so the agent must verify state before continuing.
+      // "user" / absent / unknown (older server) keeps the original text unchanged.
+      if (n.resumedFrom === "crash") {
+        return (
+          `[Chorus] The previous run on this ${n.entityType} EXITED ABNORMALLY (crashed) ` +
+          `(${n.entityType}Uuid: ${n.entityUuid}), and a user asked to resume it. The crash may ` +
+          `have left work half-finished — first re-check the current state with the appropriate ` +
+          `chorus_get_* tool (e.g. chorus_get_task / chorus_get_idea) plus chorus_get_comments, ` +
+          `and inspect any partial local work (working tree, uncommitted changes, half-written ` +
+          `files). Then continue the unfinished work from where the crashed run left off.`
+        );
+      }
       return (
         `[Chorus] Your work on this ${n.entityType} was RESUMED after an interrupt ` +
         `(${n.entityType}Uuid: ${n.entityUuid}). Continue where you left off — re-check the ` +

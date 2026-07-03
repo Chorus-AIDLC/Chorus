@@ -151,8 +151,38 @@ describe("control-handler double-check (q1=a)", () => {
     });
 
     onControl(controlEvent({ command: "resume" }));
-    expect(redispatchResume).toHaveBeenCalledWith(ENTITY.entityType, ENTITY.entityUuid);
+    expect(redispatchResume).toHaveBeenCalledWith(ENTITY.entityType, ENTITY.entityUuid, undefined);
     expect(killer).not.toHaveBeenCalled();
+  });
+
+  it("resume: threads resumeReason=crash|user through to the re-dispatch (add-crash-execution-resume)", () => {
+    const waker = makeWaker([]);
+    const redispatchResume = vi.fn();
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      redispatchResume,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ command: "resume", resumeReason: "crash" }));
+    expect(redispatchResume).toHaveBeenCalledWith(ENTITY.entityType, ENTITY.entityUuid, "crash");
+    onControl(controlEvent({ command: "resume", resumeReason: "user" }));
+    expect(redispatchResume).toHaveBeenLastCalledWith(ENTITY.entityType, ENTITY.entityUuid, "user");
+  });
+
+  it("resume: an unknown resumeReason degrades to undefined (never fails the resume)", () => {
+    const waker = makeWaker([]);
+    const redispatchResume = vi.fn();
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      redispatchResume,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ command: "resume", resumeReason: "meteor" }));
+    expect(redispatchResume).toHaveBeenCalledWith(ENTITY.entityType, ENTITY.entityUuid, undefined);
   });
 
   it("resume: a connection-uuid mismatch does NOT re-dispatch", () => {

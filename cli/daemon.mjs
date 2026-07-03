@@ -274,8 +274,8 @@ export function buildDaemon(creds, deps = {}) {
     // all scoped to THIS connection's uuid/router/backfill (see the original wiring
     // comments retained on the shared helpers). The control handler verifies a control
     // event against this connection's own connectionUuid before acting.
-    const redispatchResume = (entityType, entityUuid) => {
-      router.dispatchResume?.({ entityType, entityUuid });
+    const redispatchResume = (entityType, entityUuid, resumeReason) => {
+      router.dispatchResume?.({ entityType, entityUuid, resumeReason });
     };
     const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
     const onControl = createControlHandler({
