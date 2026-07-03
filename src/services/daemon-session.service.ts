@@ -260,8 +260,13 @@ export function transcriptEventName(sessionUuid: string): string {
  * is synchronous and does not touch the DB, so there is nothing to swallow — a
  * failure in the in-memory emit would be a programming error, not a transient teardown
  * race.
+ *
+ * Exported for the ONE caller that creates a turn row outside `createPendingTurn`:
+ * the conversational-idea dispatch (daemon-instruction.service), whose turn is written
+ * inside a `$transaction` (the chokepoint's read-then-write cannot run on an uncommitted
+ * session) and must emit the same `turn_created` trigger after commit.
  */
-function publishTranscriptEvent(event: TranscriptEvent): void {
+export function publishTranscriptEvent(event: TranscriptEvent): void {
   eventBus.emit(transcriptEventName(event.sessionUuid), event);
 }
 

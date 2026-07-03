@@ -37,6 +37,7 @@ const instructionLogger = logger.child({ module: "daemon-instruction.service" })
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { eventBus } from "@/lib/event-bus";
 import * as notificationService from "@/services/notification.service";
 import { dispatchControl } from "@/services/daemon-control.service";
 import {
@@ -46,6 +47,7 @@ import {
   assertContinuable,
   getVisibleSessions,
   getFirstInstructionBySessionUuid,
+  publishTranscriptEvent,
   STALE_THRESHOLD_MS,
   type SessionView,
   type TurnView,
@@ -495,6 +497,338 @@ export async function createAdHocSessionWithInstruction(
   });
 
   return { session, turn };
+}
+
+// ===== Conversational idea dispatch (pre-create idea + idea-anchored session) =====
+
+/**
+ * The project addressed by a conversational-idea dispatch is not visible to the caller
+ * (does not exist or lives in another company) — a non-disclosure verdict the route maps
+ * to 404, mirroring the connection/session non-disclosure errors above.
+ */
+export class ProjectNotVisibleError extends Error {
+  readonly code = "project_not_visible";
+  constructor() {
+    super("Project not found");
+    this.name = "ProjectNotVisibleError";
+  }
+}
+
+/**
+ * The chosen connection has no linked durable AgentInstance, so the pre-created idea
+ * cannot be instance-assigned. Should not happen for a live handshaked connection (the
+ * handshake links the instance), but a session must never be born with a null pin —
+ * mapped to 409 by the route, like the offline case (retry after the daemon re-handshakes).
+ */
+export class ConnectionInstanceMissingError extends Error {
+  readonly code = "connection_instance_missing";
+  readonly connectionUuid: string;
+  constructor(connectionUuid: string) {
+    super(
+      "The chosen connection has no registered agent instance yet. " +
+        "Wait for the daemon to finish its handshake and retry.",
+    );
+    this.name = "ConnectionInstanceMissingError";
+    this.connectionUuid = connectionUuid;
+  }
+}
+
+/** Max length of the server-derived placeholder title for a pre-created idea. */
+export const PLACEHOLDER_TITLE_MAX = 60;
+
+/**
+ * Derive the placeholder title for a pre-created conversational idea: the description's
+ * first non-empty line, trimmed, truncated to `PLACEHOLDER_TITLE_MAX` chars with an
+ * ellipsis. Server-side (not client) so every consumer of the endpoint gets identical
+ * behavior; the woken agent's first directive is to replace it with a real title.
+ * Falls back to a single dash for a blank description — unreachable via the endpoint
+ * (empty text is rejected first) but kept total so the helper never returns "".
+ */
+export function derivePlaceholderTitle(description: string): string {
+  const firstLine =
+    (description ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? "";
+  if (firstLine.length === 0) return "-";
+  if (firstLine.length <= PLACEHOLDER_TITLE_MAX) return firstLine;
+  return `${firstLine.slice(0, PLACEHOLDER_TITLE_MAX - 1)}…`;
+}
+
+/**
+ * Compose the conversational-idea wake instruction (template v2 — the REVIEWED CONTRACT
+ * between the conversational create-idea entry and the woken daemon agent, superseding
+ * the client-side create→claim template of add-conversational-idea-entry).
+ *
+ * The idea is PRE-CREATED and already instance-assigned + elaborating, so the template
+ * directs EDIT (never create, never claim — a claim would fail on the existing assignee)
+ * then an immediate start-elaboration in the same turn, panel guidance, and end-of-turn.
+ * English (agent-facing, matching cli/prompts.mjs precedent); the user's description
+ * passes through VERBATIM under the delimiter. Exported for unit tests: the template's
+ * wording is code, and any change is a review-visible diff.
+ */
+export function composeConversationalIdeaInstruction(params: {
+  ideaUuid: string;
+  projectUuid: string;
+  projectName?: string | null;
+  descriptionText: string;
+}): string {
+  // Name is display sugar; the uuid is the machine anchor and is always present.
+  const projectLabel = params.projectName?.trim()
+    ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
+    : `projectUuid: ${params.projectUuid}`;
+  return [
+    `[Chorus conversational idea entry] A new idea has been PRE-CREATED for project ${projectLabel} from the user's description below, and it is already assigned to you (status: elaborating).`,
+    `  ideaUuid: ${params.ideaUuid}`,
+    ``,
+    `This conversation IS that idea's root session — its elaboration and lifecycle wakes will continue here. Do the following, in order:`,
+    `1. Edit the idea via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning; you may restructure). The current title is a placeholder.`,
+    `2. Immediately start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
+    `3. End the turn. The user's panel answers will wake this same conversation.`,
+    ``,
+    `--- User's idea description ---`,
+    params.descriptionText,
+  ].join("\n");
+}
+
+/** The compact idea projection a conversational dispatch returns to the frontend. */
+export interface ConversationalIdeaView {
+  uuid: string;
+  title: string;
+  content: string | null;
+  status: string;
+  projectUuid: string;
+  createdAt: string; // ISO-8601
+}
+
+/**
+ * Conversational-idea dispatch: PRE-CREATE the Idea and its root daemon session, then
+ * send the first `human_instruction` turn — in ONE transaction (add-conversational-
+ * idea-root-session). The pivotal property: the session is born IDEA-ANCHORED
+ * (`sessionId = directIdeaUuid = ideaUuid`), so every subsequent idea-anchored wake
+ * (elaboration answers, Verify Elaborate, proposal approval, task dispatch) resolves to
+ * THIS session via the existing `sessionId === directIdeaUuid` convention — zero
+ * wake-chokepoint changes, no write-once relaxation.
+ *
+ * Order (each gate before any mutation):
+ *  1. Ownership + connection fences — `callerOwnsAgent` + `connectionBelongsToAgent`
+ *     collapse to ONE `ConnectionNotVisibleError` (route → 404 non-disclosure);
+ *     `isConnectionLive` → `ConnectionOfflineError` (route → 409). Same posture as
+ *     `createAdHocSessionWithInstruction`.
+ *  2. Project visibility (company-scoped; also supplies the template's project name) →
+ *     `ProjectNotVisibleError` (route → 404).
+ *  3. The connection's durable `agentInstanceUuid` must resolve — the idea's instance
+ *     pin must point at a real place → `ConnectionInstanceMissingError` (route → 409).
+ *  4. SERVER generates the ideaUuid, composes the instruction around it, and validates
+ *     the COMPOSED text (`validateInstructionText`) → `InstructionTextError` (route →
+ *     400). Generating the uuid before the transaction is what lets the instruction
+ *     embed it while keeping all writes atomic.
+ *  5. ONE `prisma.$transaction`: create the Idea (createdBy = caller, placeholder
+ *     title, VERBATIM description as content, `agent_instance` assignee, status
+ *     `elaborating` — assignment-equals-claim), the DaemonSession (sessionId =
+ *     directIdeaUuid = ideaUuid, origin = the chosen connection, write-once written
+ *     once correctly), and the first `human_instruction` turn (seq 1, promptText =
+ *     the composed instruction — canonical copy). All-or-nothing: a mid-transaction
+ *     failure persists nothing (no orphan idea).
+ *
+ *     The turn is written DIRECTLY here, not through the notification chokepoint:
+ *     `createReturningTurn` runs on the global prisma client and could neither see the
+ *     uncommitted idea/session nor join the transaction — and its directed-wake path
+ *     would emit a second `deliver_turn` ping (the proposal-review cautions). The
+ *     dispatch itself IS the wake, so no notification row is needed; the turn table is
+ *     the daemon's canonical backfill source, which this write lands in atomically.
+ *  6. After commit (in order): publish the `turn_created` transcript SSE trigger (the
+ *     chokepoint would have done this; the viewer must see the first turn live), emit
+ *     the idea `created` change event (SSE-driven idea lists update), and fire the
+ *     origin-only `deliver_turn` ping with the precise turnUuid (fire-and-forget +
+ *     non-fatal — the persisted turn + reconnect-backfill are the durability net).
+ *
+ *     Deliberately NO "assigned" Activity is recorded: that activity fans out an
+ *     `idea_claimed` notification whose wake would create a SECOND turn on this very
+ *     session. The dispatch is the wake — one turn, one ping.
+ *
+ * Returns `{ idea, session, turn }`. Throws the typed errors above (mapped by the
+ * route). A query/write failure propagates (no silent swallow).
+ */
+export async function createConversationalIdeaSession(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  params: {
+    projectUuid: string;
+    agentUuid: string;
+    connectionUuid: string;
+    descriptionText: string;
+  },
+): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
+  // (1) Visibility + ownership fence, identical posture to the ad-hoc path: either miss
+  // collapses to ONE 404 non-disclosure verdict.
+  const ownsAgent = await callerOwnsAgent(auth, params.agentUuid);
+  const connectionOfAgent = await connectionBelongsToAgent(
+    auth.companyUuid,
+    params.agentUuid,
+    params.connectionUuid,
+  );
+  if (!ownsAgent || !connectionOfAgent) {
+    throw new ConnectionNotVisibleError();
+  }
+  const online = await isConnectionLive(auth.companyUuid, params.connectionUuid);
+  if (!online) {
+    throw new ConnectionOfflineError(params.connectionUuid);
+  }
+
+  // (2) Project visibility (company-scoped) + the template's display name.
+  const project = await prisma.project.findFirst({
+    where: { uuid: params.projectUuid, companyUuid: auth.companyUuid },
+    select: { uuid: true, name: true },
+  });
+  if (!project) {
+    throw new ProjectNotVisibleError();
+  }
+
+  // (3) The durable instance behind the chosen connection — the idea's pin target. A
+  // live connection normally always has one (linked at handshake); never bind to null.
+  const connection = await prisma.daemonConnection.findFirst({
+    where: { uuid: params.connectionUuid, companyUuid: auth.companyUuid },
+    select: { agentInstanceUuid: true },
+  });
+  if (!connection?.agentInstanceUuid) {
+    throw new ConnectionInstanceMissingError(params.connectionUuid);
+  }
+  const instanceUuid = connection.agentInstanceUuid;
+
+  // (4) Server-generated ideaUuid FIRST, so the composed instruction can embed it while
+  // the idea write stays inside the transaction. Reject empty descriptions before
+  // composing (the template alone would otherwise pass the non-empty check), then
+  // validate the COMPOSED length against the single MAX_INSTRUCTION_CHARS cap.
+  const descriptionText = params.descriptionText?.trim() ?? "";
+  if (descriptionText.length === 0) {
+    throw new InstructionTextError("empty");
+  }
+  const ideaUuid = randomUUID();
+  const instructionText = validateInstructionText(
+    composeConversationalIdeaInstruction({
+      ideaUuid,
+      projectUuid: project.uuid,
+      projectName: project.name,
+      descriptionText,
+    }),
+  );
+
+  // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
+  const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {
+    const ideaRow = await tx.idea.create({
+      data: {
+        uuid: ideaUuid,
+        companyUuid: auth.companyUuid,
+        projectUuid: project.uuid,
+        title: derivePlaceholderTitle(descriptionText),
+        content: descriptionText,
+        // Assignment-equals-claim (r2q4=a): instance-assigned + elaborating from birth,
+        // so the agent_instance pin routes wakes to the chosen cwd from day one and the
+        // woken agent edits (never claims).
+        status: "elaborating",
+        assigneeType: "agent_instance",
+        assigneeUuid: instanceUuid,
+        assignedAt: new Date(),
+        assignedByUuid: auth.actorUuid,
+        createdByUuid: auth.actorUuid,
+      },
+      select: {
+        uuid: true,
+        title: true,
+        content: true,
+        status: true,
+        projectUuid: true,
+        createdAt: true,
+      },
+    });
+
+    // Idea-anchored from birth: sessionId === directIdeaUuid === ideaUuid. The
+    // write-once origin/directIdeaUuid fields are written once, correctly, on create —
+    // `resolveOrCreateSession` is not used because it runs on the global client.
+    const sessionRow = await tx.daemonSession.create({
+      data: {
+        companyUuid: auth.companyUuid,
+        agentUuid: params.agentUuid,
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
+        originConnectionUuid: params.connectionUuid,
+        status: "active",
+      },
+    });
+
+    // First turn, seq 1 on the freshly-created session (no concurrent writer can exist
+    // before commit). promptText carries the canonical composed instruction.
+    const turnRow = await tx.daemonSessionTurn.create({
+      data: {
+        sessionUuid: sessionRow.uuid,
+        seq: 1,
+        trigger: "human_instruction",
+        promptText: instructionText,
+        status: "pending",
+      },
+    });
+
+    return { ideaRow, sessionRow, turnRow };
+  });
+
+  const session: SessionView = {
+    uuid: sessionRow.uuid,
+    agentUuid: sessionRow.agentUuid,
+    sessionId: sessionRow.sessionId,
+    directIdeaUuid: sessionRow.directIdeaUuid,
+    originConnectionUuid: sessionRow.originConnectionUuid,
+    status: sessionRow.status,
+    title: sessionRow.title,
+    lastTurnAt: sessionRow.lastTurnAt.toISOString(),
+    createdAt: sessionRow.createdAt.toISOString(),
+    updatedAt: sessionRow.updatedAt.toISOString(),
+  };
+  const turn: TurnView = {
+    uuid: turnRow.uuid,
+    sessionUuid: turnRow.sessionUuid,
+    seq: turnRow.seq,
+    trigger: turnRow.trigger,
+    promptText: turnRow.promptText,
+    status: turnRow.status,
+    executionUuid: turnRow.executionUuid,
+    startedAt: turnRow.startedAt ? turnRow.startedAt.toISOString() : null,
+    endedAt: turnRow.endedAt ? turnRow.endedAt.toISOString() : null,
+    createdAt: turnRow.createdAt.toISOString(),
+  };
+  const idea: ConversationalIdeaView = {
+    uuid: ideaRow.uuid,
+    title: ideaRow.title,
+    content: ideaRow.content,
+    status: ideaRow.status,
+    projectUuid: ideaRow.projectUuid,
+    createdAt: ideaRow.createdAt.toISOString(),
+  };
+
+  // (6) Post-commit side effects, none of which may undo the committed writes:
+  // transcript SSE (the chokepoint's turn_created trigger, emitted here because the turn
+  // bypassed createPendingTurn), the idea `created` change event (idea lists refresh),
+  // and the precise origin-only wake ping (fire-and-forget + non-fatal).
+  publishTranscriptEvent({
+    companyUuid: auth.companyUuid,
+    sessionUuid: session.uuid,
+    trigger: "turn_created",
+    turn,
+    messages: [],
+  });
+  eventBus.emitChange({
+    companyUuid: auth.companyUuid,
+    projectUuid: project.uuid,
+    entityType: "idea",
+    entityUuid: idea.uuid,
+    action: "created",
+  });
+  deliverTurnPing({
+    companyUuid: auth.companyUuid,
+    originConnectionUuid: params.connectionUuid,
+    turnUuid: turn.uuid,
+  });
+
+  return { idea, session, turn };
 }
 
 // ===== Re-point an offline session's origin onto a chosen online instance =====
