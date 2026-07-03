@@ -1,6 +1,12 @@
 # Delta: conversational-idea-entry — pre-created idea + root session
 
-## MODIFIED Requirements
+## REMOVED Requirements
+
+### Requirement: Sending SHALL dispatch a template-composed human instruction as a new ad-hoc daemon session
+
+### Requirement: The conversational entry SHALL be a reusable component with the instruction template owned by the consumer
+
+## ADDED Requirements
 
 ### Requirement: Sending SHALL pre-create the Idea and dispatch an idea-anchored daemon session in one transactional operation
 On send, the client SHALL post the user's verbatim description together with the picked project, agent, and connection to a dedicated conversational-idea endpoint (`POST /api/ideas/conversational`). The server SHALL, atomically: (1) create the Idea with `createdBy` = the initiating user, a server-derived single-line placeholder title, and the verbatim description as content; (2) assign the Idea to the picked agent instance (`assigneeType = "agent_instance"`) and set its status to `elaborating`; (3) create the daemon session idea-anchored from birth (`sessionId = ideaUuid`, `directIdeaUuid = ideaUuid`, origin = the picked connection); and (4) create the first `human_instruction` turn whose instruction text is composed server-side from a fixed template embedding the ideaUuid, project identity, and the user's verbatim description. If any of these steps fails, none of them SHALL persist. The frontend SHALL NOT create the Idea entity itself, and the pre-existing ad-hoc endpoint (`POST /api/daemon-sessions/ad-hoc`) SHALL remain unchanged.
