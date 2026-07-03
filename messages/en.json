@@ -1222,7 +1222,10 @@
       "ideaTitle": "Title",
       "titlePlaceholder": "What's the idea?",
       "description": "Description",
-      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea..."
+      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea...",
+      "modeForm": "Fill a form",
+      "modeConversation": "Describe to an agent",
+      "modeConversationOfflineHint": "Describing to an agent needs an online daemon."
     },
     "error": {
       "loadFailed": "Failed to load ideas",

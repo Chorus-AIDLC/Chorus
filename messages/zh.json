@@ -1223,7 +1223,10 @@
       "ideaTitle": "标题",
       "titlePlaceholder": "你的想法是什么？",
       "description": "描述",
-      "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节..."
+      "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节...",
+      "modeForm": "填写表单",
+      "modeConversation": "对智能体描述",
+      "modeConversationOfflineHint": "对智能体描述需要一个在线的守护进程。"
     },
     "error": {
       "loadFailed": "加载想法失败",

@@ -20,6 +20,9 @@ import type { TrackerGroupsResult } from "@/services/idea.service";
 
 interface IdeaTrackerProps {
   projectUuid: string;
+  /** Project display name — threaded into the new-idea dialog's conversational
+   *  instruction template (display sugar; optional). */
+  projectName?: string;
   currentUserUuid: string;
   initialTrackerData: TrackerGroupsResult;
   initialSelectedIdeaUuid?: string | null;
@@ -40,7 +43,7 @@ interface IdeaTrackerProps {
   };
 }
 
-export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
+export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
   const t = useTranslations("ideaTracker");
 
   // Single owner of the view selection. The initial value is the *adaptive
@@ -150,6 +153,7 @@ export function IdeaTracker({ projectUuid, currentUserUuid, initialTrackerData, 
         open={showNewIdeaDialog}
         onOpenChange={setShowNewIdeaDialog}
         projectUuid={projectUuid}
+        projectName={projectName}
         onCreated={(uuid) => openPanel(uuid)}
       />
 
