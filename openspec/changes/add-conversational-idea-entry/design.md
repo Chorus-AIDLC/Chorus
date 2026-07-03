@@ -54,7 +54,7 @@ Behavior:
 - Presence source: `useAgentPresenceOptional()`. `null` context or zero online connections → render `offlineFallback` (with a built-in default that composes `DaemonConnectCta` variant "compact"; command literal stays in `DAEMON_START_COMMAND`, never in i18n strings).
 - Grouping: online `ConnectionView[]` grouped by `agentUuid`; agent picked via shadcn `Select` (same pattern as `AdHocSendForm`); instances of the picked agent mapped to `InstanceCandidate[]` and rendered with the shared `InstancePicker` (single instance auto-selects).
 - Dispatch: `POST /api/daemon-sessions/ad-hoc`. Error surfaces follow the api-response envelope; 409 (connection went offline between poll and send) shows a retry-able inline error and refreshes the connection list.
-- Enter-to-send in the textarea MUST route through `isImeComposing(e)` from `@/lib/ime` before treating Enter as submit (project-wide IME guard rule). Plain Enter inserts a newline; Cmd/Ctrl+Enter sends (matches `AdHocSendForm` precedent — verify and mirror its exact binding).
+- Enter-to-send in the textarea MUST route through `isImeComposing(e)` from `@/lib/ime` before treating Enter as submit (project-wide IME guard rule). Plain Enter sends; Shift+Enter inserts a newline (the verified `AdHocSendForm`/`ComposeField` binding — proposal-review Note-1 corrected this doc's earlier Cmd/Ctrl+Enter wording).
 - Implementation should extract/reuse rather than duplicate `AdHocSendForm` internals where practical (`send-instruction-box.tsx` already implements agent+instance selection and the ad-hoc POST; acceptable outcomes are either `ConversationalEntry` wrapping a generalized `AdHocSendForm` or sharing extracted hooks).
 
 ### Instruction Template Contract (owned by `NewIdeaDialog`, reviewed deliverable)
