@@ -70,6 +70,38 @@ describe("runDaemon — lifecycle action dispatch", () => {
     expect(errs.join("")).toMatch(/no daemon/);
   });
 
+  it("stop exit-code contract: 0 for stale-cleared and forced, 1 for error", async () => {
+    // stale-cleared leaves "no daemon, no pidfile" — a successful self-heal
+    // must not fail `chorus daemon stop && …` chains.
+    const staleCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: 9, reason: "stale-cleared", message: "no live daemon (cleared stale pidfile for pid 9)" }) }), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(staleCode).toBe(0);
+
+    const forcedCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: true, pid: 9, reason: "forced", message: "forced cleanup" }) }), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(forcedCode).toBe(0);
+
+    const errCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: 9, reason: "error", message: "failed to signal pid 9" }) }), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(errCode).toBe(1);
+  });
+
+  it("stop threads --force into stopDaemon; plain stop does not", async () => {
+    const lifecycle = fakeLifecycle();
+    await runDaemon({ action: "stop", force: true }, { lifecycle, log: () => {}, errLog: () => {}, env: {} });
+    expect(lifecycle.stopDaemon).toHaveBeenCalledWith({ force: true });
+
+    const lifecycle2 = fakeLifecycle();
+    await runDaemon({ action: "stop" }, { lifecycle: lifecycle2, log: () => {}, errLog: () => {}, env: {} });
+    expect(lifecycle2.stopDaemon).toHaveBeenCalledWith({ force: false });
+  });
+
   it("restart stops then starts a detached instance (skip-preflight, no prompt)", async () => {
     const lifecycle = fakeLifecycle();
     const ask = vi.fn();
@@ -83,6 +115,13 @@ describe("runDaemon — lifecycle action dispatch", () => {
     expect(ask).not.toHaveBeenCalled(); // restart is non-interactive
     // The detached child carries the marker so it skips preflight.
     expect(lifecycle.startBackground.mock.calls[0][0].env[DETACHED_ENV]).toBe("1");
+  });
+
+  it("restart keeps non-forced stop semantics even with --force present", async () => {
+    const lifecycle = fakeLifecycle();
+    await runDaemon({ action: "restart", force: true }, { lifecycle, log: () => {}, errLog: () => {}, env: {} });
+    // restart must not silently discard a pidfile it couldn't verify.
+    expect(lifecycle.stopDaemon).toHaveBeenCalledWith();
   });
 });
 

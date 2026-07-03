@@ -126,10 +126,20 @@ chorus daemon status      # is it running? (+ pid)
 chorus daemon logs        # show ~/.chorus/daemon.log
 chorus daemon restart     # stop (if running) then start a fresh detached instance
 chorus daemon stop        # terminate the recorded daemon and remove the pidfile
+chorus daemon stop --force  # force-clean the pidfile when a stuck/unverifiable
+                            # pid blocks a normal stop (best-effort signal first)
 ```
 
 - Background state lives in `~/.chorus/daemon.pid` and `~/.chorus/daemon.log`.
 - `-d` refuses to start a second daemon when a live one is already recorded.
+- The pidfile records the daemon's **identity** (start time + command line), so
+  a pid recycled by the OS after a reboot — even one now owned by another user —
+  is detected as stale and cleaned up automatically instead of blocking
+  `stop`/`start`. If a stop still cannot signal the recorded pid, its error
+  message points to `chorus daemon stop --force`.
+- `stop` exits `0` whenever it leaves the system with no daemon and no pidfile
+  (stopped, stale-cleared, or forced), so `chorus daemon stop && …` chains
+  survive a self-heal.
 - **First-run `-d` on a terminal** completes the credential prompts and the YOLO
   `y/N` confirmation in the **foreground** parent (which holds the TTY) and
   persists them *before* detaching — so the detached child never hits an

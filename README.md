@@ -105,6 +105,7 @@ chorus login                     # Authenticate (opens browser)
 chorus daemon                    # Start daemon in foreground
 chorus daemon -d                 # Start daemon in background (detached)
 chorus daemon stop               # Stop background daemon
+chorus daemon stop --force       # Force-clean the pidfile if a stuck pid blocks stop
 chorus daemon status             # Check daemon status
 chorus daemon restart            # Restart background daemon
 chorus daemon logs               # View daemon logs

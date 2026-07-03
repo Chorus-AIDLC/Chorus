@@ -22,7 +22,8 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * Parse the client-subcommand flags out of an arg list. Recognizes the
  * pre-existing `--url` / `--api-key` / `--sigint-timeout` (space and `=` forms)
  * and boolean `--yolo`, plus the new `--agent <type>` (space + `=`), boolean
- * `--chorus-only`, `--verbose`, `-d`/`--detach`, and `--help`/`-h`.
+ * `--chorus-only`, `--verbose`, `-d`/`--detach`, `--force` (stop's forced
+ * pidfile cleanup), and `--help`/`-h`.
  *
  * Only keys that appear are set, so callers can distinguish "unset" from
  * "false" (important for layered env/flag precedence downstream).
@@ -37,7 +38,7 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * @returns {{
  *   url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: string,
  *   agent?: string, chorusOnly?: boolean, verbose?: boolean, detach?: boolean,
- *   cwd?: string[], help?: boolean,
+ *   cwd?: string[], force?: boolean, help?: boolean,
  * }}
  */
 export function parseClientFlags(argv) {
@@ -61,6 +62,7 @@ export function parseClientFlags(argv) {
     else if (a === "--chorus-only") out.chorusOnly = true;
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
+    else if (a === "--force") out.force = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
@@ -99,6 +101,8 @@ USAGE
   chorus daemon [options]              Run the daemon (foreground)
   chorus daemon -d [options]           Run the daemon in the background (detached)
   chorus daemon stop                   Stop the background daemon
+  chorus daemon stop --force           Force-clean the pidfile when a stuck or
+                                       unverifiable pid blocks a normal stop
   chorus daemon status                 Show whether the background daemon is running
   chorus daemon restart                Restart the background daemon
   chorus daemon logs                   Show the background daemon log

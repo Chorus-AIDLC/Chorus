@@ -456,7 +456,14 @@ export async function runDaemon(flags = {}, deps = {}) {
   // Lifecycle subcommands (stop/status/restart/logs) operate on the pidfile/logfile
   // managed by the `-d` path — they never start the long-lived foreground daemon.
   // `run` falls through to the normal startup below. Injectable lifecycle for tests.
-  const lifecycle = deps.lifecycle ?? { startBackground, stopDaemon, isRunning, readLog };
+  // stopDaemon's real signature is (io, opts); the bundle exposes (opts) with the
+  // default io so handleLifecycleAction can pass { force } directly.
+  const lifecycle = deps.lifecycle ?? {
+    startBackground,
+    stopDaemon: (opts) => stopDaemon(undefined, opts),
+    isRunning,
+    readLog,
+  };
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
   // the detach/restart paths run the SAME (injectable) preflight, not the real
   // implementations. Threaded into startDetached so tests can drive it offline.
@@ -688,9 +695,15 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, pf
     return 0;
   }
   if (action === "stop") {
-    const r = lifecycle.stopDaemon();
-    (r.stopped ? log : errLog)(`[Chorus] ${r.message}`);
-    return r.stopped ? 0 : 1;
+    // --force: unconditional pidfile cleanup for stuck states the identity
+    // probe cannot resolve. Threaded from the parsed client flags.
+    const r = lifecycle.stopDaemon({ force: pfDeps?.flags?.force === true });
+    // Exit 0 whenever the end state is "no daemon, no pidfile" (stopped /
+    // stale-cleared / forced) so `chorus daemon stop && …` chains survive a
+    // self-heal; 1 for not-running and signal errors.
+    const ok = r.reason === "stopped" || r.reason === "stale-cleared" || r.reason === "forced";
+    (ok ? log : errLog)(`[Chorus] ${r.message}`);
+    return ok ? 0 : 1;
   }
   if (action === "restart") {
     const r = lifecycle.stopDaemon();

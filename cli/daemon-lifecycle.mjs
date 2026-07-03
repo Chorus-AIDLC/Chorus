@@ -7,10 +7,11 @@
 // are unit-testable from a single host.
 //
 // State files live alongside the credentials in ~/.chorus:
-//   pidfile  ~/.chorus/daemon.pid   (the background daemon's pid)
+//   pidfile  ~/.chorus/daemon.pid   (JSON {pid, startedAt?, argsHint?}; legacy
+//                                    bare-number files from older CLIs still read)
 //   logfile  ~/.chorus/daemon.log   (its redirected stdout+stderr)
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -32,6 +33,7 @@ function defaultIO() {
     unlinkSync,
     writeFileSync,
     spawn,
+    spawnSync,
     // process.kill with signal 0 is the portable liveness probe (no signal sent).
     kill: (pid, sig) => process.kill(pid, sig),
     platform: process.platform,
@@ -50,48 +52,175 @@ export function logFilePath(io = defaultIO()) {
 }
 
 /**
- * Read the recorded pid, or null when absent / unreadable / malformed.
- * @param {object} [io]
- * @returns {number|null}
+ * The cmdline marker every legacy (pre-identity) chorus daemon carries — the
+ * fallback identity check when the pidfile recorded no argsHint.
  */
-export function readPid(io = defaultIO()) {
+const DAEMON_CMD_MARKER = "daemon";
+
+/**
+ * Read the recorded pidfile as a structured record, or null when absent /
+ * unreadable / malformed. Two on-disk formats:
+ *   - JSON `{pid, startedAt?, argsHint?}` (current — written by startBackground)
+ *   - bare pid number (legacy — pre-identity CLIs) → `{ pid, legacy: true }`
+ * @param {object} [io]
+ * @returns {{ pid: number, startedAt?: string, argsHint?: string, legacy?: boolean }|null}
+ */
+export function readPidRecord(io = defaultIO()) {
   const path = pidFilePath(io);
   try {
     if (!io.existsSync(path)) return null;
-    const raw = io.readFileSync(path, "utf8");
-    const pid = Number.parseInt(String(raw).trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const raw = String(io.readFileSync(path, "utf8")).trim();
+    if (raw.startsWith("{")) {
+      const parsed = JSON.parse(raw);
+      const pid = Number.parseInt(String(parsed.pid), 10);
+      if (!Number.isInteger(pid) || pid <= 0) return null;
+      const record = { pid };
+      if (typeof parsed.startedAt === "string" && parsed.startedAt) record.startedAt = parsed.startedAt;
+      if (typeof parsed.argsHint === "string" && parsed.argsHint) record.argsHint = parsed.argsHint;
+      return record;
+    }
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? { pid, legacy: true } : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Is `pid` a live process? Uses signal 0 (sends nothing; throws ESRCH when the
- * pid is gone, EPERM when alive-but-not-ours → still "alive").
- * @param {number} pid @param {object} [io]
+ * Read the recorded pid, or null when absent / unreadable / malformed.
+ * Thin compatibility wrapper over readPidRecord.
+ * @param {object} [io]
+ * @returns {number|null}
  */
-export function processAlive(pid, io = defaultIO()) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+export function readPid(io = defaultIO()) {
+  return readPidRecord(io)?.pid ?? null;
+}
+
+/**
+ * Query the identity (command line + start time) of the process currently
+ * occupying `pid`. One subprocess invocation, argument arrays only (no
+ * `shell:true`), pure JS:
+ *   - POSIX: `ps -p <pid> -o lstart=,args=` (lstart is second-resolution and
+ *     stable across probes of the same process). busybox `ps` rejects `-p` and
+ *     `-o lstart` → retry `ps -o pid=,args=` (full-table) and filter by the
+ *     pid column for cmdline-only verification.
+ *   - Windows: PowerShell `Get-CimInstance Win32_Process` (wmic is deprecated).
+ * @param {number} pid @param {object} [io]
+ * @returns {{ cmdline: string, startedAt: string|null }|null} null = query failed
+ */
+export function queryProcessIdentity(pid, io = defaultIO()) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
-    io.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err && err.code === "EPERM";
+    if (io.platform === "win32") {
+      const r = io.spawnSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object CommandLine,CreationDate | ConvertTo-Json`,
+        ],
+        { encoding: "utf8", windowsHide: true }
+      );
+      if (!r || r.status !== 0 || !r.stdout) return null;
+      const parsed = JSON.parse(r.stdout);
+      if (!parsed || typeof parsed.CommandLine !== "string") return null;
+      return { cmdline: parsed.CommandLine, startedAt: parsed.CreationDate ? String(parsed.CreationDate) : null };
+    }
+    // POSIX: lstart= + args= in one call. Output shape (no headers):
+    //   "Thu Jul  2 21:22:55 2026 /usr/bin/node /x/chorus.mjs daemon"
+    // lstart is a fixed 5-field prefix (dow mon dd hh:mm:ss yyyy).
+    const full = io.spawnSync("ps", ["-p", String(pid), "-o", "lstart=,args="], { encoding: "utf8" });
+    if (full && full.status === 0 && full.stdout && full.stdout.trim()) {
+      const line = full.stdout.trim();
+      const fields = line.split(/\s+/);
+      if (fields.length >= 6) {
+        const startedAt = fields.slice(0, 5).join(" ");
+        const cmdline = fields.slice(5).join(" ");
+        if (cmdline) return { cmdline, startedAt };
+      }
+    }
+    // busybox fallback: busybox ps rejects -p AND -o lstart (it only knows -o
+    // and -T), so list every process as "pid args" and filter by the pid
+    // column ourselves. Cmdline verification still possible; no start time.
+    const argsOnly = io.spawnSync("ps", ["-o", "pid=,args="], { encoding: "utf8" });
+    if (argsOnly && argsOnly.status === 0 && argsOnly.stdout) {
+      for (const line of argsOnly.stdout.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(.+)$/);
+        if (m && Number.parseInt(m[1], 10) === pid) {
+          return { cmdline: m[2].trim(), startedAt: null };
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
+}
+
+/**
+ * Is the process recorded by `record` still OUR live daemon? Identity-verified
+ * probe (fix-daemon-stale-pid-identity): pid existence alone is not enough —
+ * after a reboot the OS recycles pids, and a foreign owner surfaces as EPERM,
+ * which the old probe misread as "daemon alive". Decision table (tech design):
+ *   - ESRCH / invalid pid                → false (stale)
+ *   - pid exists (OK or EPERM):
+ *       identity recorded    → startedAt (when recorded) AND cmdline must match;
+ *                              any mismatch → false; query failed → true (never
+ *                              auto-clean an identity we could not verify)
+ *       legacy record        → cmdline contains the daemon marker → true;
+ *                              foreign cmdline → false; query failed → EPERM
+ *                              proves it is not ours (same-user daemon) → false,
+ *                              while a signalable pid stays conservatively true
+ * Accepts a bare pid (number) for backward compatibility → treated as legacy.
+ * @param {number|{pid:number,startedAt?:string,argsHint?:string,legacy?:boolean}} record
+ * @param {object} [io]
+ */
+export function processAlive(record, io = defaultIO()) {
+  const rec = typeof record === "number" ? { pid: record, legacy: true } : record;
+  if (!rec || !Number.isInteger(rec.pid) || rec.pid <= 0) return false;
+  let eperm = false;
+  try {
+    io.kill(rec.pid, 0);
+  } catch (err) {
+    if (!err || err.code !== "EPERM") return false;
+    eperm = true;
+  }
+  // The pid exists. Verify the occupant is still our daemon.
+  const identity = queryProcessIdentity(rec.pid, io);
+  const hasRecordedIdentity = Boolean(rec.startedAt || rec.argsHint);
+  if (hasRecordedIdentity) {
+    if (identity === null) return true; // unverifiable → conservative: running
+    // Collapse whitespace on both sides: the ps parse re-joins fields with
+    // single spaces, so an argsHint containing consecutive spaces must not
+    // read as a mismatch (false-stale is the dangerous direction).
+    const liveCmd = identity.cmdline.replace(/\s+/g, " ");
+    const hint = rec.argsHint ? rec.argsHint.replace(/\s+/g, " ") : null;
+    if (hint && !liveCmd.includes(hint)) return false;
+    if (rec.startedAt && identity.startedAt !== null && identity.startedAt !== rec.startedAt) return false;
+    return true;
+  }
+  // Legacy record (no identity metadata): cmdline-marker fallback.
+  if (identity === null) {
+    // EPERM on a legacy record already proves the process belongs to another
+    // user — the CLI and daemon always run as the same user (q3=a self-heal,
+    // covers busybox systems where ps cannot report identity).
+    return !eperm;
+  }
+  return identity.cmdline.includes(DAEMON_CMD_MARKER);
 }
 
 /**
  * Current daemon status from the pidfile.
  * @param {object} [io]
  * @returns {{ running: boolean, pid: number|null, stale: boolean }}
- *   `stale` = a pidfile exists but its pid is dead (left behind by a crash).
+ *   `stale` = a pidfile exists but its pid is dead OR its identity no longer
+ *   matches (pid recycled after a reboot / crash).
  */
 export function isRunning(io = defaultIO()) {
-  const pid = readPid(io);
-  if (pid == null) return { running: false, pid: null, stale: false };
-  const alive = processAlive(pid, io);
-  return { running: alive, pid, stale: !alive };
+  const record = readPidRecord(io);
+  if (record == null) return { running: false, pid: null, stale: false };
+  const alive = processAlive(record, io);
+  return { running: alive, pid: record.pid, stale: !alive };
 }
 
 /** Ensure ~/.chorus exists for the pid/log files. */
@@ -145,21 +274,42 @@ export function startBackground(spec, io = defaultIO()) {
   // Let the parent exit without waiting on the child (POSIX + Windows).
   child.unref?.();
 
+  // Record the child's IDENTITY alongside its pid so later probes can tell
+  // "our daemon" from "a reboot-recycled pid" (fix-daemon-stale-pid-identity).
+  // argsHint: a distinguishing substring of the spawned command line. startedAt:
+  // the same query the probe uses (string-equality comparison, no clock math);
+  // a failed post-spawn query degrades to a record without startedAt.
+  const record = { pid: child.pid };
+  const argsHint = (spec.args ?? []).join(" ").trim();
+  if (argsHint) record.argsHint = argsHint;
+  const identity = queryProcessIdentity(child.pid, io);
+  if (identity?.startedAt) record.startedAt = identity.startedAt;
+
   ensureDir(pidFile, io);
-  io.writeFileSync(pidFile, `${child.pid}\n`, { mode: 0o600 });
+  io.writeFileSync(pidFile, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   return { started: true, pid: child.pid, logFile, pidFile };
 }
 
 /**
  * Stop the recorded background daemon: signal it, then remove the pidfile.
- * @param {object} [io]
- * @returns {{ stopped: boolean, pid: number|null, reason: "stopped"|"not-running"|"stale-cleared"|"error", message: string }}
+ *
+ * `opts.force` (the `chorus daemon stop --force` escape hatch): best-effort
+ * SIGTERM (failure ignored), then unlink the pidfile UNCONDITIONALLY — for
+ * stuck states the identity probe cannot resolve (e.g. an unverifiable pid the
+ * operator knows is not the daemon).
+ * @param {object} [io] @param {{ force?: boolean }} [opts]
+ * @returns {{ stopped: boolean, pid: number|null, reason: "stopped"|"not-running"|"stale-cleared"|"forced"|"error", message: string }}
  */
-export function stopDaemon(io = defaultIO()) {
+export function stopDaemon(io = defaultIO(), opts = {}) {
   const pidFile = pidFilePath(io);
   const status = isRunning(io);
   if (status.pid == null) {
     return { stopped: false, pid: null, reason: "not-running", message: "no daemon is running (no pidfile)" };
+  }
+  if (opts.force) {
+    try { io.kill(status.pid, "SIGTERM"); } catch { /* best-effort by design */ }
+    try { io.unlinkSync(pidFile); } catch { /* best-effort */ }
+    return { stopped: true, pid: status.pid, reason: "forced", message: `forced cleanup: signalled pid ${status.pid} (best-effort) and removed the pidfile` };
   }
   if (!status.running) {
     // Stale pidfile — clean it up, report clearly (no silent failure).
@@ -169,7 +319,16 @@ export function stopDaemon(io = defaultIO()) {
   try {
     io.kill(status.pid, "SIGTERM");
   } catch (err) {
-    return { stopped: false, pid: status.pid, reason: "error", message: `failed to signal pid ${status.pid}: ${err instanceof Error ? err.message : String(err)}` };
+    // Keep the pidfile: deleting a record we could not act on risks orphaning a
+    // genuinely live daemon. The message names the recovery path instead.
+    return {
+      stopped: false,
+      pid: status.pid,
+      reason: "error",
+      message:
+        `failed to signal pid ${status.pid}: ${err instanceof Error ? err.message : String(err)}` +
+        ` — the pid may have been recycled by the OS; if you are sure no daemon is running: chorus daemon stop --force`,
+    };
   }
   try { io.unlinkSync(pidFile); } catch { /* best-effort */ }
   return { stopped: true, pid: status.pid, reason: "stopped", message: `stopped daemon (pid ${status.pid})` };
