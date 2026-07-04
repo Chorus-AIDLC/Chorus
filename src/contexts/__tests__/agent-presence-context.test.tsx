@@ -706,3 +706,134 @@ describe("AgentPresenceProvider — transcript routing + setOpenSession reconnec
     expect(result.current.executionsByConnection["c1"]).toHaveLength(1);
   });
 });
+
+// =====================================================================
+// Dead-session poll guard (idea 3bf0819c): pause after consecutive 401
+// ticks, re-arm on visibility. Prevents the 15s poll from hammering the
+// middleware/IdP with a dead refresh token after a login bounce.
+// =====================================================================
+
+function unauthorizedResponse() {
+  return { ok: false, status: 401, json: async () => ({ success: false }) };
+}
+
+describe("AgentPresenceProvider — dead-session poll guard", () => {
+  it("pauses the poll after 2 consecutive all-401 ticks", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      authFetch.mockImplementation(async () => {
+        calls += 1;
+        return unauthorizedResponse();
+      });
+
+      renderProvider();
+      // Tick 1 (mount) + tick 2 (first interval) → threshold reached.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      const callsAtPause = calls;
+      expect(callsAtPause).toBeGreaterThanOrEqual(4); // 2 ticks × 2 fetches
+
+      // Further intervals fire NO requests — the interval was cleared.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(calls).toBe(callsAtPause);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not pause when responses are healthy, and a healthy tick resets the counter", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      // Alternate: 401 tick, then healthy tick, then 401 tick... — counter never
+      // reaches 2 consecutive, so polling continues.
+      let tick = 0;
+      authFetch.mockImplementation(async (url: string) => {
+        calls += 1;
+        const currentTick = tick;
+        if (currentTick % 2 === 0) return unauthorizedResponse();
+        if (url.startsWith("/api/agent-connections")) return okJson({ connections: [] });
+        return okJson({ executions: [] });
+      });
+
+      renderProvider();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      for (let i = 0; i < 4; i++) {
+        tick += 1;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15_000);
+        });
+      }
+      const callsBefore = calls;
+      tick += 1;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      // Still polling: the last interval issued new requests.
+      expect(calls).toBeGreaterThan(callsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms the paused poll on visibilitychange→visible", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      let dead = true;
+      authFetch.mockImplementation(async (url: string) => {
+        calls += 1;
+        if (dead) return unauthorizedResponse();
+        if (url.startsWith("/api/agent-connections")) return okJson({ connections: [] });
+        return okJson({ executions: [] });
+      });
+
+      renderProvider();
+      // Reach the pause.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      const callsAtPause = calls;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(calls).toBe(callsAtPause); // paused
+
+      // Session recovers; tab becomes visible again.
+      dead = false;
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        // The dispatch arms the resume gate (module listener); the re-arm path
+        // waits for it — settle as auth-context's revalidation would.
+        settleResumeRevalidation();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(calls).toBeGreaterThan(callsAtPause); // re-armed immediate tick
+
+      // And polling continues on the interval.
+      const afterRearm = calls;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(calls).toBeGreaterThan(afterRearm);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

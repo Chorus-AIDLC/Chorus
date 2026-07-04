@@ -73,6 +73,10 @@ import type {
 
 const POLL_INTERVAL_MS = 15_000;
 
+// Dead-session guard: pause the poll after this many consecutive ticks where every
+// auth-bearing fetch returned 401 (see the poll-loop effect for the full contract).
+export const DEAD_SESSION_PAUSE_THRESHOLD = 2;
+
 // SSE-tagged transcript event: the backend `TranscriptEvent` plus the `type`
 // discriminator the SSE route adds so the client can route it (mirrors how
 // `realtime-context` tags the execution event with `type: "execution"`). Carries the
@@ -291,6 +295,22 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   // last-RESPONSE-wins, closing the reconnect/poll-vs-SSE race.
   const connGenRef = useRef<Record<string, number>>({});
 
+  // Dead-session poll guard (idea 3bf0819c): when the session dies (e.g. the user
+  // was bounced to /login), the 15s poll below would otherwise keep hitting
+  // middleware-covered APIs with a dead refresh token forever — prod logs showed 80
+  // failed IdP refresh attempts in 10 minutes from exactly this loop. Track
+  // consecutive ticks where every auth-bearing fetch came back 401; after
+  // DEAD_SESSION_PAUSE_THRESHOLD such ticks, pause the interval. The next
+  // visibilitychange→visible re-arms it once (a recovered session resumes polling
+  // naturally; a still-dead one pauses again after the same number of ticks). Any
+  // non-401 response resets the counter. Refs, not state — pausing must not re-render.
+  const consecutive401TicksRef = useRef(0);
+  const pollPausedRef = useRef(false);
+  const tick401Ref = useRef<{ sawAuth401: boolean; sawHealthy: boolean }>({
+    sawAuth401: false,
+    sawHealthy: false,
+  });
+
   // 15s connection poll. On success: store the list + status "ok". On ANY
   // failure (network reject OR a non-2xx OR a non-success envelope): set status
   // "error" and LEAVE the existing connections/count untouched — a failed poll
@@ -299,9 +319,11 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     try {
       const res = await authFetch("/api/agent-connections");
       if (!res.ok) {
+        if (res.status === 401) tick401Ref.current.sawAuth401 = true;
         setStatus("error");
         return;
       }
+      tick401Ref.current.sawHealthy = true;
       const json = await res.json();
       if (json.success) {
         setConnections(json.data.connections ?? []);
@@ -331,7 +353,11 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     const genAtRequest = { ...connGenRef.current };
     try {
       const res = await authFetch("/api/daemon/executions");
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401) tick401Ref.current.sawAuth401 = true;
+        return;
+      }
+      tick401Ref.current.sawHealthy = true;
       const json = await res.json();
       if (json.success) {
         const grouped = groupExecutionsByConnection(json.data.executions ?? []);
@@ -362,14 +388,63 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   // (owns status + online count) and the execution aggregate (self-heals the
   // execution map for connections the SSE stream didn't subscribe to at open and
   // for any silently-dropped event). Clears on unmount.
+  //
+  // Dead-session guard: each tick awaits both fetches and evaluates the tick's
+  // 401 evidence — all-401-and-nothing-healthy counts toward the pause threshold,
+  // any healthy response resets it. After DEAD_SESSION_PAUSE_THRESHOLD consecutive
+  // dead ticks the interval is cleared; a visibilitychange→visible re-arms it.
   useEffect(() => {
-    fetchConnections();
-    fetchExecutions();
-    const id = setInterval(() => {
-      fetchConnections();
-      fetchExecutions();
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const tick = async () => {
+      tick401Ref.current = { sawAuth401: false, sawHealthy: false };
+      await Promise.all([fetchConnections(), fetchExecutions()]);
+      if (cancelled) return;
+      const { sawAuth401, sawHealthy } = tick401Ref.current;
+      if (sawAuth401 && !sawHealthy) {
+        consecutive401TicksRef.current += 1;
+        if (consecutive401TicksRef.current >= DEAD_SESSION_PAUSE_THRESHOLD && id) {
+          clearInterval(id);
+          id = null;
+          pollPausedRef.current = true;
+          clientLogger.warn(
+            "Agent-presence poll paused: session appears dead (consecutive 401 ticks). Will re-arm on next visibility."
+          );
+        }
+      } else if (sawHealthy) {
+        consecutive401TicksRef.current = 0;
+      }
+    };
+
+    const start = () => {
+      pollPausedRef.current = false;
+      consecutive401TicksRef.current = 0;
+      tick();
+      id = setInterval(tick, POLL_INTERVAL_MS);
+    };
+
+    // Re-arm ONCE per visible transition when paused. A recovered session (the
+    // middleware refreshed the cookie / the user logged back in) resumes normal
+    // polling; a still-dead one pauses again after the threshold. Waits for the
+    // resume gate like every other resume-triggered request (sse-resume-timing
+    // spec): the auth revalidation gets to refresh the cookie first, so the
+    // re-armed first tick doesn't race it with an expired token.
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible" || !pollPausedRef.current || cancelled) return;
+      await waitForResumeGate();
+      if (document.visibilityState !== "visible" || !pollPausedRef.current || cancelled) return;
+      start();
+    };
+
+    start();
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchConnections, fetchExecutions]);
 
   // SSE spine — one company-wide `/api/events` stream that merges `execution`
