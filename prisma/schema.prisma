@@ -595,7 +595,14 @@ model DaemonSessionTurn {
   seq           Int // monotonic per session
   trigger       String // task_assigned | mentioned | elaboration | elaboration_verified | resume | human_instruction
   promptText    String? // free-text body for human_instruction; null otherwise (canonical source)
-  status        String                    @default("pending") // pending | running | ended
+  status        String                    @default("pending") // pending | running | ended | interrupted
+  // Discriminator for the `interrupted` status: `user` = user-requested interrupt,
+  // `crash` = subprocess exited dirty, `shutdown` = daemon graceful shutdown killed
+  // the wake, `offline` = server-side reconcile of a turn whose origin connection
+  // went stale. Non-null iff status == interrupted. Unlike DaemonExecution's sticky
+  // `interrupted` (resumable), a turn's `interrupted` is TERMINAL — it is durable
+  // conversation history, never resumed or auto-retried.
+  interruptedReason String?
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
   executionUuid String?

@@ -19,6 +19,7 @@ const mockReconcileOffline = vi.fn();
 const mockPublishExecutionChange = vi.fn();
 const mockListVisibleConnectionUuids = vi.fn();
 const mockIsSessionVisibleToCaller = vi.fn();
+const mockReconcileOrphanTurns = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -37,6 +38,7 @@ vi.mock("@/services/daemon-connection.service", () => ({
     result !== null && typeof result === "object" && "conflict" in (result as object),
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
   markDisconnected: (...args: unknown[]) => mockMarkDisconnected(...args),
+  STALE_THRESHOLD_MS: 90_000,
 }));
 
 // The route now also resolves the caller's visible connections (to subscribe to
@@ -59,6 +61,7 @@ vi.mock("@/services/daemon-execution.service", () => ({
 vi.mock("@/services/daemon-session.service", () => ({
   isSessionVisibleToCaller: (...args: unknown[]) => mockIsSessionVisibleToCaller(...args),
   transcriptEventName: (sessionUuid: string) => `transcript:${sessionUuid}`,
+  reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
 }));
 
 import { GET } from "@/app/api/events/route";
@@ -122,6 +125,7 @@ beforeEach(() => {
   mockPublishExecutionChange.mockResolvedValue(undefined);
   // Default: the requested session (when one is given) is visible to the caller.
   mockIsSessionVisibleToCaller.mockResolvedValue(true);
+  mockReconcileOrphanTurns.mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -177,6 +181,44 @@ describe("GET /api/events (change events SSE)", () => {
 
     expect(mockMarkDisconnected).toHaveBeenCalledTimes(1);
     expect(mockMarkDisconnected).toHaveBeenCalledWith(companyUuid, connHandle);
+  });
+
+  it("arms a DEFERRED orphan-turn reconcile on abort that fires only after the staleness window", async () => {
+    vi.useFakeTimers();
+    const ac = new AbortController();
+    const res = await GET(makeRequest("clientType=claude_code", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await flush();
+
+    // Executions reconcile immediately; turns do NOT — they get the full window.
+    expect(mockReconcileOffline).toHaveBeenCalledTimes(1);
+    expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+
+    // One tick before the window: still not fired.
+    await vi.advanceTimersByTimeAsync(90_000 - 1);
+    expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+
+    // Window elapsed: the deferred reconcile fires for this connection. (The age-only
+    // no-op-when-reconnected verdict lives inside reconcileOrphanTurns itself.)
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockReconcileOrphanTurns).toHaveBeenCalledTimes(1);
+    expect(mockReconcileOrphanTurns).toHaveBeenCalledWith(companyUuid, connectionUuid);
+  });
+
+  it("does NOT arm the orphan reconcile for a non-daemon (browser) stream abort", async () => {
+    vi.useFakeTimers();
+    mockParseSelfReport.mockReturnValue(null);
+    mockRegisterConnection.mockResolvedValue(null);
+    const ac = new AbortController();
+    const res = await GET(makeRequest("", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await flush();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
   });
 
   it("preserves projectUuid filtering: cross-project change events are dropped", async () => {

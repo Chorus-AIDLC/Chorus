@@ -27,6 +27,7 @@ function turn(
     trigger: "task_assigned",
     promptText: null,
     status: "pending",
+    interruptedReason: null,
     executionUuid: null,
     startedAt: null,
     endedAt: null,
@@ -93,6 +94,31 @@ describe("applyTranscriptEvent", () => {
     expect(next[1].endedAt).toBe("2026-06-16T12:00:00.000Z");
     // Messages and the other turn are untouched.
     expect(next[0].status).toBe("pending");
+  });
+
+  it("turn_status_changed running→interrupted patches status + interruptedReason in place", () => {
+    // The fix-daemon-exit-orphan-running-turn live update: a viewer watching a
+    // running band sees it flip to Interrupted (with its reason) without a refetch.
+    // The event's `turn` mirrors the REAL SSE payload — a TurnView with NO
+    // `messages` key (the wire event carries messages separately, empty here).
+    const prev = [turn({ uuid: "t1", status: "running", messages: [msg({ uuid: "m1" })] })];
+    const { messages: _omit, ...eventTurn } = turn({
+      uuid: "t1",
+      status: "interrupted",
+      interruptedReason: "offline",
+      endedAt: "2026-06-16T12:00:00.000Z",
+    });
+    const next = applyTranscriptEvent(prev, {
+      trigger: "turn_status_changed",
+      turn: eventTurn,
+      messages: [],
+    });
+    expect(next).toHaveLength(1);
+    expect(next[0].status).toBe("interrupted");
+    expect(next[0].interruptedReason).toBe("offline");
+    expect(next[0].endedAt).toBe("2026-06-16T12:00:00.000Z");
+    // The band's messages survive the status patch.
+    expect(next[0].messages.map((m) => m.uuid)).toEqual(["m1"]);
   });
 
   it("transcript_appended grows the affected turn's message tail", () => {

@@ -100,13 +100,57 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(advanceTurn.mock.calls[1][0].status).toBe("ended");
   });
 
-  it("still advances running→ended on a NON-ZERO exit (a turn ends regardless of exit code)", async () => {
+  it("reports running→interrupted(crash) on a NON-ZERO exit with no interrupt requested (outcome-aware)", async () => {
     const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(2) });
     const resolved = await waker.keyFor(TASK_NOTIF);
     await waker.wake(TASK_NOTIF, resolved.key, resolved);
 
     const statuses = advanceTurn.mock.calls.map((c) => c[0].status);
-    expect(statuses).toEqual(["running", "ended"]);
+    expect(statuses).toEqual(["running", "interrupted"]);
+    expect(advanceTurn.mock.calls[1][0].interruptedReason).toBe("crash");
+  });
+
+  it("reports running→interrupted(user) when the interrupt flag was set before exit", async () => {
+    const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(130) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    waker.markInterrupting("task", "task-1");
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const last = advanceTurn.mock.calls.at(-1)[0];
+    expect(last.status).toBe("interrupted");
+    expect(last.interruptedReason).toBe("user");
+  });
+
+  it("reports running→interrupted(shutdown) when the waker is shutting down", async () => {
+    const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(130) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    waker.shuttingDown = true;
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const last = advanceTurn.mock.calls.at(-1)[0];
+    expect(last.status).toBe("interrupted");
+    expect(last.interruptedReason).toBe("shutdown");
+  });
+
+  it("user-interrupt outranks shutdown in the turn reason", async () => {
+    const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(130) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    waker.markInterrupting("task", "task-1");
+    waker.shuttingDown = true;
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(advanceTurn.mock.calls.at(-1)[0].interruptedReason).toBe("user");
+  });
+
+  it("clean exit during shutdown still reports ended (the subprocess finished its work)", async () => {
+    const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(0) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    waker.shuttingDown = true;
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const last = advanceTurn.mock.calls.at(-1)[0];
+    expect(last.status).toBe("ended");
+    expect(last).not.toHaveProperty("interruptedReason");
   });
 
   it("does NOT attempt ended when the subprocess never spawned (turn stays pending; no illegal pending→ended)", async () => {

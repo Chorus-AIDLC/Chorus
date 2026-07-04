@@ -17,9 +17,11 @@ vi.mock("@/services/daemon-execution.service", () => ({
   connectionBelongsToAgent: (...args: unknown[]) => mockConnectionBelongsToAgent(...args),
 }));
 
-// daemon-session.service: TURN_STATUSES re-exported for the route's zod enum.
+// daemon-session.service: TURN_STATUSES + the daemon-reportable interrupt-reason
+// subset, re-exported for the route's zod enums.
 vi.mock("@/services/daemon-session.service", () => ({
-  TURN_STATUSES: ["pending", "running", "ended"],
+  TURN_STATUSES: ["pending", "running", "ended", "interrupted"],
+  DAEMON_REPORTABLE_INTERRUPT_REASONS: ["user", "crash", "shutdown"],
   advanceTurnForWake: (...args: unknown[]) => mockAdvanceTurnForWake(...args),
 }));
 
@@ -127,6 +129,44 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(res.status).toBe(409);
     expect(body.error.code).toBe("CONFLICT");
     expect(body.error.message).toMatch(/ended → running/);
+  });
+
+  it("accepts status=interrupted with a daemon-reportable reason and passes it through", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "interrupted", interruptedReason: "shutdown" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.status).toBe("interrupted");
+    expect(arg.interruptedReason).toBe("shutdown");
+  });
+
+  it("rejects interruptedReason=offline (server-reconcile verdict, not daemon-reportable) at the zod boundary", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "interrupted", interruptedReason: "offline" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("rejects an interruptedReason accompanying a non-interrupted status (422)", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "ended", interruptedReason: "crash" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("rejects status=interrupted WITHOUT a reason (non-null-iff-interrupted enforced at the boundary)", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "interrupted" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
   });
 
   it("rejects a bad status at the zod boundary (422)", async () => {

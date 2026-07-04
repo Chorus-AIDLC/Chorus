@@ -10,11 +10,13 @@ import {
   isConnectionConflict,
   touchConnection,
   markDisconnected,
+  STALE_THRESHOLD_MS,
 } from "@/services/daemon-connection.service";
 import {
   reconcileOffline,
   publishExecutionChange,
 } from "@/services/daemon-execution.service";
+import { reconcileOrphanTurns } from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -133,6 +135,17 @@ export async function GET(request: NextRequest) {
           void reconcileOffline(auth.companyUuid, conn.uuid).then(() =>
             publishExecutionChange(auth.companyUuid, conn.uuid),
           );
+          // Deferred orphan-turn reconcile: unlike executions (flipped immediately
+          // above), a running TURN gets the full staleness window before being
+          // declared interrupted — SSE streams reconnect transiently, and
+          // reconcileOrphanTurns re-verifies age-only eligibility at fire time, so a
+          // reconnected daemon (fresh lastSeenAt) makes this a no-op. Per-instance
+          // best-effort: unref'd so it never holds the process; a timer lost to a
+          // server restart is covered by the read-time fallback.
+          const orphanTimer = setTimeout(() => {
+            void reconcileOrphanTurns(auth.companyUuid, conn.uuid);
+          }, STALE_THRESHOLD_MS);
+          orphanTimer.unref?.();
         }
       });
     },
