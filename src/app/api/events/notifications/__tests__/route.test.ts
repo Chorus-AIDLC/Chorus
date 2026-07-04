@@ -14,6 +14,7 @@ const mockParseSelfReport = vi.fn();
 const mockRegisterConnection = vi.fn();
 const mockTouchConnection = vi.fn();
 const mockMarkDisconnected = vi.fn();
+const mockReconcileOrphanTurns = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -35,6 +36,13 @@ vi.mock("@/services/daemon-connection.service", () => ({
     result !== null && typeof result === "object" && "conflict" in (result as object),
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
   markDisconnected: (...args: unknown[]) => mockMarkDisconnected(...args),
+  STALE_THRESHOLD_MS: 90_000,
+}));
+
+// The route now defers an orphan-turn reconcile by the staleness window on abort.
+// Mock the session service so this stays a unit test.
+vi.mock("@/services/daemon-session.service", () => ({
+  reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
 }));
 
 import { GET } from "@/app/api/events/notifications/route";
@@ -215,6 +223,24 @@ describe("GET /api/events/notifications (notification SSE)", () => {
       `notification:agent:${actorUuid}`,
       expect.any(Function),
     );
+  });
+
+  it("arms a DEFERRED orphan-turn reconcile on abort that fires only after the staleness window", async () => {
+    vi.useFakeTimers();
+    const ac = new AbortController();
+    const res = await GET(makeRequest("clientType=openclaw", ac.signal));
+    await startStream(res);
+
+    ac.abort();
+    await flush();
+    expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(90_000 - 1);
+    expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockReconcileOrphanTurns).toHaveBeenCalledTimes(1);
+    expect(mockReconcileOrphanTurns).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
 
   describe("registration conflict (a live different-process daemon holds this (agent,host,cwd))", () => {
