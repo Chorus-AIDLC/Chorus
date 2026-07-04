@@ -19,6 +19,7 @@
 import { buildPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
 import { isNewSession } from "./claude-spawner.mjs";
+import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -37,13 +38,17 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown" }) => Promise<void>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
-   *     on spawn (→ running) and on subprocess exit (→ ended) to advance the server-side
+   *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
+   *     → interrupted with the classified reason otherwise) to advance the server-side
    *     DaemonSessionTurn the notification chokepoint created (status `pending`). The
    *     server resolves the turn by the session business key (`sessionId`) and stamps
    *     the weak executionUuid link from entityType/entityUuid. Defaults to a no-op that
    *     logs — the daemon wires the REST reporter (turn-reporter.mjs).
+   *   killer?: (child: any, opts: any) => Promise<any>,  Injectable kill escalation for
+   *     interruptAll(); defaults to process-killer.killProcessTree (cross-platform).
+   *   sigintTimeoutMs?: number,  Escalation window interruptAll passes the killer.
    * }} opts
    */
   constructor(opts) {
@@ -91,6 +96,17 @@ export class Waker {
     // wake's exit path reads + clears it to decide reason=user vs reason=crash.
     /** @type {Set<string>} */
     this.interrupting = new Set();
+    // Daemon graceful-shutdown flag (fix-daemon-exit-orphan-running-turn). Set once
+    // by interruptAll() and never cleared — a shutting-down Waker is on its way out.
+    // The wake exit path reads it to report the TURN as interrupted(shutdown), and to
+    // SUPPRESS the execution interrupt report (a shutdown-kill would otherwise read as
+    // a dirty exit → sticky interrupted(crash) execution row that reconcileOffline
+    // deliberately skips — stranded in the UI on every Ctrl-C).
+    this.shuttingDown = false;
+    // Injectable killer for interruptAll (defaults to the shared cross-platform
+    // escalation; tests inject a spy). Kill logic itself stays in process-killer.mjs.
+    this.killer = opts.killer ?? killProcessTree;
+    this.sigintTimeoutMs = opts.sigintTimeoutMs ?? DEFAULT_SIGINT_TIMEOUT_MS;
 
     // Per-resource execution registry — the source of truth for the execution
     // snapshot uploaded to the server. Keyed by `${entityType}:${entityUuid}`
@@ -138,6 +154,35 @@ export class Waker {
    */
   markInterrupting(entityType, entityUuid) {
     this.interrupting.add(this.#execKey(entityType, entityUuid));
+  }
+
+  /**
+   * Daemon graceful shutdown (fix-daemon-exit-orphan-running-turn): mark this Waker
+   * SHUTTING DOWN and kill every live wake subprocess via the shared graceful
+   * escalation (SIGINT → SIGKILL after `sigintTimeoutMs`). The in-flight wake()
+   * promises then run their normal exit path, which — seeing `shuttingDown` —
+   * reports each turn `interrupted(shutdown)` and suppresses the execution
+   * interrupt report. Idempotent; never throws (a failed kill is logged and left
+   * to the server-side offline reconcile as the backstop).
+   *
+   * Returns after the kill signals are DISPATCHED — completion of the subprocesses
+   * (and their turn reports) is observed by awaiting the wake promises, which the
+   * daemon's stop() does with a bounded cap.
+   */
+  interruptAll() {
+    this.shuttingDown = true;
+    for (const [key, entry] of this.executions) {
+      if (entry.status !== "running" || !entry.child) continue;
+      try {
+        Promise.resolve(
+          this.killer(entry.child, { sigintTimeoutMs: this.sigintTimeoutMs, logger: this.logger }),
+        ).catch((err) => {
+          this.logger.warn(`[Chorus] shutdown: killProcessTree rejected for ${key}: ${err}`);
+        });
+      } catch (err) {
+        this.logger.warn(`[Chorus] shutdown: kill dispatch failed for ${key}: ${err}`);
+      }
+    }
   }
 
   /** Recognized wake-triggering resource kinds the server's DaemonExecution accepts. */
@@ -397,30 +442,51 @@ export class Waker {
         );
       }
 
-      // Turn lifecycle (子1): the subprocess has exited — advance the server turn
-      // running→ended, regardless of exit code (a turn ends whether the run was clean,
-      // crashed, or interrupted). Only when it actually reached `running` (a never-
-      // spawned wake left the turn `pending`; a pending→ended skip is rejected server-
-      // side as invalid_transition). Swallow-safe; never throws into the wake path.
+      // Outcome classification for the exit reports below. Read the flags ONCE so the
+      // turn report and the execution report can never disagree on the outcome:
+      //   • clean exit (code 0)              → turn ended            (unchanged)
+      //   • interrupting flag (user)         → turn interrupted(user)
+      //   • shuttingDown (daemon SIGINT/TERM) → turn interrupted(shutdown)
+      //   • dirty exit otherwise             → turn interrupted(crash)
+      // User-interrupt outranks shutdown: the flag was set by an explicit authorized
+      // interrupt before the shutdown began, and its execution-row semantics (sticky,
+      // resumable) must be preserved.
+      const wasInterrupting = entity && execKey ? this.interrupting.has(execKey) : false;
+      const cleanExit = result && result.exitCode === 0;
+
+      // Turn lifecycle: the subprocess has exited — advance the server turn from
+      // `running` to its OUTCOME-AWARE terminal state (fix-daemon-exit-orphan-running-
+      // turn): `ended` on a clean exit, `interrupted` with the classified reason
+      // otherwise — mirroring what the execution row records, so the conversation
+      // history says WHY a turn stopped. Only when it actually reached `running` (a
+      // never-spawned wake left the turn `pending`; a pending→<terminal> skip is
+      // rejected server-side as invalid_transition). Swallow-safe; never throws.
       if (sessionId && turnAdvancedToRunning) {
-        await this.#advanceTurn(sessionId, "ended", entity);
+        if (cleanExit) {
+          await this.#advanceTurn(sessionId, "ended", entity);
+        } else {
+          const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason);
+        }
       }
 
-      // Interrupt-vs-crash reporting (子3, Tech Design "Interrupt vs crash
-      // reporting"). Decide from the per-entity "interrupting" flag the control
-      // handler may have set while the subprocess was running:
+      // Interrupt-vs-crash EXECUTION reporting (子3, Tech Design "Interrupt vs crash
+      // reporting"). Decide from the same flags as the turn report above:
       //   • interrupting flag set            → interrupted(reason="user")
       //   • no flag AND non-zero/null exit    → interrupted(reason="crash")
       //   • clean exit (code 0)               → nothing (unchanged)
-      // The interrupted state is entity-generic — it lives on the DaemonExecution
-      // row (keyed connection+entity), so the reporter records it for ANY recognized
-      // wake resource (task/idea/proposal/document), not only tasks.
+      // EXCEPT during shutdown (fix-daemon-exit-orphan-running-turn, review blocker
+      // 2): a shutdown-killed subprocess exits dirty with no user flag, which would
+      // record the STICKY execution state interrupted(crash) — a state the execution
+      // offline-reconcile deliberately SKIPS and the read gate keeps showing, so
+      // every Ctrl-C would strand a crash-interrupted row in the UI. During shutdown
+      // report NO execution interrupt (user-interrupt still reports — its sticky
+      // resumability is the point); the row is left for reconcileOffline to flip
+      // `ended` when this connection's stream drops.
       if (entity && execKey) {
-        const wasInterrupting = this.interrupting.has(execKey);
-        const cleanExit = result && result.exitCode === 0;
         if (wasInterrupting) {
           await this.#report(entity, "user");
-        } else if (!cleanExit) {
+        } else if (!cleanExit && !this.shuttingDown) {
           // No interrupt requested but the subprocess did not exit cleanly (non-zero
           // code, or null from a spawn/transport failure) → treat as a crash.
           await this.#report(entity, "crash");
@@ -480,19 +546,22 @@ export class Waker {
    * Advance the server-side DaemonSessionTurn for this wake (子1) via the injected
    * reporter. Identified server-side by the session business key (`sessionId`); the
    * optional `entity` ({ entityType, entityUuid }) lets the server stamp the weak
-   * executionUuid link from the live execution row. Never throws into the wake path —
-   * a reporter failure is logged and swallowed (the REST reporter already swallows;
-   * this is belt-and-braces, matching #report).
-   * @param {string} sessionId @param {"running"|"ended"} status
+   * executionUuid link from the live execution row. An `interrupted` status carries
+   * its classified `interruptedReason` (user/crash/shutdown). Never throws into the
+   * wake path — a reporter failure is logged and swallowed (the REST reporter
+   * already swallows; this is belt-and-braces, matching #report).
+   * @param {string} sessionId @param {"running"|"ended"|"interrupted"} status
    * @param {{ entityType: string, entityUuid: string }|null} entity
+   * @param {"user"|"crash"|"shutdown"|null} [interruptedReason]
    */
-  async #advanceTurn(sessionId, status, entity) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null) {
     try {
       await this.advanceTurn({
         sessionId,
         status,
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
+        ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
       });
     } catch (err) {
       this.logger.warn(

@@ -254,7 +254,20 @@ export function buildDaemon(creds, deps = {}) {
     // transcript (new-vs-resume) and to spawn, so they never diverge (Module Contract
     // 1 — resolveCwd is the single source). `cwd` is `undefined` for the single-path /
     // old-daemon default, which the Waker degrades to process.cwd() (HARD-1).
-    waker = new Waker({ creds, lineage, spawner, cwd, hooks, logger, reportInterrupt, advanceTurn, verbose });
+    waker = new Waker({
+      creds,
+      lineage,
+      spawner,
+      cwd,
+      hooks,
+      logger,
+      reportInterrupt,
+      advanceTurn,
+      verbose,
+      // Graceful-shutdown kill escalation (fix-daemon-exit-orphan-running-turn):
+      // interruptAll() reuses the SAME window the interrupt control handler uses.
+      sigintTimeoutMs,
+    });
     // The router reads THIS connection's own uuid lazily (same source the control handler
     // uses) to suppress a DIRECTED (pinned) wake stamped for a different connection
     // (fix-pinned-wake-directed-delivery, T2). Null until the SSE handshake assigns it — a
@@ -399,10 +412,30 @@ export function buildDaemon(creds, deps = {}) {
       }
     },
     async stop() {
+      // Graceful shutdown ordering (fix-daemon-exit-orphan-running-turn):
+      // 1. Stop taking new work: disconnect the SSE listeners (no new notifications)
+      //    and latch the queue (queued-but-unstarted wakes never spawn).
       for (const c of connections) {
         c.sseListener.disconnect?.();
       }
-      // The MCP client is process-wide (shared) — disconnect it once.
+      queue.stop();
+      // 2. Interrupt every in-flight wake subprocess via the shared kill escalation.
+      //    Each wake's exit path — seeing shuttingDown — reports its turn
+      //    interrupted(shutdown) and suppresses the execution crash report.
+      for (const c of connections) {
+        c.waker?.interruptAll?.();
+      }
+      // 3. Await the in-flight wakes so those turn-advance reports flush, BOUNDED:
+      //    the kill escalation window plus a hard 5s cap for the exit path's REST
+      //    reports. A wake that outlives this does NOT hang the shutdown — its
+      //    orphaned turn is the server-side offline reconcile's job (the backstop).
+      const drained = await queue.drain(sigintTimeoutMs + 5_000);
+      if (!drained) {
+        logger.warn(
+          "[Chorus] shutdown: in-flight wake(s) did not finish within the bound — exiting anyway (server reconcile will finalize their turns)",
+        );
+      }
+      // 4. The MCP client is process-wide (shared) — disconnect it once.
       await mcpClient.disconnect?.();
     },
   };

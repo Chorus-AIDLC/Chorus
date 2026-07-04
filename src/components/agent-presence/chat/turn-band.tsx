@@ -71,14 +71,22 @@ export function TurnBand({
 
   const running = turn.status === "running";
   const pending = turn.status === "pending";
+  // A terminal turn the daemon (user/crash/shutdown) or server reconcile (offline)
+  // stopped — structurally quiet like `ended` (no pulse, no spinner, no timer) but
+  // labeled distinctly so an abnormal termination never masquerades as a clean end.
+  const interrupted = turn.status === "interrupted";
 
-  // Live status label (pending → Queued, running → Running, ended → Ended).
+  // Live status label (pending → Queued, running → Running, interrupted →
+  // Interrupted, ended → Ended). One generic "Interrupted" label covers every
+  // `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
   const statusLabel =
     turn.status === "running"
       ? t("turnStatusRunning")
       : turn.status === "pending"
         ? t("turnStatusPending")
-        : t("turnStatusEnded");
+        : interrupted
+          ? t("turnStatusInterrupted")
+          : t("turnStatusEnded");
 
   // Drop the synthetic promptText slot (uuid `synthetic:{turnUuid}`) the message-level
   // read folds in for pagination — the prompt is already rendered as its canonical
@@ -131,8 +139,13 @@ export function TurnBand({
                 ? "bg-[#FBF0E8] text-[#C67A52]"
                 : pending
                   ? "bg-[#F0EDE8] text-[#9A8C7E]"
-                  : "bg-[#F0EDE8] text-[#6B6B6B]"
+                  : interrupted
+                    ? // Warning-muted: distinct from both the terracotta running tint
+                      // and the neutral ended gray — an abnormal stop reads at a glance.
+                      "bg-[#F5EEE3] text-[#A8763E]"
+                    : "bg-[#F0EDE8] text-[#6B6B6B]"
             }`}
+            title={interrupted && turn.interruptedReason ? turn.interruptedReason : undefined}
           >
             {running && (
               <Loader2

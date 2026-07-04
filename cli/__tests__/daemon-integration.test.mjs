@@ -1126,3 +1126,96 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
     await daemon.stop();
   });
 });
+
+describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () => {
+  it("stop() interrupts the in-flight wake, flushes its interrupted(shutdown) turn report, then disconnects MCP", async () => {
+    const order = [];
+    let releaseChild;
+    const childExited = new Promise((r) => (releaseChild = r));
+    const FAKE_CHILD = { pid: 4242 };
+
+    // A spawner whose subprocess blocks until "killed" (releaseChild), then exits 130.
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        params.onChild?.(FAKE_CHILD);
+        await childExited;
+        return { sessionId: params.sessionId, exitCode: 130, isNew: true };
+      }),
+    };
+    const turnReports = [];
+    const mcp = mockMcp();
+    const daemon = buildDaemon(
+      { url: "https://chorus.example", apiKey: "cho_x" },
+      {
+        logger: silent,
+        mcpClient: mcp,
+        fetchImpl: lineageFetch(),
+        spawner,
+        cwd: "/nonexistent/chorus-daemon-shutdown-itest",
+        makeSseListener: (o) => new MockSse(o),
+        sigintTimeoutMs: 200,
+      }
+    );
+    // Spy on the primary waker's injected killer + turn reporter AFTER build. The
+    // killer releases the "child" (simulating the kill landing).
+    daemon.waker.killer = vi.fn(async () => {
+      order.push("killed");
+      releaseChild();
+      return { killed: true };
+    });
+    daemon.waker.advanceTurn = async (params) => {
+      turnReports.push(params);
+      order.push(`turn:${params.status}`);
+    };
+
+    await daemon.start();
+    daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });
+    await new Promise((r) => setTimeout(r, 20)); // let the wake spawn (turn → running)
+
+    await daemon.stop();
+    order.push("stopped");
+
+    // The kill was dispatched, the wake's exit path reported interrupted(shutdown)
+    // BEFORE stop() returned, and MCP disconnected last.
+    expect(order).toEqual(["turn:running", "killed", "turn:interrupted", "stopped"]);
+    const last = turnReports.at(-1);
+    expect(last.status).toBe("interrupted");
+    expect(last.interruptedReason).toBe("shutdown");
+    expect(mcp.disconnected).toBe(true);
+  });
+
+  it("stop() is bounded: an unkillable wake does not hang the shutdown", async () => {
+    // A subprocess that NEVER exits, and a killer that does nothing.
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        params.onChild?.({ pid: 1 });
+        await new Promise(() => {}); // never resolves
+      }),
+    };
+    const warns = [];
+    const daemon = buildDaemon(
+      { url: "https://chorus.example", apiKey: "cho_x" },
+      {
+        logger: { ...silent, warn: (m) => warns.push(m) },
+        mcpClient: mockMcp(),
+        fetchImpl: lineageFetch(),
+        spawner,
+        cwd: "/nonexistent/chorus-daemon-shutdown-itest2",
+        makeSseListener: (o) => new MockSse(o),
+        sigintTimeoutMs: 50, // drain bound = 50ms + 5s cap
+      }
+    );
+    daemon.waker.killer = vi.fn(async () => ({ killed: false }));
+
+    await daemon.start();
+    daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const stopped = await Promise.race([
+      daemon.stop().then(() => true),
+      new Promise((r) => setTimeout(() => r(false), 8_000)),
+    ]);
+    expect(stopped).toBe(true); // returned within the bound, did not hang
+    expect(warns.join("")).toMatch(/did not finish within the bound/);
+  }, 15_000);
+});

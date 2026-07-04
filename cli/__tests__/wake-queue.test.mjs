@@ -127,3 +127,61 @@ describe("WakeQueue enqueue is non-blocking", () => {
     expect(ran).toBe(true);
   });
 });
+
+describe("WakeQueue graceful shutdown (stop + drain)", () => {
+  it("stop() prevents queued-but-unstarted tasks from ever starting", async () => {
+    const q = new WakeQueue({ maxConcurrency: 1, logger: silent });
+    const d1 = deferred();
+    const order = [];
+
+    q.enqueue("k1", async () => {
+      order.push("start-1");
+      await d1.promise;
+      order.push("end-1");
+    });
+    q.enqueue("k2", async () => {
+      order.push("start-2");
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(["start-1"]); // k2 waits on the concurrency slot
+
+    q.stop(); // shutdown begins — k2 must never start
+    d1.release();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["start-1", "end-1"]);
+  });
+
+  it("drain resolves true once in-flight tasks finish (pending ones don't block it)", async () => {
+    const q = new WakeQueue({ maxConcurrency: 1, logger: silent });
+    const d1 = deferred();
+    q.enqueue("k1", async () => {
+      await d1.promise;
+    });
+    q.enqueue("k2", async () => {}); // queued, never starts after stop()
+    await Promise.resolve();
+    q.stop();
+
+    const drainP = q.drain(2_000);
+    d1.release();
+    await expect(drainP).resolves.toBe(true);
+  });
+
+  it("drain resolves false when an in-flight task outlives the bound (shutdown never hangs)", async () => {
+    const q = new WakeQueue({ logger: silent });
+    const never = deferred(); // task that never finishes (unkillable wake)
+    q.enqueue("k1", async () => {
+      await never.promise;
+    });
+    await Promise.resolve();
+
+    await expect(q.drain(120)).resolves.toBe(false);
+    never.release(); // cleanup
+  });
+
+  it("drain on an idle queue resolves true immediately", async () => {
+    const q = new WakeQueue({ logger: silent });
+    await expect(q.drain(0)).resolves.toBe(true);
+  });
+});
