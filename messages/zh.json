@@ -1490,6 +1490,7 @@
     "statusError": "错误",
     "turnStatusPending": "排队中",
     "turnStatusRunning": "运行中",
+    "turnStatusInterrupted": "已中断",
     "turnStatusEnded": "已结束",
     "triggerTask": "任务",
     "triggerMention": "提及",

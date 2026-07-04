@@ -1489,6 +1489,7 @@
     "statusError": "Error",
     "turnStatusPending": "Queued",
     "turnStatusRunning": "Running",
+    "turnStatusInterrupted": "Interrupted",
     "turnStatusEnded": "Ended",
     "triggerTask": "Task",
     "triggerMention": "Mention",
