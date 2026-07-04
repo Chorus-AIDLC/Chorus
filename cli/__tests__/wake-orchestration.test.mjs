@@ -539,6 +539,118 @@ describe("Waker interrupt / crash reporting (子3)", () => {
   });
 });
 
+describe("Waker graceful shutdown (fix-daemon-exit-orphan-running-turn)", () => {
+  const FAKE_CHILD = { pid: 5555 };
+
+  it("SUPPRESSES the execution crash report for a shutdown-killed subprocess (no stranded sticky rows)", async () => {
+    // A shutdown-kill looks exactly like a crash to the old logic: dirty exit, no
+    // user-interrupt flag. The !shuttingDown gate must keep reportInterrupt silent —
+    // the execution row is reconcileOffline's job when the stream drops.
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.shuttingDown = true; // shutdown began mid-run
+          return { sessionId, exitCode: 130, isNew: true }; // SIGINT-killed
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).not.toHaveBeenCalled();
+  });
+
+  it("a USER interrupt during shutdown still reports the execution (sticky resumability preserved)", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.markInterrupting("task", "task-1");
+          waker.shuttingDown = true;
+          return { sessionId, exitCode: 130, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "user");
+  });
+
+  it("outside shutdown the crash report is byte-for-byte unchanged", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          return { sessionId, exitCode: 2, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+  });
+
+  it("interruptAll sets shuttingDown and kills every live running child via the injected killer", async () => {
+    const killer = vi.fn(async () => ({ killed: true }));
+    let interruptAllRan;
+    const { waker } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          // Simulate the daemon's stop() firing while this wake is live.
+          waker.interruptAll();
+          interruptAllRan = {
+            shuttingDown: waker.shuttingDown,
+            killerCalls: killer.mock.calls.length,
+          };
+          return { sessionId, exitCode: 130, isNew: true };
+        }),
+      },
+    });
+    waker.killer = killer;
+    waker.sigintTimeoutMs = 1234;
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(interruptAllRan.shuttingDown).toBe(true);
+    expect(interruptAllRan.killerCalls).toBe(1);
+    expect(killer).toHaveBeenCalledWith(
+      FAKE_CHILD,
+      expect.objectContaining({ sigintTimeoutMs: 1234 }),
+    );
+  });
+
+  it("interruptAll skips queued entries (no child yet) and is idempotent", async () => {
+    const killer = vi.fn(async () => ({ killed: true }));
+    const { waker } = makeWaker();
+    waker.killer = killer;
+    // A queued entry (no live child) — nothing to kill.
+    waker.markQueued(TASK_NOTIF, "idea:x", { rootIdeaUuid: null });
+    waker.interruptAll();
+    waker.interruptAll();
+    expect(waker.shuttingDown).toBe(true);
+    expect(killer).not.toHaveBeenCalled();
+  });
+
+  it("a rejecting killer never throws out of interruptAll (logged)", async () => {
+    const warns = [];
+    const { waker } = makeWaker();
+    waker.logger = { ...silent, warn: (m) => warns.push(m) };
+    waker.killer = vi.fn(() => Promise.reject(new Error("kill blew up")));
+    waker.executions.set("task:task-1", {
+      entityType: "task",
+      entityUuid: "task-1",
+      rootIdeaUuid: null,
+      status: "running",
+      startedAt: null,
+      child: FAKE_CHILD,
+    });
+    expect(() => waker.interruptAll()).not.toThrow();
+    await Promise.resolve(); // let the rejection propagate to the .catch
+    expect(warns.join("")).toMatch(/killProcessTree rejected/);
+  });
+});
+
 describe("EventRouter dispatch", () => {
   function makeRouter(notifications, waker, queue, seen) {
     const mcpClient = { callTool: vi.fn(async () => ({ notifications })) };
