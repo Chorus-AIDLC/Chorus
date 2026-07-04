@@ -49,6 +49,7 @@ export { ExecutionRow, ExecutionSection } from "./execution-row";
 export { SendInstructionBox, type SessionTarget } from "./send-instruction-box";
 export {
   ConversationalEntry,
+  ConversationalDispatchError,
   USER_TEXT_MAX_CHARS,
   type ConversationalEntryProps,
 } from "./conversational-entry";

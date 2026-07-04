@@ -13,15 +13,23 @@
 //              InstancePicker; a sole instance auto-selects, 2+ require an
 //              explicit pick before Send enables),
 //   compose  — the consumer's `buildInstruction(userText)` wraps the verbatim
-//              description into the final dispatched instruction,
-//   dispatch — POST /api/daemon-sessions/ad-hoc (the existing ad-hoc endpoint;
-//              no new backend), then hand the created SessionView to
-//              `onStarted` so the consumer can close itself and land the user
-//              on the new conversation (`openChatForSession`).
+//              description into the final dispatched instruction (DEFAULT path
+//              only — a custom `dispatch` receives the RAW user text and owns
+//              composition, typically server-side),
+//   dispatch — DEFAULT: POST /api/daemon-sessions/ad-hoc (the existing ad-hoc
+//              endpoint). A consumer may instead supply `dispatch` to hit its
+//              own endpoint (add-conversational-idea-root-session: the
+//              create-idea modal posts /api/ideas/conversational, which
+//              pre-creates the Idea and composes the instruction server-side).
+//              Either way the created SessionView is handed to `onStarted` so
+//              the consumer can close itself and land the user on the new
+//              conversation (`openChatForSession`).
 //
 // Char budget: the USER text is capped at USER_TEXT_MAX_CHARS (3000) with a
 // visible counter near the limit, reserving template headroom under the server's
-// MAX_INSTRUCTION_CHARS (4000) so a composed instruction never 400s on length.
+// MAX_INSTRUCTION_CHARS (4000) so a composed instruction never 400s on length —
+// wherever the template is applied (client `buildInstruction` or a custom
+// dispatch's server-side composition).
 //
 // Errors are never silent: a 409 (the picked connection went offline between the
 // presence poll and the send) renders an inline retryable error AND re-polls the
@@ -65,11 +73,41 @@ export const USER_TEXT_MAX_CHARS = 3000;
 // cap (a counter from char 0 is noise; near the limit it is the affordance).
 const COUNTER_VISIBLE_FROM = USER_TEXT_MAX_CHARS - 500;
 
+/**
+ * Typed rejection a custom `dispatch` throws so the component can keep its
+ * status-aware error surface (409 → retryable offline error + connection
+ * re-poll; anything else → the server reason inline). `serverMessage` is the
+ * already-extracted human-readable reason (null → the component's generic
+ * fallback copy).
+ */
+export class ConversationalDispatchError extends Error {
+  readonly status: number;
+  readonly serverMessage: string | null;
+  constructor(status: number, serverMessage: string | null) {
+    super(serverMessage ?? `Dispatch failed with status ${status}`);
+    this.name = "ConversationalDispatchError";
+    this.status = status;
+    this.serverMessage = serverMessage;
+  }
+}
+
 export interface ConversationalEntryProps {
-  // Composes the final dispatched instruction around the user's verbatim text.
-  // The CONSUMER owns the template (what the agent is told to do); this
-  // component owns selection + transport.
-  buildInstruction: (userText: string) => string;
+  // Composes the final dispatched instruction around the user's verbatim text —
+  // DEFAULT dispatch only. The CONSUMER owns the template (what the agent is
+  // told to do); this component owns selection + transport. Ignored when a
+  // custom `dispatch` is provided (that dispatch receives the RAW user text and
+  // owns composition — typically delegated to its server endpoint).
+  buildInstruction?: (userText: string) => string;
+  // Replaces the default ad-hoc POST. Receives the picked agent/instance and
+  // the RAW (trimmed) user text; resolves with the created session (handed to
+  // `onStarted`) or rejects with `ConversationalDispatchError` so the component
+  // maps 409 → retryable offline error + re-poll, else the server reason.
+  // Omitted → the default ad-hoc dispatch, byte-identical to before this prop.
+  dispatch?: (args: {
+    agentUuid: string;
+    connectionUuid: string;
+    userText: string;
+  }) => Promise<SessionView>;
   // Rendered when no daemon connection is online (or the presence provider is
   // absent). Defaults to the shared DaemonConnectCta guidance.
   offlineFallback?: ReactNode;
@@ -107,6 +145,7 @@ function groupByAgent(
 
 export function ConversationalEntry({
   buildInstruction,
+  dispatch,
   offlineFallback,
   onStarted,
   defaultAgentUuid,
@@ -162,51 +201,72 @@ export function ConversationalEntry({
   const sendDisabled =
     pending || !selectedAgent || !selectedInstance || trimmed.length === 0 || overBudget;
 
+  // Default transport: the ad-hoc endpoint with the consumer's client-side
+  // template. Kept byte-identical to the pre-`dispatch` behavior so existing
+  // consumers/tests are unaffected. Throws ConversationalDispatchError so the
+  // status-aware error mapping below is shared with custom dispatches.
+  const defaultDispatch = async (args: {
+    agentUuid: string;
+    connectionUuid: string;
+    userText: string;
+  }): Promise<SessionView> => {
+    const res = await authFetch("/api/daemon-sessions/ad-hoc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentUuid: args.agentUuid,
+        connectionUuid: args.connectionUuid,
+        // buildInstruction is contractually present on the default path (the
+        // prop is optional only for custom-dispatch consumers); degrade to the
+        // raw text rather than crash if a consumer omitted both.
+        instructionText: buildInstruction
+          ? buildInstruction(args.userText)
+          : args.userText,
+      }),
+    });
+    if (!res.ok) {
+      throw new ConversationalDispatchError(
+        res.status,
+        await extractInstructionError(res, ""),
+      );
+    }
+    try {
+      const json = await res.json();
+      if (json?.success && json.data?.session) {
+        return json.data.session as SessionView;
+      }
+    } catch {
+      // Non-JSON success body — fall through to the visible error below.
+    }
+    // A 2xx without a session payload cannot hand off to the chat — treat it
+    // as a failed dispatch rather than silently closing the consumer.
+    throw new ConversationalDispatchError(res.status, null);
+  };
+
   const send = async () => {
     if (sendDisabled || !selectedAgent || !selectedInstance) return;
     setPending(true);
     setSendError(null);
     try {
-      const res = await authFetch("/api/daemon-sessions/ad-hoc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentUuid: selectedAgent.agentUuid,
-          connectionUuid: selectedInstance.connectionUuid,
-          instructionText: buildInstruction(trimmed),
-        }),
+      const created = await (dispatch ?? defaultDispatch)({
+        agentUuid: selectedAgent.agentUuid,
+        connectionUuid: selectedInstance.connectionUuid,
+        userText: trimmed,
       });
-      if (!res.ok) {
+      setText("");
+      onStarted(created);
+    } catch (error) {
+      if (error instanceof ConversationalDispatchError) {
         // 409 = the picked connection went offline between the presence poll and
         // this send. Surface the reason inline AND re-poll the connection list so
         // the picker reflects reality for the retry.
         setSendError(
-          await extractInstructionError(
-            res,
-            res.status === 409 ? t("connectionWentOffline") : t("sendError"),
-          ),
+          error.serverMessage ||
+            (error.status === 409 ? t("connectionWentOffline") : t("sendError")),
         );
-        if (res.status === 409) presence?.refreshConnections();
+        if (error.status === 409) presence?.refreshConnections();
         return;
       }
-      let created: SessionView | null = null;
-      try {
-        const json = await res.json();
-        if (json?.success && json.data?.session) {
-          created = json.data.session as SessionView;
-        }
-      } catch {
-        // Non-JSON success body — fall through to the visible error below.
-      }
-      if (!created) {
-        // A 2xx without a session payload cannot hand off to the chat — treat it
-        // as a failed dispatch rather than silently closing the consumer.
-        setSendError(t("sendError"));
-        return;
-      }
-      setText("");
-      onStarted(created);
-    } catch (error) {
       clientLogger.error("Failed to dispatch conversational entry:", error);
       setSendError(t("sendError"));
     } finally {

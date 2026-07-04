@@ -73,6 +73,7 @@ vi.mock("@/contexts/agent-presence-context", () => ({
 
 import {
   ConversationalEntry,
+  ConversationalDispatchError,
   USER_TEXT_MAX_CHARS,
 } from "../conversational-entry";
 import { DAEMON_START_COMMAND } from "../daemon-connect-cta";
@@ -368,5 +369,112 @@ describe("ConversationalEntry — dispatch", () => {
         (c) => c[0] === "/api/daemon-sessions/ad-hoc",
       ).length,
     ).toBe(1);
+  });
+});
+
+// ===== Custom dispatch prop (add-conversational-idea-root-session) =====
+describe("ConversationalEntry — custom dispatch", () => {
+  const ideaSession = { ...createdSession, sessionId: "idea-1", directIdeaUuid: "idea-1" };
+
+  it("calls the supplied dispatch with the RAW trimmed text (no ad-hoc POST, no buildInstruction) and hands its SessionView to onStarted", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    const dispatch = vi.fn().mockResolvedValue(ideaSession);
+    const onStarted = vi.fn();
+    render(<ConversationalEntry dispatch={dispatch} onStarted={onStarted} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
+      target: { value: "  Build a thing  " },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Send to agent/ }));
+
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(ideaSession));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      agentUuid: "agent-1",
+      connectionUuid: "c1",
+      userText: "Build a thing",
+    });
+    // The default transport must NOT fire when a custom dispatch is present.
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("a 409 ConversationalDispatchError shows the retryable offline error and re-polls connections", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    const dispatch = vi
+      .fn()
+      .mockRejectedValue(new ConversationalDispatchError(409, "Connection is offline"));
+    const onStarted = vi.fn();
+    render(<ConversationalEntry dispatch={dispatch} onStarted={onStarted} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
+      target: { value: "hello" },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Send to agent/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Connection is offline")).toBeTruthy(),
+    );
+    expect(mockRefreshConnections).toHaveBeenCalledTimes(1);
+    expect(onStarted).not.toHaveBeenCalled();
+    expect(
+      (screen.getByRole("button", { name: /Retry/ }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("a 409 without a server message falls back to the offline copy", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    const dispatch = vi
+      .fn()
+      .mockRejectedValue(new ConversationalDispatchError(409, null));
+    render(<ConversationalEntry dispatch={dispatch} onStarted={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
+      target: { value: "hello" },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Send to agent/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("That daemon went offline just now. Pick another instance and retry."),
+      ).toBeTruthy(),
+    );
+    expect(mockRefreshConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-409 dispatch failure surfaces the server reason inline without re-polling", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    const dispatch = vi
+      .fn()
+      .mockRejectedValue(new ConversationalDispatchError(400, "Description too long"));
+    const onStarted = vi.fn();
+    render(<ConversationalEntry dispatch={dispatch} onStarted={onStarted} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
+      target: { value: "hello" },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Send to agent/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Description too long")).toBeTruthy(),
+    );
+    expect(mockRefreshConnections).not.toHaveBeenCalled();
+    expect(onStarted).not.toHaveBeenCalled();
+  });
+
+  it("a non-typed rejection surfaces the generic send error (never silent)", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    const dispatch = vi.fn().mockRejectedValue(new Error("network down"));
+    render(<ConversationalEntry dispatch={dispatch} onStarted={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), {
+      target: { value: "hello" },
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Send to agent/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Failed to reach the agent. Please retry."),
+      ).toBeTruthy(),
+    );
   });
 });
