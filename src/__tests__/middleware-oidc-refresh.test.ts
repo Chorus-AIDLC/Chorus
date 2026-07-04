@@ -172,6 +172,8 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
     const line = expectRefreshLog(logInfo, "refreshed");
     expect(line.rotated).toBe(false);
     expect(typeof line.durationMs).toBe("number");
+    expect(line.rtFp).toMatch(/^[0-9a-f]{8}$/);
+    expect(line.newRtFp).toBeUndefined(); // no rotation → no new fingerprint
   });
 
   it("rotates the refresh cookie using refresh_expires_in when the IdP returns one", async () => {
@@ -195,6 +197,10 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
 
     const line = expectRefreshLog(logInfo, "refreshed");
     expect(line.rotated).toBe(true);
+    // Rotation logs BOTH the consumed and the newly issued token's fingerprint.
+    expect(line.rtFp).toMatch(/^[0-9a-f]{8}$/);
+    expect(line.newRtFp).toMatch(/^[0-9a-f]{8}$/);
+    expect(line.newRtFp).not.toBe(line.rtFp);
   });
 
   it("rotates the refresh cookie with the centralized default when refresh_expires_in is absent", async () => {
@@ -229,6 +235,9 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
     expect(line.status).toBe(400);
     expect(line.errorCode).toBe("invalid_grant");
     expect(typeof line.durationMs).toBe("number");
+    // Refresh-token fingerprint traces token identity across attempts (8-hex, no raw material).
+    expect(line.rtFp).toMatch(/^[0-9a-f]{8}$/);
+    expect(JSON.stringify(line)).not.toContain("refresh-token-1");
   });
 
   it("passes through untouched when the IdP error body is not JSON (errorCode undefined)", async () => {

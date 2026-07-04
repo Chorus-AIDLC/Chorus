@@ -7,7 +7,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
 import { findOrCreateUserByOidc, getCompanyByUuid } from "@/services/user.service";
 import { getCookieOptions, getMaxAgeFromJwt, resolveRefreshCookieMaxAge, REFRESH_TOKEN_COOKIE_MAX_AGE } from "@/lib/cookie-utils";
+import { tokenFingerprint } from "@/lib/token-fingerprint";
 import logger from "@/lib/logger";
+
+const callbackLogger = logger.child({ module: "oidc-callback" });
 
 // POST /api/auth/callback
 // Body: { companyUuid, oidcSub, email, name?, accessToken }
@@ -78,6 +81,18 @@ export async function POST(request: NextRequest) {
     if (company.oidcIssuer) {
       response.cookies.set("oidc_issuer", company.oidcIssuer, getCookieOptions(REFRESH_TOKEN_COOKIE_MAX_AGE));
     }
+
+    // Diagnostics (idea 3bf0819c): record the refresh token's fingerprint at BIRTH so
+    // its lineage is traceable through middleware oidc_refresh / sync_token log lines.
+    // Fingerprints only — never token material.
+    callbackLogger.info(
+      {
+        event: "login_tokens_issued",
+        rtFp: await tokenFingerprint(refreshToken && typeof refreshToken === "string" ? refreshToken : undefined),
+        userUuid: user.uuid,
+      },
+      "OIDC login tokens issued"
+    );
 
     return response;
   } catch (error) {

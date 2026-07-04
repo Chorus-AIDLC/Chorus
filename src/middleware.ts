@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SignJWT, jwtVerify } from "jose";
 import { ACCESS_TOKEN_EXPIRY, ACCESS_TOKEN_MAX_AGE } from "@/lib/user-session";
 import { getCookieOptions, resolveRefreshCookieMaxAge } from "@/lib/cookie-utils";
+import { tokenFingerprint } from "@/lib/token-fingerprint";
 import { resolveIdeaRedirect } from "@/lib/idea-url-redirect";
 import logger from "@/lib/logger";
 
@@ -80,9 +81,12 @@ function logOidcRefresh(
   fields: {
     pathname: string;
     expDelta: number | null; // seconds until/since access-token exp (negative = expired); null = no/undecodable token
+    rtFp?: string; // refresh-token fingerprint (8-hex SHA-256 prefix) — traces token IDENTITY across attempts
+    authTime?: number; // access token's auth_time claim — traces which LOGIN the token descends from
     status?: number; // IdP HTTP status when applicable
     errorCode?: string; // OAuth `error` field when parseable
     rotated?: boolean; // success only: whether a new refresh_token was returned
+    newRtFp?: string; // rotation only: fingerprint of the newly issued refresh token
     durationMs?: number; // token-endpoint round-trip
     err?: unknown; // network-error detail (failed_network only)
   }
@@ -240,10 +244,15 @@ export async function middleware(request: NextRequest) {
 
   // Seconds until/since the access token's exp at decision time (for diagnostics).
   let expDelta: number | null = null;
+  // auth_time claim — identifies which LOGIN this token descends from (diagnostics).
+  let authTime: number | undefined;
 
   // If we have an access token, check expiry
   if (accessToken) {
     const payload = decodeJwtPayload(accessToken);
+    if (payload && typeof payload.auth_time === "number") {
+      authTime = payload.auth_time;
+    }
     if (payload && typeof payload.exp === "number") {
       const now = Math.floor(Date.now() / 1000);
       expDelta = payload.exp - now;
@@ -260,17 +269,21 @@ export async function middleware(request: NextRequest) {
   const clientId = request.cookies.get("oidc_client_id")?.value;
   const issuer = request.cookies.get("oidc_issuer")?.value;
 
+  // Fingerprint the refresh token so its IDENTITY is traceable across attempts —
+  // distinguishes "one token died" from "cookie was overwritten with another token".
+  const rtFp = await tokenFingerprint(refreshToken);
+
   if (!refreshToken || !clientId || !issuer) {
     // Missing refresh materials — cannot refresh. Pass through; downstream auth and
     // the client probe decide the outcome.
-    logOidcRefresh("skipped_missing_materials", { pathname: reqPathname, expDelta });
+    logOidcRefresh("skipped_missing_materials", { pathname: reqPathname, expDelta, rtFp, authTime });
     return NextResponse.next();
   }
 
   // Get the token endpoint
   const tokenEndpoint = await getTokenEndpoint(issuer);
   if (!tokenEndpoint) {
-    logOidcRefresh("failed_discovery", { pathname: reqPathname, expDelta });
+    logOidcRefresh("failed_discovery", { pathname: reqPathname, expDelta, rtFp, authTime });
     return NextResponse.next();
   }
 
@@ -300,6 +313,8 @@ export async function middleware(request: NextRequest) {
       logOidcRefresh("failed_idp", {
         pathname: reqPathname,
         expDelta,
+        rtFp,
+        authTime,
         status: tokenResponse.status,
         errorCode,
         durationMs,
@@ -314,6 +329,8 @@ export async function middleware(request: NextRequest) {
       logOidcRefresh("failed_malformed", {
         pathname: reqPathname,
         expDelta,
+        rtFp,
+        authTime,
         status: tokenResponse.status,
         durationMs,
       });
@@ -348,7 +365,10 @@ export async function middleware(request: NextRequest) {
     logOidcRefresh("refreshed", {
       pathname: reqPathname,
       expDelta,
+      rtFp,
+      authTime,
       rotated: Boolean(tokenData.refresh_token),
+      newRtFp: tokenData.refresh_token ? await tokenFingerprint(tokenData.refresh_token) : undefined,
       durationMs,
     });
 
@@ -358,6 +378,8 @@ export async function middleware(request: NextRequest) {
     logOidcRefresh("failed_network", {
       pathname: reqPathname,
       expDelta,
+      rtFp,
+      authTime,
       durationMs: Date.now() - refreshStartedAt,
       err: error,
     });
