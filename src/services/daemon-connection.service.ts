@@ -654,7 +654,8 @@ export async function registerConnection(
       // Postgres would never dedup two NULL-cwd rows on its own. So reuse the
       // existing null row by uuid when present; create one only on first connect.
       // This prevents null-row pileup on reconnect while keeping old daemons
-      // behaving exactly as before.
+      // behaving exactly as before. (No generation reconcile here: a cwd-less old
+      // daemon never self-reports startedAt, so a generation change is unprovable.)
       const existing = await prisma.daemonConnection.findFirst({
         where: { agentUuid, clientType: report.clientType, host, cwd: null },
         select: { uuid: true },
@@ -677,6 +678,17 @@ export async function registerConnection(
     }
 
     // ===== Current-daemon path: real cwd → clean compound-key upsert =====
+    // Generation probe (restart-window seam, fix-daemon-exit-orphan-running-turn):
+    // read the row's stored startedAt BEFORE the upsert refreshes it, so a NEW
+    // PROCESS GENERATION (different self-reported process start) is detectable. A
+    // crashed daemon that restarts within the staleness window reuses this row with
+    // a fresh lastSeenAt, which permanently defeats the age-only orphan-turn
+    // reconcile — the generation change is the only remaining evidence that the
+    // previous process (and any turn it left `running`) is dead.
+    const prior = await prisma.daemonConnection.findFirst({
+      where: { agentUuid, clientType: report.clientType, host, cwd },
+      select: { uuid: true, startedAt: true },
+    });
     const row = await prisma.daemonConnection.upsert({
       where: {
         agentUuid_clientType_host_cwd: {
@@ -690,6 +702,33 @@ export async function registerConnection(
       update: refreshData,
       select: { uuid: true, connectedAt: true },
     });
+
+    // New-generation orphan-turn reconcile: fire only when the row pre-existed AND
+    // both generations are provable (non-null startedAt on both sides) AND they
+    // differ. Same startedAt = the same process reconnecting (transient SSE drop) —
+    // nothing to reconcile. Null on either side is treated conservatively as
+    // unprovable (bias toward not interrupting). Fire-and-forget + lazily imported:
+    // registration must never fail, slow, or cycle on the session service
+    // (daemon-session.service imports this module for STALE_THRESHOLD_MS).
+    const incomingStartedAt = report.startedAt ?? null;
+    const priorStartedAt = prior?.startedAt instanceof Date ? prior.startedAt : null;
+    if (
+      prior &&
+      priorStartedAt !== null &&
+      incomingStartedAt !== null &&
+      priorStartedAt.getTime() !== incomingStartedAt.getTime()
+    ) {
+      void import("@/services/daemon-session.service")
+        .then(({ reconcileOrphanTurns }) =>
+          reconcileOrphanTurns(companyUuid, row.uuid, { force: true }),
+        )
+        .catch((err) => {
+          logger.error(
+            { err, companyUuid, connectionUuid: row.uuid },
+            "New-generation orphan-turn reconcile failed to dispatch",
+          );
+        });
+    }
     return { uuid: row.uuid, connectedAt: row.connectedAt };
   } catch (err) {
     logger.error(

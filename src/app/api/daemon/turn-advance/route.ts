@@ -34,9 +34,11 @@ import {
 // status, and the OPTIONAL wake-triggering entity (for the weak executionUuid link).
 // `startedAt`/`endedAt` are optional ISO-8601 strings (the service defaults them to the
 // transition time for the running/terminal edges when omitted). `interruptedReason`
-// accompanies `status = interrupted` and is restricted to the DAEMON-reportable subset
-// (`user`/`crash`/`shutdown`) — `offline` is the server reconcile's verdict about a
-// dead daemon, which a daemon alive enough to report cannot truthfully claim.
+// MUST accompany `status = interrupted` (and only that status) — the reason column's
+// "non-null iff interrupted" invariant is enforced at this boundary, not trusted to
+// clients — and is restricted to the DAEMON-reportable subset (`user`/`crash`/
+// `shutdown`): `offline` is the server reconcile's verdict about a dead daemon, which
+// a daemon alive enough to report cannot truthfully claim.
 const bodySchema = z
   .object({
     connectionUuid: z.string().min(1),
@@ -50,6 +52,10 @@ const bodySchema = z
   })
   .refine((b) => b.status === "interrupted" || b.interruptedReason == null, {
     message: "interruptedReason is only valid with status=interrupted",
+    path: ["interruptedReason"],
+  })
+  .refine((b) => b.status !== "interrupted" || b.interruptedReason != null, {
+    message: "interruptedReason is required with status=interrupted",
     path: ["interruptedReason"],
   });
 

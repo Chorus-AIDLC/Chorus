@@ -160,15 +160,13 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
   });
 
-  it("accepts status=interrupted WITHOUT a reason (reason optional; column stays null)", async () => {
+  it("rejects status=interrupted WITHOUT a reason (non-null-iff-interrupted enforced at the boundary)", async () => {
     const res = await POST(
       postRequest({ connectionUuid, sessionId, status: "interrupted" }),
       emptyCtx,
     );
-    expect(res.status).toBe(200);
-    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
-    expect(arg.status).toBe("interrupted");
-    expect(arg.interruptedReason).toBeUndefined();
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
   });
 
   it("rejects a bad status at the zod boundary (422)", async () => {

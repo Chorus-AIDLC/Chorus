@@ -2076,6 +2076,89 @@ describe("reconcileOrphanTurns", () => {
       expect.stringMatching(/orphaned running turns/),
     );
   });
+
+  it("FORCE mode (new-generation registration) bypasses the age guard entirely", async () => {
+    // The restart-window seam: the restarted process's heartbeat keeps lastSeenAt
+    // fresh, so the age-only rule would no-op forever. force:true skips the
+    // eligibility read — the generation change is the caller's evidence.
+    runningTurnOnConnection();
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(count).toBe(1);
+    // The eligibility read is skipped entirely on the force path.
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("interrupted");
+    expect(data.interruptedReason).toBe("offline");
+  });
+
+  it("FORCE mode with no running turns is still a cheap no-op", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(count).toBe(0);
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("RESTART-WINDOW REGRESSION: force-reconciling the orphan BEFORE the new wake keeps FIFO →ended on the correct turn", async () => {
+    // The seam this fix closes: an orphaned running turn (seq 1, from the dead
+    // generation) + a fresh wake creating turn seq 2. Without the generation
+    // reconcile, →ended's oldest-running FIFO resolution would target the ORPHAN,
+    // marking it cleanly ended and stranding the genuinely-finished seq-2 turn.
+    const orphanUuid = "turn-orphan-0000-0000-000000000001";
+    const newTurnUuid = "turn-new-0000-0000-0000-000000000002";
+
+    // Step 1 — new-generation registration fires the FORCE reconcile: only the
+    // orphan is `running` at this point (the new wake hasn't started).
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ uuid: orphanUuid }]);
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: orphanUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ uuid: orphanUuid, status: "interrupted", interruptedReason: "offline" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    const reconciled = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(reconciled).toBe(1);
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].where).toEqual({
+      uuid: orphanUuid,
+    });
+
+    vi.clearAllMocks();
+
+    // Step 2 — the new wake's turn (seq 2) runs and exits: →ended resolves by
+    // status=running, and with the orphan already interrupted the ONLY running
+    // turn is the new one — the report lands on it, never on the orphan.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: newTurnUuid });
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: newTurnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ uuid: newTurnUuid, seq: 2, status: "ended" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "ended",
+    });
+    expect(res).toMatchObject({ ok: true });
+    // Resolution still queries status=running (FIFO oldest) — and the write hits
+    // the NEW turn, proving the orphan can no longer be mis-targeted.
+    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].where).toEqual({
+      sessionUuid,
+      status: "running",
+    });
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].where).toEqual({
+      uuid: newTurnUuid,
+    });
+  });
 });
 
 // ===== Read-time orphan fallback on the session read paths =====
