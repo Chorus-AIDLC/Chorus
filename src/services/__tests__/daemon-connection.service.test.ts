@@ -38,6 +38,14 @@ const mockLogger = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
+// registerConnection lazily imports the session service to fire the new-generation
+// orphan-turn reconcile (restart-window seam). Mock it so this stays a unit test —
+// vi.mock applies to dynamic import() too.
+const mockReconcileOrphanTurns = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => 0));
+vi.mock("@/services/daemon-session.service", () => ({
+  reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
+}));
+
 import {
   DAEMON_CLIENT_TYPES,
   STALE_THRESHOLD_MS,
@@ -94,6 +102,12 @@ beforeEach(() => {
   // BEFORE any write. Default it to "no incumbent" so existing tests register as
   // before; the conflict suite overrides this per-case.
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+  // The real-cwd path now ALSO issues a findFirst (the generation probe for the
+  // restart-window orphan-turn reconcile). Default to "no prior row"; tests that
+  // exercise the null-cwd lookup or the generation reconcile override per-case.
+  // (vi.clearAllMocks() clears calls but NOT implementations, so without this a
+  // prior test's mockRejectedValue on findFirst would leak into later suites.)
+  mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
 });
 
 // ===== Constants =====
@@ -183,8 +197,14 @@ describe("registerConnection", () => {
       const result = await registerConnection(companyUuid, agentUuid, report);
 
       expect(result).toEqual({ uuid: connectionUuid, connectedAt });
-      // The null-compat path must NOT be taken for a present cwd.
-      expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+      // A findFirst DOES run on the real-cwd path now — but it is the GENERATION
+      // PROBE (selects startedAt for the restart-window reconcile), not the
+      // null-compat row lookup. Assert its shape so the two can't be conflated.
+      expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.daemonConnection.findFirst.mock.calls[0][0].select).toEqual({
+        uuid: true,
+        startedAt: true,
+      });
       expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
       const arg = mockPrisma.daemonConnection.upsert.mock.calls[0][0];
       // The composite unique key now carries the REAL cwd (no more "" shim).
@@ -236,6 +256,100 @@ describe("registerConnection", () => {
       });
       expect(result).toEqual({ uuid: connectionUuid, connectedAt });
       expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    // ===== New-generation orphan-turn reconcile (restart-window seam) =====
+    // A crashed daemon restarting within the staleness window reuses this row with a
+    // fresh lastSeenAt, so the age-only reconcile can never fire — the changed
+    // self-reported startedAt is the only evidence the previous process died.
+    describe("new-generation orphan-turn reconcile on re-registration", () => {
+      const report: SelfReport = {
+        clientType: "claude_code",
+        host: "mac.local",
+        cwd: "/Users/me/projects/alpha",
+        startedAt: new Date("2026-06-15T04:00:00.000Z"),
+      };
+      // Drain the fire-and-forget dynamic-import chain (a dynamic import resolves
+      // on a macrotask, so microtask-only draining is not enough).
+      const flush = async () => {
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+      };
+
+      it("fires a FORCE reconcile when the row pre-exists with a DIFFERENT startedAt (restarted process)", async () => {
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+          uuid: connectionUuid,
+          startedAt: new Date("2026-06-15T03:00:00.000Z"), // previous generation
+        });
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+        await registerConnection(companyUuid, agentUuid, report);
+        await flush();
+
+        expect(mockReconcileOrphanTurns).toHaveBeenCalledTimes(1);
+        expect(mockReconcileOrphanTurns).toHaveBeenCalledWith(companyUuid, connectionUuid, {
+          force: true,
+        });
+      });
+
+      it("does NOT fire for the SAME startedAt (same process reconnecting after a transient drop)", async () => {
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+          uuid: connectionUuid,
+          startedAt: new Date("2026-06-15T04:00:00.000Z"), // identical instant
+        });
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+        await registerConnection(companyUuid, agentUuid, report);
+        await flush();
+        expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+      });
+
+      it("does NOT fire on first connect (no prior row)", async () => {
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+
+        await registerConnection(companyUuid, agentUuid, report);
+        await flush();
+        expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+      });
+
+      it("does NOT fire when either generation is unprovable (null startedAt on either side)", async () => {
+        // Stored null (pre-feature row) + incoming non-null → conservative no-fire.
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+          uuid: connectionUuid,
+          startedAt: null,
+        });
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+        await registerConnection(companyUuid, agentUuid, report);
+        await flush();
+        expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+
+        // Stored non-null + incoming absent → conservative no-fire too.
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+          uuid: connectionUuid,
+          startedAt: new Date("2026-06-15T03:00:00.000Z"),
+        });
+        await registerConnection(companyUuid, agentUuid, { ...report, startedAt: undefined });
+        await flush();
+        expect(mockReconcileOrphanTurns).not.toHaveBeenCalled();
+      });
+
+      it("registration succeeds even when the reconcile dispatch fails (fire-and-forget, logged)", async () => {
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+          uuid: connectionUuid,
+          startedAt: new Date("2026-06-15T03:00:00.000Z"),
+        });
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+        mockReconcileOrphanTurns.mockRejectedValueOnce(new Error("reconcile blew up"));
+
+        const result = await registerConnection(companyUuid, agentUuid, report);
+        expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+        await flush();
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ companyUuid, connectionUuid }),
+          expect.stringMatching(/New-generation orphan-turn reconcile/),
+        );
+      });
     });
 
     it("upserts the same composite key on reconnect rather than inserting", async () => {

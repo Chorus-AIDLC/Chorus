@@ -627,10 +627,22 @@ function isOrphanEligible(
  * Fire-and-forget-safe: mirrors `daemon-execution.reconcileOffline` — swallows + logs
  * its own errors so a failing reconcile can never throw into SSE stream teardown or a
  * read path. Returns the number of turns finalized (0 on error/no-op).
+ *
+ * `opts.force` (restart-window seam): a crashed daemon that RESTARTS within the
+ * staleness window reuses the SAME connection row with a fresh `lastSeenAt`, making
+ * the age-only guard a permanent no-op for turns the DEAD generation orphaned — and
+ * the next wake's FIFO `→ended` resolution would then mis-target the orphan,
+ * stranding the genuinely-new turn on a LIVE connection (unhealable). When the
+ * registration path detects a NEW PROCESS GENERATION (self-reported `startedAt`
+ * changed), it calls with `force: true` to bypass the age guard: the safety evidence
+ * is the generation change itself — a `running` turn can only belong to the
+ * previous, dead process (same-session wakes are daemon-serialized and a freshly
+ * started process has no in-flight wakes yet). Every other caller keeps age-only.
  */
 export async function reconcileOrphanTurns(
   companyUuid: string,
   connectionUuid: string,
+  opts: { force?: boolean } = {},
 ): Promise<number> {
   try {
     const runningTurns = await prisma.daemonSessionTurn.findMany({
@@ -645,11 +657,15 @@ export async function reconcileOrphanTurns(
     // Re-verify eligibility AFTER finding candidates (the cheap read first would let
     // a racing heartbeat slip between check and write; candidates-first keeps the
     // stale window minimal and the age re-check is authoritative at write time).
-    const connection = await prisma.daemonConnection.findFirst({
-      where: { companyUuid, uuid: connectionUuid },
-      select: { lastSeenAt: true },
-    });
-    if (!isOrphanEligible(connection)) return 0;
+    // The force path (new-generation registration) skips the age guard — its
+    // evidence is the generation change, not staleness.
+    if (!opts.force) {
+      const connection = await prisma.daemonConnection.findFirst({
+        where: { companyUuid, uuid: connectionUuid },
+        select: { lastSeenAt: true },
+      });
+      if (!isOrphanEligible(connection)) return 0;
+    }
 
     const now = new Date();
     let finalized = 0;
