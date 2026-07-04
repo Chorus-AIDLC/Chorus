@@ -55,11 +55,24 @@ export const TURN_TRIGGERS = [
 ] as const;
 export type TurnTrigger = (typeof TURN_TRIGGERS)[number];
 
-// A turn's lifecycle states, in strict forward order. The daemon advances a turn
-// `pending → running → ended`; this service enforces that ordering (no skips, no
-// backward transitions) in `advanceTurn`.
-export const TURN_STATUSES = ["pending", "running", "ended"] as const;
+// A turn's lifecycle states. A turn advances `pending → running`, then terminates as
+// either `ended` (the subprocess completed) or `interrupted` (the wake was stopped —
+// by a user, a crash, a daemon shutdown, or server-side offline reconcile); this
+// service enforces that ordering (no skips, no backward transitions) in `advanceTurn`.
+// Both `ended` and `interrupted` are terminal. Unlike DaemonExecution's sticky
+// `interrupted` (a live, resumable fact), a turn's `interrupted` is durable
+// conversation history — never resumed, never auto-retried.
+export const TURN_STATUSES = ["pending", "running", "ended", "interrupted"] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
+
+// Discriminator vocabulary for `status = interrupted`. `user`/`crash`/`shutdown` are
+// daemon-reported outcomes; `offline` is reserved to SERVER-side reconcile of a turn
+// whose origin connection went stale — the turn-advance route rejects a daemon
+// claiming it (the daemon being alive to report contradicts the verdict).
+export const TURN_INTERRUPT_REASONS = ["user", "crash", "shutdown", "offline"] as const;
+export type TurnInterruptReason = (typeof TURN_INTERRUPT_REASONS)[number];
+// The subset a daemon may self-report over `/api/daemon/turn-advance`.
+export const DAEMON_REPORTABLE_INTERRUPT_REASONS = ["user", "crash", "shutdown"] as const;
 
 // The two session lifecycle states. A session is `active` until explicitly ended;
 // it stays readable (its turns/transcript) regardless of state — `ended` is history,
@@ -123,7 +136,8 @@ export interface TurnView {
   seq: number;
   trigger: string;
   promptText: string | null;
-  status: string; // pending | running | ended
+  status: string; // pending | running | ended | interrupted
+  interruptedReason: string | null; // user | crash | shutdown | offline; set iff interrupted
   executionUuid: string | null;
   startedAt: string | null; // ISO-8601
   endedAt: string | null; // ISO-8601
@@ -182,6 +196,7 @@ interface DaemonSessionTurnRow {
   trigger: string;
   promptText: string | null;
   status: string;
+  interruptedReason: string | null;
   executionUuid: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
@@ -213,6 +228,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     trigger: row.trigger,
     promptText: row.promptText,
     status: row.status,
+    interruptedReason: row.interruptedReason,
     executionUuid: row.executionUuid,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
@@ -457,30 +473,40 @@ export type AdvanceTurnResult =
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "invalid_transition"; from: string; to: string };
 
-// The single legal forward edge for each status. Enforces strict
-// pending → running → ended with no skips and no backward moves. A status with no
-// outgoing edge (`ended`) is terminal. Re-applying the SAME status is also rejected
-// (an idempotent no-op would otherwise hide a double-report bug and re-emit SSE).
-const NEXT_TURN_STATUS: Record<TurnStatus, TurnStatus | null> = {
-  pending: "running",
-  running: "ended",
-  ended: null,
+// The legal forward edges for each status. Enforces strict
+// pending → running → ended | interrupted with no skips and no backward moves — in
+// particular `pending → interrupted` is illegal: a pending turn never started, is
+// recoverable via reconnect backfill, and must stay pending. A status with no
+// outgoing edges (`ended`, `interrupted`) is terminal — a late daemon report against
+// an already-reconciled turn (or vice versa) loses the race here as a harmless
+// invalid_transition. Re-applying the SAME status is also rejected (an idempotent
+// no-op would otherwise hide a double-report bug and re-emit SSE).
+const NEXT_TURN_STATUS: Record<TurnStatus, readonly TurnStatus[]> = {
+  pending: ["running"],
+  running: ["ended", "interrupted"],
+  ended: [],
+  interrupted: [],
 };
 
 /**
  * Advance a turn through its lifecycle — the SINGLE turn-status chokepoint. Enforces
- * strict `pending → running → ended`: only the one legal forward edge from the turn's
- * current status is allowed; a skip (`pending → ended`), a backward move
- * (`running → pending`), or re-applying the same status is rejected as
- * `invalid_transition` and writes nothing. A turn that does not exist is `not_found`.
+ * strict `pending → running → ended | interrupted`: only a legal forward edge from
+ * the turn's current status is allowed; a skip (`pending → ended`,
+ * `pending → interrupted`), a backward move (`running → pending`), a transition out
+ * of a terminal status (`ended`/`interrupted`), or re-applying the same status is
+ * rejected as `invalid_transition` and writes nothing. A turn that does not exist is
+ * `not_found`.
  *
  * On a legal transition it:
  *  - sets the new `status`, and optionally records `startedAt` (the daemon's spawn
- *    time, typically on → running), `endedAt` (subprocess exit, on → ended), and the
- *    weak `executionUuid` link to the live `DaemonExecution` row (recorded without
- *    altering execution-state reconcile semantics), and
+ *    time, typically on → running), `endedAt` (subprocess exit / interrupt time, on
+ *    either terminal edge), `interruptedReason` (persisted ONLY on → interrupted;
+ *    ignored on every other edge so a stray value can never decorate an `ended`
+ *    turn), and the weak `executionUuid` link to the live `DaemonExecution` row
+ *    (recorded without altering execution-state reconcile semantics), and
  *  - PUBLISHES the `turn_status_changed` SSE trigger on `transcript:{sessionUuid}` so
- *    a viewer sees the turn flip pending → running → ended live, for any caller.
+ *    a viewer sees the turn flip live, for any caller and any edge — including
+ *    → interrupted, which is how a viewer's forever-spinner clears.
  *
  * A query/write failure propagates (no silent swallow). The session lookup supplies
  * the companyUuid the SSE event carries.
@@ -488,7 +514,12 @@ const NEXT_TURN_STATUS: Record<TurnStatus, TurnStatus | null> = {
 export async function advanceTurn(
   turnUuid: string,
   status: TurnStatus,
-  opts: { startedAt?: Date | null; endedAt?: Date | null; executionUuid?: string | null } = {},
+  opts: {
+    startedAt?: Date | null;
+    endedAt?: Date | null;
+    executionUuid?: string | null;
+    interruptedReason?: string | null;
+  } = {},
 ): Promise<AdvanceTurnResult> {
   const turn = await prisma.daemonSessionTurn.findUnique({
     where: { uuid: turnUuid },
@@ -496,11 +527,11 @@ export async function advanceTurn(
   });
   if (!turn) return { ok: false, reason: "not_found" };
 
-  // The turn's persisted status must be a known lifecycle value to have a legal edge;
-  // a foreign value (should never happen) has no outgoing edge → invalid_transition.
+  // The turn's persisted status must be a known lifecycle value to have legal edges;
+  // a foreign value (should never happen) has no outgoing edges → invalid_transition.
   const current = turn.status as TurnStatus;
-  const legalNext = NEXT_TURN_STATUS[current] ?? null;
-  if (status !== legalNext) {
+  const legalNext = NEXT_TURN_STATUS[current] ?? [];
+  if (!legalNext.includes(status)) {
     return { ok: false, reason: "invalid_transition", from: turn.status, to: status };
   }
 
@@ -511,10 +542,16 @@ export async function advanceTurn(
     startedAt?: Date | null;
     endedAt?: Date | null;
     executionUuid?: string | null;
+    interruptedReason?: string | null;
   } = { status };
   if (opts.startedAt !== undefined) data.startedAt = opts.startedAt;
   if (opts.endedAt !== undefined) data.endedAt = opts.endedAt;
   if (opts.executionUuid !== undefined) data.executionUuid = opts.executionUuid;
+  // The reason is meaningful only on the → interrupted edge; dropping it elsewhere
+  // keeps the "non-null iff interrupted" column invariant without trusting callers.
+  if (status === "interrupted" && opts.interruptedReason !== undefined) {
+    data.interruptedReason = opts.interruptedReason;
+  }
 
   const updated = await prisma.daemonSessionTurn.update({
     where: { uuid: turnUuid },
@@ -1293,10 +1330,12 @@ export type AdvanceTurnForWakeResult =
  * When `entityType`/`entityUuid` are supplied AND the live `DaemonExecution` row for
  * `(companyUuid, connectionUuid, entity)` resolves, its uuid is stamped onto the turn
  * as the weak `executionUuid` link — recorded WITHOUT touching execution-state
- * reconcile semantics. `startedAt`/`endedAt` default to the transition time for the
- * `running`/`ended` edges respectively (the daemon's spawn/exit moment) unless the
- * caller passes explicit timestamps. A query/write failure propagates (no swallow):
- * a lost transition would strand a turn's lifecycle.
+ * reconcile semantics. `startedAt` defaults to the transition time on the `running`
+ * edge and `endedAt` on either terminal edge (`ended`/`interrupted`) — the daemon's
+ * spawn/exit/stop moment — unless the caller passes explicit timestamps.
+ * `interruptedReason` is passed through to `advanceTurn` (persisted only on the
+ * → interrupted edge). A query/write failure propagates (no swallow): a lost
+ * transition would strand a turn's lifecycle.
  */
 export async function advanceTurnForWake(params: {
   companyUuid: string;
@@ -1308,6 +1347,7 @@ export async function advanceTurnForWake(params: {
   entityUuid?: string | null;
   startedAt?: Date | null;
   endedAt?: Date | null;
+  interruptedReason?: string | null;
 }): Promise<AdvanceTurnForWakeResult> {
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
@@ -1328,11 +1368,17 @@ export async function advanceTurnForWake(params: {
   // the running turn's `→ended` would mis-target the newer pending turn (rejected as an
   // invalid transition), stranding the real turn `running` forever. Status-based FIFO
   // resolution fixes that without the daemon needing to learn the server turn uuid:
-  //   • → running : the OLDEST still-`pending` turn (the next queued wake to start).
-  //   • → ended   : the `running` turn (the one whose subprocess just exited).
+  //   • → running     : the OLDEST still-`pending` turn (the next queued wake to start).
+  //   • → ended       : the `running` turn (the one whose subprocess just exited).
+  //   • → interrupted : the `running` turn too (the one whose subprocess was stopped —
+  //                     both terminal edges leave from the same state).
   // For any other target status, fall back to the oldest turn in the prior state.
   const fromStatus =
-    params.status === "running" ? "pending" : params.status === "ended" ? "running" : null;
+    params.status === "running"
+      ? "pending"
+      : params.status === "ended" || params.status === "interrupted"
+        ? "running"
+        : null;
   const turn = await prisma.daemonSessionTurn.findFirst({
     where: {
       sessionUuid: session.uuid,
@@ -1374,7 +1420,7 @@ export async function advanceTurnForWake(params: {
   const endedAt =
     params.endedAt !== undefined
       ? params.endedAt
-      : params.status === "ended"
+      : params.status === "ended" || params.status === "interrupted"
         ? now
         : undefined;
 
@@ -1382,6 +1428,9 @@ export async function advanceTurnForWake(params: {
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {}),
     ...(executionUuid !== undefined ? { executionUuid } : {}),
+    ...(params.interruptedReason !== undefined
+      ? { interruptedReason: params.interruptedReason }
+      : {}),
   });
 
   if (result.ok) return { ok: true, turn: result.turn };

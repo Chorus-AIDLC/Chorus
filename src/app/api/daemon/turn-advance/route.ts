@@ -2,7 +2,7 @@
 // Daemon → server turn lifecycle advance (子1 — daemon-session-conversation).
 //
 // POST — the daemon advances the lifecycle of the turn it is executing
-// (`pending → running → ended`) on ONE of its OWN sessions. It identifies the turn by
+// (`pending → running → ended | interrupted`) on ONE of its OWN sessions. It identifies the turn by
 // the session BUSINESS KEY (`sessionId` = the directIdeaUuid for an idea-anchored
 // session, or the entity uuid for an ad-hoc one — the deterministic Claude session
 // anchor the daemon already computes), NOT the server-side turn uuid, which the daemon
@@ -24,21 +24,34 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { connectionBelongsToAgent, EXECUTION_ENTITY_TYPES } from "@/services/daemon-execution.service";
-import { TURN_STATUSES, advanceTurnForWake } from "@/services/daemon-session.service";
+import {
+  TURN_STATUSES,
+  DAEMON_REPORTABLE_INTERRUPT_REASONS,
+  advanceTurnForWake,
+} from "@/services/daemon-session.service";
 
 // Body: the connection reporting the advance, the session business key, the target
 // status, and the OPTIONAL wake-triggering entity (for the weak executionUuid link).
 // `startedAt`/`endedAt` are optional ISO-8601 strings (the service defaults them to the
-// transition time for the running/ended edges when omitted).
-const bodySchema = z.object({
-  connectionUuid: z.string().min(1),
-  sessionId: z.string().min(1),
-  status: z.enum([...TURN_STATUSES]),
-  entityType: z.enum([...EXECUTION_ENTITY_TYPES]).optional(),
-  entityUuid: z.string().min(1).optional(),
-  startedAt: z.coerce.date().nullish(),
-  endedAt: z.coerce.date().nullish(),
-});
+// transition time for the running/terminal edges when omitted). `interruptedReason`
+// accompanies `status = interrupted` and is restricted to the DAEMON-reportable subset
+// (`user`/`crash`/`shutdown`) — `offline` is the server reconcile's verdict about a
+// dead daemon, which a daemon alive enough to report cannot truthfully claim.
+const bodySchema = z
+  .object({
+    connectionUuid: z.string().min(1),
+    sessionId: z.string().min(1),
+    status: z.enum([...TURN_STATUSES]),
+    entityType: z.enum([...EXECUTION_ENTITY_TYPES]).optional(),
+    entityUuid: z.string().min(1).optional(),
+    startedAt: z.coerce.date().nullish(),
+    endedAt: z.coerce.date().nullish(),
+    interruptedReason: z.enum([...DAEMON_REPORTABLE_INTERRUPT_REASONS]).nullish(),
+  })
+  .refine((b) => b.status === "interrupted" || b.interruptedReason == null, {
+    message: "interruptedReason is only valid with status=interrupted",
+    path: ["interruptedReason"],
+  });
 
 // POST /api/daemon/turn-advance — advance a turn's lifecycle by session business key.
 export const POST = withErrorHandler(async (request: NextRequest) => {
@@ -58,8 +71,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!parsed.success) {
     return errors.validationError(parsed.error.flatten());
   }
-  const { connectionUuid, sessionId, status, entityType, entityUuid, startedAt, endedAt } =
-    parsed.data;
+  const {
+    connectionUuid,
+    sessionId,
+    status,
+    entityType,
+    entityUuid,
+    startedAt,
+    endedAt,
+    interruptedReason,
+  } = parsed.data;
 
   // Ownership fence: the connection must belong to the authenticated agent within its
   // company. A connection owned by another agent (or non-existent) is 404 — never 403
@@ -80,6 +101,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityUuid: entityUuid ?? null,
     startedAt: startedAt ?? undefined,
     endedAt: endedAt ?? undefined,
+    interruptedReason: interruptedReason ?? undefined,
   });
 
   if (!result.ok) {

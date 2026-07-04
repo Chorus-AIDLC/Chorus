@@ -27,6 +27,7 @@ function turn(
     trigger: "task_assigned",
     promptText: null,
     status: "pending",
+    interruptedReason: null,
     executionUuid: null,
     startedAt: null,
     endedAt: null,
