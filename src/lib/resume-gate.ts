@@ -35,7 +35,6 @@ interface GateState {
   pending: Promise<void>;
   resolve: () => void;
   timeoutId: ReturnType<typeof setTimeout>;
-  revalidating: boolean;
 }
 
 let gate: GateState | null = null;
@@ -47,7 +46,7 @@ function openGate(): void {
     resolve = r;
   });
   const timeoutId = setTimeout(releaseGate, RESUME_GATE_TIMEOUT_MS);
-  gate = { pending, resolve, timeoutId, revalidating: false };
+  gate = { pending, resolve, timeoutId };
 }
 
 function releaseGate(): void {
@@ -71,7 +70,6 @@ export function armResumeGate(): void {
  */
 export function beginResumeRevalidation(): void {
   openGate();
-  gate!.revalidating = true;
 }
 
 /**
