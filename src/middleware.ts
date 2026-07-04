@@ -63,20 +63,36 @@ async function getTokenEndpoint(issuer: string): Promise<string | null> {
   }
 }
 
-// Clear all auth cookies and redirect to login
-function clearAuthAndRedirect(request: NextRequest): NextResponse {
-  const loginUrl = new URL("/login", request.url);
-  const response = NextResponse.redirect(loginUrl);
+// ─── OIDC refresh diagnostics ────────────────────────────────────────────────
+// One structured log line per refresh attempt. `outcome` is the enum tests assert
+// on; failures log at warn so a resume-burst race (several failed_idp lines within
+// ~1s of one refreshed line) is visible in production logs without DB writes.
+type OidcRefreshOutcome =
+  | "refreshed"
+  | "failed_idp"
+  | "failed_network"
+  | "failed_discovery"
+  | "failed_malformed"
+  | "skipped_missing_materials";
 
-  const expireOpts = getCookieOptions(0);
-  response.cookies.set("oidc_access_token", "", expireOpts);
-  response.cookies.set("oidc_refresh_token", "", expireOpts);
-  response.cookies.set("oidc_client_id", "", expireOpts);
-  response.cookies.set("oidc_issuer", "", expireOpts);
-  response.cookies.set("user_session", "", expireOpts);
-  response.cookies.set("user_refresh", "", expireOpts);
-
-  return response;
+function logOidcRefresh(
+  outcome: OidcRefreshOutcome,
+  fields: {
+    pathname: string;
+    expDelta: number | null; // seconds until/since access-token exp (negative = expired); null = no/undecodable token
+    status?: number; // IdP HTTP status when applicable
+    errorCode?: string; // OAuth `error` field when parseable
+    rotated?: boolean; // success only: whether a new refresh_token was returned
+    durationMs?: number; // token-endpoint round-trip
+    err?: unknown; // network-error detail (failed_network only)
+  }
+): void {
+  const line = { event: "oidc_refresh", outcome, ...fields };
+  if (outcome === "refreshed") {
+    mwLogger.info(line, "OIDC refresh attempt");
+  } else {
+    mwLogger.warn(line, "OIDC refresh attempt");
+  }
 }
 
 // ─── User Session (Default Auth) refresh ────────────────────────────────────
@@ -201,6 +217,15 @@ export async function middleware(request: NextRequest) {
   if (userResult) return userResult;
 
   // --- 2. OIDC token refresh ---
+  //
+  // ⚠️ Every failure below is treated as TRANSIENT: pass the request through, never
+  // clear cookies, never redirect. Under refresh-token rotation, a middleware
+  // invocation cannot distinguish "I lost a concurrent-refresh race" (another request
+  // just rotated the token; its Set-Cookie hasn't landed in this request's cookies)
+  // from "the refresh token is genuinely revoked" — both surface as invalid_grant.
+  // Only the client's session probe can tell them apart (by the time it primes and
+  // retries, the winner's cookie has landed), so session death is decided exclusively
+  // at the client's post-prime double-401 site (auth-context fetchSession).
   const accessToken = request.cookies.get("oidc_access_token")?.value;
 
   // No access token at all — check if we have refresh materials
@@ -213,11 +238,15 @@ export async function middleware(request: NextRequest) {
     // Fall through to refresh logic below
   }
 
+  // Seconds until/since the access token's exp at decision time (for diagnostics).
+  let expDelta: number | null = null;
+
   // If we have an access token, check expiry
   if (accessToken) {
     const payload = decodeJwtPayload(accessToken);
     if (payload && typeof payload.exp === "number") {
       const now = Math.floor(Date.now() / 1000);
+      expDelta = payload.exp - now;
       // If more than 30 seconds until expiry, let it through
       if (payload.exp - now > 30) {
         return NextResponse.next();
@@ -226,23 +255,27 @@ export async function middleware(request: NextRequest) {
   }
 
   // Token is expired or about to expire — attempt refresh
+  const { pathname: reqPathname } = request.nextUrl;
   const refreshToken = request.cookies.get("oidc_refresh_token")?.value;
   const clientId = request.cookies.get("oidc_client_id")?.value;
   const issuer = request.cookies.get("oidc_issuer")?.value;
 
   if (!refreshToken || !clientId || !issuer) {
-    // Missing refresh materials — cannot refresh, clear and redirect
-    return clearAuthAndRedirect(request);
+    // Missing refresh materials — cannot refresh. Pass through; downstream auth and
+    // the client probe decide the outcome.
+    logOidcRefresh("skipped_missing_materials", { pathname: reqPathname, expDelta });
+    return NextResponse.next();
   }
 
   // Get the token endpoint
   const tokenEndpoint = await getTokenEndpoint(issuer);
   if (!tokenEndpoint) {
-    mwLogger.error({ issuer }, "Failed to discover token endpoint for issuer");
-    return clearAuthAndRedirect(request);
+    logOidcRefresh("failed_discovery", { pathname: reqPathname, expDelta });
+    return NextResponse.next();
   }
 
   // Call the token endpoint
+  const refreshStartedAt = Date.now();
   try {
     const tokenResponse = await fetch(tokenEndpoint, {
       method: "POST",
@@ -253,18 +286,38 @@ export async function middleware(request: NextRequest) {
         refresh_token: refreshToken,
       }),
     });
+    const durationMs = Date.now() - refreshStartedAt;
 
     if (!tokenResponse.ok) {
-      mwLogger.error({ status: tokenResponse.status }, "Token refresh failed");
-      return clearAuthAndRedirect(request);
+      // Parse the OAuth error code defensively — the body may not be JSON.
+      let errorCode: string | undefined;
+      try {
+        const errBody = await tokenResponse.json();
+        if (errBody && typeof errBody.error === "string") errorCode = errBody.error;
+      } catch {
+        // Non-JSON error body — leave errorCode undefined.
+      }
+      logOidcRefresh("failed_idp", {
+        pathname: reqPathname,
+        expDelta,
+        status: tokenResponse.status,
+        errorCode,
+        durationMs,
+      });
+      return NextResponse.next();
     }
 
     const tokenData = await tokenResponse.json();
     const newAccessToken = tokenData.access_token;
 
     if (!newAccessToken) {
-      mwLogger.error("No access_token in refresh response");
-      return clearAuthAndRedirect(request);
+      logOidcRefresh("failed_malformed", {
+        pathname: reqPathname,
+        expDelta,
+        status: tokenResponse.status,
+        durationMs,
+      });
+      return NextResponse.next();
     }
 
     // Determine maxAge from expires_in or default to 3600
@@ -292,10 +345,23 @@ export async function middleware(request: NextRequest) {
       response.cookies.set("oidc_refresh_token", tokenData.refresh_token, getCookieOptions(refreshMaxAge));
     }
 
+    logOidcRefresh("refreshed", {
+      pathname: reqPathname,
+      expDelta,
+      rotated: Boolean(tokenData.refresh_token),
+      durationMs,
+    });
+
     return response;
   } catch (error) {
-    mwLogger.error({ err: error }, "Token refresh error");
-    return clearAuthAndRedirect(request);
+    // Network error (e.g. device radio not up yet after tab resume) — transient.
+    logOidcRefresh("failed_network", {
+      pathname: reqPathname,
+      expDelta,
+      durationMs: Date.now() - refreshStartedAt,
+      err: error,
+    });
+    return NextResponse.next();
   }
 }
 

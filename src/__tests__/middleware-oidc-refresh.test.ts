@@ -3,18 +3,32 @@
 // endpoint stand in for any standard issuer — there is no real IdP and no
 // Cognito-specific assumption. Proves: an about-to-expire access token is refreshed via
 // the standard `grant_type=refresh_token` exchange, refresh-token rotation updates the
-// cookie with the IdP's refresh_expires_in (else the centralized default), and a refresh
-// failure clears auth and redirects to /login.
+// cookie with the IdP's refresh_expires_in (else the centralized default), and EVERY
+// refresh failure is non-destructive — the request passes through with zero cookie
+// mutation and zero redirects (under rotation the middleware cannot distinguish losing
+// a concurrent-refresh race from genuine revocation; session death is decided only by
+// the client's post-prime double-401 site). Each attempt emits one structured
+// `oidc_refresh` diagnostic line whose `outcome` is asserted per failure class.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
+const { logInfo, logWarn } = vi.hoisted(() => ({ logInfo: vi.fn(), logWarn: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
-  default: { child: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }) },
+  default: { child: () => ({ info: logInfo, error: vi.fn(), warn: logWarn, debug: vi.fn() }) },
 }));
 
 import { middleware } from "@/middleware";
 import { REFRESH_TOKEN_COOKIE_MAX_AGE } from "@/lib/cookie-utils";
+
+const AUTH_COOKIES = [
+  "oidc_access_token",
+  "oidc_refresh_token",
+  "oidc_client_id",
+  "oidc_issuer",
+  "user_session",
+  "user_refresh",
+] as const;
 
 // Build a minimal JWT (header.payload.sig) with the given exp/iss. The middleware only
 // base64url-decodes the payload to read `exp` — it does not verify the signature.
@@ -61,8 +75,35 @@ function makeRequest(opts: {
   return req;
 }
 
+// The non-destructive pass-through contract: not a redirect, and NO auth cookie is
+// touched on the response (in particular, none is expired via maxAge 0 / empty value).
+function expectPassThroughUntouched(res: NextResponse) {
+  expect(res.headers.get("location")).toBeNull();
+  expect(res.status).toBe(200);
+  for (const name of AUTH_COOKIES) {
+    expect(res.cookies.get(name)).toBeUndefined();
+  }
+}
+
+// The single structured diagnostic line for the attempt, asserted by outcome.
+function expectRefreshLog(fn: ReturnType<typeof vi.fn>, outcome: string) {
+  const calls = [...logInfo.mock.calls, ...logWarn.mock.calls].filter(
+    (c) => c[0] && typeof c[0] === "object" && c[0].event === "oidc_refresh"
+  );
+  expect(calls).toHaveLength(1);
+  const line = calls[0][0];
+  expect(line.outcome).toBe(outcome);
+  expect(typeof line.pathname).toBe("string");
+  expect("expDelta" in line).toBe(true);
+  // Level: refreshed → info, everything else → warn.
+  const expectedFn = outcome === "refreshed" ? logInfo : logWarn;
+  expect(expectedFn.mock.calls.some((c) => c[0]?.event === "oidc_refresh")).toBe(true);
+  expect(fn.mock.calls.some((c) => c[0]?.event === "oidc_refresh")).toBe(true);
+  return line;
+}
+
 // fetch mock: first call = discovery document, second = token endpoint.
-function mockDiscoveryAndToken(issuer: string, tokenResponse: { ok: boolean; body?: unknown }) {
+function mockDiscoveryAndToken(issuer: string, tokenResponse: { ok: boolean; body?: unknown; jsonThrows?: boolean }) {
   const tokenEndpoint = `${issuer}/oauth2/token`;
   vi.mocked(fetch).mockImplementation(async (input: any) => {
     const url = typeof input === "string" ? input : input.url;
@@ -73,7 +114,10 @@ function mockDiscoveryAndToken(issuer: string, tokenResponse: { ok: boolean; bod
       return {
         ok: tokenResponse.ok,
         status: tokenResponse.ok ? 200 : 400,
-        json: async () => tokenResponse.body ?? {},
+        json: async () => {
+          if (tokenResponse.jsonThrows) throw new Error("not json");
+          return tokenResponse.body ?? {};
+        },
       } as any;
     }
     throw new Error(`unexpected fetch to ${url}`);
@@ -96,9 +140,10 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
 
     const res = await middleware(req);
 
-    // No refresh attempted; not a redirect.
+    // No refresh attempted; not a redirect; no diagnostic line.
     expect(fetch).not.toHaveBeenCalled();
     expect(res.headers.get("location")).toBeNull();
+    expect(logInfo.mock.calls.concat(logWarn.mock.calls).filter((c) => c[0]?.event === "oidc_refresh")).toHaveLength(0);
   });
 
   it("refreshes via standard grant_type=refresh_token when the access token is about to expire", async () => {
@@ -122,6 +167,11 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
     // New access token written to the response cookie; not a redirect.
     expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get("oidc_access_token")?.value).toBeTruthy();
+
+    // One structured success line at info level, without rotation.
+    const line = expectRefreshLog(logInfo, "refreshed");
+    expect(line.rotated).toBe(false);
+    expect(typeof line.durationMs).toBe("number");
   });
 
   it("rotates the refresh cookie using refresh_expires_in when the IdP returns one", async () => {
@@ -142,6 +192,9 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
     const rotated = res.cookies.get("oidc_refresh_token");
     expect(rotated?.value).toBe("rotated-refresh-token");
     expect(rotated?.maxAge).toBe(7 * 24 * 3600);
+
+    const line = expectRefreshLog(logInfo, "refreshed");
+    expect(line.rotated).toBe(true);
   });
 
   it("rotates the refresh cookie with the centralized default when refresh_expires_in is absent", async () => {
@@ -164,30 +217,44 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
     expect(rotated?.maxAge).toBe(REFRESH_TOKEN_COOKIE_MAX_AGE);
   });
 
-  it("clears auth and redirects to /login when the token endpoint rejects the refresh", async () => {
+  it("passes through untouched when the token endpoint rejects the refresh (invalid_grant race loser)", async () => {
     const issuer = freshIssuer();
     mockDiscoveryAndToken(issuer, { ok: false, body: { error: "invalid_grant" } });
     const req = makeRequest({ issuer, accessExpiresInSeconds: 5 });
 
     const res = await middleware(req);
 
-    expect(res.headers.get("location")).toContain("/login");
-    // Auth cookies are expired (maxAge 0).
-    expect(res.cookies.get("oidc_access_token")?.maxAge).toBe(0);
-    expect(res.cookies.get("oidc_refresh_token")?.maxAge).toBe(0);
+    expectPassThroughUntouched(res);
+    const line = expectRefreshLog(logWarn, "failed_idp");
+    expect(line.status).toBe(400);
+    expect(line.errorCode).toBe("invalid_grant");
+    expect(typeof line.durationMs).toBe("number");
   });
 
-  it("clears auth and redirects when the token response has no access_token", async () => {
+  it("passes through untouched when the IdP error body is not JSON (errorCode undefined)", async () => {
+    const issuer = freshIssuer();
+    mockDiscoveryAndToken(issuer, { ok: false, jsonThrows: true });
+    const req = makeRequest({ issuer, accessExpiresInSeconds: 5 });
+
+    const res = await middleware(req);
+
+    expectPassThroughUntouched(res);
+    const line = expectRefreshLog(logWarn, "failed_idp");
+    expect(line.errorCode).toBeUndefined();
+  });
+
+  it("passes through untouched when the token response has no access_token", async () => {
     const issuer = freshIssuer();
     mockDiscoveryAndToken(issuer, { ok: true, body: { expires_in: 3600 } }); // missing access_token
     const req = makeRequest({ issuer, accessExpiresInSeconds: 5 });
 
     const res = await middleware(req);
 
-    expect(res.headers.get("location")).toContain("/login");
+    expectPassThroughUntouched(res);
+    expectRefreshLog(logWarn, "failed_malformed");
   });
 
-  it("clears auth and redirects when discovery cannot resolve a token endpoint", async () => {
+  it("passes through untouched when discovery cannot resolve a token endpoint", async () => {
     const issuer = freshIssuer();
     vi.mocked(fetch).mockImplementation(async (input: any) => {
       const url = typeof input === "string" ? input : input.url;
@@ -200,17 +267,49 @@ describe("middleware OIDC refresh (IdP-agnostic)", () => {
 
     const res = await middleware(req);
 
-    expect(res.headers.get("location")).toContain("/login");
+    expectPassThroughUntouched(res);
+    expectRefreshLog(logWarn, "failed_discovery");
   });
 
-  it("redirects to /login when refresh materials are missing (no refresh cookie)", async () => {
+  it("passes through untouched when the token-endpoint fetch throws (network error on resume)", async () => {
+    const issuer = freshIssuer();
+    const tokenEndpoint = `${issuer}/oauth2/token`;
+    vi.mocked(fetch).mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/.well-known/openid-configuration")) {
+        return { ok: true, json: async () => ({ token_endpoint: tokenEndpoint }) } as any;
+      }
+      throw new TypeError("fetch failed"); // radio not up yet
+    });
+    const req = makeRequest({ issuer, accessExpiresInSeconds: 5 });
+
+    const res = await middleware(req);
+
+    expectPassThroughUntouched(res);
+    expectRefreshLog(logWarn, "failed_network");
+  });
+
+  it("passes through untouched when refresh materials are missing (no refresh cookie)", async () => {
     const issuer = freshIssuer();
     const req = makeRequest({ issuer, accessExpiresInSeconds: 5, refreshToken: null });
 
     const res = await middleware(req);
 
-    expect(res.headers.get("location")).toContain("/login");
+    expectPassThroughUntouched(res);
     // No token endpoint should have been contacted.
     expect(fetch).not.toHaveBeenCalled();
+    const line = expectRefreshLog(logWarn, "skipped_missing_materials");
+    expect(line.expDelta).toBeLessThanOrEqual(5);
+  });
+
+  it("passes through untouched when the client_id cookie is missing", async () => {
+    const issuer = freshIssuer();
+    const req = makeRequest({ issuer, accessExpiresInSeconds: 5, clientId: null });
+
+    const res = await middleware(req);
+
+    expectPassThroughUntouched(res);
+    expect(fetch).not.toHaveBeenCalled();
+    expectRefreshLog(logWarn, "skipped_missing_materials");
   });
 });
