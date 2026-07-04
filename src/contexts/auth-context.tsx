@@ -21,6 +21,11 @@ import {
   clearUserManager,
 } from "@/lib/auth-client";
 import { computeKeepaliveDelayMs, pingKeepalive } from "@/lib/oidc-keepalive";
+import {
+  beginResumeRevalidation,
+  settleResumeRevalidation,
+  waitForResumeGate,
+} from "@/lib/resume-gate";
 import { clientLogger } from "@/lib/logger-client";
 
 // User info from OIDC
@@ -195,6 +200,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const delay = computeKeepaliveDelayMs(oidcUser.access_token, Date.now());
       keepaliveTimer.current = setTimeout(async () => {
         if (cancelled) return;
+        // iOS freezes this timer while the tab is backgrounded and fires it on thaw —
+        // in the same instant as the resume revalidation's own prime. Wait for the
+        // resume gate so the thawed ping doesn't add a duplicate refresh racer; outside
+        // a resume window this resolves immediately.
+        await waitForResumeGate();
+        if (cancelled) return;
         await pingKeepalive(); // best-effort; middleware refreshes the cookie
         schedule(); // re-arm from the (current) token's exp
       }, delay);
@@ -238,10 +249,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const revalidate = async () => {
       if (revalidateInFlight.current) return;
       revalidateInFlight.current = true;
+      // Hold the resume gate while the prime + probe run: SSE contexts (and the thawed
+      // keepalive ping) defer their resume work until settle, so the prime below is the
+      // only request racing the middleware refresh. Settle in finally — waiters must be
+      // released even if the probe throws.
+      beginResumeRevalidation();
       try {
         await primeSessionCookie();
         await fetchSessionRef.current();
       } finally {
+        settleResumeRevalidation();
         revalidateInFlight.current = false;
       }
     };

@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { waitForResumeGate } from "@/lib/resume-gate";
 
 type Subscriber = () => void;
 
@@ -174,8 +175,16 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
       }
     }
 
-    function handleVisibility() {
+    async function handleVisibility() {
       if (document.visibilityState === "visible") {
+        // Resume gate: defer ALL resume work — the reconnect AND the catch-up
+        // notify/notifyEntity fan-out (each of which triggers consumer re-fetches
+        // through middleware-covered routes) — until the auth revalidation settles,
+        // so none of it races the middleware OIDC refresh with an expired cookie
+        // (see src/lib/resume-gate.ts). Re-check visibility after the wait; the
+        // connection-lost check also runs after it, on the current stream state.
+        await waitForResumeGate();
+        if (document.visibilityState !== "visible") return;
         const connectionLost = !es || es.readyState === EventSource.CLOSED;
         if (connectionLost) {
           // Reconnect and catch up — events were missed while disconnected.

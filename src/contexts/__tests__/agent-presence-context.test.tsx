@@ -26,6 +26,7 @@ import {
   type TranscriptSubscriber,
 } from "@/contexts/agent-presence-context";
 import type { ConnectionView, ExecutionView } from "@/components/agent-presence";
+import { settleResumeRevalidation, __resetResumeGateForTests } from "@/lib/resume-gate";
 
 // authFetch is the provider's only network dependency; mock it.
 const authFetch = vi.fn();
@@ -173,6 +174,7 @@ beforeEach(() => {
   lastEventSource = null;
   eventSourceConstructions = 0;
   authFetch.mockReset();
+  __resetResumeGateForTests();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).EventSource = MockEventSource;
 });
@@ -538,7 +540,11 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate", () => {
       });
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    // The visibility dispatch arms the resume gate (module-level listener in
+    // src/lib/resume-gate.ts); the handler defers until it settles.
+    act(() => settleResumeRevalidation());
     await act(async () => {
+      await Promise.resolve();
       await Promise.resolve();
     });
 
@@ -578,7 +584,10 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
       });
       document.dispatchEvent(new Event("visibilitychange"));
     });
+    // Settle the resume gate armed by the visibility dispatch (see above).
+    act(() => settleResumeRevalidation());
     await act(async () => {
+      await Promise.resolve();
       await Promise.resolve();
     });
 

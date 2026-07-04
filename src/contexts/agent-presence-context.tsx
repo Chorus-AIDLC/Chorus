@@ -60,6 +60,7 @@ import {
 } from "react";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
+import { waitForResumeGate } from "@/lib/resume-gate";
 import type {
   ConnectionView,
   ExecutionView,
@@ -425,8 +426,16 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    function handleVisibility() {
+    async function handleVisibility() {
       if (document.visibilityState === "visible") {
+        // Resume gate: defer ALL resume work (reconnect + aggregate re-fetch) until
+        // the auth revalidation settles, so these requests don't race the middleware
+        // OIDC refresh with an expired cookie (see src/lib/resume-gate.ts). Re-check
+        // visibility after the wait; the stream-health check also runs after it, on
+        // the current stream state. The 15s poll tick stays ungated (not
+        // resume-correlated).
+        await waitForResumeGate();
+        if (document.visibilityState !== "visible") return;
         // A live stream is OPEN (readyState 1). A browser auto-reconnect after a
         // transient error leaves it CONNECTING (0), and an explicit close leaves
         // it CLOSED (2) — in BOTH cases events may have been missed and the stream
