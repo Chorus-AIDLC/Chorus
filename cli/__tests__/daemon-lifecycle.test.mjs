@@ -35,10 +35,12 @@ function fakeIO({
 } = {}) {
   const spawnCalls = [];
   const spawnSyncCalls = [];
+  const kills = [];
   return {
     _files: files,
     _spawnCalls: spawnCalls,
     _spawnSyncCalls: spawnSyncCalls,
+    _kills: kills,
     existsSync: (p) => p in files,
     readFileSync: (p) => {
       if (!(p in files)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -78,7 +80,8 @@ function fakeIO({
       const rows = Object.entries(identities).map(([pid, id]) => `${String(pid).padStart(5)} ${id.cmdline}`);
       return { status: 0, stdout: rows.join("\n") + "\n" };
     },
-    kill: (pid) => {
+    kill: (pid, sig) => {
+      kills.push([pid, sig]);
       if (epermPids.has(pid)) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
       if (!alivePids.has(pid)) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
       return true;
@@ -183,6 +186,26 @@ describe("processAlive — identity-verified probe decision table", () => {
   it("signalable pid + identity mismatch ⇒ stale (recycled to our own other process)", () => {
     const io = fakeIO({ alivePids: new Set([13]), identities: { 13: { startedAt: T2, cmdline: "vim notes.txt" } } });
     expect(processAlive({ pid: 13, startedAt: T1, argsHint: HINT }, io)).toBe(false);
+  });
+
+  it("argsHint match + startedAt mismatch ⇒ running (NTP clock-step, fix-daemon-stop-ntp-false-stale)", () => {
+    // lstart is clock-derived: an NTP step after spawn shifts the live value
+    // for the SAME process. A matching argsHint must win over the stale-looking
+    // startedAt — this exact false-stale unlinked a live daemon's pidfile.
+    const io = fakeIO({ alivePids: new Set([14]), identities: { 14: { startedAt: T2, cmdline: `/usr/bin/node ${HINT}` } } });
+    expect(processAlive({ pid: 14, startedAt: T1, argsHint: HINT }, io)).toBe(true);
+  });
+
+  it("argsHint mismatch + startedAt EQUAL ⇒ stale (startedAt cannot rescue a wrong cmdline)", () => {
+    const io = fakeIO({ alivePids: new Set([14]), identities: { 14: { startedAt: T1, cmdline: "/usr/sbin/dockerd" } } });
+    expect(processAlive({ pid: 14, startedAt: T1, argsHint: HINT }, io)).toBe(false);
+  });
+
+  it("no argsHint recorded ⇒ startedAt still decides alone", () => {
+    const mismatch = fakeIO({ alivePids: new Set([15]), identities: { 15: { startedAt: T2, cmdline: `/usr/bin/node ${HINT}` } } });
+    expect(processAlive({ pid: 15, startedAt: T1 }, mismatch)).toBe(false);
+    const match = fakeIO({ alivePids: new Set([15]), identities: { 15: { startedAt: T1, cmdline: `/usr/bin/node ${HINT}` } } });
+    expect(processAlive({ pid: 15, startedAt: T1 }, match)).toBe(true);
   });
 
   it("identity record + busybox (startedAt unavailable live) ⇒ cmdline alone decides", () => {
@@ -340,6 +363,21 @@ describe("stopDaemon", () => {
     const r = stopDaemon(io);
     expect(r).toMatchObject({ stopped: false, pid: 10, reason: "stale-cleared" });
     expect(PID in io._files).toBe(false);
+  });
+
+  it("clock-step regression: argsHint matches, startedAt shifted ⇒ stop SIGNALS the daemon, never clears its pidfile", () => {
+    // The reported bug: chrony stepped the clock after a boot-autostarted
+    // `chorus daemon -d`, the live lstart no longer string-equaled the
+    // recorded startedAt, and stop cleared the pidfile of the RUNNING daemon.
+    const io = fakeIO({
+      files: { [PID]: jsonPid(10, T1, "/x/chorus.mjs daemon") },
+      alivePids: new Set([10]),
+      identities: { 10: { startedAt: T2, cmdline: "/usr/bin/node /x/chorus.mjs daemon" } },
+    });
+    const r = stopDaemon(io);
+    expect(r).toMatchObject({ stopped: true, pid: 10, reason: "stopped" });
+    expect(io._kills).toContainEqual([10, "SIGTERM"]);
+    expect(PID in io._files).toBe(false); // removed AFTER a successful signal
   });
 
   it("force: best-effort signal + unconditional pidfile removal even when kill fails", () => {
