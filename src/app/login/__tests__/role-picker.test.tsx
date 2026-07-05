@@ -42,12 +42,11 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-// auth-client's authFetch/primeSessionCookie are used by the page's mount-time
+// auth-client's authFetch is used by the page's mount-time
 // already-authenticated check. Delegate authFetch to global.fetch (which each test
-// stubs) so the URL-based stubs drive it; primeSessionCookie is a no-op here.
+// stubs) so the URL-based stubs drive it.
 vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, init?: RequestInit) => fetch(url, init),
-  primeSessionCookie: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Use real translations so the test asserts on user-visible copy.

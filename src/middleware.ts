@@ -227,9 +227,10 @@ export async function middleware(request: NextRequest) {
   // invocation cannot distinguish "I lost a concurrent-refresh race" (another request
   // just rotated the token; its Set-Cookie hasn't landed in this request's cookies)
   // from "the refresh token is genuinely revoked" — both surface as invalid_grant.
-  // Only the client's session probe can tell them apart (by the time it primes and
-  // retries, the winner's cookie has landed), so session death is decided exclusively
-  // at the client's post-prime double-401 site (auth-context fetchSession).
+  // Only the client's session probe can tell them apart (by the time it retries the
+  // matcher-covered probe, the winner's cookie has landed), so session death is
+  // decided exclusively at the client's probe-retry 401 verdict (auth-context
+  // fetchSession).
   const accessToken = request.cookies.get("oidc_access_token")?.value;
 
   // No access token at all — check if we have refresh materials

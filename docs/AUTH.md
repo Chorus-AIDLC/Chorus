@@ -234,7 +234,7 @@ The middleware runs on every request (except static assets, `/login`, `/api/auth
 
 ### Layer 2: Frontend fallback (`src/app/(dashboard)/layout.tsx`)
 
-On initial page load, `checkSession()` calls `GET /api/auth/session`. If it returns 401, it tries `POST /api/auth/refresh` (which verifies `user_refresh` cookie server-side and issues new tokens). This is a safety net for cases where the middleware refresh didn't fire (e.g., the user's first request after a long idle period).
+On initial page load, `checkSession()` calls `GET /api/session`. The probe is middleware-matcher-covered, so an expiring/expired access cookie is refreshed on the probe request itself; a single retry covers transient refresh failures, and session death is decided only by AuthProvider's fetchSession verdict (which additionally attempts localStorage refresh-token recovery before redirecting).
 
 ### Layer 3: Client-side OIDC (`src/lib/auth-client.ts`)
 
@@ -303,7 +303,7 @@ This ensures data isolation between companies. Super Admin is the only context t
 | `src/app/api/auth/callback/route.ts` | OIDC callback — sets cookies after provider redirect |
 | `src/app/api/auth/identify/route.ts` | Email identification — routes to OIDC or Default Auth |
 | `src/app/api/auth/refresh/route.ts` | Token refresh endpoint (server-side, for `user_refresh` cookie) |
-| `src/app/api/auth/session/route.ts` | Session check endpoint |
+| `src/app/api/session/route.ts` | Session probe endpoint (matcher-covered so it refreshes its own cookie) |
 | `src/app/api/admin/login/route.ts` | Super Admin login endpoint |
 | `src/app/login/page.tsx` | Login page UI (email input, password form, OIDC redirect) |
 | `src/app/login/callback/page.tsx` | OIDC callback page (code exchange) |
