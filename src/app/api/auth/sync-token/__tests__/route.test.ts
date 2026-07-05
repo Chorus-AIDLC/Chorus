@@ -1,9 +1,9 @@
-// Route-level tests for POST /api/auth/sync-token — strict mode and the
-// recoverSession mode added for the iOS cookie-purge recovery (idea 3bf0819c).
-// The oidc-auth verify functions are mocked at the module boundary (JWKS/network
-// is not exercisable in unit tests); what these tests pin is the ROUTE's contract:
-// which mode verifies with which function, which cookies are written / withheld,
-// which requests are rejected, and the recovery log line.
+// Route-level tests for POST /api/auth/sync-token — the session-recovery endpoint
+// (recovery-only since the auth slim-down; the old strict sync mode is deleted).
+// The oidc-auth verify function is mocked at the module boundary (JWKS/network is
+// not exercisable in unit tests); what these tests pin is the ROUTE's contract:
+// which cookies are written / withheld, which requests are rejected, and the
+// recovery log line.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -49,28 +49,12 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("POST /api/auth/sync-token — strict mode (unchanged)", () => {
-  it("writes the access cookie when the token verifies", async () => {
-    verifyOidcAccessToken.mockResolvedValue({ type: "user", companyUuid: "c1", actorUuid: "u1" });
-
+describe("POST /api/auth/sync-token — recovery-only contract", () => {
+  it("rejects a missing refreshToken with 400 (the old strict mode is gone)", async () => {
     const res = await POST(makeRequest({ accessToken: FRESH_AT }));
-
-    expect(res.status).toBe(200);
-    expect(res.cookies.get("oidc_access_token")?.value).toBe(FRESH_AT);
-    // Strict mode never touches config cookies.
-    expect(res.cookies.get("oidc_client_id")).toBeUndefined();
-    expect(res.cookies.get("oidc_issuer")).toBeUndefined();
+    expect(res.status).toBe(400);
     expect(verifyOidcAccessTokenAllowExpired).not.toHaveBeenCalled();
-  });
-
-  it("rejects an expired/invalid token with 401 (no recovery without the flag)", async () => {
-    verifyOidcAccessToken.mockResolvedValue(null); // strict verify rejects expired
-
-    const res = await POST(makeRequest({ accessToken: STALE_AT, refreshToken: "rt-1" }));
-
-    expect(res.status).toBe(401);
     expect(res.cookies.get("oidc_access_token")).toBeUndefined();
-    expect(res.cookies.get("oidc_refresh_token")).toBeUndefined();
   });
 
   it("rejects a missing accessToken with 400", async () => {
@@ -78,8 +62,7 @@ describe("POST /api/auth/sync-token — strict mode (unchanged)", () => {
     expect(res.status).toBe(400);
   });
 });
-
-describe("POST /api/auth/sync-token — recoverSession mode", () => {
+describe("POST /api/auth/sync-token — recovery", () => {
   it("rebuilds refresh materials from a stale-but-signature-valid token", async () => {
     verifyOidcAccessTokenAllowExpired.mockResolvedValue({
       companyUuid: "c1",
@@ -88,7 +71,7 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
     });
 
     const res = await POST(
-      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-live", recoverSession: true })
+      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-live" })
     );
     const json = await res.json();
 
@@ -96,7 +79,6 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
     expect(json.data.recovered).toBe(true);
     // Verified with the tolerance bounded by the refresh cookie lifetime.
     expect(verifyOidcAccessTokenAllowExpired).toHaveBeenCalledWith(STALE_AT, REFRESH_TOKEN_COOKIE_MAX_AGE);
-    expect(verifyOidcAccessToken).not.toHaveBeenCalled();
     // All three refresh materials written; client_id/issuer from the SERVER-side
     // company record (the mock's values), never echoed from the client body.
     expect(res.cookies.get("oidc_refresh_token")?.value).toBe("rt-live");
@@ -115,7 +97,7 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
 
     await POST(
       makeRequest(
-        { accessToken: STALE_AT, refreshToken: "rt-live", recoverSession: true },
+        { accessToken: STALE_AT, refreshToken: "rt-live" },
         { oidc_refresh_token: "rt-old-cookie" }
       )
     );
@@ -127,8 +109,8 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
     expect(JSON.stringify(recover![0])).not.toContain("rt-live");
   });
 
-  it("rejects recoverSession without a refreshToken (400, no cookies)", async () => {
-    const res = await POST(makeRequest({ accessToken: STALE_AT, recoverSession: true }));
+  it("rejects a recovery without a refreshToken (400, no cookies)", async () => {
+    const res = await POST(makeRequest({ accessToken: STALE_AT }));
 
     expect(res.status).toBe(400);
     expect(verifyOidcAccessTokenAllowExpired).not.toHaveBeenCalled();
@@ -139,7 +121,7 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
     verifyOidcAccessTokenAllowExpired.mockResolvedValue(null);
 
     const res = await POST(
-      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-x", recoverSession: true })
+      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-x" })
     );
 
     expect(res.status).toBe(401);
@@ -155,7 +137,7 @@ describe("POST /api/auth/sync-token — recoverSession mode", () => {
     });
 
     const res = await POST(
-      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-x", recoverSession: true })
+      makeRequest({ accessToken: STALE_AT, refreshToken: "rt-x" })
     );
 
     expect(res.status).toBe(400);

@@ -29,7 +29,6 @@ let manager: { events: Record<string, (cb: (...a: unknown[]) => void) => void> }
 vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, opts?: RequestInit) => authFetch(url, opts),
   getOidcUser: () => getOidcUser(),
-  syncTokenToCookie: vi.fn().mockResolvedValue(true),
   resyncRefreshTokenFromStore: () => resyncRefreshTokenFromStore(),
   logout: vi.fn().mockResolvedValue(undefined),
   clearUserManager: vi.fn(),
@@ -37,13 +36,6 @@ vi.mock("@/lib/auth-client", () => ({
 }));
 vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
-// Observe keepalive scheduling without real timers/network. computeKeepaliveDelayMs is
-// mocked to a tiny delay so the timer fires within the test; pingKeepalive is a spy.
-const pingKeepalive = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/lib/oidc-keepalive", () => ({
-  computeKeepaliveDelayMs: () => 1,
-  pingKeepalive: () => pingKeepalive(),
 }));
 // Return a STABLE router object across renders — a fresh object each call would make
 // the memoized handleSessionExpired/fetchSession identities churn and re-fire the init
@@ -89,20 +81,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   push.mockReset();
   getOidcUser.mockResolvedValue(null);
-  pingKeepalive.mockClear();
   resyncRefreshTokenFromStore.mockClear();
   resyncRefreshTokenFromStore.mockResolvedValue(false);
   manager = makeManager();
 });
 
 describe("AuthProvider session-death contract", () => {
-  it("does NOT register an access-token-expired or silent-renew-error handler", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
+  it("registers NO OIDC event handlers at all (middleware owns renewal; callback owns cookies)", async () => {
+    authFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }),
+    });
 
     renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    // The only OIDC event wired is userLoaded (initial-login cookie sync).
-    await waitFor(() => expect(registeredEvents.userLoaded).toBeTypeOf("function"));
+    expect(registeredEvents.userLoaded).toBeUndefined();
     expect(registeredEvents.expired).toBeUndefined();
     expect(registeredEvents.renewError).toBeUndefined();
   });
@@ -161,42 +155,6 @@ describe("AuthProvider session-death contract", () => {
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
     expect(authFetch.mock.calls[0][0]).toBe("/api/session");
     expect(push).not.toHaveBeenCalled();
-  });
-});
-
-describe("AuthProvider OIDC keepalive (defense-in-depth)", () => {
-  it("arms the keepalive and pings when an OIDC session exists", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    // OIDC session present → keepalive should arm and (with mocked tiny delay) ping.
-    getOidcUser.mockResolvedValue({ access_token: "tok", expired: false });
-
-    renderProvider();
-
-    await waitFor(() => expect(pingKeepalive).toHaveBeenCalled());
-  });
-
-  it("does NOT arm the keepalive for default-auth (no OIDC manager)", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    manager = null; // no OIDC manager ⇒ default-auth/superadmin
-    getOidcUser.mockResolvedValue(null);
-
-    renderProvider();
-
-    // Let the init effect settle, then confirm no keepalive ping fired.
-    await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(pingKeepalive).not.toHaveBeenCalled();
-  });
-
-  it("does NOT ping when there is a manager but no OIDC user (logged out)", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    getOidcUser.mockResolvedValue(null); // manager present (default), but no user
-
-    renderProvider();
-
-    await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(pingKeepalive).not.toHaveBeenCalled();
   });
 });
 
@@ -278,55 +236,23 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
   });
 });
 
-describe("AuthProvider iOS cookie-purge recovery (resync before probe)", () => {
-  it("attempts the localStorage RT resync BEFORE probing at init when the stored user is expired", async () => {
-    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
-    const order: string[] = [];
-    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
-    authFetch.mockImplementation(async () => {
-      order.push("probe");
-      return { status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) };
-    });
-
-    renderProvider();
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(order[0]).toBe("resync");
-    expect(order.indexOf("probe")).toBeGreaterThan(order.indexOf("resync"));
-  });
-
-  it("resyncs before probing on resume revalidation when the stored user is expired", async () => {
+describe("AuthProvider iOS cookie-purge recovery (verdict-level, single site)", () => {
+  it("does NOT resync during a healthy init — recovery belongs to the verdict only", async () => {
     getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
     authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
 
     renderProvider();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    resyncRefreshTokenFromStore.mockClear();
-    const order: string[] = [];
-    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
-    authFetch.mockImplementation(async () => {
-      order.push("probe");
-      return { status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) };
-    });
 
-    await act(async () => {
-      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
-      document.dispatchEvent(new Event("visibilitychange"));
-      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-    });
-
-    expect(order[0]).toBe("resync");
-    expect(order.indexOf("probe")).toBeGreaterThan(order.indexOf("resync"));
+    expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
   });
 
-  it("does not resync on resume when the stored user is fresh (cookies intact fast-path)", async () => {
-    getOidcUser.mockResolvedValue({ expired: false, access_token: "at", refresh_token: "rt" });
+  it("does NOT resync on a healthy resume revalidation", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
     authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
 
     renderProvider();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    resyncRefreshTokenFromStore.mockClear();
 
     await act(async () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
@@ -336,8 +262,26 @@ describe("AuthProvider iOS cookie-purge recovery (resync before probe)", () => {
 
     expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
   });
-});
 
+  it("resyncs only AFTER the double-401, then reprobes (the purge path)", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    const order: string[] = [];
+    authFetch
+      .mockImplementationOnce(async () => { order.push("probe1"); return { status: 401 }; })
+      .mockImplementationOnce(async () => { order.push("probe2"); return { status: 401 }; })
+      .mockImplementationOnce(async () => {
+        order.push("probe3");
+        return { status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) };
+      });
+    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(order).toEqual(["probe1", "probe2", "resync", "probe3"]);
+    expect(push).not.toHaveBeenCalled();
+  });
+});
 describe("AuthProvider last-resort recovery in the death verdict", () => {
   it("does NOT redirect when the second 401 is rescued by resync + reprobe (iOS purge race)", async () => {
     getOidcUser.mockResolvedValue(null);

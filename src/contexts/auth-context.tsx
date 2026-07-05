@@ -10,21 +10,15 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { User } from "oidc-client-ts";
 import {
-  getUserManager,
-  getOidcUser,
   authFetch,
-  syncTokenToCookie,
   resyncRefreshTokenFromStore,
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
-import { computeKeepaliveDelayMs, pingKeepalive } from "@/lib/oidc-keepalive";
 import {
   beginResumeRevalidation,
   settleResumeRevalidation,
-  waitForResumeGate,
 } from "@/lib/resume-gate";
 import { clientLogger } from "@/lib/logger-client";
 
@@ -120,123 +114,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [handleSessionExpired]);
 
-  // Initialize session on mount
+  // Initialize session on mount: a single probe. The probe request is
+  // matcher-covered (the middleware refreshes an expiring cookie on it), and
+  // fetchSession's verdict chain owns retry + iOS cookie-purge recovery — there is
+  // no separate init-time sync/recovery step. Cookie-based, so this populates
+  // `user` for every login mode (OIDC, default-auth, superadmin).
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-
-      // If we have a valid OIDC user, sync its (possibly refreshed) token to the
-      // cookie first so the backend session lookup sees the freshest token.
-      const oidcUser = await getOidcUser();
-      if (oidcUser && !oidcUser.expired) {
-        await syncTokenToCookie(oidcUser.access_token, oidcUser.refresh_token);
-      } else {
-        // No fresh OIDC user in localStorage (e.g. the page was restored from bfcache /
-        // a frozen tab and the access cookie may have expired in the background).
-        //
-        // iOS cookie-purge recovery first (idea 3bf0819c): iOS can wipe ALL httpOnly
-        // auth cookies from a backgrounded tab, leaving the middleware NOTHING to
-        // refresh — the prime below would silently pass through and the probe would
-        // bounce, even though localStorage still holds a live refresh token. Rebuild
-        // the refresh-material cookies from the stored (expired-AT + RT) pair before
-        // priming. No-op when there is no stored refresh token; a dead one still
-        // fails at the IdP during the prime and bounces via the double-401 path.
-        await resyncRefreshTokenFromStore();
-      }
-
-      // Always resolve the session from the backend. `/api/session` accepts
-      // BOTH an OIDC bearer token AND a session cookie (default-auth / superadmin
-      // set `user_session` / `admin_session` with no OIDC user), so this populates
-      // `user` for every login mode — not just OIDC. Previously this was gated
-      // behind the OIDC branch, leaving `user` permanently null for default-auth
-      // users and silently disabling every owner-gated UI (e.g. the comment
-      // mention badge's owner-only "Open conversation" button).
       await fetchSession();
-
       setLoading(false);
     };
 
     init();
   }, [fetchSession]);
-
-  // Set up OIDC event handlers.
-  //
-  // We deliberately do NOT redirect to /login on `addAccessTokenExpired` or
-  // `addSilentRenewError`. An expired access token is not a dead session: the Edge
-  // middleware silently refreshes the cookie on the next request, and getAuthContext
-  // falls through to it. Treating expiry as logout (the previous behavior) bounced
-  // users out while their cookie session was still valid. Session death is decided
-  // only by a true 401 from /api/session (see fetchSession). The only handler we
-  // keep is `addUserLoaded`, which syncs the token oidc-client-ts already holds into
-  // the cookie at initial login — it does not consume the refresh token.
-  useEffect(() => {
-    const manager = getUserManager();
-    if (!manager) return;
-
-    const handleUserLoaded = async (user: User) => {
-      clientLogger.debug("OIDC user loaded, syncing token to cookie");
-      try {
-        await syncTokenToCookie(user.access_token, user.refresh_token);
-      } catch (err) {
-        clientLogger.error("Failed to sync token after load:", err);
-      }
-    };
-
-    manager.events.addUserLoaded(handleUserLoaded);
-
-    return () => {
-      manager.events.removeUserLoaded(handleUserLoaded);
-    };
-  }, []);
-
-  // OIDC keepalive (DEFENSE-IN-DEPTH — not a correctness dependency).
-  //
-  // The middleware refreshes the cookie on any matcher-covered request, but a user idle
-  // on a single SPA page may make none for a while, letting the cookie lapse mid-idle.
-  // When (and only when) there is an OIDC session, schedule a ping to a middleware-covered
-  // path shortly before the access token expires so the middleware rotates the cookie. The
-  // interval is derived from the token's own exp/iat (not a fixed constant). If this whole
-  // block were removed, sessions would still be correct — the next real request is rescued
-  // by the middleware fall-through; this only shrinks the idle SSE-drop window.
-  const keepaliveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    // No OIDC manager ⇒ default-auth/superadmin (or logged out) ⇒ do not arm. (Harmless if
-    // it ever did: the keepalive path is a no-op for a non-OIDC session.)
-    const manager = getUserManager();
-    if (!manager) return;
-
-    let cancelled = false;
-
-    const schedule = async () => {
-      if (cancelled) return;
-      const oidcUser = await getOidcUser();
-      // Only arm while an OIDC session exists.
-      if (cancelled || !oidcUser) return;
-
-      const delay = computeKeepaliveDelayMs(oidcUser.access_token, Date.now());
-      keepaliveTimer.current = setTimeout(async () => {
-        if (cancelled) return;
-        // iOS freezes this timer while the tab is backgrounded and fires it on thaw —
-        // in the same instant as the resume revalidation's own prime. Wait for the
-        // resume gate so the thawed ping doesn't add a duplicate refresh racer; outside
-        // a resume window this resolves immediately.
-        await waitForResumeGate();
-        if (cancelled) return;
-        await pingKeepalive(); // best-effort; middleware refreshes the cookie
-        schedule(); // re-arm from the (current) token's exp
-      }, delay);
-    };
-
-    schedule();
-
-    return () => {
-      cancelled = true;
-      if (keepaliveTimer.current) {
-        clearTimeout(keepaliveTimer.current);
-        keepaliveTimer.current = null;
-      }
-    };
-  }, []);
 
   // Re-validate the session when the page is RESTORED after being backgrounded.
   //
@@ -246,8 +137,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // cookie may have expired in the background and nothing has refreshed it. We prime the
   // cookie (matcher-covered request → middleware refresh) and re-resolve the session, so a
   // resumed tab with a still-valid refresh token stays logged in instead of bouncing.
-  // `fetchSession` itself only redirects on a genuine post-prime 401, so a truly dead
-  // session still goes to /login cleanly.
+  // `fetchSession` itself only redirects after its full verdict chain (retry +
+  // recovery) fails, so a truly dead session still goes to /login cleanly.
   //
   // A ref holds the latest fetchSession so this effect can mount once (empty deps) without
   // re-binding listeners on every fetchSession identity change.
@@ -265,20 +156,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const revalidate = async () => {
       if (revalidateInFlight.current) return;
       revalidateInFlight.current = true;
-      // Hold the resume gate while the prime + probe run: SSE contexts (and the thawed
-      // keepalive ping) defer their resume work until settle, so the prime below is the
-      // only request racing the middleware refresh. Settle in finally — waiters must be
-      // released even if the probe throws.
+      // Hold the resume gate while the probe runs: SSE contexts defer their resume
+      // work until settle, so the probe below is the only request racing the
+      // middleware refresh. Settle in finally — waiters must be released even if the
+      // probe throws. Recovery (iOS cookie purge) lives inside fetchSession's verdict
+      // chain — the resume path needs no separate recovery step.
       beginResumeRevalidation();
       try {
-        // iOS cookie-purge recovery (idea 3bf0819c): the resume may find ALL auth
-        // cookies gone (purged while backgrounded). Rebuild the refresh materials from
-        // the localStorage user BEFORE priming so the middleware has something to
-        // refresh. Cheap no-op when cookies are intact or no stored refresh token.
-        const oidcUser = await getOidcUser();
-        if (oidcUser && oidcUser.expired) {
-          await resyncRefreshTokenFromStore();
-        }
         await fetchSessionRef.current();
       } finally {
         settleResumeRevalidation();
