@@ -129,9 +129,6 @@ function installFetch(handlers: {
     if (url === "/api/session") {
       return { ok: true, json: { success: false } };
     }
-    if (url === "/api/keepalive") {
-      return { ok: true, json: { ok: true } };
-    }
     throw new Error(`Unexpected fetch in test: ${url}`);
   };
   global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -415,9 +412,6 @@ describe("LoginPage — already-authenticated redirect (root-reopen fix)", () =>
           status: 200,
           json: async () => ({ success: true, data: { user: { uuid: "u1", email: "a@b.c" } } }),
         } as Response;
-      }
-      if (u === "/api/keepalive") {
-        return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
       if (u === "/api/auth/check-default") {
         return { ok: true, json: async () => ({ success: true, data: { enabled: false } }) } as Response;
