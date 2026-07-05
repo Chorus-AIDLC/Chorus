@@ -24,9 +24,13 @@ describe("KEEPALIVE_PATH is middleware-covered but outside api/auth", () => {
     expect(new RegExp(MATCHER).test(KEEPALIVE_PATH)).toBe(true);
   });
 
-  it("api/auth paths are NOT matched (so they could not trigger the refresh)", () => {
-    expect(new RegExp(MATCHER).test("/api/auth/session")).toBe(false);
-    expect(new RegExp(MATCHER).test("/api/auth/refresh")).toBe(false);
+  it("api/auth paths are NOT matched (cookie-write races stay protected)", () => {
+    expect(new RegExp(MATCHER).test("/api/auth/sync-token")).toBe(false);
+    expect(new RegExp(MATCHER).test("/api/auth/callback")).toBe(false);
+  });
+
+  it("the session probe path IS matched (the probe refreshes its own cookie)", () => {
+    expect(new RegExp(MATCHER).test("/api/session")).toBe(true);
   });
 
   it("the keepalive path is not under api/auth", () => {

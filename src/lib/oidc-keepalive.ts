@@ -14,9 +14,9 @@
 // (getAuthContext falls through to the refreshed cookie). The keepalive only shrinks the
 // idle window in which a streaming connection might drop.
 
-// The ping target MUST be inside the middleware matcher (NOT an `api/auth` path, which
-// the matcher excludes) so the middleware's OIDC refresh runs for it.
-export const KEEPALIVE_PATH = "/api/keepalive";
+// The ping target MUST be inside the middleware matcher so the middleware's OIDC
+// refresh runs for it. /api/session doubles as the probe endpoint.
+export const KEEPALIVE_PATH = "/api/session";
 
 // Fire this many seconds BEFORE the access token's expiry. Must be smaller than the
 // middleware's own near-expiry refresh threshold (30s) so the ping lands inside the

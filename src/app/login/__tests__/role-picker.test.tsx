@@ -127,7 +127,7 @@ function installFetch(handlers: {
     if (url === "/api/admin/session") {
       return { ok: true, json: { success: false } };
     }
-    if (url === "/api/auth/session") {
+    if (url === "/api/session") {
       return { ok: true, json: { success: false } };
     }
     if (url === "/api/keepalive") {
@@ -410,7 +410,7 @@ describe("LoginPage — already-authenticated redirect (root-reopen fix)", () =>
       if (u === "/api/admin/session") {
         return { ok: true, json: async () => ({ success: !!opts.admin }) } as Response;
       }
-      if (u === "/api/auth/session") {
+      if (u === "/api/session") {
         return {
           ok: true,
           status: 200,

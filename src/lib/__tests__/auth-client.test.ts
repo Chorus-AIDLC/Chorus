@@ -18,7 +18,6 @@ import {
   isAuthenticated,
   syncTokenToCookie,
   resyncRefreshTokenFromStore,
-  primeSessionCookie,
   authFetch,
   createAuthFetcher,
   login,
@@ -453,37 +452,6 @@ describe('resyncRefreshTokenFromStore', () => {
     vi.mocked(fetch).mockRejectedValue(new Error('network'));
     expect(await resyncRefreshTokenFromStore()).toBe(false);
     clearUserManager();
-  });
-});
-
-describe('primeSessionCookie', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal('fetch', vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('GETs the middleware-covered keepalive path with same-origin credentials', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-    await primeSessionCookie();
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/keepalive',
-      expect.objectContaining({ method: 'GET', credentials: 'same-origin' })
-    );
-  });
-
-  it('does not target an api/auth path (those are excluded from the middleware matcher)', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-    await primeSessionCookie();
-    const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string;
-    expect(calledUrl.startsWith('/api/auth')).toBe(false);
-  });
-
-  it('swallows errors (best-effort, not a correctness dependency)', async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error('offline'));
-    await expect(primeSessionCookie()).resolves.toBeUndefined();
   });
 });
 

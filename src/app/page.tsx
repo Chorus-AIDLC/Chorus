@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { authFetch, primeSessionCookie, resyncRefreshTokenFromStore } from "@/lib/auth-client";
+import { authFetch, resyncRefreshTokenFromStore } from "@/lib/auth-client";
 
 export default function Home() {
   const t = useTranslations();
@@ -23,25 +23,19 @@ export default function Home() {
         }
 
         // Check user session (works for both OIDC and default auth via cookie).
-        // The session probe (/api/auth/session) is NOT covered by the middleware
-        // matcher, so it can't refresh the cookie itself. When the page is reopened
-        // after a long idle (iOS bfcache/frozen-tab restore), the access cookie may
-        // have expired with no preceding middleware-covered request — so a first probe
-        // would 401 even though the refresh token is still valid. Prime the cookie via
-        // a matcher-covered request and retry once before deciding. Mirrors the contract
-        // in (dashboard)/layout.tsx checkSession and auth-context.fetchSession.
-        let userResponse = await authFetch("/api/auth/session");
+        // The probe (/api/session) is matcher-covered — the middleware refreshes an
+        // expiring cookie on the probe request itself. Retry once for transient
+        // refresh failures. Mirrors auth-context.fetchSession's contract.
+        let userResponse = await authFetch("/api/session");
         if (userResponse.status === 401) {
-          await primeSessionCookie();
-          userResponse = await authFetch("/api/auth/session");
+          userResponse = await authFetch("/api/session");
         }
         if (userResponse.status === 401) {
           // Last resort (idea 3bf0819c): an iOS cookie purge leaves the middleware
           // nothing to refresh — rebuild refresh materials from the localStorage
-          // store, then re-prime and re-probe once. No-op when nothing is stored.
+          // store, then re-probe once. No-op when nothing is stored.
           if (await resyncRefreshTokenFromStore()) {
-            await primeSessionCookie();
-            userResponse = await authFetch("/api/auth/session");
+            userResponse = await authFetch("/api/session");
           }
         }
 

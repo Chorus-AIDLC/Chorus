@@ -17,7 +17,6 @@ import {
   authFetch,
   syncTokenToCookie,
   resyncRefreshTokenFromStore,
-  primeSessionCookie,
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
@@ -72,23 +71,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fetch current session from backend.
   //
-  // The session probe (`/api/auth/session`) is NOT matcher-covered, so it can't refresh
-  // the cookie itself. A 401 therefore does NOT immediately mean the session is dead — it
-  // may just mean the access cookie expired while the page was backgrounded and no
-  // middleware-covered request has run yet (the iOS bfcache/resume case). So on a 401 we
-  // first `primeSessionCookie()` (a matcher-covered request that lets the middleware refresh
-  // the cookie from the refresh token) and retry the probe ONCE. Only if the retry is still
-  // 401 is the refresh token genuinely expired/revoked — a true re-login condition. A
-  // transient/network failure must NOT redirect (the next request retries), so it leaves
-  // session state untouched.
+  // The probe (`/api/session`) is matcher-covered, so the middleware refreshes an
+  // expiring/expired access cookie on the probe request itself — no separate priming
+  // request is needed. A single 401 still does NOT mean the session is dead: the
+  // middleware is lenient about transient refresh failures (IdP hiccup, iOS radio not
+  // up yet), so we retry ONCE (a second refresh chance), then attempt the localStorage
+  // refresh-token recovery (iOS cookie purge), and only a 401 that survives all of it
+  // is a true re-login condition. A transient/network failure must NOT redirect (the
+  // next request retries), so it leaves session state untouched.
   const fetchSession = useCallback(async () => {
     try {
-      let response = await authFetch("/api/auth/session");
+      let response = await authFetch("/api/session");
 
       if (response.status === 401) {
-        // Give the middleware a chance to refresh the cookie, then retry once.
-        await primeSessionCookie();
-        response = await authFetch("/api/auth/session");
+        // Retry once — a second middleware refresh chance for transient failures.
+        response = await authFetch("/api/session");
         if (response.status === 401) {
           // Last resort before declaring death (idea 3bf0819c): the double-401 may be
           // an iOS cookie purge whose early resync (init/revalidate) lost a race —
@@ -99,8 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // genuinely dead RT fails the IdP exchange during the prime — so true
           // session death still lands in handleSessionExpired right below.
           if (await resyncRefreshTokenFromStore()) {
-            await primeSessionCookie();
-            response = await authFetch("/api/auth/session");
+            response = await authFetch("/api/session");
           }
         }
         if (response.status === 401) {
@@ -146,14 +142,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // priming. No-op when there is no stored refresh token; a dead one still
         // fails at the IdP during the prime and bounces via the double-401 path.
         await resyncRefreshTokenFromStore();
-        // Prime the cookie via a matcher-covered request so the middleware refreshes it
-        // from the refresh token BEFORE the (non-matcher-covered) session probe below.
-        // Without this, the probe would 401 and bounce the user even though the refresh
-        // token is valid.
-        await primeSessionCookie();
       }
 
-      // Always resolve the session from the backend. `/api/auth/session` accepts
+      // Always resolve the session from the backend. `/api/session` accepts
       // BOTH an OIDC bearer token AND a session cookie (default-auth / superadmin
       // set `user_session` / `admin_session` with no OIDC user), so this populates
       // `user` for every login mode — not just OIDC. Previously this was gated
@@ -175,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // middleware silently refreshes the cookie on the next request, and getAuthContext
   // falls through to it. Treating expiry as logout (the previous behavior) bounced
   // users out while their cookie session was still valid. Session death is decided
-  // only by a true 401 from /api/auth/session (see fetchSession). The only handler we
+  // only by a true 401 from /api/session (see fetchSession). The only handler we
   // keep is `addUserLoaded`, which syncs the token oidc-client-ts already holds into
   // the cookie at initial login — it does not consume the refresh token.
   useEffect(() => {
@@ -288,7 +279,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (oidcUser && oidcUser.expired) {
           await resyncRefreshTokenFromStore();
         }
-        await primeSessionCookie();
         await fetchSessionRef.current();
       } finally {
         settleResumeRevalidation();
@@ -317,7 +307,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     try {
       // Clear backend session
-      await fetch("/api/auth/session", { method: "DELETE" });
+      await fetch("/api/session", { method: "DELETE" });
 
       // OIDC logout
       await authLogout();
