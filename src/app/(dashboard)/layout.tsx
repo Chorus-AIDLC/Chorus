@@ -177,11 +177,9 @@ export default function DashboardLayout({
 
   const checkSession = async () => {
     try {
-      // Use authFetch which adds OIDC Authorization header if available.
-      // For default auth users (no OIDC), cookies are still sent automatically
-      // and the server authenticates via the user_session httpOnly cookie.
-      // The probe (/api/session) is matcher-covered, so the middleware refreshes an
-      // expiring cookie on this very request; retry once for transient failures.
+      // Cookie-based probe (all login modes). /api/session is matcher-covered, so
+      // the middleware refreshes an expiring cookie on this very request; retry once
+      // for transient failures.
       let response = await authFetch("/api/session");
       if (response.status === 401) {
         response = await authFetch("/api/session");
