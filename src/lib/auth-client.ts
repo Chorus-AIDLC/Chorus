@@ -84,6 +84,40 @@ export async function syncTokenToCookie(accessToken: string, refreshToken?: stri
   }
 }
 
+// Session recovery after an iOS cookie purge (idea 3bf0819c).
+//
+// iOS Safari can purge ALL httpOnly auth cookies from a backgrounded tab, leaving the
+// middleware nothing to refresh — a guaranteed bounce — while oidc-client-ts's
+// localStorage user still holds a live refresh token (its ACCESS token is typically
+// expired by then, so the strict sync path won't run). This posts the stored pair in
+// `recoverSession` mode: the server verifies the access token's signature (bounded exp
+// tolerance; it identifies the company, it does not authenticate) and rebuilds the
+// refresh-materials cookies. The REAL authentication still happens when the middleware
+// exchanges the refresh token at the IdP on the next covered request — a dead refresh
+// token still bounces via the existing double-401 path.
+//
+// Returns true when a recovery request was made and accepted; false when there is
+// nothing to recover from (no stored user / no refresh token) or the server declined.
+export async function resyncRefreshTokenFromStore(): Promise<boolean> {
+  const user = await getOidcUser();
+  if (!user?.refresh_token || !user.access_token) return false;
+  try {
+    const response = await fetch("/api/auth/sync-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accessToken: user.access_token,
+        refreshToken: user.refresh_token,
+        recoverSession: true,
+      }),
+    });
+    return response.ok;
+  } catch {
+    // Best-effort — the subsequent prime/probe path decides the outcome either way.
+    return false;
+  }
+}
+
 // Prime the session cookie before a session probe.
 //
 // The session probe (`/api/auth/session`) is NOT covered by the middleware matcher

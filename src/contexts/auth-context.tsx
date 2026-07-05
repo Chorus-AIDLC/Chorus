@@ -16,6 +16,7 @@ import {
   getOidcUser,
   authFetch,
   syncTokenToCookie,
+  resyncRefreshTokenFromStore,
   primeSessionCookie,
   logout as authLogout,
   clearUserManager,
@@ -121,10 +122,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await syncTokenToCookie(oidcUser.access_token, oidcUser.refresh_token);
       } else {
         // No fresh OIDC user in localStorage (e.g. the page was restored from bfcache /
-        // a frozen tab and the access cookie may have expired in the background). Prime
-        // the cookie via a matcher-covered request so the middleware refreshes it from the
-        // refresh token BEFORE the (non-matcher-covered) session probe below. Without this,
-        // the probe would 401 and bounce the user even though the refresh token is valid.
+        // a frozen tab and the access cookie may have expired in the background).
+        //
+        // iOS cookie-purge recovery first (idea 3bf0819c): iOS can wipe ALL httpOnly
+        // auth cookies from a backgrounded tab, leaving the middleware NOTHING to
+        // refresh — the prime below would silently pass through and the probe would
+        // bounce, even though localStorage still holds a live refresh token. Rebuild
+        // the refresh-material cookies from the stored (expired-AT + RT) pair before
+        // priming. No-op when there is no stored refresh token; a dead one still
+        // fails at the IdP during the prime and bounces via the double-401 path.
+        await resyncRefreshTokenFromStore();
+        // Prime the cookie via a matcher-covered request so the middleware refreshes it
+        // from the refresh token BEFORE the (non-matcher-covered) session probe below.
+        // Without this, the probe would 401 and bounce the user even though the refresh
+        // token is valid.
         await primeSessionCookie();
       }
 
@@ -255,6 +266,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // released even if the probe throws.
       beginResumeRevalidation();
       try {
+        // iOS cookie-purge recovery (idea 3bf0819c): the resume may find ALL auth
+        // cookies gone (purged while backgrounded). Rebuild the refresh materials from
+        // the localStorage user BEFORE priming so the middleware has something to
+        // refresh. Cheap no-op when cookies are intact or no stored refresh token.
+        const oidcUser = await getOidcUser();
+        if (oidcUser && oidcUser.expired) {
+          await resyncRefreshTokenFromStore();
+        }
         await primeSessionCookie();
         await fetchSessionRef.current();
       } finally {

@@ -17,6 +17,7 @@ import {
   getAccessToken,
   isAuthenticated,
   syncTokenToCookie,
+  resyncRefreshTokenFromStore,
   primeSessionCookie,
   authFetch,
   createAuthFetcher,
@@ -370,6 +371,88 @@ describe('syncTokenToCookie', () => {
 
     expect(result).toBe(false);
     expect(console.error).toHaveBeenCalledWith('[Chorus] Failed to sync token to cookie');
+  });
+});
+
+describe('resyncRefreshTokenFromStore', () => {
+  beforeEach(() => {
+    clearUserManager();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts the stored expired-AT + RT pair in recoverSession mode', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
+
+    const result = await resyncRefreshTokenFromStore();
+
+    expect(fetch).toHaveBeenCalledWith('/api/auth/sync-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accessToken: 'access-token-xyz',
+        refreshToken: 'refresh-token-abc',
+        recoverSession: true,
+      }),
+    });
+    expect(result).toBe(true);
+    clearUserManager();
+  });
+
+  it('is a no-op (false, no fetch) when the stored user has no refresh token', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ refresh_token: undefined, expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
+    const result = await resyncRefreshTokenFromStore();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+    clearUserManager();
+  });
+
+  it('is a no-op (false, no fetch) when there is no stored user at all', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(null),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
+    const result = await resyncRefreshTokenFromStore();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+    clearUserManager();
+  });
+
+  it('returns false when the server declines and on network error', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
+    vi.mocked(fetch).mockResolvedValue({ ok: false } as any);
+    expect(await resyncRefreshTokenFromStore()).toBe(false);
+
+    vi.mocked(fetch).mockRejectedValue(new Error('network'));
+    expect(await resyncRefreshTokenFromStore()).toBe(false);
+    clearUserManager();
   });
 });
 

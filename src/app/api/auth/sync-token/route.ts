@@ -4,23 +4,75 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { errors } from "@/lib/api-response";
-import { verifyOidcAccessToken } from "@/lib/oidc-auth";
-import { getCookieOptions, getMaxAgeFromJwt, resolveRefreshCookieMaxAge } from "@/lib/cookie-utils";
+import { verifyOidcAccessToken, verifyOidcAccessTokenAllowExpired } from "@/lib/oidc-auth";
+import {
+  getCookieOptions,
+  getMaxAgeFromJwt,
+  resolveRefreshCookieMaxAge,
+  REFRESH_TOKEN_COOKIE_MAX_AGE,
+} from "@/lib/cookie-utils";
 import { tokenFingerprint } from "@/lib/token-fingerprint";
 import logger from "@/lib/logger";
 
 const syncLogger = logger.child({ module: "sync-token" });
 
 // POST /api/auth/sync-token
-// Body: { accessToken: string }
-// Verifies the token, then updates the oidc_access_token cookie
+// Body: { accessToken: string, refreshToken?: string, recoverSession?: boolean }
+//
+// Strict mode (default): verifies the access token (must be unexpired), then updates
+// the oidc_access_token cookie (+ refresh cookie when provided).
+//
+// Recovery mode (recoverSession: true — idea 3bf0819c): iOS purges httpOnly cookies
+// from backgrounded tabs, leaving the middleware with NOTHING to refresh (silent
+// no-cookie pass-through → guaranteed login bounce) even though localStorage still
+// holds a live refresh token. This mode rebuilds the middleware's refresh materials
+// from the localStorage copy: the access token is verified for signature/issuer with
+// a bounded exp tolerance (it identifies the company — it does NOT authenticate), a
+// refresh token is required, and the oidc_refresh_token + oidc_client_id +
+// oidc_issuer cookies are written (client_id/issuer from server-side company config,
+// never from the client). The EXPIRED access token is deliberately NOT written — the
+// next middleware-covered request performs the real refresh at the IdP, which is the
+// actual authentication gate; a dead refresh token still fails there and bounces.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { accessToken, refreshToken } = body;
+    const { accessToken, refreshToken, recoverSession } = body;
 
     if (!accessToken || typeof accessToken !== "string") {
       return errors.badRequest("Missing required field: accessToken");
+    }
+
+    if (recoverSession === true) {
+      if (!refreshToken || typeof refreshToken !== "string") {
+        return errors.badRequest("recoverSession requires refreshToken");
+      }
+      // Signature/issuer strictly verified; exp tolerated up to the refresh cookie's
+      // own lifetime — a token staler than any possible live refresh token is useless.
+      const staleAuth = await verifyOidcAccessTokenAllowExpired(accessToken, REFRESH_TOKEN_COOKIE_MAX_AGE);
+      if (!staleAuth) {
+        return errors.unauthorized("Invalid access token");
+      }
+      if (!staleAuth.clientId) {
+        return errors.badRequest("Company has no OIDC client configured");
+      }
+
+      const response = NextResponse.json({ success: true, data: { recovered: true } });
+      const refreshMaxAge = resolveRefreshCookieMaxAge();
+      response.cookies.set("oidc_refresh_token", refreshToken, getCookieOptions(refreshMaxAge));
+      response.cookies.set("oidc_client_id", staleAuth.clientId, getCookieOptions(REFRESH_TOKEN_COOKIE_MAX_AGE));
+      response.cookies.set("oidc_issuer", staleAuth.issuer, getCookieOptions(REFRESH_TOKEN_COOKIE_MAX_AGE));
+
+      syncLogger.info(
+        {
+          event: "sync_token",
+          mode: "recover",
+          incomingRtFp: await tokenFingerprint(refreshToken),
+          cookieRtFp: await tokenFingerprint(request.cookies.get("oidc_refresh_token")?.value),
+        },
+        "Session recovery: refresh materials rebuilt from client store"
+      );
+
+      return response;
     }
 
     // Verify the token is legitimate before storing it in a cookie

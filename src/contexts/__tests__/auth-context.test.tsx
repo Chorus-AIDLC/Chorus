@@ -15,12 +15,13 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor , act } from "@testing-library/react";
 
 const authFetch = vi.fn();
 const push = vi.fn();
 const getOidcUser = vi.fn().mockResolvedValue(null);
 const primeSessionCookie = vi.fn().mockResolvedValue(undefined);
+const resyncRefreshTokenFromStore = vi.fn().mockResolvedValue(false);
 
 // OIDC manager event registry captured per-test.
 let registeredEvents: Record<string, ((...a: unknown[]) => void) | undefined>;
@@ -30,6 +31,7 @@ vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, opts?: RequestInit) => authFetch(url, opts),
   getOidcUser: () => getOidcUser(),
   syncTokenToCookie: vi.fn().mockResolvedValue(true),
+  resyncRefreshTokenFromStore: () => resyncRefreshTokenFromStore(),
   primeSessionCookie: () => primeSessionCookie(),
   logout: vi.fn().mockResolvedValue(undefined),
   clearUserManager: vi.fn(),
@@ -92,6 +94,8 @@ beforeEach(() => {
   pingKeepalive.mockClear();
   primeSessionCookie.mockClear();
   primeSessionCookie.mockResolvedValue(undefined);
+  resyncRefreshTokenFromStore.mockClear();
+  resyncRefreshTokenFromStore.mockResolvedValue(false);
   manager = makeManager();
 });
 
@@ -276,5 +280,60 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
     // Let the cycle settle and confirm the burst did not stack a second prime.
     await new Promise((r) => setTimeout(r, 20));
     expect(primeSessionCookie).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AuthProvider iOS cookie-purge recovery (resync before prime)", () => {
+  it("attempts the localStorage RT resync BEFORE priming at init when the stored user is expired", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
+    const order: string[] = [];
+    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
+    primeSessionCookie.mockImplementation(async () => { order.push("prime"); });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(order[0]).toBe("resync");
+    expect(order.indexOf("prime")).toBeGreaterThan(order.indexOf("resync"));
+  });
+
+  it("resyncs before priming on resume revalidation when the stored user is expired", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    resyncRefreshTokenFromStore.mockClear();
+    primeSessionCookie.mockClear();
+    const order: string[] = [];
+    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
+    primeSessionCookie.mockImplementation(async () => { order.push("prime"); });
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(order[0]).toBe("resync");
+    expect(order.indexOf("prime")).toBeGreaterThan(order.indexOf("resync"));
+  });
+
+  it("does not resync on resume when the stored user is fresh (cookies intact fast-path)", async () => {
+    getOidcUser.mockResolvedValue({ expired: false, access_token: "at", refresh_token: "rt" });
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    resyncRefreshTokenFromStore.mockClear();
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
   });
 });

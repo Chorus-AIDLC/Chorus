@@ -98,6 +98,54 @@ export async function verifyOidcAccessToken(
   }
 }
 
+// Session-recovery verification (idea 3bf0819c): verify an OIDC access token whose
+// `exp` may be in the past, for the sync-token `recoverSession` mode. iOS purges
+// httpOnly cookies from backgrounded tabs; the only client-side copy of the session
+// is the oidc-client-ts localStorage user, whose ACCESS token is typically expired by
+// then. To rebuild the middleware's refresh materials we must identify the company
+// from a signature-valid (but stale) token. Signature, issuer, and token_use are
+// verified exactly as in verifyOidcAccessToken — only `exp` is tolerated, bounded by
+// `maxExpiredSeconds`. This NEVER authenticates a request: the caller uses the result
+// solely to decide which company's client_id/issuer cookies to write; actual session
+// authentication still requires the middleware to exchange the refresh token at the
+// IdP, which is the real gate.
+export async function verifyOidcAccessTokenAllowExpired(
+  token: string,
+  maxExpiredSeconds: number
+): Promise<{ companyUuid: string; issuer: string; clientId: string | null } | null> {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+
+    const payloadJson = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+    const issuer = payloadJson.iss;
+    if (!issuer) return null;
+
+    const jwks = getJwks(issuer);
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer,
+      // jose's clockTolerance stretches the exp check without weakening the signature
+      // or issuer verification.
+      clockTolerance: maxExpiredSeconds,
+    });
+
+    const oidcPayload = payload as OidcTokenPayload;
+    if (oidcPayload.token_use && oidcPayload.token_use !== "access") {
+      return null;
+    }
+
+    const company = await prisma.company.findFirst({
+      where: { oidcEnabled: true, oidcIssuer: issuer },
+    });
+    if (!company) return null;
+
+    return { companyUuid: company.uuid, issuer, clientId: company.oidcClientId };
+  } catch (error) {
+    logger.error({ err: error }, "OIDC stale-token verification failed");
+    return null;
+  }
+}
+
 // Check if a token looks like an OIDC JWT (for routing purposes)
 export function isOidcToken(token: string): boolean {
   // OIDC tokens are JWTs, API keys start with "cho_"
