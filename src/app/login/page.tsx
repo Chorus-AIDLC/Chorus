@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createUserManager, storeOidcConfig, type OidcConfig } from "@/lib/oidc";
-import { authFetch, primeSessionCookie } from "@/lib/auth-client";
+import { authFetch, resyncRefreshTokenFromStore } from "@/lib/auth-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,10 +82,18 @@ export default function LoginPage() {
           return;
         }
 
-        let res = await authFetch("/api/auth/session");
+        let res = await authFetch("/api/session");
         if (res.status === 401) {
-          await primeSessionCookie();
-          res = await authFetch("/api/auth/session");
+          res = await authFetch("/api/session");
+        }
+        if (res.status === 401) {
+          // Last resort (idea 3bf0819c): a user bounced here by an iOS cookie purge
+          // still has a live refresh token in localStorage. Rebuild the refresh
+          // materials and re-probe — a recovered session is sent straight back to
+          // /projects below instead of being shown the login form.
+          if (await resyncRefreshTokenFromStore()) {
+            res = await authFetch("/api/session");
+          }
         }
         if (!cancelled && res.ok) {
           const data = await res.json().catch(() => ({}));

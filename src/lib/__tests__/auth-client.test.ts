@@ -14,12 +14,8 @@ import {
   initUserManager,
   clearUserManager,
   getOidcUser,
-  getAccessToken,
-  isAuthenticated,
-  syncTokenToCookie,
-  primeSessionCookie,
+  resyncRefreshTokenFromStore,
   authFetch,
-  createAuthFetcher,
   login,
   logout,
 } from '../auth-client';
@@ -214,193 +210,84 @@ describe('getOidcUser', () => {
   });
 });
 
-describe('getAccessToken', () => {
+describe('resyncRefreshTokenFromStore', () => {
   beforeEach(() => {
     clearUserManager();
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('returns null when user does not exist', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(null),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await getAccessToken();
-
-    expect(result).toBeNull();
-  });
-
-  it('returns token from non-expired user', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await getAccessToken();
-
-    expect(result).toBe('access-token-xyz');
-    expect(mockManager.signinSilent).not.toHaveBeenCalled();
-  });
-
-  it('does NOT call signinSilent for an expired user; returns the (stale) token', async () => {
-    // Single refresh authority: the frontend never renews. It returns the expired
-    // token so the request still fires — the Edge middleware refreshes the cookie for
-    // that request and getAuthContext falls through to the refreshed cookie. Calling
-    // signinSilent here would re-race the rotating refresh token (the root-cause bug).
-    vi.stubGlobal('window', { localStorage: {} });
-    const expiredUser = createMockUser({ expired: true, access_token: 'stale-token' });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(expiredUser),
-      signinSilent: vi.fn(),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await getAccessToken();
-
-    expect(mockManager.signinSilent).not.toHaveBeenCalled();
-    expect(result).toBe('stale-token');
-  });
-
-  it('returns null when no user (no manager)', async () => {
-    // This edge case shouldn't happen in practice, but test defensive code
-    const result = await getAccessToken();
-    expect(result).toBeNull();
-  });
-});
-
-describe('isAuthenticated', () => {
-  beforeEach(() => {
-    clearUserManager();
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('returns true when user exists and not expired', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await isAuthenticated();
-
-    expect(result).toBe(true);
-  });
-
-  it('returns false when user does not exist', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(null),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await isAuthenticated();
-
-    expect(result).toBe(false);
-  });
-
-  it('returns false when user is expired', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const expiredUser = createMockUser({ expired: true });
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(expiredUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const result = await isAuthenticated();
-
-    expect(result).toBe(false);
-  });
-});
-
-describe('syncTokenToCookie', () => {
-  beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', vi.fn());
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('calls /api/auth/sync-token and returns true on success', async () => {
+  it('posts the stored expired-AT + RT pair in recoverSession mode', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
 
-    const result = await syncTokenToCookie('access-token', 'refresh-token');
+    const result = await resyncRefreshTokenFromStore();
 
     expect(fetch).toHaveBeenCalledWith('/api/auth/sync-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accessToken: 'access-token', refreshToken: 'refresh-token' }),
+      body: JSON.stringify({
+        accessToken: 'access-token-xyz',
+        refreshToken: 'refresh-token-abc',
+      }),
     });
     expect(result).toBe(true);
+    clearUserManager();
   });
 
-  it('returns false on non-ok response', async () => {
+  it('is a no-op (false, no fetch) when the stored user has no refresh token', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ refresh_token: undefined, expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
+    const result = await resyncRefreshTokenFromStore();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+    clearUserManager();
+  });
+
+  it('is a no-op (false, no fetch) when there is no stored user at all', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(null),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
+    const result = await resyncRefreshTokenFromStore();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+    clearUserManager();
+  });
+
+  it('returns false when the server declines and on network error', async () => {
+    vi.stubGlobal('window', { localStorage: {} });
+    const mockManager = createMockUserManager({
+      getUser: vi.fn().mockResolvedValue(createMockUser({ expired: true })),
+    });
+    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
+    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
+
     vi.mocked(fetch).mockResolvedValue({ ok: false } as any);
+    expect(await resyncRefreshTokenFromStore()).toBe(false);
 
-    const result = await syncTokenToCookie('access-token');
-
-    expect(result).toBe(false);
-  });
-
-  it('returns false on error', async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
-
-    const result = await syncTokenToCookie('access-token');
-
-    expect(result).toBe(false);
-    expect(console.error).toHaveBeenCalledWith('[Chorus] Failed to sync token to cookie');
-  });
-});
-
-describe('primeSessionCookie', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal('fetch', vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('GETs the middleware-covered keepalive path with same-origin credentials', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-    await primeSessionCookie();
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/keepalive',
-      expect.objectContaining({ method: 'GET', credentials: 'same-origin' })
-    );
-  });
-
-  it('does not target an api/auth path (those are excluded from the middleware matcher)', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-    await primeSessionCookie();
-    const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string;
-    expect(calledUrl.startsWith('/api/auth')).toBe(false);
-  });
-
-  it('swallows errors (best-effort, not a correctness dependency)', async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error('offline'));
-    await expect(primeSessionCookie()).resolves.toBeUndefined();
+    vi.mocked(fetch).mockRejectedValue(new Error('network'));
+    expect(await resyncRefreshTokenFromStore()).toBe(false);
+    clearUserManager();
   });
 });
 
@@ -415,42 +302,35 @@ describe('authFetch', () => {
     vi.unstubAllGlobals();
   });
 
-  it('adds Bearer header with access token', async () => {
+  it('is cookie-based: sends same-origin credentials and NO Authorization header', async () => {
     vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
     const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
+      getUser: vi.fn().mockResolvedValue(createMockUser()),
     });
     vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
     vi.mocked(fetch).mockResolvedValue({ status: 200, ok: true } as any);
 
     await authFetch('/api/test');
 
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/test',
-      expect.objectContaining({
-        headers: expect.any(Headers),
-      })
-    );
-    const headers = vi.mocked(fetch).mock.calls[0][1]?.headers as Headers;
-    expect(headers.get('Authorization')).toBe('Bearer access-token-xyz');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe('/api/test');
+    expect((opts as RequestInit).credentials).toBe('same-origin');
+    const headers = new Headers((opts as RequestInit).headers);
+    expect(headers.get('Authorization')).toBeNull();
+    // The localStorage token is never read for requests.
+    expect(mockManager.getUser).not.toHaveBeenCalled();
   });
 
-  it('does NOT silent-renew on 401 for an OIDC user; surfaces the 401', async () => {
-    // OIDC 401 survives the middleware's cookie-refresh chance ⇒ true session death.
-    // authFetch must NOT call signinSilent (single refresh authority) and must surface
-    // the original 401 to the single redirect site (auth-context).
+  it('surfaces a 401 without any retry or silent renew (verdict logic owns recovery)', async () => {
     vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
     const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
+      getUser: vi.fn().mockResolvedValue(createMockUser()),
       signinSilent: vi.fn(),
     });
     vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
     vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
     const response401 = { status: 401, ok: false };
     vi.mocked(fetch).mockResolvedValue(response401 as any);
 
@@ -458,111 +338,19 @@ describe('authFetch', () => {
 
     expect(result).toBe(response401);
     expect(mockManager.signinSilent).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledTimes(1); // no retry
-  });
-
-  it('retries on 401 via cookie refresh when no OIDC manager', async () => {
-    // No window stub → getUserManager() returns null (default auth user)
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ status: 401, ok: false } as any) // initial request
-      .mockResolvedValueOnce({ status: 200, ok: true } as any)  // /api/auth/refresh
-      .mockResolvedValueOnce({ status: 200, ok: true } as any); // retry
-
-    const result = await authFetch('/api/test');
-
-    expect(result.status).toBe(200);
-    expect(fetch).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(fetch).mock.calls[1][0]).toBe('/api/auth/refresh');
-  });
-
-  it('returns original 401 when cookie refresh fails', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ status: 401, ok: false } as any)
-      .mockResolvedValueOnce({ status: 401, ok: false } as any); // refresh failed
-
-    const result = await authFetch('/api/test');
-
-    expect(result.status).toBe(401);
-    expect(fetch).toHaveBeenCalledTimes(2);
-  });
-
-  it('returns original 401 when cookie refresh throws', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ status: 401, ok: false } as any)
-      .mockRejectedValueOnce(new Error('Network error')); // refresh throws
-
-    const result = await authFetch('/api/test');
-
-    expect(result.status).toBe(401);
-  });
-
-  it('does not retry on non-401 errors', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    vi.mocked(fetch).mockResolvedValue({ status: 403, ok: false } as any);
-
-    await authFetch('/api/test');
-
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-});
 
-describe('createAuthFetcher', () => {
-  beforeEach(() => {
-    clearUserManager();
-    vi.clearAllMocks();
-    vi.stubGlobal('fetch', vi.fn());
-  });
+  it('passes through request options', async () => {
+    vi.mocked(fetch).mockResolvedValue({ status: 200, ok: true } as any);
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+    await authFetch('/api/test', { method: 'POST', body: '{}' });
 
-  it('returns fetcher function that throws on non-ok', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    vi.mocked(fetch).mockResolvedValue({ status: 404, ok: false } as any);
-
-    const fetcher = createAuthFetcher();
-
-    await expect(fetcher('/api/test')).rejects.toThrow('Fetch failed');
-  });
-
-  it('returns JSON on successful fetch', async () => {
-    vi.stubGlobal('window', { localStorage: {} });
-    const mockUser = createMockUser();
-    const mockManager = createMockUserManager({
-      getUser: vi.fn().mockResolvedValue(mockUser),
-    });
-    vi.mocked(getStoredOidcConfig).mockReturnValue(mockConfig);
-    vi.mocked(createUserManager).mockReturnValue(mockManager as any);
-
-    const mockData = { success: true, data: 'test' };
-    vi.mocked(fetch).mockResolvedValue({
-      status: 200,
-      ok: true,
-      json: async () => mockData,
-    } as any);
-
-    const fetcher = createAuthFetcher();
-    const result = await fetcher('/api/test');
-
-    expect(result).toEqual(mockData);
+    const [, opts] = vi.mocked(fetch).mock.calls[0];
+    expect((opts as RequestInit).method).toBe('POST');
+    expect((opts as RequestInit).body).toBe('{}');
   });
 });
-
 describe('login', () => {
   beforeEach(() => {
     clearUserManager();

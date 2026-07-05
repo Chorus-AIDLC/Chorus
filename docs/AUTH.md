@@ -146,16 +146,18 @@ When both are set, `isDefaultAuthEnabled()` returns true and the login page show
 1. User enters email + password
 2. `POST /api/auth/default-login` verifies email matches `DEFAULT_USER` (case-insensitive) and password matches `DEFAULT_PASSWORD`
 3. `findOrCreateDefaultUser()` auto-provisions company (from email domain) and user in the database
-4. Creates two self-signed HS256 JWTs:
+4. Creates one self-signed HS256 JWT:
 
 | Token | Cookie name | Expiry | Contents |
 |---|---|---|---|
-| Access token | `user_session` | 1 hour | Full user payload (`userUuid`, `companyUuid`, `email`, `name`, `oidcSub`) |
-| Refresh token | `user_refresh` | 7 days | Minimal payload (`userUuid`, `companyUuid`) |
+| Session token | `user_session` | 365 days (local-dev longevity) | Full user payload (`userUuid`, `companyUuid`, `email`, `name`, `oidcSub`) |
 
-5. Sets both as HTTP-only cookies
+5. Sets it as an HTTP-only cookie
 
-**Auto-refresh**: The Edge Middleware (`src/middleware.ts`) detects when `user_session` is within 10 seconds of expiry and uses `user_refresh` to sign a new access token locally (no external calls needed). See [Token Lifecycle](#4-token-lifecycle--auto-refresh) for details.
+**No refresh arm**: default auth is a single long-lived JWT. There is no `user_refresh`
+token and no middleware refresh branch for it (that machinery existed historically but had
+no producer and was deleted in the auth slim-down, idea 3bf0819c). When the token
+eventually expires, the session probe's verdict simply routes to re-login.
 
 ### 2.4 Super Admin
 
@@ -215,40 +217,33 @@ Token refresh is handled at two layers:
 
 ### Layer 1: Edge Middleware (`src/middleware.ts`)
 
-The middleware runs on every request (except static assets, `/login`, `/api/auth/*`) and handles token refresh transparently before requests reach Server Components.
+The middleware runs on every matcher-covered request (everything except static assets, `/login`, `/api/auth/*`) and refreshes OIDC tokens transparently before requests reach Server Components. It is the single renewal authority.
 
 **OIDC users**:
 1. Decode `oidc_access_token` cookie, check `exp` claim
 2. If > 30 seconds until expiry → pass through
-3. If expiring → call external token endpoint with `oidc_refresh_token` + `oidc_client_id`
-4. Write new access token to both request and response cookies
-5. If refresh fails → clear all cookies, redirect to `/login`
+3. If expiring/expired (or the access cookie is gone but a refresh cookie exists) → call the discovered token endpoint with `oidc_refresh_token` + `oidc_client_id`
+4. Write the new access token to both request and response cookies
+5. **If refresh fails → pass the request through untouched.** The middleware NEVER clears cookies or redirects: a single invocation cannot distinguish a transient failure from a dead refresh token, so session death is decided exclusively by the client probe verdict (see Layer 2). Every attempt emits a structured `oidc_refresh` log line (outcome, path, token fingerprint).
 
-**Default Auth users**:
-1. Decode `user_session` cookie, check `exp` claim
-2. If > 10 seconds until expiry → pass through
-3. If expiring → verify `user_refresh` cookie using `NEXTAUTH_SECRET`
-4. Re-sign a new access token with the same payload using `jose` (no external calls)
-5. Write new `user_session` to both request and response cookies
-6. Log: `[middleware] User session refreshed for <email>`
+**Default Auth users**: no middleware involvement — the `user_session` JWT is long-lived and self-contained.
 
-### Layer 2: Frontend fallback (`src/app/(dashboard)/layout.tsx`)
+### Layer 2: Client probe verdict (`src/contexts/auth-context.tsx`)
 
-On initial page load, `checkSession()` calls `GET /api/auth/session`. If it returns 401, it tries `POST /api/auth/refresh` (which verifies `user_refresh` cookie server-side and issues new tokens). This is a safety net for cases where the middleware refresh didn't fire (e.g., the user's first request after a long idle period).
+AuthProvider's `fetchSession()` probes `GET /api/session`. The probe is middleware-matcher-covered, so an expiring/expired access cookie is refreshed on the probe request itself. The verdict chain: probe → retry once (second refresh chance for transient failures) → on a second 401, attempt localStorage refresh-token recovery via `POST /api/auth/sync-token` (rebuilds the refresh-material cookies after an iOS cookie purge) → final probe → only then redirect to `/login`. The dashboard layout, root page, and login page consume the same contract; AuthProvider is the single session-death authority.
 
-### Layer 3: Client-side OIDC (`src/lib/auth-client.ts`)
+### Layer 3: Recovery endpoint (`/api/auth/sync-token`)
 
-For OIDC users, `authFetch()` wraps all API calls. On 401, it attempts `signinSilent()` via `oidc-client-ts` to refresh the token client-side, then retries the request.
+The only client→cookie write path. iOS Safari purges httpOnly cookies from backgrounded tabs while `oidc-client-ts`'s localStorage user survives; the recovery posts the stored (expired access token + live refresh token) pair, the server verifies the access token's **signature** (bounded exp tolerance — it identifies the company, it never authenticates), and rebuilds `oidc_refresh_token`/`oidc_client_id`/`oidc_issuer`. Real authentication still happens at the IdP on the next middleware refresh. `authFetch()` itself is a plain same-origin cookie fetch — no Bearer header, no silent renew, no retries.
 
 ### Token expiry summary
 
 | Token | Expiry | Refresh mechanism |
 |---|---|---|
 | OIDC access token | ~1 hour (provider-dependent) | Middleware (external token endpoint) |
-| OIDC refresh token | ~30 days (provider-dependent) | N/A (used to refresh access token) |
-| Default Auth access token (`user_session`) | 1 hour | Middleware (local JWT re-sign) |
-| Default Auth refresh token (`user_refresh`) | 7 days | N/A (used to refresh access token) |
-| Super Admin session (`admin_session`) | 24 hours | `POST /api/auth/refresh` |
+| OIDC refresh token | ~30 days (provider-dependent) | N/A (used to refresh access token; recoverable from localStorage after an iOS cookie purge) |
+| Default Auth session (`user_session`) | 365 days | None (single long-lived JWT; expiry → re-login) |
+| Super Admin session (`admin_session`) | 24 hours | None (expiry → re-login) |
 | API Key | Configurable (or no expiry) | N/A (long-lived) |
 
 ---
@@ -296,14 +291,13 @@ This ensures data isolation between companies. Super Admin is the only context t
 | `src/lib/oidc.ts` | OIDC client configuration, `UserManager` factory |
 | `src/lib/auth-client.ts` | Client-side `authFetch()`, OIDC silent renew, token sync |
 | `src/lib/default-auth.ts` | `isDefaultAuthEnabled()`, `verifyDefaultPassword()` |
-| `src/lib/user-session.ts` | JWT creation/verification for `user_session`/`user_refresh` tokens, cookie helpers |
+| `src/lib/user-session.ts` | JWT creation/verification for the `user_session` token, cookie helpers |
 | `src/lib/super-admin.ts` | Super Admin email/password verification |
 | `src/middleware.ts` | Edge Middleware — auto-refresh for both OIDC and Default Auth tokens |
 | `src/app/api/auth/default-login/route.ts` | Default Auth login endpoint |
 | `src/app/api/auth/callback/route.ts` | OIDC callback — sets cookies after provider redirect |
 | `src/app/api/auth/identify/route.ts` | Email identification — routes to OIDC or Default Auth |
-| `src/app/api/auth/refresh/route.ts` | Token refresh endpoint (server-side, for `user_refresh` cookie) |
-| `src/app/api/auth/session/route.ts` | Session check endpoint |
+| `src/app/api/session/route.ts` | Session probe endpoint (matcher-covered so it refreshes its own cookie) |
 | `src/app/api/admin/login/route.ts` | Super Admin login endpoint |
 | `src/app/login/page.tsx` | Login page UI (email input, password form, OIDC redirect) |
 | `src/app/login/callback/page.tsx` | OIDC callback page (code exchange) |

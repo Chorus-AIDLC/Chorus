@@ -36,8 +36,6 @@ export function createOidcSettings(config: OidcConfig): UserManagerSettings {
     // race to invalid_grant. oidc-client-ts is used here only for the initial
     // authorization-code exchange, not for renewal.
     automaticSilentRenew: false,
-    silent_redirect_uri: `${baseUrl}/login/silent-refresh`,
-    accessTokenExpiringNotificationTimeInSeconds: 60, // Notify 60s before expiry
     // PKCE is enabled by default in oidc-client-ts
     // Use localStorage for user/token storage (persistent across tabs/sessions)
     userStore,

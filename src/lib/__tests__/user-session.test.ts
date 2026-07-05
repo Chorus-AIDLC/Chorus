@@ -34,19 +34,11 @@ vi.mock('@/lib/cookie-utils', () => ({
 
 import {
   createUserAccessToken,
-  createUserRefreshToken,
   verifyAccessToken,
-  verifyRefreshToken,
-  extractBearerToken,
   getUserSessionFromRequest,
-  getFullSessionFromRequest,
-  setUserSessionCookies,
   clearUserSessionCookies,
-  getRefreshTokenFromRequest,
   ACCESS_TOKEN_EXPIRY,
   ACCESS_TOKEN_MAX_AGE,
-  USER_SESSION_COOKIE,
-  USER_REFRESH_COOKIE,
   UserSessionPayload,
 } from '../user-session';
 import { SignJWT, jwtVerify } from 'jose';
@@ -110,66 +102,6 @@ describe('createUserAccessToken', () => {
     };
 
     await expect(createUserAccessToken(payload)).rejects.toThrow('NEXTAUTH_SECRET is not set');
-  });
-});
-
-describe('createUserRefreshToken', () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-    process.env.NEXTAUTH_SECRET = 'test-secret';
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  it('returns JWT string with tokenType refresh', async () => {
-    const payload: UserSessionPayload = {
-      type: 'user',
-      userUuid: 'user-123',
-      companyUuid: 'company-456',
-      email: 'user@example.com',
-      oidcSub: 'oidc-sub-123',
-    };
-
-    const token = await createUserRefreshToken(payload);
-
-    expect(token).toBe('mock-jwt-token');
-    expect(mockSign).toHaveBeenCalled();
-  });
-
-  it('only includes userUuid and companyUuid in refresh token', async () => {
-    const payload: UserSessionPayload = {
-      type: 'user',
-      userUuid: 'user-123',
-      companyUuid: 'company-456',
-      email: 'user@example.com',
-      name: 'Test User',
-      oidcSub: 'oidc-sub-123',
-      oidcAccessToken: 'oidc-access',
-      oidcRefreshToken: 'oidc-refresh',
-    };
-
-    const token = await createUserRefreshToken(payload);
-
-    expect(token).toBe('mock-jwt-token');
-    expect(mockSign).toHaveBeenCalled();
-  });
-
-  it('throws when NEXTAUTH_SECRET is missing', async () => {
-    delete process.env.NEXTAUTH_SECRET;
-    const payload: UserSessionPayload = {
-      type: 'user',
-      userUuid: 'user-123',
-      companyUuid: 'company-456',
-      email: 'user@example.com',
-      oidcSub: 'oidc-sub-123',
-    };
-
-    await expect(createUserRefreshToken(payload)).rejects.toThrow('NEXTAUTH_SECRET is not set');
   });
 });
 
@@ -270,87 +202,6 @@ describe('verifyAccessToken', () => {
     const result = await verifyAccessToken('invalid-token');
 
     expect(result).toBeNull();
-  });
-});
-
-describe('verifyRefreshToken', () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-    process.env.NEXTAUTH_SECRET = 'test-secret';
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  it('returns minimal payload for valid refresh token', async () => {
-    vi.mocked(jwtVerify).mockResolvedValue({
-      payload: {
-        tokenType: 'refresh',
-        userUuid: 'user-123',
-        companyUuid: 'company-456',
-      },
-    } as any);
-
-    const result = await verifyRefreshToken('valid-refresh-token');
-
-    expect(result).toEqual({
-      userUuid: 'user-123',
-      companyUuid: 'company-456',
-    });
-  });
-
-  it('returns null when tokenType is not refresh', async () => {
-    vi.mocked(jwtVerify).mockResolvedValue({
-      payload: {
-        tokenType: 'access',
-        userUuid: 'user-123',
-        companyUuid: 'company-456',
-      },
-    } as any);
-
-    const result = await verifyRefreshToken('access-token');
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null when jwtVerify throws', async () => {
-    vi.mocked(jwtVerify).mockRejectedValue(new Error('Invalid token'));
-
-    const result = await verifyRefreshToken('invalid-token');
-
-    expect(result).toBeNull();
-  });
-});
-
-describe('extractBearerToken', () => {
-  it('extracts token from Bearer header', () => {
-    expect(extractBearerToken('Bearer my-token-123')).toBe('my-token-123');
-  });
-
-  it('is case-insensitive for Bearer keyword', () => {
-    expect(extractBearerToken('bearer my-token-123')).toBe('my-token-123');
-    expect(extractBearerToken('BEARER my-token-123')).toBe('my-token-123');
-  });
-
-  it('returns null for null header', () => {
-    expect(extractBearerToken(null)).toBeNull();
-  });
-
-  it('returns null for empty string', () => {
-    expect(extractBearerToken('')).toBeNull();
-  });
-
-  it('returns null for non-Bearer auth schemes', () => {
-    expect(extractBearerToken('Basic dXNlcjpwYXNz')).toBeNull();
-  });
-
-  it('returns null for malformed Bearer header', () => {
-    expect(extractBearerToken('Bearer')).toBeNull();
-    expect(extractBearerToken('Bearer ')).toBeNull();
   });
 });
 
@@ -487,123 +338,6 @@ describe('getUserSessionFromRequest', () => {
   });
 });
 
-describe('getFullSessionFromRequest', () => {
-  const originalEnv = process.env;
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-    process.env.NEXTAUTH_SECRET = 'test-secret';
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
-  function makeRequest(cookie?: string) {
-    return {
-      cookies: {
-        get: (name: string) => (cookie && name === 'user_session' ? { value: cookie } : undefined),
-      },
-    } as unknown as NextRequest;
-  }
-
-  it('returns full UserSessionPayload when cookie is present', async () => {
-    vi.mocked(jwtVerify).mockResolvedValue({
-      payload: {
-        type: 'user',
-        tokenType: 'access',
-        userUuid: 'user-123',
-        companyUuid: 'company-456',
-        email: 'user@example.com',
-        name: 'Test User',
-        oidcSub: 'oidc-sub-123',
-        oidcAccessToken: 'oidc-access',
-        oidcRefreshToken: 'oidc-refresh',
-        oidcExpiresAt: 1234567890,
-      },
-    } as any);
-
-    const request = makeRequest('valid-token');
-    const result = await getFullSessionFromRequest(request);
-
-    expect(result).toEqual({
-      type: 'user',
-      userUuid: 'user-123',
-      companyUuid: 'company-456',
-      email: 'user@example.com',
-      name: 'Test User',
-      oidcSub: 'oidc-sub-123',
-      oidcAccessToken: 'oidc-access',
-      oidcRefreshToken: 'oidc-refresh',
-      oidcExpiresAt: 1234567890,
-    });
-  });
-
-  it('returns null when cookie is not present', async () => {
-    const request = makeRequest();
-    const result = await getFullSessionFromRequest(request);
-
-    expect(result).toBeNull();
-  });
-
-  it('returns null when token is invalid', async () => {
-    vi.mocked(jwtVerify).mockRejectedValue(new Error('Invalid token'));
-
-    const request = makeRequest('invalid-token');
-    const result = await getFullSessionFromRequest(request);
-
-    expect(result).toBeNull();
-  });
-});
-
-describe('setUserSessionCookies', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('sets both access and refresh cookies', () => {
-    const mockSetCookie = vi.fn();
-    const response = {
-      cookies: {
-        set: mockSetCookie,
-      },
-    } as unknown as NextResponse;
-
-    setUserSessionCookies(response, 'access-token', 'refresh-token');
-
-    expect(mockSetCookie).toHaveBeenCalledTimes(2);
-    expect(mockSetCookie).toHaveBeenCalledWith('user_session', 'access-token', {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60,
-    });
-    expect(mockSetCookie).toHaveBeenCalledWith('user_refresh', 'refresh-token', {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60,
-    });
-  });
-
-  it('calls getCookieOptions with correct maxAge values', () => {
-    const mockSetCookie = vi.fn();
-    const response = {
-      cookies: {
-        set: mockSetCookie,
-      },
-    } as unknown as NextResponse;
-
-    setUserSessionCookies(response, 'access-token', 'refresh-token');
-
-    expect(getCookieOptions).toHaveBeenCalledWith(60 * 60); // ACCESS_TOKEN_MAX_AGE
-    expect(getCookieOptions).toHaveBeenCalledWith(7 * 24 * 60 * 60); // 7 days
-  });
-});
-
 describe('clearUserSessionCookies', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -637,35 +371,9 @@ describe('clearUserSessionCookies', () => {
   });
 });
 
-describe('getRefreshTokenFromRequest', () => {
-  function makeRequest(cookie?: string) {
-    return {
-      cookies: {
-        get: (name: string) => (cookie && name === 'user_refresh' ? { value: cookie } : undefined),
-      },
-    } as unknown as NextRequest;
-  }
-
-  it('returns refresh token from cookie', () => {
-    const request = makeRequest('refresh-token');
-    const result = getRefreshTokenFromRequest(request);
-
-    expect(result).toBe('refresh-token');
-  });
-
-  it('returns null when cookie is not present', () => {
-    const request = makeRequest();
-    const result = getRefreshTokenFromRequest(request);
-
-    expect(result).toBeNull();
-  });
-});
-
 describe('constants', () => {
   it('exports correct constants', () => {
     expect(ACCESS_TOKEN_EXPIRY).toBe('1h');
     expect(ACCESS_TOKEN_MAX_AGE).toBe(60 * 60);
-    expect(USER_SESSION_COOKIE).toBe('user_session');
-    expect(USER_REFRESH_COOKIE).toBe('user_refresh');
   });
 });
