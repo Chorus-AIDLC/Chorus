@@ -1,42 +1,29 @@
 # sse-resume-timing Specification
 
 ## Purpose
-TBD - created by archiving change fix-ios-resume-login-bounce. Update Purpose after archive.
+Records the retirement of the resume gate. The gate existed to suppress the burst of
+concurrent middleware-covered requests fired when a backgrounded tab becomes visible,
+under the hypothesis that Cognito refresh-token rotation made concurrent refreshes
+lethal (race losers get `invalid_grant`). Production fingerprint evidence disproved the
+hypothesis: rotation is OFF for this deployment (`RefreshTokenRotation: null`), and
+concurrent refreshes of the same refresh token all succeed. The gate was therefore
+deleted in the auth slim-down (idea 3bf0819c) — visibility handlers reconnect and fetch
+immediately.
+
 ## Requirements
-### Requirement: SSE reconnects after tab resume wait for the auth resume gate
+### Requirement: Resume-time request bursts are tolerated, with a rotation precondition on record
 
-Client contexts that react to `visibilitychange` to visible (notification, realtime, and agent-presence) SHALL defer their entire resume-triggered handler work — the EventSource reconnect AND every accompanying network-triggering action in the same handler, including the notification unread-count fetch, the agent-presence executions re-fetch, and the realtime catch-up notifications that fan out into consumer re-fetches — until the auth resume gate settles: the gate is armed by the tab-resume signal, held open while the auth context's resume revalidation (cookie prime plus session probe) is in flight, and settled when that revalidation completes or a hard timeout elapses, whichever comes first. Only the visibility-resume path is gated; initial-mount connections and fetches SHALL proceed immediately. This SHALL bound the number of near-simultaneous middleware-covered requests carrying an expired access token after a resume, so at most one request races to refresh the token instead of one per stream or fetch.
+Client contexts that react to `visibilitychange` to visible (notification, realtime, and agent-presence) SHALL reconnect their streams and issue their accompanying fetches immediately, without deferring on any shared gate. This is safe because the deployment's IdP does not rotate refresh tokens: concurrent middleware refreshes of the same refresh token all succeed, and the middleware's lenient-failure contract (see the oidc-session-refresh spec) absorbs any transient rejection without destroying session state. **Precondition on record:** if refresh-token rotation is ever enabled at the IdP, resume burst suppression MUST be reintroduced before or with that change — under rotation, concurrent refreshes produce `invalid_grant` for every race loser and can trip IdP reuse detection, revoking the whole token family.
 
-#### Scenario: Resume reconnects are deferred until revalidation settles
+#### Scenario: Resume reconnects fire immediately
 
-- **WHEN** a backgrounded tab with an expired access token becomes visible and the auth
-  context begins its resume revalidation
-- **THEN** the SSE contexts do not open new EventSource connections until the revalidation
-  settles, after which they reconnect using the refreshed cookie
+- **WHEN** a backgrounded tab becomes visible and the SSE contexts' visibility handlers run
+- **THEN** stream reconnects and their accompanying fetches are issued without waiting on
+  any auth-revalidation gate, and any refresh contention is absorbed by the middleware's
+  lenient-failure contract
 
-#### Scenario: Accompanying resume fetches are gated with the reconnect
+#### Scenario: Rotation re-enablement requires burst suppression
 
-- **WHEN** a visibility-resume handler would, alongside its EventSource reconnect, fetch
-  the notification unread count, re-fetch the presence executions aggregate, or emit
-  realtime catch-up notifications that trigger consumer re-fetches
-- **THEN** none of those requests are issued before the resume gate settles; they run
-  after the gate releases, in their existing order
-
-#### Scenario: Gate timeout prevents deadlock
-
-- **WHEN** the resume gate is armed but the revalidation never settles (auth provider
-  absent, unmounted, or hung)
-- **THEN** waiting SSE contexts are released after the hard timeout and reconnect anyway
-
-#### Scenario: No gating outside a resume window
-
-- **WHEN** an SSE context connects at initial mount, or reconnects while no resume window
-  is armed
-- **THEN** the connection proceeds immediately without waiting on the gate
-
-#### Scenario: Visibility re-checked after the wait
-
-- **WHEN** an SSE context finishes waiting on the resume gate but the document has been
-  backgrounded again during the wait
-- **THEN** the context does not open the connection until the next visible transition
-
+- **WHEN** refresh-token rotation is enabled at the IdP for this application's client
+- **THEN** a resume burst-suppression mechanism is reintroduced as part of the same change,
+  before concurrent resume refreshes can race the rotated token

@@ -16,10 +16,6 @@ import {
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
-import {
-  beginResumeRevalidation,
-  settleResumeRevalidation,
-} from "@/lib/resume-gate";
 import { clientLogger } from "@/lib/logger-client";
 
 // User info from OIDC
@@ -156,16 +152,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const revalidate = async () => {
       if (revalidateInFlight.current) return;
       revalidateInFlight.current = true;
-      // Hold the resume gate while the probe runs: SSE contexts defer their resume
-      // work until settle, so the probe below is the only request racing the
-      // middleware refresh. Settle in finally — waiters must be released even if the
-      // probe throws. Recovery (iOS cookie purge) lives inside fetchSession's verdict
-      // chain — the resume path needs no separate recovery step.
-      beginResumeRevalidation();
+      // Recovery (iOS cookie purge) lives inside fetchSession's verdict chain — the
+      // resume path needs no separate recovery step. Concurrent resume requests from
+      // SSE contexts are harmless: rotation is off, so parallel middleware refreshes
+      // of the same refresh token all succeed (re-enabling rotation at the IdP would
+      // require reintroducing resume burst suppression — see the oidc-session-refresh
+      // spec).
       try {
         await fetchSessionRef.current();
       } finally {
-        settleResumeRevalidation();
         revalidateInFlight.current = false;
       }
     };

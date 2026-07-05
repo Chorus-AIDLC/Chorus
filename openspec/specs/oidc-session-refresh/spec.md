@@ -2,10 +2,11 @@
 
 ## Purpose
 Defines how Chorus renews an OIDC user's session: the Edge middleware is the single,
-IdP-agnostic refresh authority (cookie-based), the frontend never races it on the refresh
-token, an expired access token does not by itself end the session, and a redirect to login
-happens only on a true post-middleware 401. Also governs the refresh-token cookie lifetime
-and an optional idle keepalive.
+IdP-agnostic refresh authority (cookie-based), the browser authenticates with cookies
+only, an expired access token does not by itself end the session, and a redirect to login
+happens only after the probe verdict chain (covered probe → retry → localStorage
+refresh-token recovery → final probe) fails. Also governs the refresh-token cookie
+lifetime.
 ## Requirements
 ### Requirement: Edge middleware is the single OIDC refresh authority
 
@@ -65,15 +66,15 @@ auth resolution falling through to the refreshed `oidc_access_token` cookie.
   condition
 - **THEN** it does not redirect to `/login` solely because of that event
 
-### Requirement: Redirect to login only on a true post-middleware 401
+### Requirement: Redirect to login only after the probe verdict chain fails
 
-The application SHALL redirect an OIDC user to `/login` only when a request that has already passed through the Edge middleware (and therefore been given the cookie-refresh opportunity) still resolves as unauthenticated — i.e. the session endpoint or a gated request returns 401, indicating the refresh token is genuinely expired or revoked. The Edge middleware itself SHALL NOT redirect any request to `/login` and SHALL NOT expire or clear auth cookies, under any refresh outcome; the client-side session probe (prime, then retry once, then redirect on a second 401) is the sole session-death decision site for OIDC sessions. The authenticated fetch helper SHALL NOT attempt a frontend `signinSilent` refresh on a 401 for an OIDC session; it SHALL rely on the middleware-refreshed cookie and surface a genuine 401 to the single redirect site.
+The application SHALL redirect an OIDC user to `/login` only when the session probe's full verdict chain fails: the probe request (which is middleware-matcher-covered and therefore itself receives the cookie-refresh opportunity) returns 401, a single retry returns 401, a localStorage refresh-token recovery attempt (when a stored refresh token exists) is made, and a final probe still returns 401. The Edge middleware itself SHALL NOT redirect any request to `/login` and SHALL NOT expire or clear auth cookies, under any refresh outcome; the client-side probe verdict is the sole session-death decision site for OIDC sessions. The browser SHALL authenticate with cookies only — no code path attaches an OIDC Bearer header to first-party requests.
 
 #### Scenario: Genuine refresh-token failure redirects to login
 
-- **WHEN** the refresh token is expired or revoked and a request passes through middleware
-  (which cannot refresh) and `/api/auth/session` returns 401 both before and after a
-  cookie-priming retry
+- **WHEN** the refresh token is expired or revoked, the covered probe and its retry both
+  return 401, and the recovery attempt (if a stored refresh token exists) does not produce
+  a passing probe
 - **THEN** the application clears the session state client-side and redirects the user to
   `/login`
 
@@ -84,35 +85,12 @@ The application SHALL redirect an OIDC user to `/login` only when a request that
 - **THEN** the middleware response is never a redirect to `/login` and never carries
   cookie-expiring `Set-Cookie` headers for the auth cookies
 
-#### Scenario: authFetch does not silent-renew on OIDC 401
+#### Scenario: The probe refreshes its own cookie
 
-- **WHEN** an authenticated fetch for an OIDC session receives a 401
-- **THEN** it does not call `signinSilent` and does not retry via a frontend refresh; the
-  401 is surfaced for the single session-death redirect path
-
-### Requirement: Optional keepalive refreshes the cookie for idle single-page sessions
-
-A keepalive, when present, SHALL refresh the session cookie for an idle single-page OIDC
-session before its access token expires, and session continuity SHALL NOT depend on it. When
-an OIDC session exists, the application MAY run a lightweight client keepalive that, as the
-access token nears expiry, issues a request to a path covered by the middleware matcher so
-the middleware refreshes the cookie even if the user remains idle on a single page without
-navigating. The keepalive SHALL target a middleware-covered path (not an `api/auth` path,
-which is excluded from the matcher) and SHALL derive its timing from the access token's
-expiry rather than a fixed constant. Even without the keepalive, the first request issued
-after the user resumes activity SHALL be rescued by the middleware refresh.
-
-#### Scenario: Idle single-page session is kept alive
-
-- **WHEN** an OIDC user stays on a single page without navigating and the keepalive is enabled
-- **THEN** before the access token expires, a request to a middleware-covered path triggers a
-  cookie refresh, so the session does not lapse during the idle period
-
-#### Scenario: Keepalive is not required for correctness
-
-- **WHEN** the keepalive is absent or disabled and the user resumes activity after the access
-  token expired (refresh token still valid)
-- **THEN** the first request is refreshed by the middleware and the user is not redirected
+- **WHEN** the session probe endpoint is requested with an expiring or expired access cookie
+  and valid refresh materials
+- **THEN** the middleware refreshes the cookie on the probe request itself, and the probe
+  answers using the refreshed credential — no separate priming request is required
 
 ### Requirement: Refresh-token cookie lifetime is not a hardcoded 30-day literal
 

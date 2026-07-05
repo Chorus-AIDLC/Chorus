@@ -23,7 +23,6 @@ import {
   AtSign,
 } from "lucide-react";
 import { authFetch } from "@/lib/auth-client";
-import { waitForResumeGate } from "@/lib/resume-gate";
 
 function getToastIcon(action: string) {
   switch (action) {
@@ -176,14 +175,8 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       }
     }
 
-    async function handleVisibility() {
+    function handleVisibility() {
       if (document.visibilityState === "visible") {
-        // Resume gate: defer ALL resume work (reconnect + unread-count fetch) until
-        // the auth revalidation settles, so these requests don't race the middleware
-        // OIDC refresh with an expired access cookie (see src/lib/resume-gate.ts).
-        // Re-check visibility after the wait — the tab may have gone hidden again.
-        await waitForResumeGate();
-        if (document.visibilityState !== "visible") return;
         connect();
         fetchUnreadCount();
       } else {
