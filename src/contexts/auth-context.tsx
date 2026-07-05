@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import {
   authFetch,
   resyncRefreshTokenFromStore,
+  purgeDeadSession,
   logout as authLogout,
   clearUserManager,
 } from "@/lib/auth-client";
@@ -56,6 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setCompany(null);
     setError("Session expired. Please log in again.");
+    // The verdict's recovery attempt has already proven the stored refresh token dead —
+    // purge the localStorage copy so future /login visits don't re-attempt a doomed
+    // recovery (fire-and-forget; the redirect must not wait on it).
+    void purgeDeadSession();
     router.push("/login");
   }, [router]);
 

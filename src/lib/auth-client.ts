@@ -94,6 +94,26 @@ export async function authFetch(
   return fetch(url, { ...options, credentials: "same-origin" });
 }
 
+// Purge the dead session's client-side traces (localStorage OIDC user + manager).
+//
+// Called when the probe verdict declares session death: the stored refresh token has
+// PROVEN dead (the verdict's recovery attempt already failed at the IdP), so keeping
+// the localStorage user only makes every future /login visit re-attempt a doomed
+// recovery (one sync-token POST + one failed IdP round-trip of pure log noise).
+// Unlike logout(), no server call — there is nothing left to log out of.
+export async function purgeDeadSession(): Promise<void> {
+  const manager = getUserManager();
+  if (manager) {
+    try {
+      await manager.removeUser();
+    } catch {
+      // Ignore — clearing the manager below still detaches the stored user.
+    }
+  }
+  clearUserManager();
+  clearOidcConfig();
+}
+
 // Login redirect
 export async function login(): Promise<void> {
   const manager = getUserManager();

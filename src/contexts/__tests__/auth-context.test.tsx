@@ -21,6 +21,7 @@ const authFetch = vi.fn();
 const push = vi.fn();
 const getOidcUser = vi.fn().mockResolvedValue(null);
 const resyncRefreshTokenFromStore = vi.fn().mockResolvedValue(false);
+const purgeDeadSession = vi.fn().mockResolvedValue(undefined);
 
 // OIDC manager event registry captured per-test.
 let registeredEvents: Record<string, ((...a: unknown[]) => void) | undefined>;
@@ -30,6 +31,7 @@ vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, opts?: RequestInit) => authFetch(url, opts),
   getOidcUser: () => getOidcUser(),
   resyncRefreshTokenFromStore: () => resyncRefreshTokenFromStore(),
+  purgeDeadSession: () => purgeDeadSession(),
   logout: vi.fn().mockResolvedValue(undefined),
   clearUserManager: vi.fn(),
   getUserManager: () => manager,
@@ -83,6 +85,7 @@ beforeEach(() => {
   getOidcUser.mockResolvedValue(null);
   resyncRefreshTokenFromStore.mockClear();
   resyncRefreshTokenFromStore.mockResolvedValue(false);
+  purgeDeadSession.mockClear();
   manager = makeManager();
 });
 
@@ -110,6 +113,20 @@ describe("AuthProvider session-death contract", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
     // Two probe calls (initial + retry) — the covered probe IS the refresh attempt.
     expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBeGreaterThanOrEqual(2);
+    // Death purges the localStorage user so /login doesn't re-attempt doomed recoveries.
+    expect(purgeDeadSession).toHaveBeenCalled();
+  });
+
+  it("does NOT purge the stored user on a healthy session", async () => {
+    authFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }),
+    });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(purgeDeadSession).not.toHaveBeenCalled();
   });
 
   it("does NOT redirect when a 401 is rescued by the retry (the iOS bfcache case)", async () => {

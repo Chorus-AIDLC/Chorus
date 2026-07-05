@@ -122,7 +122,7 @@ function installFetch(handlers: {
     }
     // The mount-time already-authenticated check (root-reopen fix): default to NOT
     // authenticated so the login form renders as before. admin session not-success,
-    // user session not-success, keepalive prime is a no-op here.
+    // user session not-success.
     if (url === "/api/admin/session") {
       return { ok: true, json: { success: false } };
     }
