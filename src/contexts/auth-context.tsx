@@ -90,7 +90,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await primeSessionCookie();
         response = await authFetch("/api/auth/session");
         if (response.status === 401) {
-          // Genuine session death (survived a middleware refresh attempt).
+          // Last resort before declaring death (idea 3bf0819c): the double-401 may be
+          // an iOS cookie purge whose early resync (init/revalidate) lost a race —
+          // e.g. the radio wasn't up at resume instant, or a parallel prober reached
+          // this verdict before the recovery chain finished. Rebuild the refresh
+          // materials from the localStorage store and give the middleware ONE more
+          // chance. The helper no-ops (false) without a stored refresh token, and a
+          // genuinely dead RT fails the IdP exchange during the prime — so true
+          // session death still lands in handleSessionExpired right below.
+          if (await resyncRefreshTokenFromStore()) {
+            await primeSessionCookie();
+            response = await authFetch("/api/auth/session");
+          }
+        }
+        if (response.status === 401) {
+          // Genuine session death (survived middleware refresh AND recovery).
           handleSessionExpired();
           return false;
         }

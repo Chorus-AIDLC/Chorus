@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { authFetch, primeSessionCookie } from "@/lib/auth-client";
+import { authFetch, primeSessionCookie, resyncRefreshTokenFromStore } from "@/lib/auth-client";
 
 export default function Home() {
   const t = useTranslations();
@@ -34,6 +34,15 @@ export default function Home() {
         if (userResponse.status === 401) {
           await primeSessionCookie();
           userResponse = await authFetch("/api/auth/session");
+        }
+        if (userResponse.status === 401) {
+          // Last resort (idea 3bf0819c): an iOS cookie purge leaves the middleware
+          // nothing to refresh — rebuild refresh materials from the localStorage
+          // store, then re-prime and re-probe once. No-op when nothing is stored.
+          if (await resyncRefreshTokenFromStore()) {
+            await primeSessionCookie();
+            userResponse = await authFetch("/api/auth/session");
+          }
         }
 
         if (userResponse.ok) {

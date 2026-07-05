@@ -337,3 +337,45 @@ describe("AuthProvider iOS cookie-purge recovery (resync before prime)", () => {
     expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
   });
 });
+
+describe("AuthProvider last-resort recovery in the death verdict", () => {
+  it("does NOT redirect when the second 401 is rescued by resync + reprobe (iOS purge race)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    // Probe: 401, (prime), 401, [resync true], (prime), 200
+    authFetch
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 200, json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }) });
+    resyncRefreshTokenFromStore.mockResolvedValue(true);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(resyncRefreshTokenFromStore).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalledWith("/login");
+  });
+
+  it("still redirects when recovery was attempted but the third probe is 401 (dead RT)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    authFetch.mockResolvedValue({ status: 401 });
+    resyncRefreshTokenFromStore.mockResolvedValue(true);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
+  });
+
+  it("still redirects immediately when there is nothing to recover from (resync false)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    authFetch.mockResolvedValue({ status: 401 });
+    resyncRefreshTokenFromStore.mockResolvedValue(false);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
+    // Only two probes happened (401 + post-prime 401) — no third.
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBe(2);
+  });
+});

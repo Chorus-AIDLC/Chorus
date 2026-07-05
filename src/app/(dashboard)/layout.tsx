@@ -126,7 +126,6 @@ export default function DashboardLayout({
     /^\/projects\/[a-f0-9-]{36}\/(tasks|graph)(\/|$)/,
   );
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { checkSession(); }, []);
 
   // Fetch current project + sibling projects when URL changes
@@ -194,14 +193,15 @@ export default function DashboardLayout({
         response = await authFetch("/api/auth/session");
       }
 
-      // Session death is decided ONLY by a true 401 that survived the prime+retry — the
-      // same contract as auth-context.fetchSession. A transient/non-401 failure must NOT
-      // bounce the user (it would log out a still-valid session on a network blip, e.g.
-      // right after an iOS resume); leave session state untouched and let a later
-      // resume/navigation re-check.
+      // Session death is decided ONLY by AuthProvider's fetchSession (mounted in this
+      // same tree) — it holds the full verdict chain including the last-resort
+      // localStorage refresh-token recovery. This probe must NOT issue its own
+      // /login redirect: a second independent death-decider can win the race against
+      // the recovery chain and bounce a recoverable session (the 2026-07-05 04:37Z
+      // recurrence). On a persistent 401 here, just stop the loading gate; if the
+      // session is truly dead, AuthProvider redirects moments later.
       if (response.status === 401) {
-        clearUserManager();
-        router.push("/login");
+        setLoading(false);
         return;
       }
 
