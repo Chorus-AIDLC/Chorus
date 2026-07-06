@@ -167,7 +167,7 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("TURN_TRIGGERS covers the seven wake kinds (incl. the distinct elaboration_verified and start_development)", () => {
+  it("TURN_TRIGGERS covers the eight wake kinds (incl. the distinct elaboration_verified, start_development, and yolo_requested)", () => {
     expect([...TURN_TRIGGERS].sort()).toEqual(
       [
         "elaboration",
@@ -176,6 +176,7 @@ describe("constants", () => {
         "mentioned",
         "resume",
         "start_development",
+        "yolo_requested",
         "task_assigned",
       ].sort(),
     );
@@ -188,6 +189,11 @@ describe("constants", () => {
 
   it("TURN_TRIGGERS includes start_development as a member distinct from task_assigned", () => {
     expect(TURN_TRIGGERS).toContain("start_development");
+    expect(TURN_TRIGGERS).toContain("task_assigned");
+  });
+
+  it("TURN_TRIGGERS includes yolo_requested as a member distinct from task_assigned", () => {
+    expect(TURN_TRIGGERS).toContain("yolo_requested");
     expect(TURN_TRIGGERS).toContain("task_assigned");
   });
 

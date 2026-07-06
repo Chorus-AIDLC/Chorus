@@ -42,6 +42,11 @@ function resolveNotificationType(action: string, targetType: string): string | n
     // elaboration_verified; deliberately NOT in PREF_FIELD_MAP so the agent wake
     // is never preference-gated.
     "idea:start_development": "start_development",
+    // Human clicked Yolo → wake the Idea's assigned daemon agent to drive the
+    // WHOLE idea to done via the yolo skill. Same agent-only wake shape as
+    // start_development; deliberately NOT in PREF_FIELD_MAP so the agent wake is
+    // never preference-gated.
+    "idea:yolo_requested": "yolo_requested",
     // elaboration_followup is no longer emitted (the validate/follow-up
     // mechanism was removed); mapping retained for legacy activity rows.
     "idea:elaboration_followup": "elaboration_requested",
@@ -400,10 +405,12 @@ async function resolveRecipients(
     }
 
     case "elaboration_verified":
-    case "start_development": {
+    case "start_development":
+    case "yolo_requested": {
       // Human stage-advance wakes (Verify Elaborate → write the proposal;
-      // Start Development → claim and execute the remaining tasks): wake ONLY
-      // the Idea's assigned daemon agent. These are agent-only wakes: the
+      // Start Development → claim and execute the remaining tasks; Yolo → drive
+      // the whole idea to done via the yolo skill): wake ONLY the Idea's
+      // assigned daemon agent. These are agent-only wakes: the
       // recipient list deliberately excludes the human creator (and any human),
       // so they never surface in a human's notification bell. If the Idea has
       // no assigned agent (or the assignee is a human), return [] — there is no
@@ -560,6 +567,8 @@ function buildMessage(
       return `${actorName} verified elaboration for idea "${entityTitle}" — write the proposal`;
     case "start_development":
       return `${actorName} started development for idea "${entityTitle}" — claim and execute the remaining tasks`;
+    case "yolo_requested":
+      return `${actorName} requested a Yolo run for idea "${entityTitle}" — drive it to done via the yolo skill`;
     case "report_created":
       return `${actorName} generated a new report on idea "${entityTitle}"`;
     default:

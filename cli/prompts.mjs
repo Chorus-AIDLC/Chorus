@@ -154,6 +154,26 @@ function buildPromptBody(n) {
         `to_verify (awaiting human verification) and tasks claimed by other sessions untouched. If nothing ` +
         `is claimable, post a brief status comment on the idea and end the turn.\n${mentionGuidance(n, "idea")}`
       );
+    case "yolo_requested":
+      // A human clicked "Yolo" (add-stage-advance-yolo). Unlike start_development
+      // (always the execute stage), this wake can land at ANY incomplete stage, so the
+      // prompt must NOT hard-code a stage — it points the agent at the yolo skill and lets
+      // it self-select the entry phase from the idea's current state (no proposal yet →
+      // elaborate + write proposal; approved proposal with open tasks → execute; etc.).
+      // Honors the "yolo never merges" rule: drive through done + completion report, but
+      // never merge or push a PR without explicit human approval.
+      return (
+        `[Chorus] A human requested a YOLO run for idea '${n.entityTitle}' ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Drive this idea all the ` +
+        `way to done following the yolo skill (the full-auto AI-DLC pipeline: Idea → ` +
+        `Elaboration → Proposal → Execute → Verify). First read the idea's current state with ` +
+        `chorus_get_idea (plus chorus_get_elaboration / chorus_get_proposals as needed) and ` +
+        `RESUME from whatever phase it is already in — do NOT assume a fixed stage: if ` +
+        `elaboration isn't resolved, self-elaborate then write the proposal; if a proposal is ` +
+        `approved with open tasks, execute them; and so on. Complete the pipeline through the ` +
+        `final done state and completion report, but do NOT merge or push a pull request ` +
+        `without explicit human approval.\n${mentionGuidance(n, "idea")}`
+      );
     case "proposal_rejected":
       return (
         `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, ` +
@@ -289,6 +309,11 @@ export const WAKE_ACTIONS = new Set([
   // CLAIM AND EXECUTE ALL remaining tasks (dedicated trigger, session-origin-pinned like
   // elaboration_verified). See buildPrompt's `start_development` case.
   "start_development",
+  // add-stage-advance-yolo: a human clicked "Yolo" — wakes the assigned daemon agent to
+  // drive the WHOLE idea to done via the yolo skill (dedicated trigger, session-origin-
+  // pinned like start_development). Unlike start_development it is stage-adaptive — see
+  // buildPrompt's `yolo_requested` case.
+  "yolo_requested",
   "proposal_rejected",
   "proposal_approved",
   "idea_claimed",

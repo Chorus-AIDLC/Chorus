@@ -37,6 +37,7 @@ import { getElaborationAction, skipElaborationAction, verifyElaborationAction } 
 import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
 import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
+import { YoloButton } from "@/components/yolo-button";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
@@ -248,7 +249,6 @@ export function IdeaDetailPanel({
   }, []);
 
   const canAssign = idea.status !== "elaborated";
-  const elaborationResolved = idea.elaborationStatus === "resolved";
   // Shared enable-predicate (also used by the dashboard idea-tracker panel) so
   // the two surfaces never drift. Computed from the elaboration data already
   // loaded into this panel — no extra fetch.
@@ -712,11 +712,19 @@ export function IdeaDetailPanel({
                       router.refresh();
                     }}
                   />
-                  {idea.status === "elaborating" && !elaborationResolved && !canVerify && !verified && !canSkipElaboration && (
-                    <span className="text-[11px] text-[#9A9A9A]">
-                      {t("elaboration.elaborationRequiredHint")}
-                    </span>
-                  )}
+                  {/* Yolo — human "drive this whole idea to done via the yolo
+                      skill" action (add-stage-advance-yolo). Fed the same
+                      gating arrays as Start Development; shows at any incomplete
+                      stage. */}
+                  <YoloButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={sdProposals}
+                    tasks={sdTasks}
+                    onStarted={() => {
+                      router.refresh();
+                    }}
+                  />
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

@@ -294,6 +294,7 @@ describe("triggerForAction / NOTIFICATION_ACTION_TO_TURN_TRIGGER", () => {
       "elaboration",
       "elaboration_verified",
       "start_development",
+      "yolo_requested",
       "resume",
       "human_instruction",
     ]);

@@ -43,6 +43,7 @@ import type { IdeaResponse } from "@/services/idea.service";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { StartDevelopmentButton } from "@/components/start-development-button";
+import { YoloButton } from "@/components/yolo-button";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
@@ -541,7 +542,6 @@ export function IdeaDetailPanel({
 
   const status = idea?.derivedStatus || "todo";
   const canAssign = idea ? idea.status !== "elaborated" : false;
-  const elaborationResolved = idea?.elaborationStatus === "resolved";
   // Shared enable-predicate (same helper as the /ideas idea-detail panel) so
   // the two surfaces never drift.
   const canVerify = canVerifyElaboration({
@@ -549,8 +549,6 @@ export function IdeaDetailPanel({
     elaborationStatus: idea?.elaborationStatus,
     elaboration,
   });
-  const showHelpText =
-    idea?.status === "elaborating" && !elaborationResolved && !canVerify && !verified;
 
   return (
     <>
@@ -961,11 +959,19 @@ export function IdeaDetailPanel({
                       fetchIdea();
                     }}
                   />
-                  {showHelpText && (
-                    <span className="text-[11px] text-[#9A9A9A]">
-                      {t("elaboration.elaborationRequiredHint")}
-                    </span>
-                  )}
+                  {/* Yolo — human "drive this whole idea to done via the yolo
+                      skill" action (add-stage-advance-yolo). Shows at any
+                      incomplete stage (relaxed predicate), so it can coexist
+                      with Start Development on a building-stage idea. */}
+                  <YoloButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={proposals}
+                    tasks={tasks}
+                    onStarted={() => {
+                      fetchIdea();
+                    }}
+                  />
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

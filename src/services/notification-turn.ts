@@ -124,6 +124,11 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
   // wake defect) — so turns stay observable and the session-origin upgrade applies
   // by design.
   start_development: "start_development",
+  // Human clicked Yolo → wake the assigned daemon agent to DRIVE THE WHOLE IDEA
+  // TO DONE via the yolo skill. Its OWN trigger, for the same reasons as
+  // start_development — never collapsed into task_assigned, so turns stay
+  // observable and the session-origin upgrade applies by design.
+  yolo_requested: "yolo_requested",
   // Human-typed instruction (子2 UI send box). Canonical text on the turn; the
   // notification carries a denormalized copy in `instructionText`.
   human_instruction: "human_instruction",
@@ -173,6 +178,10 @@ const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   // Start Development is a human stage-advance on an idea — the wake must land
   // where that idea's conversation already runs (elaboration decision Q2).
   "start_development",
+  // Yolo is a human stage-advance on an idea — same session-origin requirement:
+  // the full-auto run must continue the idea's existing conversation, not fan
+  // out to an arbitrary online cwd.
+  "yolo_requested",
 ]);
 
 /**

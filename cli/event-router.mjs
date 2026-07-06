@@ -21,6 +21,7 @@ const ACTION_TO_TURN_TRIGGER = {
   mentioned: "mentioned",
   elaboration_verified: "elaboration_verified",
   start_development: "start_development",
+  yolo_requested: "yolo_requested",
   elaboration_requested: "elaboration",
   elaboration_answered: "elaboration",
   human_instruction: "human_instruction",
@@ -294,16 +295,17 @@ export class EventRouter {
       return;
     }
     // A DIRECTED autonomous turn (mentioned / task_assigned / elaboration_verified /
-    // start_development) is delivered by the deliver_turn ping too (T2). Its prompt must be
-    // rebuilt from the notification (promptText is null), so it takes a separate async path.
-    // resume / elaboration are not delivered by deliver_turn (resume is synthetic;
-    // elaboration request/answer rides the notification broadcast), so they are not
-    // re-dispatched here.
+    // start_development / yolo_requested) is delivered by the deliver_turn ping too (T2).
+    // Its prompt must be rebuilt from the notification (promptText is null), so it takes a
+    // separate async path. resume / elaboration are not delivered by deliver_turn (resume
+    // is synthetic; elaboration request/answer rides the notification broadcast), so they
+    // are not re-dispatched here.
     if (
       pending.trigger === "mentioned" ||
       pending.trigger === "task_assigned" ||
       pending.trigger === "elaboration_verified" ||
-      pending.trigger === "start_development"
+      pending.trigger === "start_development" ||
+      pending.trigger === "yolo_requested"
     ) {
       // Shared dedup, marked BEFORE async work (mirrors the human_instruction path and
       // `dispatch`) so concurrent deliveries collapse to one wake.
