@@ -913,7 +913,6 @@
     "skipReasonLabel": "Reason for skipping",
     "skipReasonPlaceholder": "e.g., Bug fix with clear reproduction steps",
     "skipReasonRequired": "Please provide a reason",
-    "elaborationRequiredHint": "Complete or skip elaboration to create a proposal",
     "verifyButton": "Verify Elaborate",
     "verifying": "Verifying...",
     "verifyFailed": "Failed to verify elaboration",
@@ -937,6 +936,19 @@
     "errorNoUnfinishedTasks": "All tasks are already finished",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
     "errorGeneric": "Failed to start development"
+  },
+  "yolo": {
+    "button": "Yolo",
+    "cancel": "Cancel",
+    "confirmTitle": "Run Yolo on this idea?",
+    "confirmDescription": "Yolo wakes the assigned agent to drive this idea all the way to done automatically — elaboration, proposal, execution, and verification — following the yolo skill. It won't merge or push a pull request without your approval. Continue?",
+    "confirmCta": "Run Yolo",
+    "starting": "Starting...",
+    "startedHint": "Yolo started — the agent is driving this idea to done",
+    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
+    "errorAssigneeNotAgent": "The idea's assignee is not an agent",
+    "errorGeneric": "Failed to start Yolo"
   },
   "projectGroups": {
     "newProjectGroup": "New Project Group",

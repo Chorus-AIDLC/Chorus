@@ -163,6 +163,28 @@ describe("buildPrompt", () => {
     expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
   });
 
+  it("yolo_requested wakes the agent to drive the whole idea via the yolo skill, stage-adaptive, no PR merge (add-stage-advance-yolo)", () => {
+    expect(WAKE_ACTIONS.has("yolo_requested")).toBe(true);
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "yolo_requested",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("idea-9"); // the idea uuid
+    expect(p).toContain("proj-1"); // project uuid for context
+    // Points at the yolo skill / full pipeline:
+    expect(p.toLowerCase()).toContain("yolo skill");
+    // Stage-adaptive — resume from current phase, NOT a hard-coded execute loop:
+    expect(p.toLowerCase()).toContain("resume");
+    expect(p).not.toContain("ALL remaining tasks");
+    // "Yolo never merges": must forbid a PR merge/push without approval.
+    expect(p.toLowerCase()).toContain("do not merge");
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
+  });
+
   it("WAKE_ACTIONS covers the agent-relevant server notifications and excludes the noisy ones", () => {
     for (const a of [
       "task_assigned",
@@ -171,6 +193,7 @@ describe("buildPrompt", () => {
       "elaboration_answered",
       "elaboration_verified",
       "start_development",
+      "yolo_requested",
       "proposal_rejected",
       "proposal_approved",
       "idea_claimed",

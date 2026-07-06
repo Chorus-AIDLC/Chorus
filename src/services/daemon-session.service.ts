@@ -50,6 +50,7 @@ export const TURN_TRIGGERS = [
   "elaboration",
   "elaboration_verified",
   "start_development",
+  "yolo_requested",
   "resume",
   "human_instruction",
 ] as const;

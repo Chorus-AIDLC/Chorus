@@ -434,4 +434,5 @@ chorus_add_comment({ targetType: "task", targetUuid: "<task-uuid>", content: "Re
 ## Next
 
 - After submitting for verification, an Admin reviews using `/review`
+- **Human "Yolo" wake:** a `yolo_requested` wake (the human clicked **Yolo** on the idea-detail panel) means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline), not just the execute stage — read the idea's current state and resume from whatever phase it is in. It is stage-adaptive, and it must never merge or push a PR without explicit human approval.
 - For platform overview and shared tools, see `/chorus`
