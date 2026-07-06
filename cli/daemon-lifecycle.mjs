@@ -164,9 +164,11 @@ export function queryProcessIdentity(pid, io = defaultIO()) {
  * which the old probe misread as "daemon alive". Decision table (tech design):
  *   - ESRCH / invalid pid                → false (stale)
  *   - pid exists (OK or EPERM):
- *       identity recorded    → startedAt (when recorded) AND cmdline must match;
- *                              any mismatch → false; query failed → true (never
- *                              auto-clean an identity we could not verify)
+ *       identity recorded    → argsHint (when recorded) decides ALONE: cmdline
+ *                              contains it → true, else false. startedAt only
+ *                              decides when no argsHint was recorded; query
+ *                              failed → true (never auto-clean an identity we
+ *                              could not verify)
  *       legacy record        → cmdline contains the daemon marker → true;
  *                              foreign cmdline → false; query failed → EPERM
  *                              proves it is not ours (same-user daemon) → false,
@@ -195,7 +197,13 @@ export function processAlive(record, io = defaultIO()) {
     // read as a mismatch (false-stale is the dangerous direction).
     const liveCmd = identity.cmdline.replace(/\s+/g, " ");
     const hint = rec.argsHint ? rec.argsHint.replace(/\s+/g, " ") : null;
-    if (hint && !liveCmd.includes(hint)) return false;
+    // argsHint decides ALONE when recorded (fix-daemon-stop-ntp-false-stale):
+    // startedAt strings are clock-derived (POSIX lstart is recomputed from
+    // btime + start ticks at query time), so an NTP step after spawn shifts
+    // them for the SAME process — it must never veto a matching argsHint, or
+    // a boot-autostarted daemon becomes unstoppable once chrony corrects the
+    // clock. startedAt still decides for records without an argsHint.
+    if (hint) return liveCmd.includes(hint);
     if (rec.startedAt && identity.startedAt !== null && identity.startedAt !== rec.startedAt) return false;
     return true;
   }
