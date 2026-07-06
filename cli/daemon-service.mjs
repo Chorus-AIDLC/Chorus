@@ -113,9 +113,11 @@ export function renderSystemdUnit(spec) {
     chorusOnly: spec.chorusOnly,
     scriptPath: spec.scriptPath,
   });
-  // ExecStart: continuation-line the --cwd pairs for readability, matching the
-  // hand-written units operators already have. systemd joins `\`-continued lines.
-  const execStart = [spec.nodePath, ...args].join(" ");
+  // systemd's ExecStart tokenizer splits on UNQUOTED whitespace, so a token
+  // with a space (an operator's `--cwd "/home/u/My Projects/repo"`, or a node/
+  // script path under such a dir) would be mis-split and the daemon would serve
+  // the wrong path silently. Quote every token so spaces survive.
+  const execStart = [spec.nodePath, ...args].map(systemdQuoteArg).join(" ");
   const restartSec = spec.restartSec ?? 10;
   const timeoutStopSec = spec.timeoutStopSec ?? 30;
   return `[Unit]
@@ -211,6 +213,19 @@ function xmlEscape(s) {
 }
 
 /**
+ * Quote a single token for a systemd `ExecStart=` line. systemd splits the line
+ * on unquoted whitespace and supports C-escaped double-quoted strings, so a
+ * token containing whitespace (or a quote/backslash) must be wrapped in `"…"`
+ * with `\` and `"` escaped. Tokens without whitespace are left bare to keep the
+ * common unit readable.
+ */
+function systemdQuoteArg(token) {
+  const s = String(token);
+  if (!/[\s"\\]/.test(s)) return s;
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
  * Detect whether a supervisor already manages the chorus daemon on this host.
  * Linux only (systemd --user); everything else reports `{ kind: "none" }`.
  *   - kind: "systemd" with installed (unit file present, `is-enabled` not
@@ -299,6 +314,12 @@ export function installService(spec, io = defaultIO()) {
         return { platform: "linux", installed: false, unitPath, unitText, steps, error: `systemctl --user enable --now failed: ${enable.stderr.trim() || `exit ${enable.status}`}` };
       }
       steps.push(`systemctl --user enable --now ${SERVICE_NAME}.service`);
+      // enable --now only STARTS an inactive service; on a re-install over an
+      // already-running daemon it is a no-op, leaving the old process on the old
+      // --cwd/--agent flags. Restart so a re-install always applies the new unit.
+      // Best-effort: a restart failure must not fail an otherwise-good install.
+      const restart = systemctlUser(["restart", `${SERVICE_NAME}.service`], io);
+      if (restart.status === 0) steps.push(`systemctl --user restart ${SERVICE_NAME}.service`);
       return { platform: "linux", installed: true, unitPath, unitText, steps };
     } catch (err) {
       return { platform: "linux", installed: false, unitPath, unitText, steps, error: err instanceof Error ? err.message : String(err) };
@@ -321,7 +342,10 @@ export function installService(spec, io = defaultIO()) {
   }
   // Windows / other: no first-class service model without native deps. Print the
   // foreground command an operator can wrap in their supervisor of choice.
-  const cmd = [spec.nodePath, ...buildServiceArgs(spec)].join(" ");
+  // Quote whitespace-bearing tokens so a copy-pasted path with a space survives.
+  const cmd = [spec.nodePath, ...buildServiceArgs(spec)]
+    .map((a) => (/\s/.test(String(a)) ? `"${a}"` : a))
+    .join(" ");
   return {
     platform: "other",
     installed: false,

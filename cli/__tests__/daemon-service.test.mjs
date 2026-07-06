@@ -56,6 +56,23 @@ describe("renderSystemdUnit (pure)", () => {
     expect(unit).not.toMatch(/ExecStop=/);
   });
 
+  it("quotes ExecStart tokens containing whitespace so systemd does not mis-split them", () => {
+    const u = renderSystemdUnit({ ...BASE, cwds: ["/home/u/My Projects/repo", "/plain"] });
+    const execLine = u.split("\n").find((l) => l.startsWith("ExecStart="));
+    // The spaced --cwd value must survive as ONE quoted token; the plain one bare.
+    expect(execLine).toContain('--cwd "/home/u/My Projects/repo"');
+    expect(execLine).toContain("--cwd /plain");
+    // Regression guard: the space inside the path must not appear unquoted (which
+    // systemd would tokenize into `--cwd /home/u/My` + stray `Projects/repo`).
+    expect(execLine).not.toMatch(/--cwd \/home\/u\/My Projects/);
+  });
+
+  it("quotes a node/script path that itself contains a space", () => {
+    const u = renderSystemdUnit({ ...BASE, nodePath: "/opt/My Tools/node", cwds: ["/a"] });
+    const execLine = u.split("\n").find((l) => l.startsWith("ExecStart="));
+    expect(execLine).toContain('ExecStart="/opt/My Tools/node"');
+  });
+
   it("carries Restart=on-failure, RestartSec, TimeoutStopSec, PATH, HOME, WantedBy", () => {
     expect(unit).toMatch(/^Restart=on-failure$/m);
     expect(unit).toMatch(/^RestartSec=10$/m);
@@ -153,7 +170,7 @@ describe("installService", () => {
     };
   }
 
-  it("writes the unit, daemon-reloads, and enable --now on Linux", () => {
+  it("writes the unit, daemon-reloads, enable --now, then restart on Linux", () => {
     const { io, calls } = linuxIO();
     const r = installService({ ...BASE }, io);
     expect(r).toMatchObject({ platform: "linux", installed: true });
@@ -161,11 +178,23 @@ describe("installService", () => {
     const [path, text] = io.writeFileSync.mock.calls[0];
     expect(path).toBe(systemdUnitPath({ home: "/home/u" }));
     expect(text).toMatch(/Type=simple/);
-    // ordered systemctl calls
+    // ordered systemctl calls — restart follows enable so a re-install with new
+    // flags actually applies to an already-running daemon (not just a no-op start).
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "enable", "--now", `${SERVICE_NAME}.service`],
+      ["systemctl", "--user", "restart", `${SERVICE_NAME}.service`],
     ]);
+  });
+
+  it("a failed restart does not fail an otherwise-good install", () => {
+    const { io } = linuxIO({
+      spawnSync: vi.fn((_cmd, args) => (args.includes("restart") ? { status: 1, stdout: "", stderr: "transient" } : { status: 0, stdout: "", stderr: "" })),
+    });
+    const r = installService({ ...BASE }, io);
+    expect(r.installed).toBe(true);
+    // restart step is best-effort — omitted from steps on failure, install still succeeds
+    expect(r.steps.some((s) => s.includes("restart"))).toBe(false);
   });
 
   it("returns installed:false + error when daemon-reload fails", () => {

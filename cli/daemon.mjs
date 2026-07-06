@@ -755,6 +755,11 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       for (const s of r.steps) log(`[Chorus]   ${s}`);
       log(`[Chorus] it will now start automatically at login. Manage it with:`);
       log(`[Chorus]   chorus daemon status | stop | restart | logs`);
+      // A --user service only survives logout with lingering enabled; and a
+      // separately-started `chorus daemon -d` would hold the same paths and make
+      // this service exit-and-retry. Surface both so neither is a silent gotcha.
+      log(`[Chorus] to keep it running after you log out: loginctl enable-linger "$USER"`);
+      log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
       return 0;
     }
     if (r.platform === "linux") {
