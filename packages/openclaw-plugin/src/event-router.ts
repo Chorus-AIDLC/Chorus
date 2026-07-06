@@ -179,6 +179,20 @@ export class ChorusEventRouter {
         case "elaboration_answered":
           this.handleElaborationAnswered(notification, attribution);
           break;
+        // Stage-advance wakes (add-elaboration-verify-wake / add-stage-advance-*): a human
+        // clicked "Verify Elaborate" / "Start Development" / "Yolo" on the idea panel. These
+        // mirror the daemon's cli/prompts.mjs WAKE_ACTIONS cases — see the lockstep parity
+        // guard in cli/__tests__/openclaw-plugin-wake-parity.test.mjs, which fails if the
+        // daemon adds a wake action this switch does not handle.
+        case "elaboration_verified":
+          this.handleElaborationVerified(notification, attribution);
+          break;
+        case "start_development":
+          this.handleStartDevelopment(notification, attribution);
+          break;
+        case "yolo_requested":
+          this.handleYoloRequested(notification, attribution);
+          break;
         case "proposal_rejected":
           this.handleProposalRejected(notification, attribution);
           break;
@@ -313,6 +327,74 @@ export class ChorusEventRouter {
       `After reviewing, @mention the answerer to ask if they have any further questions before you proceed.\n` +
       mentionGuidance,
       this.contextKeyFor("elaboration_answered", n.entityUuid),
+      attr
+    );
+  }
+
+  /**
+   * A human clicked "Verify Elaborate" (add-elaboration-verify-wake). The elaboration
+   * is DONE and the idea is now `elaborated` — this is NOT a request to answer questions.
+   * The agent's job on this wake is to WRITE THE PROPOSAL via the existing proposal flow,
+   * anchored to the idea's session that ran elaboration. Mirrors the daemon's
+   * cli/prompts.mjs `elaboration_verified` case (plugin voice; no headless preamble).
+   */
+  private handleElaborationVerified(n: NotificationDetail, attr: WakeAttribution): void {
+    const mentionGuidance = this.buildMentionGuidance(n, "idea");
+
+    this.wake(
+      `[Chorus] Elaboration for idea '${n.entityTitle}' was VERIFIED by a human (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
+      `The idea is now elaborated — do NOT answer elaboration questions. Proceed to WRITE THE PROPOSAL: gather context with ` +
+      `chorus_get_idea and chorus_get_elaboration, then author the proposal via the existing proposal flow ` +
+      `(chorus_pm_create_proposal / the proposal skill).\n${mentionGuidance}`,
+      this.contextKeyFor("elaboration_verified", n.entityUuid),
+      attr
+    );
+  }
+
+  /**
+   * A human clicked "Start Development" (add-stage-advance-start-development). The idea's
+   * proposal is approved and unfinished tasks remain. The agent's job on this wake is the
+   * WHOLE remaining execute stage — loop over every claimable task until none remain, never
+   * stopping after a single task. Mirrors the daemon's cli/prompts.mjs `start_development`
+   * case (plugin voice; no headless preamble).
+   */
+  private handleStartDevelopment(n: NotificationDetail, attr: WakeAttribution): void {
+    const mentionGuidance = this.buildMentionGuidance(n, "idea");
+
+    this.wake(
+      `[Chorus] A human started DEVELOPMENT for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
+      `The idea's proposal is approved and unfinished tasks remain. Claim and execute ALL remaining tasks of that proposal in ` +
+      `dependency order, following the develop workflow: repeatedly find claimable tasks (chorus_get_unblocked_tasks with ` +
+      `projectUuid: "${n.projectUuid}"), claim one (chorus_claim_task), implement it, self-check its acceptance criteria ` +
+      `(chorus_report_criteria_self_check), and submit it (chorus_submit_for_verify) — then loop until NO claimable task remains. ` +
+      `Do NOT stop after one task. Leave tasks already in to_verify (awaiting human verification) and tasks claimed by other ` +
+      `sessions untouched. If nothing is claimable, post a brief status comment on the idea and end the turn.\n${mentionGuidance}`,
+      this.contextKeyFor("start_development", n.entityUuid),
+      attr
+    );
+  }
+
+  /**
+   * A human clicked "Yolo" (add-stage-advance-yolo). Unlike start_development (always the
+   * execute stage), this wake can land at ANY incomplete stage, so the prompt does NOT
+   * hard-code a stage — it points the agent at the yolo skill and lets it self-select the
+   * entry phase from the idea's current state. Honors the "yolo never merges" rule: drive
+   * through done + completion report, but never merge/push a PR without explicit human
+   * approval. Mirrors the daemon's cli/prompts.mjs `yolo_requested` case (plugin voice; no
+   * headless preamble).
+   */
+  private handleYoloRequested(n: NotificationDetail, attr: WakeAttribution): void {
+    const mentionGuidance = this.buildMentionGuidance(n, "idea");
+
+    this.wake(
+      `[Chorus] A human requested a YOLO run for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
+      `Drive this idea all the way to done following the yolo skill (the full-auto AI-DLC pipeline: Idea → Elaboration → Proposal → ` +
+      `Execute → Verify). First read the idea's current state with chorus_get_idea (plus chorus_get_elaboration / ` +
+      `chorus_get_proposals as needed) and RESUME from whatever phase it is already in — do NOT assume a fixed stage: if ` +
+      `elaboration isn't resolved, self-elaborate then write the proposal; if a proposal is approved with open tasks, execute them; ` +
+      `and so on. Complete the pipeline through the final done state and completion report, but do NOT merge or push a pull request ` +
+      `without explicit human approval.\n${mentionGuidance}`,
+      this.contextKeyFor("yolo_requested", n.entityUuid),
       attr
     );
   }
