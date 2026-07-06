@@ -95,10 +95,12 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 chorus login                     # 认证（打开浏览器）
 chorus daemon                    # 前台启动 daemon
 chorus daemon -d                 # 后台启动 daemon（分离模式）
-chorus daemon stop               # 停止后台 daemon
+chorus daemon install            # 安装为开机自启服务（Linux）—— 推荐
+chorus daemon uninstall          # 卸载已安装的服务
+chorus daemon stop               # 停止 daemon（已安装服务时委派给 systemd）
 chorus daemon stop --force       # pid 卡死时强制清理 pidfile
 chorus daemon status             # 查看 daemon 状态
-chorus daemon restart            # 重启后台 daemon
+chorus daemon restart            # 重启 daemon
 chorus daemon logs               # 查看 daemon 日志
 ```
 
@@ -106,11 +108,21 @@ chorus daemon logs               # 查看 daemon 日志
 
 - **Claude Code 与 Codex 后端** — 自动检测 PATH 中的 `claude`（或 `codex`）CLI；用 `--agent codex` 选择
 - **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
+- **开机自启服务** — `chorus daemon install` 生成正确的 `systemd --user` unit 并启动（见下文）；此后 `status/stop/restart/logs` 会自动委派给 systemd
 - **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
 - **多路径** — 用可重复的 `--cwd` 让单个 daemon 同时服务多个工作目录（见下文）
 - **交互式设置** — 首次启动时如未配置凭证会提示输入
 
 daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
+
+#### 开机 / 登录时自启 —— `chorus daemon install`
+
+```bash
+chorus daemon install --cwd ~/work/repo-a --cwd ~/work/repo-b   # 立即安装并启动，登录时自启
+chorus daemon uninstall                                         # 停用并移除该服务
+```
+
+在 Linux 上，`install` 会生成一个 `systemd --user` unit，让 daemon 以**前台**方式运行（`Type=simple`，不带 `-d`），从而由 systemd 直接接管进程，然后 `daemon-reload` + `enable --now`。它会捕获你传入的 `--cwd`/`--agent`/`--chorus-only` 参数。**不要**手写 `Type=forking` + `chorus daemon -d` 的 unit —— daemon 会自我 daemon 化，systemd 追踪不到，重启时会陷入死循环；交给 `install` 写正确的 unit。在 macOS/Windows 上，`install` 会打印一份可手动安装的正确模板。请先运行 `chorus login`，让 unit 能读到凭证。详见 [docs/DAEMON.md](docs/DAEMON.md)。
 
 #### 服务多个工作目录
 
