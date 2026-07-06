@@ -91,8 +91,14 @@ describe("parseDaemonAction — lifecycle sub-actions", () => {
     expect(parseDaemonAction(["restart", "--verbose"])).toBe("restart");
   });
 
-  it("DAEMON_ACTIONS is exactly the four lifecycle verbs", () => {
-    expect([...DAEMON_ACTIONS].sort()).toEqual(["logs", "restart", "status", "stop"]);
+  it("DAEMON_ACTIONS is exactly the lifecycle + service verbs", () => {
+    expect([...DAEMON_ACTIONS].sort()).toEqual(["install", "logs", "restart", "status", "stop", "uninstall"]);
+  });
+
+  it("recognizes install / uninstall as leading actions", () => {
+    expect(parseDaemonAction(["install"])).toBe("install");
+    expect(parseDaemonAction(["install", "--cwd", "/a"])).toBe("install");
+    expect(parseDaemonAction(["uninstall"])).toBe("uninstall");
   });
 });
 
@@ -111,6 +117,8 @@ describe("daemonHelpText", () => {
       "restart",
       "logs",
       "stop --force",
+      "install",
+      "uninstall",
     ]) {
       expect(help).toContain(token);
     }

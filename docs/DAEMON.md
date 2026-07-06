@@ -6,8 +6,9 @@ Claude Code on task dispatch — so an assigned agent can act on work even when 
 one is at a terminal.
 
 ```bash
-npx @chorus-aidlc/chorus daemon        # foreground
-npx @chorus-aidlc/chorus daemon -d     # background (detached)
+npx @chorus-aidlc/chorus daemon          # foreground
+npx @chorus-aidlc/chorus daemon -d       # background (detached)
+npx @chorus-aidlc/chorus daemon install  # install as a boot service (Linux) — recommended
 ```
 
 See `chorus daemon --help` and `chorus login --help` for the full flag list.
@@ -146,18 +147,54 @@ chorus daemon stop --force  # force-clean the pidfile when a stuck/unverifiable
   interactive prompt.
 - Every lifecycle subcommand reports clearly when no daemon is running (it never
   fails silently).
+- **Under a supervisor (`chorus daemon install`)** these same subcommands
+  delegate to the service manager instead of the pidfile: `status`/`stop`/
+  `restart`/`logs` drive `systemctl`/`journalctl`. See "Auto-start on boot /
+  login" below — that is the recommended way to run the daemon permanently.
 
 ---
 
-## Auto-start on boot / login (manual setup)
+## Auto-start on boot / login
 
-Chorus does **not** install OS services for you. To start the daemon
-automatically, install one of the templates below by hand. (Windows: use Task
-Scheduler to run `chorus daemon` at logon — not templated here.)
+### Recommended: `chorus daemon install` (Linux)
+
+```bash
+chorus daemon install --cwd ~/proj          # generate the systemd --user unit,
+                                             # daemon-reload, enable --now
+chorus daemon install --cwd ~/a --cwd ~/b    # serve several paths at boot
+chorus daemon uninstall                      # disable + remove the unit
+```
+
+`install` generates a correct `systemd --user` unit and starts it — you never
+hand-write the file. It captures the `--cwd` / `--agent` / `--chorus-only` flags
+you pass, plus absolute `node` / `chorus.mjs` paths and your current `PATH`, and
+runs `systemctl --user daemon-reload` then `enable --now`. After install, the
+lifecycle subcommands **delegate to systemd** automatically — `chorus daemon
+status` / `stop` / `restart` / `logs` drive `systemctl` / `journalctl`, so a
+supervised daemon is never misreported as "not running".
+
+> **Why a command instead of a hand-written unit?** The generated unit runs the
+> daemon in the **foreground** (`Type=simple`, no `-d`) so systemd owns the
+> process directly. Hand-writing a `Type=forking` unit around `chorus daemon -d`
+> looks reasonable but breaks badly: `-d` self-daemonizes (it forks a detached
+> child and writes a JSON pidfile systemd can't parse), so systemd never adopts
+> the child as `MainPID`, marks the service failed, and `Restart=on-failure`
+> retries every few seconds — each retry's `-d` preflight then finds the previous
+> orphan alive via the pidfile and refuses, an infinite restart loop that also
+> pins the server-side connection rows. Let `install` write the right unit.
 
 > Pre-authorize YOLO before enabling auto-start: run `chorus daemon` once on a
-> terminal and confirm the `y/N` prompt (persists `yoloAckAt`), **or** set
-> `--chorus-only` in the template to keep the unattended daemon restricted.
+> terminal and confirm the `y/N` prompt (persists `yoloAckAt`), **or** pass
+> `--chorus-only` to `install` to keep the unattended daemon restricted.
+> `install` also needs credentials the unit can see — run `chorus login` first
+> so they land in `~/.chorus/daemon.json` (not just your shell env).
+
+### Manual setup (macOS, or advanced Linux customization)
+
+`chorus daemon install` is Linux-only; on macOS it prints the plist below for you
+to install by hand, and on Windows it prints the foreground command to wrap in
+Task Scheduler. Use these templates directly if you need to customize the unit.
+
 > Replace `/usr/local/bin/chorus` with your actual install path (`which chorus`).
 
 ### macOS — launchd LaunchAgent
@@ -248,7 +285,9 @@ unattended posture.
 |------|-------------------|
 | Start (foreground) | `chorus daemon` |
 | Start (background) | `chorus daemon -d` |
-| Stop / status / logs / restart | `chorus daemon stop` / `status` / `logs` / `restart` |
+| Install as a boot service (Linux) | `chorus daemon install [--cwd …]` |
+| Remove the boot service | `chorus daemon uninstall` |
+| Stop / status / logs / restart | `chorus daemon stop` / `status` / `logs` / `restart` (delegate to systemd when installed) |
 | Restrict the woken agent | `--chorus-only` / `CHORUS_CHORUS_ONLY=1` |
 | Force full autonomy | `--yolo` / `CHORUS_YOLO=1` (also the default) |
 | Verbose per-wake logs | `--verbose` / `CHORUS_VERBOSE=1` |
