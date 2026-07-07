@@ -104,6 +104,11 @@ describe("ChorusEventRouter.dispatch", () => {
     ["task_reopened", "task", "reopened"],
     ["elaboration_requested", "idea", "Elaboration requested"],
     ["elaboration_answered", "idea", "Elaboration answers submitted"],
+    // Stage-advance wakes (sync-openclaw-plugin-wake-events): mirror the daemon's
+    // cli/prompts.mjs contracts. The needle is the distinctive instruction of each.
+    ["elaboration_verified", "idea", "WRITE THE PROPOSAL"],
+    ["start_development", "idea", "ALL remaining tasks"],
+    ["yolo_requested", "idea", "yolo skill"],
   ])("routes action '%s' to a wake containing %j", async (action, entityType, needle) => {
     const { router } = build({
       chorus_get_notifications: {
