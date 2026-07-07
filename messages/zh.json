@@ -1654,6 +1654,11 @@
     "tooltip": {
       "loading": "加载中…"
     },
+    "zoom": {
+      "in": "放大",
+      "out": "缩小",
+      "fit": "适应视图"
+    },
     "status": {
       "unknown": "未知"
     }

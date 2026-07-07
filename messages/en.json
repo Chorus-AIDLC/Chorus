@@ -1653,6 +1653,11 @@
     "tooltip": {
       "loading": "Loading…"
     },
+    "zoom": {
+      "in": "Zoom in",
+      "out": "Zoom out",
+      "fit": "Fit to view"
+    },
     "status": {
       "unknown": "Unknown"
     }

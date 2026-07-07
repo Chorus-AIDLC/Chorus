@@ -38,7 +38,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Plus, Minus, Maximize } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { usePresence } from "@/hooks/use-presence";
 import { getAgentColor } from "@/lib/agent-color";
 import {
@@ -213,6 +221,68 @@ export function centerTransformFor(
 // clamp scale identically (Tech Design D1/D3).
 const SCALE_MIN = 0.2;
 const SCALE_MAX = 2.5;
+
+// --- Trackpad wheel-gesture tuning (Tech Design D1) -------------------------
+//
+// The `/graph` canvas classifies raw `wheel` events into a Figma/Miro-style
+// model: a trackpad pinch (reported by browsers as ctrl+wheel) or Ctrl/⌘+wheel
+// zooms; a plain two-finger trackpad swipe pans; a classic mouse-wheel notch
+// still zooms (elaboration Q2=a / Q3=a). See `classifyWheel`.
+//
+// Heuristic honesty: no web API cleanly separates "mouse wheel" from "trackpad
+// two-finger scroll" — both are `WheelEvent`s. We treat a plain wheel as a PAN
+// when it carries a horizontal component (`deltaX`) OR reads as a fine-grained
+// pixel-mode vertical scroll (below MOUSE_NOTCH_MIN px); otherwise (coarse,
+// vertical-only, often line-mode) it is a mouse notch → ZOOM. This is the same
+// signal Figma / tldraw / Excalidraw use. The one accepted ambiguity: a plain
+// vertical two-finger trackpad swipe with pixel deltas at/above MOUSE_NOTCH_MIN
+// is indistinguishable from a mouse notch and will zoom — covered by the pinch
+// path, the on-screen controls, and Ctrl+wheel as unambiguous fallbacks.
+const ZOOM_WHEEL_SENSITIVITY = 0.0015; // mouse-notch zoom feel (unchanged from the old handler)
+const ZOOM_PINCH_SENSITIVITY = 0.01; // pinch/ctrl+wheel deltas are fine pixels — a larger factor keeps them responsive without over-zooming
+const MOUSE_NOTCH_MIN = 30; // px: a pixel-mode vertical wheel below this reads as a fine trackpad scroll (pan), not a mouse notch
+
+// The fixed multiplier the on-screen +/- zoom buttons step by (Tech Design D2).
+const ZOOM_BUTTON_STEP = 1.3;
+
+/** The classified intent of a wheel event over the canvas (Tech Design D1). */
+export type WheelGesture =
+  | { kind: "zoom"; scaleFactor: number }
+  | { kind: "pan"; dx: number; dy: number };
+
+/**
+ * Classify a raw wheel event into a pan or a zoom (pure + exported so the
+ * heuristic is unit-testable without a canvas — mirrors pinchTransform). See
+ * the tuning-constant block above for the heuristic rationale.
+ *
+ *   1. ctrlKey → zoom. Browsers report a trackpad PINCH as a synthetic
+ *      ctrl+wheel, and Ctrl/⌘+wheel is the explicit zoom shortcut. Uses the
+ *      finer ZOOM_PINCH_SENSITIVITY.
+ *   2. else a horizontal component OR a fine pixel-mode vertical scroll → pan
+ *      (a two-finger trackpad swipe). dx/dy are the raw deltas.
+ *   3. else → zoom (a classic mouse-wheel notch), preserving the old feel via
+ *      ZOOM_WHEEL_SENSITIVITY.
+ *
+ * `scaleFactor` is a multiplier on the current scale; scrolling up (negative
+ * deltaY) yields a factor > 1 (zoom in), matching the prior handler.
+ */
+export function classifyWheel(ev: {
+  ctrlKey: boolean;
+  deltaX: number;
+  deltaY: number;
+  deltaMode: number; // 0 = pixel, 1 = line, 2 = page
+}): WheelGesture {
+  if (ev.ctrlKey) {
+    return { kind: "zoom", scaleFactor: Math.exp(-ev.deltaY * ZOOM_PINCH_SENSITIVITY) };
+  }
+  const isPixelMode = ev.deltaMode === 0;
+  const looksLikeTrackpadSwipe =
+    ev.deltaX !== 0 || (isPixelMode && Math.abs(ev.deltaY) < MOUSE_NOTCH_MIN);
+  if (looksLikeTrackpadSwipe) {
+    return { kind: "pan", dx: ev.deltaX, dy: ev.deltaY };
+  }
+  return { kind: "zoom", scaleFactor: Math.exp(-ev.deltaY * ZOOM_WHEEL_SENSITIVITY) };
+}
 
 // Double-tap disambiguation window (Tech Design D2). A second tap within this
 // time AND distance of the first is a double-tap (zoom), not a node click.
@@ -1039,16 +1109,16 @@ export function MindMapCanvas({
     }
   }, []);
 
-  const handleWheel = useCallback(
-    (ev: React.WheelEvent) => {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const sx = ev.clientX - rect.left;
-      const sy = ev.clientY - rect.top;
+  // Zoom by a scale factor while keeping the graph point under (sx, sy) fixed
+  // (cursor/viewport anchor). Shared by the wheel-zoom path and the on-screen
+  // zoom buttons (Tech Design D1/D2). Clamps to [SCALE_MIN, SCALE_MAX].
+  const zoomAround = useCallback(
+    (scaleFactor: number, sx: number, sy: number) => {
       const v = viewRef.current;
-      const factor = Math.exp(-ev.deltaY * 0.0015);
-      const nextScale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, v.scale * factor));
-      // Zoom around the cursor: keep the graph point under the cursor fixed.
+      const nextScale = Math.min(
+        SCALE_MAX,
+        Math.max(SCALE_MIN, v.scale * scaleFactor),
+      );
       const gx = (sx - v.tx) / v.scale;
       const gy = (sy - v.ty) / v.scale;
       viewRef.current = {
@@ -1060,6 +1130,62 @@ export function MindMapCanvas({
     },
     [scheduleRender],
   );
+  // Keep a live ref to zoomAround so the native (non-React) wheel listener below
+  // can call the latest closure without re-attaching on every render.
+  const zoomAroundRef = useRef(zoomAround);
+  zoomAroundRef.current = zoomAround;
+
+  // Native, NON-PASSIVE wheel listener (Tech Design D1). React's onWheel is
+  // passive in some browsers, so preventDefault() there is ignored (and warns).
+  // Attaching manually with { passive: false } lets us stop the page from
+  // scrolling while the cursor is over the canvas and a gesture is classified.
+  // classifyWheel splits the raw event into a two-finger PAN (trackpad swipe)
+  // or a ZOOM (pinch / ctrl+wheel / mouse notch); see classifyWheel above.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (ev: WheelEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const sx = ev.clientX - rect.left;
+      const sy = ev.clientY - rect.top;
+      const gesture = classifyWheel(ev);
+      // Stop the page from scrolling under any classified graph gesture.
+      ev.preventDefault();
+      if (gesture.kind === "pan") {
+        // Content follows the fingers: swiping down/right moves the view up/left.
+        viewRef.current = {
+          ...viewRef.current,
+          tx: viewRef.current.tx - gesture.dx,
+          ty: viewRef.current.ty - gesture.dy,
+        };
+        scheduleRender();
+      } else {
+        zoomAroundRef.current(gesture.scaleFactor, sx, sy);
+      }
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [scheduleRender]);
+
+  // --- On-screen zoom / fit controls (Tech Design D2, Q4=a) -----------------
+  // A fallback zoom entry point that needs no gesture, wheel, or modifier key.
+  // The +/- buttons step the zoom centered on the viewport (reusing zoomAround);
+  // fit re-frames the whole tree via the same fitTransformFor the first-load fit
+  // and double-tap reset use. Hidden while the layout is empty (nothing to zoom).
+  const zoomInByButton = useCallback(() => {
+    zoomAround(ZOOM_BUTTON_STEP, dims.width / 2, dims.height / 2);
+  }, [zoomAround, dims.width, dims.height]);
+  const zoomOutByButton = useCallback(() => {
+    zoomAround(1 / ZOOM_BUTTON_STEP, dims.width / 2, dims.height / 2);
+  }, [zoomAround, dims.width, dims.height]);
+  const fitByButton = useCallback(() => {
+    const next = fitTransformFor(layout, dims);
+    if (next) {
+      viewRef.current = next;
+      scheduleRender();
+    }
+  }, [layout, dims, scheduleRender]);
+  const hasNodes = layout.positions.size > 0;
 
   return (
     <div ref={containerRef} className="absolute inset-0">
@@ -1072,7 +1198,6 @@ export function MindMapCanvas({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onPointerLeave={() => setHoverId(null)}
-        onWheel={handleWheel}
       />
       {/* Hover tooltip — a DOM overlay above the canvas (Tech Design D3).
           Title-only: shows the hovered node's FULL untruncated title (the one
@@ -1086,6 +1211,64 @@ export function MindMapCanvas({
           x={tooltipAnchor.x}
           y={tooltipAnchor.y}
         />
+      )}
+      {/* On-screen zoom / fit control cluster (Tech Design D2, Q4=a). A DOM
+          overlay in the bottom-left (opposite the top-right search card),
+          giving a gesture-free zoom/reframe fallback. Hidden while the graph
+          is empty. All labels are i18n-driven (graph.zoom.*). */}
+      {hasNodes && (
+        <TooltipProvider delayDuration={300}>
+          <div className="absolute bottom-3 left-3 flex flex-col gap-1 rounded-lg border border-[#EAE4DB] bg-white/95 p-1 shadow-sm backdrop-blur-sm">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={zoomInByButton}
+                  aria-label={t("graph.zoom.in")}
+                  data-testid="graph-zoom-in"
+                  className="text-[#6B6B6B]"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t("graph.zoom.in")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={zoomOutByButton}
+                  aria-label={t("graph.zoom.out")}
+                  data-testid="graph-zoom-out"
+                  className="text-[#6B6B6B]"
+                >
+                  <Minus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t("graph.zoom.out")}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={fitByButton}
+                  aria-label={t("graph.zoom.fit")}
+                  data-testid="graph-zoom-fit"
+                  className="text-[#6B6B6B]"
+                >
+                  <Maximize className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t("graph.zoom.fit")}</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
       )}
     </div>
   );
