@@ -36,11 +36,12 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(parseClientFlags(["--agent=codex"]).agent).toBe("codex");
   });
 
-  it("parses boolean --chorus-only / --verbose / -d / --detach", () => {
+  it("parses boolean --chorus-only / --verbose / -d / --detach / --force", () => {
     expect(parseClientFlags(["--chorus-only"]).chorusOnly).toBe(true);
     expect(parseClientFlags(["--verbose"]).verbose).toBe(true);
     expect(parseClientFlags(["-d"]).detach).toBe(true);
     expect(parseClientFlags(["--detach"]).detach).toBe(true);
+    expect(parseClientFlags(["--force"]).force).toBe(true);
   });
 
   it("parses --help / -h into help:true", () => {
@@ -55,6 +56,7 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(f.verbose).toBeUndefined();
     expect(f.detach).toBeUndefined();
     expect(f.agent).toBeUndefined();
+    expect(f.force).toBeUndefined();
     expect(f.help).toBeUndefined();
   });
 
@@ -89,8 +91,14 @@ describe("parseDaemonAction — lifecycle sub-actions", () => {
     expect(parseDaemonAction(["restart", "--verbose"])).toBe("restart");
   });
 
-  it("DAEMON_ACTIONS is exactly the four lifecycle verbs", () => {
-    expect([...DAEMON_ACTIONS].sort()).toEqual(["logs", "restart", "status", "stop"]);
+  it("DAEMON_ACTIONS is exactly the lifecycle + service verbs", () => {
+    expect([...DAEMON_ACTIONS].sort()).toEqual(["install", "logs", "restart", "status", "stop", "uninstall"]);
+  });
+
+  it("recognizes install / uninstall as leading actions", () => {
+    expect(parseDaemonAction(["install"])).toBe("install");
+    expect(parseDaemonAction(["install", "--cwd", "/a"])).toBe("install");
+    expect(parseDaemonAction(["uninstall"])).toBe("uninstall");
   });
 });
 
@@ -108,6 +116,9 @@ describe("daemonHelpText", () => {
       "status",
       "restart",
       "logs",
+      "stop --force",
+      "install",
+      "uninstall",
     ]) {
       expect(help).toContain(token);
     }

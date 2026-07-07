@@ -78,6 +78,7 @@ import {
   appendTranscriptMessages,
   advanceTurnForWake,
   getPendingTurnsForConnection,
+  reconcileOrphanTurns,
   SessionReadOnlyError,
   transcriptEventName,
 } from "@/services/daemon-session.service";
@@ -116,6 +117,7 @@ function turnRow(overrides: Partial<Record<string, unknown>> = {}) {
     trigger: "task_assigned",
     promptText: null,
     status: "pending",
+    interruptedReason: null,
     executionUuid: null,
     startedAt: null,
     endedAt: null,
@@ -165,7 +167,7 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("TURN_TRIGGERS covers the six wake kinds (incl. the distinct elaboration_verified)", () => {
+  it("TURN_TRIGGERS covers the eight wake kinds (incl. the distinct elaboration_verified, start_development, and yolo_requested)", () => {
     expect([...TURN_TRIGGERS].sort()).toEqual(
       [
         "elaboration",
@@ -173,6 +175,8 @@ describe("constants", () => {
         "human_instruction",
         "mentioned",
         "resume",
+        "start_development",
+        "yolo_requested",
         "task_assigned",
       ].sort(),
     );
@@ -183,8 +187,18 @@ describe("constants", () => {
     expect(TURN_TRIGGERS).toContain("elaboration");
   });
 
-  it("TURN_STATUSES are the strict forward lifecycle pending/running/ended", () => {
-    expect([...TURN_STATUSES]).toEqual(["pending", "running", "ended"]);
+  it("TURN_TRIGGERS includes start_development as a member distinct from task_assigned", () => {
+    expect(TURN_TRIGGERS).toContain("start_development");
+    expect(TURN_TRIGGERS).toContain("task_assigned");
+  });
+
+  it("TURN_TRIGGERS includes yolo_requested as a member distinct from task_assigned", () => {
+    expect(TURN_TRIGGERS).toContain("yolo_requested");
+    expect(TURN_TRIGGERS).toContain("task_assigned");
+  });
+
+  it("TURN_STATUSES are the strict forward lifecycle pending/running/ended|interrupted", () => {
+    expect([...TURN_STATUSES]).toEqual(["pending", "running", "ended", "interrupted"]);
   });
 
   it("SESSION_STATUSES are active/ended", () => {
@@ -447,8 +461,107 @@ describe("createPendingTurn", () => {
   });
 });
 
-// ===== advanceTurn (strict pending → running → ended) =====
+// ===== advanceTurn (strict pending → running → ended | interrupted) =====
 describe("advanceTurn", () => {
+  it("running → interrupted: persists status + interruptedReason + endedAt, emits turn_status_changed", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    const endedAt = new Date("2026-06-15T05:00:00.000Z");
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "interrupted", interruptedReason: "shutdown", endedAt }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurn(turnUuid, "interrupted", {
+      endedAt,
+      interruptedReason: "shutdown",
+    });
+    expect(res).toMatchObject({ ok: true });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("interrupted");
+    expect(data.interruptedReason).toBe("shutdown");
+    expect(data.endedAt).toBe(endedAt);
+
+    // The SSE trigger fires exactly as for ended, carrying the reason in the view.
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    const [eventName, payload] = mockEventBus.emit.mock.calls[0];
+    expect(eventName).toBe(`transcript:${sessionUuid}`);
+    expect(payload.trigger).toBe("turn_status_changed");
+    expect(payload.turn.status).toBe("interrupted");
+    expect(payload.turn.interruptedReason).toBe("shutdown");
+  });
+
+  it("REJECTS pending → interrupted (a pending turn stays recoverable via backfill)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "pending",
+    });
+    const res = await advanceTurn(turnUuid, "interrupted", { interruptedReason: "offline" });
+    expect(res).toEqual({
+      ok: false,
+      reason: "invalid_transition",
+      from: "pending",
+      to: "interrupted",
+    });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS any transition out of the terminal interrupted state (incl. a late running→ended report)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "interrupted",
+    });
+    // The daemon finished the subprocess after the server already reconciled the turn
+    // interrupted(offline) — its late `ended` report must lose the race, writing nothing.
+    const res = await advanceTurn(turnUuid, "ended");
+    expect(res).toMatchObject({ ok: false, reason: "invalid_transition", from: "interrupted", to: "ended" });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS ended → interrupted (terminal states never cross)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "ended",
+    });
+    const res = await advanceTurn(turnUuid, "interrupted", { interruptedReason: "offline" });
+    expect(res).toMatchObject({ ok: false, reason: "invalid_transition", from: "ended", to: "interrupted" });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS re-applying interrupted → interrupted", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "interrupted",
+    });
+    const res = await advanceTurn(turnUuid, "interrupted", { interruptedReason: "offline" });
+    expect(res).toMatchObject({ ok: false, reason: "invalid_transition" });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("DROPS interruptedReason on a non-interrupted edge (invariant: reason iff interrupted)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "ended" }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    // A stray reason alongside a legal → ended must not decorate the ended turn.
+    await advanceTurn(turnUuid, "ended", { interruptedReason: "crash" });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("ended");
+    expect(data).not.toHaveProperty("interruptedReason");
+  });
+
   it("pending → running: updates status, records startedAt + executionUuid, emits turn_status_changed", async () => {
     mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
       uuid: turnUuid,
@@ -838,8 +951,10 @@ describe("getSessionDetail", () => {
       orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
     });
     // Candidate turns are read seq DESC; with NO cursor there is no take cap (the page
-    // window is computed in memory over the message stream) and no seq filter.
-    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    // window is computed in memory over the message stream) and no seq filter. The
+    // candidate query is the LAST turn findMany (the read-time orphan-reconcile probe
+    // runs first on this path).
+    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.orderBy).toEqual({ seq: "desc" });
     expect(turnArgs.where).toEqual({ sessionUuid });
   });
@@ -924,8 +1039,9 @@ describe("getSessionDetail", () => {
     );
 
     // Candidate turn query fenced `seq <= beforeTurnSeq` (the cursor turn itself stays in
-    // so its older messages can be returned).
-    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    // so its older messages can be returned). The candidate query is the LAST turn
+    // findMany (the read-time orphan-reconcile probe runs first on this path).
+    const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.where).toEqual({ sessionUuid, seq: { lte: 3 } });
     // Only messages strictly older than (turnSeq 3, msgSeq 2): t3's seq 1 (and its slot
     // seq 0), plus all of t2 and t1's slots. t3's seq 2 and 3 are at/after the cursor →
@@ -1769,6 +1885,28 @@ describe("advanceTurnForWake", () => {
     expect(updateArg.data).not.toHaveProperty("executionUuid");
   });
 
+  it("running→interrupted resolves the RUNNING turn, defaults endedAt, and persists the reason", async () => {
+    ownedSessionWithLatestTurn("running");
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "interrupted",
+      interruptedReason: "shutdown",
+    });
+
+    expect(res).toMatchObject({ ok: true });
+    // → interrupted leaves from the same state as → ended: the running turn.
+    const resolve = mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0];
+    expect(resolve.where).toEqual({ sessionUuid, status: "running" });
+    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    expect(updateArg.data.status).toBe("interrupted");
+    expect(updateArg.data.interruptedReason).toBe("shutdown");
+    expect(updateArg.data.endedAt).toBeInstanceOf(Date);
+  });
+
   it("returns not_found when the agent has no such session (non-disclosure)", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(null);
     const res = await advanceTurnForWake({
@@ -1813,6 +1951,314 @@ describe("advanceTurnForWake", () => {
     });
     expect(res).toMatchObject({ ok: false, reason: "invalid_transition", from: "ended", to: "running" });
     expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+});
+
+// ===== reconcileOrphanTurns (server-side escape hatch for a daemon dead mid-turn) =====
+describe("reconcileOrphanTurns", () => {
+  const STALE = STALE_THRESHOLD_MS; // 90_000 (mocked to the real literal above)
+
+  // A running turn owned (via its session's originConnectionUuid) by the connection,
+  // plus the advanceTurn-chokepoint mocks for a successful → interrupted write.
+  function runningTurnOnConnection() {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ uuid: turnUuid }]);
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "interrupted", interruptedReason: "offline" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+  }
+
+  it("finalizes a stale connection's running turns as interrupted(offline) via the chokepoint (SSE emitted)", async () => {
+    runningTurnOnConnection();
+    // lastSeenAt aged past the threshold → orphan-eligible.
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      lastSeenAt: new Date(Date.now() - STALE - 1_000),
+    });
+
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+
+    expect(count).toBe(1);
+    // The candidate query is fenced to running turns of THIS connection's sessions.
+    const findArg = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(findArg.where).toEqual({
+      status: "running",
+      session: { companyUuid, originConnectionUuid: connectionUuid },
+    });
+    // Written through advanceTurn: status + reason + endedAt.
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("interrupted");
+    expect(data.interruptedReason).toBe("offline");
+    expect(data.endedAt).toBeInstanceOf(Date);
+    // SSE published by the chokepoint (not reimplemented here).
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit.mock.calls[0][1].trigger).toBe("turn_status_changed");
+  });
+
+  it("AGE-ONLY rule: a fresh lastSeenAt is NOT eligible even when status is 'offline' (abort→reconnect gap)", async () => {
+    // The connection row just aborted (status flipped offline) but its lastSeenAt is
+    // fresh — the daemon may be reconnecting. The reconcile must write NOTHING; the
+    // stored status is deliberately not consulted (blocker-1 regression guard).
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ uuid: turnUuid }]);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "offline",
+      lastSeenAt: new Date(Date.now() - 5_000), // 5s ago — well within 90s
+    });
+
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+
+    expect(count).toBe(0);
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+    // Eligibility read selects only lastSeenAt — status cannot influence the verdict.
+    expect(mockPrisma.daemonConnection.findFirst.mock.calls[0][0].select).toEqual({
+      lastSeenAt: true,
+    });
+  });
+
+  it("a stale lastSeenAt IS eligible even while status still reads 'online' (kill -9, no abort)", async () => {
+    runningTurnOnConnection();
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "online", // never marked offline — the daemon died without an abort
+      lastSeenAt: new Date(Date.now() - STALE - 60_000),
+    });
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+    expect(count).toBe(1);
+  });
+
+  it("a deleted connection row is eligible (a gone connection cannot report)", async () => {
+    runningTurnOnConnection();
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+    expect(count).toBe(1);
+  });
+
+  it("no running turns → no eligibility read, no writes (cheap no-op)", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+    expect(count).toBe(0);
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("PENDING turns are untouched — the candidate query filters status=running only", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    await reconcileOrphanTurns(companyUuid, connectionUuid);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where.status).toBe("running");
+  });
+
+  it("RACE: a turn the daemon terminally reported meanwhile loses as a LOGGED invalid_transition (no crash)", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ uuid: turnUuid }]);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      lastSeenAt: new Date(Date.now() - STALE - 1_000),
+    });
+    // By the time advanceTurn re-reads the turn, the daemon's own running→ended landed.
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "ended",
+    });
+
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+
+    expect(count).toBe(0);
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ turnUuid, from: "ended", to: "interrupted" }),
+      expect.stringMatching(/lost the race/),
+    );
+  });
+
+  it("SWALLOWS + LOGS its own errors (fire-and-forget-safe, returns 0)", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockRejectedValue(new Error("db down"));
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid);
+    expect(count).toBe(0);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ companyUuid, connectionUuid }),
+      expect.stringMatching(/orphaned running turns/),
+    );
+  });
+
+  it("FORCE mode (new-generation registration) bypasses the age guard entirely", async () => {
+    // The restart-window seam: the restarted process's heartbeat keeps lastSeenAt
+    // fresh, so the age-only rule would no-op forever. force:true skips the
+    // eligibility read — the generation change is the caller's evidence.
+    runningTurnOnConnection();
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(count).toBe(1);
+    // The eligibility read is skipped entirely on the force path.
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("interrupted");
+    expect(data.interruptedReason).toBe("offline");
+  });
+
+  it("FORCE mode with no running turns is still a cheap no-op", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    const count = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(count).toBe(0);
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("RESTART-WINDOW REGRESSION: force-reconciling the orphan BEFORE the new wake keeps FIFO →ended on the correct turn", async () => {
+    // The seam this fix closes: an orphaned running turn (seq 1, from the dead
+    // generation) + a fresh wake creating turn seq 2. Without the generation
+    // reconcile, →ended's oldest-running FIFO resolution would target the ORPHAN,
+    // marking it cleanly ended and stranding the genuinely-finished seq-2 turn.
+    const orphanUuid = "turn-orphan-0000-0000-000000000001";
+    const newTurnUuid = "turn-new-0000-0000-0000-000000000002";
+
+    // Step 1 — new-generation registration fires the FORCE reconcile: only the
+    // orphan is `running` at this point (the new wake hasn't started).
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ uuid: orphanUuid }]);
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: orphanUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ uuid: orphanUuid, status: "interrupted", interruptedReason: "offline" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    const reconciled = await reconcileOrphanTurns(companyUuid, connectionUuid, { force: true });
+    expect(reconciled).toBe(1);
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].where).toEqual({
+      uuid: orphanUuid,
+    });
+
+    vi.clearAllMocks();
+
+    // Step 2 — the new wake's turn (seq 2) runs and exits: →ended resolves by
+    // status=running, and with the orphan already interrupted the ONLY running
+    // turn is the new one — the report lands on it, never on the orphan.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: newTurnUuid });
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: newTurnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ uuid: newTurnUuid, seq: 2, status: "ended" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "ended",
+    });
+    expect(res).toMatchObject({ ok: true });
+    // Resolution still queries status=running (FIFO oldest) — and the write hits
+    // the NEW turn, proving the orphan can no longer be mis-targeted.
+    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].where).toEqual({
+      sessionUuid,
+      status: "running",
+    });
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].where).toEqual({
+      uuid: newTurnUuid,
+    });
+  });
+});
+
+// ===== Read-time orphan fallback on the session read paths =====
+describe("read-time orphan-turn fallback", () => {
+  const staleDate = new Date(Date.now() - STALE_THRESHOLD_MS - 10_000);
+
+  it("getVisibleSessions converges a stale connection's running turn before returning", async () => {
+    const userAuth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    mockPrisma.daemonSession.findMany.mockResolvedValue([sessionRow()]);
+    // Probe: this session has a running turn; reconcile re-reads candidates the same way.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { uuid: turnUuid, sessionUuid },
+    ]);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ lastSeenAt: staleDate });
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "interrupted", interruptedReason: "offline" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const sessions = await getVisibleSessions(userAuth);
+
+    expect(sessions).toHaveLength(1);
+    // The orphaned turn was written through (interrupted persisted in the DB).
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.status).toBe("interrupted");
+    expect(data.interruptedReason).toBe("offline");
+  });
+
+  it("getVisibleSessions read SURVIVES a fallback failure (best-effort, logged, never breaks the read)", async () => {
+    const userAuth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    mockPrisma.daemonSession.findMany.mockResolvedValue([sessionRow()]);
+    // The probe itself explodes — the read must still return its sessions, with the
+    // failure logged (no-silent-errors) rather than propagated.
+    mockPrisma.daemonSessionTurn.findMany.mockRejectedValue(new Error("probe down"));
+
+    const sessions = await getVisibleSessions(userAuth);
+
+    expect(sessions).toHaveLength(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ companyUuid }),
+      expect.stringMatching(/fallback failed/),
+    );
+  });
+
+  it("getSessionDetail converges the open session's orphaned running turn on read", async () => {
+    const userAuth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    // First findMany = probe (running turn present); later calls = candidate window.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ status: "running" }),
+    ]);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ lastSeenAt: staleDate });
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "interrupted", interruptedReason: "offline" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const detail = await getSessionDetail(userAuth, sessionUuid);
+
+    expect(detail).not.toBeNull();
+    // Write-through happened before the view was built.
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data.status).toBe(
+      "interrupted",
+    );
+  });
+
+  it("getSessionDetail during the abort→reconnect gap does NOT interrupt the live turn", async () => {
+    const userAuth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ status: "running" }),
+    ]);
+    // status=offline (stream just aborted) but lastSeenAt fresh → NOT eligible.
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({
+      status: "offline",
+      lastSeenAt: new Date(Date.now() - 3_000),
+    });
+
+    const detail = await getSessionDetail(userAuth, sessionUuid);
+
+    expect(detail).not.toBeNull();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    // The running band renders as-is — still the daemon's live turn.
+    expect(detail!.turns.some((t) => t.status === "running")).toBe(true);
   });
 });
 

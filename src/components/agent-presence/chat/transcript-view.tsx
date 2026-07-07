@@ -294,7 +294,7 @@ export function TranscriptView({
   // The conversation's single composer-hosted execution — its origin connection's
   // CURRENT in-flight work that the reply box's action row reflects. Priority:
   // running (→ Interrupt) > user-interrupted (→ Resume) > crash-interrupted (→ the
-  // "auto-recovers" hint, no Resume). We surface this directly off the connection's
+  // "exited with error" label + Resume). We surface this directly off the connection's
   // live slice rather than the per-turn `executionUuid` link, which the daemon does
   // not reliably populate (so the control would otherwise never appear even while the
   // conversation is plainly running). Null when the conversation is idle (just Send).

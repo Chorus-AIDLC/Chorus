@@ -15,6 +15,24 @@ function fakeLifecycle(over = {}) {
   };
 }
 
+/**
+ * A fake supervisor seam. Default: no supervisor installed (kind:none), so the
+ * control verbs fall through to the pidfile path — the pre-existing behavior.
+ * On a host that actually runs the chorus systemd unit the real detectSupervisor
+ * would fire, so every dispatch test injects this stub for isolation.
+ */
+function fakeService(over = {}) {
+  return {
+    detectSupervisor: vi.fn(() => ({ kind: "none" })),
+    installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: ["wrote /u"] })),
+    uninstallService: vi.fn(() => ({ platform: "linux", removed: true, unitPath: "/u", steps: ["removed /u"] })),
+    systemctlUser: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    journalctlUser: vi.fn(() => ({ status: 0, stdout: "journal-body", stderr: "" })),
+    resolveServicePaths: vi.fn(() => ({ nodePath: "/node", scriptPath: "/x/chorus.mjs", path: "/bin" })),
+    ...over,
+  };
+}
+
 describe("runDaemon — lifecycle action dispatch", () => {
   it("status reports running pid and never builds the daemon", async () => {
     const logs = [];
@@ -22,7 +40,7 @@ describe("runDaemon — lifecycle action dispatch", () => {
     const lifecycle = fakeLifecycle({ isRunning: () => ({ running: true, pid: 77, stale: false }) });
     const code = await runDaemon(
       { action: "status" },
-      { lifecycle, build, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+      { lifecycle, service: fakeService(), build, log: (m) => logs.push(m), errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
     expect(logs.join("")).toMatch(/running \(pid 77\)/);
@@ -33,7 +51,7 @@ describe("runDaemon — lifecycle action dispatch", () => {
     const logs = [];
     const code = await runDaemon(
       { action: "status" },
-      { lifecycle: fakeLifecycle(), build: vi.fn(), log: (m) => logs.push(m), errLog: () => {}, env: {} }
+      { lifecycle: fakeLifecycle(), service: fakeService(), build: vi.fn(), log: (m) => logs.push(m), errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
     expect(logs.join("")).toMatch(/not running/i);
@@ -43,7 +61,7 @@ describe("runDaemon — lifecycle action dispatch", () => {
     const out = [];
     const ok = await runDaemon(
       { action: "logs" },
-      { lifecycle: fakeLifecycle(), log: (m) => out.push(m), errLog: (m) => out.push("E:" + m), env: {} }
+      { lifecycle: fakeLifecycle(), service: fakeService(), log: (m) => out.push(m), errLog: (m) => out.push("E:" + m), env: {} }
     );
     expect(ok).toBe(0);
     expect(out.join("")).toContain("log-body");
@@ -51,23 +69,55 @@ describe("runDaemon — lifecycle action dispatch", () => {
     const errs = [];
     const bad = await runDaemon(
       { action: "logs" },
-      { lifecycle: fakeLifecycle({ readLog: () => ({ ok: false, message: "no log file at /l" }) }), log: () => {}, errLog: (m) => errs.push(m), env: {} }
+      { lifecycle: fakeLifecycle({ readLog: () => ({ ok: false, message: "no log file at /l" }) }), service: fakeService(), log: () => {}, errLog: (m) => errs.push(m), env: {} }
     );
     expect(bad).toBe(1);
     expect(errs.join("")).toMatch(/no log file/);
   });
 
   it("stop returns 0 when it stopped, 1 (with clear message) when nothing ran", async () => {
-    const okCode = await runDaemon({ action: "stop" }, { lifecycle: fakeLifecycle(), log: () => {}, errLog: () => {}, env: {} });
+    const okCode = await runDaemon({ action: "stop" }, { lifecycle: fakeLifecycle(), service: fakeService(), log: () => {}, errLog: () => {}, env: {} });
     expect(okCode).toBe(0);
 
     const errs = [];
     const badCode = await runDaemon(
       { action: "stop" },
-      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: null, reason: "not-running", message: "no daemon is running" }) }), log: () => {}, errLog: (m) => errs.push(m), env: {} }
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: null, reason: "not-running", message: "no daemon is running" }) }), service: fakeService(), log: () => {}, errLog: (m) => errs.push(m), env: {} }
     );
     expect(badCode).toBe(1);
     expect(errs.join("")).toMatch(/no daemon/);
+  });
+
+  it("stop exit-code contract: 0 for stale-cleared and forced, 1 for error", async () => {
+    // stale-cleared leaves "no daemon, no pidfile" — a successful self-heal
+    // must not fail `chorus daemon stop && …` chains.
+    const staleCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: 9, reason: "stale-cleared", message: "no live daemon (cleared stale pidfile for pid 9)" }) }), service: fakeService(), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(staleCode).toBe(0);
+
+    const forcedCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: true, pid: 9, reason: "forced", message: "forced cleanup" }) }), service: fakeService(), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(forcedCode).toBe(0);
+
+    const errCode = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle({ stopDaemon: () => ({ stopped: false, pid: 9, reason: "error", message: "failed to signal pid 9" }) }), service: fakeService(), log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(errCode).toBe(1);
+  });
+
+  it("stop threads --force into stopDaemon; plain stop does not", async () => {
+    const lifecycle = fakeLifecycle();
+    await runDaemon({ action: "stop", force: true }, { lifecycle, service: fakeService(), log: () => {}, errLog: () => {}, env: {} });
+    expect(lifecycle.stopDaemon).toHaveBeenCalledWith({ force: true });
+
+    const lifecycle2 = fakeLifecycle();
+    await runDaemon({ action: "stop" }, { lifecycle: lifecycle2, service: fakeService(), log: () => {}, errLog: () => {}, env: {} });
+    expect(lifecycle2.stopDaemon).toHaveBeenCalledWith({ force: false });
   });
 
   it("restart stops then starts a detached instance (skip-preflight, no prompt)", async () => {
@@ -75,7 +125,7 @@ describe("runDaemon — lifecycle action dispatch", () => {
     const ask = vi.fn();
     const code = await runDaemon(
       { action: "restart" },
-      { lifecycle, prompt: ask, log: () => {}, errLog: () => {}, env: {} }
+      { lifecycle, service: fakeService(), prompt: ask, log: () => {}, errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
     expect(lifecycle.stopDaemon).toHaveBeenCalledOnce();
@@ -83,6 +133,157 @@ describe("runDaemon — lifecycle action dispatch", () => {
     expect(ask).not.toHaveBeenCalled(); // restart is non-interactive
     // The detached child carries the marker so it skips preflight.
     expect(lifecycle.startBackground.mock.calls[0][0].env[DETACHED_ENV]).toBe("1");
+  });
+
+  it("restart keeps non-forced stop semantics even with --force present", async () => {
+    const lifecycle = fakeLifecycle();
+    await runDaemon({ action: "restart", force: true }, { lifecycle, service: fakeService(), log: () => {}, errLog: () => {}, env: {} });
+    // restart must not silently discard a pidfile it couldn't verify.
+    expect(lifecycle.stopDaemon).toHaveBeenCalledWith();
+  });
+});
+
+describe("runDaemon — supervisor (systemd) delegation", () => {
+  // When a systemd unit is installed+active, the control verbs must route to
+  // systemctl/journalctl instead of the pidfile — so a supervised daemon is
+  // never misreported as "not running" (the boot-storm confusion).
+  const installedActive = () => fakeService({
+    detectSupervisor: vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" })),
+  });
+
+  it("status delegates to systemctl and never touches the pidfile", async () => {
+    const logs = [];
+    const service = installedActive();
+    service.systemctlUser = vi.fn(() => ({ status: 0, stdout: "● chorus-daemon.service active", stderr: "" }));
+    const lifecycle = fakeLifecycle();
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle, service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("")).toMatch(/managed by systemd/);
+    expect(service.systemctlUser).toHaveBeenCalledWith(["status", "--no-pager", "chorus-daemon.service"]);
+    expect(lifecycle.isRunning).not.toHaveBeenCalled();
+  });
+
+  it("status returns 1 when the unit is installed but NOT active", async () => {
+    const service = fakeService({
+      detectSupervisor: () => ({ kind: "systemd", installed: true, active: false, unitPath: "/u" }),
+    });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(1);
+    expect(logs.join("")).toMatch(/NOT active/);
+  });
+
+  it("stop delegates to systemctl stop and does not signal the pidfile", async () => {
+    const service = installedActive();
+    const lifecycle = fakeLifecycle();
+    const logs = [];
+    const code = await runDaemon(
+      { action: "stop" },
+      { lifecycle, service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.systemctlUser).toHaveBeenCalledWith(["stop", "chorus-daemon.service"]);
+    expect(lifecycle.stopDaemon).not.toHaveBeenCalled();
+    expect(logs.join("")).toMatch(/stopped the daemon service/);
+  });
+
+  it("restart delegates to systemctl restart and does not re-detach", async () => {
+    const service = installedActive();
+    const lifecycle = fakeLifecycle();
+    const code = await runDaemon(
+      { action: "restart" },
+      { lifecycle, service, log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.systemctlUser).toHaveBeenCalledWith(["restart", "chorus-daemon.service"]);
+    expect(lifecycle.startBackground).not.toHaveBeenCalled();
+  });
+
+  it("logs delegates to journalctl", async () => {
+    const service = installedActive();
+    service.journalctlUser = vi.fn(() => ({ status: 0, stdout: "journal-line", stderr: "" }));
+    const out = [];
+    const code = await runDaemon(
+      { action: "logs" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => out.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.journalctlUser).toHaveBeenCalledWith(["-u", "chorus-daemon.service", "--no-pager", "-n", "200"]);
+    expect(out.join("")).toContain("journal-line");
+  });
+
+  it("a stop failure under systemd surfaces the error and returns 1", async () => {
+    const service = installedActive();
+    service.systemctlUser = vi.fn(() => ({ status: 1, stdout: "", stderr: "Failed to stop" }));
+    const errs = [];
+    const code = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).toMatch(/failed to stop the service/i);
+  });
+});
+
+describe("runDaemon — install / uninstall", () => {
+  it("install passes the invoking --cwd/--agent/--chorus-only into the spec and reports success", async () => {
+    const service = fakeService();
+    const logs = [];
+    const code = await runDaemon(
+      { action: "install", cwd: ["/a", "/b"], agent: "claude-code", chorusOnly: true },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    const spec = service.installService.mock.calls[0][0];
+    expect(spec.cwds).toEqual(["/a", "/b"]);
+    expect(spec.agent).toBe("claude-code");
+    expect(spec.chorusOnly).toBe(true);
+    expect(logs.join("")).toMatch(/installed and started/);
+  });
+
+  it("install surfaces a Linux failure as exit 1", async () => {
+    const service = fakeService({
+      installService: () => ({ platform: "linux", installed: false, unitPath: "/u", unitText: "", steps: ["wrote /u"], error: "daemon-reload failed" }),
+    });
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).toMatch(/install failed: daemon-reload failed/);
+  });
+
+  it("install on macOS prints the template + steps and exits 0 without failing", async () => {
+    const service = fakeService({
+      installService: () => ({ platform: "darwin", installed: false, unitPath: "/p.plist", unitText: "<plist/>", steps: ["Save the plist below to /p.plist"] }),
+    });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("\n")).toMatch(/Linux-only/);
+    expect(logs.join("\n")).toContain("<plist/>");
+  });
+
+  it("uninstall reports removal on Linux; 'nothing to remove' when absent", async () => {
+    const removed = fakeService();
+    const okLogs = [];
+    await runDaemon({ action: "uninstall" }, { lifecycle: fakeLifecycle(), service: removed, log: (m) => okLogs.push(m), errLog: () => {}, env: {} });
+    expect(okLogs.join("")).toMatch(/removed the daemon service/);
+
+    const none = fakeService({ uninstallService: () => ({ platform: "linux", removed: false, unitPath: "/u", steps: [] }) });
+    const noneLogs = [];
+    await runDaemon({ action: "uninstall" }, { lifecycle: fakeLifecycle(), service: none, log: (m) => noneLogs.push(m), errLog: () => {}, env: {} });
+    expect(noneLogs.join("")).toMatch(/nothing to remove/);
   });
 });
 

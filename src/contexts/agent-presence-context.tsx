@@ -65,9 +65,16 @@ import type {
   ExecutionView,
 } from "@/components/agent-presence";
 import type { ExecutionEvent } from "@/contexts/realtime-context";
-import type { TranscriptEvent as TranscriptEventBase } from "@/services/daemon-session.service";
+import type {
+  SessionView,
+  TranscriptEvent as TranscriptEventBase,
+} from "@/services/daemon-session.service";
 
 const POLL_INTERVAL_MS = 15_000;
+
+// Dead-session guard: pause the poll after this many consecutive ticks where every
+// auth-bearing fetch returned 401 (see the poll-loop effect for the full contract).
+export const DEAD_SESSION_PAUSE_THRESHOLD = 2;
 
 // SSE-tagged transcript event: the backend `TranscriptEvent` plus the `type`
 // discriminator the SSE route adds so the client can route it (mirrors how
@@ -99,6 +106,15 @@ export interface ChatFocusTarget {
   // for an unknown-host pin and `cwd` is null for an unknown-path pin (same
   // sentinels the connection projection / liveness rule use).
   pin?: { host: string; cwd: string | null };
+  // Focus a SPECIFIC conversation, present ONLY for `openChatForSession` (e.g. the
+  // conversational create-idea entry landing the user on the session it just
+  // dispatched). `DaemonChat` selects this session and subscribes its transcript
+  // instead of clearing the selection.
+  sessionUuid?: string;
+  // The dispatch response's SessionView, so a session created moments ago — not yet
+  // in the fetched session list — is seeded into the list and selectable immediately
+  // (same optimistic path as `handleSessionStarted`).
+  sessionSeed?: SessionView;
 }
 
 // Map of connectionUuid → that connection's current displayable executions
@@ -146,8 +162,20 @@ export interface AgentPresenceValue {
     agentUuid: string,
     pin?: { host: string; cwd: string | null },
   ) => void;
+  // Open the daemon-chat modal focused on a SPECIFIC conversation (one-shot, same
+  // consume-and-clear contract as `openChatForAgent`). Used after dispatching a new
+  // ad-hoc session (e.g. the conversational create-idea entry) to land the user on
+  // that session's live transcript. Takes the dispatch response's full `SessionView`
+  // (not just a uuid) so `DaemonChat` can seed a session the list has not fetched
+  // yet and select it immediately.
+  openChatForSession: (session: SessionView) => void;
   // Consume the one-shot focus target (called by `DaemonChat` after it focuses).
   clearChatFocusTarget: () => void;
+  // On-demand re-poll of the connection list (same fetch the 15s loop runs).
+  // Callers use it to re-sync immediately after a server verdict contradicts the
+  // rendered list (e.g. an ad-hoc dispatch 409s because the picked connection
+  // just went offline) instead of waiting out the poll interval.
+  refreshConnections: () => void;
 }
 
 const AgentPresenceContext = createContext<AgentPresenceValue | null>(null);
@@ -266,6 +294,22 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   // last-RESPONSE-wins, closing the reconnect/poll-vs-SSE race.
   const connGenRef = useRef<Record<string, number>>({});
 
+  // Dead-session poll guard (idea 3bf0819c): when the session dies (e.g. the user
+  // was bounced to /login), the 15s poll below would otherwise keep hitting
+  // middleware-covered APIs with a dead refresh token forever — prod logs showed 80
+  // failed IdP refresh attempts in 10 minutes from exactly this loop. Track
+  // consecutive ticks where every auth-bearing fetch came back 401; after
+  // DEAD_SESSION_PAUSE_THRESHOLD such ticks, pause the interval. The next
+  // visibilitychange→visible re-arms it once (a recovered session resumes polling
+  // naturally; a still-dead one pauses again after the same number of ticks). Any
+  // non-401 response resets the counter. Refs, not state — pausing must not re-render.
+  const consecutive401TicksRef = useRef(0);
+  const pollPausedRef = useRef(false);
+  const tick401Ref = useRef<{ sawAuth401: boolean; sawHealthy: boolean }>({
+    sawAuth401: false,
+    sawHealthy: false,
+  });
+
   // 15s connection poll. On success: store the list + status "ok". On ANY
   // failure (network reject OR a non-2xx OR a non-success envelope): set status
   // "error" and LEAVE the existing connections/count untouched — a failed poll
@@ -274,9 +318,11 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     try {
       const res = await authFetch("/api/agent-connections");
       if (!res.ok) {
+        if (res.status === 401) tick401Ref.current.sawAuth401 = true;
         setStatus("error");
         return;
       }
+      tick401Ref.current.sawHealthy = true;
       const json = await res.json();
       if (json.success) {
         setConnections(json.data.connections ?? []);
@@ -306,7 +352,11 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     const genAtRequest = { ...connGenRef.current };
     try {
       const res = await authFetch("/api/daemon/executions");
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401) tick401Ref.current.sawAuth401 = true;
+        return;
+      }
+      tick401Ref.current.sawHealthy = true;
       const json = await res.json();
       if (json.success) {
         const grouped = groupExecutionsByConnection(json.data.executions ?? []);
@@ -337,14 +387,58 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   // (owns status + online count) and the execution aggregate (self-heals the
   // execution map for connections the SSE stream didn't subscribe to at open and
   // for any silently-dropped event). Clears on unmount.
+  //
+  // Dead-session guard: each tick awaits both fetches and evaluates the tick's
+  // 401 evidence — all-401-and-nothing-healthy counts toward the pause threshold,
+  // any healthy response resets it. After DEAD_SESSION_PAUSE_THRESHOLD consecutive
+  // dead ticks the interval is cleared; a visibilitychange→visible re-arms it.
   useEffect(() => {
-    fetchConnections();
-    fetchExecutions();
-    const id = setInterval(() => {
-      fetchConnections();
-      fetchExecutions();
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const tick = async () => {
+      tick401Ref.current = { sawAuth401: false, sawHealthy: false };
+      await Promise.all([fetchConnections(), fetchExecutions()]);
+      if (cancelled) return;
+      const { sawAuth401, sawHealthy } = tick401Ref.current;
+      if (sawAuth401 && !sawHealthy) {
+        consecutive401TicksRef.current += 1;
+        if (consecutive401TicksRef.current >= DEAD_SESSION_PAUSE_THRESHOLD && id) {
+          clearInterval(id);
+          id = null;
+          pollPausedRef.current = true;
+          clientLogger.warn(
+            "Agent-presence poll paused: session appears dead (consecutive 401 ticks). Will re-arm on next visibility."
+          );
+        }
+      } else if (sawHealthy) {
+        consecutive401TicksRef.current = 0;
+      }
+    };
+
+    const start = () => {
+      pollPausedRef.current = false;
+      consecutive401TicksRef.current = 0;
+      tick();
+      id = setInterval(tick, POLL_INTERVAL_MS);
+    };
+
+    // Re-arm ONCE per visible transition when paused. A recovered session (the
+    // middleware refreshed the cookie / the user logged back in) resumes normal
+    // polling; a still-dead one pauses again after the threshold.
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !pollPausedRef.current || cancelled) return;
+      start();
+    };
+
+    start();
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      if (id) clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchConnections, fetchExecutions]);
 
   // SSE spine — one company-wide `/api/events` stream that merges `execution`
@@ -463,6 +557,19 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Open the chat focused on a specific conversation. Carries the full SessionView
+  // so `DaemonChat` can seed a freshly-created session (returned by the ad-hoc
+  // dispatch but not yet in the fetched list) and select it immediately. Same
+  // seed-then-open ordering and one-shot consumption as `openChatForAgent`.
+  const openChatForSession = useCallback((session: SessionView) => {
+    setFocusTarget({
+      agentUuid: session.agentUuid,
+      sessionUuid: session.uuid,
+      sessionSeed: session,
+    });
+    setModalOpen(true);
+  }, []);
+
   // Consume the one-shot focus target (called by `DaemonChat` after focusing) so a
   // later manual modal open is not re-hijacked by a stale focus.
   const clearChatFocusTarget = useCallback(() => {
@@ -483,7 +590,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       subscribeTranscript,
       focusTarget,
       openChatForAgent,
+      openChatForSession,
       clearChatFocusTarget,
+      refreshConnections: fetchConnections,
     }),
     [
       status,
@@ -496,7 +605,9 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       subscribeTranscript,
       focusTarget,
       openChatForAgent,
+      openChatForSession,
       clearChatFocusTarget,
+      fetchConnections,
     ],
   );
 
@@ -524,4 +635,12 @@ export function useAgentPresence(): AgentPresenceValue {
     );
   }
   return ctx;
+}
+
+// Non-throwing variant for components that can render outside the dashboard
+// shell (e.g. panels mounted in isolated tests): an absent provider reads as
+// "no presence data" (null), not a wiring bug. Consumers must treat null as
+// offline/unknown, never as online.
+export function useAgentPresenceOptional(): AgentPresenceValue | null {
+  return useContext(AgentPresenceContext);
 }

@@ -4,7 +4,7 @@
 // persistent conversation; the server creates that turn (status `pending`) at the
 // notification chokepoint, and the daemon advances it:
 //   • on spawn      → pending → running
-//   • on subprocess exit → running → ended
+//   • on subprocess exit → running → ended (clean) | interrupted (user/crash/shutdown)
 //
 // The daemon does NOT know the server-side turn uuid. It identifies the turn the SAME
 // way the transcript ingest does — by the session BUSINESS KEY (`sessionId` = the
@@ -27,7 +27,10 @@ import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
 /** Turn lifecycle states the server's turn-advance endpoint accepts. */
-export const TURN_STATUSES = new Set(["pending", "running", "ended"]);
+export const TURN_STATUSES = new Set(["pending", "running", "ended", "interrupted"]);
+
+/** Interrupt reasons a DAEMON may report (`offline` is server-reconcile-only). */
+export const TURN_INTERRUPT_REASONS = new Set(["user", "crash", "shutdown"]);
 
 /**
  * Build an `advanceTurn(params)` function the waker invokes on a wake's spawn (→
@@ -43,7 +46,7 @@ export const TURN_STATUSES = new Set(["pending", "running", "ended"]);
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>}
+ * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -58,18 +61,36 @@ export function createTurnReporter(opts) {
     logger,
   });
 
-  return async function advanceTurn({ sessionId, status, entityType, entityUuid }) {
+  return async function advanceTurn({
+    sessionId,
+    status,
+    entityType,
+    entityUuid,
+    interruptedReason,
+  }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
         `[Chorus] refusing to advance turn: bad sessionId/status (${sessionId}, ${status})`,
       );
       return;
     }
+    // Domain guard mirroring the server's: a reason travels only with `interrupted`
+    // and only from the daemon-reportable vocabulary (`offline` is the server's own
+    // reconcile verdict). Refusing here keeps a bad caller visible in daemon logs
+    // instead of as a server 400.
+    if (interruptedReason != null) {
+      if (status !== "interrupted" || !TURN_INTERRUPT_REASONS.has(interruptedReason)) {
+        logger.warn(
+          `[Chorus] refusing to advance turn: bad interruptedReason (${interruptedReason}) for status ${status}`,
+        );
+        return;
+      }
+    }
     // The client resolves the connectionUuid lazily, validates it (logging
     // "no connection uuid yet" when absent), POSTs the exact server payload — sending
     // entityType/entityUuid only when both are present — and logs the failure cause on a
     // network error / non-2xx. We swallow the structured result so a failed report can
     // never crash the wake path.
-    await client.turnAdvance({ sessionId, status, entityType, entityUuid });
+    await client.turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason });
   };
 }

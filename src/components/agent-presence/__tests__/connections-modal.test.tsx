@@ -96,6 +96,24 @@ function ViewAllTrigger() {
   return <Button onClick={() => setModalOpen(true)}>view-all-trigger</Button>;
 }
 
+// A stand-in for a session-focus caller (e.g. the conversational create-idea entry
+// right after its ad-hoc dispatch) — it calls `openChatForSession` with the
+// dispatch response's SessionView, exactly as the real consumer does.
+function OpenForSessionTrigger({
+  session,
+}: {
+  session: Parameters<
+    ReturnType<typeof useAgentPresence>["openChatForSession"]
+  >[0];
+}) {
+  const { openChatForSession } = useAgentPresence();
+  return (
+    <Button onClick={() => openChatForSession(session)}>
+      open-for-session-trigger
+    </Button>
+  );
+}
+
 // ===== EventSource stub =====
 class NoopEventSource {
   static CONNECTING = 0;
@@ -658,16 +676,20 @@ describe("Daemon chat modal — opening + conversation list", () => {
     });
   });
 
-  it("shows the crash 'auto-recovers' hint (no Resume) for a crash-interrupted conversation", async () => {
+  it("shows the 'exited with error' label + Resume for a crash-interrupted conversation (add-crash-execution-resume)", async () => {
     await openShipLogin({
       turnStatus: "ended",
       executions: [adHocExec({ status: "interrupted", interruptedReason: "crash" })],
     });
+    // A crash is manually resumable: error label + the same Resume control as a
+    // user interrupt sit in the composer action row; no "auto-recovers" claim.
     await waitFor(() =>
-      expect(screen.getAllByText("Auto-recovers").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("Exited with error").length).toBeGreaterThan(0),
     );
-    // Crash recovers via reconnect-backfill — no manual Resume affordance.
-    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: /resume/i }).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Auto-recovers")).toBeNull();
   });
 
   it("opening Interrupt in the action row shows its confirmation dialog before any request", async () => {
@@ -701,6 +723,176 @@ describe("Daemon chat modal — opening + conversation list", () => {
       ).toBeGreaterThan(0),
     );
     expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
+  });
+});
+
+describe("Daemon chat modal — one-shot session focus (openChatForSession)", () => {
+  // The seeded SessionView mirrors the ad-hoc dispatch response: a session the
+  // list endpoint does NOT return yet (fresh create, before the next re-sync).
+  const seededSession = {
+    uuid: "s-fresh",
+    agentUuid: "agent-1",
+    sessionId: "sid-s-fresh",
+    directIdeaUuid: null,
+    originConnectionUuid: "1",
+    status: "active",
+    title: "Fresh conversation",
+    lastTurnAt: "2026-06-16T12:04:00.000Z",
+    createdAt: "2026-06-16T12:04:00.000Z",
+    updatedAt: "2026-06-16T12:04:00.000Z",
+  };
+
+  async function renderWithSessionTrigger() {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const utils = render(
+      <AgentPresenceProvider>
+        <ViewAllTrigger />
+        <OpenForSessionTrigger session={seededSession} />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return { user, ...utils };
+  }
+
+  it("opens the modal with the seeded session selected + its transcript subscribed, even though the list has not fetched it", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      // The session-list endpoint does NOT know the fresh session yet.
+      sessions: [
+        session({
+          uuid: "s-old",
+          agentUuid: "agent-1",
+          title: "Older chat",
+          lastTurnAt: "2026-06-16T10:00:00.000Z",
+        }),
+      ],
+      detail: {
+        session: seededSession,
+        turns: [],
+      },
+    });
+    const { user } = await renderWithSessionTrigger();
+    await user.click(screen.getByText("open-for-session-trigger"));
+
+    // Modal opened directly on the seeded conversation: its (empty) transcript
+    // pane is shown with the conversation name as the detail title.
+    await waitFor(() =>
+      expect(screen.getAllByText("Fresh conversation").length).toBeGreaterThan(0),
+    );
+    // The transcript detail was fetched for the seeded session — proof the
+    // selection landed and the transcript channel opened (setOpenSession drives
+    // the provider's ?sessionUuid= reconnect, which shares this uuid).
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (c) =>
+            typeof c[0] === "string" &&
+            (c[0] as string).startsWith("/api/daemon-sessions/s-fresh"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("is one-shot: a later manual modal open does not re-apply the session focus", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({
+          uuid: "s-old",
+          agentUuid: "agent-1",
+          title: "Older chat",
+          lastTurnAt: "2026-06-16T10:00:00.000Z",
+        }),
+      ],
+      detail: {
+        session: seededSession,
+        turns: [],
+      },
+    });
+    const { user } = await renderWithSessionTrigger();
+    await user.click(screen.getByText("open-for-session-trigger"));
+    await waitFor(() =>
+      expect(screen.getAllByText("Fresh conversation").length).toBeGreaterThan(0),
+    );
+
+    // Close the modal (Radix Dialog close button), then reopen manually.
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByText("Fresh conversation")).toBeNull(),
+    );
+    await user.click(screen.getByText("view-all-trigger"));
+
+    // The manual open lands on the conversation list (seeded session still in the
+    // locally-seeded list) but the focus is NOT re-applied: the older conversation
+    // list is shown rather than auto-reopening the fresh transcript. The
+    // conversation ROW for the fresh session may render (it was seeded into the
+    // list), but the detail title only renders when selected — assert via the
+    // detail fetch NOT firing again after reopen.
+    const callsBefore = mockAuthFetch.mock.calls.filter(
+      (c) =>
+        typeof c[0] === "string" &&
+        (c[0] as string).startsWith("/api/daemon-sessions/s-fresh"),
+    ).length;
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const callsAfter = mockAuthFetch.mock.calls.filter(
+      (c) =>
+        typeof c[0] === "string" &&
+        (c[0] as string).startsWith("/api/daemon-sessions/s-fresh"),
+    ).length;
+    expect(callsAfter).toBe(callsBefore);
+  });
+
+  it("agent-only focus (openChatForAgent) still clears the selection — landing on the agent's list, not a transcript", async () => {
+    respondWith({
+      connections: [conn({ uuid: "1", agentUuid: "agent-1", agentName: "Alpha" })],
+      sessions: [
+        session({
+          uuid: "s-old",
+          agentUuid: "agent-1",
+          title: "Older chat",
+          lastTurnAt: "2026-06-16T10:00:00.000Z",
+        }),
+      ],
+    });
+    function OpenForAgentTrigger() {
+      const { openChatForAgent } = useAgentPresence();
+      return (
+        <Button onClick={() => openChatForAgent("agent-1")}>
+          open-for-agent-trigger
+        </Button>
+      );
+    }
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenForAgentTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await user.click(screen.getByText("open-for-agent-trigger"));
+
+    // The conversation list shows, and NO transcript detail is fetched (nothing
+    // selected — agent-only focus never auto-selects a session).
+    await waitFor(() =>
+      expect(screen.getAllByText("Older chat").length).toBeGreaterThan(0),
+    );
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (c) =>
+          typeof c[0] === "string" &&
+          /^\/api\/daemon-sessions\/[^/?]+$/.test(c[0] as string),
+      ),
+    ).toBe(false);
   });
 });
 

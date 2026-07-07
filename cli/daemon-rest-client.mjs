@@ -134,10 +134,12 @@ export function createDaemonRestClient(opts) {
     /**
      * POST /api/daemon/turn-advance — advance a wake's DaemonSessionTurn lifecycle. The
      * server resolves the turn by the session BUSINESS KEY (`sessionId`); the optional
-     * `entityType`/`entityUuid` stamp the weak executionUuid link. Requires the
+     * `entityType`/`entityUuid` stamp the weak executionUuid link. An `interrupted`
+     * status may carry `interruptedReason` (`user`/`crash`/`shutdown` — the server
+     * rejects `offline`, which is its own reconcile verdict). Requires the
      * connectionUuid (the server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -150,6 +152,8 @@ export function createDaemonRestClient(opts) {
         status,
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
+        // Only meaningful alongside status=interrupted; never sent otherwise.
+        ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
       };
       return post(
         "turn-advance",

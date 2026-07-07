@@ -104,9 +104,12 @@ The `chorus daemon` connects your local machine to a remote Chorus server as an 
 chorus login                     # Authenticate (opens browser)
 chorus daemon                    # Start daemon in foreground
 chorus daemon -d                 # Start daemon in background (detached)
-chorus daemon stop               # Stop background daemon
+chorus daemon install            # Install as a boot-autostart service (Linux) — recommended
+chorus daemon uninstall          # Remove the installed service
+chorus daemon stop               # Stop the daemon (delegates to systemd when installed)
+chorus daemon stop --force       # Force-clean the pidfile if a stuck pid blocks stop
 chorus daemon status             # Check daemon status
-chorus daemon restart            # Restart background daemon
+chorus daemon restart            # Restart the daemon
 chorus daemon logs               # View daemon logs
 ```
 
@@ -114,11 +117,21 @@ chorus daemon logs               # View daemon logs
 
 - **Claude Code & Codex backends** — Auto-detects the `claude` (or `codex`) CLI on your PATH; pick with `--agent codex`
 - **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
+- **Boot-autostart service** — `chorus daemon install` generates a correct `systemd --user` unit and starts it (see below); `status/stop/restart/logs` then transparently delegate to systemd
 - **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
 - **Multi-path** — Serve several working directories from one daemon with repeatable `--cwd` (see below)
 - **Interactive setup** — Prompts for credentials on first start if not already configured
 
 The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
+
+#### Run at boot / login — `chorus daemon install`
+
+```bash
+chorus daemon install --cwd ~/work/repo-a --cwd ~/work/repo-b   # install + start now, autostart at login
+chorus daemon uninstall                                         # disable + remove the service
+```
+
+On Linux, `install` generates a `systemd --user` unit that runs the daemon in the **foreground** (`Type=simple`, no `-d`) so systemd owns the process directly, then `daemon-reload` + `enable --now`. It captures the `--cwd`/`--agent`/`--chorus-only` flags you pass. Do **not** hand-write a `Type=forking` unit around `chorus daemon -d` — the daemon self-daemonizes, which systemd can't track and which loops on restart; let `install` write the right unit. On macOS/Windows, `install` prints a correct template you install manually. Run `chorus login` first so the unit can see your credentials. See [docs/DAEMON.md](docs/DAEMON.md) for details.
 
 #### Serve multiple working directories
 

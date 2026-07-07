@@ -42,12 +42,11 @@ vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-// auth-client's authFetch/primeSessionCookie are used by the page's mount-time
+// auth-client's authFetch is used by the page's mount-time
 // already-authenticated check. Delegate authFetch to global.fetch (which each test
-// stubs) so the URL-based stubs drive it; primeSessionCookie is a no-op here.
+// stubs) so the URL-based stubs drive it.
 vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, init?: RequestInit) => fetch(url, init),
-  primeSessionCookie: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Use real translations so the test asserts on user-visible copy.
@@ -123,15 +122,12 @@ function installFetch(handlers: {
     }
     // The mount-time already-authenticated check (root-reopen fix): default to NOT
     // authenticated so the login form renders as before. admin session not-success,
-    // user session not-success, keepalive prime is a no-op here.
+    // user session not-success.
     if (url === "/api/admin/session") {
       return { ok: true, json: { success: false } };
     }
-    if (url === "/api/auth/session") {
+    if (url === "/api/session") {
       return { ok: true, json: { success: false } };
-    }
-    if (url === "/api/keepalive") {
-      return { ok: true, json: { ok: true } };
     }
     throw new Error(`Unexpected fetch in test: ${url}`);
   };
@@ -410,15 +406,12 @@ describe("LoginPage — already-authenticated redirect (root-reopen fix)", () =>
       if (u === "/api/admin/session") {
         return { ok: true, json: async () => ({ success: !!opts.admin }) } as Response;
       }
-      if (u === "/api/auth/session") {
+      if (u === "/api/session") {
         return {
           ok: true,
           status: 200,
           json: async () => ({ success: true, data: { user: { uuid: "u1", email: "a@b.c" } } }),
         } as Response;
-      }
-      if (u === "/api/keepalive") {
-        return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
       if (u === "/api/auth/check-default") {
         return { ok: true, json: async () => ({ success: true, data: { enabled: false } }) } as Response;

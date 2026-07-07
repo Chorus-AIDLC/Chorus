@@ -22,6 +22,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { UnifiedComments } from "@/components/unified-comments";
@@ -34,6 +40,10 @@ import { AssignIdeaModal } from "./assign-idea-modal";
 import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction, verifyElaborationAction } from "./[ideaUuid]/elaboration-actions";
+import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
+import { clientLogger } from "@/lib/logger-client";
+import { StartDevelopmentButton } from "@/components/start-development-button";
+import { YoloButton } from "@/components/yolo-button";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
@@ -174,6 +184,45 @@ export function IdeaDetailPanel({
   // Subscribe to SSE events to refresh elaboration when idea changes
   useRealtimeEntityTypeEvent("idea", reloadElaboration);
 
+  // Start-Development gating data (add-stage-advance-start-development). This
+  // panel doesn't otherwise load proposals/tasks, so fetch just the statuses the
+  // shared predicate needs — only once the idea is elaborated (before that no
+  // approved proposal can exist, so the fetch is skipped entirely).
+  const [sdProposals, setSdProposals] = useState<{ status: string }[]>([]);
+  const [sdTasks, setSdTasks] = useState<{ status: string }[]>([]);
+  const reloadStartDevData = useCallback(async () => {
+    if (idea.status !== "elaborated") {
+      setSdProposals([]);
+      setSdTasks([]);
+      return;
+    }
+    try {
+      const result = await getProposalsForIdeaAction(projectUuid, idea.uuid);
+      if (!result.success || !result.data) return;
+      setSdProposals(result.data.map((p) => ({ status: p.status })));
+      const approved = result.data.filter((p) => p.status === "approved");
+      const taskResults = await Promise.all(
+        approved.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+      );
+      setSdTasks(
+        taskResults.flatMap((r) =>
+          r.success && r.data ? r.data.map((task) => ({ status: (task as { status: string }).status })) : []
+        )
+      );
+    } catch (e) {
+      clientLogger.error("Failed to load start-development gating data:", e);
+    }
+  }, [idea.uuid, idea.status, projectUuid]);
+
+  useEffect(() => {
+    reloadStartDevData();
+  }, [reloadStartDevData]);
+
+  // Task/proposal state changes (approve, claim, verify) shift the button's
+  // preconditions — refresh on their SSE events.
+  useRealtimeEntityTypeEvent("proposal", reloadStartDevData);
+  useRealtimeEntityTypeEvent("task", reloadStartDevData);
+
   // Skip elaboration state
   const [showSkipDialog, setShowSkipDialog] = useState(false);
   const [skipReason, setSkipReason] = useState("");
@@ -206,7 +255,6 @@ export function IdeaDetailPanel({
   }, []);
 
   const canAssign = idea.status !== "elaborated";
-  const elaborationResolved = idea.elaborationStatus === "resolved";
   // Shared enable-predicate (also used by the dashboard idea-tracker panel) so
   // the two surfaces never drift. Computed from the elaboration data already
   // loaded into this panel — no extra fetch.
@@ -601,14 +649,27 @@ export function IdeaDetailPanel({
             ) : (
               <>
                 {canAssign && (
-                  <Button
-                    variant="outline"
-                    className="shrink-0 border-[#E5E0D8] rounded-md px-4 py-2 text-[13px] font-medium"
-                    onClick={() => setShowAssignModal(true)}
-                  >
-                    <User className="mr-2 h-4 w-4" />
-                    {idea.assignee ? t("common.reassign") : t("common.assign")}
-                  </Button>
+                  // Icon-only (Option C — declutter the action row): the (re)assign
+                  // label rides a shadcn Tooltip (+ aria-label for a11y) so the
+                  // stage primary CTA stays the only full-text button.
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0 h-8 w-8 border-[#E5E0D8]"
+                          onClick={() => setShowAssignModal(true)}
+                          aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
+                        >
+                          <User className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {idea.assignee ? t("common.reassign") : t("common.assign")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 {/* Middle area: help text or action buttons */}
                 <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
@@ -657,11 +718,32 @@ export function IdeaDetailPanel({
                   {verifyError && (
                     <span className="text-[11px] text-destructive">{verifyError}</span>
                   )}
-                  {idea.status === "elaborating" && !elaborationResolved && !canVerify && !verified && !canSkipElaboration && (
-                    <span className="text-[11px] text-[#9A9A9A]">
-                      {t("elaboration.elaborationRequiredHint")}
-                    </span>
-                  )}
+                  {/* Start Development — human "the plan is approved, go build
+                      it" action (add-stage-advance-start-development). Same
+                      shared-predicate contract as Verify Elaborate; presence
+                      gating + per-error-code toasts live in the component. */}
+                  <StartDevelopmentButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={sdProposals}
+                    tasks={sdTasks}
+                    onStarted={() => {
+                      router.refresh();
+                    }}
+                  />
+                  {/* Yolo — human "drive this whole idea to done via the yolo
+                      skill" action (add-stage-advance-yolo). Fed the same
+                      gating arrays as Start Development; shows at any incomplete
+                      stage. */}
+                  <YoloButton
+                    ideaUuid={idea.uuid}
+                    assignee={idea.assignee}
+                    proposals={sdProposals}
+                    tasks={sdTasks}
+                    onStarted={() => {
+                      router.refresh();
+                    }}
+                  />
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

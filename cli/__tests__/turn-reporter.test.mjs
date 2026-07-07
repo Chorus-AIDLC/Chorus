@@ -3,7 +3,7 @@
 // daemon-session-conversation): REST POST to /api/daemon/turn-advance, Bearer auth,
 // zero new deps, fire-and-forget never-throws.
 import { describe, it, expect, vi } from "vitest";
-import { createTurnReporter, TURN_STATUSES } from "../turn-reporter.mjs";
+import { createTurnReporter, TURN_STATUSES, TURN_INTERRUPT_REASONS } from "../turn-reporter.mjs";
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -123,6 +123,62 @@ describe("createTurnReporter", () => {
   });
 
   it("TURN_STATUSES is the strict lifecycle set", () => {
-    expect([...TURN_STATUSES].sort()).toEqual(["ended", "pending", "running"]);
+    expect([...TURN_STATUSES].sort()).toEqual(["ended", "interrupted", "pending", "running"]);
+  });
+
+  it("TURN_INTERRUPT_REASONS is the daemon-reportable subset (no offline)", () => {
+    expect([...TURN_INTERRUPT_REASONS].sort()).toEqual(["crash", "shutdown", "user"]);
+  });
+
+  it("sends interruptedReason alongside status=interrupted", async () => {
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: silent,
+      fetchImpl,
+    });
+
+    await advance({ sessionId: "idea-1", status: "interrupted", interruptedReason: "shutdown" });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body).toEqual({
+      connectionUuid: "conn-1",
+      sessionId: "idea-1",
+      status: "interrupted",
+      interruptedReason: "shutdown",
+    });
+  });
+
+  it("refuses interruptedReason=offline (server-reconcile verdict) — logged, no fetch", async () => {
+    const fetchImpl = okFetch();
+    const warns = [];
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      fetchImpl,
+    });
+
+    await advance({ sessionId: "idea-1", status: "interrupted", interruptedReason: "offline" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(warns.join("")).toMatch(/bad interruptedReason/);
+  });
+
+  it("refuses an interruptedReason on a non-interrupted status — logged, no fetch", async () => {
+    const fetchImpl = okFetch();
+    const warns = [];
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      fetchImpl,
+    });
+
+    await advance({ sessionId: "idea-1", status: "ended", interruptedReason: "crash" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(warns.join("")).toMatch(/bad interruptedReason/);
   });
 });

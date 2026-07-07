@@ -138,6 +138,42 @@ function buildPromptBody(n) {
         `chorus_get_elaboration, then author the proposal via the existing proposal flow ` +
         `(chorus_pm_create_proposal / the proposal skill).\n${mentionGuidance(n, "idea")}`
       );
+    case "start_development":
+      // A human clicked "Start Development" (add-stage-advance-start-development). The
+      // idea's proposal is approved and unfinished tasks remain. The agent's job on this
+      // wake is the WHOLE remaining execute stage — loop over every claimable task until
+      // none remain (elaboration decision Q1), never stopping after a single task.
+      return (
+        `[Chorus] A human started DEVELOPMENT for idea '${n.entityTitle}' ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). The idea's proposal is approved and ` +
+        `unfinished tasks remain. Claim and execute ALL remaining tasks of that proposal in dependency ` +
+        `order, following the develop workflow: repeatedly find claimable tasks (chorus_get_unblocked_tasks ` +
+        `with projectUuid: "${n.projectUuid}"), claim one (chorus_claim_task), implement it, self-check its ` +
+        `acceptance criteria (chorus_report_criteria_self_check), and submit it (chorus_submit_for_verify) — ` +
+        `then loop until NO claimable task remains. Do NOT stop after one task. Leave tasks already in ` +
+        `to_verify (awaiting human verification) and tasks claimed by other sessions untouched. If nothing ` +
+        `is claimable, post a brief status comment on the idea and end the turn.\n${mentionGuidance(n, "idea")}`
+      );
+    case "yolo_requested":
+      // A human clicked "Yolo" (add-stage-advance-yolo). Unlike start_development
+      // (always the execute stage), this wake can land at ANY incomplete stage, so the
+      // prompt must NOT hard-code a stage — it points the agent at the yolo skill and lets
+      // it self-select the entry phase from the idea's current state (no proposal yet →
+      // elaborate + write proposal; approved proposal with open tasks → execute; etc.).
+      // Honors the "yolo never merges" rule: drive through done + completion report, but
+      // never merge or push a PR without explicit human approval.
+      return (
+        `[Chorus] A human requested a YOLO run for idea '${n.entityTitle}' ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Drive this idea all the ` +
+        `way to done following the yolo skill (the full-auto AI-DLC pipeline: Idea → ` +
+        `Elaboration → Proposal → Execute → Verify). First read the idea's current state with ` +
+        `chorus_get_idea (plus chorus_get_elaboration / chorus_get_proposals as needed) and ` +
+        `RESUME from whatever phase it is already in — do NOT assume a fixed stage: if ` +
+        `elaboration isn't resolved, self-elaborate then write the proposal; if a proposal is ` +
+        `approved with open tasks, execute them; and so on. Complete the pipeline through the ` +
+        `final done state and completion report, but do NOT merge or push a pull request ` +
+        `without explicit human approval.\n${mentionGuidance(n, "idea")}`
+      );
     case "proposal_rejected":
       return (
         `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, ` +
@@ -172,6 +208,21 @@ function buildPromptBody(n) {
       // daemon's isNewSession probe selects `claude --resume <directIdeaUuid>`
       // automatically, so the woken Claude continues the SAME session where it left
       // off. It intentionally has no @mention (a self-resume has no actor to address).
+      //
+      // `resumedFrom` (add-crash-execution-resume) distinguishes the resume kind:
+      // "crash" gets an explicit exited-abnormally instruction — the previous run may
+      // have died mid-edit, so the agent must verify state before continuing.
+      // "user" / absent / unknown (older server) keeps the original text unchanged.
+      if (n.resumedFrom === "crash") {
+        return (
+          `[Chorus] The previous run on this ${n.entityType} EXITED ABNORMALLY (crashed) ` +
+          `(${n.entityType}Uuid: ${n.entityUuid}), and a user asked to resume it. The crash may ` +
+          `have left work half-finished — first re-check the current state with the appropriate ` +
+          `chorus_get_* tool (e.g. chorus_get_task / chorus_get_idea) plus chorus_get_comments, ` +
+          `and inspect any partial local work (working tree, uncommitted changes, half-written ` +
+          `files). Then continue the unfinished work from where the crashed run left off.`
+        );
+      }
       return (
         `[Chorus] Your work on this ${n.entityType} was RESUMED after an interrupt ` +
         `(${n.entityType}Uuid: ${n.entityUuid}). Continue where you left off — re-check the ` +
@@ -253,6 +304,16 @@ export const WAKE_ACTIONS = new Set([
   // idea-rooted like the other elaboration wakes, so the session anchor/resume contract is
   // unchanged. See buildPrompt's `elaboration_verified` case for the write-proposal prompt.
   "elaboration_verified",
+  // add-stage-advance-start-development: a human clicked "Start Development" — the idea's
+  // proposal is approved and unfinished tasks remain. Wakes the assigned daemon agent to
+  // CLAIM AND EXECUTE ALL remaining tasks (dedicated trigger, session-origin-pinned like
+  // elaboration_verified). See buildPrompt's `start_development` case.
+  "start_development",
+  // add-stage-advance-yolo: a human clicked "Yolo" — wakes the assigned daemon agent to
+  // drive the WHOLE idea to done via the yolo skill (dedicated trigger, session-origin-
+  // pinned like start_development). Unlike start_development it is stage-adaptive — see
+  // buildPrompt's `yolo_requested` case.
+  "yolo_requested",
   "proposal_rejected",
   "proposal_approved",
   "idea_claimed",

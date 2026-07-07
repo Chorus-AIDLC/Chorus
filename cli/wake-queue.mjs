@@ -30,6 +30,15 @@ export class WakeQueue {
     /** @type {string[]} keys waiting for a global concurrency slot. */
     this.readyKeys = [];
     this.activeCount = 0;
+    // Graceful-shutdown latch: once set, #pump starts NOTHING new — in-flight tasks
+    // finish (drain observes them) but queued work stays queued and dies with the
+    // process. Never cleared; a stopping queue is on its way out.
+    this.stopped = false;
+  }
+
+  /** Stop starting new tasks (graceful shutdown). In-flight tasks are unaffected. */
+  stop() {
+    this.stopped = true;
   }
 
   /**
@@ -75,8 +84,29 @@ export class WakeQueue {
     return [...this.pending.entries()].filter(([, q]) => q.length > 0).map(([k]) => k);
   }
 
+  /**
+   * Wait (bounded) for every in-flight task to finish — the graceful-shutdown drain
+   * (fix-daemon-exit-orphan-running-turn). Resolves `true` when the queue went idle
+   * (no active task) within `timeoutMs`, `false` on timeout — the caller exits
+   * anyway and leaves the rest to the server-side reconcile backstop. Pending
+   * (not-yet-started) tasks are NOT waited for: a shutting-down daemon stops
+   * starting new work, so only the in-flight subprocesses (and their exit reports)
+   * matter. Polling (50ms) keeps this zero-dep and independent of task internals.
+   * @param {number} timeoutMs
+   * @returns {Promise<boolean>}
+   */
+  async drain(timeoutMs) {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (this.activeCount > 0) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return true;
+  }
+
   /** Try to start as many ready keys as the concurrency cap allows. */
   #pump() {
+    if (this.stopped) return; // shutting down — start nothing new
     while (this.activeCount < this.maxConcurrency && this.readyKeys.length > 0) {
       const key = this.readyKeys.shift();
       if (this.running.has(key)) continue; // already running under another slot

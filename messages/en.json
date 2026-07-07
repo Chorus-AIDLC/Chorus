@@ -913,7 +913,6 @@
     "skipReasonLabel": "Reason for skipping",
     "skipReasonPlaceholder": "e.g., Bug fix with clear reproduction steps",
     "skipReasonRequired": "Please provide a reason",
-    "elaborationRequiredHint": "Complete or skip elaboration to create a proposal",
     "verifyButton": "Verify Elaborate",
     "verifying": "Verifying...",
     "verifyFailed": "Failed to verify elaboration",
@@ -926,6 +925,30 @@
       "userScenario": "User Scenario",
       "scope": "Scope"
     }
+  },
+  "startDevelopment": {
+    "button": "Start Development",
+    "starting": "Starting...",
+    "startedHint": "Development started — the agent is executing the remaining tasks",
+    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "errorAgentOffline": "The assigned agent is offline. Start development after it reconnects.",
+    "errorNoApprovedProposal": "This idea has no approved proposal yet",
+    "errorNoUnfinishedTasks": "All tasks are already finished",
+    "errorAssigneeNotAgent": "The idea's assignee is not an agent",
+    "errorGeneric": "Failed to start development"
+  },
+  "yolo": {
+    "button": "Yolo",
+    "cancel": "Cancel",
+    "confirmTitle": "Run Yolo on this idea?",
+    "confirmDescription": "Yolo wakes the assigned agent to drive this idea all the way to done automatically — elaboration, proposal, execution, and verification — following the yolo skill. It won't merge or push a pull request without your approval. Continue?",
+    "confirmCta": "Run Yolo",
+    "starting": "Starting...",
+    "startedHint": "Yolo started — the agent is driving this idea to done",
+    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
+    "errorAssigneeNotAgent": "The idea's assignee is not an agent",
+    "errorGeneric": "Failed to start Yolo"
   },
   "projectGroups": {
     "newProjectGroup": "New Project Group",
@@ -1211,7 +1234,10 @@
       "ideaTitle": "Title",
       "titlePlaceholder": "What's the idea?",
       "description": "Description",
-      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea..."
+      "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea...",
+      "modeForm": "Fill a form",
+      "modeConversation": "Describe to an agent",
+      "modeConversationOfflineHint": "Describing to an agent needs an online daemon."
     },
     "error": {
       "loadFailed": "Failed to load ideas",
@@ -1394,7 +1420,7 @@
     "execInterrupted": "Interrupted",
     "execInterruptedUser": "Interrupted",
     "execInterruptedCrash": "Crashed",
-    "execCrashAutoRecovers": "Auto-recovers",
+    "execCrashExited": "Exited with error",
     "execWaiting": "Waiting",
     "execLoading": "Loading execution state...",
     "execElapsedLabel": "Elapsed since started",
@@ -1475,6 +1501,7 @@
     "statusError": "Error",
     "turnStatusPending": "Queued",
     "turnStatusRunning": "Running",
+    "turnStatusInterrupted": "Interrupted",
     "turnStatusEnded": "Ended",
     "triggerTask": "Task",
     "triggerMention": "Mention",
@@ -1545,6 +1572,19 @@
   "transcriptHeader": {
     "cwdAriaLabel": "Working directory",
     "hostAriaLabel": "Host"
+  },
+  "conversationalEntry": {
+    "noOnlineDaemon": "No agent daemon is online right now. Start one to describe your idea in a conversation:",
+    "agentLabel": "Agent",
+    "agentPlaceholder": "Pick an agent",
+    "instanceLabel": "Working directory",
+    "pickAgentFirst": "Pick an agent to see its online working directories.",
+    "placeholder": "Describe what you want — the agent will pick it up from here…",
+    "charCounter": "{count} / {max}",
+    "connectionWentOffline": "That daemon went offline just now. Pick another instance and retry.",
+    "sendError": "Failed to reach the agent. Please retry.",
+    "send": "Send to agent",
+    "retry": "Retry"
   },
   "daemonConnectCta": {
     "headline": "Next step: keep your agent online",

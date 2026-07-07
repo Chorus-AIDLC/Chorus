@@ -914,7 +914,6 @@
     "skipReasonLabel": "跳过原因",
     "skipReasonPlaceholder": "例如：有明确复现步骤的bug修复",
     "skipReasonRequired": "请提供跳过原因",
-    "elaborationRequiredHint": "完成或跳过需求澄清后才能创建方案",
     "verifyButton": "完成细化",
     "verifying": "确认中...",
     "verifyFailed": "确认细化失败",
@@ -927,6 +926,30 @@
       "userScenario": "用户场景",
       "scope": "范围"
     }
+  },
+  "startDevelopment": {
+    "button": "开始开发",
+    "starting": "启动中...",
+    "startedHint": "开发已启动 —— agent 正在执行剩余任务",
+    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再开始开发。",
+    "errorNoApprovedProposal": "该 idea 还没有已批准的 proposal",
+    "errorNoUnfinishedTasks": "所有任务都已完成",
+    "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
+    "errorGeneric": "开始开发失败"
+  },
+  "yolo": {
+    "button": "Yolo",
+    "cancel": "取消",
+    "confirmTitle": "对这个 idea 执行 Yolo？",
+    "confirmDescription": "Yolo 会唤醒被分配的 agent，按 yolo skill 全自动把这个 idea 推进到完成 —— 需求澄清、方案、执行、验收。未经你确认不会合并或推送 PR。是否继续？",
+    "confirmCta": "执行 Yolo",
+    "starting": "启动中...",
+    "startedHint": "Yolo 已启动 —— agent 正在推进这个 idea 到完成",
+    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再执行 Yolo。",
+    "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
+    "errorGeneric": "启动 Yolo 失败"
   },
   "projectGroups": {
     "newProjectGroup": "新建项目组",
@@ -1212,7 +1235,10 @@
       "ideaTitle": "标题",
       "titlePlaceholder": "你的想法是什么？",
       "description": "描述",
-      "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节..."
+      "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节...",
+      "modeForm": "填写表单",
+      "modeConversation": "对智能体描述",
+      "modeConversationOfflineHint": "对智能体描述需要一个在线的守护进程。"
     },
     "error": {
       "loadFailed": "加载想法失败",
@@ -1395,7 +1421,7 @@
     "execInterrupted": "已打断",
     "execInterruptedUser": "已打断",
     "execInterruptedCrash": "已崩溃",
-    "execCrashAutoRecovers": "自动恢复",
+    "execCrashExited": "异常退出",
     "execWaiting": "等待中",
     "execLoading": "正在加载执行状态...",
     "execElapsedLabel": "已运行时长",
@@ -1476,6 +1502,7 @@
     "statusError": "错误",
     "turnStatusPending": "排队中",
     "turnStatusRunning": "运行中",
+    "turnStatusInterrupted": "已中断",
     "turnStatusEnded": "已结束",
     "triggerTask": "任务",
     "triggerMention": "提及",
@@ -1546,6 +1573,19 @@
   "transcriptHeader": {
     "cwdAriaLabel": "工作目录",
     "hostAriaLabel": "主机"
+  },
+  "conversationalEntry": {
+    "noOnlineDaemon": "当前没有在线的智能体守护进程。启动一个即可用对话方式描述你的想法：",
+    "agentLabel": "智能体",
+    "agentPlaceholder": "选择智能体",
+    "instanceLabel": "工作目录",
+    "pickAgentFirst": "先选择一个智能体，查看它在线的工作目录。",
+    "placeholder": "描述你想做什么——接下来交给智能体…",
+    "charCounter": "{count} / {max}",
+    "connectionWentOffline": "该守护进程刚刚离线了。请换一个实例后重试。",
+    "sendError": "无法联系到智能体，请重试。",
+    "send": "发送给智能体",
+    "retry": "重试"
   },
   "daemonConnectCta": {
     "headline": "下一步：让你的智能体保持在线",

@@ -15,12 +15,13 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor , act } from "@testing-library/react";
 
 const authFetch = vi.fn();
 const push = vi.fn();
 const getOidcUser = vi.fn().mockResolvedValue(null);
-const primeSessionCookie = vi.fn().mockResolvedValue(undefined);
+const resyncRefreshTokenFromStore = vi.fn().mockResolvedValue(false);
+const purgeDeadSession = vi.fn().mockResolvedValue(undefined);
 
 // OIDC manager event registry captured per-test.
 let registeredEvents: Record<string, ((...a: unknown[]) => void) | undefined>;
@@ -29,21 +30,14 @@ let manager: { events: Record<string, (cb: (...a: unknown[]) => void) => void> }
 vi.mock("@/lib/auth-client", () => ({
   authFetch: (url: string, opts?: RequestInit) => authFetch(url, opts),
   getOidcUser: () => getOidcUser(),
-  syncTokenToCookie: vi.fn().mockResolvedValue(true),
-  primeSessionCookie: () => primeSessionCookie(),
+  resyncRefreshTokenFromStore: () => resyncRefreshTokenFromStore(),
+  purgeDeadSession: () => purgeDeadSession(),
   logout: vi.fn().mockResolvedValue(undefined),
   clearUserManager: vi.fn(),
   getUserManager: () => manager,
 }));
 vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
-// Observe keepalive scheduling without real timers/network. computeKeepaliveDelayMs is
-// mocked to a tiny delay so the timer fires within the test; pingKeepalive is a spy.
-const pingKeepalive = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/lib/oidc-keepalive", () => ({
-  computeKeepaliveDelayMs: () => 1,
-  pingKeepalive: () => pingKeepalive(),
 }));
 // Return a STABLE router object across renders — a fresh object each call would make
 // the memoized handleSessionExpired/fetchSession identities churn and re-fire the init
@@ -89,39 +83,55 @@ beforeEach(() => {
   vi.clearAllMocks();
   push.mockReset();
   getOidcUser.mockResolvedValue(null);
-  pingKeepalive.mockClear();
-  primeSessionCookie.mockClear();
-  primeSessionCookie.mockResolvedValue(undefined);
+  resyncRefreshTokenFromStore.mockClear();
+  resyncRefreshTokenFromStore.mockResolvedValue(false);
+  purgeDeadSession.mockClear();
   manager = makeManager();
 });
 
 describe("AuthProvider session-death contract", () => {
-  it("does NOT register an access-token-expired or silent-renew-error handler", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
+  it("registers NO OIDC event handlers at all (middleware owns renewal; callback owns cookies)", async () => {
+    authFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }),
+    });
 
     renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    // The only OIDC event wired is userLoaded (initial-login cookie sync).
-    await waitFor(() => expect(registeredEvents.userLoaded).toBeTypeOf("function"));
+    expect(registeredEvents.userLoaded).toBeUndefined();
     expect(registeredEvents.expired).toBeUndefined();
     expect(registeredEvents.renewError).toBeUndefined();
   });
 
-  it("redirects to /login only after prime+retry still 401 (true session death)", async () => {
-    // Both probe attempts 401 → genuinely dead → redirect. prime is called between them.
+  it("redirects to /login only after probe+retry still 401 (true session death)", async () => {
+    // Both probe attempts 401 → genuinely dead → redirect.
     authFetch.mockResolvedValue({ status: 401, json: async () => ({ success: false }) });
 
     renderProvider();
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
-    expect(primeSessionCookie).toHaveBeenCalled(); // primed before declaring death
-    // Two probe calls (initial + post-prime retry).
-    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBeGreaterThanOrEqual(2);
+    // Two probe calls (initial + retry) — the covered probe IS the refresh attempt.
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBeGreaterThanOrEqual(2);
+    // Death purges the localStorage user so /login doesn't re-attempt doomed recoveries.
+    expect(purgeDeadSession).toHaveBeenCalled();
   });
 
-  it("does NOT redirect when a 401 is rescued by prime+retry (the iOS bfcache case)", async () => {
-    // First probe 401 (cookie expired in background); after prime, middleware refreshed the
-    // cookie, retry returns 200 → user stays logged in, no redirect.
+  it("does NOT purge the stored user on a healthy session", async () => {
+    authFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }),
+    });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(purgeDeadSession).not.toHaveBeenCalled();
+  });
+
+  it("does NOT redirect when a 401 is rescued by the retry (the iOS bfcache case)", async () => {
+    // First probe 401 (cookie expired in background); the retry probe is itself
+    // middleware-covered, returns 200 → user stays logged in, no redirect.
     authFetch
       .mockResolvedValueOnce({ status: 401, json: async () => ({ success: false }) })
       .mockResolvedValueOnce({
@@ -134,8 +144,7 @@ describe("AuthProvider session-death contract", () => {
 
     renderProvider();
 
-    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
-    await waitFor(() => expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBe(2));
+    await waitFor(() => expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBe(2));
     expect(push).not.toHaveBeenCalled();
   });
 
@@ -161,44 +170,8 @@ describe("AuthProvider session-death contract", () => {
     renderProvider();
 
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    expect(authFetch.mock.calls[0][0]).toBe("/api/auth/session");
+    expect(authFetch.mock.calls[0][0]).toBe("/api/session");
     expect(push).not.toHaveBeenCalled();
-  });
-});
-
-describe("AuthProvider OIDC keepalive (defense-in-depth)", () => {
-  it("arms the keepalive and pings when an OIDC session exists", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    // OIDC session present → keepalive should arm and (with mocked tiny delay) ping.
-    getOidcUser.mockResolvedValue({ access_token: "tok", expired: false });
-
-    renderProvider();
-
-    await waitFor(() => expect(pingKeepalive).toHaveBeenCalled());
-  });
-
-  it("does NOT arm the keepalive for default-auth (no OIDC manager)", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    manager = null; // no OIDC manager ⇒ default-auth/superadmin
-    getOidcUser.mockResolvedValue(null);
-
-    renderProvider();
-
-    // Let the init effect settle, then confirm no keepalive ping fired.
-    await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(pingKeepalive).not.toHaveBeenCalled();
-  });
-
-  it("does NOT ping when there is a manager but no OIDC user (logged out)", async () => {
-    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: false }) });
-    getOidcUser.mockResolvedValue(null); // manager present (default), but no user
-
-    renderProvider();
-
-    await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(pingKeepalive).not.toHaveBeenCalled();
   });
 });
 
@@ -214,17 +187,15 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
 
     renderProvider();
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length;
-    primeSessionCookie.mockClear();
+    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/session").length;
 
     // Simulate iOS restoring the tab from bfcache.
     const evt = new Event("pageshow") as PageTransitionEvent;
     Object.defineProperty(evt, "persisted", { value: true });
     window.dispatchEvent(evt);
 
-    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
     await waitFor(() =>
-      expect(authFetch.mock.calls.filter((c) => c[0] === "/api/auth/session").length).toBeGreaterThan(probesAfterInit)
+      expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBeGreaterThan(probesAfterInit)
     );
   });
 
@@ -233,14 +204,14 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
 
     renderProvider();
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    primeSessionCookie.mockClear();
+    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/session").length;
 
     const evt = new Event("pageshow") as PageTransitionEvent;
     Object.defineProperty(evt, "persisted", { value: false });
     window.dispatchEvent(evt);
 
     await new Promise((r) => setTimeout(r, 20));
-    expect(primeSessionCookie).not.toHaveBeenCalled();
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBe(probesAfterInit);
   });
 
   it("primes + re-validates when the tab becomes visible again", async () => {
@@ -248,12 +219,14 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
 
     renderProvider();
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    primeSessionCookie.mockClear();
+    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/session").length;
 
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     document.dispatchEvent(new Event("visibilitychange"));
 
-    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBeGreaterThan(probesAfterInit)
+    );
   });
 
   it("coalesces the pageshow + visibilitychange burst into a single prime (in-flight guard)", async () => {
@@ -261,20 +234,109 @@ describe("AuthProvider resume re-validation (iOS bfcache/visibility fix)", () =>
 
     renderProvider();
     await waitFor(() => expect(authFetch).toHaveBeenCalled());
-    primeSessionCookie.mockClear();
+    const probesAfterInit = authFetch.mock.calls.filter((c) => c[0] === "/api/session").length;
 
     // iOS bfcache restore fires BOTH signals in the same sync tick. The first revalidate
-    // sets the in-flight flag before its `await primeSessionCookie()` yields, so the second
-    // signal's revalidate returns immediately → prime runs once, not twice.
+    // sets the in-flight flag before its first await yields, so the second signal's
+    // revalidate returns immediately → exactly one extra probe, not two.
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     const ps = new Event("pageshow") as PageTransitionEvent;
     Object.defineProperty(ps, "persisted", { value: true });
     window.dispatchEvent(ps);
     document.dispatchEvent(new Event("visibilitychange"));
 
-    await waitFor(() => expect(primeSessionCookie).toHaveBeenCalledTimes(1));
-    // Let the cycle settle and confirm the burst did not stack a second prime.
+    await waitFor(() =>
+      expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBe(probesAfterInit + 1)
+    );
     await new Promise((r) => setTimeout(r, 20));
-    expect(primeSessionCookie).toHaveBeenCalledTimes(1);
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBe(probesAfterInit + 1);
+  });
+});
+
+describe("AuthProvider iOS cookie-purge recovery (verdict-level, single site)", () => {
+  it("does NOT resync during a healthy init — recovery belongs to the verdict only", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
+  });
+
+  it("does NOT resync on a healthy resume revalidation", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    authFetch.mockResolvedValue({ status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(resyncRefreshTokenFromStore).not.toHaveBeenCalled();
+  });
+
+  it("resyncs only AFTER the double-401, then reprobes (the purge path)", async () => {
+    getOidcUser.mockResolvedValue({ expired: true, access_token: "at", refresh_token: "rt" });
+    const order: string[] = [];
+    authFetch
+      .mockImplementationOnce(async () => { order.push("probe1"); return { status: 401 }; })
+      .mockImplementationOnce(async () => { order.push("probe2"); return { status: 401 }; })
+      .mockImplementationOnce(async () => {
+        order.push("probe3");
+        return { status: 200, json: async () => ({ success: true, data: { user: {}, company: {} } }) };
+      });
+    resyncRefreshTokenFromStore.mockImplementation(async () => { order.push("resync"); return true; });
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(order).toEqual(["probe1", "probe2", "resync", "probe3"]);
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+describe("AuthProvider last-resort recovery in the death verdict", () => {
+  it("does NOT redirect when the second 401 is rescued by resync + reprobe (iOS purge race)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    // Probe: 401, (prime), 401, [resync true], (prime), 200
+    authFetch
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 200, json: async () => ({ success: true, data: { user: { uuid: "u1" }, company: {} } }) });
+    resyncRefreshTokenFromStore.mockResolvedValue(true);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(resyncRefreshTokenFromStore).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalledWith("/login");
+  });
+
+  it("still redirects when recovery was attempted but the third probe is 401 (dead RT)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    authFetch.mockResolvedValue({ status: 401 });
+    resyncRefreshTokenFromStore.mockResolvedValue(true);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
+  });
+
+  it("still redirects immediately when there is nothing to recover from (resync false)", async () => {
+    getOidcUser.mockResolvedValue(null);
+    authFetch.mockResolvedValue({ status: 401 });
+    resyncRefreshTokenFromStore.mockResolvedValue(false);
+
+    renderProvider();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/login"));
+    // Only two probes happened (401 + post-prime 401) — no third.
+    expect(authFetch.mock.calls.filter((c) => c[0] === "/api/session").length).toBe(2);
   });
 });

@@ -157,11 +157,11 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
   );
 }
 
-// Resume control for a USER-interrupted execution row (子3 — daemon-interrupt-resume).
-// Shown ONLY when status === "interrupted" AND interruptedReason === "user": a crash
-// (reason === "crash") auto-recovers via the daemon's reconnect-backfill and is NOT
-// manually resumable (q7=a), so it shows a static "auto-recovers" hint instead (see
-// ExecutionRow). On click it POSTs /api/daemon/resume { targetConnectionUuid... };
+// Resume control for an interrupted execution row (子3 — daemon-interrupt-resume;
+// widened by add-crash-execution-resume). Shown when status === "interrupted" with
+// EITHER reason: "user" (an intentional stop) or "crash" (the subprocess exited
+// abnormally — manually resumable too, since reconnect-backfill only auto-recovers
+// it if the daemon restarts). On click it POSTs /api/daemon/resume { connectionUuid... };
 // the server records the transition + dispatches a `resume` control command, and the
 // row re-appears as running via the next execution snapshot. No confirm dialog —
 // resume is non-destructive, unlike interrupt.
@@ -233,8 +233,8 @@ export function ResumeButton({ exec }: { exec: ExecutionView }) {
 // status-dependent trailing control:
 //  - running     → a live HH:MM:SS elapsed indicator + an Interrupt control,
 //  - queued      → a static "waiting" hint,
-//  - interrupted → an "interrupted" badge + either a Resume control (reason=user)
-//                  or a static "auto-recovers" hint (reason=crash).
+//  - interrupted → an "interrupted"/"crashed" badge + a Resume control (both
+//                  reasons are manually resumable — add-crash-execution-resume).
 // A row whose resource no longer resolves (deleted) falls back to a localized
 // placeholder title and renders as plain text (no link).
 //
@@ -343,7 +343,7 @@ export function ExecutionRow({
   );
 
   // Status/controls content — IDENTICAL across layouts; only its position changes.
-  // running → elapsed + Interrupt; interrupted → badge + Resume/auto-recovers;
+  // running → elapsed + Interrupt; interrupted → badge + Resume (both reasons);
   // queued → "waiting". Kept as a fragment so both the inline trailing wrapper and
   // the stacked second row reuse the exact same control nodes.
   const controls = running ? (
@@ -367,13 +367,11 @@ export function ExecutionRow({
         <PauseCircle className="h-3 w-3" aria-hidden />
         {interruptedByUser ? t("execInterruptedUser") : t("execInterruptedCrash")}
       </Badge>
-      {interruptedByUser ? (
-        <ResumeButton exec={exec} />
-      ) : (
-        <span className="text-[11px] font-medium text-[#9A8C7E]">
-          {t("execCrashAutoRecovers")}
-        </span>
-      )}
+      {/* Both interrupt reasons offer Resume (add-crash-execution-resume): a crash is
+          manually resumable too — it only auto-recovers if the daemon reconnects, which
+          never happens while the daemon stays online. The badge above already carries
+          the crash indication on this row. */}
+      <ResumeButton exec={exec} />
     </>
   ) : (
     <span className="text-[11px] font-medium text-[#9A9A9A]">

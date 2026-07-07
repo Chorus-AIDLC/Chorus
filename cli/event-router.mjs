@@ -14,12 +14,14 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 // MIRROR of the server's NOTIFICATION_ACTION_TO_TURN_TRIGGER (src/services/notification-turn.ts).
 // Used ONLY to match a re-read wake notification back to a DIRECTED autonomous pending turn
 // (the deliver_turn re-dispatch rebuilds the prompt from the notification, T2). Kept narrow
-// to the three triggers a `deliver_turn` ping can carry for an autonomous wake; every other
-// action collapses to the `task_assigned` trigger exactly as the server does, so a
+// to the dedicated triggers a `deliver_turn` ping can carry for an autonomous wake; every
+// other action collapses to the `task_assigned` trigger exactly as the server does, so a
 // task_assigned turn matches its task_reopened/task_verified/idea_claimed/proposal_* origins.
 const ACTION_TO_TURN_TRIGGER = {
   mentioned: "mentioned",
   elaboration_verified: "elaboration_verified",
+  start_development: "start_development",
+  yolo_requested: "yolo_requested",
   elaboration_requested: "elaboration",
   elaboration_answered: "elaboration",
   human_instruction: "human_instruction",
@@ -219,7 +221,12 @@ export class EventRouter {
    * per-direct-idea serialization holds and the spawner's on-disk transcript probe
    * naturally selects `claude --resume <directIdeaUuid>` (the session already
    * exists). Synchronous + non-throwing, mirroring `dispatch`.
-   * @param {{ entityType?: string, entityUuid?: string }} target
+   *
+   * `resumeReason` (add-crash-execution-resume) is the interrupted row's prior
+   * reason ("user" | "crash") threaded from the control event; it is stamped on the
+   * synthetic notification as `resumedFrom` so the prompt builder can state a crash
+   * explicitly. Absent/unknown → not stamped → the user-resume prompt.
+   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string }} target
    */
   dispatchResume(target) {
     const entityType = target?.entityType;
@@ -228,7 +235,16 @@ export class EventRouter {
       this.logger.warn("[Chorus] resume dispatch missing entityType/entityUuid, skipping");
       return;
     }
-    const n = { action: "resource_resumed", entityType, entityUuid };
+    const resumedFrom =
+      target?.resumeReason === "user" || target?.resumeReason === "crash"
+        ? target.resumeReason
+        : undefined;
+    const n = {
+      action: "resource_resumed",
+      entityType,
+      entityUuid,
+      ...(resumedFrom ? { resumedFrom } : {}),
+    };
     this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
       this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);
     });
@@ -278,15 +294,18 @@ export class EventRouter {
       this.logger.warn(`[Chorus] pending-turn ${turnUuid} missing sessionId, skipping`);
       return;
     }
-    // A DIRECTED autonomous turn (mentioned / task_assigned / elaboration_verified) is
-    // delivered by the deliver_turn ping too (T2). Its prompt must be rebuilt from the
-    // notification (promptText is null), so it takes a separate async path. resume /
-    // elaboration are not delivered by deliver_turn (resume is synthetic; elaboration
-    // request/answer rides the notification broadcast), so they are not re-dispatched here.
+    // A DIRECTED autonomous turn (mentioned / task_assigned / elaboration_verified /
+    // start_development / yolo_requested) is delivered by the deliver_turn ping too (T2).
+    // Its prompt must be rebuilt from the notification (promptText is null), so it takes a
+    // separate async path. resume / elaboration are not delivered by deliver_turn (resume
+    // is synthetic; elaboration request/answer rides the notification broadcast), so they
+    // are not re-dispatched here.
     if (
       pending.trigger === "mentioned" ||
       pending.trigger === "task_assigned" ||
-      pending.trigger === "elaboration_verified"
+      pending.trigger === "elaboration_verified" ||
+      pending.trigger === "start_development" ||
+      pending.trigger === "yolo_requested"
     ) {
       // Shared dedup, marked BEFORE async work (mirrors the human_instruction path and
       // `dispatch`) so concurrent deliveries collapse to one wake.

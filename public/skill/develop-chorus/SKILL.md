@@ -269,4 +269,6 @@ chorus_add_comment({ targetType: "task", targetUuid: "<task-uuid>", content: "Re
 ## Next
 
 - After submitting for verification, an Admin reviews using the `review-chorus` skill (`<BASE_URL>/skill/review-chorus/SKILL.md`)
+- **Human "Start Development" wake:** a `start_development` wake (the human clicked **Start Development** on the idea-detail panel) means: claim and execute ALL remaining tasks of the idea's approved proposal in dependency order — loop this workflow until no claimable task remains, leaving `to_verify` and other-session tasks untouched.
+- **Human "Yolo" wake:** a `yolo_requested` wake (the human clicked **Yolo** on the idea-detail panel) means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline), not just the execute stage — read the idea's current state and resume from whatever phase it is in. Unlike `start_development` it is stage-adaptive, and it must never merge or push a PR without explicit human approval.
 - For platform overview and shared tools, see `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`)

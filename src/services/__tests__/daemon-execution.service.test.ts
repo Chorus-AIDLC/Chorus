@@ -923,7 +923,7 @@ describe("resumeExecution", () => {
     });
     mockPrisma.daemonExecution.update.mockResolvedValue({});
     const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, resumedFrom: "user" });
     const arg = mockPrisma.daemonExecution.update.mock.calls[0][0];
     expect(arg.where).toEqual({ id: 7 });
     expect(arg.data.status).toBe("running");
@@ -931,14 +931,29 @@ describe("resumeExecution", () => {
     expect(arg.data.startedAt).toBeInstanceOf(Date);
   });
 
-  it("rejects a crash-interrupted row as not-resumable (no update)", async () => {
+  it("resumes a crash-interrupted row too, reporting resumedFrom=crash (add-crash-execution-resume)", async () => {
     mockPrisma.daemonExecution.findFirst.mockResolvedValue({
       id: 8,
       status: "interrupted",
       interruptedReason: "crash",
     });
+    mockPrisma.daemonExecution.update.mockResolvedValue({});
     const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
-    expect(res).toMatchObject({ ok: false, reason: "not_resumable", interruptedReason: "crash" });
+    expect(res).toEqual({ ok: true, resumedFrom: "crash" });
+    const arg = mockPrisma.daemonExecution.update.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: 8 });
+    expect(arg.data.status).toBe("running");
+    expect(arg.data.interruptedReason).toBeNull();
+  });
+
+  it("rejects an interrupted row with an unknown reason as not-resumable (no update)", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({
+      id: 11,
+      status: "interrupted",
+      interruptedReason: null,
+    });
+    const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+    expect(res).toMatchObject({ ok: false, reason: "not_resumable", interruptedReason: null });
     expect(mockPrisma.daemonExecution.update).not.toHaveBeenCalled();
   });
 
@@ -952,6 +967,20 @@ describe("resumeExecution", () => {
     expect(res).toMatchObject({ ok: false, reason: "not_resumable", status: "running" });
     expect(mockPrisma.daemonExecution.update).not.toHaveBeenCalled();
   });
+
+  it.each(["queued", "ended"] as const)(
+    "rejects a %s row as not-resumable even if a stale reason lingers",
+    async (status) => {
+      mockPrisma.daemonExecution.findFirst.mockResolvedValue({
+        id: 12,
+        status,
+        interruptedReason: "crash",
+      });
+      const res = await resumeExecution(companyUuid, connectionUuid, "task", t1);
+      expect(res).toMatchObject({ ok: false, reason: "not_resumable", status });
+      expect(mockPrisma.daemonExecution.update).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns not_found when no row exists for the connection+entity", async () => {
     mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);

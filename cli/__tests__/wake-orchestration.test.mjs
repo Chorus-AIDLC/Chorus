@@ -79,6 +79,36 @@ describe("buildPrompt", () => {
     expect(pi).toContain("idea-7");
   });
 
+  it("resource_resumed with resumedFrom=crash injects the crash-specific continue instruction (add-crash-execution-resume)", () => {
+    const p = buildPrompt({
+      action: "resource_resumed",
+      entityType: "task",
+      entityUuid: "task-1",
+      resumedFrom: "crash",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("task-1");
+    // States the abnormal exit and instructs verify-state-then-continue.
+    expect(p).toContain("EXITED ABNORMALLY");
+    expect(p).toContain("chorus_get_task");
+    expect(p.toLowerCase()).toContain("re-check the current state");
+    expect(p.toLowerCase()).toContain("continue the unfinished work");
+    // It is a DIFFERENT text from the user-resume prompt.
+    expect(p).not.toContain("RESUMED after an interrupt");
+  });
+
+  it("resource_resumed with resumedFrom=user, absent, or unknown keeps the user-resume prompt (graceful degradation)", () => {
+    const base = { action: "resource_resumed", entityType: "task", entityUuid: "task-1" };
+    const userText = buildPrompt({ ...base, resumedFrom: "user" });
+    const absentText = buildPrompt(base);
+    const unknownText = buildPrompt({ ...base, resumedFrom: "meteor" });
+    expect(userText).toContain("RESUMED after an interrupt");
+    // Absent (older server) and unknown values degrade to the SAME user text.
+    expect(absentText).toBe(userText);
+    expect(unknownText).toBe(userText);
+    expect(userText).not.toContain("EXITED ABNORMALLY");
+  });
+
   it("elaboration_verified wakes the agent to WRITE the proposal, not answer questions (add-elaboration-verify-wake)", () => {
     expect(WAKE_ACTIONS.has("elaboration_verified")).toBe(true);
     const p = buildPrompt({
@@ -104,6 +134,57 @@ describe("buildPrompt", () => {
     expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
   });
 
+  it("start_development wakes the agent to EXECUTE ALL remaining tasks, never stopping after one (add-stage-advance-start-development)", () => {
+    expect(WAKE_ACTIONS.has("start_development")).toBe(true);
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "start_development",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("idea-9"); // the idea uuid
+    expect(p).toContain("proj-1"); // project uuid for context
+    // The execute-all contract (elaboration decision Q1):
+    expect(p).toContain("ALL remaining tasks");
+    expect(p).toContain("dependency");
+    expect(p).toContain("Do NOT stop after one task");
+    // The develop-flow loop tools:
+    expect(p).toContain("chorus_get_unblocked_tasks");
+    expect(p).toContain("chorus_claim_task");
+    expect(p).toContain("chorus_submit_for_verify");
+    // Boundaries: leave to_verify / foreign-claimed tasks; end benignly.
+    expect(p).toContain("to_verify");
+    expect(p.toLowerCase()).toContain("other sessions");
+    expect(p.toLowerCase()).toContain("status comment");
+    // It must NOT instruct proposal authoring — that's the elaboration_verified wake.
+    expect(p).not.toContain("chorus_pm_create_proposal");
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
+  });
+
+  it("yolo_requested wakes the agent to drive the whole idea via the yolo skill, stage-adaptive, no PR merge (add-stage-advance-yolo)", () => {
+    expect(WAKE_ACTIONS.has("yolo_requested")).toBe(true);
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "yolo_requested",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("idea-9"); // the idea uuid
+    expect(p).toContain("proj-1"); // project uuid for context
+    // Points at the yolo skill / full pipeline:
+    expect(p.toLowerCase()).toContain("yolo skill");
+    // Stage-adaptive — resume from current phase, NOT a hard-coded execute loop:
+    expect(p.toLowerCase()).toContain("resume");
+    expect(p).not.toContain("ALL remaining tasks");
+    // "Yolo never merges": must forbid a PR merge/push without approval.
+    expect(p.toLowerCase()).toContain("do not merge");
+    expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
+  });
+
   it("WAKE_ACTIONS covers the agent-relevant server notifications and excludes the noisy ones", () => {
     for (const a of [
       "task_assigned",
@@ -111,6 +192,8 @@ describe("buildPrompt", () => {
       "elaboration_requested",
       "elaboration_answered",
       "elaboration_verified",
+      "start_development",
+      "yolo_requested",
       "proposal_rejected",
       "proposal_approved",
       "idea_claimed",
@@ -479,6 +562,118 @@ describe("Waker interrupt / crash reporting (子3)", () => {
   });
 });
 
+describe("Waker graceful shutdown (fix-daemon-exit-orphan-running-turn)", () => {
+  const FAKE_CHILD = { pid: 5555 };
+
+  it("SUPPRESSES the execution crash report for a shutdown-killed subprocess (no stranded sticky rows)", async () => {
+    // A shutdown-kill looks exactly like a crash to the old logic: dirty exit, no
+    // user-interrupt flag. The !shuttingDown gate must keep reportInterrupt silent —
+    // the execution row is reconcileOffline's job when the stream drops.
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.shuttingDown = true; // shutdown began mid-run
+          return { sessionId, exitCode: 130, isNew: true }; // SIGINT-killed
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).not.toHaveBeenCalled();
+  });
+
+  it("a USER interrupt during shutdown still reports the execution (sticky resumability preserved)", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          waker.markInterrupting("task", "task-1");
+          waker.shuttingDown = true;
+          return { sessionId, exitCode: 130, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "user");
+  });
+
+  it("outside shutdown the crash report is byte-for-byte unchanged", async () => {
+    const { waker, reportInterrupt } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          return { sessionId, exitCode: 2, isNew: true };
+        }),
+      },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+  });
+
+  it("interruptAll sets shuttingDown and kills every live running child via the injected killer", async () => {
+    const killer = vi.fn(async () => ({ killed: true }));
+    let interruptAllRan;
+    const { waker } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId, onChild }) => {
+          onChild?.(FAKE_CHILD);
+          // Simulate the daemon's stop() firing while this wake is live.
+          waker.interruptAll();
+          interruptAllRan = {
+            shuttingDown: waker.shuttingDown,
+            killerCalls: killer.mock.calls.length,
+          };
+          return { sessionId, exitCode: 130, isNew: true };
+        }),
+      },
+    });
+    waker.killer = killer;
+    waker.sigintTimeoutMs = 1234;
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(interruptAllRan.shuttingDown).toBe(true);
+    expect(interruptAllRan.killerCalls).toBe(1);
+    expect(killer).toHaveBeenCalledWith(
+      FAKE_CHILD,
+      expect.objectContaining({ sigintTimeoutMs: 1234 }),
+    );
+  });
+
+  it("interruptAll skips queued entries (no child yet) and is idempotent", async () => {
+    const killer = vi.fn(async () => ({ killed: true }));
+    const { waker } = makeWaker();
+    waker.killer = killer;
+    // A queued entry (no live child) — nothing to kill.
+    waker.markQueued(TASK_NOTIF, "idea:x", { rootIdeaUuid: null });
+    waker.interruptAll();
+    waker.interruptAll();
+    expect(waker.shuttingDown).toBe(true);
+    expect(killer).not.toHaveBeenCalled();
+  });
+
+  it("a rejecting killer never throws out of interruptAll (logged)", async () => {
+    const warns = [];
+    const { waker } = makeWaker();
+    waker.logger = { ...silent, warn: (m) => warns.push(m) };
+    waker.killer = vi.fn(() => Promise.reject(new Error("kill blew up")));
+    waker.executions.set("task:task-1", {
+      entityType: "task",
+      entityUuid: "task-1",
+      rootIdeaUuid: null,
+      status: "running",
+      startedAt: null,
+      child: FAKE_CHILD,
+    });
+    expect(() => waker.interruptAll()).not.toThrow();
+    await Promise.resolve(); // let the rejection propagate to the .catch
+    expect(warns.join("")).toMatch(/killProcessTree rejected/);
+  });
+});
+
 describe("EventRouter dispatch", () => {
   function makeRouter(notifications, waker, queue, seen) {
     const mcpClient = { callTool: vi.fn(async () => ({ notifications })) };
@@ -576,6 +771,32 @@ describe("EventRouter dispatch", () => {
 
     expect(spawner.wake).toHaveBeenCalledTimes(2);
     expect(maxConcurrent).toBe(1); // same direct idea → never concurrent
+  });
+
+  it("dispatchResume stamps resumedFrom on the synthetic wake only for known reasons (add-crash-execution-resume)", async () => {
+    const enqueued = [];
+    const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
+    const attribution = { key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA };
+    const waker = {
+      keyFor: vi.fn(async () => attribution),
+      markQueued: vi.fn(),
+      wake: vi.fn(async () => {}),
+    };
+    const { router } = makeRouter([], waker, queue);
+
+    router.dispatchResume({ entityType: "task", entityUuid: "task-1", resumeReason: "crash" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-2", resumeReason: "user" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-3" });
+    router.dispatchResume({ entityType: "task", entityUuid: "task-4", resumeReason: "meteor" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(enqueued).toHaveLength(4);
+    const wakes = waker.markQueued.mock.calls.map((c) => c[0]);
+    expect(wakes[0]).toMatchObject({ action: "resource_resumed", entityUuid: "task-1", resumedFrom: "crash" });
+    expect(wakes[1]).toMatchObject({ action: "resource_resumed", entityUuid: "task-2", resumedFrom: "user" });
+    // Absent / unknown reasons are NOT stamped — buildPrompt then falls back to the user text.
+    expect(wakes[2]).not.toHaveProperty("resumedFrom");
+    expect(wakes[3]).not.toHaveProperty("resumedFrom");
   });
 });
 

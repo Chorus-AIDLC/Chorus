@@ -11,7 +11,7 @@
  * default long-lived daemon) is intentionally NOT in this set — it is the
  * absence of a recognized sub-action token.
  */
-export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs"]);
+export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
 /** Known agent backends. Only `claude-code` is implemented; the rest reserve
  * the extension point (see daemon-agent-selection). Exported for the resolver
@@ -22,7 +22,8 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * Parse the client-subcommand flags out of an arg list. Recognizes the
  * pre-existing `--url` / `--api-key` / `--sigint-timeout` (space and `=` forms)
  * and boolean `--yolo`, plus the new `--agent <type>` (space + `=`), boolean
- * `--chorus-only`, `--verbose`, `-d`/`--detach`, and `--help`/`-h`.
+ * `--chorus-only`, `--verbose`, `-d`/`--detach`, `--force` (stop's forced
+ * pidfile cleanup), and `--help`/`-h`.
  *
  * Only keys that appear are set, so callers can distinguish "unset" from
  * "false" (important for layered env/flag precedence downstream).
@@ -37,7 +38,7 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * @returns {{
  *   url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: string,
  *   agent?: string, chorusOnly?: boolean, verbose?: boolean, detach?: boolean,
- *   cwd?: string[], help?: boolean,
+ *   cwd?: string[], force?: boolean, help?: boolean,
  * }}
  */
 export function parseClientFlags(argv) {
@@ -61,6 +62,7 @@ export function parseClientFlags(argv) {
     else if (a === "--chorus-only") out.chorusOnly = true;
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
+    else if (a === "--force") out.force = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
@@ -76,7 +78,7 @@ export function parseClientFlags(argv) {
  * or an unknown leading token) is the normal long-lived daemon (`run`).
  *
  * @param {string[]} rest  argv after the `daemon` subcommand token
- * @returns {"run"|"stop"|"status"|"restart"|"logs"}
+ * @returns {"run"|"stop"|"status"|"restart"|"logs"|"install"|"uninstall"}
  */
 export function parseDaemonAction(rest) {
   const first = rest[0];
@@ -98,10 +100,18 @@ agent notification stream, and wake a local headless agent on task dispatch.
 USAGE
   chorus daemon [options]              Run the daemon (foreground)
   chorus daemon -d [options]           Run the daemon in the background (detached)
-  chorus daemon stop                   Stop the background daemon
-  chorus daemon status                 Show whether the background daemon is running
-  chorus daemon restart                Restart the background daemon
-  chorus daemon logs                   Show the background daemon log
+  chorus daemon install [options]      Install as a boot-autostart service and
+                                       start it now (Linux systemd --user;
+                                       macOS/Windows print a template + steps)
+  chorus daemon uninstall              Remove the installed service (Linux) /
+                                       print removal steps (macOS/Windows)
+  chorus daemon stop                   Stop the daemon (delegates to the service
+                                       manager when installed, else the pidfile)
+  chorus daemon stop --force           Force-clean the pidfile when a stuck or
+                                       unverifiable pid blocks a normal stop
+  chorus daemon status                 Show whether the daemon is running
+  chorus daemon restart                Restart the daemon
+  chorus daemon logs                   Show the daemon log (journal when installed)
 
 OPTIONS
   --url <url>              Remote Chorus server URL            (env: CHORUS_URL)
@@ -130,11 +140,23 @@ CREDENTIALS
   ~/.chorus/daemon.json (from 'chorus login') > Claude Code plugin config.
   On a TTY with no resolvable credentials, the daemon prompts to complete them.
 
+SERVICE (install)
+  'chorus daemon install' is the recommended way to run the daemon permanently.
+  On Linux it generates a systemd --user unit that runs the daemon in the
+  FOREGROUND (Type=simple, no -d) so systemd owns the process directly: it
+  starts at login, restarts on failure, and 'systemctl --user stop' shuts it
+  down gracefully. Do NOT hand-write a Type=forking unit around 'chorus daemon
+  -d' — the daemon self-daemonizes, which systemd cannot track and which loops
+  on restart. The install captures the --cwd / --agent / --chorus-only flags you
+  pass. On macOS/Windows install prints a correct template you install manually.
+
 EXAMPLES
   chorus daemon                        # Foreground, default yolo (TTY confirms once)
   chorus daemon --chorus-only          # Restrict the woken agent to Chorus tools
   chorus daemon -d                     # Background; see 'chorus daemon logs'
-  chorus daemon stop                   # Stop the background daemon
+  chorus daemon install --cwd ~/proj   # Install + start as a boot service (Linux)
+  chorus daemon uninstall              # Remove the installed service
+  chorus daemon stop                   # Stop the daemon
 `;
 }
 

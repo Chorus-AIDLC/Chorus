@@ -2,10 +2,11 @@
 
 ## Purpose
 Defines how Chorus renews an OIDC user's session: the Edge middleware is the single,
-IdP-agnostic refresh authority (cookie-based), the frontend never races it on the refresh
-token, an expired access token does not by itself end the session, and a redirect to login
-happens only on a true post-middleware 401. Also governs the refresh-token cookie lifetime
-and an optional idle keepalive.
+IdP-agnostic refresh authority (cookie-based), the browser authenticates with cookies
+only, an expired access token does not by itself end the session, and a redirect to login
+happens only after the probe verdict chain (covered probe → retry → localStorage
+refresh-token recovery → final probe) fails. Also governs the refresh-token cookie
+lifetime.
 ## Requirements
 ### Requirement: Edge middleware is the single OIDC refresh authority
 
@@ -65,51 +66,31 @@ auth resolution falling through to the refreshed `oidc_access_token` cookie.
   condition
 - **THEN** it does not redirect to `/login` solely because of that event
 
-### Requirement: Redirect to login only on a true post-middleware 401
+### Requirement: Redirect to login only after the probe verdict chain fails
 
-The application SHALL redirect an OIDC user to `/login` only when a request that has already
-passed through the Edge middleware (and therefore been given the cookie-refresh opportunity)
-still resolves as unauthenticated — i.e. the session endpoint or a gated request returns
-401, indicating the refresh token is genuinely expired or revoked. The authenticated fetch
-helper SHALL NOT attempt a frontend `signinSilent` refresh on a 401 for an OIDC session;
-it SHALL rely on the middleware-refreshed cookie and surface a genuine 401 to the single
-redirect site.
+The application SHALL redirect an OIDC user to `/login` only when the session probe's full verdict chain fails: the probe request (which is middleware-matcher-covered and therefore itself receives the cookie-refresh opportunity) returns 401, a single retry returns 401, a localStorage refresh-token recovery attempt (when a stored refresh token exists) is made, and a final probe still returns 401. The Edge middleware itself SHALL NOT redirect any request to `/login` and SHALL NOT expire or clear auth cookies, under any refresh outcome; the client-side probe verdict is the sole session-death decision site for OIDC sessions. The browser SHALL authenticate with cookies only — no code path attaches an OIDC Bearer header to first-party requests.
 
 #### Scenario: Genuine refresh-token failure redirects to login
 
-- **WHEN** the refresh token is expired or revoked and a request passes through middleware
-  (which cannot refresh) and `/api/auth/session` returns 401
-- **THEN** the application clears the session state and redirects the user to `/login`
+- **WHEN** the refresh token is expired or revoked, the covered probe and its retry both
+  return 401, and the recovery attempt (if a stored refresh token exists) does not produce
+  a passing probe
+- **THEN** the application clears the session state client-side and redirects the user to
+  `/login`
 
-#### Scenario: authFetch does not silent-renew on OIDC 401
+#### Scenario: Middleware never issues the login redirect
 
-- **WHEN** an authenticated fetch for an OIDC session receives a 401
-- **THEN** it does not call `signinSilent` and does not retry via a frontend refresh; the
-  401 is surfaced for the single session-death redirect path
+- **WHEN** any request passes through the Edge middleware, regardless of the state of the
+  auth cookies or the outcome of a refresh attempt
+- **THEN** the middleware response is never a redirect to `/login` and never carries
+  cookie-expiring `Set-Cookie` headers for the auth cookies
 
-### Requirement: Optional keepalive refreshes the cookie for idle single-page sessions
+#### Scenario: The probe refreshes its own cookie
 
-A keepalive, when present, SHALL refresh the session cookie for an idle single-page OIDC
-session before its access token expires, and session continuity SHALL NOT depend on it. When
-an OIDC session exists, the application MAY run a lightweight client keepalive that, as the
-access token nears expiry, issues a request to a path covered by the middleware matcher so
-the middleware refreshes the cookie even if the user remains idle on a single page without
-navigating. The keepalive SHALL target a middleware-covered path (not an `api/auth` path,
-which is excluded from the matcher) and SHALL derive its timing from the access token's
-expiry rather than a fixed constant. Even without the keepalive, the first request issued
-after the user resumes activity SHALL be rescued by the middleware refresh.
-
-#### Scenario: Idle single-page session is kept alive
-
-- **WHEN** an OIDC user stays on a single page without navigating and the keepalive is enabled
-- **THEN** before the access token expires, a request to a middleware-covered path triggers a
-  cookie refresh, so the session does not lapse during the idle period
-
-#### Scenario: Keepalive is not required for correctness
-
-- **WHEN** the keepalive is absent or disabled and the user resumes activity after the access
-  token expired (refresh token still valid)
-- **THEN** the first request is refreshed by the middleware and the user is not redirected
+- **WHEN** the session probe endpoint is requested with an expiring or expired access cookie
+  and valid refresh materials
+- **THEN** the middleware refreshes the cookie on the probe request itself, and the probe
+  answers using the refreshed credential — no separate priming request is required
 
 ### Requirement: Refresh-token cookie lifetime is not a hardcoded 30-day literal
 
@@ -144,4 +125,46 @@ required to derive a value they cannot observe.
   cookie from a client-supplied refresh token (no IdP token response is observed)
 - **THEN** the cookie max-age is sourced from the centralized documented default constant, not
   an inline hardcoded 30-day literal
+
+### Requirement: Middleware refresh failure is non-destructive
+
+The Edge middleware SHALL treat every OIDC refresh failure as transient and pass the request through unchanged: on a network error contacting the IdP, an OIDC discovery failure, a non-OK token-endpoint response (including `invalid_grant`), a token response missing `access_token`, or an expired access token with missing refresh materials, the middleware SHALL forward the request without modifying any cookie and without redirecting. Rationale: under refresh-token rotation, a middleware invocation cannot distinguish losing a concurrent-refresh race from genuine refresh-token revocation, so it never has enough information to destroy session state safely.
+
+#### Scenario: Concurrent-refresh race loser does not destroy the session
+
+- **WHEN** multiple simultaneous requests each trigger a middleware refresh with the same
+  rotated-away refresh token and the IdP rejects the losers with `invalid_grant`
+- **THEN** each losing request is passed through with cookies untouched, and the winning
+  request's refreshed cookies remain in effect for subsequent requests
+
+#### Scenario: Network error during resume does not end the session
+
+- **WHEN** the middleware's fetch to the IdP token endpoint throws (e.g. the device's
+  network stack is not yet ready after tab resume)
+- **THEN** the request is passed through with cookies untouched and the user is not
+  redirected
+
+#### Scenario: Expired token with missing refresh materials passes through
+
+- **WHEN** the access token cookie is expired and one or more of the refresh token,
+  client-id, or issuer cookies are absent
+- **THEN** the middleware passes the request through without clearing the remaining
+  cookies; downstream auth resolution and the client probe decide the outcome
+
+### Requirement: Every middleware refresh attempt emits a structured diagnostic log
+
+The Edge middleware SHALL emit exactly one structured log line per OIDC refresh attempt, carrying at minimum: an event identifier, the outcome class (refreshed, IdP-rejected, network-error, discovery-failed, malformed-response, or skipped-for-missing-materials), the IdP HTTP status and OAuth error code when applicable, the triggering request path, the access token's expiry delta at decision time, and the token-endpoint round-trip duration. Failure outcomes SHALL log at warning level. The diagnostics SHALL be server-console logs only and SHALL NOT create database or activity records.
+
+#### Scenario: A resume burst is identifiable from the logs
+
+- **WHEN** several requests trigger refresh attempts within a short window after a tab
+  resume
+- **THEN** the logs show one line per attempt with the triggering path and outcome, making
+  the winner and any race losers individually attributable
+
+#### Scenario: Failure logs carry the IdP error detail
+
+- **WHEN** the IdP token endpoint returns a non-OK response with an OAuth error body
+- **THEN** the log line records the HTTP status and, when parseable, the OAuth `error`
+  code such as `invalid_grant`
 

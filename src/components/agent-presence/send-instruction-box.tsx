@@ -55,6 +55,31 @@ import type { SessionView } from "@/services/daemon-session.service";
 // round-trip. The server remains authoritative; this only avoids a doomed POST.
 export const MAX_INSTRUCTION_CHARS = 4000;
 
+// Map an agent's ONLINE `ConnectionView[]` to the shared `InstanceCandidate` shape
+// the picker renders. One canonical mapping for every live-send surface (the ad-hoc
+// form here, the conversational entry) so the "" / null sentinels never drift.
+export function connectionsToInstanceCandidates(
+  connections: ConnectionView[],
+): InstanceCandidate[] {
+  return connections.map((c) => ({
+    connectionUuid: c.uuid,
+    host: c.host ?? "",
+    // null (and any missing self-report) → the "unknown path" instance.
+    cwd: c.cwd ?? null,
+    effectiveStatus: c.effectiveStatus,
+  }));
+}
+
+// Resolve a failed Response into its server-provided `error` reason, falling back
+// to the caller's localized generic message. Exported for the other live-send
+// surface (conversational entry) so error extraction stays identical.
+export async function extractInstructionError(
+  res: Response,
+  fallback: string,
+): Promise<string> {
+  return extractError(res, fallback);
+}
+
 // The session-targeting row shape from GET /api/daemon-sessions (the subset the
 // send box needs). Mirrors `SessionTargetView` (daemon-instruction.service.ts).
 export interface SessionTarget {
@@ -118,9 +143,9 @@ function ComposeField({
   sendLabel: string;
   layout: "inline" | "stacked";
   // THIS conversation's in-flight execution, if any — a `running` one (→ Interrupt
-  // beside Send) or a `user`-interrupted one (→ Resume). A `crash`-interrupted one is
-  // also accepted and renders the static "auto-recovers" hint (no Resume). The
-  // Interrupt/Resume controls are the SAME shipped components the connection deck
+  // beside Send) or an interrupted one (→ Resume; a `crash`-interrupted one adds an
+  // "exited with error" label beside the same Resume — add-crash-execution-resume).
+  // The Interrupt/Resume controls are the SAME shipped components the connection deck
   // renders — same AlertDialog confirm, same endpoints, same wiring. Null/undefined
   // when the conversation is idle (just Send).
   controllableExecution?: ExecutionView | null;
@@ -163,10 +188,12 @@ function ComposeField({
 
   // The state-driven control that joins Send in the action row, mirroring the
   // standalone ExecutionRow's trailing controls byte-for-byte:
-  //   running                       → Interrupt (with its AlertDialog confirm)
-  //   interrupted + reason === user → Resume
-  //   interrupted + reason === crash → a static "auto-recovers" hint (no Resume),
-  //                                    since a crash recovers via reconnect-backfill.
+  //   running                        → Interrupt (with its AlertDialog confirm)
+  //   interrupted + reason === user  → Resume
+  //   interrupted + reason === crash → an "exited with error" label + the SAME Resume
+  //                                    (add-crash-execution-resume: a crash is manually
+  //                                    resumable — backfill only auto-recovers it if
+  //                                    the daemon restarts, not while it stays online).
   const exec = controllableExecution ?? null;
   const execControl = exec
     ? exec.status === "running"
@@ -175,9 +202,12 @@ function ComposeField({
         ? <ResumeButton exec={exec} />
         : exec.status === "interrupted" && exec.interruptedReason === "crash"
           ? (
-              <span className="text-[11px] font-medium text-[#9A8C7E]">
-                {tc("execCrashAutoRecovers")}
-              </span>
+              <>
+                <span className="text-[11px] font-medium text-[#B45309]">
+                  {tc("execCrashExited")}
+                </span>
+                <ResumeButton exec={exec} />
+              </>
             )
           : null
     : null;
@@ -580,14 +610,7 @@ export function AdHocSendForm({
   // The picker's instance set: the ONLINE connection set only (a live send needs
   // online). Mapped to the shared InstanceCandidate shape.
   const instances: InstanceCandidate[] = useMemo(
-    () =>
-      onlineConnections.map((c) => ({
-        connectionUuid: c.uuid,
-        host: c.host ?? "",
-        // null (and any missing self-report) → the "unknown path" instance.
-        cwd: c.cwd ?? null,
-        effectiveStatus: c.effectiveStatus,
-      })),
+    () => connectionsToInstanceCandidates(onlineConnections),
     [onlineConnections],
   );
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.13.1] - 2026-07-07
+
+### Added
+- **Stage-advance framework — Start Development & Yolo**: A generic stage-advance framework replaces the elaboration-only path. Both idea-detail panels now expose a **Start Development** button (server preconditions + activity + `start_development` wake) and a **Yolo** button (`yolo_requested` wake) so a human can hand an idea straight to autonomous development from the UI. (#389, #404)
+- **Conversational idea entry**: The new-idea dialog gains a conversational mode — describe your idea to an agent and hand off directly into chat. The agent-name Select always shows, even with a single online agent. (#391)
+- **Conversational idea root session**: Conversational idea creation now dispatches transactionally through `/api/ideas/conversational` — it pre-creates the idea, an idea-anchored root session, and the first instruction in one step, via a pluggable dispatch surface. (#392)
+- **One-click Resume for crash-exited daemon executions**: Crash-interrupted executions (`interruptedReason=crash`) are now manually resumable from the chat window and connection deck, with a crash-specific continue instruction injected into the resumed wake. Covers both Claude Code and Codex backends. (#390)
+- **Graceful daemon shutdown + orphan-turn reconcile**: The daemon now reports an outcome-aware turn exit on shutdown, the server reconciles orphan turns for dead daemons (and on new-generation daemon re-registration), turns gain a terminal `interrupted` state, and the daemon conversation surface renders interrupted turns. (#397, #398)
+- **`chorus daemon install`**: A systemd supervisor unit generator for running the daemon as a background service, with quoted `ExecStart` tokens and restart-on-reinstall. (#402)
+
+### Fixed
+- **iOS resume login-bounce**: Middleware OIDC refresh failures are now non-destructive — middleware never destroys auth state. Browser auth is cookie-only (keepalive and the resume gate deleted; `sync-token` is recovery-only), with last-resort refresh-token recovery after an iOS cookie purge and structured refresh-token diagnostics. Agent-presence polling pauses after consecutive dead-session 401s. (#400)
+- **Daemon stop misreads a live daemon as stale after an NTP clock step**: A boot-time NTP step shifted `ps lstart`, so `startedAt` string-equality vetoed the pidfile match and cleared a live daemon as stale. (#401)
+- **Daemon stale-PID identity**: `stop` now identity-verifies pidfile liveness so recycled PIDs read as stale, adds a `stop --force` escape hatch + exit-code contract, and uses a busybox-compatible `ps` fallback. (#390)
+
+### Changed
+- **Idea panel action row**: Decluttered — Reassign and Yolo are now icon buttons with shadcn Tooltips. (#406)
+
+### Plugin
+- **OpenClaw plugin → 0.13.1**: The OpenClaw plugin router now handles the daemon stage-advance wake events (`start_development`, `yolo_requested`). Version bumped 0.11.1 → 0.13.1. (#405)
+
+---
+
 ## [0.13.0] - 2026-07-02
 
 ### Added

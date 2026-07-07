@@ -4,7 +4,6 @@
 
 import { UserManager, User } from "oidc-client-ts";
 import { createUserManager, getStoredOidcConfig, storeOidcConfig, clearOidcConfig, type OidcConfig } from "./oidc";
-import { clientLogger } from "@/lib/logger-client";
 
 // Singleton UserManager instance
 let userManager: UserManager | null = null;
@@ -46,127 +45,73 @@ export async function getOidcUser(): Promise<User | null> {
   }
 }
 
-// Get the current OIDC access token, if any.
+// Session recovery after an iOS cookie purge (idea 3bf0819c).
 //
-// The frontend does NOT renew the token here. Renewal is owned solely by the Edge
-// middleware (cookie path) — see src/middleware.ts and src/lib/oidc.ts. If the token
-// is expired we still return it: the request is sent with the (stale) Bearer header,
-// the middleware refreshes the `oidc_access_token` cookie for that same request, and
-// getAuthContext (src/lib/auth.ts) falls through from the expired Bearer token to the
-// freshly-refreshed cookie. Calling signinSilent() here would make the frontend a
-// second consumer of the rotating refresh token and reintroduce the invalid_grant race.
-export async function getAccessToken(): Promise<string | null> {
+// iOS Safari can purge ALL httpOnly auth cookies from a backgrounded tab, leaving the
+// middleware nothing to refresh — a guaranteed bounce — while oidc-client-ts's
+// localStorage user still holds a live refresh token (its ACCESS token is typically
+// expired by then). The server verifies the access token's signature (bounded exp
+// tolerance; it identifies the company, it does not authenticate) and rebuilds the
+// refresh-materials cookies. The REAL authentication still happens when the middleware
+// exchanges the refresh token at the IdP on the next covered request — a dead refresh
+// token still bounces via the existing double-401 path.
+//
+// Returns true when a recovery request was made and accepted; false when there is
+// nothing to recover from (no stored user / no refresh token) or the server declined.
+export async function resyncRefreshTokenFromStore(): Promise<boolean> {
   const user = await getOidcUser();
-
-  if (!user) return null;
-
-  return user.access_token;
-}
-
-// Check if user is authenticated
-export async function isAuthenticated(): Promise<boolean> {
-  const user = await getOidcUser();
-  return user !== null && !user.expired;
-}
-
-// Sync a new access token (and optionally refresh token) to HTTP-only cookies via the server endpoint
-export async function syncTokenToCookie(accessToken: string, refreshToken?: string): Promise<boolean> {
+  if (!user?.refresh_token || !user.access_token) return false;
   try {
     const response = await fetch("/api/auth/sync-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken, refreshToken }),
+      body: JSON.stringify({
+        accessToken: user.access_token,
+        refreshToken: user.refresh_token,
+      }),
     });
     return response.ok;
   } catch {
-    clientLogger.error("Failed to sync token to cookie");
+    // Best-effort — the subsequent prime/probe path decides the outcome either way.
     return false;
   }
 }
 
-// Prime the session cookie before a session probe.
+// Authenticated fetch — cookie-based.
 //
-// The session probe (`/api/auth/session`) is NOT covered by the middleware matcher
-// (it excludes `api/auth`), so it can never refresh the cookie itself. The middleware —
-// the single OIDC refresh authority — only runs for matcher-covered paths. On a desktop
-// full-page reload the document request (matcher-covered) refreshes the cookie before the
-// probe runs, masking this. But when the page is restored without a server document
-// request (iOS WebKit bfcache / frozen-tab `pageshow(persisted)` resume), the probe is the
-// FIRST network call, hits an expired access cookie, 401s, and bounces the user to /login —
-// even though the refresh token is still valid.
-//
-// `primeSessionCookie` issues a best-effort GET to a matcher-covered path so the middleware
-// refreshes the `oidc_access_token` cookie from the refresh token BEFORE the probe. It is a
-// no-op for default-auth/superadmin (their middleware branch refreshes the same way, and a
-// non-refreshable session simply gets a normal response). Verified on production against the
-// real Cognito IdP: with an expired access cookie + valid refresh token, GET /api/keepalive
-// returns 200 and rewrites the cookie, after which /api/auth/session returns 200.
-export async function primeSessionCookie(): Promise<void> {
-  try {
-    await fetch("/api/keepalive", { method: "GET", credentials: "same-origin", cache: "no-store" });
-  } catch {
-    // Best-effort only — if it fails, fetchSession still tries the probe and the next
-    // matcher-covered request will refresh.
-  }
-}
-
-// Create authenticated fetch wrapper
+// The browser authenticates with COOKIES only, for every login mode. The Edge
+// middleware is the single renewal authority: any matcher-covered request (including
+// these) gets an expiring/expired access cookie refreshed before the route runs, and
+// getAuthContext resolves the cookie. No Bearer header is attached — the localStorage
+// OIDC token is frozen at login and would only ever be a stale duplicate of what the
+// cookie already proves (SSE, which cannot send headers, has always worked this way).
+// A 401 here means the middleware could not refresh; the caller's probe/verdict logic
+// (auth-context fetchSession) owns retry, recovery, and the re-login decision.
 export async function authFetch(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = await getAccessToken();
-
-  const headers = new Headers(options.headers);
-
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  // On 401: OIDC users rely on the middleware-refreshed cookie (no retry here);
-  // default-auth users get one cookie-based refresh + retry.
-  if (response.status === 401) {
-    const manager = getUserManager();
-    if (manager) {
-      // OIDC user: do NOT silent-renew here. Renewal is owned by the Edge middleware,
-      // which already had its chance to refresh the cookie on this same request before
-      // it reached the route. A 401 that survives the middleware means the refresh
-      // token is genuinely expired/revoked — a true session-death condition. Surface
-      // the 401 so the single redirect site (auth-context) handles re-login. Calling
-      // signinSilent() here would re-race the rotating refresh token.
-    } else {
-      // Default auth user: refresh via cookie-based refresh token
-      try {
-        const refreshRes = await fetch("/api/auth/refresh", { method: "POST" });
-        if (refreshRes.ok) {
-          // Refresh succeeded — cookies are updated, retry without Bearer header
-          headers.delete("Authorization");
-          return fetch(url, { ...options, headers });
-        }
-      } catch {
-        // Refresh failed, return original 401
-      }
-    }
-  }
-
-  return response;
+  return fetch(url, { ...options, credentials: "same-origin" });
 }
 
-// Create fetch hook for SWR or React Query
-export function createAuthFetcher() {
-  return async (url: string) => {
-    const response = await authFetch(url);
-    if (!response.ok) {
-      const error = new Error("Fetch failed");
-      throw error;
+// Purge the dead session's client-side traces (localStorage OIDC user + manager).
+//
+// Called when the probe verdict declares session death: the stored refresh token has
+// PROVEN dead (the verdict's recovery attempt already failed at the IdP), so keeping
+// the localStorage user only makes every future /login visit re-attempt a doomed
+// recovery (one sync-token POST + one failed IdP round-trip of pure log noise).
+// Unlike logout(), no server call — there is nothing left to log out of.
+export async function purgeDeadSession(): Promise<void> {
+  const manager = getUserManager();
+  if (manager) {
+    try {
+      await manager.removeUser();
+    } catch {
+      // Ignore — clearing the manager below still detaches the stored user.
     }
-    return response.json();
-  };
+  }
+  clearUserManager();
+  clearOidcConfig();
 }
 
 // Login redirect

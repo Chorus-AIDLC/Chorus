@@ -269,6 +269,31 @@ describe("dispatchControl resume", () => {
     expect(channel).toBe(controlEventName(connectionUuid));
     expect(event).toMatchObject({ type: "control", command: "resume", entityType: "task", entityUuid: t1 });
   });
+
+  it("carries resumeReason on the wire when provided (add-crash-execution-resume)", () => {
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "resume",
+      entityType: "task",
+      entityUuid: t1,
+      resumeReason: "crash",
+    });
+    const [, event] = mockEventBus.emit.mock.calls[0];
+    expect(event).toMatchObject({ command: "resume", resumeReason: "crash" });
+  });
+
+  it("omits resumeReason from the wire when absent (interrupt shape stays byte-identical)", () => {
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "interrupt",
+      entityType: "task",
+      entityUuid: t1,
+    });
+    const [, event] = mockEventBus.emit.mock.calls[0];
+    expect(event).not.toHaveProperty("resumeReason");
+  });
 });
 
 // ===== dispatchControl deliver_turn (子2 — origin-only live delivery, precise turn) =====

@@ -46,6 +46,15 @@ import {
   isRunning,
   readLog,
 } from "./daemon-lifecycle.mjs";
+import {
+  detectSupervisor,
+  installService,
+  uninstallService,
+  systemctlUser,
+  journalctlUser,
+  resolveServicePaths,
+  SERVICE_NAME,
+} from "./daemon-service.mjs";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -254,7 +263,20 @@ export function buildDaemon(creds, deps = {}) {
     // transcript (new-vs-resume) and to spawn, so they never diverge (Module Contract
     // 1 — resolveCwd is the single source). `cwd` is `undefined` for the single-path /
     // old-daemon default, which the Waker degrades to process.cwd() (HARD-1).
-    waker = new Waker({ creds, lineage, spawner, cwd, hooks, logger, reportInterrupt, advanceTurn, verbose });
+    waker = new Waker({
+      creds,
+      lineage,
+      spawner,
+      cwd,
+      hooks,
+      logger,
+      reportInterrupt,
+      advanceTurn,
+      verbose,
+      // Graceful-shutdown kill escalation (fix-daemon-exit-orphan-running-turn):
+      // interruptAll() reuses the SAME window the interrupt control handler uses.
+      sigintTimeoutMs,
+    });
     // The router reads THIS connection's own uuid lazily (same source the control handler
     // uses) to suppress a DIRECTED (pinned) wake stamped for a different connection
     // (fix-pinned-wake-directed-delivery, T2). Null until the SSE handshake assigns it — a
@@ -274,8 +296,8 @@ export function buildDaemon(creds, deps = {}) {
     // all scoped to THIS connection's uuid/router/backfill (see the original wiring
     // comments retained on the shared helpers). The control handler verifies a control
     // event against this connection's own connectionUuid before acting.
-    const redispatchResume = (entityType, entityUuid) => {
-      router.dispatchResume?.({ entityType, entityUuid });
+    const redispatchResume = (entityType, entityUuid, resumeReason) => {
+      router.dispatchResume?.({ entityType, entityUuid, resumeReason });
     };
     const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
     const onControl = createControlHandler({
@@ -399,10 +421,30 @@ export function buildDaemon(creds, deps = {}) {
       }
     },
     async stop() {
+      // Graceful shutdown ordering (fix-daemon-exit-orphan-running-turn):
+      // 1. Stop taking new work: disconnect the SSE listeners (no new notifications)
+      //    and latch the queue (queued-but-unstarted wakes never spawn).
       for (const c of connections) {
         c.sseListener.disconnect?.();
       }
-      // The MCP client is process-wide (shared) — disconnect it once.
+      queue.stop();
+      // 2. Interrupt every in-flight wake subprocess via the shared kill escalation.
+      //    Each wake's exit path — seeing shuttingDown — reports its turn
+      //    interrupted(shutdown) and suppresses the execution crash report.
+      for (const c of connections) {
+        c.waker?.interruptAll?.();
+      }
+      // 3. Await the in-flight wakes so those turn-advance reports flush, BOUNDED:
+      //    the kill escalation window plus a hard 5s cap for the exit path's REST
+      //    reports. A wake that outlives this does NOT hang the shutdown — its
+      //    orphaned turn is the server-side offline reconcile's job (the backstop).
+      const drained = await queue.drain(sigintTimeoutMs + 5_000);
+      if (!drained) {
+        logger.warn(
+          "[Chorus] shutdown: in-flight wake(s) did not finish within the bound — exiting anyway (server reconcile will finalize their turns)",
+        );
+      }
+      // 4. The MCP client is process-wide (shared) — disconnect it once.
       await mcpClient.disconnect?.();
     },
   };
@@ -456,7 +498,25 @@ export async function runDaemon(flags = {}, deps = {}) {
   // Lifecycle subcommands (stop/status/restart/logs) operate on the pidfile/logfile
   // managed by the `-d` path — they never start the long-lived foreground daemon.
   // `run` falls through to the normal startup below. Injectable lifecycle for tests.
-  const lifecycle = deps.lifecycle ?? { startBackground, stopDaemon, isRunning, readLog };
+  // stopDaemon's real signature is (io, opts); the bundle exposes (opts) with the
+  // default io so handleLifecycleAction can pass { force } directly.
+  const lifecycle = deps.lifecycle ?? {
+    startBackground,
+    stopDaemon: (opts) => stopDaemon(undefined, opts),
+    isRunning,
+    readLog,
+  };
+  // Supervisor (systemd --user) seam — install/uninstall the boot service and
+  // detect/delegate to it from the lifecycle subcommands. Injectable for tests
+  // (no real systemctl / disk). Defaults to the real daemon-service module.
+  const service = deps.service ?? {
+    detectSupervisor,
+    installService,
+    uninstallService,
+    systemctlUser,
+    journalctlUser,
+    resolveServicePaths: () => resolveServicePaths(env),
+  };
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
   // the detach/restart paths run the SAME (injectable) preflight, not the real
   // implementations. Threaded into startDetached so tests can drive it offline.
@@ -464,7 +524,7 @@ export async function runDaemon(flags = {}, deps = {}) {
 
   const action = flags.action ?? "run";
   if (action !== "run") {
-    return handleLifecycleAction(action, { log, errLog, lifecycle, pfDeps });
+    return handleLifecycleAction(action, { log, errLog, lifecycle, service, pfDeps });
   }
 
   // `-d` / --detach: complete any interactive preflight in THIS foreground process
@@ -665,13 +725,87 @@ export async function preflight(ctx) {
 }
 
 /**
- * Dispatch a daemon lifecycle subcommand (stop/status/restart/logs) against the
- * pidfile/logfile-managed background daemon. Each reports clearly when nothing
- * is running (no silent failure). `restart` performs stop-then-detached-start.
+ * Dispatch a daemon lifecycle subcommand. Two families:
+ *   - install / uninstall — manage the boot-autostart supervisor service
+ *     (systemd --user on Linux; a printed template on macOS/Windows).
+ *   - status / stop / restart / logs — when a supervisor unit is installed and
+ *     active, DELEGATE to it (systemctl / journalctl) so a supervised daemon is
+ *     never misreported as "not running"; otherwise operate on the
+ *     pidfile/logfile-managed `-d` background daemon exactly as before.
+ * Each reports clearly (no silent failure). `restart` performs
+ * stop-then-detached-start on the pidfile path.
  * @returns {Promise<number>} exit code
  */
-export async function handleLifecycleAction(action, { log, errLog, lifecycle, pfDeps }) {
+export async function handleLifecycleAction(action, { log, errLog, lifecycle, service, pfDeps }) {
+  // The supervisor seam is optional (older test bundles inject only lifecycle);
+  // a no-op fallback keeps those callers on the pure pidfile path.
+  const svc = service ?? { detectSupervisor: () => ({ kind: "none" }) };
+
+  if (action === "install") {
+    const spec = {
+      ...svc.resolveServicePaths(),
+      cwds: pfDeps?.flags?.cwd ?? [],
+      agent: pfDeps?.flags?.agent,
+      chorusOnly: pfDeps?.flags?.chorusOnly === true,
+      workingDir: process.cwd(),
+    };
+    const r = svc.installService(spec);
+    if (r.installed) {
+      log(`[Chorus] installed and started the daemon service:`);
+      for (const s of r.steps) log(`[Chorus]   ${s}`);
+      log(`[Chorus] it will now start automatically at login. Manage it with:`);
+      log(`[Chorus]   chorus daemon status | stop | restart | logs`);
+      // A --user service only survives logout with lingering enabled; and a
+      // separately-started `chorus daemon -d` would hold the same paths and make
+      // this service exit-and-retry. Surface both so neither is a silent gotcha.
+      log(`[Chorus] to keep it running after you log out: loginctl enable-linger "$USER"`);
+      log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
+      return 0;
+    }
+    if (r.platform === "linux") {
+      // Linux install actually failed (write / systemctl error) — surface it.
+      errLog(`[Chorus] service install failed: ${r.error}`);
+      for (const s of r.steps) errLog(`[Chorus]   (did: ${s})`);
+      return 1;
+    }
+    // macOS / Windows: not auto-installed by design — print the template + steps.
+    log(`[Chorus] automatic install is Linux-only. To run the daemon as a service on this platform:`);
+    for (const s of r.steps) log(`[Chorus]   ${s}`);
+    log("");
+    log(r.unitText);
+    return 0;
+  }
+  if (action === "uninstall") {
+    const r = svc.uninstallService();
+    if (r.platform === "linux") {
+      if (r.error) {
+        errLog(`[Chorus] service uninstall failed: ${r.error}`);
+        return 1;
+      }
+      if (r.removed) {
+        log(`[Chorus] removed the daemon service:`);
+        for (const s of r.steps) log(`[Chorus]   ${s}`);
+      } else {
+        log(`[Chorus] no installed daemon service found (nothing to remove).`);
+      }
+      return 0;
+    }
+    log(`[Chorus] automatic uninstall is Linux-only. To remove the service on this platform:`);
+    for (const s of r.steps) log(`[Chorus]   ${s}`);
+    return 0;
+  }
+
+  // For the control verbs, prefer a live supervisor unit over the pidfile.
+  const sup = svc.detectSupervisor();
+  const supervised = sup.kind === "systemd" && sup.installed;
+
   if (action === "status") {
+    if (supervised) {
+      log(`[Chorus] daemon is managed by systemd (${SERVICE_NAME}.service) — ${sup.active ? "active" : "installed but NOT active"}.`);
+      const r = svc.systemctlUser(["status", "--no-pager", `${SERVICE_NAME}.service`]);
+      if (r.stdout) log(r.stdout.trimEnd());
+      return sup.active ? 0 : 1;
+    }
     const s = lifecycle.isRunning();
     if (s.running) log(`[Chorus] daemon is running (pid ${s.pid}).`);
     else if (s.stale) log(`[Chorus] daemon is NOT running (stale pidfile for pid ${s.pid}).`);
@@ -679,6 +813,15 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, pf
     return 0;
   }
   if (action === "logs") {
+    if (supervised) {
+      const r = svc.journalctlUser(["-u", `${SERVICE_NAME}.service`, "--no-pager", "-n", "200"]);
+      if (r.status !== 0 && !r.stdout) {
+        errLog(`[Chorus] could not read the service journal: ${r.stderr.trim() || `exit ${r.status}`}`);
+        return 1;
+      }
+      log(r.stdout.trimEnd());
+      return 0;
+    }
     const r = lifecycle.readLog();
     if (!r.ok) {
       errLog(`[Chorus] ${r.message}`);
@@ -688,11 +831,36 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, pf
     return 0;
   }
   if (action === "stop") {
-    const r = lifecycle.stopDaemon();
-    (r.stopped ? log : errLog)(`[Chorus] ${r.message}`);
-    return r.stopped ? 0 : 1;
+    if (supervised) {
+      const r = svc.systemctlUser(["stop", `${SERVICE_NAME}.service`]);
+      if (r.status === 0) {
+        log(`[Chorus] stopped the daemon service (systemctl --user stop ${SERVICE_NAME}.service).`);
+        log(`[Chorus] note: it is still enabled and will start again at next login. To disable: chorus daemon uninstall`);
+        return 0;
+      }
+      errLog(`[Chorus] failed to stop the service: ${r.stderr.trim() || `exit ${r.status}`}`);
+      return 1;
+    }
+    // --force: unconditional pidfile cleanup for stuck states the identity
+    // probe cannot resolve. Threaded from the parsed client flags.
+    const r = lifecycle.stopDaemon({ force: pfDeps?.flags?.force === true });
+    // Exit 0 whenever the end state is "no daemon, no pidfile" (stopped /
+    // stale-cleared / forced) so `chorus daemon stop && …` chains survive a
+    // self-heal; 1 for not-running and signal errors.
+    const ok = r.reason === "stopped" || r.reason === "stale-cleared" || r.reason === "forced";
+    (ok ? log : errLog)(`[Chorus] ${r.message}`);
+    return ok ? 0 : 1;
   }
   if (action === "restart") {
+    if (supervised) {
+      const r = svc.systemctlUser(["restart", `${SERVICE_NAME}.service`]);
+      if (r.status === 0) {
+        log(`[Chorus] restarted the daemon service (systemctl --user restart ${SERVICE_NAME}.service).`);
+        return 0;
+      }
+      errLog(`[Chorus] failed to restart the service: ${r.stderr.trim() || `exit ${r.status}`}`);
+      return 1;
+    }
     const r = lifecycle.stopDaemon();
     log(`[Chorus] ${r.message}`);
     // Start a fresh detached instance regardless of whether one was running.

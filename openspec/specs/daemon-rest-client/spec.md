@@ -16,14 +16,19 @@ The system SHALL provide a single shared module that encapsulates every daemon�
 #### Scenario: The payload shapes match the existing server contract
 
 - **WHEN** the client issues each operation
-- **THEN** the `turn-advance` body MUST carry `{ connectionUuid, sessionId, status }` (with optional `entityType`/`entityUuid`), the `transcript` body MUST carry `{ sessionId, messages: [{ role, text }] }`, the `execution-state` body MUST carry `{ connectionUuid, executions: [{ taskUuid, rootIdeaUuid|null, status, startedAt|null }] }`, the `report-interrupt` body MUST carry `{ connectionUuid, entityType, entityUuid, reason }`, and the `pending-turns` read MUST be `GET /api/daemon/pending-turns?connectionUuid=<uuid>`
-- **AND** these MUST be the exact shapes the existing server endpoints already accept (no server change)
+- **THEN** the `turn-advance` body MUST carry `{ connectionUuid, sessionId, status }` (with optional `entityType`/`entityUuid`, and — when `status` is `interrupted` — an `interruptedReason` of `user`, `crash`, or `shutdown`), the `transcript` body MUST carry `{ sessionId, messages: [{ role, text }] }`, the `execution-state` body MUST carry `{ connectionUuid, executions: [{ taskUuid, rootIdeaUuid|null, status, startedAt|null }] }`, the `report-interrupt` body MUST carry `{ connectionUuid, entityType, entityUuid, reason }`, and the `pending-turns` read MUST be `GET /api/daemon/pending-turns?connectionUuid=<uuid>`
+- **AND** these MUST be the exact shapes the server endpoints accept
 
 #### Scenario: The client has zero daemon-host coupling
 
 - **WHEN** the shared module's source is inspected
 - **THEN** it MUST NOT import `child_process`, spawn `claude`, parse stream-json, or import any OpenClaw SDK symbol
 - **AND** its only outbound effect MUST be HTTP calls via the injected `fetchImpl`
+
+#### Scenario: The server rejects a daemon claiming the offline reason
+
+- **WHEN** a turn-advance report carries `status = "interrupted"` with `interruptedReason = "offline"`
+- **THEN** the server MUST reject it (the `offline` verdict is reserved to server-side reconcile)
 
 ### Requirement: The chorus CLI daemon SHALL consume the shared client without behavior change
 

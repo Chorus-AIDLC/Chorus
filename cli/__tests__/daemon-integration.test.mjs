@@ -784,6 +784,9 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
         targetConnectionUuid: CONN,
         entityType: "task",
         entityUuid: TASK_UUID,
+        // The server's /resume route threads the row's prior interruptedReason
+        // (add-crash-execution-resume); a user resume keeps the original prompt.
+        resumeReason: "user",
       });
       await new Promise((r) => setTimeout(r, 30));
 
@@ -794,9 +797,11 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
       expect(calls[1].sessionId).toBe(DIRECT); // SAME session as the first wake
       expect(calls[1].isNew).toBe(false); // → claude --resume <directIdeaUuid>
       // The resume prompt mentions the resumed entity — so the woken Claude knows to
-      // continue, not start fresh.
+      // continue, not start fresh. resumeReason="user" keeps the original text (the
+      // crash variant is covered by the wake-orchestration prompt tests + AC below).
       expect(calls[1].prompt).toContain(TASK_UUID);
       expect(calls[1].prompt).toContain("RESUMED");
+      expect(calls[1].prompt).not.toContain("EXITED ABNORMALLY");
 
       // Resolve the resumed wake cleanly — no further interrupt / crash report.
       reportInterrupt.mockClear();
@@ -805,6 +810,79 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
       expect(reportInterrupt).not.toHaveBeenCalled();
 
       killSpy.mockRestore();
+      await daemon.stop();
+    } finally {
+      if (prevConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevConfig;
+      rmSync(configDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // --- add-crash-execution-resume: crash exit → resume(reason=crash) re-wakes the
+  //     SAME session with the crash-specific continue instruction ---
+  it("crash exit then a resume CONTROL with resumeReason=crash resumes the session with the EXITED ABNORMALLY prompt", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "chorus-itest-crash-cfg-"));
+    const cwd = mkdtempSync(join(tmpdir(), "chorus-itest-crash-cwd-"));
+    const prevConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+
+    try {
+      const TASK_NOTIF_LOCAL = { ...TASK_NOTIF, uuid: "n-assigned-crash" };
+      const reportInterrupt = vi.fn(async () => {});
+      const { spawner, calls, resolveWake } = makeFakeSpawner({ writeTranscriptOnNew: true });
+
+      let captured;
+      const daemon = buildDaemon(
+        { url: "https://c", apiKey: "cho_x" },
+        {
+          logger: silent,
+          mcpClient: mcpFor([TASK_NOTIF_LOCAL]),
+          fetchImpl: lineageFetch(),
+          spawner,
+          cwd,
+          reportInterrupt,
+          sigintTimeoutMs: 50,
+          makeSseListener: (o) => (captured = new MockSse(o)),
+        }
+      );
+
+      await daemon.start();
+      captured.deliver({ type: "connection_registered", connectionUuid: CONN });
+
+      // (1) Initial wake spawns a new session.
+      captured.deliver({ type: "new_notification", notificationUuid: "n-assigned-crash" });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(spawner.wake).toHaveBeenCalledTimes(1);
+
+      // (2) The subprocess CRASHES: non-zero exit with NO interrupt requested. The
+      //     waker reports reason="crash" (the server marks the row interrupted/crash).
+      resolveWake(0, 137);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(reportInterrupt).toHaveBeenCalledWith("task", TASK_UUID, "crash");
+
+      // (3) The user clicks Resume in the chat window → the server dispatches a
+      //     resume control event carrying resumeReason="crash".
+      captured.deliver({
+        type: "control",
+        command: "resume",
+        targetConnectionUuid: CONN,
+        entityType: "task",
+        entityUuid: TASK_UUID,
+        resumeReason: "crash",
+      });
+      await new Promise((r) => setTimeout(r, 30));
+
+      // Same session resumed (transcript exists → isNew=false), with the
+      // crash-specific continue instruction on the prompt.
+      expect(spawner.wake).toHaveBeenCalledTimes(2);
+      expect(calls[1].sessionId).toBe(DIRECT);
+      expect(calls[1].isNew).toBe(false);
+      expect(calls[1].prompt).toContain(TASK_UUID);
+      expect(calls[1].prompt).toContain("EXITED ABNORMALLY");
+      expect(calls[1].prompt).toMatch(/continue the unfinished work/i);
+
+      resolveWake(1, 0);
       await daemon.stop();
     } finally {
       if (prevConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
@@ -1047,4 +1125,97 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
     killSpy.mockRestore();
     await daemon.stop();
   });
+});
+
+describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () => {
+  it("stop() interrupts the in-flight wake, flushes its interrupted(shutdown) turn report, then disconnects MCP", async () => {
+    const order = [];
+    let releaseChild;
+    const childExited = new Promise((r) => (releaseChild = r));
+    const FAKE_CHILD = { pid: 4242 };
+
+    // A spawner whose subprocess blocks until "killed" (releaseChild), then exits 130.
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        params.onChild?.(FAKE_CHILD);
+        await childExited;
+        return { sessionId: params.sessionId, exitCode: 130, isNew: true };
+      }),
+    };
+    const turnReports = [];
+    const mcp = mockMcp();
+    const daemon = buildDaemon(
+      { url: "https://chorus.example", apiKey: "cho_x" },
+      {
+        logger: silent,
+        mcpClient: mcp,
+        fetchImpl: lineageFetch(),
+        spawner,
+        cwd: "/nonexistent/chorus-daemon-shutdown-itest",
+        makeSseListener: (o) => new MockSse(o),
+        sigintTimeoutMs: 200,
+      }
+    );
+    // Spy on the primary waker's injected killer + turn reporter AFTER build. The
+    // killer releases the "child" (simulating the kill landing).
+    daemon.waker.killer = vi.fn(async () => {
+      order.push("killed");
+      releaseChild();
+      return { killed: true };
+    });
+    daemon.waker.advanceTurn = async (params) => {
+      turnReports.push(params);
+      order.push(`turn:${params.status}`);
+    };
+
+    await daemon.start();
+    daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });
+    await new Promise((r) => setTimeout(r, 20)); // let the wake spawn (turn → running)
+
+    await daemon.stop();
+    order.push("stopped");
+
+    // The kill was dispatched, the wake's exit path reported interrupted(shutdown)
+    // BEFORE stop() returned, and MCP disconnected last.
+    expect(order).toEqual(["turn:running", "killed", "turn:interrupted", "stopped"]);
+    const last = turnReports.at(-1);
+    expect(last.status).toBe("interrupted");
+    expect(last.interruptedReason).toBe("shutdown");
+    expect(mcp.disconnected).toBe(true);
+  });
+
+  it("stop() is bounded: an unkillable wake does not hang the shutdown", async () => {
+    // A subprocess that NEVER exits, and a killer that does nothing.
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        params.onChild?.({ pid: 1 });
+        await new Promise(() => {}); // never resolves
+      }),
+    };
+    const warns = [];
+    const daemon = buildDaemon(
+      { url: "https://chorus.example", apiKey: "cho_x" },
+      {
+        logger: { ...silent, warn: (m) => warns.push(m) },
+        mcpClient: mockMcp(),
+        fetchImpl: lineageFetch(),
+        spawner,
+        cwd: "/nonexistent/chorus-daemon-shutdown-itest2",
+        makeSseListener: (o) => new MockSse(o),
+        sigintTimeoutMs: 50, // drain bound = 50ms + 5s cap
+      }
+    );
+    daemon.waker.killer = vi.fn(async () => ({ killed: false }));
+
+    await daemon.start();
+    daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const stopped = await Promise.race([
+      daemon.stop().then(() => true),
+      new Promise((r) => setTimeout(() => r(false), 8_000)),
+    ]);
+    expect(stopped).toBe(true); // returned within the bound, did not hang
+    expect(warns.join("")).toMatch(/did not finish within the bound/);
+  }, 15_000);
 });

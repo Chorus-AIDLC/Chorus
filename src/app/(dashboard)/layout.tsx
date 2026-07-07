@@ -19,7 +19,7 @@ import {
   Menu,
   Network,
 } from "lucide-react";
-import { authFetch, primeSessionCookie, logout as authLogout, clearUserManager } from "@/lib/auth-client";
+import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
@@ -126,7 +126,6 @@ export default function DashboardLayout({
     /^\/projects\/[a-f0-9-]{36}\/(tasks|graph)(\/|$)/,
   );
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { checkSession(); }, []);
 
   // Fetch current project + sibling projects when URL changes
@@ -178,30 +177,23 @@ export default function DashboardLayout({
 
   const checkSession = async () => {
     try {
-      // Use authFetch which adds OIDC Authorization header if available.
-      // For default auth users (no OIDC), cookies are still sent automatically
-      // and the server authenticates via the user_session httpOnly cookie.
-      let response = await authFetch("/api/auth/session");
-
-      // The session probe (/api/auth/session) is NOT covered by the middleware matcher,
-      // so it can't refresh the cookie itself. On a 401, prime the cookie via a
-      // matcher-covered request (primeSessionCookie → middleware refreshes from the refresh
-      // token) and retry once. This rescues the iOS bfcache/resume case where no server
-      // document request preceded this probe. (The old `/api/auth/refresh` retry here was a
-      // SuperAdmin-only endpoint — a no-op for OIDC users — so it never helped them.)
+      // Cookie-based probe (all login modes). /api/session is matcher-covered, so
+      // the middleware refreshes an expiring cookie on this very request; retry once
+      // for transient failures.
+      let response = await authFetch("/api/session");
       if (response.status === 401) {
-        await primeSessionCookie();
-        response = await authFetch("/api/auth/session");
+        response = await authFetch("/api/session");
       }
 
-      // Session death is decided ONLY by a true 401 that survived the prime+retry — the
-      // same contract as auth-context.fetchSession. A transient/non-401 failure must NOT
-      // bounce the user (it would log out a still-valid session on a network blip, e.g.
-      // right after an iOS resume); leave session state untouched and let a later
-      // resume/navigation re-check.
+      // Session death is decided ONLY by AuthProvider's fetchSession (mounted in this
+      // same tree) — it holds the full verdict chain including the last-resort
+      // localStorage refresh-token recovery. This probe must NOT issue its own
+      // /login redirect: a second independent death-decider can win the race against
+      // the recovery chain and bounce a recoverable session (the 2026-07-05 04:37Z
+      // recurrence). On a persistent 401 here, just stop the loading gate; if the
+      // session is truly dead, AuthProvider redirects moments later.
       if (response.status === 401) {
-        clearUserManager();
-        router.push("/login");
+        setLoading(false);
         return;
       }
 
@@ -500,7 +492,7 @@ export default function DashboardLayout({
     {/* AuthProvider exposes the current user via useAuth() to the whole shell.
         It is mounted here (not the root layout) because only the authenticated
         dashboard tree needs it: the comment mention badge's owner gate reads
-        useAuth().user.uuid. AuthProvider self-fetches /api/auth/session (the same
+        useAuth().user.uuid. AuthProvider self-fetches /api/session (the same
         endpoint this layout already polls), so it is additive — the layout keeps
         its own local `user` state for the sidebar; this provider serves consumers
         deep in the tree that can't be prop-threaded (e.g. MentionBadge inside a

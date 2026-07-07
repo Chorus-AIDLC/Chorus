@@ -79,7 +79,10 @@ vi.mock("@/services/daemon-control.service", () => ({
 }));
 
 // randomUUID — stub so the ad-hoc sessionId is deterministic in assertions.
-const STUB_SESSION_ID = "adhoc-0000-0000-0000-000000000abc";
+// vi.hoisted: the SUT's import graph now reaches @/lib/event-bus, whose singleton calls
+// randomUUID() at MODULE-INIT time — before a plain top-level const would initialize
+// under the hoisted mock (TDZ crash). Hoisting the value keeps the stub total.
+const STUB_SESSION_ID = vi.hoisted(() => "adhoc-0000-0000-0000-000000000abc");
 vi.mock("crypto", () => ({ randomUUID: () => STUB_SESSION_ID }));
 
 import {

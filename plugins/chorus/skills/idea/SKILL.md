@@ -303,4 +303,5 @@ This is a soft heuristic, not a rule — use judgment. Cycle prevention is autom
 ## Next
 
 - Once elaboration is resolved, use `/proposal` to create a Proposal with document and task drafts
+- **Human "Yolo" handoff:** the idea-detail panel shows a **Yolo** button at any incomplete stage (enabled while the assignee agent is online), confirmed via a dialog before it fires. A `yolo_requested` wake means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline) — read the idea's current state first and resume from whatever phase it is in, never assuming a fixed stage. Complete through done + the completion report, but never merge or push a PR without explicit human approval.
 - For platform overview and shared tools, see `/chorus`

@@ -507,22 +507,40 @@ describe("Agent Connections modal — interrupted rows + resume control", () => 
     await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
   });
 
-  it("a crash-interrupted row shows NO Resume control (it auto-recovers)", async () => {
+  it("a crash-interrupted row shows the Crashed badge AND a Resume control (add-crash-execution-resume)", async () => {
     routeFetch([
       execView({
         uuid: "crash",
         status: "interrupted",
         interruptedReason: "crash",
         startedAt: null,
+        entityType: "task",
       }),
     ]);
     await renderView();
     await waitFor(() => expect(screen.getAllByText("Task crash").length).toBeGreaterThan(0));
 
-    expect(
-      screen.queryAllByRole("button", { name: "Resume this interrupted execution" }).length,
-    ).toBe(0);
-    expect(screen.getAllByText("Auto-recovers").length).toBeGreaterThan(0);
+    // A crash is manually resumable too — same Resume control as a user interrupt,
+    // and no misleading "auto-recovers" claim.
+    expect(screen.getAllByText("Crashed").length).toBeGreaterThan(0);
+    const resumeButtons = screen.getAllByRole("button", {
+      name: "Resume this interrupted execution",
+    });
+    expect(resumeButtons.length).toBeGreaterThan(0);
+    expect(screen.queryByText("Auto-recovers")).toBeNull();
+
+    // Clicking Resume POSTs the same endpoint with the connection + entity.
+    fireEvent.click(resumeButtons[0]);
+    await waitFor(() => {
+      const resumeCall = mockAuthFetch.mock.calls.find((c) => c[0] === "/api/daemon/resume");
+      expect(resumeCall).toBeTruthy();
+      const body = JSON.parse((resumeCall![1] as RequestInit).body as string);
+      expect(body).toEqual({
+        connectionUuid: CONN_UUID,
+        entityType: "task",
+        entityUuid: "task-crash",
+      });
+    });
   });
 
   it("an interrupted row keeps showing (not the empty state)", async () => {
