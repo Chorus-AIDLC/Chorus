@@ -20,6 +20,7 @@ import {
   nodeTypes,
   defaultEdgeStyle,
   getLayoutedElements,
+  DAG_PAN_ZOOM_PROPS,
   type TaskNodeData,
 } from "@/components/task-dag";
 import { getProjectDependenciesAction } from "./actions";
@@ -156,6 +157,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
         minZoom={0.3}
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
+        {...DAG_PAN_ZOOM_PROPS}
       >
         <Background color="#E5E0D8" gap={20} />
         <Controls
