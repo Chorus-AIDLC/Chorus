@@ -23,6 +23,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView, type ProposalData } from "./proposal-view";
@@ -906,14 +912,27 @@ export function IdeaDetailPanel({
             ) : (
               <div className="flex items-center justify-between gap-3">
                 {canAssign && (
-                  <Button
-                    variant="outline"
-                    className="shrink-0 border-[#E5E0D8] rounded-md px-4 py-2 text-[13px] font-medium"
-                    onClick={() => setShowAssignModal(true)}
-                  >
-                    <User className="mr-2 h-4 w-4" />
-                    {idea.assignee ? t("common.reassign") : t("common.assign")}
-                  </Button>
+                  // Icon-only (Option C — declutter the action row): the (re)assign
+                  // label rides a shadcn Tooltip (+ aria-label for a11y) so the
+                  // stage primary CTA stays the only full-text button.
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0 h-8 w-8 border-[#E5E0D8]"
+                          onClick={() => setShowAssignModal(true)}
+                          aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
+                        >
+                          <User className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {idea.assignee ? t("common.reassign") : t("common.assign")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
                   {/* Verify Elaborate — human "elaboration confirmed, agent

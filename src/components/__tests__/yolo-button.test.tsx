@@ -15,6 +15,24 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+// The Yolo trigger is now wrapped in a shadcn (Radix) Tooltip, whose
+// PopperContent uses ResizeObserver — absent from jsdom. Without this stub,
+// opening the tooltip (focus/click) throws unhandled errors that Vitest flags
+// as potential false positives. Stub the browser APIs Radix's popper needs.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+if (typeof Element !== "undefined" && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.scrollIntoView = () => {};
+}
+
 const { yoloRequestedActionMock, toastSuccessMock, toastErrorMock } = vi.hoisted(() => ({
   yoloRequestedActionMock: vi.fn(),
   toastSuccessMock: vi.fn(),
