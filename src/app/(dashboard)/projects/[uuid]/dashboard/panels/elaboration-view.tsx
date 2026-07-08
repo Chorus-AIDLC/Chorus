@@ -19,9 +19,13 @@ interface ElaborationViewProps {
   elaboration: ElaborationResponse | null;
   isLoading: boolean;
   onRefresh: () => Promise<void> | void;
+  // Reassign entry: the panel wires these so the assignee block below becomes
+  // the reassign trigger (replaces the removed footer reassign button).
+  onReassign?: () => void;
+  canReassign?: boolean;
 }
 
-export function ElaborationView({ idea, elaboration, isLoading, onRefresh }: ElaborationViewProps) {
+export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onReassign, canReassign }: ElaborationViewProps) {
   const t = useTranslations("ideaTracker");
   const tCommon = useTranslations("common");
 
@@ -35,8 +39,12 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh }: Ela
 
   return (
     <motion.div variants={fadeIn} initial="initial" animate="animate">
-      {/* Assignee Section */}
-      <AssigneeSection assignee={idea.assignee} />
+      {/* Assignee Section — doubles as the reassign trigger (elaboration q2). */}
+      <AssigneeSection
+        assignee={idea.assignee}
+        onReassign={onReassign}
+        editable={canReassign}
+      />
 
       <Separator className="my-5 bg-[#F5F2EC]" />
 

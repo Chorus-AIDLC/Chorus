@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2 } from "lucide-react";
+import { X, Loader2, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -23,13 +23,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { PresenceIndicator } from "@/components/ui/presence-indicator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView, type ProposalData } from "./proposal-view";
@@ -935,6 +928,8 @@ export function IdeaDetailPanel({
                           await fetchElaboration();
                           await fetchIdea();
                         }}
+                        onReassign={() => setShowAssignModal(true)}
+                        canReassign={canAssign}
                       />
                     </div>
                   )}
@@ -1011,29 +1006,10 @@ export function IdeaDetailPanel({
               </div>
             ) : (
               <div className="flex items-center justify-between gap-3">
-                {canAssign && (
-                  // Icon-only (Option C — declutter the action row): the (re)assign
-                  // label rides a shadcn Tooltip (+ aria-label for a11y) so the
-                  // stage primary CTA stays the only full-text button.
-                  <TooltipProvider delayDuration={300}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0 h-8 w-8 border-[#E5E0D8]"
-                          onClick={() => setShowAssignModal(true)}
-                          aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
-                        >
-                          <User className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {idea.assignee ? t("common.reassign") : t("common.assign")}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
+                {/* Reassign moved onto the assignee block in the elaboration tab
+                    (see ElaborationView onReassign/canReassign) — the footer no
+                    longer carries a standalone reassign button, which frees room
+                    for Yolo to render as a full icon+label CTA. */}
                 <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
                   {/* Proposal-progression CTAs are hidden on a container idea:
                       a container may elaborate + derive children but MUST NOT

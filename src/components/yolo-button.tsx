@@ -26,12 +26,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import {
   canRequestYolo,
@@ -131,28 +125,18 @@ export function YoloButton({
   return (
     <>
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        {/* Icon-only (Option C — declutter the action row): the label rides a
-            shadcn Tooltip (+ aria-label for a11y) so the row stays compact while
-            the stage primary CTA keeps its full-text button. Both TooltipTrigger
-            and AlertDialogTrigger are asChild, so Radix merges their props onto
-            the single Button. */}
-        <TooltipProvider delayDuration={300}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <AlertDialogTrigger asChild>
-                <Button
-                  size="icon"
-                  className="h-8 w-8 bg-[#7F5AF0] hover:bg-[#6D48DE] text-white"
-                  disabled={!enabled}
-                  aria-label={t("button")}
-                >
-                  <Rocket className="h-4 w-4" />
-                </Button>
-              </AlertDialogTrigger>
-            </TooltipTrigger>
-            <TooltipContent>{t("button")}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {/* Icon + label: the footer now has room (the standalone reassign button
+            moved onto the assignee block), so Yolo reads as a full text button
+            like Start Development rather than an icon-only shortcut. */}
+        <AlertDialogTrigger asChild>
+          <Button
+            className="bg-[#7F5AF0] hover:bg-[#6D48DE] text-white"
+            disabled={!enabled}
+          >
+            <Rocket className="mr-2 h-4 w-4" />
+            {t("button")}
+          </Button>
+        </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("confirmTitle")}</AlertDialogTitle>

@@ -190,15 +190,17 @@ describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {
   it("does not render the button while a round is still pending", async () => {
     getElaborationActionMock.mockResolvedValue(elaborationResponse("pending_answers"));
     renderPanel();
-    // The idea loads (Reassign button proves the footer rendered) but no verify button.
-    await screen.findByRole("button", { name: "Reassign" });
+    // The idea loads (the stubbed elaboration view proves the panel body
+    // rendered — reassign now lives inside that view, not the footer) but no
+    // verify button.
+    await screen.findByTestId("elaboration-view");
     expect(screen.queryByRole("button", { name: "Verify Elaborate" })).toBeNull();
   });
 
   it("does not render the button once elaboration is resolved", async () => {
     getIdeaActionMock.mockResolvedValue(ideaResponse({ elaborationStatus: "resolved" }));
     renderPanel();
-    await screen.findByRole("button", { name: "Reassign" });
+    await screen.findByTestId("elaboration-view");
     expect(screen.queryByRole("button", { name: "Verify Elaborate" })).toBeNull();
   });
 
