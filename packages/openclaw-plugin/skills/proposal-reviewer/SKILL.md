@@ -4,7 +4,7 @@ description: Adversarial read-only review of a submitted Chorus proposal — doc
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.1"
+  version: "0.13.2"
   category: project-management
   mcp_server: chorus
 ---

@@ -74,6 +74,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       content?: string;
       attachments?: unknown;
       parentUuid?: string | null;
+      isContainer?: boolean;
     }>(request);
 
     // Validate required fields
@@ -90,6 +91,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
         attachments: body.attachments,
         createdByUuid: auth.actorUuid,
         parentUuid: body.parentUuid ?? null,
+        isContainer: body.isContainer,
       });
 
       return success(idea);

@@ -144,7 +144,12 @@ describe("POST /api/ideas/conversational", () => {
     expect(json.data.idea.uuid).toBe("idea-1");
     expect(json.data.session.sessionId).toBe("idea-1");
     expect(json.data.turn.uuid).toBe("turn-1");
-    expect(mockCreateConversational).toHaveBeenCalledWith(userAuth, validBody);
+    // The route strips `decompose` and threads a `mode` selector to the service;
+    // absent `decompose` defaults to the "elaborate" (non-container) mode.
+    expect(mockCreateConversational).toHaveBeenCalledWith(userAuth, {
+      ...validBody,
+      mode: "elaborate",
+    });
   });
 
   it("404 non-disclosure for an unowned agent / foreign connection", async () => {

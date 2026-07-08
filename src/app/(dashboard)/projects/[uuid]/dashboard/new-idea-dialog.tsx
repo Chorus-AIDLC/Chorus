@@ -34,6 +34,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isImeComposing } from "@/lib/ime";
 import { authFetch } from "@/lib/auth-client";
@@ -79,8 +80,14 @@ export function NewIdeaDialog({
   const tCommon = useTranslations("common");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [isContainer, setIsContainer] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Conversational container-decompose intent (add-container-idea-ui Block 3): when
+  // checked, the dispatch flags the pre-created idea as a container and asks the woken
+  // agent to propose child ideas as an elaboration round. Rides the existing
+  // conversational wake — no new action type.
+  const [decompose, setDecompose] = useState(false);
 
   // Conversational mode plumbing. The presence spine is optional so the dialog
   // stays mountable outside the dashboard shell (treated as "no daemon online").
@@ -110,12 +117,14 @@ export function NewIdeaDialog({
           title: trimmedTitle,
           content: content.trim() || undefined,
           ...(parentUuid ? { parentUuid } : {}),
+          ...(isContainer ? { isContainer: true } : {}),
         }),
       });
       const json = await res.json();
       if (json.success && json.data?.uuid) {
         setTitle("");
         setContent("");
+        setIsContainer(false);
         onOpenChange(false);
         onCreated?.(json.data.uuid);
       } else {
@@ -164,6 +173,25 @@ export function NewIdeaDialog({
             rows={4}
             className="resize-none"
           />
+        </div>
+
+        {/* Container toggle — a checked box makes a bare container in one step;
+            content stays optional, only the title is required. */}
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="idea-is-container"
+            checked={isContainer}
+            onCheckedChange={(checked) => setIsContainer(checked === true)}
+            className="mt-0.5"
+          />
+          <div className="grid gap-1 leading-none">
+            <Label htmlFor="idea-is-container" className="cursor-pointer">
+              {tLineage("makeContainer")}
+            </Label>
+            <p className="text-xs font-normal text-[#9A9A9A]">
+              {tLineage("containerHint")}
+            </p>
+          </div>
         </div>
 
         {error && (
@@ -216,6 +244,7 @@ export function NewIdeaDialog({
         agentUuid: args.agentUuid,
         connectionUuid: args.connectionUuid,
         descriptionText: args.userText,
+        ...(decompose ? { decompose: true } : {}),
       }),
     });
     if (!res.ok) {
@@ -248,7 +277,26 @@ export function NewIdeaDialog({
   };
 
   const conversationPane = (
-    <div className="py-2">
+    <div className="space-y-3 py-2">
+      {/* Decompose intent — ask the agent to break the described work into child
+          ideas under a new container, proposed as an elaboration round to confirm.
+          Only meaningful in conversational mode (needs an online daemon). */}
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id="idea-decompose"
+          checked={decompose}
+          onCheckedChange={(checked) => setDecompose(checked === true)}
+          className="mt-0.5"
+        />
+        <div className="grid gap-1 leading-none">
+          <Label htmlFor="idea-decompose" className="cursor-pointer">
+            {t("newIdea.decompose")}
+          </Label>
+          <p className="text-xs font-normal text-[#9A9A9A]">
+            {t("newIdea.decomposeHint")}
+          </p>
+        </div>
+      </div>
       <ConversationalEntry
         dispatch={conversationalDispatch}
         onStarted={(session) => {

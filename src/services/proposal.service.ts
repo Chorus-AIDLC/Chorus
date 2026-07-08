@@ -652,10 +652,29 @@ export async function getProposalByUuid(companyUuid: string, uuid: string) {
   });
 }
 
+// Clear, per-surface error thrown when a container idea is used to create a proposal.
+export const CONTAINER_PROPOSAL_BLOCKED_MESSAGE =
+  "Container ideas cannot create proposals — derive a child idea instead.";
+
 // Create Proposal (container)
 export async function createProposal(
   params: ProposalCreateParams
 ): Promise<ProposalResponse> {
+  // Container guard (single authoritative choke point): a container idea may
+  // elaborate but MUST NOT create a proposal. When the input is ideas, reject if
+  // ANY input idea is flagged isContainer. This blocks ONLY new creation — it never
+  // mutates or cascades over existing proposals/tasks (containers stay freely
+  // reversible). No Proposal row is written when the guard trips.
+  if (params.inputType === "idea" && params.inputUuids.length > 0) {
+    const inputIdeas = await prisma.idea.findMany({
+      where: { uuid: { in: params.inputUuids }, companyUuid: params.companyUuid },
+      select: { uuid: true, isContainer: true },
+    });
+    if (inputIdeas.some((idea) => idea.isContainer === true)) {
+      throw new Error(CONTAINER_PROPOSAL_BLOCKED_MESSAGE);
+    }
+  }
+
   // Ensure all drafts have UUIDs (frontend may still pass drafts at creation time)
   const documentDraftsWithUuids = params.documentDrafts?.map(ensureDocumentDraftUuid);
   const taskDraftsWithUuids = params.taskDrafts?.map(ensureTaskDraftUuid);

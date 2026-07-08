@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.1"
+  version: "0.13.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -82,6 +82,8 @@ chorus_pm_create_proposal({
 ```
 
 **Multiple Ideas:** You can combine multiple ideas into one proposal by passing multiple UUIDs in `inputUuids`.
+
+> **A theme cannot be a proposal input** — `chorus_pm_create_proposal` rejects any input idea with `isContainer = true`. Derive a child idea from the theme and write the proposal on the child instead. (See the theme-ideas section of the `/idea` skill.)
 
 ### Step 1.5: Detect OpenSpec mode
 
