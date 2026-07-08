@@ -1019,6 +1019,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | documentDrafts | array | No | List of document drafts |
 | taskDrafts | array | No | List of task drafts |
 
+**Theme guard**: When `inputType = "idea"`, the request is rejected if **any** input idea has `isContainer = true` (single or mixed input set), and no proposal row is written. Themes are grouping nodes, not deliverables — derive a child idea (`chorus_pm_create_idea` with `parentUuid`) and create the proposal on the child. Enforced at the service layer (`createProposal`), the single choke point for all creation paths.
+
 **Output**: Created Proposal JSON
 
 ### chorus_pm_validate_proposal
@@ -1334,6 +1336,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | title | string | Yes | Idea title |
 | content | string | No | Idea detailed description |
 | parentUuid | string | No | Parent Idea UUID to derive from (must be in the same project). Establishes single-parent lineage. |
+| isContainer | boolean | No | Create the Idea as a **theme** (default `false`). A theme groups derived children and may elaborate, but MUST NOT create a proposal (see `chorus_pm_create_proposal`). Orthogonal to `parentUuid` and freely reversible. |
 
 **Output**: Created Idea JSON (`{ uuid, title, parentUuid }`)
 
@@ -1352,6 +1355,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | title | string | No | New title (omit to leave unchanged) |
 | content | string | No | New description / content (omit to leave unchanged) |
 | parentUuid | string \| null | No | Reparent under this same-project Idea (cycle-checked); `null` detaches to top-level; omit to leave the parent unchanged |
+| isContainer | boolean | No | Set/clear the **theme** flag (omit to leave unchanged). Counts toward the "at least one field" precondition, so `{ ideaUuid, isContainer }` is a valid edit. Freely reversible — clearing it re-enables proposal creation; setting it never cascades to existing proposals/tasks. |
 
 **Output**: Updated Idea JSON (`{ uuid, title, parentUuid }`)
 

@@ -39,6 +39,11 @@ const bodySchema = z.object({
   agentUuid: z.string().min(1),
   connectionUuid: z.string().min(1),
   descriptionText: z.string(),
+  // Container-decompose intent (add-container-idea-ui Block 3). When true, the service
+  // pre-creates the idea as a container (isContainer=true) and dispatches the decompose
+  // instruction template. Optional + defaulting false so the existing conversational
+  // path is unchanged. Rides the SAME human_instruction wake — no new action type.
+  decompose: z.boolean().optional(),
 });
 
 // POST /api/ideas/conversational — pre-create idea + root session + first instruction.
@@ -60,10 +65,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   try {
-    const { idea, session, turn } = await createConversationalIdeaSession(
-      auth,
-      parsed.data,
-    );
+    const { decompose, ...rest } = parsed.data;
+    const { idea, session, turn } = await createConversationalIdeaSession(auth, {
+      ...rest,
+      mode: decompose ? "decompose" : "elaborate",
+    });
     return success({ idea, session, turn });
   } catch (err) {
     // Unowned agent / absent or foreign connection → 404 non-disclosure (never confirm

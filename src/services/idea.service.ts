@@ -41,6 +41,9 @@ export interface IdeaCreateParams {
   createdByUuid: string;
   // Optional lineage parent (single-parent forest). Must be a same-project Idea.
   parentUuid?: string | null;
+  // Container idea flag (default false). A container may elaborate + derive
+  // children but MUST NOT create a proposal. Orthogonal to parentUuid.
+  isContainer?: boolean;
 }
 
 // Lightweight lineage references emitted on single-idea reads.
@@ -102,6 +105,10 @@ export interface IdeaResponse {
   // proposals, sorted by createdAt descending. Only emitted by getIdea
   // (single-entity reads), not by listIdeas — list rows carry the count only.
   reports?: import("./document.service").DocumentResponse[];
+  // Container idea flag (default false). A container groups derived children and
+  // may elaborate, but MUST NOT create a proposal. Orthogonal to lineage. Always
+  // present on read payloads so clients can render container affordances.
+  isContainer: boolean;
   // Lineage (single-parent forest, weak read-only relation). parentUuid is the
   // stored edge; parent/children/descendantUuids are emitted by getIdea only.
   parentUuid?: string | null;
@@ -212,6 +219,7 @@ async function formatIdeaResponse(
     assigneeUuid: string | null;
     assignedAt: Date | null;
     assignedByUuid: string | null;
+    isContainer: boolean;
     createdByUuid: string;
     createdAt: Date;
     updatedAt: Date;
@@ -229,6 +237,7 @@ async function formatIdeaResponse(
     content: idea.content,
     attachments: idea.attachments,
     status: normalizeIdeaStatus(idea.status),
+    isContainer: idea.isContainer,
     assignee,
     ...(idea.project && { project: idea.project }),
     ...(idea.elaborationStatus != null && { elaborationStatus: idea.elaborationStatus }),
@@ -296,6 +305,7 @@ export async function listIdeas({
         assignedAt: true,
         assignedByUuid: true,
         parentUuid: true,
+        isContainer: true,
         createdByUuid: true,
         createdAt: true,
         updatedAt: true,
@@ -517,6 +527,7 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
       status: "open",
       createdByUuid: params.createdByUuid,
       parentUuid: params.parentUuid ?? undefined,
+      isContainer: params.isContainer ?? undefined,
     },
     select: {
       uuid: true,
@@ -531,6 +542,7 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
       assignedAt: true,
       assignedByUuid: true,
       parentUuid: true,
+      isContainer: true,
       createdByUuid: true,
       createdAt: true,
       updatedAt: true,
@@ -548,7 +560,7 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
 export async function updateIdea(
   uuid: string,
   companyUuid: string,
-  data: { title?: string; content?: string | null; status?: string },
+  data: { title?: string; content?: string | null; status?: string; isContainer?: boolean },
   actorContext?: { actorType: string; actorUuid: string }
 ): Promise<IdeaResponse> {
   // If content is being updated and we have actor context, capture old content for mention diffing
@@ -1252,6 +1264,36 @@ export interface DerivedStatusResult {
   badgeHint: BadgeHint;
 }
 
+/** Child-completion rollup for a theme (container) idea — powers the x/y ring. */
+export interface ChildProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * Roll a theme (container) idea's derived status up from its direct children.
+ * A theme has no proposal/task of its own, so its own status would otherwise be
+ * stuck at whatever elaboration produced (typically "elaborated" → in_progress
+ * "planning"). Instead its progress reflects the children: done when every child
+ * is done, in_progress once any child has started, else todo. Callers apply this
+ * ONLY when the theme has ≥1 child; a childless theme keeps its own base status.
+ */
+export function rollupThemeDerivedStatus(
+  childDerivedStatuses: DerivedIdeaStatus[],
+): DerivedStatusResult & { childProgress: ChildProgress } {
+  const total = childDerivedStatuses.length;
+  const done = childDerivedStatuses.filter((s) => s === "done").length;
+  const childProgress: ChildProgress = { done, total };
+  if (total === 0) {
+    // Caller keeps the theme's own base status; ring shows 0/0.
+    return { derivedStatus: "todo", badgeHint: "open", childProgress };
+  }
+  if (done === total) return { derivedStatus: "done", badgeHint: "done", childProgress };
+  const anyStarted = childDerivedStatuses.some((s) => s !== "todo");
+  if (anyStarted) return { derivedStatus: "in_progress", badgeHint: "building", childProgress };
+  return { derivedStatus: "todo", badgeHint: "open", childProgress };
+}
+
 export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusResult {
   const normalized = normalizeIdeaStatus(ctx.ideaStatus);
 
@@ -1288,7 +1330,7 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
 export async function getIdeaWithDerivedStatus(
   companyUuid: string,
   ideaUuid: string,
-): Promise<(IdeaResponse & DerivedStatusResult) | null> {
+): Promise<(IdeaResponse & DerivedStatusResult & { childProgress?: ChildProgress | null }) | null> {
   const idea = await getIdea(companyUuid, ideaUuid);
   if (!idea) return null;
 
@@ -1321,6 +1363,16 @@ export async function getIdeaWithDerivedStatus(
     taskStatuses,
   });
 
+  // A theme with children rolls its status up from them (getIdea already
+  // resolved each direct child's derivedStatus). Attach childProgress for the
+  // x/y ring. A childless theme keeps its own base status.
+  if (idea.isContainer && (idea.children?.length ?? 0) > 0) {
+    const rolled = rollupThemeDerivedStatus(
+      (idea.children ?? []).map((c) => c.derivedStatus),
+    );
+    return { ...idea, ...rolled };
+  }
+
   return { ...idea, ...result };
 }
 
@@ -1339,6 +1391,12 @@ export interface IdeaWithDerivedStatus {
   // is built client-side from parentUuid; childCount drives the "+N derived" chip.
   parentUuid: string | null;
   childCount: number;
+  // Container idea flag (default false) — drives the container badge on tracker rows.
+  isContainer: boolean;
+  // Theme rollup: child-completion progress (done/total over DIRECT children).
+  // Present (total > 0) only on a theme with children; null otherwise. Powers the
+  // x/y progress ring and the theme's rolled-up derivedStatus.
+  childProgress?: ChildProgress | null;
 }
 
 /**
@@ -1358,6 +1416,7 @@ export async function getIdeasWithDerivedStatus(
       status: true,
       elaborationStatus: true,
       parentUuid: true,
+      isContainer: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -1439,8 +1498,8 @@ export async function getIdeasWithDerivedStatus(
     }
   }
 
-  // Compute derived status for each idea
-  return ideas.map((idea) => {
+  // Pass 1: compute each idea's OWN derived status from its proposal/task chain.
+  const base: IdeaWithDerivedStatus[] = ideas.map((idea) => {
     const latestApproved = ideaToLatestApproved.get(idea.uuid);
     const taskStatuses = latestApproved
       ? proposalToTaskStatuses.get(latestApproved.uuid) || []
@@ -1467,8 +1526,33 @@ export async function getIdeasWithDerivedStatus(
       taskCount: taskStatuses.length,
       parentUuid: idea.parentUuid ?? null,
       childCount: childCountByParent.get(idea.uuid) ?? 0,
+      isContainer: idea.isContainer,
+      childProgress: null,
     };
   });
+
+  // Pass 2: a THEME (container) with ≥1 child aggregates its children — its own
+  // status would otherwise be stuck at what elaboration produced, hiding real
+  // progress. Group pass-1 derived statuses by parent (direct children only),
+  // then roll each theme up + attach childProgress for the x/y ring.
+  const childDerivedByParent = new Map<string, DerivedIdeaStatus[]>();
+  for (const item of base) {
+    if (!item.parentUuid) continue;
+    const arr = childDerivedByParent.get(item.parentUuid) ?? [];
+    arr.push(item.derivedStatus);
+    childDerivedByParent.set(item.parentUuid, arr);
+  }
+  for (const item of base) {
+    if (!item.isContainer) continue;
+    const childStatuses = childDerivedByParent.get(item.uuid) ?? [];
+    if (childStatuses.length === 0) continue; // childless theme keeps its own status
+    const rolled = rollupThemeDerivedStatus(childStatuses);
+    item.derivedStatus = rolled.derivedStatus;
+    item.badgeHint = rolled.badgeHint;
+    item.childProgress = rolled.childProgress;
+  }
+
+  return base;
 }
 
 // ===== Tracker Grouping =====
@@ -1485,6 +1569,11 @@ export interface TrackerIdeaItem {
   // view; childCount drives the "+N derived" rollup chip. Direct children only.
   parentUuid: string | null;
   childCount: number;
+  // Container idea flag (default false) — drives the container badge on the card.
+  isContainer: boolean;
+  // Theme rollup: child-completion (done/total) for the x/y ring. Null unless a
+  // theme with ≥1 child.
+  childProgress?: ChildProgress | null;
 }
 
 export interface TrackerGroupsResult {
@@ -1529,6 +1618,8 @@ export async function getTrackerGroups(
       createdAt: idea.createdAt.toISOString(),
       parentUuid: idea.parentUuid,
       childCount: idea.childCount,
+      isContainer: idea.isContainer,
+      childProgress: idea.childProgress ?? null,
     };
 
     if (groups[ds]) {

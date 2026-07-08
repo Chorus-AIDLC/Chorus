@@ -97,6 +97,19 @@ describe("chorus_edit_idea handler", () => {
     expect(mockIdeaService.setIdeaParent).not.toHaveBeenCalled();
   });
 
+  it("edits only isContainer: passes the empty-edit guard and routes to updateIdea with isContainer", async () => {
+    const res = await toolHandlers["chorus_edit_idea"]({ ideaUuid, isContainer: true });
+    expect(res.isError).toBeFalsy();
+    expect(mockIdeaService.updateIdea).toHaveBeenCalledWith(
+      ideaUuid,
+      companyUuid,
+      { isContainer: true },
+      { actorType: "agent", actorUuid: callerUuid },
+    );
+    // Container-only edit must not touch the lineage parent.
+    expect(mockIdeaService.setIdeaParent).not.toHaveBeenCalled();
+  });
+
   it("routes parentUuid through setIdeaParent (the cycle/same-project guard), not a bare update", async () => {
     const res = await toolHandlers["chorus_edit_idea"]({ ideaUuid, parentUuid: "parent-1" });
     expect(res.isError).toBeFalsy();

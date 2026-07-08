@@ -195,6 +195,7 @@ model Idea {
   parentUuid        String? // Single parent Idea UUID (nullable = top-level). One undifferentiated edge; semantics by context.
   parent            Idea?     @relation("IdeaLineage", fields: [parentUuid], references: [uuid], onDelete: Restrict, onUpdate: Restrict)
   children          Idea[]    @relation("IdeaLineage")
+  isContainer       Boolean   @default(false) // Container idea: groups derived children; may elaborate but MUST NOT create a proposal. Orthogonal to parentUuid.
   createdByUuid     String // User UUID
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt

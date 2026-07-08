@@ -556,13 +556,32 @@ export function derivePlaceholderTitle(description: string): string {
 }
 
 /**
+ * How the woken agent should treat a conversational-idea dispatch:
+ *  - `elaborate` (default): the original single-idea contract — edit the idea, start one
+ *    elaboration round, end the turn.
+ *  - `decompose`: the container-decompose contract (add-container-idea-ui Block 3) — the
+ *    pre-created idea is a CONTAINER; the agent clarifies decomposition scope, proposes
+ *    candidate CHILD ideas as an elaboration round for the user to confirm, and only on
+ *    the confirm re-wake creates them under the container.
+ */
+export type ConversationalIdeaMode = "elaborate" | "decompose";
+
+/**
  * Compose the conversational-idea wake instruction (template v2 — the REVIEWED CONTRACT
  * between the conversational create-idea entry and the woken daemon agent, superseding
  * the client-side create→claim template of add-conversational-idea-entry).
  *
- * The idea is PRE-CREATED and already instance-assigned + elaborating, so the template
- * directs EDIT (never create, never claim — a claim would fail on the existing assignee)
- * then an immediate start-elaboration in the same turn, panel guidance, and end-of-turn.
+ * The idea is PRE-CREATED and already instance-assigned + elaborating, so both templates
+ * direct EDIT (never create, never claim — a claim would fail on the existing assignee).
+ *  - `elaborate` (default): edit → immediate start-elaboration → panel guidance → end turn.
+ *  - `decompose`: edit the CONTAINER → keep isContainer → one lightweight scope-clarifying
+ *    elaboration → propose candidate CHILDREN as a structured elaboration round (one
+ *    single-select question per child, ≤15/round, never a multi-select) → end turn → on the
+ *    confirm re-wake create each accepted child via chorus_pm_create_idea with
+ *    parentUuid=<container>, children starting `open`, no auto-elaboration; the container's
+ *    own status stays `elaborated`. The confirm re-wake rides the EXISTING
+ *    `elaboration_answered` wake — no new wake/notification action is introduced.
+ *
  * English (agent-facing, matching cli/prompts.mjs precedent); the user's description
  * passes through VERBATIM under the delimiter. Exported for unit tests: the template's
  * wording is code, and any change is a review-visible diff.
@@ -572,11 +591,31 @@ export function composeConversationalIdeaInstruction(params: {
   projectUuid: string;
   projectName?: string | null;
   descriptionText: string;
+  mode?: ConversationalIdeaMode;
 }): string {
   // Name is display sugar; the uuid is the machine anchor and is always present.
   const projectLabel = params.projectName?.trim()
     ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
     : `projectUuid: ${params.projectUuid}`;
+
+  if (params.mode === "decompose") {
+    return [
+      `[Chorus container-decompose entry] A new CONTAINER idea has been PRE-CREATED for project ${projectLabel} from the user's description below, and it is already assigned to you (status: elaborating, isContainer: true).`,
+      `  ideaUuid: ${params.ideaUuid}`,
+      ``,
+      `This conversation IS that container idea's root session. The user wants help DECOMPOSING it into child ideas. Do the following, in order:`,
+      `1. Edit the container via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning). The current title is a placeholder.`,
+      `2. Ensure it stays a container: it was pre-created with isContainer=true — do NOT clear that flag (a container groups its child ideas and MUST NOT get a proposal of its own).`,
+      `3. Run ONE lightweight elaboration round (chorus_pm_start_elaboration) to clarify the decomposition scope/dimension — how to slice the work into children. Keep it short; you may self-answer in headless or ask the user, then continue.`,
+      `4. Propose the candidate child ideas AS A STRUCTURED ELABORATION ROUND (chorus_pm_start_elaboration) for the user to review/edit/confirm — use ONE elaboration question PER proposed child (the child's title as the question text, a short rationale as its description), single-select. Elaboration questions are single-select and a round is capped at 15 questions, so propose at most 15 candidates per round and NEVER a single multi-select question; if you need more children, propose them across additional rounds. Do NOT create any child ideas yet — this round is the preview the user accepts/edits/declines per child.`,
+      `5. End the turn. The user's answers in the idea's elaboration panel will wake this same conversation (the existing elaboration-answered wake).`,
+      `6. On that re-wake, create each ACCEPTED child via chorus_pm_create_idea with parentUuid=${params.ideaUuid}. Each child starts in the "open" state — do NOT auto-elaborate them. The container's OWN status stays "elaborated"; creating children does not advance or alter it.`,
+      ``,
+      `--- User's idea description ---`,
+      params.descriptionText,
+    ].join("\n");
+  }
+
   return [
     `[Chorus conversational idea entry] A new idea has been PRE-CREATED for project ${projectLabel} from the user's description below, and it is already assigned to you (status: elaborating).`,
     `  ideaUuid: ${params.ideaUuid}`,
@@ -657,8 +696,15 @@ export async function createConversationalIdeaSession(
     agentUuid: string;
     connectionUuid: string;
     descriptionText: string;
+    // Selects the wake template + whether the pre-created idea is a container.
+    // `elaborate` (default) is the original single-idea contract; `decompose`
+    // (add-container-idea-ui Block 3) pre-creates the idea with isContainer=true and
+    // dispatches the decompose instruction so the agent proposes child ideas as an
+    // elaboration round. Optional so existing callers (byte-identical) stay unchanged.
+    mode?: ConversationalIdeaMode;
   },
 ): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
+  const mode: ConversationalIdeaMode = params.mode ?? "elaborate";
   // (1) Visibility + ownership fence, identical posture to the ad-hoc path: either miss
   // collapses to ONE 404 non-disclosure verdict.
   const ownsAgent = await callerOwnsAgent(auth, params.agentUuid);
@@ -710,6 +756,7 @@ export async function createConversationalIdeaSession(
       projectUuid: project.uuid,
       projectName: project.name,
       descriptionText,
+      mode,
     }),
   );
 
@@ -722,6 +769,10 @@ export async function createConversationalIdeaSession(
         projectUuid: project.uuid,
         title: derivePlaceholderTitle(descriptionText),
         content: descriptionText,
+        // Decompose mode pre-creates a CONTAINER (add-container-idea-ui Block 3): the
+        // woken agent proposes child ideas under it and must not give it a proposal of
+        // its own. `elaborate` mode leaves it a normal idea (isContainer stays false).
+        isContainer: mode === "decompose",
         // Assignment-equals-claim (r2q4=a): instance-assigned + elaborating from birth,
         // so the agent_instance pin routes wakes to the chosen cwd from day one and the
         // woken agent edits (never claims).

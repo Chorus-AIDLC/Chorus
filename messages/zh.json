@@ -1214,7 +1214,15 @@
       "pickerTruncated": "仅显示前 200 个想法。如果没看到想要的父级，请用标题搜索缩小范围。",
       "save": "设为父想法",
       "saveFailed": "设置父级失败",
-      "deriveFailed": "派生想法失败"
+      "deriveFailed": "派生想法失败",
+      "container": "主题",
+      "containerDescription": "主题用于归拢一组相关的子想法、确立共同方向。它可以细化，但真正的交付发生在你从它派生的子想法里——主题本身不写提案。",
+      "containerBadge": "主题",
+      "typeIdea": "想法",
+      "typeTheme": "主题",
+      "makeContainer": "设为主题",
+      "containerHint": "主题通过派生子想法向前推进。",
+      "childrenDone": "{done}/{total} 已完成"
     },
     "actions": {
       "newIdea": "新建想法",
@@ -1238,7 +1246,9 @@
       "descriptionPlaceholder": "添加背景、目标或其他有助于说明想法的细节...",
       "modeForm": "填写表单",
       "modeConversation": "对智能体描述",
-      "modeConversationOfflineHint": "对智能体描述需要一个在线的守护进程。"
+      "modeConversationOfflineHint": "对智能体描述需要一个在线的守护进程。",
+      "decompose": "帮我拆解为子想法",
+      "decomposeHint": "创建一个主题，并让智能体提出候选子想法供你确认。"
     },
     "error": {
       "loadFailed": "加载想法失败",

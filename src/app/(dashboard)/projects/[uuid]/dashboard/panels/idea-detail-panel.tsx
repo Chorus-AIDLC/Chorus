@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,7 +54,11 @@ import { YoloButton } from "@/components/yolo-button";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
-type IdeaWithDerivedStatus = IdeaResponse & { derivedStatus: string; badgeHint: string | null };
+type IdeaWithDerivedStatus = IdeaResponse & {
+  derivedStatus: string;
+  badgeHint: string | null;
+  childProgress?: { done: number; total: number } | null;
+};
 
 // Task shape needed by TaskDetailPanel
 interface TaskForPanel {
@@ -106,6 +111,7 @@ import {
   BADGE_HINT_I18N_KEYS,
   type FlatTask,
 } from "../utils";
+import { ProgressRing } from "@/components/ui/progress-ring";
 
 // ===== Tab Types =====
 type TabId = "overview" | "elaboration" | "proposal" | "tasks" | "activity";
@@ -205,6 +211,9 @@ export function IdeaDetailPanel({
   const [editContent, setEditContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Container toggle state — freely reversible, independent of edit mode.
+  const [isTogglingContainer, setIsTogglingContainer] = useState(false);
 
   // Move dialog state
   const [showMoveDialog, setShowMoveDialog] = useState(false);
@@ -546,7 +555,33 @@ export function IdeaDetailPanel({
     }
   };
 
+  // Toggle the container flag. Freely reversible; passes the current
+  // title/content through unchanged (updateIdeaAction requires them) plus the
+  // new isContainer value. Optimistic-then-refetch so the UI flips instantly.
+  const handleToggleContainer = async (next: boolean) => {
+    if (!idea) return;
+    setIsTogglingContainer(true);
+    setIdea({ ...idea, isContainer: next });
+    const result = await updateIdeaAction({
+      ideaUuid: idea.uuid,
+      projectUuid,
+      title: idea.title,
+      content: idea.content ?? null,
+      isContainer: next,
+    });
+    setIsTogglingContainer(false);
+    if (result.success) {
+      await fetchIdea();
+      router.refresh();
+    } else {
+      // Revert optimistic flip on failure and surface the error.
+      setIdea({ ...idea, isContainer: !next });
+      toast.error(result.error || t("ideas.updateFailed"));
+    }
+  };
+
   const status = idea?.derivedStatus || "todo";
+  const isContainer = idea?.isContainer === true;
   const canAssign = idea ? idea.status !== "elaborated" : false;
   // Shared enable-predicate (same helper as the /ideas idea-detail panel) so
   // the two surfaces never drift.
@@ -566,11 +601,12 @@ export function IdeaDetailPanel({
 
       {/* Panel */}
       <div
-        className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+        className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col border-l border-[#E5E0D8] bg-white shadow-xl ${
           hasAnimated ? "" : "animate-in slide-in-from-right duration-300"
         }`}
       >
-        {/* Header */}
+        {/* Header — a theme reads through the leading TYPE eyebrow (see below),
+            not a whole-panel tint, keeping the head calm and uncluttered. */}
         <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
           <div className="flex-1 min-w-0">
             {isLoading ? (
@@ -582,6 +618,15 @@ export function IdeaDetailPanel({
                 </h2>
               ) : (
                 <>
+                  {/* TYPE eyebrow — the single signal that carries "this is a
+                      theme": THEME (accent) vs IDEA (muted), above the title. */}
+                  <span
+                    className={`text-[11px] font-semibold uppercase tracking-wider ${
+                      isContainer ? "text-[#B26B3D]" : "text-[#B4B2A9]"
+                    }`}
+                  >
+                    {isContainer ? tLineage("typeTheme") : tLineage("typeIdea")}
+                  </span>
                   <h2 className="text-base font-semibold text-[#2C2C2C] truncate">
                     {idea.title}
                   </h2>
@@ -595,6 +640,20 @@ export function IdeaDetailPanel({
                         ? tTracker(`badge.${BADGE_HINT_I18N_KEYS[idea.badgeHint] || "open"}`)
                         : tStatus(derivedStatusI18nKeys[status] || "todo")}
                     </Badge>
+                    {isContainer && idea.childProgress && idea.childProgress.total > 0 && (
+                      // Theme rollup: x/y ring reflecting child completion, so the
+                      // header shows real progress rather than a stuck "elaborated".
+                      <span
+                        className="flex items-center gap-1 text-xs font-medium text-[#B26B3D]"
+                        title={tLineage("childrenDone", {
+                          done: idea.childProgress.done,
+                          total: idea.childProgress.total,
+                        })}
+                      >
+                        <ProgressRing done={idea.childProgress.done} total={idea.childProgress.total} size={13} stroke={2} />
+                        {idea.childProgress.done}/{idea.childProgress.total}
+                      </span>
+                    )}
                     <span className="text-xs text-[#9A9A9A]">
                       {formatDateTime(idea.createdAt)}
                     </span>
@@ -742,6 +801,30 @@ export function IdeaDetailPanel({
                   {/* Overview Tab */}
                   {visitedTabs.has("overview") && (
                     <div style={{ display: activeTab === "overview" ? "block" : "none" }}>
+                      {/* Container toggle — freely reversible. A container idea
+                          groups derived children, may elaborate, but cannot
+                          create a proposal (its proposal CTAs are hidden). */}
+                      <div className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-[#EFEBE3] bg-[#FAF8F4] px-3.5 py-3">
+                        <div className="min-w-0 space-y-0.5">
+                          <Label
+                            htmlFor="container-toggle"
+                            className="flex items-center gap-1.5 text-[13px] font-medium text-[#2C2C2C]"
+                          >
+                            <GitFork className="h-3.5 w-3.5 text-[#C67A52]" aria-hidden />
+                            {tLineage("container")}
+                          </Label>
+                          <p className="text-[11px] leading-relaxed text-[#888780]">
+                            {tLineage("containerDescription")}
+                          </p>
+                        </div>
+                        <Switch
+                          id="container-toggle"
+                          checked={isContainer}
+                          disabled={isTogglingContainer}
+                          onCheckedChange={handleToggleContainer}
+                          aria-label={tLineage("makeContainer")}
+                        />
+                      </div>
                       <OverviewTimeline
                         idea={idea}
                         proposals={proposals}
@@ -787,9 +870,26 @@ export function IdeaDetailPanel({
                         {/* Derived children list */}
                         {idea.children && idea.children.length > 0 && (
                           <>
-                            <div className="flex items-center gap-1.5 px-1 pt-1">
-                              <span className="text-[12px] font-medium text-[#5F5E5A]">{tLineage("derivedIdeas")}</span>
-                              <span className="text-[11px] text-[#888780]">{idea.children.length}</span>
+                            <div className="flex items-center justify-between px-1 pt-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[12px] font-medium text-[#5F5E5A]">{tLineage("derivedIdeas")}</span>
+                                <span className="text-[11px] text-[#888780]">{idea.children.length}</span>
+                              </div>
+                              {/* Read-only child-completion rollup with a Linear-style
+                                  x/y progress ring. Direct children only. */}
+                              {(() => {
+                                const done = idea.children.filter((c) => c.derivedStatus === "done").length;
+                                const total = idea.children.length;
+                                return (
+                                  <span
+                                    className="flex items-center gap-1.5 text-[12px] text-[#7A7A75]"
+                                    title={tLineage("childrenDone", { done, total })}
+                                  >
+                                    <ProgressRing done={done} total={total} size={14} stroke={2} />
+                                    {done}/{total}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="overflow-hidden rounded-lg border border-[#EFEBE3]">
                               {idea.children.map((child, idx) => (
@@ -935,6 +1035,13 @@ export function IdeaDetailPanel({
                   </TooltipProvider>
                 )}
                 <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+                  {/* Proposal-progression CTAs are hidden on a container idea:
+                      a container may elaborate + derive children but MUST NOT
+                      create a proposal, so Verify Elaborate / Start Development
+                      / Yolo are suppressed. "Derive child idea" (header GitFork
+                      button) is the primary progression path instead. */}
+                  {!isContainer && (
+                  <>
                   {/* Verify Elaborate — human "elaboration confirmed, agent
                       writes the proposal" action, gated by the shared
                       predicate. No manual create-proposal fallback here. */}
@@ -991,6 +1098,15 @@ export function IdeaDetailPanel({
                       fetchIdea();
                     }}
                   />
+                  </>
+                  )}
+                  {/* Container hint — replaces the proposal CTAs so the footer
+                      is never empty and the "derive instead" affordance reads. */}
+                  {isContainer && (
+                    <span className="text-[11px] text-[#888780]">
+                      {tLineage("containerHint")}
+                    </span>
+                  )}
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
