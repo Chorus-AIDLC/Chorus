@@ -222,67 +222,19 @@ export function centerTransformFor(
 const SCALE_MIN = 0.2;
 const SCALE_MAX = 2.5;
 
-// --- Trackpad wheel-gesture tuning (Tech Design D1) -------------------------
+// --- Wheel zoom tuning ------------------------------------------------------
 //
-// The `/graph` canvas classifies raw `wheel` events into a Figma/Miro-style
-// model: a trackpad pinch (reported by browsers as ctrl+wheel) or Ctrl/⌘+wheel
-// zooms; a plain two-finger trackpad swipe pans; a classic mouse-wheel notch
-// still zooms (elaboration Q2=a / Q3=a). See `classifyWheel`.
-//
-// Heuristic honesty: no web API cleanly separates "mouse wheel" from "trackpad
-// two-finger scroll" — both are `WheelEvent`s. We treat a plain wheel as a PAN
-// when it carries a horizontal component (`deltaX`) OR reads as a fine-grained
-// pixel-mode vertical scroll (below MOUSE_NOTCH_MIN px); otherwise (coarse,
-// vertical-only, often line-mode) it is a mouse notch → ZOOM. This is the same
-// signal Figma / tldraw / Excalidraw use. The one accepted ambiguity: a plain
-// vertical two-finger trackpad swipe with pixel deltas at/above MOUSE_NOTCH_MIN
-// is indistinguishable from a mouse notch and will zoom — covered by the pinch
-// path, the on-screen controls, and Ctrl+wheel as unambiguous fallbacks.
-const ZOOM_WHEEL_SENSITIVITY = 0.0015; // mouse-notch zoom feel (unchanged from the old handler)
+// The `/graph` canvas ALWAYS zooms on wheel (idea 9d326265, elaboration round 3
+// — "protect mouse-wheel zoom"): a plain mouse wheel zooms at any speed, a
+// trackpad pinch (delivered by the browser as a ctrl+wheel with fine pixel
+// deltas) zooms, and panning is via drag — the wheel never pans. No device
+// inference. A ctrlKey wheel (pinch / Ctrl-⌘) uses the finer pinch sensitivity;
+// a plain notch uses the mouse-notch feel.
+const ZOOM_WHEEL_SENSITIVITY = 0.0015; // mouse-notch zoom feel
 const ZOOM_PINCH_SENSITIVITY = 0.01; // pinch/ctrl+wheel deltas are fine pixels — a larger factor keeps them responsive without over-zooming
-const MOUSE_NOTCH_MIN = 30; // px: a pixel-mode vertical wheel below this reads as a fine trackpad scroll (pan), not a mouse notch
 
 // The fixed multiplier the on-screen +/- zoom buttons step by (Tech Design D2).
 const ZOOM_BUTTON_STEP = 1.3;
-
-/** The classified intent of a wheel event over the canvas (Tech Design D1). */
-export type WheelGesture =
-  | { kind: "zoom"; scaleFactor: number }
-  | { kind: "pan"; dx: number; dy: number };
-
-/**
- * Classify a raw wheel event into a pan or a zoom (pure + exported so the
- * heuristic is unit-testable without a canvas — mirrors pinchTransform). See
- * the tuning-constant block above for the heuristic rationale.
- *
- *   1. ctrlKey → zoom. Browsers report a trackpad PINCH as a synthetic
- *      ctrl+wheel, and Ctrl/⌘+wheel is the explicit zoom shortcut. Uses the
- *      finer ZOOM_PINCH_SENSITIVITY.
- *   2. else a horizontal component OR a fine pixel-mode vertical scroll → pan
- *      (a two-finger trackpad swipe). dx/dy are the raw deltas.
- *   3. else → zoom (a classic mouse-wheel notch), preserving the old feel via
- *      ZOOM_WHEEL_SENSITIVITY.
- *
- * `scaleFactor` is a multiplier on the current scale; scrolling up (negative
- * deltaY) yields a factor > 1 (zoom in), matching the prior handler.
- */
-export function classifyWheel(ev: {
-  ctrlKey: boolean;
-  deltaX: number;
-  deltaY: number;
-  deltaMode: number; // 0 = pixel, 1 = line, 2 = page
-}): WheelGesture {
-  if (ev.ctrlKey) {
-    return { kind: "zoom", scaleFactor: Math.exp(-ev.deltaY * ZOOM_PINCH_SENSITIVITY) };
-  }
-  const isPixelMode = ev.deltaMode === 0;
-  const looksLikeTrackpadSwipe =
-    ev.deltaX !== 0 || (isPixelMode && Math.abs(ev.deltaY) < MOUSE_NOTCH_MIN);
-  if (looksLikeTrackpadSwipe) {
-    return { kind: "pan", dx: ev.deltaX, dy: ev.deltaY };
-  }
-  return { kind: "zoom", scaleFactor: Math.exp(-ev.deltaY * ZOOM_WHEEL_SENSITIVITY) };
-}
 
 // Double-tap disambiguation window (Tech Design D2). A second tap within this
 // time AND distance of the first is a double-tap (zoom), not a node click.
@@ -1135,12 +1087,18 @@ export function MindMapCanvas({
   const zoomAroundRef = useRef(zoomAround);
   zoomAroundRef.current = zoomAround;
 
-  // Native, NON-PASSIVE wheel listener (Tech Design D1). React's onWheel is
-  // passive in some browsers, so preventDefault() there is ignored (and warns).
-  // Attaching manually with { passive: false } lets us stop the page from
-  // scrolling while the cursor is over the canvas and a gesture is classified.
-  // classifyWheel splits the raw event into a two-finger PAN (trackpad swipe)
-  // or a ZOOM (pinch / ctrl+wheel / mouse notch); see classifyWheel above.
+  // Native, NON-PASSIVE wheel listener. React's onWheel is passive in some
+  // browsers, so preventDefault() there is ignored (and warns). Attaching
+  // manually with { passive: false } lets us stop the page from scrolling while
+  // the cursor is over the canvas.
+  //
+  // Wheel model (idea 9d326265, elaboration round 3 — "protect mouse-wheel
+  // zoom"): a wheel over the canvas ALWAYS zooms around the cursor, at any
+  // speed, with no modifier required. No device inference, no pan-on-wheel —
+  // panning is via drag (see handlePointerMove). A trackpad pinch arrives as a
+  // synthetic ctrlKey wheel with fine pixel deltas, so it uses the finer
+  // ZOOM_PINCH_SENSITIVITY; a plain mouse notch uses ZOOM_WHEEL_SENSITIVITY.
+  // Scrolling up (negative deltaY) yields a factor > 1 (zoom in).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1148,20 +1106,12 @@ export function MindMapCanvas({
       const rect = canvas.getBoundingClientRect();
       const sx = ev.clientX - rect.left;
       const sy = ev.clientY - rect.top;
-      const gesture = classifyWheel(ev);
-      // Stop the page from scrolling under any classified graph gesture.
+      // Stop the page from scrolling under the canvas.
       ev.preventDefault();
-      if (gesture.kind === "pan") {
-        // Content follows the fingers: swiping down/right moves the view up/left.
-        viewRef.current = {
-          ...viewRef.current,
-          tx: viewRef.current.tx - gesture.dx,
-          ty: viewRef.current.ty - gesture.dy,
-        };
-        scheduleRender();
-      } else {
-        zoomAroundRef.current(gesture.scaleFactor, sx, sy);
-      }
+      const sensitivity = ev.ctrlKey
+        ? ZOOM_PINCH_SENSITIVITY
+        : ZOOM_WHEEL_SENSITIVITY;
+      zoomAroundRef.current(Math.exp(-ev.deltaY * sensitivity), sx, sy);
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);

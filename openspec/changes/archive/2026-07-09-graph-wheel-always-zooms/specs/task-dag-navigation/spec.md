@@ -1,8 +1,5 @@
-# task-dag-navigation Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-graph-trackpad-gestures. Update Purpose after archive.
-## Requirements
 ### Requirement: Trackpad-first pan and zoom on the interactive task-dependency DAG
 
 The interactive, full-canvas task-dependency DAG — the ReactFlow graph rendered on the tasks view and in the proposal editor — SHALL use ReactFlow's default wheel-zoom model: a wheel event zooms the graph around the cursor, a trackpad pinch zooms, and panning is by dragging. It SHALL NOT infer the pointing device, SHALL NOT pan on wheel, and SHALL NOT require a modifier key to zoom. This is the same wheel/drag configuration the readonly dashboard-preview DAG uses, so all three DAG mounts converge on the same behavior. Zooming SHALL also remain available through the on-screen zoom controls the interactive mounts display, and the resulting scale SHALL clamp to the DAG's existing minimum and maximum zoom bounds. Node dragging, selection, and connection behavior SHALL be unchanged. The compact, readonly DAG preview embedded in the dashboard proposal panel SHALL retain its existing wheel-zoom / drag-pan behavior (now shared by all mounts).
@@ -31,4 +28,3 @@ The interactive, full-canvas task-dependency DAG — the ReactFlow graph rendere
 
 - **WHEN** a user drags a node, selects a node, or (in an editable DAG) creates a connection
 - **THEN** those interactions behave exactly as they did before the navigation model changed
-

@@ -23,7 +23,6 @@ import { usePresence, injectPresence } from "@/hooks/use-presence";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { findNew, findDeleted, shouldRefresh } from "./draft-diff";
-import { DAG_PAN_ZOOM_PROPS } from "@/components/task-dag";
 import { ExportDropdown } from "@/components/export-dropdown";
 import { getProposalDraftsAction } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -751,7 +750,9 @@ export function ProposalEditor({
                   minZoom={0.3}
                   maxZoom={1.5}
                   proOptions={{ hideAttribution: true }}
-                  {...DAG_PAN_ZOOM_PROPS}
+                  zoomOnScroll={true}
+                  zoomOnPinch={true}
+                  panOnDrag={true}
                 >
                   <Background color="#E5E0D8" gap={20} />
                   <Controls

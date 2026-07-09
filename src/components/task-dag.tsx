@@ -5,7 +5,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  PanOnScrollMode,
   type Node,
   type Edge,
   type NodeProps,
@@ -127,27 +126,12 @@ const compactEdgeStyle = {
   markerEnd: { type: "arrowclosed" as const, color: "#C67A52" },
 };
 
-// Shared Figma/Miro-style trackpad pan/zoom config for the interactive,
-// full-canvas DAG mounts (tasks view + proposal editor). A two-finger scroll
-// pans freely (both axes); zoom stays available via pinch, Ctrl/⌘+scroll, and
-// the <Controls> buttons those mounts render unconditionally.
-//
-// NOTE (Tech Design D3.0): this is intentionally NOT applied to the readonly
-// dashboard-preview <ReactFlow> below — that mount hides <Controls> (gated
-// behind !readonly) and lives inside a scrollable dashboard, so flipping
-// zoomOnScroll off there would strip its only zoom affordance and its wheel
-// would hijack page scroll. It keeps its own inline zoomOnScroll/panOnDrag.
-// This module owns the constant; the two in-scope mounts import and spread it.
-export const DAG_PAN_ZOOM_PROPS = {
-  panOnScroll: true,
-  panOnScrollMode: PanOnScrollMode.Free,
-  zoomOnScroll: false,
-  zoomOnPinch: true,
-  // Mutable string[] (not `as const`) so it matches ReactFlow's KeyCode type,
-  // which rejects a readonly tuple. ⌘ (macOS) + Ctrl (Windows/Linux)+wheel zoom.
-  zoomActivationKeyCode: ["Meta", "Control"] as string[],
-  panOnDrag: true,
-};
+// Wheel model (idea 9d326265, elaboration round 3 — "protect mouse-wheel zoom"):
+// all DAG mounts use ReactFlow's default wheel-zoom — a plain wheel zooms around
+// the cursor, a pinch zooms, and drag pans. The interactive mounts (tasks view +
+// proposal editor) set the same inline zoomOnScroll/panOnDrag this readonly
+// preview <ReactFlow> uses, so all three converge on the default behavior and no
+// custom wheel listener is needed.
 
 function getLayoutedElements(
   nodes: Node<TaskNodeData>[],
