@@ -1,17 +1,14 @@
 // @vitest-environment jsdom
 //
-// Trackpad wheel-gesture coverage for MindMapCanvas (Task: "Canvas: trackpad
-// wheel classifier + non-passive listener", Spec Delta "Trackpad two-finger pan
-// and pinch-zoom on the canvas"). Two layers, mirroring mindmap-canvas-touch:
-//
-//   1. Pure math — `classifyWheel` is an exported pure helper, so the
-//      pan/pinch/mouse-zoom heuristic is asserted directly without a canvas:
-//      ctrl+wheel → zoom, horizontal wheel → pan, fine pixel vertical → pan,
-//      coarse/line vertical → zoom, and the zoom scaleFactor sign.
-//
-//   2. Behavior — a mounted canvas is driven with a native (non-passive) wheel
-//      event to prove (a) the listener calls preventDefault so the page does not
-//      scroll, and (b) a ctrl+wheel zoom mutates the view transform scale.
+// Wheel-zoom coverage for MindMapCanvas (Spec Delta "Trackpad two-finger pan and
+// pinch-zoom on the canvas", idea 9d326265 elaboration round 3 — "protect
+// mouse-wheel zoom"). The canvas ALWAYS zooms on wheel — no device inference, no
+// pan-on-wheel; panning is via drag. This file drives a native (non-passive)
+// wheel event and asserts:
+//   (a) a plain vertical mouse wheel ZOOMS (view scale changes) + preventDefaults,
+//   (b) a ctrl+wheel (pinch / Ctrl-⌘) also zooms,
+//   (c) scroll up zooms in / scroll down zooms out,
+//   (d) a plain wheel does NOT pan (no translate-only change).
 //
 // Canvas 2D is mocked the same way as mindmap-canvas-touch.test.tsx.
 
@@ -121,53 +118,37 @@ afterEach(() => {
 
 import {
   MindMapCanvas,
-  classifyWheel,
   type ForceNode,
 } from "../mindmap-canvas";
-
-describe("classifyWheel (pure) — Q2=a / Q3=a pan vs zoom heuristic", () => {
-  it("ctrl+wheel (trackpad pinch OR Ctrl/⌘+wheel) → zoom", () => {
-    const g = classifyWheel({ ctrlKey: true, deltaX: 0, deltaY: -10, deltaMode: 0 });
-    expect(g.kind).toBe("zoom");
-    if (g.kind === "zoom") expect(g.scaleFactor).toBeGreaterThan(1); // scroll up = zoom in
-  });
-
-  it("a wheel event with a horizontal component → pan", () => {
-    const g = classifyWheel({ ctrlKey: false, deltaX: 40, deltaY: 5, deltaMode: 0 });
-    expect(g).toEqual({ kind: "pan", dx: 40, dy: 5 });
-  });
-
-  it("a fine pixel-mode vertical wheel (below the mouse-notch threshold) → pan", () => {
-    const g = classifyWheel({ ctrlKey: false, deltaX: 0, deltaY: 12, deltaMode: 0 });
-    expect(g).toEqual({ kind: "pan", dx: 0, dy: 12 });
-  });
-
-  it("a coarse pixel-mode vertical wheel (at/above the threshold) → zoom (mouse notch)", () => {
-    const g = classifyWheel({ ctrlKey: false, deltaX: 0, deltaY: 120, deltaMode: 0 });
-    expect(g.kind).toBe("zoom");
-    if (g.kind === "zoom") expect(g.scaleFactor).toBeLessThan(1); // scroll down = zoom out
-  });
-
-  it("a line-mode vertical wheel → zoom (classic mouse wheel)", () => {
-    const g = classifyWheel({ ctrlKey: false, deltaX: 0, deltaY: -3, deltaMode: 1 });
-    expect(g.kind).toBe("zoom");
-    if (g.kind === "zoom") expect(g.scaleFactor).toBeGreaterThan(1);
-  });
-
-  it("zoom scaleFactor sign matches scroll direction", () => {
-    const inGesture = classifyWheel({ ctrlKey: true, deltaX: 0, deltaY: -20, deltaMode: 0 });
-    const outGesture = classifyWheel({ ctrlKey: true, deltaX: 0, deltaY: 20, deltaMode: 0 });
-    if (inGesture.kind === "zoom") expect(inGesture.scaleFactor).toBeGreaterThan(1);
-    if (outGesture.kind === "zoom") expect(outGesture.scaleFactor).toBeLessThan(1);
-  });
-});
 
 function buildNodes(): ForceNode[] {
   return [{ id: "idea-1", type: "idea", title: "Idea one", status: "building" }];
 }
 
-describe("MindMapCanvas — native non-passive wheel listener", () => {
-  it("calls preventDefault so the page does not scroll during a gesture", () => {
+function dispatchWheel(
+  canvas: HTMLCanvasElement,
+  init: Partial<WheelEventInit>,
+): WheelEvent {
+  const ev = new WheelEvent("wheel", {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    ctrlKey: false,
+    clientX: 400,
+    clientY: 300,
+    cancelable: true,
+    bubbles: true,
+    ...init,
+  });
+  act(() => {
+    canvas.dispatchEvent(ev);
+    vi.advanceTimersByTime(50); // let the repaint run
+  });
+  return ev;
+}
+
+describe("MindMapCanvas — wheel always zooms (protect mouse-wheel zoom)", () => {
+  it("a plain vertical mouse wheel zooms (scale changes) and preventDefaults", () => {
     const { container } = render(
       <MindMapCanvas nodes={buildNodes()} links={[]} selectedId={null} onNodeClick={vi.fn()} />,
     );
@@ -175,20 +156,16 @@ describe("MindMapCanvas — native non-passive wheel listener", () => {
     act(() => {
       vi.advanceTimersByTime(50); // settle the one-time fit
     });
-    const ev = new WheelEvent("wheel", {
-      deltaX: 30,
-      deltaY: 0,
-      ctrlKey: false,
-      cancelable: true,
-      bubbles: true,
-    });
-    act(() => {
-      canvas.dispatchEvent(ev);
-    });
+    const scaleBefore = setTransformScales.at(-1)!;
+    const ev = dispatchWheel(canvas, { deltaY: -100 }); // scroll up → zoom in
     expect(ev.defaultPrevented).toBe(true);
+    expect(setTransformScales.at(-1)!).toBeGreaterThan(scaleBefore); // zoomed, not panned
   });
 
-  it("a ctrl+wheel zoom mutates the view transform scale", () => {
+  it("a small, fractional vertical wheel still zooms (never pans)", () => {
+    // A hi-res/smooth-scroll mouse reports small, fractional vertical deltas.
+    // Under the always-zoom model that is unambiguously a zoom — the view SCALE
+    // changes rather than translating.
     const { container } = render(
       <MindMapCanvas nodes={buildNodes()} links={[]} selectedId={null} onNodeClick={vi.fn()} />,
     );
@@ -197,23 +174,40 @@ describe("MindMapCanvas — native non-passive wheel listener", () => {
       vi.advanceTimersByTime(50);
     });
     const scaleBefore = setTransformScales.at(-1)!;
-    expect(Number.isFinite(scaleBefore)).toBe(true);
+    const ev = dispatchWheel(canvas, { deltaY: -6.7 }); // small + fractional
+    expect(ev.defaultPrevented).toBe(true);
+    expect(setTransformScales.at(-1)!).toBeGreaterThan(scaleBefore);
+  });
+
+  it("a ctrl+wheel (pinch / Ctrl-⌘) also zooms", () => {
+    const { container } = render(
+      <MindMapCanvas nodes={buildNodes()} links={[]} selectedId={null} onNodeClick={vi.fn()} />,
+    );
+    const canvas = container.querySelector("canvas")!;
     act(() => {
-      canvas.dispatchEvent(
-        new WheelEvent("wheel", {
-          deltaX: 0,
-          deltaY: -100, // scroll up with ctrl → zoom in
-          ctrlKey: true,
-          clientX: 400,
-          clientY: 300,
-          cancelable: true,
-          bubbles: true,
-        }),
-      );
-      vi.advanceTimersByTime(50); // let the repaint run
+      vi.advanceTimersByTime(50);
     });
-    const scaleAfter = setTransformScales.at(-1)!;
-    expect(scaleAfter).toBeGreaterThan(scaleBefore);
+    const scaleBefore = setTransformScales.at(-1)!;
+    const ev = dispatchWheel(canvas, { deltaY: -100, ctrlKey: true });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(setTransformScales.at(-1)!).toBeGreaterThan(scaleBefore);
+  });
+
+  it("scroll up zooms in and scroll down zooms out", () => {
+    const { container } = render(
+      <MindMapCanvas nodes={buildNodes()} links={[]} selectedId={null} onNodeClick={vi.fn()} />,
+    );
+    const canvas = container.querySelector("canvas")!;
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    const scaleFit = setTransformScales.at(-1)!;
+    dispatchWheel(canvas, { deltaY: -120 }); // up → in
+    const scaleIn = setTransformScales.at(-1)!;
+    expect(scaleIn).toBeGreaterThan(scaleFit);
+    dispatchWheel(canvas, { deltaY: 120 }); // down → out
+    const scaleOut = setTransformScales.at(-1)!;
+    expect(scaleOut).toBeLessThan(scaleIn);
   });
 });
 
