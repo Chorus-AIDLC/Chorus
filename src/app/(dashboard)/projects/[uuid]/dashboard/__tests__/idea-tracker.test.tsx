@@ -88,6 +88,7 @@ function idea(over: Partial<TrackerIdeaItem> = {}): TrackerIdeaItem {
     createdAt: "2026-06-14T00:00:00.000Z",
     parentUuid: null,
     childCount: 0,
+    isContainer: false,
     ...over,
   };
 }

@@ -167,6 +167,40 @@ describe("NewIdeaDialog — mode gating", () => {
     });
   });
 
+  it("the decompose toggle flows decompose:true into the conversational-idea POST body", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+
+    // Toggle the theme-decompose intent (rendered above the entry pane).
+    await user.click(
+      screen.getByLabelText("Help me break this into child ideas"),
+    );
+
+    const props = entryProps.mock.calls[entryProps.mock.calls.length - 1][0];
+    const session = { uuid: "s-1", sessionId: "idea-1", directIdeaUuid: "idea-1" };
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { session } }),
+    });
+    await props.dispatch({
+      agentUuid: "agent-1",
+      connectionUuid: "c1",
+      userText: "big feature to split",
+    });
+    const [url, init] = mockAuthFetch.mock.calls[0];
+    expect(url).toBe("/api/ideas/conversational");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      projectUuid: "proj-1",
+      agentUuid: "agent-1",
+      connectionUuid: "c1",
+      descriptionText: "big feature to split",
+      decompose: true,
+    });
+  });
+
   it("the dispatch maps failures to ConversationalDispatchError carrying status + server reason", async () => {
     setPresence(true);
     const user = userEvent.setup();

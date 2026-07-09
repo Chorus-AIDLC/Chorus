@@ -156,6 +156,9 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
         minZoom={0.3}
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
+        zoomOnScroll={true}
+        zoomOnPinch={true}
+        panOnDrag={true}
       >
         <Background color="#E5E0D8" gap={20} />
         <Controls

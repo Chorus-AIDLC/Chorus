@@ -1213,7 +1213,15 @@
       "pickerTruncated": "Showing the first 200 ideas. If you don't see the parent you want, narrow by searching its title.",
       "save": "Set as parent",
       "saveFailed": "Failed to set parent",
-      "deriveFailed": "Failed to derive idea"
+      "deriveFailed": "Failed to derive idea",
+      "container": "Theme",
+      "containerDescription": "A theme groups related child ideas and sets shared direction. It can elaborate, but the real work happens in the ideas you derive from it — a theme doesn't write its own proposal.",
+      "containerBadge": "Theme",
+      "typeIdea": "IDEA",
+      "typeTheme": "THEME",
+      "makeContainer": "Make this a theme",
+      "containerHint": "Themes move forward by deriving child ideas.",
+      "childrenDone": "{done}/{total} done"
     },
     "actions": {
       "newIdea": "New Idea",
@@ -1237,7 +1245,9 @@
       "descriptionPlaceholder": "Add context, goals, or any details that help clarify the idea...",
       "modeForm": "Fill a form",
       "modeConversation": "Describe to an agent",
-      "modeConversationOfflineHint": "Describing to an agent needs an online daemon."
+      "modeConversationOfflineHint": "Describing to an agent needs an online daemon.",
+      "decompose": "Help me break this into child ideas",
+      "decomposeHint": "Creates a theme and asks the agent to propose child ideas for you to confirm."
     },
     "error": {
       "loadFailed": "Failed to load ideas",
@@ -1652,6 +1662,11 @@
     },
     "tooltip": {
       "loading": "Loading…"
+    },
+    "zoom": {
+      "in": "Zoom in",
+      "out": "Zoom out",
+      "fit": "Fit to view"
     },
     "status": {
       "unknown": "Unknown"

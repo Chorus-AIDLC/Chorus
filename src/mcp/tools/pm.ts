@@ -988,15 +988,16 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_create_idea",
     {
-      description: "Create an Idea (submits requirements on behalf of humans). Optional parentUuid derives it from an existing same-project idea (single-parent lineage).",
+      description: "Create an Idea (submits requirements on behalf of humans). Optional parentUuid derives it from an existing same-project idea (single-parent lineage). Optional isContainer marks it as a theme (groups derived children; may elaborate but cannot create a proposal).",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         title: z.string().describe("Idea title"),
         content: z.string().optional().describe("Idea detailed description"),
         parentUuid: z.string().optional().describe("Same-project parent Idea to derive from (single-parent lineage)"),
+        isContainer: z.boolean().optional().describe("Mark as a theme (groups derived children; may elaborate but MUST NOT create a proposal). Defaults to false."),
       }),
     },
-    async ({ projectUuid, title, content, parentUuid }) => {
+    async ({ projectUuid, title, content, parentUuid, isContainer }) => {
       const exists = await projectExists(auth.companyUuid, projectUuid);
       if (!exists) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
@@ -1010,6 +1011,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           content: content || null,
           createdByUuid: auth.actorUuid,
           parentUuid: parentUuid ?? null,
+          isContainer,
         });
 
         return {
@@ -1038,18 +1040,19 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_edit_idea",
     {
-      description: "Edit an existing Idea's title, description (content), and/or lineage parent (`parentUuid`). Provide at least one field. Does not change status.",
+      description: "Edit an existing Idea's title, description (content), lineage parent (`parentUuid`), and/or theme flag (`isContainer`). Provide at least one field. Does not change status.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID to edit"),
         title: z.string().optional().describe("New title (omit to leave unchanged)"),
         content: z.string().optional().describe("New description (omit to leave unchanged)"),
         parentUuid: z.string().nullable().optional().describe("Same-project parent Idea to reparent under; null detaches to top-level; omit to leave unchanged"),
+        isContainer: z.boolean().optional().describe("Mark/unmark as a theme (groups derived children; may elaborate but MUST NOT create a proposal). Freely reversible; omit to leave unchanged."),
       }),
     },
-    async ({ ideaUuid, title, content, parentUuid }) => {
-      if (title === undefined && content === undefined && parentUuid === undefined) {
+    async ({ ideaUuid, title, content, parentUuid, isContainer }) => {
+      if (title === undefined && content === undefined && parentUuid === undefined && isContainer === undefined) {
         return {
-          content: [{ type: "text", text: "Provide at least one of title, content, or parentUuid to edit." }],
+          content: [{ type: "text", text: "Provide at least one of title, content, parentUuid, or isContainer to edit." }],
           isError: true,
         };
       }
@@ -1069,16 +1072,17 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           resolvedParentUuid = reparented.parentUuid ?? null;
         }
 
-        // Title/content edit (records the "edited" activity). Skipped when only
-        // the parent changed.
+        // Title/content/container edit (title/content changes record the
+        // "edited" activity). Skipped when only the parent changed.
         let title_ = existing.title;
-        if (title !== undefined || content !== undefined) {
+        if (title !== undefined || content !== undefined || isContainer !== undefined) {
           const updated = await ideaService.updateIdea(
             ideaUuid,
             auth.companyUuid,
             {
               ...(title !== undefined ? { title } : {}),
               ...(content !== undefined ? { content: content || null } : {}),
+              ...(isContainer !== undefined ? { isContainer } : {}),
             },
             { actorType: "agent", actorUuid: auth.actorUuid },
           );

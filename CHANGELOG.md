@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.2] - 2026-07-09
+
+### Added
+- **Theme (container) ideas**: A new `Idea.isContainer` "theme" — a parent idea that groups related child ideas under a shared direction. A theme can elaborate but cannot create a proposal; to deliver, derive a child idea and write the proposal there. The flag is orthogonal to lineage, freely reversible, and guarded at the single `createProposal` choke point (company-scoped, no bypass across action/REST/MCP). Full UI chain: one-step empty-theme creation in the new-idea dialog, a THEME-vs-IDEA type-eyebrow across tracker rows and the detail panel, a Linear-style x/y progress ring rolling a theme's status up from its children (no N+1), and a daemon-assisted "decompose into child ideas" flow that reuses the conversational-idea entry + elaboration re-wake (no new wake action or plugin ports). (#409)
+- **Trackpad zoom & pan gestures for project graph views**: A Figma/Miro-style trackpad model across both graph surfaces — two-finger swipe pans, pinch zooms — while keeping mouse users supported. The canvas mind-map gains an on-screen +/- / fit control cluster; the ReactFlow task DAG gets a shared pan/zoom prop set (pinch + Ctrl/Cmd + Controls zoom), with the readonly dashboard preview excluded. (#408)
+
+### Changed
+- **Idea panel reassign moves onto the assignee block**: The dashboard idea-tracker detail panel drops its icon-only footer reassign button; reassign now triggers from the assignee block shown in the elaboration tab (same `status !== "elaborated"` gate). The shared Yolo button is restored to a full rocket icon + "Yolo" label (purple styling and confirm dialog kept). The `/ideas` panel keeps its own footer reassign button. (#410)
+
+### Fixed
+- **Slow/high-resolution mouse wheel intermittently panned instead of zoomed on graphs**: The #408 trackpad gestures introduced a mouse-vs-trackpad device classifier that misfired — a smooth-scroll mouse is indistinguishable from a trackpad on the wheel event stream. Settled on a deterministic model: a plain wheel **always** zooms around the cursor at any speed, pinch zooms, and drag pans. The classifier (`wheel-gesture.ts`, `dag-wheel-nav.tsx`) is removed and the task DAG returns to ReactFlow default scroll/pinch zoom, converging with the readonly preview. (#412)
+
+### Plugin
+- **Plugin & skill versions → 0.13.2**: Claude Code plugin, standalone skill, and OpenClaw plugin versions bumped to 0.13.2. The "container" idea concept is renamed to **"Theme"** across i18n values, MCP tool descriptions, and skill docs (the underlying `isContainer` field, keys, and tool names are unchanged). (#409)
+
+---
+
 ## [0.13.1] - 2026-07-07
 
 ### Added

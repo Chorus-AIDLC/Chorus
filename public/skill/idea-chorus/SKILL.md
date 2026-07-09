@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.11.1"
+  version: "0.13.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -282,6 +282,14 @@ When a new direction surfaces (during elaboration, brainstorm, or review), decid
 - **Create a plain top-level idea** (no `parentUuid`) when there is no lineage to the current idea.
 
 This is a soft heuristic, not a rule — use judgment. Cycle prevention is automatic: you cannot set a parent that is the idea itself or one of its descendants. Parent and child must be in the same project (cross-project lineage is not supported yet). Deleting a parent re-parents its children to top-level (it never cascades).
+
+### Theme ideas
+
+A **theme** is an idea that only *groups* related children under a shared direction — it is not a deliverable itself. Set `isContainer: true` on `chorus_pm_create_idea` / `chorus_edit_idea` (or the detail-panel toggle) to make one; it is freely reversible. The one rule that matters: **a theme cannot create a proposal** — to deliver its direction, derive a child idea (`parentUuid = <theme>`) and write the proposal on the child. A theme may still elaborate (its elaboration is shared context for children), and its status/progress rolls up from its children. Everything else is self-documented on the tool params.
+
+#### Theme decompose (daemon-assisted)
+
+When a theme is created via the conversational "help me break this into child ideas" entry, don't create children immediately — **propose then create**: (1) edit the theme + optionally one short scope-elaboration round; (2) propose the candidate children as an elaboration round (`chorus_pm_start_elaboration`), one single-select question per candidate, for the user to accept/decline in the panel; (3) on the answer re-wake, create each accepted child with `chorus_pm_create_idea` (`parentUuid = <theme>`, left in `open`).
 
 ---
 

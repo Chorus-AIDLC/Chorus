@@ -381,3 +381,51 @@ When a search ends, the graph SHALL keep every currently expanded node expanded 
 - **WHEN** the user clears a search and then collapses a hub that had been expanded to reveal a match
 - **THEN** that hub collapses normally, because expansion is now ordinary user-controlled state with no search snapshot overriding it
 
+### Requirement: Trackpad two-finger pan and pinch-zoom on the canvas
+
+The canvas mind-map SHALL use a deterministic wheel model in which a wheel event over the canvas ALWAYS zooms the tree around the cursor, at any scroll speed and with no modifier key required, and SHALL NOT infer the pointing device or pan in response to a wheel. Because a browser reports a trackpad pinch as a wheel event, a trackpad pinch SHALL therefore also zoom. Zooming SHALL reuse the existing view transform and SHALL clamp the resulting scale to the same minimum and maximum bounds the touch path uses. Panning SHALL be available through dragging (the existing single-pointer drag-to-pan), not through the wheel. While the pointer is over the canvas, the graph SHALL prevent the browser's default page scroll so the page does not move while zooming. These wheel changes SHALL NOT alter the existing touch gestures (two-finger pinch, double-tap, single-finger drag) or the single-pointer drag-to-pan behavior.
+
+#### Scenario: Plain mouse wheel zooms the tree at any speed
+
+- **WHEN** a user scrolls a plain mouse wheel (no modifier) over the canvas, whether slowly or quickly
+- **THEN** the tree zooms around the cursor (scrolling up zooms in, down zooms out), the browser page does not scroll, and the tree does not pan
+
+#### Scenario: Trackpad pinch zooms around the cursor
+
+- **WHEN** a user performs a pinch gesture on a trackpad over the canvas (reported by the browser as a wheel event)
+- **THEN** the tree zooms in or out around the cursor position, clamped to the same minimum and maximum zoom bounds as the other zoom paths
+
+#### Scenario: Panning is via drag, not the wheel
+
+- **WHEN** a user wants to pan the tree
+- **THEN** they drag with a single pointer (the wheel never pans), and the drag-to-pan behaves exactly as before
+
+#### Scenario: Existing touch and drag behavior unchanged
+
+- **WHEN** a user uses a two-finger touch pinch, a double-tap, a single-finger touch drag, or a single-pointer mouse drag on the canvas
+- **THEN** those gestures behave exactly as they did before the wheel model changed
+
+### Requirement: On-screen zoom and fit controls on the graph canvas
+
+The graph canvas SHALL present an on-screen control cluster offering zoom-in, zoom-out, and fit-to-view (reset) actions, so a user can change the zoom and re-frame the whole tree without relying on any trackpad gesture, mouse wheel, or modifier key. Zoom-in and zoom-out SHALL step the zoom by a fixed factor centered on the viewport, clamped to the same minimum and maximum zoom bounds as the gesture paths. Fit-to-view SHALL re-frame the entire tree centered in the viewport, using the same fit computation the first-load fit and the double-tap reset use. Each control SHALL carry an accessible label and a tooltip, and all of its user-facing text SHALL be internationalized in both supported locales. The control cluster SHALL be hidden when the graph is empty (there is nothing to zoom or fit).
+
+#### Scenario: Zoom-in and zoom-out buttons change the zoom
+
+- **WHEN** a user clicks the zoom-in or zoom-out control
+- **THEN** the tree zooms in or out by a fixed step centered on the viewport, staying within the minimum and maximum zoom bounds
+
+#### Scenario: Fit control re-frames the whole tree
+
+- **WHEN** a user clicks the fit-to-view control
+- **THEN** the view re-frames the entire tree centered in the viewport, matching the first-load fit
+
+#### Scenario: Controls are accessible and localized
+
+- **WHEN** the control cluster is shown
+- **THEN** each button exposes an accessible label and a tooltip whose text is internationalized in both supported locales
+
+#### Scenario: Controls hidden when the graph is empty
+
+- **WHEN** the project has no Ideas, Proposals, Tasks, or Documents to graph
+- **THEN** the zoom/fit control cluster is not shown
+

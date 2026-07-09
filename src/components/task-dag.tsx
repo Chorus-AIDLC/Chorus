@@ -126,6 +126,13 @@ const compactEdgeStyle = {
   markerEnd: { type: "arrowclosed" as const, color: "#C67A52" },
 };
 
+// Wheel model (idea 9d326265, elaboration round 3 — "protect mouse-wheel zoom"):
+// all DAG mounts use ReactFlow's default wheel-zoom — a plain wheel zooms around
+// the cursor, a pinch zooms, and drag pans. The interactive mounts (tasks view +
+// proposal editor) set the same inline zoomOnScroll/panOnDrag this readonly
+// preview <ReactFlow> uses, so all three converge on the default behavior and no
+// custom wheel listener is needed.
+
 function getLayoutedElements(
   nodes: Node<TaskNodeData>[],
   edges: Edge[],

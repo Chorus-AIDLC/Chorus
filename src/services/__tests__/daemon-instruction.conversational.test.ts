@@ -210,6 +210,60 @@ describe("composeConversationalIdeaInstruction", () => {
     expect(text).toContain(`project projectUuid: ${projectUuid}`);
     expect(text).not.toContain('""');
   });
+
+  it("mode:'elaborate' is the default template (no decompose contract)", () => {
+    const explicit = composeConversationalIdeaInstruction({ ...base, mode: "elaborate" });
+    const defaulted = composeConversationalIdeaInstruction(base);
+    expect(explicit).toBe(defaulted);
+    expect(explicit).not.toContain("chorus_pm_create_idea");
+    expect(explicit).not.toContain("container-decompose");
+  });
+
+  // ===== decompose variant =====
+  describe("mode:'decompose'", () => {
+    const decomposeText = () =>
+      composeConversationalIdeaInstruction({ ...base, mode: "decompose" });
+
+    it("still embeds the ideaUuid, project identity, and the description verbatim", () => {
+      const text = decomposeText();
+      expect(text).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);
+      expect(text).toContain(`"Chorus" (projectUuid: ${projectUuid})`);
+      expect(text).toContain(base.descriptionText);
+    });
+
+    it("directs: edit container, keep isContainer, clarify scope, then end turn", () => {
+      const text = decomposeText();
+      expect(text).toContain("chorus_edit_idea");
+      expect(text).toContain("isContainer");
+      expect(text).toContain("chorus_pm_start_elaboration");
+      expect(text).toContain("End the turn");
+    });
+
+    it("proposes children as a one-question-per-child elaboration round (single-select, ≤15, no multi-select)", () => {
+      const text = decomposeText();
+      // ONE elaboration question PER proposed child.
+      expect(text).toContain("ONE elaboration question PER proposed child");
+      // The 15-question cap is stated.
+      expect(text).toContain("15");
+      // Single-select, explicitly NOT a multi-select round.
+      expect(text.toLowerCase()).toContain("single-select");
+      expect(text).toContain("NEVER a single multi-select");
+    });
+
+    it("directs child creation only on re-wake, with parentUuid, open state, no auto-elaborate", () => {
+      const text = decomposeText();
+      // Children are created via chorus_pm_create_idea with parentUuid = the container.
+      expect(text).toContain("chorus_pm_create_idea");
+      expect(text).toContain(`parentUuid=${STUB_IDEA_UUID}`);
+      // Children start open, no auto-elaboration.
+      expect(text).toContain('"open"');
+      expect(text.toLowerCase()).toContain("auto-elaborate");
+      // The container's own status stays elaborated.
+      expect(text).toContain('"elaborated"');
+      // Do NOT create children before confirmation.
+      expect(text).toContain("Do NOT create any child ideas yet");
+    });
+  });
 });
 
 // ===== createConversationalIdeaSession — happy path =====
@@ -266,6 +320,38 @@ describe("createConversationalIdeaSession", () => {
     expect(session.directIdeaUuid).toBe(STUB_IDEA_UUID);
     expect(turn.uuid).toBe(turnUuid);
     expect(turn.promptText).toContain(validParams.descriptionText);
+  });
+
+  it("default (no mode) pre-creates a NON-container idea with the elaborate template", async () => {
+    await createConversationalIdeaSession(userAuth, validParams);
+    const ideaData = mockTx.idea.create.mock.calls[0][0].data;
+    expect(ideaData.isContainer).toBe(false);
+    const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
+    expect(turnData.promptText).not.toContain("container-decompose");
+    expect(turnData.promptText).not.toContain("chorus_pm_create_idea");
+  });
+
+  it("mode:'decompose' pre-creates a CONTAINER idea and dispatches the decompose template", async () => {
+    const { idea } = await createConversationalIdeaSession(userAuth, {
+      ...validParams,
+      mode: "decompose",
+    });
+
+    // Idea is pre-created as a container.
+    const ideaData = mockTx.idea.create.mock.calls[0][0].data;
+    expect(ideaData.isContainer).toBe(true);
+    // Still assignment-equals-claim: instance-assigned + elaborating from birth.
+    expect(ideaData.status).toBe("elaborating");
+    expect(ideaData.assigneeType).toBe("agent_instance");
+    expect(idea.uuid).toBe(STUB_IDEA_UUID);
+
+    // The first turn carries the DECOMPOSE instruction, not the elaborate one.
+    const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
+    expect(turnData.trigger).toBe("human_instruction");
+    expect(turnData.promptText).toContain("container-decompose");
+    expect(turnData.promptText).toContain("chorus_pm_create_idea");
+    expect(turnData.promptText).toContain(`parentUuid=${STUB_IDEA_UUID}`);
+    expect(turnData.promptText).toContain(validParams.descriptionText);
   });
 
   it("emits exactly ONE deliver_turn ping (post-commit, precise turnUuid, origin only)", async () => {

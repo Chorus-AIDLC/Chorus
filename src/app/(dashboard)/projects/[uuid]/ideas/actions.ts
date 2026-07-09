@@ -19,6 +19,7 @@ interface CreateIdeaInput {
   title: string;
   content?: string;
   attachments?: Attachment[];
+  isContainer?: boolean;
 }
 
 export async function createIdeaAction(input: CreateIdeaInput) {
@@ -35,6 +36,7 @@ export async function createIdeaAction(input: CreateIdeaInput) {
       content: input.content || null,
       attachments: input.attachments || null,
       createdByUuid: auth.actorUuid,
+      isContainer: input.isContainer,
     });
 
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
@@ -50,6 +52,7 @@ interface UpdateIdeaInput {
   projectUuid: string;
   title: string;
   content: string | null;
+  isContainer?: boolean;
 }
 
 export async function updateIdeaAction(input: UpdateIdeaInput) {
@@ -65,6 +68,7 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
       {
         title: input.title,
         content: input.content,
+        ...(input.isContainer !== undefined ? { isContainer: input.isContainer } : {}),
       },
       { actorType: auth.type, actorUuid: auth.actorUuid },
     );

@@ -65,6 +65,7 @@ import {
   getDescendantUuids,
   moveIdea,
   deleteIdea,
+  rollupThemeDerivedStatus,
 } from "@/services/idea.service";
 
 const COMPANY = "company-1111";
@@ -85,6 +86,7 @@ function ideaRow(overrides: Record<string, unknown> = {}) {
     assignedAt: null,
     assignedByUuid: null,
     parentUuid: null,
+    isContainer: false,
     createdByUuid: "creator-uuid",
     companyUuid: COMPANY,
     projectUuid: PROJECT,
@@ -306,6 +308,63 @@ describe("getIdeasWithDerivedStatus rollup", () => {
     // groupBy used exactly once — the rollup is not a per-idea query
     expect(mockPrisma.idea.groupBy).toHaveBeenCalledTimes(1);
   });
+
+  it("rolls a theme's derived status up from its direct children", async () => {
+    // 1 theme + 3 children (1 done, 1 in_progress, 1 todo). The theme's own
+    // status (open→todo here) must be overridden to in_progress, with childProgress 1/3.
+    mockPrisma.idea.findMany.mockResolvedValueOnce([
+      { uuid: "theme", title: "Theme", status: "elaborated", elaborationStatus: "resolved", parentUuid: null, isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "c1", title: "C1", status: "open", elaborationStatus: null, parentUuid: "theme", isContainer: false, createdAt: now, updatedAt: now },
+      { uuid: "c2", title: "C2", status: "elaborating", elaborationStatus: "validating", parentUuid: "theme", isContainer: false, createdAt: now, updatedAt: now },
+      { uuid: "c3", title: "C3", status: "elaborated", elaborationStatus: "resolved", parentUuid: "theme", isContainer: false, createdAt: now, updatedAt: now },
+    ]);
+    mockPrisma.idea.groupBy.mockResolvedValueOnce([{ parentUuid: "theme", _count: { _all: 3 } }]);
+    // c3 has an approved proposal with all tasks done → child derived = done.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([
+      { uuid: "p3", status: "approved", inputUuids: ["c3"], createdAt: now },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([
+      { proposalUuid: "p3", status: "done" },
+    ]);
+
+    const res = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+    const theme = res.find((i) => i.uuid === "theme")!;
+    expect(theme.derivedStatus).toBe("in_progress"); // not stuck at "planning"/elaborated
+    expect(theme.childProgress).toEqual({ done: 1, total: 3 });
+  });
+});
+
+describe("rollupThemeDerivedStatus (pure)", () => {
+  it("is done only when every child is done", () => {
+    expect(rollupThemeDerivedStatus(["done", "done"])).toMatchObject({
+      derivedStatus: "done",
+      childProgress: { done: 2, total: 2 },
+    });
+  });
+  it("is in_progress once any child has started", () => {
+    expect(rollupThemeDerivedStatus(["todo", "in_progress", "todo"])).toMatchObject({
+      derivedStatus: "in_progress",
+      childProgress: { done: 0, total: 3 },
+    });
+  });
+  it("is todo when all children are todo", () => {
+    expect(rollupThemeDerivedStatus(["todo", "todo"])).toMatchObject({
+      derivedStatus: "todo",
+      childProgress: { done: 0, total: 2 },
+    });
+  });
+  it("counts human_conduct_required as started (in_progress)", () => {
+    expect(rollupThemeDerivedStatus(["human_conduct_required", "todo"])).toMatchObject({
+      derivedStatus: "in_progress",
+      childProgress: { done: 0, total: 2 },
+    });
+  });
+  it("returns 0/0 progress for no children", () => {
+    expect(rollupThemeDerivedStatus([])).toMatchObject({
+      derivedStatus: "todo",
+      childProgress: { done: 0, total: 0 },
+    });
+  });
 });
 
 describe("getIdea lineage payload", () => {
@@ -337,6 +396,43 @@ describe("getIdea lineage payload", () => {
     expect(res?.parent).toEqual({ uuid: "root", title: "Root", status: "open" });
     expect(res?.children?.map((c) => c.uuid)).toEqual(["leaf"]);
     expect(res?.descendantUuids).toEqual(["leaf"]);
+  });
+});
+
+describe("getIdea isContainer flag", () => {
+  it("returns isContainer=true when the idea is a container", async () => {
+    // Leaf container idea (no children): findFirst -> idea, then the
+    // getDescendantUuids walk finds no children, and getProposalsByIdeaUuid
+    // (mocked to []) yields no reports.
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(
+      ideaRow({
+        uuid: "cont",
+        isContainer: true,
+        project: { uuid: PROJECT, name: "P" },
+        parent: null,
+        children: [],
+      }),
+    );
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]); // getDescendantUuids: no children
+
+    const res = await getIdea(COMPANY, "cont");
+    expect(res?.isContainer).toBe(true);
+  });
+
+  it("returns isContainer=false for a non-container idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(
+      ideaRow({
+        uuid: "plain",
+        isContainer: false,
+        project: { uuid: PROJECT, name: "P" },
+        parent: null,
+        children: [],
+      }),
+    );
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]); // getDescendantUuids: no children
+
+    const res = await getIdea(COMPANY, "plain");
+    expect(res?.isContainer).toBe(false);
   });
 });
 

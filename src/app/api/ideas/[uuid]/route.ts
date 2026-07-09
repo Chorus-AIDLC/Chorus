@@ -59,6 +59,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       title?: string;
       content?: string;
       status?: string;
+      isContainer?: boolean;
     }>(request);
 
     // Build update data
@@ -66,6 +67,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       title?: string;
       content?: string | null;
       status?: string;
+      isContainer?: boolean;
     } = {};
 
     // Title validation
@@ -96,6 +98,11 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       }
 
       updateData.status = body.status;
+    }
+
+    // Container flag (freely reversible; reuses idea:write, no cascade).
+    if (body.isContainer !== undefined) {
+      updateData.isContainer = body.isContainer;
     }
 
     const updated = await updateIdea(idea.uuid, auth.companyUuid, updateData, {

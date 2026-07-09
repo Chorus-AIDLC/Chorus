@@ -5,6 +5,8 @@
 //    stage (incl. no proposal), hidden only when the idea is done or the
 //    assignee is not an agent,
 //  - AgentPresence-driven online state: offline disables with a hint,
+//  - icon + label presentation (refine-idea-panel-action-row): the button
+//    renders the visible "Yolo" text label, not an icon-only shortcut,
 //  - the CONFIRM step: clicking the button opens the dialog and does NOT call
 //    yoloRequestedAction until the user confirms,
 //  - server error codes surface as SPECIFIC i18n toasts (agent_offline distinct
@@ -15,10 +17,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// The Yolo trigger is now wrapped in a shadcn (Radix) Tooltip, whose
-// PopperContent uses ResizeObserver — absent from jsdom. Without this stub,
-// opening the tooltip (focus/click) throws unhandled errors that Vitest flags
-// as potential false positives. Stub the browser APIs Radix's popper needs.
+// The Yolo confirm step uses a shadcn (Radix) AlertDialog, whose Popper-based
+// primitives use ResizeObserver + pointer-capture — absent from jsdom. Without
+// these stubs, opening the dialog throws unhandled errors that Vitest flags as
+// potential false positives. Stub the browser APIs Radix needs.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class {
     observe() {}
@@ -106,6 +108,16 @@ describe("YoloButton — render gating", () => {
     render(<YoloButton {...HAPPY_PROPS} />);
     const btn = screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" });
     expect(btn.disabled).toBe(false);
+  });
+
+  it("renders the visible 'Yolo' text label (icon + label, not icon-only)", () => {
+    render(<YoloButton {...HAPPY_PROPS} />);
+    // The label is real button text now (no tooltip needed to convey it): the
+    // trigger's accessible name comes from its textContent, and the text node
+    // is present in the DOM.
+    const btn = screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" });
+    expect(btn.textContent).toContain("Yolo");
+    expect(screen.getByText("Yolo")).toBeTruthy();
   });
 
   it("renders on a building-stage idea (approved proposal + unfinished task) — coexists with Start Development", () => {

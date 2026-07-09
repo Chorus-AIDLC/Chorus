@@ -227,6 +227,94 @@ describe("createProposal", () => {
 });
 
 // ====================================================================
+// createProposal — container-idea guard
+// ====================================================================
+
+describe("createProposal — container guard", () => {
+  it("rejects when the sole input idea is a container, persisting no Proposal row", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-container", isContainer: true },
+    ]);
+
+    await expect(
+      createProposal({
+        companyUuid: COMPANY_UUID,
+        projectUuid: PROJECT_UUID,
+        title: "Should be blocked",
+        inputType: "idea",
+        inputUuids: ["idea-container"],
+        createdByUuid: ACTOR_UUID,
+      })
+    ).rejects.toThrow("Container ideas cannot create proposals");
+
+    // No Proposal row must be written on rejection.
+    expect(mockPrisma.proposal.create).not.toHaveBeenCalled();
+    expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mixed input set when at least one idea is a container", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-normal", isContainer: false },
+      { uuid: "idea-container", isContainer: true },
+    ]);
+
+    await expect(
+      createProposal({
+        companyUuid: COMPANY_UUID,
+        projectUuid: PROJECT_UUID,
+        title: "Mixed input",
+        inputType: "idea",
+        inputUuids: ["idea-normal", "idea-container"],
+        createdByUuid: ACTOR_UUID,
+      })
+    ).rejects.toThrow("Container ideas cannot create proposals");
+
+    expect(mockPrisma.proposal.create).not.toHaveBeenCalled();
+  });
+
+  it("passes when all input ideas are non-container (regression-safe)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "idea-1", isContainer: false },
+      { uuid: "idea-2", isContainer: false },
+    ]);
+    const created = dbProposal({ status: "draft" });
+    mockPrisma.proposal.create.mockResolvedValue(created);
+
+    const result = await createProposal({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      title: "Non-container idea proposal",
+      inputType: "idea",
+      inputUuids: ["idea-1", "idea-2"],
+      createdByUuid: ACTOR_UUID,
+    });
+
+    expect(mockPrisma.proposal.create).toHaveBeenCalledOnce();
+    expect(result.uuid).toBe(created.uuid);
+    expect(mockEventBus.emitChange).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: "proposal", action: "created" })
+    );
+  });
+
+  it("does not query ideas or block for non-idea input types", async () => {
+    mockPrisma.proposal.create.mockResolvedValue(dbProposal({ status: "draft" }));
+
+    await createProposal({
+      companyUuid: COMPANY_UUID,
+      projectUuid: PROJECT_UUID,
+      title: "Manual input",
+      inputType: "manual",
+      inputUuids: ["source-1"],
+      createdByUuid: ACTOR_UUID,
+    });
+
+    // Guard is scoped to inputType === "idea"; other sources skip the idea lookup.
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.proposal.create).toHaveBeenCalledOnce();
+  });
+});
+
+// ====================================================================
 // addDocumentDraft
 // ====================================================================
 

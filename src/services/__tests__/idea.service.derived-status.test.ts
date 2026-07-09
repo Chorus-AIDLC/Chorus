@@ -668,6 +668,8 @@ describe("getTrackerGroups", () => {
       createdAt: now.toISOString(),
       parentUuid: null,
       childCount: 0,
+      isContainer: undefined,
+      childProgress: null,
     });
   });
 
