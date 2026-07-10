@@ -192,15 +192,21 @@ span[style*="--sdm-tbg"] {
   }
 }
 
-/* Sonner toast theme — Chorus design tokens */
-[data-sonner-toaster] {
-  --normal-bg: var(--color-card);
-  --normal-text: var(--color-foreground);
-  --normal-border: var(--color-border);
-}
-
+/* Sonner toast theme — Chorus design tokens.
+   The toast surface (--normal-bg/-text/-border) is locked to design tokens via
+   inline CSS variables on the Toaster (src/components/ui/sonner.tsx): sonner's own
+   [data-sonner-theme='light'|'dark'] rules hardcode --normal-bg to #fff / #000 at a
+   specificity a plain [data-sonner-toaster] override cannot beat, so the inline
+   style carries them instead. The rules below cover the parts sonner does not read
+   from --normal-* (title/description/close/action button) and the elevation shadow. */
 [data-sonner-toast] {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Dark mode: a light-alpha shadow is invisible on the charcoal surface, so deepen
+   it (next-themes sets `.dark` on <html>) to keep the toast reading as elevated. */
+.dark [data-sonner-toast] {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55) !important;
 }
 
 [data-sonner-toast] [data-title] {
