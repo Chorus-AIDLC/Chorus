@@ -31,50 +31,50 @@ export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: Bas
       {/* Assignee Section */}
       <AssigneeSection assignee={idea.assignee} />
 
-      <Separator className="my-5 bg-[#F5F2EC]" />
+      <Separator className="my-5 bg-secondary" />
 
       {/* Content Section */}
       <div>
-        <Label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {tCommon("content")}
         </Label>
         <div className="mt-2">
           {idea.content ? (
-            <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+            <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
               <MarkdownContent>{idea.content}</MarkdownContent>
             </div>
           ) : (
-            <p className="text-sm italic text-[#9A9A9A]">
+            <p className="text-sm italic text-muted-foreground">
               {tCommon("noContent")}
             </p>
           )}
         </div>
       </div>
 
-      <Separator className="my-5 bg-[#F5F2EC]" />
+      <Separator className="my-5 bg-secondary" />
 
       {/* Created By Section */}
       <div>
-        <Label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {tCommon("created")}
         </Label>
         <div className="mt-2 flex items-center gap-2">
           {idea.createdBy && (
-            <span className="text-sm text-[#2C2C2C]">
+            <span className="text-sm text-foreground">
               {idea.createdBy.name}
             </span>
           )}
-          <span className="text-xs text-[#9A9A9A]">
+          <span className="text-xs text-muted-foreground">
             {formatDateTime(idea.createdAt)}
           </span>
         </div>
       </div>
 
       {/* Assign / Reassign Action */}
-      <Separator className="my-5 bg-[#F5F2EC]" />
+      <Separator className="my-5 bg-secondary" />
       <div>
         <Button
-          className="bg-[#C67A52] hover:bg-[#B56A42] text-white w-full"
+          className="bg-primary hover:bg-[#B56A42] text-white w-full"
           onClick={() => setShowAssignModal(true)}
         >
           <UserPlus className="mr-2 h-4 w-4" />

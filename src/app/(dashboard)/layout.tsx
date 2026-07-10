@@ -25,6 +25,7 @@ import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
 import { AuthProvider } from "@/contexts/auth-context";
 import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { NotificationBell } from "@/components/notification-bell";
@@ -453,6 +454,12 @@ export default function DashboardLayout({
           justify-between pins the whole footer to the bottom-left (with two
           children — nav + footer — the pill no longer floats mid-rail). */}
       <div className="mt-auto flex flex-col gap-1 px-4 pb-4">
+        {/* Appearance + language — a quiet paired utility row sitting ABOVE the
+            presence pill. Compact icon-triggers (theme glyph + locale code) so
+            preferences read as low-key, not primary nav. Rendered in both the
+            desktop aside and the mobile Sheet (both render SidebarContent). */}
+        <SidebarPreferences mobile={mobile} />
+
         {/* Agent Presence pill — resident rail affordance (online-agent count +
             click popover). Reads from the shell-level AgentPresenceProvider. */}
         <AgentPresencePill mobile={mobile} />

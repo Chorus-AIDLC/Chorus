@@ -57,19 +57,19 @@ function SessionStatusIndicator({ status }: { status: SessionExecStatus }) {
   if (status === "running") {
     return (
       <span aria-hidden className="relative inline-flex h-2.5 w-2.5 items-center justify-center">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-[#C67A52] opacity-30 motion-safe:animate-ping" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#C67A52]" />
+        <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-30 motion-safe:animate-ping" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
       </span>
     );
   }
   if (status === "interrupted") {
-    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-[#B45309]" />;
+    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-[#B45309] dark:text-[#E0A34E]" />;
   }
   if (status === "error") {
-    return <TriangleAlert aria-hidden className="h-3.5 w-3.5 text-[#DC2626]" />;
+    return <TriangleAlert aria-hidden className="h-3.5 w-3.5 text-[#DC2626] dark:text-[#F08078]" />;
   }
   // Idle: a quiet flat dot (no pulse) so the row still has a leading marker.
-  return <span aria-hidden className="h-2 w-2 rounded-full bg-[#D7D2C9]" />;
+  return <span aria-hidden className="h-2 w-2 rounded-full bg-[#D7D2C9] dark:bg-[#2a2822]" />;
 }
 
 function Row({
@@ -102,14 +102,14 @@ function Row({
       aria-current={selected ? "true" : undefined}
       className={`relative h-auto w-full justify-start gap-0 rounded-none px-0 py-0 text-left transition-colors ${
         selected
-          ? "bg-[#FBF4EF] hover:bg-[#FBF4EF]"
-          : "bg-white hover:bg-[#FAF8F4]"
+          ? "bg-[#FBF4EF] dark:bg-[#221e1b] hover:bg-[#FBF4EF] dark:hover:bg-[#26241f]"
+          : "bg-card hover:bg-background"
       }`}
     >
       {selected && (
         <span
           aria-hidden
-          className="absolute inset-y-0 left-0 w-[3px] bg-[#C67A52]"
+          className="absolute inset-y-0 left-0 w-[3px] bg-primary"
         />
       )}
       <span className="flex w-full items-center gap-3 px-4 py-3.5">
@@ -121,13 +121,13 @@ function Row({
             {row.ideaAnchored && (
               <Badge
                 variant="secondary"
-                className="shrink-0 gap-1 border-0 bg-[#F3ECFB] px-1.5 py-0 text-[10px] font-medium text-[#7C5BC0]"
+                className="shrink-0 gap-1 border-0 bg-[#F3ECFB] dark:bg-[#221a30] px-1.5 py-0 text-[10px] font-medium text-[#7C5BC0] dark:text-[#B79AF0]"
               >
                 <Sparkles className="h-2.5 w-2.5" aria-hidden />
                 {t("badgeIdea")}
               </Badge>
             )}
-            <span className="truncate text-[14px] font-semibold text-[#2C2C2C]">
+            <span className="truncate text-[14px] font-semibold text-foreground">
               {row.title}
             </span>
           </span>
@@ -136,16 +136,16 @@ function Row({
               <span
                 className={`text-[10px] font-semibold uppercase tracking-wide ${
                   row.status === "running"
-                    ? "text-[#C67A52]"
+                    ? "text-primary"
                     : row.status === "error"
-                      ? "text-[#DC2626]"
-                      : "text-[#B45309]"
+                      ? "text-[#DC2626] dark:text-[#F08078]"
+                      : "text-[#B45309] dark:text-[#E0A34E]"
                 }`}
               >
                 {statusLabel}
               </span>
             )}
-            <span className="truncate font-mono text-[10px] text-[#9A9A9A]">
+            <span className="truncate font-mono text-[10px] text-muted-foreground">
               {formatRelative(row.session.lastTurnAt, nowMs)}
             </span>
           </span>
@@ -197,7 +197,7 @@ export function ConversationList({
     <div className="flex h-full flex-col gap-3">
       {/* Agent Select — the primary axis. */}
       <div className="flex flex-col gap-1.5 px-1">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {t("agentSelectLabel")}
         </span>
         <Select
@@ -206,7 +206,7 @@ export function ConversationList({
         >
           <SelectTrigger
             aria-label={t("agentSelectLabel")}
-            className="w-full rounded-lg border-[#E5E0D8] bg-white text-[13px] text-[#2C2C2C]"
+            className="w-full rounded-lg border-border bg-card text-[13px] text-foreground"
           >
             <SelectValue placeholder={t("agentSelectPlaceholder")} />
           </SelectTrigger>
@@ -228,8 +228,8 @@ export function ConversationList({
           aria-current={composing ? "true" : undefined}
           className={`h-9 w-full justify-center gap-1.5 rounded-lg text-[13px] font-medium ${
             composing
-              ? "bg-[#C67A52] text-white hover:bg-[#B56A44]"
-              : "border border-[#E5D2C2] bg-[#FBF4EF] text-[#C67A52] hover:bg-[#F6E9DF]"
+              ? "bg-primary text-white hover:bg-[#B56A44]"
+              : "border border-[#E5D2C2] dark:border-[#33302a] bg-[#FBF4EF] dark:bg-[#221e1b] text-primary hover:bg-[#F6E9DF] dark:hover:bg-[#26241f]"
           }`}
         >
           <MessageCirclePlus className="h-4 w-4" aria-hidden />
@@ -238,22 +238,22 @@ export function ConversationList({
       </div>
 
       {/* Conversation list card. */}
-      <Card className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
         <div className="flex items-center justify-between px-4 py-3.5">
-          <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-[#9A9A9A]">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-muted-foreground">
             {t("listHeader")}
           </span>
-          <span className="font-mono text-[11px] font-medium text-[#9A9A9A]">
+          <span className="font-mono text-[11px] font-medium text-muted-foreground">
             {rows.length}
           </span>
         </div>
-        <div className="h-px w-full bg-[#EFEBE4]" />
+        <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
         {rows.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 p-8 text-center">
-            <p className="text-[13px] font-medium text-[#6B6B6B]">
+            <p className="text-[13px] font-medium text-muted-foreground">
               {t("noSessions.title")}
             </p>
-            <p className="max-w-[220px] text-[12px] leading-relaxed text-[#9A9A9A]">
+            <p className="max-w-[220px] text-[12px] leading-relaxed text-muted-foreground">
               {t("noSessions.body")}
             </p>
           </div>
@@ -268,7 +268,7 @@ export function ConversationList({
                   nowMs={nowMs}
                 />
                 {idx < visibleRows.length - 1 && (
-                  <div className="h-px w-full bg-[#F2EEE7]" />
+                  <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
                 )}
               </div>
             ))}
@@ -278,7 +278,7 @@ export function ConversationList({
                   variant="ghost"
                   size="sm"
                   onClick={onLoadMore}
-                  className="h-8 w-full rounded-lg text-[12px] font-medium text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
+                  className="h-8 w-full rounded-lg text-[12px] font-medium text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
                 >
                   {t("loadMore")}
                 </Button>

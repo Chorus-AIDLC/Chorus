@@ -61,7 +61,7 @@ export function IdentityBlock({
         <Icon className={iconSize} style={{ color: iconColor }} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className={`truncate font-semibold text-[#2C2C2C] ${nameSize}`}>
+        <div className={`truncate font-semibold text-foreground ${nameSize}`}>
           {agentName}
         </div>
         {/* Path-first: the connection's working directory leads as a monospace
@@ -73,13 +73,13 @@ export function IdentityBlock({
           <PathChip cwd={connection.cwd} />
           <Badge
             variant="secondary"
-            className="shrink-0 border-0 bg-[#F0EDE8] px-2 py-0.5 text-[10px] font-medium text-[#6B6B6B]"
+            className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
           >
             {clientTypeLabel(connection.clientType)}
           </Badge>
           <span
             title={hostTitle}
-            className="truncate font-mono text-[11px] text-[#9A9A9A]"
+            className="truncate font-mono text-[11px] text-muted-foreground"
           >
             v{version} · {hostLabel}
           </span>

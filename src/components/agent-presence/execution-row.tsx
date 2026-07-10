@@ -117,7 +117,7 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
           variant="ghost"
           size="sm"
           aria-label={t("interruptAria")}
-          className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#B45309] hover:bg-[#FEF3C7] hover:text-[#92400E]"
+          className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E] hover:bg-[#FEF3C7] dark:hover:bg-[#33270f] hover:text-[#92400E]"
         >
           <OctagonX className="h-3.5 w-3.5" aria-hidden />
           {t("interrupt")}
@@ -216,7 +216,7 @@ export function ResumeButton({ exec }: { exec: ExecutionView }) {
       disabled={pending}
       aria-label={t("resumeAria")}
       onClick={() => void handleResume()}
-      className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#15803D] hover:bg-[#DCFCE7] hover:text-[#166534]"
+      className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#15803D] dark:text-[#4FD07A] hover:bg-[#DCFCE7] dark:hover:bg-[#13291d] hover:text-[#166534]"
     >
       {pending ? (
         <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
@@ -281,18 +281,18 @@ export function ExecutionRow({
   const iconTile = (
     <span
       className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-        running ? "bg-[#C67A5214]" : interrupted ? "bg-[#FEF3C7]" : "bg-[#F0EDE8]"
+        running ? "bg-primary/[0.08]" : interrupted ? "bg-[#FEF3C7] dark:bg-[#33270f]" : "bg-[#F0EDE8] dark:bg-[#1f1e1c]"
       }`}
       aria-hidden
     >
       {running ? (
         // Decorative spin gated behind motion-safe so reduced-motion users see
         // a static icon (same reduced-motion regime as the online pulse dot).
-        <Loader2 className="h-4 w-4 text-[#C67A52] motion-safe:animate-spin" />
+        <Loader2 className="h-4 w-4 text-primary motion-safe:animate-spin" />
       ) : interrupted ? (
-        <PauseCircle className="h-4 w-4 text-[#B45309]" />
+        <PauseCircle className="h-4 w-4 text-[#B45309] dark:text-[#E0A34E]" />
       ) : (
-        <Clock3 className="h-4 w-4 text-[#9A9A9A]" />
+        <Clock3 className="h-4 w-4 text-muted-foreground" />
       )}
     </span>
   );
@@ -304,11 +304,11 @@ export function ExecutionRow({
             small chat glyph leads its title instead. Every other kind keeps its
             resource-type badge. */}
         {isConversation ? (
-          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" aria-hidden />
+          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
         ) : (
           <Badge
             variant="secondary"
-            className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+            className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
           >
             {entityTypeLabel(exec.entityType)}
           </Badge>
@@ -316,15 +316,15 @@ export function ExecutionRow({
         {href ? (
           <Link
             href={href}
-            className={`group inline-flex min-w-0 items-center gap-1.5 ${titleClamp} text-[14px] font-medium text-[#2C2C2C] hover:text-[#C67A52]`}
+            className={`group inline-flex min-w-0 items-center gap-1.5 ${titleClamp} text-[14px] font-medium text-foreground hover:text-primary`}
           >
             <span className={titleClamp}>{title}</span>
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-[#C67A52]" />
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#C8C3BA] group-hover:text-primary" />
           </Link>
         ) : (
           <span
             className={`block ${titleClamp} text-[14px] font-medium ${
-              isConversation ? "text-[#2C2C2C]" : "text-[#9A9A9A]"
+              isConversation ? "text-foreground" : "text-muted-foreground"
             }`}
           >
             {title}
@@ -350,7 +350,7 @@ export function ExecutionRow({
     <>
       {exec.startedAt && (
         <span
-          className="font-mono text-[12px] font-medium tabular-nums text-[#15803D]"
+          className="font-mono text-[12px] font-medium tabular-nums text-[#15803D] dark:text-[#4FD07A]"
           title={t("execElapsedLabel")}
         >
           {formatElapsed(exec.startedAt, nowMs)}
@@ -362,7 +362,7 @@ export function ExecutionRow({
     <>
       <Badge
         variant="secondary"
-        className="shrink-0 gap-1 border-0 bg-[#FEF3C7] px-2 py-0.5 text-[10px] font-medium text-[#B45309]"
+        className="shrink-0 gap-1 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-2 py-0.5 text-[10px] font-medium text-[#B45309] dark:text-[#E0A34E]"
       >
         <PauseCircle className="h-3 w-3" aria-hidden />
         {interruptedByUser ? t("execInterruptedUser") : t("execInterruptedCrash")}
@@ -374,7 +374,7 @@ export function ExecutionRow({
       <ResumeButton exec={exec} />
     </>
   ) : (
-    <span className="text-[11px] font-medium text-[#9A9A9A]">
+    <span className="text-[11px] font-medium text-muted-foreground">
       {t("execWaiting")}
     </span>
   );
@@ -384,7 +384,7 @@ export function ExecutionRow({
   // 12px gap). No shrink-0 on the controls row — they have the full width.
   if (stacked) {
     return (
-      <li className="flex flex-col gap-2 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
+      <li className="flex flex-col gap-2 rounded-xl border border-border bg-card px-3.5 py-3">
         <div className="flex items-start gap-3">
           {iconTile}
           {body}
@@ -397,13 +397,13 @@ export function ExecutionRow({
   // Inline (default): icon + body + trailing controls on one row. running/interrupted
   // wrap the controls in a shrink-0 flex group; queued is a single shrink-0 hint.
   return (
-    <li className="flex items-center gap-3 rounded-xl border border-[#E5E0D8] bg-white px-3.5 py-3">
+    <li className="flex items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-3">
       {iconTile}
       {body}
       {running || interrupted ? (
         <div className="flex shrink-0 items-center gap-2">{controls}</div>
       ) : (
-        <span className="shrink-0 text-[11px] font-medium text-[#9A9A9A]">
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
           {t("execWaiting")}
         </span>
       )}
@@ -426,13 +426,13 @@ export function ExecutionSection({
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 text-[#C67A52]" aria-hidden />
-        <span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B6B]">
+        <Icon className="h-4 w-4 text-primary" aria-hidden />
+        <span className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
           {label}
         </span>
         <Badge
           variant="secondary"
-          className="border-0 bg-[#F0EDE8] px-1.5 py-0 font-mono text-[10px] font-medium text-[#9A8C7E]"
+          className="border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] px-1.5 py-0 font-mono text-[10px] font-medium text-[#9A8C7E]"
         >
           {count}
         </Badge>

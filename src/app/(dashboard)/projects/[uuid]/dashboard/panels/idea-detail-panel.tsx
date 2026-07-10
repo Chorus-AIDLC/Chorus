@@ -594,19 +594,19 @@ export function IdeaDetailPanel({
 
       {/* Panel */}
       <div
-        className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col border-l border-[#E5E0D8] bg-white shadow-xl ${
+        className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col border-l border-border bg-card shadow-xl ${
           hasAnimated ? "" : "animate-in slide-in-from-right duration-300"
         }`}
       >
         {/* Header — a theme reads through the leading TYPE eyebrow (see below),
             not a whole-panel tint, keeping the head calm and uncluttered. */}
-        <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
+        <div className="flex items-center justify-between border-b border-secondary px-6 py-5">
           <div className="flex-1 min-w-0">
             {isLoading ? (
-              <div className="h-5 w-40 animate-pulse rounded bg-[#F5F2EC]" />
+              <div className="h-5 w-40 animate-pulse rounded bg-secondary" />
             ) : idea ? (
               isEditing ? (
-                <h2 className="text-base font-semibold text-[#2C2C2C]">
+                <h2 className="text-base font-semibold text-foreground">
                   {t("ideas.editIdea")}
                 </h2>
               ) : (
@@ -615,12 +615,12 @@ export function IdeaDetailPanel({
                       theme": THEME (accent) vs IDEA (muted), above the title. */}
                   <span
                     className={`text-[11px] font-semibold uppercase tracking-wider ${
-                      isContainer ? "text-[#B26B3D]" : "text-[#B4B2A9]"
+                      isContainer ? "text-primary" : "text-muted-foreground"
                     }`}
                   >
                     {isContainer ? tLineage("typeTheme") : tLineage("typeIdea")}
                   </span>
-                  <h2 className="text-base font-semibold text-[#2C2C2C] truncate">
+                  <h2 className="text-base font-semibold text-foreground truncate">
                     {idea.title}
                   </h2>
                   <div className="mt-1.5 flex items-center gap-2">
@@ -637,7 +637,7 @@ export function IdeaDetailPanel({
                       // Theme rollup: x/y ring reflecting child completion, so the
                       // header shows real progress rather than a stuck "elaborated".
                       <span
-                        className="flex items-center gap-1 text-xs font-medium text-[#B26B3D]"
+                        className="flex items-center gap-1 text-xs font-medium text-primary"
                         title={tLineage("childrenDone", {
                           done: idea.childProgress.done,
                           total: idea.childProgress.total,
@@ -647,14 +647,14 @@ export function IdeaDetailPanel({
                         {idea.childProgress.done}/{idea.childProgress.total}
                       </span>
                     )}
-                    <span className="text-xs text-[#9A9A9A]">
+                    <span className="text-xs text-muted-foreground">
                       {formatDateTime(idea.createdAt)}
                     </span>
                   </div>
                 </>
               )
             ) : (
-              <h2 className="text-base font-semibold text-[#2C2C2C]">
+              <h2 className="text-base font-semibold text-foreground">
                 {tTracker("panel.notFound")}
               </h2>
             )}
@@ -665,52 +665,52 @@ export function IdeaDetailPanel({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 gap-1.5 border-[#E5E0D8] px-2.5"
+                className="h-8 gap-1.5 border-border px-2.5"
                 onClick={() => setShowDeriveDialog(true)}
                 title={tLineage("deriveIdea")}
                 aria-label={tLineage("deriveIdea")}
               >
-                <GitFork className="h-3.5 w-3.5 text-[#C67A52]" />
-                <span className="text-[12px] font-medium text-[#C67A52]">{tLineage("derive")}</span>
+                <GitFork className="h-3.5 w-3.5 text-primary" />
+                <span className="text-[12px] font-medium text-primary">{tLineage("derive")}</span>
               </Button>
             )}
             {idea && !isEditing && (
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 border-[#E5E0D8]"
+                className="h-8 w-8 border-border"
                 onClick={() => setShowMoveDialog(true)}
                 title={t("ideas.actions.move")}
                 aria-label={t("ideas.actions.move")}
               >
-                <ArrowRightLeft className="h-4 w-4 text-[#6B6B6B]" />
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
               </Button>
             )}
             {idea && idea.status !== "elaborated" && !isEditing && (
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 border-[#E5E0D8]"
+                className="h-8 w-8 border-border"
                 onClick={handleStartEdit}
                 title={t("ideas.editIdea")}
               >
-                <Pencil className="h-4 w-4 text-[#6B6B6B]" />
+                <Pencil className="h-4 w-4 text-muted-foreground" />
               </Button>
             )}
             <Button
               variant="outline"
               size="icon"
-              className="h-8 w-8 border-[#E5E0D8]"
+              className="h-8 w-8 border-border"
               onClick={isEditing ? handleCancelEdit : onClose}
             >
-              <X className="h-4 w-4 text-[#6B6B6B]" />
+              <X className="h-4 w-4 text-muted-foreground" />
             </Button>
           </div>
         </div>
 
         {/* Tab Bar */}
         {idea && !isLoading && !isEditing && (
-          <div className="border-b border-[#F5F2EC] px-6">
+          <div className="border-b border-secondary px-6">
             <div className="flex gap-0 -mb-px">
               {visibleTabs.map((tab) => (
                 <button
@@ -718,18 +718,18 @@ export function IdeaDetailPanel({
                   onClick={() => handleTabChange(tab)}
                   className={`relative flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors cursor-pointer ${
                     activeTab === tab
-                      ? "text-[#C67A52] border-b-2 border-[#C67A52]"
-                      : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                      ? "text-primary border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-muted-foreground"
                   }`}
                 >
                   {tTracker(`panel.tabs.${tab}`)}
                   {tab === "tasks" && activeTaskCount > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#E3F2FD] text-[#1976D2] text-[10px] font-semibold leading-none">
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0] text-[10px] font-semibold leading-none">
                       {activeTaskCount}
                     </span>
                   )}
                   {tab === "activity" && commentCount > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#F5F2EC] text-[#6B6B6B] text-[10px] font-semibold leading-none">
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-secondary text-muted-foreground text-[10px] font-semibold leading-none">
                       {commentCount}
                     </span>
                   )}
@@ -744,14 +744,14 @@ export function IdeaDetailPanel({
           <div className="flex min-h-full flex-col px-6 py-5">
             {isLoading ? (
               <div className="flex flex-1 items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-[#C67A52]" />
-                <span className="ml-2 text-sm text-[#9A9A9A]">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <span className="ml-2 text-sm text-muted-foreground">
                   {tTracker("loading")}
                 </span>
               </div>
             ) : error ? (
               <div className="flex flex-1 items-center justify-center py-12">
-                <p className="text-sm text-[#9A9A9A]">{error}</p>
+                <p className="text-sm text-muted-foreground">{error}</p>
               </div>
             ) : idea ? (
               isEditing ? (
@@ -763,20 +763,20 @@ export function IdeaDetailPanel({
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="edit-title" className="text-[13px] font-medium text-[#2C2C2C]">
+                    <Label htmlFor="edit-title" className="text-[13px] font-medium text-foreground">
                       {t("ideas.titleLabel")}
                     </Label>
                     <Input
                       id="edit-title"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
-                      className="border-[#E5E0D8] text-sm focus-visible:ring-[#C67A52]"
+                      className="border-border text-sm focus-visible:ring-primary"
                       autoFocus
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="edit-content" className="text-[13px] font-medium text-[#2C2C2C]">
+                    <Label htmlFor="edit-content" className="text-[13px] font-medium text-foreground">
                       {t("common.content")}
                     </Label>
                     <Textarea
@@ -784,7 +784,7 @@ export function IdeaDetailPanel({
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
                       rows={8}
-                      className="border-[#E5E0D8] text-sm resize-none focus-visible:ring-[#C67A52]"
+                      className="border-border text-sm resize-none focus-visible:ring-primary"
                     />
                   </div>
                 </div>
@@ -797,16 +797,16 @@ export function IdeaDetailPanel({
                       {/* Container toggle — freely reversible. A container idea
                           groups derived children, may elaborate, but cannot
                           create a proposal (its proposal CTAs are hidden). */}
-                      <div className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-[#EFEBE3] bg-[#FAF8F4] px-3.5 py-3">
+                      <div className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-[#EFEBE3] dark:border-[#2a2a2e] bg-background px-3.5 py-3">
                         <div className="min-w-0 space-y-0.5">
                           <Label
                             htmlFor="container-toggle"
-                            className="flex items-center gap-1.5 text-[13px] font-medium text-[#2C2C2C]"
+                            className="flex items-center gap-1.5 text-[13px] font-medium text-foreground"
                           >
-                            <GitFork className="h-3.5 w-3.5 text-[#C67A52]" aria-hidden />
+                            <GitFork className="h-3.5 w-3.5 text-primary" aria-hidden />
                             {tLineage("container")}
                           </Label>
-                          <p className="text-[11px] leading-relaxed text-[#888780]">
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
                             {tLineage("containerDescription")}
                           </p>
                         </div>
@@ -829,13 +829,13 @@ export function IdeaDetailPanel({
                       <div className="mt-5 space-y-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
-                            <GitFork className="h-3.5 w-3.5 text-[#C67A52]" />
-                            <span className="text-[12px] font-semibold text-[#5F5E5A]">{tLineage("title")}</span>
+                            <GitFork className="h-3.5 w-3.5 text-primary" />
+                            <span className="text-[12px] font-semibold text-foreground/80">{tLineage("title")}</span>
                           </div>
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 gap-1 border-[#E5E0D8] px-2 text-[11px] text-[#6B6B6B]"
+                            className="h-7 gap-1 border-border px-2 text-[11px] text-muted-foreground"
                             onClick={() => setShowSetParentDialog(true)}
                           >
                             <Pencil className="h-3 w-3" />
@@ -848,16 +848,16 @@ export function IdeaDetailPanel({
                           <button
                             type="button"
                             onClick={() => onNavigate?.(idea.parent!.uuid)}
-                            className="flex w-full items-center gap-2 rounded-lg bg-[#FAF8F4] px-3 py-2.5 text-left transition-colors hover:bg-[#F5F2EC]"
+                            className="flex w-full items-center gap-2 rounded-lg bg-background px-3 py-2.5 text-left transition-colors hover:bg-secondary"
                           >
-                            <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
-                            <span className="shrink-0 text-[12px] text-[#888780]">{tLineage("derivedFrom")}</span>
+                            <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="shrink-0 text-[12px] text-muted-foreground">{tLineage("derivedFrom")}</span>
                             {/* min-w-0 flex-1 so a long parent title truncates
                                 instead of stretching the breadcrumb past the panel. */}
-                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
+                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground/80">{idea.parent.title}</span>
                           </button>
                         ) : (
-                          <p className="px-1 text-[12px] text-[#A8A498]">{tLineage("noParent")}</p>
+                          <p className="px-1 text-[12px] text-muted-foreground">{tLineage("noParent")}</p>
                         )}
 
                         {/* Derived children list */}
@@ -865,8 +865,8 @@ export function IdeaDetailPanel({
                           <>
                             <div className="flex items-center justify-between px-1 pt-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[12px] font-medium text-[#5F5E5A]">{tLineage("derivedIdeas")}</span>
-                                <span className="text-[11px] text-[#888780]">{idea.children.length}</span>
+                                <span className="text-[12px] font-medium text-foreground/80">{tLineage("derivedIdeas")}</span>
+                                <span className="text-[11px] text-muted-foreground">{idea.children.length}</span>
                               </div>
                               {/* Read-only child-completion rollup with a Linear-style
                                   x/y progress ring. Direct children only. */}
@@ -875,7 +875,7 @@ export function IdeaDetailPanel({
                                 const total = idea.children.length;
                                 return (
                                   <span
-                                    className="flex items-center gap-1.5 text-[12px] text-[#7A7A75]"
+                                    className="flex items-center gap-1.5 text-[12px] text-muted-foreground"
                                     title={tLineage("childrenDone", { done, total })}
                                   >
                                     <ProgressRing done={done} total={total} size={14} stroke={2} />
@@ -884,18 +884,18 @@ export function IdeaDetailPanel({
                                 );
                               })()}
                             </div>
-                            <div className="overflow-hidden rounded-lg border border-[#EFEBE3]">
+                            <div className="overflow-hidden rounded-lg border border-[#EFEBE3] dark:border-[#2a2a2e]">
                               {idea.children.map((child, idx) => (
                                 <div key={child.uuid}>
-                                  {idx > 0 && <div className="h-px bg-[#F0EEEA]" />}
+                                  {idx > 0 && <div className="h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />}
                                   <button
                                     type="button"
                                     onClick={() => onNavigate?.(child.uuid)}
-                                    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[#FAF8F4]"
+                                    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-background"
                                   >
                                     <span className="flex min-w-0 items-center gap-2">
-                                      <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-[#C2BDB2]" />
-                                      <span className="truncate text-[12px] text-[#2C2C2A]">{child.title}</span>
+                                      <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                      <span className="truncate text-[12px] text-foreground">{child.title}</span>
                                     </span>
                                     <Badge className={`shrink-0 border-0 text-[10px] ${derivedStatusColors[child.derivedStatus] || derivedStatusColors.todo}`}>
                                       {tStatus(derivedStatusI18nKeys[child.derivedStatus] || "todo")}
@@ -978,19 +978,19 @@ export function IdeaDetailPanel({
 
         {/* Footer */}
         {idea && !isLoading && (
-          <div className="border-t border-[#F5F2EC] px-6 py-4">
+          <div className="border-t border-secondary px-6 py-4">
             {isEditing ? (
               <div className="flex items-center justify-end gap-3">
                 <Button
                   variant="outline"
-                  className="border-[#E5E0D8]"
+                  className="border-border"
                   onClick={handleCancelEdit}
                   disabled={isSaving}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button
-                  className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                  className="bg-primary hover:bg-[#B56A42] text-white"
                   onClick={handleSaveEdit}
                   disabled={isSaving || !editTitle.trim()}
                 >
@@ -1023,7 +1023,7 @@ export function IdeaDetailPanel({
                       predicate. No manual create-proposal fallback here. */}
                   {canVerify && !verified && (
                     <Button
-                      className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                      className="bg-primary hover:bg-[#B56A42] text-white"
                       onClick={handleVerify}
                       disabled={isVerifying}
                     >
@@ -1041,7 +1041,7 @@ export function IdeaDetailPanel({
                     </Button>
                   )}
                   {verified && (
-                    <span className="text-[11px] text-[#00796B]">
+                    <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">
                       {t("elaboration.verifiedQueuedHint")}
                     </span>
                   )}
@@ -1079,7 +1079,7 @@ export function IdeaDetailPanel({
                   {/* Container hint — replaces the proposal CTAs so the footer
                       is never empty and the "derive instead" affordance reads. */}
                   {isContainer && (
-                    <span className="text-[11px] text-[#888780]">
+                    <span className="text-[11px] text-muted-foreground">
                       {tLineage("containerHint")}
                     </span>
                   )}
@@ -1089,7 +1089,7 @@ export function IdeaDetailPanel({
                     <Button
                       variant="outline"
                       size="icon"
-                      className="shrink-0 h-8 w-8 border-[#E5E0D8] text-[#EF4444] hover:bg-[#FFEBEE] hover:text-[#EF4444] hover:border-[#EF4444]"
+                      className="shrink-0 h-8 w-8 border-border text-[#EF4444] dark:text-[#F0897E] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#EF4444] hover:border-[#EF4444]"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

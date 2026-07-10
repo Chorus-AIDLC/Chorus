@@ -73,7 +73,7 @@ export function TaskActions({ taskUuid, status, currentUserUuid }: TaskActionsPr
         <>
           <Button
             onClick={() => setShowAssignModal(true)}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+            className="bg-primary hover:bg-[#B56A42] text-white"
           >
             <UserPlus className="mr-2 h-4 w-4" />
             {t("common.assign")}
@@ -107,7 +107,7 @@ export function TaskActions({ taskUuid, status, currentUserUuid }: TaskActionsPr
       )}
       <Button
         variant="outline"
-        className="border-[#E5E0D8] text-[#6B6B6B]"
+        className="border-border text-muted-foreground"
         onClick={() => router.back()}
       >
         {t("common.back")}

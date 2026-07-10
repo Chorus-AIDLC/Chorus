@@ -128,10 +128,10 @@ export function SetParentDialog({
         <div className="min-w-0 space-y-3 pt-1">
           {isLoading ? (
             <div className="flex h-40 items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-[#9A9A9A]" />
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <div className="rounded-md border border-[#E5E0D8]">
+            <div className="rounded-md border border-border">
               <Command>
                 <CommandInput placeholder={t("searchPlaceholder")} />
                 {/* CommandList is already the scroll container
@@ -162,14 +162,14 @@ export function SetParentDialog({
                             // and a long title overflows the dialog.
                             "flex min-w-0 items-center justify-between gap-2",
                             isBlocked && "opacity-55",
-                            isCurrent && "bg-[#C67A52]/10",
+                            isCurrent && "bg-primary/10",
                           )}
                         >
-                          <span className="min-w-0 flex-1 truncate text-[13px] text-[#2C2C2A]">
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
                             {idea.title}
                           </span>
                           {isBlocked && (
-                            <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#B0654A]">
+                            <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#B0654A] dark:text-[#EBA890]">
                               <Ban className="h-3 w-3" />
                               {t("cycleBlocked")}
                             </span>
@@ -184,16 +184,16 @@ export function SetParentDialog({
           )}
 
           {/* Cycle-prevention explainer */}
-          <div className="flex items-start gap-2 rounded-md bg-[#FBF0EB] px-3 py-2.5">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#B0654A]" />
-            <p className="text-[12px] leading-relaxed text-[#9A5238]">
+          <div className="flex items-start gap-2 rounded-md bg-[#FBF0EB] dark:bg-[#221e1b] px-3 py-2.5">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#B0654A] dark:text-[#EBA890]" />
+            <p className="text-[12px] leading-relaxed text-[#9A5238] dark:text-[#E9A088]">
               {t("cycleWarning")}
             </p>
           </div>
 
           {/* Truncation notice — the picker shows the first 200 ideas only. */}
           {truncated && (
-            <p className="px-1 text-[12px] text-[#A8A498]" role="status">
+            <p className="px-1 text-[12px] text-muted-foreground" role="status">
               {t("pickerTruncated")}
             </p>
           )}
@@ -210,7 +210,7 @@ export function SetParentDialog({
           {currentParentUuid ? (
             <Button
               variant="outline"
-              className="border-[#E5E0D8]"
+              className="border-border"
               onClick={() => apply(null)}
               disabled={isSaving}
             >
@@ -221,7 +221,7 @@ export function SetParentDialog({
           )}
           <Button
             variant="outline"
-            className="border-[#E5E0D8]"
+            className="border-border"
             onClick={() => onOpenChange(false)}
             disabled={isSaving}
           >

@@ -62,14 +62,14 @@ export function AcceptanceCriteriaEditor({
           {items.map((item, index) => (
             <div
               key={index}
-              className="flex items-start gap-2 rounded-lg border border-[#E5E2DC] bg-[#FAF8F4] p-2.5"
+              className="flex items-start gap-2 rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] bg-background p-2.5"
             >
               <div className="flex-1 min-w-0">
                 <Input
                   value={item.description}
                   onChange={(e) => updateAt(index, { description: e.target.value })}
                   placeholder={t("acceptanceCriteria.criterionPlaceholder")}
-                  className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52] h-8"
+                  className="border-[#E5E2DC] dark:border-[#2a2a2e] text-sm focus-visible:ring-primary h-8"
                   disabled={disabled}
                 />
               </div>
@@ -77,10 +77,10 @@ export function AcceptanceCriteriaEditor({
                 <Switch
                   checked={item.required}
                   onCheckedChange={(checked) => updateAt(index, { required: checked })}
-                  className="data-[state=checked]:bg-[#C67A52]"
+                  className="data-[state=checked]:bg-primary"
                   disabled={disabled}
                 />
-                <span className="text-[10px] font-medium text-[#6B6B6B] min-w-[52px]">
+                <span className="text-[10px] font-medium text-muted-foreground min-w-[52px]">
                   {item.required
                     ? t("acceptanceCriteria.required")
                     : t("acceptanceCriteria.optional")}
@@ -88,7 +88,7 @@ export function AcceptanceCriteriaEditor({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 w-7 p-0 border-[#E5E2DC] text-[#9A9A9A] hover:text-[#D32F2F] hover:border-[#D32F2F] hover:bg-[#FFEBEE]"
+                  className="h-7 w-7 p-0 border-[#E5E2DC] dark:border-[#2a2a2e] text-muted-foreground hover:text-[#D32F2F] hover:border-[#D32F2F] hover:bg-[#FFEBEE] dark:hover:bg-[#331619]"
                   onClick={() => removeAt(index)}
                   disabled={disabled}
                   type="button"
@@ -103,7 +103,7 @@ export function AcceptanceCriteriaEditor({
       <Button
         variant="outline"
         size="sm"
-        className="h-8 gap-1.5 border-[#E5E2DC] text-xs text-[#6B6B6B] hover:text-[#C67A52] hover:border-[#C67A52]"
+        className="h-8 gap-1.5 border-[#E5E2DC] dark:border-[#2a2a2e] text-xs text-muted-foreground hover:text-primary hover:border-primary"
         onClick={append}
         disabled={disabled}
         type="button"

@@ -55,13 +55,13 @@ export function Message({
       <div className="flex items-baseline gap-2">
         <span
           className={`text-[11px] font-semibold uppercase tracking-wide ${
-            isUser ? "text-[#C67A52]" : "text-[#6B6B6B]"
+            isUser ? "text-primary" : "text-muted-foreground"
           }`}
         >
           {roleLabel}
         </span>
         {clock && (
-          <span className="font-mono text-[10px] tabular-nums text-[#9A9A9A]">
+          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
             {clock}
           </span>
         )}
@@ -70,7 +70,7 @@ export function Message({
         // The human side is the literal instruction the user typed — render it
         // verbatim (pre-wrapped) so their exact text, whitespace, and any stray
         // markdown characters are shown as-typed, not reinterpreted.
-        <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[#2C2C2C]">
+        <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground">
           {message.text}
         </p>
       ) : (
@@ -90,7 +90,7 @@ export function Message({
         // horizontal-scroll regions (`block overflow-x-auto max-w-full`,
         // layout preserved), inline code & links wrap anywhere instead of
         // forcing a min-content width, and images cap at the available width.
-        <div className="prose prose-sm w-full min-w-0 max-w-full break-words text-[13px] leading-relaxed text-[#2C2C2C] [&_a]:break-all [&_code]:[overflow-wrap:anywhere] [&_img]:h-auto [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
+        <div className="prose prose-sm w-full min-w-0 max-w-full break-words text-[13px] leading-relaxed text-foreground [&_a]:break-all [&_code]:[overflow-wrap:anywhere] [&_img]:h-auto [&_img]:max-w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
           <MarkdownContent>{message.text}</MarkdownContent>
         </div>
       )}

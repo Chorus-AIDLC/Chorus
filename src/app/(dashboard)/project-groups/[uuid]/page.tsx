@@ -15,7 +15,7 @@ import {
 import { authFetch } from "@/lib/auth-client";
 import { ManageProjectGroupDialog } from "@/components/manage-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
-import { getProjectInitials, getProjectIconColor } from "@/lib/project-colors";
+import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -155,36 +155,36 @@ export default function ProjectGroupDashboardPage() {
     {
       label: t("groupDashboard.statProjects"),
       value: stats.projectCount,
-      valueColor: "text-[#2C2C2C]",
+      valueColor: "text-foreground",
     },
     {
       label: t("groupDashboard.statTotalTasks"),
       value: stats.totalTasks,
-      valueColor: "text-[#C67A52]",
+      valueColor: "text-primary",
     },
     {
       label: t("groupDashboard.statCompletionRate"),
       value: `${stats.completionRate}%`,
-      valueColor: "text-[#5A9E6F]",
+      valueColor: "text-[#5A9E6F] dark:text-[#6FD19A]",
     },
     {
       label: t("groupDashboard.statOpenIdeas"),
       value: stats.openIdeas,
-      valueColor: "text-[#2C2C2C]",
+      valueColor: "text-foreground",
     },
     {
       label: t("groupDashboard.statActiveProposals"),
       value: stats.activeProposals,
-      valueColor: "text-[#C67A52]",
+      valueColor: "text-primary",
     },
   ];
 
   return (
-    <div className="flex h-full flex-col gap-6 bg-[#FAF8F4] p-4 md:p-6 lg:p-8">
+    <div className="flex h-full flex-col gap-6 bg-background p-4 md:p-6 lg:p-8">
       {/* Breadcrumb */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[12px]">
-          <Link href="/projects" className="text-[#C67A52] hover:underline">
+          <Link href="/projects" className="text-primary hover:underline">
             {t("nav.projects")}
           </Link>
           <span className="text-[#9A9A9A]">/</span>
@@ -195,14 +195,14 @@ export default function ProjectGroupDashboardPage() {
       {/* Title Section */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3.5">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#C67A52]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary">
             <Folder className="h-[22px] w-[22px] text-white" />
           </div>
           <div>
-            <h1 className="text-[24px] font-semibold tracking-tight text-[#2C2C2C]">
+            <h1 className="text-[24px] font-semibold tracking-tight text-foreground">
               {group.name}
             </h1>
-            <p className="text-[13px] text-[#6B6B6B]">
+            <p className="text-[13px] text-muted-foreground">
               {t("groupDashboard.subtitle", { count: stats.projectCount })}
             </p>
           </div>
@@ -211,9 +211,9 @@ export default function ProjectGroupDashboardPage() {
           variant="outline"
           size="sm"
           onClick={() => setShowManage(true)}
-          className="gap-2 rounded-lg border-[#E5E2DC] bg-white text-[13px] font-medium text-[#2C2C2C] hover:border-[#C67A52] hover:bg-white"
+          className="gap-2 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] bg-card text-[13px] font-medium text-foreground hover:border-primary hover:bg-card"
         >
-          <Settings className="h-3.5 w-3.5 text-[#6B6B6B]" />
+          <Settings className="h-3.5 w-3.5 text-muted-foreground" />
           {t("projectGroups.manageGroup")}
         </Button>
       </div>
@@ -223,7 +223,7 @@ export default function ProjectGroupDashboardPage() {
         {statCards.map((stat) => (
           <Card
             key={stat.label}
-            className="rounded-2xl border-[#E5E2DC] bg-white !gap-1 p-4 !py-4 shadow-none"
+            className="rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] bg-card !gap-1 p-4 !py-4 shadow-none"
           >
             <p className="text-[12px] font-normal text-[#9A9A9A]">{stat.label}</p>
             <p
@@ -240,13 +240,13 @@ export default function ProjectGroupDashboardPage() {
         {/* Left: Projects in this group */}
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-[14px] font-semibold text-[#2C2C2C]">
+            <h2 className="text-[14px] font-semibold text-foreground">
               {t("groupDashboard.projectsInGroup")}
             </h2>
             <Button
               size="sm"
               onClick={() => setShowCreateProject(true)}
-              className="gap-1.5 rounded-lg bg-[#C67A52] text-[12px] font-medium text-white hover:bg-[#B56A42]"
+              className="gap-1.5 rounded-lg bg-primary text-[12px] font-medium text-white hover:bg-[#B56A42]"
             >
               <Plus className="h-3.5 w-3.5" />
               {t("groupDashboard.newProject")}
@@ -263,16 +263,16 @@ export default function ProjectGroupDashboardPage() {
                     key={project.uuid}
                     href={`/projects/${project.uuid}/dashboard`}
                   >
-                    <div className="flex cursor-pointer items-center justify-between rounded-xl border border-[#E5E2DC] bg-white py-3 px-4 transition-all hover:border-[#C67A52] hover:shadow-sm">
+                    <div className="flex cursor-pointer items-center justify-between rounded-xl border border-[#E5E2DC] dark:border-[#2a2a2e] bg-card py-3 px-4 transition-all hover:border-primary hover:shadow-sm">
                       <div className="flex items-center gap-3">
                         <div
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold"
-                          style={{ backgroundColor: iconColor.bg, color: iconColor.text }}
+                          className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold"
+                          style={projectIconStyle(iconColor)}
                         >
                           {initials}
                         </div>
                         <div>
-                          <p className="text-[13px] font-semibold text-[#2C2C2C]">
+                          <p className="text-[13px] font-semibold text-foreground">
                             {project.name}
                           </p>
                           <p className="text-[11px] text-[#9A9A9A]">
@@ -289,7 +289,7 @@ export default function ProjectGroupDashboardPage() {
                 );
               })
             ) : (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#E5E2DC] bg-[#FAF8F4] px-8 py-12">
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#E5E2DC] dark:border-[#2a2a2e] bg-background px-8 py-12">
                 <Folder className="mb-3 h-8 w-8 text-[#D0CCC4]" />
                 <p className="text-[13px] font-medium text-[#9A9A9A]">
                   {t("groupDashboard.noProjects")}
@@ -304,11 +304,11 @@ export default function ProjectGroupDashboardPage() {
 
         {/* Right: Recent Activity */}
         <div className="flex w-full flex-col gap-4 lg:w-[420px] lg:shrink-0">
-          <h2 className="text-[14px] font-semibold text-[#2C2C2C]">
+          <h2 className="text-[14px] font-semibold text-foreground">
             {t("dashboard.recentActivity")}
           </h2>
 
-          <Card className="flex flex-col overflow-hidden rounded-2xl border-[#E5E2DC] bg-white !gap-0 !py-0 shadow-none">
+          <Card className="flex flex-col overflow-hidden rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] bg-card !gap-0 !py-0 shadow-none">
             {recentActivity.length > 0 ? (
               recentActivity.slice(0, 5).map((activity, i) => {
                 const dotColor =
@@ -318,7 +318,7 @@ export default function ProjectGroupDashboardPage() {
                     key={activity.uuid}
                     className={`flex items-start gap-3 px-4 py-3.5 ${
                       i < Math.min(recentActivity.length, 5) - 1
-                        ? "border-b border-[#E5E2DC]"
+                        ? "border-b border-[#E5E2DC] dark:border-[#2a2a2e]"
                         : ""
                     }`}
                   >
@@ -327,7 +327,7 @@ export default function ProjectGroupDashboardPage() {
                       style={{ backgroundColor: dotColor }}
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="text-[12px] leading-[1.4] text-[#2C2C2C]">
+                      <p className="text-[12px] leading-[1.4] text-foreground">
                         {formatActivityText(activity)}
                       </p>
                       <p className="mt-1 text-[11px] text-[#9A9A9A]">

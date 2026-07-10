@@ -63,8 +63,8 @@ export default function Home() {
   }, [router]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#FAF8F4]">
-      <div className="text-[#737373]">{t("common.loading")}</div>
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="text-muted-foreground">{t("common.loading")}</div>
     </div>
   );
 }

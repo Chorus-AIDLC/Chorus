@@ -109,7 +109,7 @@ export function ReportsList({
     if (!hasApprovedProposal) return null;
     return (
       <div className="flex items-center justify-center py-3">
-        <Loader2 className="h-4 w-4 animate-spin text-[#C67A52]" />
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
       </div>
     );
   }
@@ -120,11 +120,11 @@ export function ReportsList({
     <div className="mt-6 space-y-3">
       {/* Section header — REPORTS · count · subtitle */}
       <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#9A9A9A]">
+        <span className="text-[11px] font-semibold uppercase tracking-[1px] text-muted-foreground">
           {tIdea("reportsList")}
         </span>
-        <span className="text-[11px] text-[#9A9A9A]">{reports.length}</span>
-        <span className="text-[11px] text-[#B4B2A9]">
+        <span className="text-[11px] text-muted-foreground">{reports.length}</span>
+        <span className="text-[11px] text-muted-foreground">
           · {tIdea("reportsAcrossProposals")}
         </span>
       </div>
@@ -135,7 +135,7 @@ export function ReportsList({
           <Button
             key={r.uuid}
             variant="ghost"
-            className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
+            className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-background transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
             onClick={() =>
               onDocClick({
                 title: r.title,
@@ -144,14 +144,14 @@ export function ReportsList({
               })
             }
           >
-            <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+            <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <Badge
               variant="outline"
-              className="shrink-0 text-[10px] font-medium border-[#E5E0D8] text-[#6B6B6B] bg-[#F5F2EC] px-2 py-0.5 font-mono"
+              className="shrink-0 text-[10px] font-medium border-border text-muted-foreground bg-secondary px-2 py-0.5 font-mono"
             >
               {tDocs(DOC_TYPE_I18N_KEYS[r.type] || "typeOther")}
             </Badge>
-            <span className="flex-1 min-w-0 text-left text-[13px] text-[#2C2C2A] truncate">
+            <span className="flex-1 min-w-0 text-left text-[13px] text-foreground truncate">
               {r.title}
             </span>
           </Button>

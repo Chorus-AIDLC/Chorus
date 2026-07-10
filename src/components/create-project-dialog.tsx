@@ -85,12 +85,12 @@ export function CreateProjectDialog({
         className="sm:max-w-[480px] gap-0 p-0 rounded-[16px]"
         showCloseButton={false}
       >
-        <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC]">
+        <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC] dark:border-[#2a2a2e]">
           <div className="flex flex-col gap-1">
-            <DialogTitle className="text-lg font-semibold tracking-[-0.3px] text-[#2C2C2C]">
+            <DialogTitle className="text-lg font-semibold tracking-[-0.3px] text-foreground">
               {t("projectGroups.newProjectTitle")}
             </DialogTitle>
-            <p className="text-xs text-[#9A9A9A]">
+            <p className="text-xs text-muted-foreground">
               {t("projectGroups.creatingIn", { groupName: displayGroupName })}
             </p>
           </div>
@@ -107,14 +107,14 @@ export function CreateProjectDialog({
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Label className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label className="text-[13px] font-medium text-foreground">
               {t("projectGroups.projectTitle")}
             </Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={t("projectGroups.projectTitlePlaceholder")}
-              className="h-10 rounded-lg border-[#E5E2DC]"
+              className="h-10 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e]"
               onKeyDown={(e) => {
                 if (isImeComposing(e)) return;
                 if (e.key === "Enter" && title.trim()) handleSubmit();
@@ -123,30 +123,30 @@ export function CreateProjectDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label className="text-[13px] font-medium text-foreground">
               {t("common.description")}
             </Label>
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("projectGroups.projectDescriptionPlaceholder")}
-              className="min-h-[80px] rounded-lg border-[#E5E2DC]"
+              className="min-h-[80px] rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e]"
             />
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC]">
+        <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC] dark:border-[#2a2a2e]">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="rounded-lg border-[#E5E2DC] text-[13px]"
+            className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleSubmit}
             disabled={isPending || success || !title.trim()}
-            className="rounded-lg bg-[#C67A52] hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
+            className="rounded-lg bg-primary hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
             <AnimatePresence mode="wait">
               {success ? (

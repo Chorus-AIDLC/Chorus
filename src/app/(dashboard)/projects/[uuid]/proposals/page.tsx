@@ -44,18 +44,18 @@ export default async function ProposalsPage({ params }: PageProps) {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("proposals.pageTitle")}</h1>
-          <p className="mt-1 text-[13px] text-[#6B6B6B]">
+          <h1 className="text-2xl font-semibold text-foreground">{t("proposals.pageTitle")}</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
             {t("proposals.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-3">
           {pendingCount > 0 && (
-            <Badge className="bg-[#C67A52] text-white border-transparent px-2.5 py-1 text-xs font-medium">
+            <Badge className="bg-primary text-white border-transparent px-2.5 py-1 text-xs font-medium">
               {pendingCount} {t("proposals.pendingReview")}
             </Badge>
           )}
-          <Button asChild className="bg-[#C67A52] hover:bg-[#B56A42] text-white">
+          <Button asChild className="bg-primary hover:bg-[#B56A42] text-white">
             <Link href={`/projects/${projectUuid}/proposals/new`}>
               <Plus className="mr-2 h-4 w-4" />
               {t("proposals.createProposal")}

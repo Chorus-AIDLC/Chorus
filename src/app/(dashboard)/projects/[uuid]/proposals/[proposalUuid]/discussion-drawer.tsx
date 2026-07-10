@@ -51,7 +51,7 @@ export function DiscussionDrawer({
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5 border-[#E5E0D8] text-[#3D3D3D]"
+            className="gap-1.5 border-border text-foreground"
           >
             <MessageCircle className="h-4 w-4" />
             <span>{t("proposals.discussion")}</span>
@@ -66,12 +66,12 @@ export function DiscussionDrawer({
           side="right"
           className="w-full sm:w-[420px] sm:max-w-[420px] p-0 flex flex-col"
         >
-          <SheetHeader className="border-b border-[#F0EDE8] px-6 py-4">
+          <SheetHeader className="border-b border-[#F0EDE8] dark:border-[#26241f] px-6 py-4">
             <SheetTitle className="flex items-center gap-2 text-base">
               <MessageCircle className="h-[18px] w-[18px]" />
               {t("proposals.discussion")}
               {count > 0 && (
-                <span className="rounded-full bg-[#F0EDE8] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
+                <span className="rounded-full bg-[#F0EDE8] dark:bg-[#1f1e1c] px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   {count}
                 </span>
               )}

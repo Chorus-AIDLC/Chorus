@@ -44,12 +44,12 @@ interface TaskViewToggleProps {
 
 // Status color configuration (same as kanban-board)
 const statusColors: Record<string, string> = {
-  open: "bg-[#FFF3E0] text-[#E65100]",
-  assigned: "bg-[#E3F2FD] text-[#1976D2]",
-  in_progress: "bg-[#E8F5E9] text-[#5A9E6F]",
-  to_verify: "bg-[#F3E5F5] text-[#7B1FA2]",
-  done: "bg-[#E0F2F1] text-[#00796B]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  open: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  assigned: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  in_progress: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  to_verify: "bg-[#F3E5F5] dark:bg-[#281630] text-[#7B1FA2] dark:text-[#C98FE0]",
+  done: "bg-[#E0F2F1] dark:bg-[#12292a] text-[#00796B] dark:text-[#4FD1C0]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
 };
 
 // Status to i18n key mapping
@@ -135,7 +135,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
 
       {/* Toolbar: View Toggle + New Task */}
       <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-1 rounded-lg bg-[#F5F2EC] p-1 w-fit">
+        <div className="flex items-center gap-1 rounded-lg bg-secondary p-1 w-fit">
           {/* List view button - shown on mobile */}
           {isMobile && (
             <Button
@@ -143,8 +143,8 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
               size="sm"
               className={`h-8 gap-1.5 rounded-md px-3 text-xs ${
                 view === "list"
-                  ? "bg-white text-[#2C2C2C] shadow-sm"
-                  : "text-[#6B6B6B] hover:text-[#2C2C2C]"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setView("list")}
             >
@@ -159,8 +159,8 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
               size="sm"
               className={`h-8 gap-1.5 rounded-md px-3 text-xs ${
                 view === "kanban"
-                  ? "bg-white text-[#2C2C2C] shadow-sm"
-                  : "text-[#6B6B6B] hover:text-[#2C2C2C]"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setView("kanban")}
             >
@@ -173,8 +173,8 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
             size="sm"
             className={`h-8 gap-1.5 rounded-md px-3 text-xs ${
               view === "dag"
-                ? "bg-white text-[#2C2C2C] shadow-sm"
-                : "text-[#6B6B6B] hover:text-[#2C2C2C]"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
             }`}
             onClick={() => setView("dag")}
           >
@@ -183,7 +183,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
           </Button>
         </div>
         <Button
-          className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          className="bg-primary hover:bg-[#B56A42] text-white"
           onClick={() => {
             closePanel();
             setShowCreatePanel(true);
@@ -198,7 +198,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
       {view === "list" ? (
         <>
           {/* Status filter tabs */}
-          <div className="mb-4 flex gap-1 overflow-x-auto border-b border-[#E5E0D8] pb-2">
+          <div className="mb-4 flex gap-1 overflow-x-auto border-b border-border pb-2">
             {statusFilters.map((filter) => {
               const count = filter.statuses.length === 0
                 ? proposalFilteredTasks.length
@@ -210,13 +210,13 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
                   size="sm"
                   className={`h-8 shrink-0 rounded-md px-3 text-xs ${
                     activeFilter === filter.id
-                      ? "bg-[#F5F2EC] text-[#2C2C2C] font-medium"
-                      : "text-[#6B6B6B] hover:text-[#2C2C2C]"
+                      ? "bg-secondary text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   onClick={() => setActiveFilter(filter.id)}
                 >
                   {filter.id === "all" ? t(`tasks.${filter.labelKey}`) : t(`status.${filter.labelKey}`)}
-                  <span className="ml-1.5 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#6B6B6B]">
+                  <span className="ml-1.5 rounded-full bg-card px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                     {count}
                   </span>
                 </Button>
@@ -231,7 +231,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
-                className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+                className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-border text-sm text-[#9A9A9A]"
               >
                 {t("tasks.noTasks")}
               </motion.div>
@@ -239,21 +239,21 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
               filteredTasks.map((task) => (
                 <Card
                   key={task.uuid}
-                  className="cursor-pointer border-[#E5E0D8] bg-white p-4 transition-all hover:border-[#C67A52] hover:shadow-sm"
+                  className="cursor-pointer border-border bg-card p-4 transition-all hover:border-primary hover:shadow-sm"
                   onClick={() => openPanel(task.uuid)}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <h4 className="font-medium text-[#2C2C2C] truncate">{task.title}</h4>
+                      <h4 className="font-medium text-foreground truncate">{task.title}</h4>
                       {task.description && (
-                        <p className="mt-1 line-clamp-1 text-sm text-[#6B6B6B]">
+                        <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
                           {task.description}
                         </p>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {task.storyPoints != null && task.storyPoints > 0 && (
-                        <span className="rounded bg-[#FFF3E0] px-2 py-0.5 text-xs font-medium text-[#E65100]">
+                        <span className="rounded bg-[#FFF3E0] dark:bg-[#3a2a12] px-2 py-0.5 text-xs font-medium text-[#E65100] dark:text-[#F0A050]">
                           {task.storyPoints}h
                         </span>
                       )}

@@ -111,11 +111,11 @@ export function TurnBand({
       <div
         aria-hidden
         className={`relative w-[3px] shrink-0 rounded-full ${
-          running || pending ? "bg-[#C67A52]" : "bg-[#EFEBE4]"
+          running || pending ? "bg-primary" : "bg-[#EFEBE4] dark:bg-[#201e1b]"
         }`}
       >
         {running && (
-          <span className="absolute inset-0 rounded-full bg-[#C67A52] opacity-40 motion-safe:animate-pulse" />
+          <span className="absolute inset-0 rounded-full bg-primary opacity-40 motion-safe:animate-pulse" />
         )}
       </div>
 
@@ -124,26 +124,26 @@ export function TurnBand({
             optional entity deep link. */}
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <span className="inline-flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5 text-[#C67A52]" aria-hidden />
-            <span className="text-[12px] font-semibold uppercase tracking-wide text-[#2C2C2C]">
+            <Icon className="h-3.5 w-3.5 text-primary" aria-hidden />
+            <span className="text-[12px] font-semibold uppercase tracking-wide text-foreground">
               {triggerLabel}
             </span>
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-wide text-[#9A9A9A]">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
             {t("turnLabel", { seq: turn.seq })}
           </span>
           <Badge
             variant="secondary"
             className={`gap-1 border-0 px-1.5 py-0 text-[10px] font-medium ${
               running
-                ? "bg-[#FBF0E8] text-[#C67A52]"
+                ? "bg-[#FBF0E8] dark:bg-[#221e1b] text-primary"
                 : pending
-                  ? "bg-[#F0EDE8] text-[#9A8C7E]"
+                  ? "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-[#9A8C7E]"
                   : interrupted
                     ? // Warning-muted: distinct from both the terracotta running tint
                       // and the neutral ended gray — an abnormal stop reads at a glance.
-                      "bg-[#F5EEE3] text-[#A8763E]"
-                    : "bg-[#F0EDE8] text-[#6B6B6B]"
+                      "bg-[#F5EEE3] dark:bg-[#221e19] text-[#A8763E] dark:text-[#E0B070]"
+                    : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
             }`}
             title={interrupted && turn.interruptedReason ? turn.interruptedReason : undefined}
           >
@@ -158,7 +158,7 @@ export function TurnBand({
           {href && (
             <Link
               href={href}
-              className="group inline-flex items-center gap-1 text-[11px] font-medium text-[#C67A52] hover:text-[#B56A44]"
+              className="group inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:text-[#B56A44]"
             >
               {linkLabel}
               <ExternalLink className="h-3 w-3" aria-hidden />
@@ -170,7 +170,7 @@ export function TurnBand({
             as the first thing in the band when present — it's what the human said
             to start this turn. Autonomous triggers carry no promptText. */}
         {turn.promptText && turn.promptText.trim().length > 0 && (
-          <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-[#FCFBF8] px-3 py-2 text-[13px] leading-relaxed text-[#6B6B6B]">
+          <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-[#FCFBF8] dark:bg-[#1e1d1b] px-3 py-2 text-[13px] leading-relaxed text-muted-foreground">
             {turn.promptText}
           </p>
         )}
@@ -191,7 +191,7 @@ export function TurnBand({
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
           ) : (
-            <p className="text-[12px] italic text-[#9A9A9A]">
+            <p className="text-[12px] italic text-muted-foreground">
               {t("turnNoMessages")}
             </p>
           )}

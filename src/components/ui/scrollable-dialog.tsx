@@ -105,7 +105,7 @@ export function ScrollableDialog({
         showCloseButton={showCloseButton}
       >
         {/* Pinned header — never compresses, never scrolls away. */}
-        <DialogHeader className="shrink-0 border-b border-[#E5E0D8] px-6 py-5 text-left">
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 text-left">
           {header}
         </DialogHeader>
 
@@ -119,7 +119,7 @@ export function ScrollableDialog({
         </div>
 
         {/* Pinned footer — stays visible + tappable however tall the body is. */}
-        <DialogFooter className="shrink-0 border-t border-[#E5E0D8] px-6 py-5">
+        <DialogFooter className="shrink-0 border-t border-border px-6 py-5">
           {footer}
         </DialogFooter>
       </DialogContent>

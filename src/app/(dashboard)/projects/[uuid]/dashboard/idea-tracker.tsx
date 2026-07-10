@@ -101,7 +101,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
     <div className="flex h-full flex-col">
       {/* Header: single 3-way view switch + New Idea button */}
       <div className="mb-4 flex items-center justify-between">
-        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#EFEBE3] p-0.5">
+        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#EFEBE3] dark:bg-[#201e1a] p-0.5">
           {viewOptions.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -110,8 +110,8 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
               aria-pressed={view === id}
               className={`flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
                 view === id
-                  ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
-                  : "text-[#888780] hover:text-[#2C2C2A]"
+                  ? "bg-card font-medium text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -128,7 +128,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
           <Button
             onClick={() => setShowNewIdeaDialog(true)}
             size="sm"
-            className="gap-1.5 rounded-md bg-[#C67A52] px-3.5 py-2 text-white hover:bg-[#B56A42]"
+            className="gap-1.5 rounded-md bg-primary px-3.5 py-2 text-white hover:bg-[#B56A42]"
           >
             <Plus className="h-4 w-4" />
             {t("actions.newIdea")}

@@ -26,18 +26,18 @@ export function ActivityCommentsView({
   return (
     <div className="space-y-4">
       {/* Sub-tab toggle */}
-      <div className="flex gap-1 rounded-lg bg-[#F5F2EC] p-0.5">
+      <div className="flex gap-1 rounded-lg bg-secondary p-0.5">
         <button
           onClick={() => setActiveSubTab("comments")}
           className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
             activeSubTab === "comments"
-              ? "bg-white text-[#2C2C2C] shadow-sm"
-              : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+              ? "bg-card text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-muted-foreground"
           }`}
         >
           {t("panel.activityTab.comments")}
           {commentCount > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#F5F2EC] text-[#6B6B6B] text-[10px] font-semibold leading-none">
+            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-secondary text-muted-foreground text-[10px] font-semibold leading-none">
               {commentCount}
             </span>
           )}
@@ -46,8 +46,8 @@ export function ActivityCommentsView({
           onClick={() => setActiveSubTab("activity")}
           className={`flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer ${
             activeSubTab === "activity"
-              ? "bg-white text-[#2C2C2C] shadow-sm"
-              : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+              ? "bg-card text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-muted-foreground"
           }`}
         >
           {t("panel.activityTab.activity")}

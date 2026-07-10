@@ -41,10 +41,10 @@ export function SourceIdeasCard({
 
   return (
     <>
-      <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-        <CardHeader className="border-b border-[#F5F2EC] px-5 py-4">
+      <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+        <CardHeader className="border-b border-secondary px-5 py-4">
           <div className="flex items-center gap-2">
-            <Lightbulb className="h-4 w-4 text-[#C67A52]" />
+            <Lightbulb className="h-4 w-4 text-primary" />
             <CardTitle className="text-[13px] font-semibold text-foreground">
               {t("sourceIdeas")}
             </CardTitle>
@@ -55,10 +55,10 @@ export function SourceIdeasCard({
             <button
               key={idea.uuid}
               onClick={() => setSelectedIdea(idea)}
-              className="flex w-full items-center gap-2 rounded-lg bg-[#F5F2EC] px-3 py-2 text-left transition-colors hover:bg-[#EDE9E3]"
+              className="flex w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-left transition-colors hover:bg-[#EDE9E3] dark:hover:bg-[#2a2a2e]"
             >
-              <Lightbulb className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" />
-              <span className="flex-1 truncate text-xs font-medium text-[#C67A52]">
+              <Lightbulb className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="flex-1 truncate text-xs font-medium text-primary">
                 {idea.title}
               </span>
               <ArrowUpRight className="h-3 w-3 shrink-0 text-[#9A9A9A]" />

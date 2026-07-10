@@ -72,12 +72,12 @@ interface KanbanBoardProps {
 
 // Status color configuration
 const statusColors: Record<string, string> = {
-  open: "bg-[#FFF3E0] text-[#E65100]",
-  assigned: "bg-[#E3F2FD] text-[#1976D2]",
-  in_progress: "bg-[#E8F5E9] text-[#5A9E6F]",
-  to_verify: "bg-[#F3E5F5] text-[#7B1FA2]",
-  done: "bg-[#E0F2F1] text-[#00796B]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  open: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  assigned: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  in_progress: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  to_verify: "bg-[#F3E5F5] dark:bg-[#281630] text-[#7B1FA2] dark:text-[#C98FE0]",
+  done: "bg-[#E0F2F1] dark:bg-[#12292a] text-[#00796B] dark:text-[#4FD1C0]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
 };
 
 // Status to i18n key mapping
@@ -92,10 +92,10 @@ const statusI18nKeys: Record<string, string> = {
 
 // Blocker status badge colors
 const blockerStatusColors: Record<string, string> = {
-  in_progress: "bg-[#FFF3E0] text-[#E65100]",
-  assigned: "bg-[#E8F5E9] text-[#2E7D32]",
-  open: "bg-[#F5F5F5] text-[#6B6B6B]",
-  to_verify: "bg-[#E3F2FD] text-[#1565C0]",
+  in_progress: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  assigned: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#2E7D32] dark:text-[#5FD07E]",
+  open: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
+  to_verify: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1565C0] dark:text-[#5AA9F0]",
 };
 
 // Kanban column configuration
@@ -315,13 +315,13 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
           return (
             <div
               key={column.id}
-              className="flex w-[300px] flex-shrink-0 flex-col rounded-xl bg-[#F5F2EC] p-4"
+              className="flex w-[300px] flex-shrink-0 flex-col rounded-xl bg-secondary p-4"
             >
               {/* Column Header */}
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-medium text-[#2C2C2C]">{t(`status.${column.labelKey}`)}</h3>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
+                  <h3 className="font-medium text-foreground">{t(`status.${column.labelKey}`)}</h3>
+                  <span className="rounded-full bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {columnTasks.length}
                   </span>
                 </div>
@@ -352,12 +352,12 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                     ref={provided.innerRef}
                     {...provided.droppableProps}
                     className={`flex-1 space-y-3 overflow-y-auto min-h-[100px] rounded-lg pt-3 pr-3 transition-colors ${
-                      snapshot.isDraggingOver ? "bg-[#E5E0D8]" : ""
+                      snapshot.isDraggingOver ? "bg-border" : ""
                     }`}
                   >
                     {columnTasks.length === 0 && !snapshot.isDraggingOver ? (
                       <div
-                        className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+                        className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-border text-sm text-[#9A9A9A]"
                       >
                         {t("tasks.noTasks")}
                       </div>
@@ -391,7 +391,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                 transition={ANIM.spring}
                               >
                                 {workerCounts[task.uuid] > 0 && (
-                                  <div className="absolute -top-3 -right-3 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-green-400 bg-white shadow-sm">
+                                  <div className="absolute -top-3 -right-3 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-green-400 bg-card shadow-sm">
                                     <img src="/typing-animation.gif" alt="" className="h-8 w-8" />
                                   </div>
                                 )}
@@ -399,9 +399,9 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                               <Card
                                 className={`cursor-pointer p-4 transition-all ${
                                   blocked
-                                    ? "border-dashed border-[#D1D1D1] opacity-60"
-                                    : "border-[#E5E0D8] hover:border-[#C67A52]"
-                                } bg-white hover:shadow-sm ${
+                                    ? "border-dashed border-[#D1D1D1] dark:border-[#3a3a40] opacity-60"
+                                    : "border-border hover:border-primary"
+                                } bg-card hover:shadow-sm ${
                                   snapshot.isDragging
                                     ? "shadow-lg rotate-2"
                                     : ""
@@ -417,7 +417,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   </Badge>
                                   <div className="flex items-center gap-1.5">
                                     {task.storyPoints && (
-                                    <span className="flex items-center gap-1 rounded bg-[#FFF3E0] px-2 py-0.5 text-xs font-medium text-[#E65100]">
+                                    <span className="flex items-center gap-1 rounded bg-[#FFF3E0] dark:bg-[#3a2a12] px-2 py-0.5 text-xs font-medium text-[#E65100] dark:text-[#F0A050]">
                                       <svg
                                         xmlns="http://www.w3.org/2000/svg"
                                         viewBox="0 0 24 24"
@@ -436,20 +436,20 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                     )}
                                   </div>
                                 </div>
-                                <h4 className="mb-1 font-medium text-[#2C2C2C]">
+                                <h4 className="mb-1 font-medium text-foreground">
                                   {task.title}
                                 </h4>
                                 {task.description && (
-                                  <p className="mb-2 line-clamp-2 text-sm text-[#6B6B6B]">
+                                  <p className="mb-2 line-clamp-2 text-sm text-muted-foreground">
                                     {task.description}
                                   </p>
                                 )}
 
                                 {/* Blocked banner */}
                                 {blocked && (
-                                  <div className="mb-2 flex items-center gap-1.5 rounded-md bg-[#FFF3E0] px-2 py-1">
-                                    <Lock className="h-3 w-3 shrink-0 text-[#E65100]" />
-                                    <span className="text-[9px] font-medium leading-tight text-[#E65100] line-clamp-1">
+                                  <div className="mb-2 flex items-center gap-1.5 rounded-md bg-[#FFF3E0] dark:bg-[#3a2a12] px-2 py-1">
+                                    <Lock className="h-3 w-3 shrink-0 text-[#E65100] dark:text-[#F0A050]" />
+                                    <span className="text-[9px] font-medium leading-tight text-[#E65100] dark:text-[#F0A050] line-clamp-1">
                                       {t("tasks.blockedBy", { tasks: blockerNames })}
                                     </span>
                                   </div>
@@ -491,7 +491,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                       )}
                                     </span>
                                   ) : task.status === "open" ? (
-                                    <span className="text-[#C67A52]">
+                                    <span className="text-primary">
                                       {t("common.assign")}
                                     </span>
                                   ) : (
@@ -499,7 +499,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                   )}
                                   <span className="flex items-center gap-1">
                                     {workerCounts[task.uuid] > 0 && (
-                                      <Badge variant="outline" className="h-4 gap-1 border-green-300 px-1.5 text-[10px] text-green-700">
+                                      <Badge variant="outline" className="h-4 gap-1 border-green-300 dark:border-[#2a4a34] px-1.5 text-[10px] text-green-700 dark:text-[#6FD19A]">
                                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
                                         {t("sessions.workerCount", { count: workerCounts[task.uuid] })}
                                       </Badge>
@@ -509,13 +509,13 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                       const isVerifyCol = task.status === "to_verify";
                                       const allPassed = s.requiredPassed === s.required && s.required > 0;
                                       const hasFailed = s.requiredFailed > 0;
-                                      let badgeClass = "bg-[#F5F2EC] text-[#9A9A9A]";
+                                      let badgeClass = "bg-secondary text-muted-foreground";
                                       if (isVerifyCol) {
                                         badgeClass = allPassed
-                                          ? "bg-green-50 text-green-700"
+                                          ? "bg-green-50 text-green-700 dark:bg-[#14281a] dark:text-[#6FD19A]"
                                           : hasFailed
-                                            ? "bg-red-50 text-[#C4574C]"
-                                            : "bg-amber-50 text-[#D97706]";
+                                            ? "bg-red-50 text-[#C4574C] dark:bg-[#331619] dark:text-[#F0897E]"
+                                            : "bg-amber-50 text-[#D97706] dark:bg-[#332a12] dark:text-[#E0B44E]";
                                       }
                                       return (
                                         <Badge className={`h-4 gap-1 border-0 px-1.5 text-[9px] ${badgeClass}`}>
@@ -561,7 +561,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
       <DialogContent className="max-w-md rounded-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <TriangleAlert className="h-5 w-5 text-[#E65100]" />
+            <TriangleAlert className="h-5 w-5 text-[#E65100] dark:text-[#F0A050]" />
             {t("tasks.dependencyBlocked")}
           </DialogTitle>
           <DialogDescription>
@@ -569,28 +569,28 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-lg bg-[#FAF8F4] p-3">
-          <p className="mb-2 text-xs font-medium text-[#6B6B6B]">
+        <div className="rounded-lg bg-background p-3">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
             {t("tasks.blockerList")}
           </p>
           <div className="space-y-2">
             {forceDialogBlockers.map((blocker) => (
               <div
                 key={blocker.uuid}
-                className="flex items-center justify-between rounded-lg border border-[#E5E0D8] bg-white p-3"
+                className="flex items-center justify-between rounded-lg border border-border bg-card p-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-[#2C2C2C]">
+                  <p className="truncate text-sm font-medium text-foreground">
                     {blocker.title}
                   </p>
                   <div className="mt-1 flex items-center gap-2">
                     {blocker.assignee && (
-                      <span className="text-xs text-[#6B6B6B]">
+                      <span className="text-xs text-muted-foreground">
                         {blocker.assignee.name}
                       </span>
                     )}
                     {blocker.sessionCheckin && (
-                      <span className="flex items-center gap-1 text-xs text-[#6B6B6B]">
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Monitor className="h-3 w-3" />
                         {blocker.sessionCheckin.sessionName}
                       </span>
@@ -598,7 +598,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                   </div>
                 </div>
                 <Badge
-                  className={`shrink-0 ${blockerStatusColors[blocker.status] || "bg-[#F5F5F5] text-[#6B6B6B]"}`}
+                  className={`shrink-0 ${blockerStatusColors[blocker.status] || "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground"}`}
                 >
                   {t(`status.${statusI18nKeys[blocker.status] || blocker.status}`)}
                 </Badge>
@@ -627,10 +627,10 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
       <DialogContent className="max-w-[520px] rounded-2xl p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-4">
           <DialogTitle className="flex items-center gap-2.5">
-            <TriangleAlert className="h-5 w-5 text-[#C4574C]" />
+            <TriangleAlert className="h-5 w-5 text-[#C4574C] dark:text-[#F0897E]" />
             {t("acceptanceCriteria.title")}
           </DialogTitle>
-          <DialogDescription className="text-[13px] leading-relaxed text-[#6B6B6B]">
+          <DialogDescription className="text-[13px] leading-relaxed text-muted-foreground">
             {t("acceptanceCriteria.gateBlocked", { count: gateDialogCriteria.filter(c => c.required && c.status !== "passed").length })}
           </DialogDescription>
         </DialogHeader>
@@ -644,44 +644,44 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
               key={criterion.uuid}
               className={`rounded-lg border p-3 space-y-2 ${
                 criterion.status === "failed"
-                  ? "border-red-200 bg-white"
-                  : "border-[#E5E0D8] bg-white"
+                  ? "border-red-200 dark:border-[#5a2a2e] bg-card"
+                  : "border-border bg-card"
               }`}
             >
               <div className="flex items-center gap-2">
                 <div className={`h-2 w-2 rounded-full shrink-0 ${
                   criterion.status === "failed" ? "bg-[#C4574C]" : "bg-[#F59E0B]"
                 }`} />
-                <span className="text-xs font-semibold text-[#2C2C2C]">{criterion.description}</span>
+                <span className="text-xs font-semibold text-foreground">{criterion.description}</span>
               </div>
               <div className="flex items-center gap-2 pl-4">
                 <Badge className={`text-[10px] border-0 ${
                   criterion.status === "failed"
-                    ? "bg-red-50 text-[#C4574C]"
-                    : "bg-amber-50 text-[#D97706]"
+                    ? "bg-red-50 text-[#C4574C] dark:bg-[#331619] dark:text-[#F0897E]"
+                    : "bg-amber-50 text-[#D97706] dark:bg-[#332a12] dark:text-[#E0B44E]"
                 }`}>
                   {t(`acceptanceCriteria.status.${criterion.status}`)}
                 </Badge>
-                <Badge className="text-[10px] border-0 bg-[#FAF8F4] text-[#9A9A9A]">
+                <Badge className="text-[10px] border-0 bg-background text-muted-foreground">
                   {criterion.required ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
                 </Badge>
                 {!criterion.evidence && (
-                  <span className="text-[10px] italic text-[#9A9A9A]">
+                  <span className="text-[10px] italic text-muted-foreground">
                     {t("acceptanceCriteria.noEvidence")}
                   </span>
                 )}
               </div>
               {criterion.evidence && (
-                <div className="rounded-md bg-red-50 p-2 ml-4">
-                  <span className="text-[10px] font-medium text-[#9A9A9A]">{t("acceptanceCriteria.verifyEvidence")}</span>
-                  <p className="text-[11px] text-[#2C2C2C] mt-0.5">{criterion.evidence}</p>
+                <div className="rounded-md bg-red-50 dark:bg-[#331619] p-2 ml-4">
+                  <span className="text-[10px] font-medium text-muted-foreground">{t("acceptanceCriteria.verifyEvidence")}</span>
+                  <p className="text-[11px] text-foreground mt-0.5">{criterion.evidence}</p>
                 </div>
               )}
             </div>
           ))}
         </div>
 
-        <DialogFooter className="border-t border-[#E5E2DC] px-6 py-4">
+        <DialogFooter className="border-t border-[#E5E2DC] dark:border-[#2a2a2e] px-6 py-4">
           <Button className="rounded-lg bg-[#C4574C] hover:bg-[#A3433A] text-white" onClick={() => setGateDialogOpen(false)}>
             {t("acceptanceCriteria.dismiss")}
           </Button>

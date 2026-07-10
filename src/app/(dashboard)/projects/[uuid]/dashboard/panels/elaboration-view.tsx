@@ -32,7 +32,7 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onRea
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-[#C67A52]" />
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
       </div>
     );
   }
@@ -46,7 +46,7 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onRea
         editable={canReassign}
       />
 
-      <Separator className="my-5 bg-[#F5F2EC]" />
+      <Separator className="my-5 bg-secondary" />
 
       {/* Elaboration Q&A Panel — primary content, right after assignee */}
       {elaboration && elaboration.rounds.length > 0 ? (
@@ -60,14 +60,14 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onRea
       ) : idea.status === "open" ? (
         /* Open idea — prompt to assign */
         <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FFF3E0]">
-            <Bot className="h-5 w-5 text-[#E65100]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FFF3E0] dark:bg-[#3a2a12]">
+            <Bot className="h-5 w-5 text-[#E65100] dark:text-[#F0A050]" />
           </div>
           <div>
-            <p className="text-sm font-medium text-[#2C2C2C]">
+            <p className="text-sm font-medium text-foreground">
               {t("panel.elaborationNotStarted")}
             </p>
-            <p className="mt-1 text-xs text-[#9A9A9A]">
+            <p className="mt-1 text-xs text-muted-foreground">
               {t("panel.elaborationNotStartedDesc")}
             </p>
           </div>
@@ -75,14 +75,14 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onRea
       ) : (
         /* Elaborating but no rounds yet — agent working */
         <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E3F2FD]">
-            <Bot className="h-5 w-5 text-[#1976D2]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E3F2FD] dark:bg-[#13253a]">
+            <Bot className="h-5 w-5 text-[#1976D2] dark:text-[#5AA9F0]" />
           </div>
           <div>
-            <p className="text-sm font-medium text-[#2C2C2C]">
+            <p className="text-sm font-medium text-foreground">
               {t("panel.elaborationWaiting")}
             </p>
-            <p className="mt-1 text-xs text-[#9A9A9A]">
+            <p className="mt-1 text-xs text-muted-foreground">
               {t("panel.elaborationWaitingDesc")}
             </p>
           </div>
@@ -92,13 +92,13 @@ export function ElaborationView({ idea, elaboration, isLoading, onRefresh, onRea
       {/* Content Section */}
       {idea.content && (
         <>
-          <Separator className="my-5 bg-[#F5F2EC]" />
+          <Separator className="my-5 bg-secondary" />
           <div>
-            <Label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+            <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {tCommon("content")}
             </Label>
             <div className="mt-2">
-              <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+              <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                 <MarkdownContent>{idea.content}</MarkdownContent>
               </div>
             </div>

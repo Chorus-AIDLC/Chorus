@@ -175,7 +175,7 @@ function ComposeField({
       onClick={onSend}
       disabled={sendDisabled}
       aria-label={sendLabel}
-      className="h-8 shrink-0 gap-1.5 rounded-lg bg-[#C67A52] px-3.5 text-[13px] font-medium text-white hover:bg-[#B56A44] disabled:bg-[#E5E0D8] disabled:text-[#9A9A9A]"
+      className="h-8 shrink-0 gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-white hover:bg-[#B56A44] disabled:bg-border disabled:text-[#9A9A9A]"
     >
       {pending ? (
         <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
@@ -203,7 +203,7 @@ function ComposeField({
         : exec.status === "interrupted" && exec.interruptedReason === "crash"
           ? (
               <>
-                <span className="text-[11px] font-medium text-[#B45309]">
+                <span className="text-[11px] font-medium text-[#B45309] dark:text-[#E0A34E]">
                   {tc("execCrashExited")}
                 </span>
                 <ResumeButton exec={exec} />
@@ -225,7 +225,7 @@ function ComposeField({
   // Only a hard-disabled reason (no online origin) is shown — it must be visible
   // (not just a tooltip) so the gate is never silent. It renders ABOVE the input.
   const offlineReason = disabled ? (
-    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
+    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E]">
       <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="min-w-0">{disabledReason}</span>
     </span>
@@ -253,7 +253,7 @@ function ComposeField({
           disabled={disabled || pending}
           placeholder={placeholder}
           rows={3}
-          className="min-h-[76px] resize-none rounded-xl border-[#E5E0D8] bg-white pb-12 text-[14px] text-[#2C2C2C] placeholder:text-[#9A9A9A] focus-visible:border-[#C67A52] focus-visible:ring-[#C67A52]/30"
+          className="min-h-[76px] resize-none rounded-xl border-border bg-card pb-12 text-[14px] text-foreground placeholder:text-[#9A9A9A] focus-visible:border-primary focus-visible:ring-primary/30"
         />
         {actionGroup}
       </div>
@@ -386,7 +386,7 @@ export function ConversationReplyBox({
       {canContinueElsewhere &&
         (continueOpen ? (
           <div className="flex flex-col gap-2">
-            <span className="text-[12px] font-medium text-[#6B6B6B]">
+            <span className="text-[12px] font-medium text-muted-foreground">
               {tc("continueOnlineHelp")}
             </span>
             <RepointForm
@@ -402,7 +402,7 @@ export function ConversationReplyBox({
             variant="outline"
             size="sm"
             onClick={() => setContinueOpen(true)}
-            className="h-8 w-fit gap-1.5 rounded-lg border-[#E5D5C6] bg-white text-[12px] font-medium text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#A65F3C]"
+            className="h-8 w-fit gap-1.5 rounded-lg border-[#E5D5C6] dark:border-[#33302a] bg-card text-[12px] font-medium text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-[#A65F3C]"
           >
             <MessageCirclePlus className="h-3.5 w-3.5" aria-hidden />
             {tc("continueOnlineAction")}
@@ -539,9 +539,9 @@ export function RepointForm({
   })();
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#E5E0D8] bg-white p-4">
+    <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-card p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {ta("workingDirectory")}
         </span>
         {/* Live re-point → online instances ONLY (offline is never a target). The server
@@ -555,8 +555,8 @@ export function RepointForm({
       </div>
       {/* Resolved-target confirmation, shown before the re-point fires. */}
       {sendingToLabel && (
-        <div className="flex items-center gap-1.5 text-[11px] text-[#6B6B6B]">
-          <SendHorizonal className="h-3 w-3 shrink-0 text-[#9A9A9A]" aria-hidden />
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <SendHorizonal className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 truncate">{sendingToLabel}</span>
         </div>
       )}
@@ -692,19 +692,19 @@ export function AdHocSendForm({
   })();
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#E5E0D8] bg-white p-4">
+    <div className="flex flex-col gap-3 rounded-xl border border-dashed border-border bg-card p-4">
       {!hideHeader && (
         <div className="flex flex-col gap-1">
-          <span className="text-[13px] font-semibold text-[#2C2C2C]">
+          <span className="text-[13px] font-semibold text-foreground">
             {t("adHocTitle")}
           </span>
-          <span className="text-[12px] leading-relaxed text-[#9A9A9A]">
+          <span className="text-[12px] leading-relaxed text-muted-foreground">
             {ta("liveSendNote")}
           </span>
         </div>
       )}
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {ta("workingDirectory")}
         </span>
         {/* Live send → online instances ONLY (offline is never a send target).
@@ -718,8 +718,8 @@ export function AdHocSendForm({
       </div>
       {/* Resolved-target confirmation, shown before the live send fires. */}
       {sendingToLabel && (
-        <div className="flex items-center gap-1.5 text-[11px] text-[#6B6B6B]">
-          <SendHorizonal className="h-3 w-3 shrink-0 text-[#9A9A9A]" aria-hidden />
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <SendHorizonal className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 truncate">{sendingToLabel}</span>
         </div>
       )}
@@ -835,11 +835,11 @@ export function SendInstructionBox({
     (s.originOnline ? "" : " · " + t("originOfflineTag"));
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
+    <div className="flex flex-col gap-4 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Radio className="h-4 w-4 text-[#C67A52]" aria-hidden />
-          <span className="text-[14px] font-semibold text-[#2C2C2C]">
+          <Radio className="h-4 w-4 text-primary" aria-hidden />
+          <span className="text-[14px] font-semibold text-foreground">
             {t("sendInstruction")}
           </span>
         </div>
@@ -850,20 +850,20 @@ export function SendInstructionBox({
           purely a new-conversation composer. */}
       {agentSessions.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("targetConversation")}
           </span>
           <Select value={target} onValueChange={setTarget}>
             <SelectTrigger
               aria-label={t("targetConversation")}
-              className="w-full rounded-lg border-[#E5E0D8] bg-white text-[13px] text-[#2C2C2C]"
+              className="w-full rounded-lg border-border bg-card text-[13px] text-foreground"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={NEW_CONVERSATION}>
                 <span className="inline-flex items-center gap-2">
-                  <MessageCirclePlus className="h-3.5 w-3.5 text-[#C67A52]" aria-hidden />
+                  <MessageCirclePlus className="h-3.5 w-3.5 text-primary" aria-hidden />
                   {t("newConversation")}
                 </span>
               </SelectItem>
@@ -886,7 +886,7 @@ export function SendInstructionBox({
             layout={layout}
           />
         ) : (
-          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E]">
             <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {t("noOnlineConnection")}
           </span>
@@ -900,8 +900,8 @@ export function SendInstructionBox({
               variant="secondary"
               className={`shrink-0 gap-1 border-0 px-2 py-0.5 text-[10px] font-medium ${
                 selectedSession.originOnline
-                  ? "bg-[#DCFCE7] text-[#15803D]"
-                  : "bg-[#F0EDE8] text-[#9A8C7E]"
+                  ? "bg-[#DCFCE7] dark:bg-[#13291d] text-[#15803D] dark:text-[#4FD07A]"
+                  : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-[#9A8C7E]"
               }`}
             >
               {selectedSession.originOnline

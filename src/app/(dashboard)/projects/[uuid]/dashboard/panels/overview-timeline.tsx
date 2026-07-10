@@ -199,15 +199,15 @@ export function OverviewTimeline({
         return isExpanded ? (
           <div className="mt-2 space-y-1.5">
             {idea.createdBy && (
-              <p className="text-[12px] text-[#6B6B6B]">
+              <p className="text-[12px] text-muted-foreground">
                 {t("panel.timeline.createdBy", { name: idea.createdBy.name })}
               </p>
             )}
-            <p className="text-[12px] text-[#9A9A9A]">
+            <p className="text-[12px] text-muted-foreground">
               {formatRelativeTime(idea.createdAt, tRoot)}
             </p>
             {idea.content && (
-              <p className="text-[12px] text-[#6B6B6B] line-clamp-2">
+              <p className="text-[12px] text-muted-foreground line-clamp-2">
                 {idea.content.slice(0, 120)}
                 {idea.content.length > 120 ? "..." : ""}
               </p>
@@ -218,9 +218,9 @@ export function OverviewTimeline({
       case "elaboration":
         return isExpanded ? (
           <div className="mt-2 space-y-1.5">
-            <p className="text-[12px] text-[#6B6B6B]">{elaborationSummary}</p>
+            <p className="text-[12px] text-muted-foreground">{elaborationSummary}</p>
             {elaboration && elaboration.rounds.length > 0 && (
-              <p className="text-[12px] text-[#9A9A9A]">
+              <p className="text-[12px] text-muted-foreground">
                 {t("panel.timeline.rounds", { count: elaboration.rounds.length })}
               </p>
             )}
@@ -230,17 +230,17 @@ export function OverviewTimeline({
       case "proposal":
         return isExpanded ? (
           <div className="mt-2 space-y-1.5">
-            <p className="text-[12px] text-[#6B6B6B]">{proposalSummary}</p>
+            <p className="text-[12px] text-muted-foreground">{proposalSummary}</p>
             {proposals.length > 0 && (
               <div className="space-y-1">
                 {proposalStats.docCount > 0 && (
-                  <div className="flex items-center gap-1.5 text-[12px] text-[#9A9A9A]">
+                  <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
                     <FileText className="h-3 w-3" />
                     <span>{t("panel.timeline.documents", { count: proposalStats.docCount })}</span>
                   </div>
                 )}
                 {proposalStats.taskDraftCount > 0 && (
-                  <div className="flex items-center gap-1.5 text-[12px] text-[#9A9A9A]">
+                  <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
                     <ListChecks className="h-3 w-3" />
                     <span>{t("panel.timeline.tasks", { count: proposalStats.taskDraftCount })}</span>
                   </div>
@@ -254,12 +254,12 @@ export function OverviewTimeline({
         return isExpanded ? (
           <div className="mt-2 space-y-2">
             {tasks.length === 0 ? (
-              <p className="text-[12px] text-[#9A9A9A]">{t("panel.timeline.noTasks")}</p>
+              <p className="text-[12px] text-muted-foreground">{t("panel.timeline.noTasks")}</p>
             ) : (
               <>
                 {/* Progress bar */}
                 <div className="flex items-center gap-2">
-                  <div className="flex-1 h-1.5 rounded-full bg-[#F0EDE8] overflow-hidden flex">
+                  <div className="flex-1 h-1.5 rounded-full bg-[#F0EDE8] dark:bg-[#1f1e1c] overflow-hidden flex">
                     {taskStats.done > 0 && (
                       <div
                         className="h-full bg-[#00796B]"
@@ -279,7 +279,7 @@ export function OverviewTimeline({
                       />
                     )}
                   </div>
-                  <span className="text-[11px] text-[#9A9A9A] shrink-0">
+                  <span className="text-[11px] text-muted-foreground shrink-0">
                     {t("panel.timeline.tasksComplete", { done: taskStats.done, total: taskStats.total })}
                   </span>
                 </div>
@@ -290,17 +290,17 @@ export function OverviewTimeline({
                     <button
                       key={task.uuid}
                       onClick={() => onSelectTask(task.uuid)}
-                      className="flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#F5F2EC] transition-colors group cursor-pointer"
+                      className="flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-secondary transition-colors group cursor-pointer"
                     >
-                      <ChevronLeft className="h-3 w-3 text-[#D9D9D9] shrink-0 group-hover:text-[#C67A52]" />
+                      <ChevronLeft className="h-3 w-3 text-muted-foreground shrink-0 group-hover:text-primary" />
                       <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDotColor(task.status)}`} />
-                      <span className="flex-1 text-[12px] text-[#2C2C2C] truncate group-hover:text-[#C67A52]">
+                      <span className="flex-1 text-[12px] text-foreground truncate group-hover:text-primary">
                         {task.title}
                       </span>
                     </button>
                   ))}
                   {tasks.length > 5 && (
-                    <p className="text-[11px] text-[#9A9A9A] px-2">
+                    <p className="text-[11px] text-muted-foreground px-2">
                       {t("panel.timeline.moreItems", { count: tasks.length - 5 })}
                     </p>
                   )}
@@ -345,22 +345,22 @@ export function OverviewTimeline({
               {/* Dot */}
               <div className="mt-1">
                 {node.status === "completed" ? (
-                  <div className="h-5 w-5 rounded-full bg-[#E0F2F1] flex items-center justify-center">
-                    <Check className="h-3 w-3 text-[#00796B]" />
+                  <div className="h-5 w-5 rounded-full bg-[#E0F2F1] dark:bg-[#12292a] flex items-center justify-center">
+                    <Check className="h-3 w-3 text-[#00796B] dark:text-[#4FD1C0]" />
                   </div>
                 ) : node.status === "active" ? (
-                  <div className="h-5 w-5 rounded-full bg-[#C67A52] flex items-center justify-center">
+                  <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
                     <Circle className="h-2 w-2 fill-white text-white" />
                   </div>
                 ) : (
-                  <div className="h-5 w-5 rounded-full border-2 border-dashed border-[#D9D9D9] flex items-center justify-center">
-                    <Circle className="h-2 w-2 text-[#D9D9D9]" />
+                  <div className="h-5 w-5 rounded-full border-2 border-dashed border-[#D9D9D9] dark:border-[#3a3a40] flex items-center justify-center">
+                    <Circle className="h-2 w-2 text-muted-foreground" />
                   </div>
                 )}
               </div>
               {/* Vertical line */}
               {!isLast && (
-                <div className="flex-1 w-px bg-[#E5E0D8] mt-1 min-h-[8px]" />
+                <div className="flex-1 w-px bg-border mt-1 min-h-[8px]" />
               )}
             </div>
 
@@ -371,23 +371,23 @@ export function OverviewTimeline({
                 className="flex items-center gap-1.5 w-full text-left group cursor-pointer"
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A] shrink-0" />
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-[#9A9A9A] shrink-0" />
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 )}
                 <span
                   className={`text-[13px] font-medium ${
                     node.status === "active"
-                      ? "text-[#C67A52]"
+                      ? "text-primary"
                       : node.status === "completed"
-                        ? "text-[#2C2C2C]"
-                        : "text-[#9A9A9A]"
+                        ? "text-foreground"
+                        : "text-muted-foreground"
                   }`}
                 >
                   {t(node.labelKey)}
                 </span>
                 {!isExpanded && (
-                  <span className="text-[11px] text-[#9A9A9A] truncate ml-1">
+                  <span className="text-[11px] text-muted-foreground truncate ml-1">
                     {getOneLiner(node)}
                   </span>
                 )}

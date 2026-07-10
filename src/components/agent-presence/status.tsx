@@ -45,7 +45,7 @@ export function StatusBadge({ online }: { online: boolean }) {
   return (
     <Badge
       className={`gap-1.5 rounded-full border-0 px-2.5 py-1 text-[11px] font-semibold tracking-wide ${
-        online ? "bg-[#DCFCE7] text-[#15803D]" : "bg-[#F0EDE8] text-[#6B6B6B]"
+        online ? "bg-[#DCFCE7] dark:bg-[#13291d] text-[#15803D] dark:text-[#4FD07A]" : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
       }`}
     >
       <StatusDot online={online} />

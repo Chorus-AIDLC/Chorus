@@ -130,7 +130,7 @@ export function ProposalFilter({ projectUuid }: ProposalFilterProps) {
             aria-expanded={open}
             className={cn(
               "justify-between gap-1 min-w-[120px] max-w-[200px] md:min-w-[160px] md:max-w-none",
-              hasSelection && "border-[#C67A52] bg-[#FFF8F4]"
+              hasSelection && "border-primary bg-[#FFF8F4] dark:bg-[#2a2016]"
             )}
           >
             <span className="truncate">
@@ -166,7 +166,7 @@ export function ProposalFilter({ projectUuid }: ProposalFilterProps) {
                           className={cn(
                             "flex size-4 shrink-0 items-center justify-center rounded-sm border",
                             isSelected
-                              ? "border-[#C67A52] bg-[#C67A52] text-white"
+                              ? "border-primary bg-primary text-white"
                               : "border-muted-foreground/30"
                           )}
                         >
@@ -197,12 +197,12 @@ export function ProposalFilter({ projectUuid }: ProposalFilterProps) {
                 <Badge
                   key={p.uuid}
                   variant="outline"
-                  className="gap-1 border-[#C67A52] bg-[#FFF8F4] text-[#C67A52]"
+                  className="gap-1 border-primary bg-[#FFF8F4] dark:bg-[#2a2016] text-primary"
                 >
                   {p.title}
                   <button
                     type="button"
-                    className="ml-0.5 rounded-full hover:bg-[#C67A52]/20"
+                    className="ml-0.5 rounded-full hover:bg-primary/20"
                     onClick={() => toggleProposal(p.uuid)}
                   >
                     <X className="size-3" />

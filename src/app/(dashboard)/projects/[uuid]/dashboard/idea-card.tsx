@@ -43,25 +43,27 @@ const badgeHintI18n: Record<string, string> = {
   closed: "closed",
 };
 
-// Badge colors per hint
+// Badge colors per hint. Status hues carry semantic meaning (no design token
+// exists for them), so each keeps its light hex and gains a lighter `dark:`
+// variant for legibility on the dark surface. Greys route to muted-foreground.
 const badgeHintColor: Record<string, string> = {
-  open: "text-[#888780]",              // Gray — not started
-  researching: "text-[#7F77DD]",       // Purple — AI working
-  answer_questions: "text-[#C47A20]",  // Orange — human action
-  planning: "text-[#7F77DD]",          // Purple — AI working
-  review_proposal: "text-[#C47A20]",   // Orange — human action
-  building: "text-[#7F77DD]",          // Purple — AI working
-  verify_work: "text-[#C47A20]",       // Orange — human action
-  done: "text-[#1D9E75]",             // Green — complete
-  closed: "text-[#888780]",           // Gray — closed
+  open: "text-muted-foreground",                          // Gray — not started
+  researching: "text-[#7F77DD] dark:text-[#A99FF0]",      // Purple — AI working
+  answer_questions: "text-[#C47A20] dark:text-[#E0A050]", // Orange — human action
+  planning: "text-[#7F77DD] dark:text-[#A99FF0]",         // Purple — AI working
+  review_proposal: "text-[#C47A20] dark:text-[#E0A050]",  // Orange — human action
+  building: "text-[#7F77DD] dark:text-[#A99FF0]",         // Purple — AI working
+  verify_work: "text-[#C47A20] dark:text-[#E0A050]",      // Orange — human action
+  done: "text-[#1D9E75] dark:text-[#4FD1A0]",             // Green — complete
+  closed: "text-muted-foreground",                        // Gray — closed
 };
 
 export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: IdeaRowProps) {
   const t = useTranslations("ideaTracker");
   const badgeKey = idea.badgeHint ? badgeHintI18n[idea.badgeHint] : null;
   const badgeColor = idea.badgeHint
-    ? badgeHintColor[idea.badgeHint] || "text-[#888780]"
-    : "text-[#888780]";
+    ? badgeHintColor[idea.badgeHint] || "text-muted-foreground"
+    : "text-muted-foreground";
   const childCount = idea.childCount ?? 0;
 
   // A "theme" reuses the leading type-eyebrow slot instead of a trailing badge:
@@ -72,7 +74,7 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
   return (
     <div
       className={`flex items-center justify-between px-3.5 py-3 transition-colors ${
-        onClick ? "cursor-pointer hover:bg-[#FAF8F4]" : ""
+        onClick ? "cursor-pointer hover:bg-background" : ""
       }`}
       onClick={onClick ? () => onClick(idea.uuid) : undefined}
       style={depth > 0 ? { paddingLeft: `${14 + depth * 22}px` } : undefined}
@@ -81,20 +83,20 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
       <div className="flex min-w-0 items-center gap-2.5">
         {showConnector && (
           // ↳ derivation connector — NOT a folder metaphor (weak lineage).
-          <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-[#C2BDB2]" aria-hidden />
+          <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
         )}
         <span
           className={`shrink-0 text-[11px] font-semibold tracking-wide ${
-            isTheme ? "text-[#B26B3D]" : "font-normal tracking-normal text-[#B4B2A9]"
+            isTheme ? "text-primary" : "font-normal tracking-normal text-muted-foreground"
           }`}
         >
           {isTheme ? t("lineage.typeTheme") : t("lineage.typeIdea")}
         </span>
-        <span className={`truncate text-[13px] text-[#2C2C2A] ${isTheme ? "font-medium" : ""}`}>
+        <span className={`truncate text-[13px] text-foreground ${isTheme ? "font-medium" : ""}`}>
           {idea.title}
         </span>
         {badgeKey && (
-          <span className={`shrink-0 rounded bg-[#F0EEEA] px-1.5 py-0.5 text-[11px] ${badgeColor}`}>
+          <span className={`shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[11px] ${badgeColor}`}>
             {t(`badge.${badgeKey}`)}
           </span>
         )}
@@ -103,7 +105,7 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
           // child completion — replaces the flat "+N derived" chip so the theme's
           // real progress is legible (not stuck at "elaborated").
           <span
-            className="flex shrink-0 items-center gap-1 rounded bg-[#F3E7DD] px-1.5 py-0.5 text-[11px] font-medium text-[#B26B3D]"
+            className="flex shrink-0 items-center gap-1 rounded bg-primary/[0.12] px-1.5 py-0.5 text-[11px] font-medium text-primary"
             title={t("lineage.childrenDone", {
               done: idea.childProgress.done,
               total: idea.childProgress.total,
@@ -114,7 +116,7 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
           </span>
         ) : childCount > 0 ? (
           // Non-theme parent (weak lineage): plain "+N derived" rollup chip.
-          <span className="flex shrink-0 items-center gap-1 rounded bg-[#F3E7DD] px-1.5 py-0.5 text-[11px] font-medium text-[#B26B3D]">
+          <span className="flex shrink-0 items-center gap-1 rounded bg-primary/[0.12] px-1.5 py-0.5 text-[11px] font-medium text-primary">
             <GitFork className="h-2.5 w-2.5" aria-hidden />
             {t("lineage.derivedCount", { count: childCount })}
           </span>
@@ -122,7 +124,7 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
       </div>
 
       {/* Right: Date */}
-      <span className="shrink-0 pl-4 text-[12px] text-[#888780]">
+      <span className="shrink-0 pl-4 text-[12px] text-muted-foreground">
         {formatShortDate(idea.createdAt)}
       </span>
     </div>

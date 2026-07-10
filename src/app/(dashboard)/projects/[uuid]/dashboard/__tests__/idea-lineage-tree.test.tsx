@@ -57,16 +57,17 @@ const TWO_TREES: IdeaCardItem[] = [
 ];
 
 describe("IdeaLineageTree grouping", () => {
-  it("renders one white block per top-level tree (gaps reveal the page bg)", () => {
+  it("renders one card block per top-level tree (gaps reveal the page bg)", () => {
     const { container, getAllByTestId } = render(<IdeaLineageTree ideas={TWO_TREES} />);
 
-    // Two top-level trees → exactly two white-block groups.
+    // Two top-level trees → exactly two card-block groups.
     const groups = container.querySelectorAll('[data-testid="lineage-tree-group"]');
     expect(groups.length).toBe(2);
-    // Each group is a white rounded block; the outer wrapper uses space-y so the
-    // page background shows through the gaps (no single white container).
+    // Each group is a card rounded block (bg-card = white in light, dark surface
+    // in dark); the outer wrapper uses space-y so the page background shows
+    // through the gaps (no single container).
     groups.forEach((g) => {
-      expect(g.className).toContain("bg-white");
+      expect(g.className).toContain("bg-card");
       expect(g.className).toContain("rounded-lg");
     });
     expect((groups[0].parentElement as HTMLElement).className).toContain("space-y-2.5");
