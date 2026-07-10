@@ -50,9 +50,9 @@ export function IdeaStatusGroup({
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-2 px-0 pb-1.5 pt-0">
         {isOpen ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#888780] transition-colors group-hover:text-[#2C2C2A]" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#888780] transition-colors group-hover:text-[#2C2C2A]" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
         )}
         {/* Status dot */}
         <span
@@ -62,21 +62,21 @@ export function IdeaStatusGroup({
             border: dotStyle.stroke ? `1.5px solid ${dotStyle.stroke}` : undefined,
           }}
         />
-        <span className={`text-[13px] font-medium transition-colors group-hover:text-[#2C2C2A] ${hasIdeas ? "text-[#5F5E5A]" : "text-[#B4B2A9]"}`}>
+        <span className={`text-[13px] font-medium transition-colors group-hover:text-foreground ${hasIdeas ? "text-foreground/80" : "text-muted-foreground/60"}`}>
           {t(`status.${statusKey}`)}
         </span>
-        <span className="text-[12px] text-[#888780] transition-colors group-hover:text-[#2C2C2A]">
+        <span className="text-[12px] text-muted-foreground transition-colors group-hover:text-foreground">
           {ideas.length}
         </span>
       </CollapsibleTrigger>
 
       {hasIdeas && (
         <CollapsibleContent>
-          <div className="overflow-hidden rounded-lg bg-white">
+          <div className="overflow-hidden rounded-lg bg-card">
             {ideas.map((idea, idx) => (
               <div key={idea.uuid}>
                 {idx > 0 && (
-                  <div className="mx-0 h-px bg-[#F0EEEA]" />
+                  <div className="mx-0 h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />
                 )}
                 <PresenceIndicator entityType="idea" entityUuid={idea.uuid} badgeInside>
                   <IdeaCard idea={idea} onClick={onIdeaClick} />

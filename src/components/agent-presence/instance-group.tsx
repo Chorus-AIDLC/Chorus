@@ -276,7 +276,7 @@ export function useInstanceActivity(
         dot: (
           <span
             aria-hidden
-            className="inline-flex h-2.5 w-2.5 rounded-full bg-[#C67A52]"
+            className="inline-flex h-2.5 w-2.5 rounded-full bg-primary"
           />
         ),
       };
@@ -322,12 +322,12 @@ export function PathChip({
   return (
     <span
       title={title}
-      className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-[#F0EDE8] px-2 py-1"
+      className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-[#F0EDE8] dark:bg-[#1f1e1c] px-2 py-1"
     >
       <Icon className="h-3.5 w-3.5 shrink-0 text-[#9A8E7E]" aria-hidden />
       <span
         className={`min-w-0 truncate font-mono text-[12px] font-semibold ${
-          formatted.isUnknown ? "text-[#9A9A9A]" : "text-[#3A3631]"
+          formatted.isUnknown ? "text-muted-foreground" : "text-[#3A3631]"
         }`}
       >
         {label}
@@ -346,7 +346,7 @@ function HostSuffix({ host }: { host: string }) {
   return (
     <span
       title={title}
-      className="inline-flex min-w-0 max-w-[140px] shrink items-center gap-1 truncate font-mono text-[11px] text-[#9A9A9A]"
+      className="inline-flex min-w-0 max-w-[140px] shrink items-center gap-1 truncate font-mono text-[11px] text-muted-foreground"
     >
       <Monitor className="h-3 w-3 shrink-0" aria-hidden />
       <span className="truncate">{label}</span>
@@ -392,7 +392,7 @@ export function InstanceRow({
               </span>
             )}
             {activity && (
-              <span className="min-w-0 truncate text-[11px] text-[#9A9A9A]">
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
                 {activity}
               </span>
             )}
@@ -473,15 +473,15 @@ export function AgentGroupHeader({
         />
       </div>
       <div className="min-w-0 flex-1 text-left">
-        <div className="truncate text-[14px] font-semibold text-[#2C2C2C]">
+        <div className="truncate text-[14px] font-semibold text-foreground">
           {agentName}
         </div>
-        <div className="mt-0.5 truncate text-[12px] text-[#9A9A9A]">
+        <div className="mt-0.5 truncate text-[12px] text-muted-foreground">
           {subline}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <span className="text-[12px] text-[#9A9A9A]">
+        <span className="text-[12px] text-muted-foreground">
           {td("instancesCount", { count: group.connections.length })}
         </span>
         <StatusDot online={anyOnline} size="md" />
@@ -504,7 +504,7 @@ export function AgentGroupHeader({
           ? td("collapseAgent", { agent: agentName })
           : td("expandAgent", { agent: agentName })
       }
-      className="flex h-auto w-full items-center justify-start gap-2.5 rounded-lg px-1.5 py-1 hover:bg-[#FBF4EF]"
+      className="flex h-auto w-full items-center justify-start gap-2.5 rounded-lg px-1.5 py-1 hover:bg-[#FBF4EF] dark:hover:bg-[#26241f]"
     >
       {inner}
     </Button>

@@ -55,6 +55,12 @@
     "system": "系统",
     "confirmDelete": "确定要删除吗？"
   },
+  "theme": {
+    "toggleLabel": "主题",
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
   "activity": {
     "taskCreated": "{actor} 创建了此任务",
     "taskAssigned": "{actor} 被分配到此任务",

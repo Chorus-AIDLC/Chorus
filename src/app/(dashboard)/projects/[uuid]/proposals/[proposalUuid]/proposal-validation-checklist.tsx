@@ -69,10 +69,10 @@ export function ProposalValidationChecklist({ projectUuid, proposalUuid, status 
 
   if (loading) {
     return (
-      <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0">
+      <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0">
         <div className="flex items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-2.5">
-            <ClipboardCheck className="h-4 w-4 text-[#C67A52]" />
+            <ClipboardCheck className="h-4 w-4 text-primary" />
             <span className="text-[13px] font-semibold text-foreground">{t("title")}</span>
           </div>
           <Skeleton className="h-5 w-20" />
@@ -86,7 +86,7 @@ export function ProposalValidationChecklist({ projectUuid, proposalUuid, status 
       <Card className="border-red-200 shadow-none rounded-2xl gap-0 py-0">
         <div className="flex items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-2.5">
-            <ClipboardCheck className="h-4 w-4 text-[#C67A52]" />
+            <ClipboardCheck className="h-4 w-4 text-primary" />
             <span className="text-[13px] font-semibold text-foreground">{t("title")}</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-red-600">
@@ -118,10 +118,10 @@ export function ProposalValidationChecklist({ projectUuid, proposalUuid, status 
     <button
       type="button"
       onClick={() => setExpanded(!expanded)}
-      className="flex w-full items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[#FAF8F4] transition-colors rounded-2xl"
+      className="flex w-full items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-background transition-colors rounded-2xl"
     >
       <div className="flex items-center gap-2.5">
-        <ClipboardCheck className="h-4 w-4 text-[#C67A52]" />
+        <ClipboardCheck className="h-4 w-4 text-primary" />
         <span className="text-[13px] font-semibold text-foreground">{t("title")}</span>
       </div>
       <div className="flex items-center gap-2.5">
@@ -156,7 +156,7 @@ export function ProposalValidationChecklist({ projectUuid, proposalUuid, status 
   );
 
   return (
-    <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+    <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
       {header}
       {expanded && (
         <CardContent className="px-4 pb-4 pt-0">

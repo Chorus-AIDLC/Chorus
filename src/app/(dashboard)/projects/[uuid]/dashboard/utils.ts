@@ -70,10 +70,10 @@ export function formatRelativeTime(dateString: string, t: TranslateFn): string {
 
 /** Badge colors keyed by derived status */
 export const DERIVED_STATUS_COLORS: Record<string, string> = {
-  todo: "bg-[#FFF3E0] text-[#E65100]",
-  in_progress: "bg-[#E3F2FD] text-[#1976D2]",
-  human_conduct_required: "bg-[#F3E5F5] text-[#7B1FA2]",
-  done: "bg-[#E0F2F1] text-[#00796B]",
+  todo: "bg-[#FFF3E0] text-[#E65100] dark:bg-[#3a2a12] dark:text-[#F0A050]",
+  in_progress: "bg-[#E3F2FD] text-[#1976D2] dark:bg-[#13253a] dark:text-[#5AA9F0]",
+  human_conduct_required: "bg-[#F3E5F5] text-[#7B1FA2] dark:bg-[#281630] dark:text-[#C98FE0]",
+  done: "bg-[#E0F2F1] text-[#00796B] dark:bg-[#12292a] dark:text-[#4FD1C0]",
 };
 
 /** i18n key mapping for derived status labels (under "ideaTracker.status" namespace) */

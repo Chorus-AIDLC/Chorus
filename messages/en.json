@@ -55,6 +55,12 @@
     "system": "System",
     "confirmDelete": "Are you sure you want to delete?"
   },
+  "theme": {
+    "toggleLabel": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
   "activity": {
     "taskCreated": "{actor} created this task",
     "taskAssigned": "{actor} was assigned to this task",

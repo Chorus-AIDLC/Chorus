@@ -136,12 +136,12 @@ function PathChip({
     <span
       title={title}
       className={cn(
-        "inline-flex min-w-0 items-center gap-1.5 rounded-md border border-[#E5E0D8] bg-[#FAF8F4] px-2 py-0.5",
+        "inline-flex min-w-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5",
         "font-mono text-xs",
-        formatted.isUnknown ? "text-[#9A9A9A] italic" : "text-[#2C2C2C]",
+        formatted.isUnknown ? "text-muted-foreground italic" : "text-foreground",
       )}
     >
-      <Folder className="size-3 shrink-0 text-[#9A9A9A]" aria-hidden />
+      <Folder className="size-3 shrink-0 text-muted-foreground" aria-hidden />
       <span className="truncate">{label}</span>
     </span>
   );
@@ -166,7 +166,7 @@ function HostSuffix({
   return (
     <span
       title={title}
-      className="shrink-0 truncate font-mono text-[10px] text-[#9A9A9A]"
+      className="shrink-0 truncate font-mono text-[10px] text-muted-foreground"
     >
       {label}
     </span>
@@ -210,7 +210,7 @@ export function InstancePicker({
 
   if (instances.length === 0) {
     return (
-      <div className={cn("py-2 text-xs text-[#9A9A9A]", className)}>
+      <div className={cn("py-2 text-xs text-muted-foreground", className)}>
         {t("noInstances")}
       </div>
     );
@@ -247,8 +247,8 @@ export function InstancePicker({
             onClick={() => onSelect(instance)}
             className={cn(
               "flex items-center gap-2.5 rounded-md border px-2.5 py-2 transition-colors",
-              "cursor-pointer border-[#E5E0D8] hover:bg-[#FAF8F4]",
-              selected && "border-[#C67A52] bg-[#FAF8F4]",
+              "cursor-pointer border-border hover:bg-background",
+              selected && "border-primary bg-background",
             )}
           >
             {/* Status dot — pinned to the row edge, never shrinks. Always online

@@ -94,7 +94,7 @@ export function StartDevelopmentButton({
   // visible-but-disabled with a hint, matching the optimistic-display contract.
   if (!preconditionsMet || started) {
     return started ? (
-      <span className="text-[11px] text-[#00796B]">{t("startedHint")}</span>
+      <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">{t("startedHint")}</span>
     ) : null;
   }
 
@@ -115,7 +115,7 @@ export function StartDevelopmentButton({
   return (
     <>
       <Button
-        className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+        className="bg-primary hover:bg-[#B56A42] text-white"
         onClick={handleClick}
         disabled={!enabled || isStarting}
       >
@@ -132,7 +132,7 @@ export function StartDevelopmentButton({
         )}
       </Button>
       {!agentOnline && (
-        <span className="text-[11px] text-[#9A9A9A]">{t("offlineHint")}</span>
+        <span className="text-[11px] text-muted-foreground">{t("offlineHint")}</span>
       )}
     </>
   );

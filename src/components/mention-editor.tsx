@@ -291,7 +291,7 @@ export function createSuggestionPopupRenderer(
 
   if (items.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "py-2 px-3 text-xs text-[#9A9A9A]";
+    empty.className = "py-2 px-3 text-xs text-muted-foreground";
     empty.textContent = "No results";
     container.appendChild(empty);
     return;
@@ -323,8 +323,8 @@ export function createSuggestionPopupRenderer(
       btn.type = "button";
       btn.className = `flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors ${
         index === selectedIdx
-          ? "bg-[#FAF8F4] text-[#2C2C2C]"
-          : "text-[#6B6B6B] hover:bg-[#FAF8F4]"
+          ? "bg-background text-foreground"
+          : "text-muted-foreground hover:bg-background"
       }`;
       btn.onclick = () => doCommand(item);
 
@@ -337,8 +337,8 @@ export function createSuggestionPopupRenderer(
       const avatar = document.createElement("div");
       avatar.className = `flex h-6 w-6 items-center justify-center rounded-full ${
         item.type === "agent"
-          ? "bg-[#C67A52] text-white"
-          : "bg-[#E5E0D8] text-[#6B6B6B]"
+          ? "bg-primary text-white"
+          : "bg-border text-muted-foreground"
       }`;
       avatar.innerHTML =
         item.type === "agent"
@@ -368,7 +368,7 @@ export function createSuggestionPopupRenderer(
 
       if (item.email) {
         const emailEl = document.createElement("div");
-        emailEl.className = "truncate text-[10px] text-[#9A9A9A]";
+        emailEl.className = "truncate text-[10px] text-muted-foreground";
         emailEl.textContent = item.email;
         info.appendChild(emailEl);
       }
@@ -383,10 +383,10 @@ export function createSuggestionPopupRenderer(
         const statusEl = document.createElement("div");
         if (count > 0) {
           statusEl.className =
-            "mt-0.5 truncate text-[10px] font-medium text-[#15803D]";
+            "mt-0.5 truncate text-[10px] font-medium text-[#15803D] dark:text-[#4FD07A]";
           statusEl.textContent = `▶ ${labels.activeCount(count)}`;
         } else {
-          statusEl.className = "mt-0.5 truncate text-[10px] text-[#9A9A9A]";
+          statusEl.className = "mt-0.5 truncate text-[10px] text-muted-foreground";
           statusEl.textContent = labels.idle;
         }
         info.appendChild(statusEl);
@@ -756,7 +756,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                 onStart: (props: any) => {
                   const popup = document.createElement("div");
                   popup.className =
-                    "z-[100] rounded-md border border-[#E5E0D8] bg-white shadow-md min-w-[200px] max-w-[300px] overflow-hidden";
+                    "z-[100] rounded-md border border-border bg-card shadow-md min-w-[200px] max-w-[300px] overflow-hidden";
                   popupRef.current = popup;
                   currentCommandRef.current = props.command;
 

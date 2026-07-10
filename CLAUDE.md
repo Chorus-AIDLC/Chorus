@@ -179,6 +179,20 @@ Rules:
 - Follow existing component usage patterns in the codebase for consistency
 - **IME composition guard for Enter handlers**: Any `onKeyDown` (or framework-equivalent like Tiptap's `editorProps.handleKeyDown`) that treats `Enter` as a submit / navigate / advance action MUST first call `isImeComposing(e)` from `@/lib/ime` and early-return if true. This prevents CJK / Japanese / Korean IME users from losing in-progress text when pressing Enter to confirm a candidate word. Do NOT inline `e.nativeEvent.isComposing` checks — route through the helper for consistency and testability.
 
+## Dark / Light Theme Rules
+
+**CRITICAL: The app ships TWO themes — light and dark (next-themes toggles a `.dark` class on `<html>`; default = `system`). Every UI change MUST look correct in BOTH.** A change verified only in one theme is not done.
+
+- **Default to semantic Tailwind tokens, never hardcoded hex.** Use `bg-background`, `bg-card`, `text-foreground`, `text-muted-foreground`, `border-border`, `bg-primary`, `bg-secondary`, `bg-muted`, etc. These are defined for both themes in `src/app/globals.css` (`:root` + `.dark`), so they adapt for free. Do NOT write `bg-[#FFFFFF]` / `text-[#2C2C2C]` / `border-[#E5E0D8]` — the top hardcoded hexes ARE the design-system palette and have exact token equivalents (`#FAF8F4`→`background`, `#FFFFFF`→`card`, `#C67A52`→`primary`, `#6B6B6B`→`muted-foreground`, `#E5E0D8`→`border`, `#F5F2EC`→`secondary`, `#2C2C2C`→`foreground`).
+- **For semantic status colors (green/red/yellow/blue/purple pills, warm surface tints) that have no token, keep the light hex/class and ADD a hue-matched `dark:` variant** — e.g. `bg-green-50 text-green-700 dark:bg-[#14281a] dark:text-[#6FD19A]`. A fixed-light palette class (`bg-green-50`, `text-red-700`) with no `dark:` variant renders pale-on-dark and is a bug.
+- **Cover ALL prefixed utilities, not just bare `bg-`.** When de-hardcoding for dark, match `(hover:|focus:|active:|group-hover:)?(bg|text|border|ring|from|to|via)-[#…]` — `border-[#…]`, `hover:bg-[#…]`, `ring-[#…]`, and compound prose classes like `[&_p]:text-[#…]` are the usual blind spots.
+- **`dark:` classes CANNOT reach three places — handle each explicitly:**
+  1. **Inline `style={{color/background}}`** (data-driven colors, hash-computed avatar/project-icon hues): expose light+dark as CSS custom properties and swap with a scoped `.dark .foo` rule in globals.css (see `.project-icon`, `.progress-pct`, `.graph-swatch`).
+  2. **`<canvas>` painters** (e.g. the project graph `mindmap-canvas.tsx`): Canvas 2D can't read CSS tokens. Resolve a palette from `document.documentElement.classList.contains("dark")` at paint time + a `MutationObserver` on `<html>` class to repaint on flip. Use the shared `useDarkClass()` hook from `@/hooks/use-dark-class` for React-side reads.
+  3. **Third-party unlayered CSS** (e.g. `@xyflow/react`): Tailwind v4 puts utilities in a cascade `@layer`, so an unlayered vendor stylesheet always wins over your `className` overrides. Use the library's own theming API instead (ReactFlow: the `colorMode={isDark ? "dark" : "light"}` prop — NOT `"system"`, which reads the OS media query, wrong for class-driven next-themes).
+- **When re-tuning the token palette, also grep for JS-side hardcoded hex mirrors** (canvas SURFACE constants, ReactFlow `Background color` / `colorMode`) — they don't auto-follow a token change.
+- **Verify both themes before calling it done.** Toggle via the sidebar preferences control, or in dev set `localStorage['chorus-theme']` + toggle the `.dark` class. For canvas/graph work, read back pixels (`getImageData`) — screenshots alone miss low-contrast text.
+
 ## Skill & Plugin Documentation
 
 Chorus has two sets of skill documentation. **All skill docs must be written in English.**

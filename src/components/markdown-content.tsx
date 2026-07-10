@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Streamdown, type Components } from "streamdown";
 
 import {
-  streamdownPlugins,
+  streamdownPluginsFor,
   streamdownControls,
 } from "@/lib/streamdown-plugins";
 
@@ -54,6 +54,11 @@ export function MarkdownContent({
     [isDark],
   );
 
+  // Theme-aware plugin set: the code plugin must emit dark Shiki vars in dark
+  // (see streamdown-plugins.ts). Memoized so the plugin instance is stable per
+  // theme; the `key` below already forces a remount + re-tokenize on flip.
+  const plugins = useMemo(() => streamdownPluginsFor(isDark), [isDark]);
+
   // Mermaid caches its singleton inside Streamdown; passing a new `mermaid` prop
   // updates config but does not re-paint already-rendered SVGs. The `key` forces
   // React to tear down and rebuild the subtree on theme change, which is what
@@ -65,7 +70,7 @@ export function MarkdownContent({
   return (
     <Streamdown
       key={isDark ? "dark" : "light"}
-      plugins={streamdownPlugins}
+      plugins={plugins}
       controls={streamdownControls}
       mermaid={mermaidOptions}
       components={components}

@@ -38,6 +38,7 @@
 //   depends : dependsOn  -> dependent     (amber   #E8833A)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import {
@@ -98,7 +99,7 @@ const ForceGraphCanvas = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="absolute inset-0 flex items-center justify-center text-sm text-[#6B6B6B]">
+      <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
         …
       </div>
     ),
@@ -106,12 +107,19 @@ const ForceGraphCanvas = dynamic(
 );
 
 // Per-type filter swatch (just a small color dot). The rich type colors
-// live inside the node painter; this is purely for the filter UI.
-const FILTER_SWATCH: Record<NodeType, { color: string; Icon: typeof Lightbulb }> = {
-  idea: { color: "#7C4DFF", Icon: Lightbulb },
-  proposal: { color: "#2563EB", Icon: ClipboardList },
-  task: { color: "#E8833A", Icon: CheckSquare },
-  document: { color: "#00897B", Icon: FileText },
+// live inside the node painter; this is purely for the filter UI. The `dark`
+// hue mirrors the canvas painter's `TYPE_COLOR_DARK` (lifted for the charcoal
+// surface) so the legend dot matches the card chip in both themes. Applied via
+// a CSS custom property + a `.dark`-scoped rule (inline styles carry no `dark:`
+// — same pattern as `.project-icon`); see the `.graph-swatch` rule in globals.css.
+const FILTER_SWATCH: Record<
+  NodeType,
+  { color: string; darkColor: string; Icon: typeof Lightbulb }
+> = {
+  idea: { color: "#7C4DFF", darkColor: "#9B82FF", Icon: Lightbulb },
+  proposal: { color: "#2563EB", darkColor: "#5A8DEF", Icon: ClipboardList },
+  task: { color: "#E8833A", darkColor: "#F0964E", Icon: CheckSquare },
+  document: { color: "#00897B", darkColor: "#1CA695", Icon: FileText },
 };
 
 // --- Component -------------------------------------------------------------
@@ -969,7 +977,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     return (
       <div className="p-4 md:p-8">
         <Header t={t} />
-        <Card className="border-[#E5E0D8] p-6 text-sm text-[#B71C1C]">{error}</Card>
+        <Card className="border-border p-6 text-sm text-[#B71C1C] dark:text-[#F08078]">{error}</Card>
         {panels}
       </div>
     );
@@ -979,7 +987,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     return (
       <div className="p-4 md:p-8">
         <Header t={t} />
-        <Card className="flex items-center justify-center border-[#E5E0D8] p-12 text-sm text-[#6B6B6B]">
+        <Card className="flex items-center justify-center border-border p-12 text-sm text-muted-foreground">
           {t("graph.loading")}
         </Card>
         {panels}
@@ -991,18 +999,18 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
     <div className="flex h-full min-h-0 flex-col p-4 md:p-8">
       <Header t={t} />
 
-      <div className="relative flex-1 min-h-[600px] overflow-hidden rounded-[10px] border border-[#E5E0D8] bg-[#FAF8F4]">
+      <div className="relative flex-1 min-h-[600px] overflow-hidden rounded-[10px] border border-border bg-background">
         {isEmpty && (
           // Either the project has no entities at all, OR all four type-toggles
           // are off. Either way, the user sees the same explanation; the
           // canvas mind-map renderer + filter panel remain mounted below so
           // toggling a type back on immediately restores the view.
           <AnimatedEmptyState>
-            <Card className="m-12 flex flex-col items-center justify-center border-[#E5E0D8] p-8 text-center">
-              <h3 className="mb-2 text-base font-medium text-[#2C2C2C]">
+            <Card className="m-12 flex flex-col items-center justify-center border-border p-8 text-center">
+              <h3 className="mb-2 text-base font-medium text-foreground">
                 {t("graph.emptyTitle")}
               </h3>
-              <p className="max-w-sm text-sm text-[#6B6B6B]">{t("graph.emptyDesc")}</p>
+              <p className="max-w-sm text-sm text-muted-foreground">{t("graph.emptyDesc")}</p>
             </Card>
           </AnimatedEmptyState>
         )}
@@ -1038,12 +1046,12 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
               onClick={() => setPanelOpen(true)}
               aria-label={t("graph.controls.open")}
               data-testid="graph-controls-toggle"
-              className="bg-white/95 shadow-sm backdrop-blur"
+              className="bg-card/95 shadow-sm backdrop-blur"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
           ) : (
-          <Card className="w-[208px] border-[#E5E0D8] bg-white/95 p-2.5 shadow-sm backdrop-blur">
+          <Card className="w-[208px] border-border bg-card/95 p-2.5 shadow-sm backdrop-blur">
             {/* Collapse control — mobile only; desktop keeps the panel pinned. */}
             {isMobile && (
               <div className="mb-1.5 flex justify-end">
@@ -1054,7 +1062,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                   onClick={() => setPanelOpen(false)}
                   aria-label={t("graph.controls.close")}
                   data-testid="graph-controls-collapse"
-                  className="text-[#6B6B6B]"
+                  className="text-muted-foreground"
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -1093,7 +1101,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                         onClick={clearSearch}
                         aria-label={t("graph.search.clear")}
                         data-testid="graph-search-clear"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6B6B6B]"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground"
                       >
                         <X className="h-3.5 w-3.5" />
                       </Button>
@@ -1113,7 +1121,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                               : t("graph.expandAll")
                           }
                           data-testid="graph-expand-toggle"
-                          className="shrink-0 text-[#6B6B6B]"
+                          className="shrink-0 text-muted-foreground"
                         >
                           {anyExpanded ? (
                             <Minimize2 className="h-3.5 w-3.5" />
@@ -1139,7 +1147,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                   >
                     {totalMatches > 0 ? (
                       <span
-                        className="text-[11px] tabular-nums text-[#6B6B6B]"
+                        className="text-[11px] tabular-nums text-muted-foreground"
                         data-testid="graph-search-count"
                       >
                         {t("graph.search.count", {
@@ -1149,7 +1157,7 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                       </span>
                     ) : (
                       <span
-                        className="text-[11px] text-[#B07B00]"
+                        className="text-[11px] text-[#B07B00] dark:text-[#E0A050]"
                         data-testid="graph-search-no-matches"
                       >
                         {t("graph.search.noMatches")}
@@ -1201,10 +1209,15 @@ export function ResourceGraph({ projectUuid, currentUserUuid }: ResourceGraphPro
                       onCheckedChange={() => toggleType(type)}
                     />
                     <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: swatch.color }}
+                      className="graph-swatch h-2 w-2 shrink-0 rounded-full"
+                      style={
+                        {
+                          "--swatch": swatch.color,
+                          "--swatch-dark": swatch.darkColor,
+                        } as CSSProperties
+                      }
                     />
-                    <Label htmlFor={id} className="cursor-pointer text-xs text-[#2C2C2C]">
+                    <Label htmlFor={id} className="cursor-pointer text-xs text-foreground">
                       {t(`graph.filters.${type}` as const)}
                     </Label>
                   </div>
@@ -1226,8 +1239,8 @@ function Header({ t }: { t: ReturnType<typeof useTranslations> }) {
   return (
     <div className="mb-6 flex items-center justify-between">
       <div>
-        <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("graph.title")}</h1>
-        <p className="mt-1 text-sm text-[#6B6B6B]">{t("graph.subtitle")}</p>
+        <h1 className="text-2xl font-semibold text-foreground">{t("graph.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("graph.subtitle")}</p>
       </div>
     </div>
   );

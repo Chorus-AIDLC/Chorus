@@ -72,30 +72,30 @@ export function ActivityTimeline({ ideaUuid }: ActivityTimelineProps) {
 
   return (
     <div className="mt-5">
-      <Label className="text-[11px] font-medium uppercase tracking-wider text-[#9A9A9A]">
+      <Label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         {t("common.activity")}
       </Label>
       <div className="mt-2">
         {isLoading ? (
           <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
         ) : activities.length === 0 ? (
-          <p className="text-sm text-[#9A9A9A] italic">{t("common.noActivity")}</p>
+          <p className="text-sm text-muted-foreground italic">{t("common.noActivity")}</p>
         ) : (
           activities.map((activity, idx) => (
             <div key={activity.uuid} className="flex items-stretch gap-2.5">
               <div className="flex flex-col items-center w-2 shrink-0">
-                <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full border-[1.5px] border-[#D9D9D9] bg-white" />
+                <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full border-[1.5px] border-[#D9D9D9] dark:border-[#3a3a40] bg-card" />
                 {idx < activities.length - 1 && (
-                  <div className="flex-1 w-px bg-[#E5E0D8] mt-1" />
+                  <div className="flex-1 w-px bg-border mt-1" />
                 )}
               </div>
               <div className="flex-1 pb-3">
-                <p className="text-[13px] text-[#2C2C2C]">
+                <p className="text-[13px] text-foreground">
                   {formatActivityMessage(activity, t as TranslateFn)}
                 </p>
-                <p className="text-[11px] text-[#9A9A9A]">{formatRelativeTime(activity.createdAt, t as TranslateFn)}</p>
+                <p className="text-[11px] text-muted-foreground">{formatRelativeTime(activity.createdAt, t as TranslateFn)}</p>
               </div>
             </div>
           ))

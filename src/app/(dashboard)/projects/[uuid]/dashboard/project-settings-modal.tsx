@@ -75,55 +75,55 @@ export function ProjectSettingsModal({
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5 rounded-lg border-[#E5E2DC] bg-white text-[12px] font-normal text-[#2C2C2C] hover:border-[#C67A52] hover:bg-white"
+          className="gap-1.5 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] bg-card text-[12px] font-normal text-foreground hover:border-primary hover:bg-card"
         >
-          <Settings className="h-3.5 w-3.5 text-[#6B6B6B]" />
+          <Settings className="h-3.5 w-3.5 text-muted-foreground" />
           {t("dashboard.settings")}
         </Button>
       </DialogTrigger>
       <DialogContent className="gap-0 overflow-hidden rounded-2xl border-0 p-0 sm:max-w-[520px]">
         <DialogHeader className="px-7 py-6">
-          <DialogTitle className="text-[20px] font-semibold tracking-tight text-[#2C2C2C]">
+          <DialogTitle className="text-[20px] font-semibold tracking-tight text-foreground">
             {t("projectSettings.title")}
           </DialogTitle>
         </DialogHeader>
 
-        <Separator className="bg-[#E5E2DC]" />
+        <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
         <div className="flex flex-col gap-7 p-7">
           {/* Basic Information */}
           <div className="flex flex-col gap-5">
-            <h3 className="text-[14px] font-semibold text-[#2C2C2C]">
+            <h3 className="text-[14px] font-semibold text-foreground">
               {t("projectSettings.basicInfo")}
             </h3>
 
             <div className="flex flex-col gap-1.5">
-              <Label className="text-[12px] font-medium text-[#6B6B6B]">
+              <Label className="text-[12px] font-medium text-muted-foreground">
                 {t("projectSettings.projectName")}
               </Label>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="h-11 rounded-[10px] border-[#E5E2DC] text-[14px] text-[#2C2C2C] focus-visible:ring-[#C67A52]"
+                className="h-11 rounded-[10px] border-[#E5E2DC] dark:border-[#2a2a2e] text-[14px] text-foreground focus-visible:ring-primary"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label className="text-[12px] font-medium text-[#6B6B6B]">
+              <Label className="text-[12px] font-medium text-muted-foreground">
                 {t("projectSettings.description")}
               </Label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
-                className="resize-none rounded-[10px] border-[#E5E2DC] text-[14px] text-[#2C2C2C] focus-visible:ring-[#C67A52]"
+                className="resize-none rounded-[10px] border-[#E5E2DC] dark:border-[#2a2a2e] text-[14px] text-foreground focus-visible:ring-primary"
               />
             </div>
 
             <Button
               onClick={handleSave}
               disabled={saving || !name.trim()}
-              className="w-fit rounded-[10px] bg-[#C67A52] px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
+              className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
             >
               {saving ? (
                 <>
@@ -136,21 +136,21 @@ export function ProjectSettingsModal({
             </Button>
           </div>
 
-          <Separator className="bg-[#E5E2DC]" />
+          <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
           {/* Danger Zone */}
           <div className="flex flex-col gap-4">
-            <h3 className="text-[14px] font-semibold text-[#C4574C]">
+            <h3 className="text-[14px] font-semibold text-[#C4574C] dark:text-[#F0897E]">
               {t("projectSettings.dangerZone")}
             </h3>
 
             <div className="rounded-xl border border-[#C4574C40] bg-[#C4574C08] px-[18px] py-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
-                  <span className="text-[13px] font-semibold text-[#2C2C2C]">
+                  <span className="text-[13px] font-semibold text-foreground">
                     {t("projectSettings.deleteTitle")}
                   </span>
-                  <span className="text-[12px] text-[#6B6B6B]">
+                  <span className="text-[12px] text-muted-foreground">
                     {t("projectSettings.deleteDescription")}
                   </span>
                 </div>

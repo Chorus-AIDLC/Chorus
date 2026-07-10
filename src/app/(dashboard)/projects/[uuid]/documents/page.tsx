@@ -61,8 +61,8 @@ export default async function DocumentsPage({ params, searchParams }: PageProps)
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("documents.title")}</h1>
-          <p className="mt-1 text-sm text-[#6B6B6B]">{t("documents.subtitle")}</p>
+          <h1 className="text-2xl font-semibold text-foreground">{t("documents.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("documents.subtitle")}</p>
         </div>
         <CreateDocumentDialog projectUuid={projectUuid} />
       </div>
@@ -90,12 +90,12 @@ export default async function DocumentsPage({ params, searchParams }: PageProps)
       {/* Documents Grid */}
       {filteredDocuments.length === 0 ? (
         <AnimatedEmptyState>
-          <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#E8F5E9]">
-              <FilePlus className="h-8 w-8 text-[#5A9E6F]" />
+          <Card className="flex flex-col items-center justify-center p-12 text-center border-border">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#E8F5E9] dark:bg-[#14281a]">
+              <FilePlus className="h-8 w-8 text-[#5A9E6F] dark:text-[#6FD19A]" />
             </div>
-            <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("documents.noDocuments")}</h3>
-            <p className="mb-6 max-w-sm text-sm text-[#6B6B6B]">{t("documents.noDocumentsDesc")}</p>
+            <h3 className="mb-2 text-lg font-medium text-foreground">{t("documents.noDocuments")}</h3>
+            <p className="mb-6 max-w-sm text-sm text-muted-foreground">{t("documents.noDocumentsDesc")}</p>
             <CreateDocumentDialog projectUuid={projectUuid} />
           </Card>
         </AnimatedEmptyState>

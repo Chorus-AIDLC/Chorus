@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
+import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { LayoutDashboard, Building2, Shield, LogOut } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
 
@@ -115,6 +116,10 @@ export default function AdminLayout({
         <div className="border-t p-4">
           <div className="mb-2 truncate text-sm text-muted-foreground">
             {user.email}
+          </div>
+          {/* Appearance + language preferences (compact paired utility row) */}
+          <div className="mb-1 -ml-2">
+            <SidebarPreferences />
           </div>
           <Button
             variant="ghost"

@@ -24,20 +24,20 @@ interface ActivityWithActor {
 }
 
 const actionConfig: Record<string, { i18nKey: string; color: string }> = {
-  created: { i18nKey: "activity.actionCreated", color: "text-[#5A9E6F]" },
-  updated: { i18nKey: "activity.actionUpdated", color: "text-[#1976D2]" },
-  approved: { i18nKey: "activity.actionApproved", color: "text-[#5A9E6F]" },
-  rejected: { i18nKey: "activity.actionRejected", color: "text-[#D32F2F]" },
-  claimed: { i18nKey: "activity.actionClaimed", color: "text-[#7B1FA2]" },
-  completed: { i18nKey: "activity.actionCompleted", color: "text-[#00796B]" },
+  created: { i18nKey: "activity.actionCreated", color: "text-[#5A9E6F] dark:text-[#6FD19A]" },
+  updated: { i18nKey: "activity.actionUpdated", color: "text-[#1976D2] dark:text-[#5AA9F0]" },
+  approved: { i18nKey: "activity.actionApproved", color: "text-[#5A9E6F] dark:text-[#6FD19A]" },
+  rejected: { i18nKey: "activity.actionRejected", color: "text-[#D32F2F] dark:text-[#F08078]" },
+  claimed: { i18nKey: "activity.actionClaimed", color: "text-[#7B1FA2] dark:text-[#C98FE0]" },
+  completed: { i18nKey: "activity.actionCompleted", color: "text-[#00796B] dark:text-[#4FD1C0]" },
 };
 
 const entityTypeConfig: Record<string, { i18nKey: string; color: string }> = {
-  idea: { i18nKey: "activity.entityIdea", color: "bg-[#FFF3E0] text-[#E65100]" },
-  proposal: { i18nKey: "activity.entityProposal", color: "bg-[#F3E5F5] text-[#7B1FA2]" },
-  task: { i18nKey: "activity.entityTask", color: "bg-[#E3F2FD] text-[#1976D2]" },
-  document: { i18nKey: "activity.entityDocument", color: "bg-[#E8F5E9] text-[#5A9E6F]" },
-  project: { i18nKey: "activity.entityProject", color: "bg-[#FFF3E0] text-[#E65100]" },
+  idea: { i18nKey: "activity.entityIdea", color: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]" },
+  proposal: { i18nKey: "activity.entityProposal", color: "bg-[#F3E5F5] dark:bg-[#281630] text-[#7B1FA2] dark:text-[#C98FE0]" },
+  task: { i18nKey: "activity.entityTask", color: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]" },
+  document: { i18nKey: "activity.entityDocument", color: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]" },
+  project: { i18nKey: "activity.entityProject", color: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]" },
 };
 
 function formatRelativeOrNull(date: Date, t: Awaited<ReturnType<typeof getTranslations>>): string | null {
@@ -148,51 +148,51 @@ export default async function ActivityPage({ params }: PageProps) {
     <div className="p-4 md:p-8">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("activity.title")}</h1>
-        <p className="mt-1 text-sm text-[#6B6B6B]">{t("activity.subtitle")}</p>
+        <h1 className="text-2xl font-semibold text-foreground">{t("activity.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("activity.subtitle")}</p>
       </div>
 
       {/* Activity Feed */}
       {activities.length === 0 ? (
         <AnimatedEmptyState>
-          <Card className="flex flex-col items-center justify-center p-12 text-center border-[#E5E0D8]">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F2EC]">
-              <Monitor className="h-8 w-8 text-[#6B6B6B]" />
+          <Card className="flex flex-col items-center justify-center p-12 text-center border-border">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-secondary">
+              <Monitor className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="mb-2 text-lg font-medium text-[#2C2C2C]">{t("activity.noActivity")}</h3>
-            <p className="max-w-sm text-sm text-[#6B6B6B]">{t("activity.noActivityDesc")}</p>
+            <h3 className="mb-2 text-lg font-medium text-foreground">{t("activity.noActivity")}</h3>
+            <p className="max-w-sm text-sm text-muted-foreground">{t("activity.noActivityDesc")}</p>
           </Card>
         </AnimatedEmptyState>
       ) : (
         <div className="space-y-8">
           {Object.entries(groupedActivities).map(([dateLabel, items]) => (
             <div key={dateLabel}>
-              <h3 className="mb-4 text-sm font-medium text-[#6B6B6B]">{dateLabel}</h3>
+              <h3 className="mb-4 text-sm font-medium text-muted-foreground">{dateLabel}</h3>
               <div className="space-y-3">
                 {items.map((activity, index) => {
                   const actionConf = actionConfig[activity.action] || actionConfig.updated;
                   const entityConf = entityTypeConfig[activity.targetType] || entityTypeConfig.project;
 
                   return (
-                    <Card key={activity.uuid} className="flex items-start gap-4 border-[#E5E0D8] p-4" style={{ animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both` }}>
-                      <div className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-full ${activity.isAgent ? "bg-[#E3F2FD]" : "bg-[#F5F2EC]"}`}>
+                    <Card key={activity.uuid} className="flex items-start gap-4 border-border p-4" style={{ animation: `fade-in-up 0.2s ease-out ${index * 0.04}s both` }}>
+                      <div className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-full ${activity.isAgent ? "bg-[#E3F2FD] dark:bg-[#13253a]" : "bg-secondary"}`}>
                         {activity.isAgent ? (
-                          <Monitor className="h-4 w-4 text-[#1976D2]" />
+                          <Monitor className="h-4 w-4 text-[#1976D2] dark:text-[#5AA9F0]" />
                         ) : (
-                          <User className="h-4 w-4 text-[#6B6B6B]" />
+                          <User className="h-4 w-4 text-muted-foreground" />
                         )}
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 text-sm">
-                          <span className="font-medium text-[#2C2C2C]">{activity.actorName}</span>
+                          <span className="font-medium text-foreground">{activity.actorName}</span>
                           <span className={actionConf.color}>{t(actionConf.i18nKey)}</span>
                           <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${entityConf.color}`}>
                             {t(entityConf.i18nKey)}
                           </span>
                         </div>
                         {activity.value && typeof activity.value === "object" && "title" in (activity.value as object) ? (
-                          <p className="mt-1 text-sm text-[#6B6B6B] truncate">
+                          <p className="mt-1 text-sm text-muted-foreground truncate">
                             {String((activity.value as { title: string }).title)}
                           </p>
                         ) : null}

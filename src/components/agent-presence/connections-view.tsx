@@ -80,12 +80,12 @@ import {
 // One labeled stat tile — used in both the desktop 2x2 grid and mobile detail.
 function StatTile({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div
-        className={`mt-1.5 truncate text-[15px] font-medium text-[#2C2C2C] ${mono ? "font-mono" : ""}`}
+        className={`mt-1.5 truncate text-[15px] font-medium text-foreground ${mono ? "font-mono" : ""}`}
       >
         {value}
       </div>
@@ -99,8 +99,8 @@ function StatTile({ label, value, mono }: { label: string; value: string; mono?:
 // has room. The chip self-truncates so a long path never overflows the tile.
 function PathTile({ label, cwd }: { label: string; cwd: string | null }) {
   return (
-    <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div className="mt-1.5 flex min-w-0">
@@ -162,10 +162,10 @@ function ExecutionPane({
   );
 
   return (
-    <div className="flex h-full min-h-[180px] flex-col gap-4 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5">
+    <div className="flex h-full min-h-[180px] flex-col gap-4 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-5">
       <div className="flex items-center gap-2">
-        <ListChecks className="h-4 w-4 text-[#C67A52]" aria-hidden />
-        <span className="text-[14px] font-semibold text-[#2C2C2C]">
+        <ListChecks className="h-4 w-4 text-primary" aria-hidden />
+        <span className="text-[14px] font-semibold text-foreground">
           {t("execTitle")}
         </span>
       </div>
@@ -177,22 +177,22 @@ function ExecutionPane({
           // never flashes a false-empty in the first-paint window.
           <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
             <Loader2
-              className="h-5 w-5 text-[#9A9A9A] motion-safe:animate-spin"
+              className="h-5 w-5 text-muted-foreground motion-safe:animate-spin"
               aria-hidden
             />
-            <p className="text-[13px] font-medium text-[#6B6B6B]">
+            <p className="text-[13px] font-medium text-muted-foreground">
               {t("execLoading")}
             </p>
           </div>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F0EDE8]">
-              <Clock3 className="h-5 w-5 text-[#9A9A9A]" aria-hidden />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F0EDE8] dark:bg-[#1f1e1c]">
+              <Clock3 className="h-5 w-5 text-muted-foreground" aria-hidden />
             </div>
-            <p className="text-[13px] font-medium text-[#6B6B6B]">
+            <p className="text-[13px] font-medium text-muted-foreground">
               {t("execEmptyTitle")}
             </p>
-            <p className="max-w-xs text-[12px] leading-relaxed text-[#9A9A9A]">
+            <p className="max-w-xs text-[12px] leading-relaxed text-muted-foreground">
               {t("execEmptyBody")}
             </p>
           </div>
@@ -259,14 +259,14 @@ function RailRow({
       aria-current={selected ? "true" : undefined}
       className={`relative h-auto w-full justify-start gap-0 rounded-none px-0 py-0 text-left transition-colors ${
         selected
-          ? "bg-[#FBF4EF] hover:bg-[#FBF4EF]"
-          : "bg-white hover:bg-[#FAF8F4]"
+          ? "bg-[#FBF4EF] dark:bg-[#221e1b] hover:bg-[#FBF4EF] dark:hover:bg-[#26241f]"
+          : "bg-card hover:bg-background"
       }`}
     >
       {selected && (
         <span
           aria-hidden
-          className="absolute inset-y-0 left-0 w-[3px] bg-[#C67A52]"
+          className="absolute inset-y-0 left-0 w-[3px] bg-primary"
         />
       )}
       <span className="flex w-full items-center gap-3 px-4 py-3.5">
@@ -274,7 +274,7 @@ function RailRow({
           <StatusDot online={online} size="md" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="truncate text-[14px] font-semibold text-[#2C2C2C]">
+          <span className="truncate text-[14px] font-semibold text-foreground">
             {agentName}
           </span>
           {/* Path-first: the connection's working directory is the primary
@@ -285,18 +285,18 @@ function RailRow({
           <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
             <Badge
               variant="secondary"
-              className="shrink-0 border-0 bg-[#F0EDE8] px-1.5 py-0 text-[10px] font-medium text-[#6B6B6B]"
+              className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
             >
               {clientTypeLabel(connection.clientType)}
             </Badge>
-            <span className="truncate font-mono text-[10px] text-[#9A9A9A]">
+            <span className="truncate font-mono text-[10px] text-muted-foreground">
               · {host}
             </span>
           </span>
         </span>
         <span
           className={`shrink-0 text-[11px] font-medium tabular-nums ${
-            online ? "text-[#15803D]" : "text-[#9A9A9A]"
+            online ? "text-[#15803D] dark:text-[#4FD07A]" : "text-muted-foreground"
           }`}
         >
           {formatRelative(connection.lastSeenAt, nowMs)}
@@ -326,23 +326,23 @@ function MobileCard({
       onClick={onSelect}
       className="block h-auto w-full rounded-2xl p-0 text-left hover:bg-transparent"
     >
-      <Card className="w-full gap-3.5 rounded-2xl border-[#E5E0D8] bg-white p-4 shadow-none transition-colors hover:bg-[#FBF4EF]/40">
+      <Card className="w-full gap-3.5 rounded-2xl border-border bg-card p-4 shadow-none transition-colors hover:bg-[#FBF4EF] dark:hover:bg-[#26241f]/40">
         <div className="flex items-center justify-between gap-3">
           <IdentityBlock connection={connection} size="md" />
           <div className="shrink-0">
             <StatusBadge online={online} />
           </div>
         </div>
-        <div className="h-px w-full bg-[#F2EEE7]" />
+        <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
         <div className="grid grid-cols-2 gap-3">
           {/* Uptime tile is conditional — offline cards omit it entirely so the
               footer becomes a single Last-active tile, never a placeholder dash. */}
           {online ? (
             <div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+              <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 {t("fieldUptime")}
               </div>
-              <div className="mt-1 truncate font-mono text-[14px] font-medium text-[#2C2C2C]">
+              <div className="mt-1 truncate font-mono text-[14px] font-medium text-foreground">
                 {formatUptime(connection.connectedAt, nowMs)}
               </div>
             </div>
@@ -350,10 +350,10 @@ function MobileCard({
             <div />
           )}
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {t("fieldLastActive")}
             </div>
-            <div className="mt-1 truncate text-[14px] font-medium text-[#2C2C2C]">
+            <div className="mt-1 truncate text-[14px] font-medium text-foreground">
               {formatRelative(connection.lastSeenAt, nowMs)}
             </div>
           </div>
@@ -404,18 +404,18 @@ function DetailContent({
             <StatusBadge online={online} />
           </div>
         </div>
-        <div className="h-px w-full bg-[#EFEBE4]" />
+        <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
         <div className="flex flex-1 flex-col gap-6 p-6">
           <div className="grid grid-cols-2 gap-4">
             {/* Uptime is online-only. The slot stays empty for offline
                 connections — never a placeholder dash, never a misleading
                 ever-growing duration. */}
             {online ? (
-              <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                   {t("fieldUptime")}
                 </div>
-                <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-[#2C2C2C]">
+                <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-foreground">
                   {formatUptime(connection.connectedAt, nowMs)}
                 </div>
               </div>
@@ -474,11 +474,11 @@ function DetailContent({
       </div>
       <div className="grid gap-3">
         {online && (
-          <div className="rounded-xl border border-[#E5E0D8] bg-white p-4">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {t("fieldUptime")}
             </div>
-            <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-[#2C2C2C]">
+            <div className="mt-2 truncate font-mono text-[22px] font-medium tabular-nums text-foreground">
               {formatUptime(connection.connectedAt, nowMs)}
             </div>
           </div>
@@ -653,18 +653,18 @@ export function AgentConnectionsView() {
   }, [visibleConnections, mobileDetailOpen, selectedUuid]);
 
   return (
-    <div className="min-h-full bg-[#FAF8F4]">
+    <div className="min-h-full bg-background">
       {/* ===========================================================
           MOBILE: drill-down detail view (renders on top when open).
           ========================================================== */}
       {mobileDetailOpen && selected && (
         <div className="lg:hidden">
-          <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[#EFEBE4] bg-[#FAF8F4] px-3 py-2.5">
+          <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-[#EFEBE4] dark:border-[#2a2a2e] bg-background px-3 py-2.5">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setMobileDetailOpen(false)}
-              className="h-9 gap-1 px-2 text-[15px] font-normal text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
+              className="h-9 gap-1 px-2 text-[15px] font-normal text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
             >
               <ChevronLeft className="h-5 w-5" />
               {t("mobileBack")}
@@ -698,20 +698,20 @@ export function AgentConnectionsView() {
         {/* Header */}
         <header className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
           <div className="flex flex-col gap-1.5">
-            <h2 className="text-[22px] font-semibold text-[#2C2C2C] lg:text-[24px]">
+            <h2 className="text-[22px] font-semibold text-foreground lg:text-[24px]">
               {t("title")}
             </h2>
-            <p className="max-w-[640px] text-[13px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-[640px] text-[13px] leading-relaxed text-muted-foreground">
               {t("subtitle")}
             </p>
           </div>
           {!loading && visibleConnections.length > 0 && (
-            <div className="inline-flex items-center gap-2 self-start rounded-full border border-[#E5E0D8] bg-white px-3.5 py-1.5">
+            <div className="inline-flex items-center gap-2 self-start rounded-full border border-border bg-card px-3.5 py-1.5">
               <StatusDot online={onlineCount > 0} size="md" />
               {/* Online-only deck: `total` is the VISIBLE (online) count, not the
                   raw connection count — offline rows are hidden, so claiming a
                   higher total than the rendered rows would be misleading. */}
-              <span className="text-[13px] font-medium text-[#2C2C2C]">
+              <span className="text-[13px] font-medium text-foreground">
                 {t("summary", {
                   online: onlineCount,
                   total: visibleConnections.length,
@@ -723,27 +723,27 @@ export function AgentConnectionsView() {
 
         {/* Body */}
         {loading ? (
-          <p className="text-sm text-[#6B6B6B]">{t("loading")}</p>
+          <p className="text-sm text-muted-foreground">{t("loading")}</p>
         ) : showError ? (
           // A failed fetch with no cached list — render a DISTINCT error card,
           // never the "no connections" empty state (no silent error).
-          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] bg-[#FFF9F3] p-8 text-center shadow-none md:p-12">
+          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] dark:border-[#33302a] bg-[#FFF9F3] dark:bg-[#2a2113] p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D9770615]">
-              <WifiOff className="h-6 w-6 text-[#B45309]" />
+              <WifiOff className="h-6 w-6 text-[#B45309] dark:text-[#E0A34E]" />
             </div>
-            <h3 className="text-base font-semibold text-[#92400E]">
+            <h3 className="text-base font-semibold text-[#92400E] dark:text-[#E0A34E]">
               {t("loadErrorTitle")}
             </h3>
-            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
               {t("loadErrorBody")}
             </p>
           </Card>
         ) : visibleConnections.length === 0 ? (
-          <Card className="items-center gap-4 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
-              <RadioTower className="h-6 w-6 text-[#C67A52]" />
+          <Card className="items-center gap-4 rounded-2xl border-border bg-card p-8 text-center shadow-none md:p-12">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/[0.08]">
+              <RadioTower className="h-6 w-6 text-primary" />
             </div>
-            <h3 className="text-base font-semibold text-[#2C2C2C]">
+            <h3 className="text-base font-semibold text-foreground">
               {t("empty.title")}
             </h3>
             {/* The hand-written "run chorus daemon" sentence is replaced by the
@@ -774,16 +774,16 @@ export function AgentConnectionsView() {
             {/* DESKTOP: master-detail (lg+) */}
             <div className="hidden flex-1 gap-5 lg:flex">
               {/* Connection rail */}
-              <Card className="flex w-[340px] shrink-0 flex-col gap-0 overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+              <Card className="flex w-[340px] shrink-0 flex-col gap-0 overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
                 <div className="flex items-center justify-between px-4 py-4">
-                  <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-[#9A9A9A]">
+                  <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-muted-foreground">
                     {t("railHeader")}
                   </span>
-                  <span className="font-mono text-[11px] font-medium text-[#9A9A9A]">
+                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
                     {visibleConnections.length}
                   </span>
                 </div>
-                <div className="h-px w-full bg-[#EFEBE4]" />
+                <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
                 <div className="flex flex-col">
                   {visibleConnections.map((connection, idx) => (
                     <div key={connection.uuid}>
@@ -794,7 +794,7 @@ export function AgentConnectionsView() {
                         nowMs={nowMs}
                       />
                       {idx < visibleConnections.length - 1 && (
-                        <div className="h-px w-full bg-[#F2EEE7]" />
+                        <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
                       )}
                     </div>
                   ))}
@@ -802,7 +802,7 @@ export function AgentConnectionsView() {
               </Card>
 
               {/* Detail panel */}
-              <Card className="flex flex-1 flex-col overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+              <Card className="flex flex-1 flex-col overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
                 {selected ? (
                   <DetailContent
                     connection={selected}
@@ -814,7 +814,7 @@ export function AgentConnectionsView() {
                     onlineConnections={selectedAgentOnlineConnections}
                   />
                 ) : (
-                  <div className="flex flex-1 items-center justify-center p-12 text-[13px] text-[#9A9A9A]">
+                  <div className="flex flex-1 items-center justify-center p-12 text-[13px] text-muted-foreground">
                     {t("selectPrompt")}
                   </div>
                 )}

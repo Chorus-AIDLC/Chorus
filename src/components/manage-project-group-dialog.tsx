@@ -94,10 +94,10 @@ export function ManageProjectGroupDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[480px] gap-0 p-0">
-        <DialogHeader className="border-b border-[#E5E2DC] px-6 py-5">
+        <DialogHeader className="border-b border-[#E5E2DC] dark:border-[#2a2a2e] px-6 py-5">
           <div className="flex items-center gap-2.5">
-            <Settings className="h-5 w-5 text-[#C67A52]" />
-            <DialogTitle className="text-[18px] font-semibold tracking-tight text-[#2C2C2C]">
+            <Settings className="h-5 w-5 text-primary" />
+            <DialogTitle className="text-[18px] font-semibold tracking-tight text-foreground">
               {t("manageGroup")}
             </DialogTitle>
           </div>
@@ -106,26 +106,26 @@ export function ManageProjectGroupDialog({
         <div className="space-y-5 px-6 py-5">
           {/* Edit Name */}
           <div className="space-y-1.5">
-            <Label className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label className="text-[13px] font-medium text-foreground">
               {t("groupName")}
             </Label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-10 rounded-lg border-[#E5E2DC] text-[13px] focus-visible:ring-[#C67A52]"
+              className="h-10 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px] focus-visible:ring-primary"
             />
           </div>
 
           {/* Edit Description */}
           <div className="space-y-1.5">
-            <Label className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label className="text-[13px] font-medium text-foreground">
               {t("descriptionOptional")}
             </Label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-[#E5E2DC] px-3 py-2.5 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C67A52] focus-visible:ring-offset-1"
+              className="w-full rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] px-3 py-2.5 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
               placeholder={t("descriptionPlaceholder")}
             />
           </div>
@@ -135,7 +135,7 @@ export function ManageProjectGroupDialog({
             <Button
               onClick={handleSave}
               disabled={saving || !name.trim() || (name === groupName && description === (groupDescription ?? ""))}
-              className="rounded-lg bg-[#C67A52] text-[13px] font-medium text-white hover:bg-[#B56A42]"
+              className="rounded-lg bg-primary text-[13px] font-medium text-white hover:bg-[#B56A42]"
             >
               {saving ? t("saving") : t("saveChanges")}
             </Button>
@@ -143,7 +143,7 @@ export function ManageProjectGroupDialog({
         </div>
 
         {/* Danger Zone */}
-        <div className="border-t border-[#E5E2DC] px-6 py-5">
+        <div className="border-t border-[#E5E2DC] dark:border-[#2a2a2e] px-6 py-5">
           {!showDeleteConfirm ? (
             <button
               onClick={() => setShowDeleteConfirm(true)}
@@ -164,13 +164,13 @@ export function ManageProjectGroupDialog({
 
               {projectCount > 0 && (
                 <div className="space-y-2 pt-1">
-                  <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[#2C2C2C]">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12px] text-foreground">
                     <input
                       type="radio"
                       name="deleteOption"
                       checked={!deleteProjects}
                       onChange={() => setDeleteProjects(false)}
-                      className="accent-[#C67A52]"
+                      className="accent-primary"
                     />
                     {t("deleteKeepProjects", { count: projectCount })}
                   </label>
@@ -192,7 +192,7 @@ export function ManageProjectGroupDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="rounded-lg border-[#E5E2DC] text-[12px]"
+                  className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[12px]"
                 >
                   {t("cancel")}
                 </Button>

@@ -86,7 +86,7 @@ export function ExportDropdown({ document, documentUuid, variant = "default" }: 
           className={
             isCompact
               ? "h-6 text-[11px] text-muted-foreground hover:text-foreground"
-              : "border-[#E5E0D8] text-[#6B6B6B] gap-1.5"
+              : "border-border text-muted-foreground gap-1.5"
           }
           disabled={isExporting}
         >

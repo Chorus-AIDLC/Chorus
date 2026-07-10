@@ -80,12 +80,12 @@ export function IdeaLineageTree({ ideas, onIdeaClick }: IdeaLineageTreeProps) {
         <div
           key={group[0].idea.uuid}
           data-testid="lineage-tree-group"
-          className="overflow-hidden rounded-lg bg-white"
+          className="overflow-hidden rounded-lg bg-card"
         >
           {group.map((row, idx) => (
             <div key={row.idea.uuid}>
               {/* Tight hairline between rows inside the same tree. */}
-              {idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA]" />}
+              {idx > 0 && <div className="mx-0 h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />}
               <PresenceIndicator entityType="idea" entityUuid={row.idea.uuid} badgeInside>
                 <IdeaCard
                   idea={row.idea}

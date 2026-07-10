@@ -46,8 +46,8 @@ export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSect
         <AvatarFallback
           className={
             isAgentAssignee(assignee)
-              ? "bg-[#C67A52] text-white"
-              : "bg-[#E5E0D8] text-[#6B6B6B]"
+              ? "bg-primary text-white"
+              : "bg-border text-muted-foreground"
           }
         >
           {isAgentAssignee(assignee) ? (
@@ -58,8 +58,8 @@ export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSect
         </AvatarFallback>
       </Avatar>
       <div className="min-w-0">
-        <div className="text-sm font-medium text-[#2C2C2C]">{assignee.name}</div>
-        <div className="text-xs text-[#6B6B6B]">
+        <div className="text-sm font-medium text-foreground">{assignee.name}</div>
+        <div className="text-xs text-muted-foreground">
           {isAgentAssignee(assignee) ? tCommon("agent") : tCommon("user")}
         </div>
         {/* Pinned (host, cwd) place for an agent_instance assignee. */}
@@ -74,14 +74,14 @@ export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSect
       </div>
     </>
   ) : (
-    <span className="text-sm text-[#9A9A9A]">{tCommon("unassigned")}</span>
+    <span className="text-sm text-muted-foreground">{tCommon("unassigned")}</span>
   );
 
-  const boxClass = "mt-2 flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-3";
+  const boxClass = "mt-2 flex items-center gap-2.5 rounded-lg bg-background p-3";
 
   return (
     <div>
-      <Label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {tCommon("assignee")}
       </Label>
       {interactive ? (

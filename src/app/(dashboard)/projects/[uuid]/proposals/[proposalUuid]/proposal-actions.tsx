@@ -121,7 +121,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
         <DropdownMenuTrigger asChild>
           <Button
             variant="outline"
-            className="border-[#E5E0D8] text-[#3D3D3D] gap-1.5"
+            className="border-border text-foreground gap-1.5"
             disabled={isPending}
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -138,11 +138,11 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
           {status === "pending" && (
             <>
               <DropdownMenuItem onClick={() => setApproveDialogOpen(true)}>
-                <Check className="h-4 w-4 text-[#5A9E6F]" />
+                <Check className="h-4 w-4 text-[#5A9E6F] dark:text-[#6FD19A]" />
                 {t("common.approve")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setRejectDialogOpen(true)}>
-                <X className="h-4 w-4 text-[#D32F2F]" />
+                <X className="h-4 w-4 text-[#D32F2F] dark:text-[#F08078]" />
                 {t("common.reject")}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setCloseDialogOpen(true)}>
@@ -178,14 +178,14 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             <Button
               variant="outline"
               onClick={() => setSubmitDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={isPending}
-              className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+              className="bg-primary hover:bg-[#B56A42] text-white"
             >
               {isPending ? t("common.processing") : t("proposals.submitForReview")}
             </Button>
@@ -203,13 +203,13 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             value={approveNote}
             onChange={(e) => setApproveNote(e.target.value)}
             placeholder={t("proposals.approveNotePlaceholder")}
-            className="min-h-[100px] border-[#E5E0D8]"
+            className="min-h-[100px] border-border"
           />
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setApproveDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>
@@ -234,13 +234,13 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
             placeholder={t("proposals.rejectReasonPlaceholder")}
-            className="min-h-[100px] border-[#E5E0D8]"
+            className="min-h-[100px] border-border"
           />
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setRejectDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>
@@ -265,20 +265,20 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             value={closeReason}
             onChange={(e) => setCloseReason(e.target.value)}
             placeholder={t("proposals.closeReasonPlaceholder")}
-            className="min-h-[100px] border-[#E5E0D8]"
+            className="min-h-[100px] border-border"
           />
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setCloseDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>
             <Button
               onClick={handleClose}
               disabled={isPending || !closeReason.trim()}
-              className="bg-[#6B6B6B] hover:bg-[#555555] text-white"
+              className="bg-muted-foreground hover:bg-[#555555] text-white"
             >
               {isPending ? t("common.processing") : t("proposals.closeProposal")}
             </Button>
@@ -293,16 +293,16 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             <DialogDescription>{t("proposals.revokeProposalDesc")}</DialogDescription>
           </DialogHeader>
           {materializedEntities && (materializedEntities.tasks.length > 0 || materializedEntities.documents.length > 0) && (
-            <div className="space-y-3 rounded-lg border border-[#FFCDD2] bg-[#FFF5F5] p-3">
+            <div className="space-y-3 rounded-lg border border-[#FFCDD2] dark:border-[#3a181c] bg-[#FFF5F5] dark:bg-[#33191b] p-3">
               {materializedEntities.tasks.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] mb-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] dark:text-[#F08078] mb-1.5">
                     <ListChecks className="h-3.5 w-3.5" />
                     {t("proposals.revokeTasksToClose", { count: materializedEntities.tasks.length })}
                   </div>
                   <ul className="space-y-1 pl-5">
                     {materializedEntities.tasks.map((task) => (
-                      <li key={task.uuid} className="text-xs text-[#6B6B6B]">
+                      <li key={task.uuid} className="text-xs text-muted-foreground">
                         {task.title}
                         <span className="ml-1.5 text-[10px] text-muted-foreground">({task.status})</span>
                       </li>
@@ -312,13 +312,13 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
               )}
               {materializedEntities.documents.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] mb-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[#D32F2F] dark:text-[#F08078] mb-1.5">
                     <FileText className="h-3.5 w-3.5" />
                     {t("proposals.revokeDocsToDelete", { count: materializedEntities.documents.length })}
                   </div>
                   <ul className="space-y-1 pl-5">
                     {materializedEntities.documents.map((doc) => (
-                      <li key={doc.uuid} className="text-xs text-[#6B6B6B]">
+                      <li key={doc.uuid} className="text-xs text-muted-foreground">
                         {doc.title}
                       </li>
                     ))}
@@ -331,13 +331,13 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             value={revokeReason}
             onChange={(e) => setRevokeReason(e.target.value)}
             placeholder={t("proposals.revokeReasonPlaceholder")}
-            className="min-h-[100px] border-[#E5E0D8]"
+            className="min-h-[100px] border-border"
           />
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setRevokeDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>
@@ -362,7 +362,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             <Button
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
-              className="border-[#E5E0D8] text-[#6B6B6B]"
+              className="border-border text-muted-foreground"
             >
               {t("common.cancel")}
             </Button>

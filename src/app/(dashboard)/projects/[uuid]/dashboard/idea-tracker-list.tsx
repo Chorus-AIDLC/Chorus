@@ -115,8 +115,8 @@ export function IdeaTrackerList({
   if (error && Object.keys(groups).length === 0) {
     return (
       <div className="flex flex-col items-center gap-4 py-16">
-        <AlertCircle className="h-10 w-10 text-[#E65100]" />
-        <p className="text-[13px] text-[#6B6B6B]">{error}</p>
+        <AlertCircle className="h-10 w-10 text-[#E65100] dark:text-[#F0A050]" />
+        <p className="text-[13px] text-muted-foreground">{error}</p>
         <Button
           variant="outline"
           size="sm"
@@ -125,7 +125,7 @@ export function IdeaTrackerList({
             setError(null);
             fetchData();
           }}
-          className="border-[#E5E0D8] text-[#2C2C2C]"
+          className="border-border text-foreground"
         >
           {t("actions.retry")}
         </Button>
@@ -137,20 +137,20 @@ export function IdeaTrackerList({
   if (totalIdeas === 0) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#F5F2EC]">
-          <Lightbulb className="h-5 w-5 text-[#B4B2A9]" />
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
+          <Lightbulb className="h-5 w-5 text-muted-foreground" />
         </div>
-        <p className="text-[13px] font-medium text-[#6B6B6B]">
+        <p className="text-[13px] font-medium text-muted-foreground">
           {t("empty.noIdeas")}
         </p>
-        <p className="max-w-[260px] text-center text-[12px] leading-relaxed text-[#9A9A9A]">
+        <p className="max-w-[260px] text-center text-[12px] leading-relaxed text-muted-foreground">
           {t("empty.getStarted")}
         </p>
         {onNewIdea && (
           <Button
             onClick={onNewIdea}
             size="sm"
-            className="mt-2 gap-1.5 rounded-md bg-[#C67A52] px-4 py-2 text-white hover:bg-[#B56A42]"
+            className="mt-2 gap-1.5 rounded-md bg-primary px-4 py-2 text-white hover:bg-[#B56A42]"
           >
             <Plus className="h-4 w-4" />
             {t("actions.newIdea")}

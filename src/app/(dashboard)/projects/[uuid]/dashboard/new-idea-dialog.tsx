@@ -161,7 +161,7 @@ export function NewIdeaDialog({
         <div className="space-y-2">
           <Label htmlFor="idea-content">
             {t("newIdea.description")}
-            <span className="ml-1 text-xs font-normal text-[#9A9A9A]">
+            <span className="ml-1 text-xs font-normal text-muted-foreground">
               ({tCommon("optional")})
             </span>
           </Label>
@@ -188,7 +188,7 @@ export function NewIdeaDialog({
             <Label htmlFor="idea-is-container" className="cursor-pointer">
               {tLineage("makeContainer")}
             </Label>
-            <p className="text-xs font-normal text-[#9A9A9A]">
+            <p className="text-xs font-normal text-muted-foreground">
               {tLineage("containerHint")}
             </p>
           </div>
@@ -212,7 +212,7 @@ export function NewIdeaDialog({
         <Button
           onClick={handleSubmit}
           disabled={isSubmitting || !title.trim()}
-          className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          className="bg-primary hover:bg-[#B56A42] text-white"
         >
           {isSubmitting ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -292,7 +292,7 @@ export function NewIdeaDialog({
           <Label htmlFor="idea-decompose" className="cursor-pointer">
             {t("newIdea.decompose")}
           </Label>
-          <p className="text-xs font-normal text-[#9A9A9A]">
+          <p className="text-xs font-normal text-muted-foreground">
             {t("newIdea.decomposeHint")}
           </p>
         </div>
@@ -313,7 +313,7 @@ export function NewIdeaDialog({
         <DialogHeader>
           <DialogTitle>{isDerive ? tLineage("deriveIdea") : t("newIdea.title")}</DialogTitle>
           {isDerive && parentTitle && (
-            <p className="text-[13px] text-[#6B6B6B]">
+            <p className="text-[13px] text-muted-foreground">
               {tLineage("derivedFrom")} · {parentTitle}
             </p>
           )}
@@ -340,8 +340,8 @@ export function NewIdeaDialog({
                 collapsible-free — exactly the shared CTA the other daemon
                 empty states show. */}
             {!daemonOnline && (
-              <div className="rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] px-3 py-2">
-                <p className="px-1 pt-1 text-[12px] font-medium text-[#6B6B6B]">
+              <div className="rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] px-3 py-2">
+                <p className="px-1 pt-1 text-[12px] font-medium text-muted-foreground">
                   {t("newIdea.modeConversationOfflineHint")}
                 </p>
                 <DaemonConnectCta variant="compact" />

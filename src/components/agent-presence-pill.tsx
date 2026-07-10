@@ -152,7 +152,7 @@ function PopoverInstanceRow({
         // never blank. An offline instance already reads "offline · <last seen>"
         // in its own row, so the idle line is online-only to avoid redundancy.
         online && (
-          <p className="pl-1 text-[12px] text-[#9A9A9A]">{t("connectionIdle")}</p>
+          <p className="pl-1 text-[12px] text-muted-foreground">{t("connectionIdle")}</p>
         )
       )}
     </div>
@@ -266,11 +266,11 @@ const CAPSULE_SKIN: Record<
   // Warm neutral surface + hairline border; subtle hover lift toward the brand
   // terracotta wash used elsewhere in the rail.
   online:
-    "border-[#E7E1D7] bg-[#FCFBF8] hover:bg-[#FBF4EF] hover:border-[#E2D6C9]",
-  idle: "border-[#EAE5DC] bg-[#FAF8F4] hover:bg-[#F6F2EC]",
-  loading: "border-[#EAE5DC] bg-[#FAF8F4]",
+    "border-[#E7E1D7] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:border-[#E2D6C9] dark:hover:border-[#3a3a40]",
+  idle: "border-[#EAE5DC] dark:border-[#2a2a2e] bg-background hover:bg-[#F6F2EC] dark:hover:bg-[#26241f]",
+  loading: "border-[#EAE5DC] dark:border-[#2a2a2e] bg-background",
   // Error reskins the capsule amber so a failed poll can never read as "0 online".
-  error: "border-[#EBD9C4] bg-[#FFF9F2] hover:bg-[#FEF3E4]",
+  error: "border-[#EBD9C4] dark:border-[#3a2f1a] bg-[#FFF9F2] dark:bg-[#2a2113] hover:bg-[#FEF3E4] dark:hover:bg-[#332a17]",
 };
 
 // The presence pill. `mobile` widens the type scale a touch to match the
@@ -302,7 +302,7 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
   let body: React.ReactNode;
   if (status === "error") {
     body = (
-      <span className={`truncate font-medium text-[#B45309] ${unitSize}`}>
+      <span className={`truncate font-medium text-[#B45309] dark:text-[#E0A34E] ${unitSize}`}>
         {t("unavailable")}
       </span>
     );
@@ -313,7 +313,7 @@ export function AgentPresencePill({ mobile = false }: { mobile?: boolean }) {
       </span>
     );
   } else {
-    const onlineTint = onlineCount > 0 ? "text-[#15803D]" : "text-foreground/80";
+    const onlineTint = onlineCount > 0 ? "text-[#15803D] dark:text-[#4FD07A]" : "text-foreground/80";
     body = (
       <span className={`flex min-w-0 items-baseline gap-1.5 truncate ${unitSize}`}>
         <span
@@ -388,7 +388,7 @@ function PopoverContentInner({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] font-semibold uppercase tracking-wide text-[#6B6B6B]">
+        <span className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
           {t("popoverTitle")}
         </span>
       </div>
@@ -401,7 +401,7 @@ function PopoverContentInner({
         variant="ghost"
         size="sm"
         onClick={onViewAll}
-        className="w-full justify-center text-[12px] font-medium text-[#C67A52] hover:bg-[#C67A5214] hover:text-[#A65F3C]"
+        className="w-full justify-center text-[12px] font-medium text-primary hover:bg-primary/[0.08] hover:text-[#A65F3C]"
       >
         {t("viewAll")}
       </Button>

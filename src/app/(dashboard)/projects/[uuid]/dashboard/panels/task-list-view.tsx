@@ -114,8 +114,8 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-        <ListChecks className="h-8 w-8 text-[#D9D9D9]" />
-        <p className="text-sm text-[#9A9A9A]">{t("panel.taskList.noTasks")}</p>
+        <ListChecks className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">{t("panel.taskList.noTasks")}</p>
       </div>
     );
   }
@@ -123,14 +123,14 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
   return (
     <div className="space-y-3">
       {/* Summary bar */}
-      <div className="flex items-center gap-3 rounded-lg bg-[#FAFAF7] px-3 py-2">
-        <span className="text-[12px] text-[#6B6B6B]">
+      <div className="flex items-center gap-3 rounded-lg bg-[#FAFAF7] dark:bg-[#1e1e1c] px-3 py-2">
+        <span className="text-[12px] text-muted-foreground">
           {t("panel.taskList.summary", { done: stats.done, total: stats.total })}
         </span>
         {stats.acTotal > 0 && (
           <>
-            <span className="text-[12px] text-[#D9D9D9]">&middot;</span>
-            <span className="text-[12px] text-[#6B6B6B]">
+            <span className="text-[12px] text-muted-foreground">&middot;</span>
+            <span className="text-[12px] text-muted-foreground">
               {t("panel.taskList.acSummary", { passed: stats.acRequiredPassed, total: stats.acRequired })}
             </span>
           </>
@@ -138,7 +138,7 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
         {proposalUuids.length > 0 && (
           <Link
             href={`/projects/${projectUuid}/tasks?proposalUuids=${proposalUuids.join(",")}`}
-            className="ml-auto flex items-center gap-1 text-[13px] font-medium text-[#C67A52] shrink-0"
+            className="ml-auto flex items-center gap-1 text-[13px] font-medium text-primary shrink-0"
           >
             {t("panel.taskList.viewKanban")}
             <ChevronRight className="h-3.5 w-3.5" />
@@ -157,15 +157,15 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
               className="flex items-center gap-2 w-full text-left py-1.5 group cursor-pointer"
             >
               {isCollapsed ? (
-                <ChevronRight className="h-3.5 w-3.5 text-[#9A9A9A]" />
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A]" />
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
               )}
               <span className={`h-2 w-2 rounded-full shrink-0 ${getTaskStatusDotColor(group.status)}`} />
-              <span className="text-[13px] font-medium text-[#2C2C2C]">
+              <span className="text-[13px] font-medium text-foreground">
                 {getStatusLabel(group.status, t)}
               </span>
-              <span className="text-[11px] text-[#9A9A9A] ml-auto">
+              <span className="text-[11px] text-muted-foreground ml-auto">
                 {group.tasks.length}
               </span>
             </button>
@@ -181,17 +181,17 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
                     <PresenceIndicator key={task.uuid} entityType="task" entityUuid={task.uuid} badgeInside>
                       <button
                         onClick={() => onSelectTask(task.uuid)}
-                        className="flex items-center gap-2 w-full text-left rounded-md px-2.5 py-2 hover:bg-[#F5F2EC] transition-colors group cursor-pointer"
+                        className="flex items-center gap-2 w-full text-left rounded-md px-2.5 py-2 hover:bg-secondary transition-colors group cursor-pointer"
                       >
-                        <ChevronLeft className="h-3.5 w-3.5 text-[#D9D9D9] shrink-0 group-hover:text-[#C67A52]" />
+                        <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary" />
                         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${getTaskStatusDotColor(task.status)}`} />
-                        <span className="flex-1 text-[13px] text-[#2C2C2C] truncate group-hover:text-[#C67A52]">
+                        <span className="flex-1 text-[13px] text-foreground truncate group-hover:text-primary">
                           {task.title}
                         </span>
 
                         {/* AC progress pill */}
                         {ac && ac.total > 0 && (
-                          <span className="inline-flex items-center gap-0.5 shrink-0 rounded-full bg-[#F0EDE8] px-1.5 py-0.5 text-[10px] text-[#6B6B6B]">
+                          <span className="inline-flex items-center gap-0.5 shrink-0 rounded-full bg-[#F0EDE8] dark:bg-[#1f1e1c] px-1.5 py-0.5 text-[10px] text-muted-foreground">
                             <Check className="h-2.5 w-2.5" />
                             {ac.requiredPassed}/{ac.required}
                           </span>
@@ -199,7 +199,7 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
 
                         {/* Assignee */}
                         {task.assignee && (
-                          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-[#9A9A9A] max-w-[72px] truncate" title={task.assignee.name}>
+                          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted-foreground max-w-[72px] truncate" title={task.assignee.name}>
                             <User className="h-2.5 w-2.5 shrink-0" />
                             {task.assignee.name.split(/[@\s]/)[0]}
                           </span>
@@ -207,7 +207,7 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
 
                         {/* Worker count */}
                         {workers > 0 && (
-                          <span className="inline-flex items-center justify-center h-4 min-w-[16px] rounded-full bg-[#E8F5E9] text-[#2E7D32] text-[9px] font-semibold shrink-0" title={t("panel.taskList.workersActive", { count: workers })}>
+                          <span className="inline-flex items-center justify-center h-4 min-w-[16px] rounded-full bg-[#E8F5E9] dark:bg-[#14281a] text-[#2E7D32] dark:text-[#5FD07E] text-[9px] font-semibold shrink-0" title={t("panel.taskList.workersActive", { count: workers })}>
                             {workers}
                           </span>
                         )}

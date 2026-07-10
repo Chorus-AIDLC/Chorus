@@ -107,7 +107,7 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
     >
       <DialogTrigger asChild>
         {trigger || (
-          <Button className="bg-[#C67A52] hover:bg-[#B56A42] text-white">
+          <Button className="bg-primary hover:bg-[#B56A42] text-white">
             <Plus className="mr-2 h-4 w-4" />
             {t("documents.newDocument")}
           </Button>
@@ -126,7 +126,7 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="doc-title" className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label htmlFor="doc-title" className="text-[13px] font-medium text-foreground">
               {t("documents.titleLabel")} *
             </Label>
             <Input
@@ -134,17 +134,17 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={t("documents.titlePlaceholder")}
-              className="border-[#E5E0D8] focus-visible:ring-[#C67A52]"
+              className="border-border focus-visible:ring-primary"
               autoFocus
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="doc-type" className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label htmlFor="doc-type" className="text-[13px] font-medium text-foreground">
               {t("documents.typeLabel")}
             </Label>
             <Select value={type} onValueChange={setType}>
-              <SelectTrigger className="border-[#E5E0D8] focus:ring-[#C67A52]">
+              <SelectTrigger className="border-border focus:ring-primary">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -158,18 +158,18 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
           </div>
 
           <div className="space-y-2">
-            <Label className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label className="text-[13px] font-medium text-foreground">
               {t("documents.uploadMarkdown")}
             </Label>
             <div
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-[#E5E0D8] p-4 transition-colors hover:border-[#C67A52] hover:bg-[#FFFBF8]"
+              className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border p-4 transition-colors hover:border-primary hover:bg-[#FFFBF8] dark:hover:bg-[#1e1d1b]"
               onClick={() => fileInputRef.current?.click()}
             >
               {fileName ? (
                 <>
-                  <FileText className="h-5 w-5 text-[#C67A52]" />
+                  <FileText className="h-5 w-5 text-primary" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[#2C2C2C] truncate">{fileName}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{fileName}</p>
                     <p className="text-xs text-[#9A9A9A]">
                       {fileContent.length.toLocaleString()} {t("documents.characters")}
                     </p>
@@ -179,7 +179,7 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
                 <>
                   <Upload className="h-5 w-5 text-[#9A9A9A]" />
                   <div>
-                    <p className="text-sm text-[#6B6B6B]">{t("documents.clickToUpload")}</p>
+                    <p className="text-sm text-muted-foreground">{t("documents.clickToUpload")}</p>
                     <p className="text-xs text-[#9A9A9A]">.md, .txt, .markdown</p>
                   </div>
                 </>
@@ -200,14 +200,14 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
             variant="outline"
             onClick={() => setOpen(false)}
             disabled={isSaving}
-            className="border-[#E5E0D8]"
+            className="border-border"
           >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleSubmit}
             disabled={isSaving || !title.trim()}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+            className="bg-primary hover:bg-[#B56A42] text-white"
           >
             {isSaving ? (
               <>
