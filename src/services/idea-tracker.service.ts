@@ -9,7 +9,11 @@
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
 import { buildAssigneeMatch } from "@/lib/uuid-resolver";
-import { computeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
+import {
+  computeDerivedStatus,
+  getIdeasWithDerivedStatus,
+  type DerivedIdeaStatus,
+} from "@/services/idea.service";
 
 // ===== Idea tracker types =====
 
@@ -66,12 +70,20 @@ export interface BuildTaskTrackerOptions {
  * each carrying derivedStatus + proposal/task counts.
  *
  * Filters: excludes status="closed" (terminal) and derivedStatus="done"
- * (rolled-up completion of the proposal/task chain).
+ * (rolled-up completion of the proposal/task chain). A container (theme) idea's
+ * derivedStatus is rolled up from its children — so a theme whose children are
+ * all done is dropped like any other completed idea, rather than lingering
+ * forever (containers have no proposal/task chain of their own).
  *
  * Ordering: ideas are visited in `updatedAt desc` so the cap, when applied,
  * keeps the most-recently-touched work.
  *
- * Query budget: 4 prisma calls (ideas → proposals → tasks → projects).
+ * Query budget: 4 prisma calls (ideas → proposals → tasks → projects), plus —
+ * ONLY when the agent has a container idea on their plate — one
+ * getIdeasWithDerivedStatus (itself ~3-4 queries over the whole project) per
+ * distinct project that holds a container. This container rollup runs before the
+ * maxIdeas cap, so it is bounded by the agent's container-bearing projects, not
+ * by the cap. Skipped entirely when there are no containers.
  */
 export async function buildIdeaTracker(
   auth: AuthContext,
@@ -103,6 +115,7 @@ export async function buildIdeaTracker(
       status: true,
       elaborationStatus: true,
       parentUuid: true,
+      isContainer: true,
       projectUuid: true,
       createdAt: true,
       updatedAt: true,
@@ -187,6 +200,28 @@ export async function buildIdeaTracker(
   });
   const projectNames = new Map(projects.map((p) => [p.uuid, p.name]));
 
+  // Q5 (containers only): a theme (container) idea has no proposal/task chain of
+  // its own, so computeDerivedStatus would stall it at "in_progress" forever —
+  // even when every child is done. Its real status must roll up from its
+  // children, which may be assigned to other actors and thus absent from the
+  // assignee-matched set above. Resolve the rolled-up status from the same
+  // project-wide board builder the UI uses, so this surface can't drift from it.
+  // Only fires when the agent actually has a container on their plate.
+  const containerProjectUuids = [
+    ...new Set(rawIdeas.filter((i) => i.isContainer).map((i) => i.projectUuid)),
+  ];
+  const containerDerivedStatus = new Map<string, DerivedIdeaStatus>();
+  if (containerProjectUuids.length > 0) {
+    const rolled = await Promise.all(
+      containerProjectUuids.map((projectUuid) =>
+        getIdeasWithDerivedStatus(auth.companyUuid, projectUuid),
+      ),
+    );
+    for (const item of rolled.flat()) {
+      if (item.isContainer) containerDerivedStatus.set(item.uuid, item.derivedStatus);
+    }
+  }
+
   const tracker: Record<string, IdeaTrackerProject> = {};
   let count = 0;
 
@@ -198,13 +233,24 @@ export async function buildIdeaTracker(
       ? proposalToTaskStatuses.get(latestApproved.uuid) ?? []
       : [];
 
-    const { derivedStatus } = computeDerivedStatus({
+    const own = computeDerivedStatus({
       ideaStatus: idea.status,
       elaborationStatus: idea.elaborationStatus,
       hasPendingProposal: ideaHasPending.has(idea.uuid),
       hasApprovedProposal: !!latestApproved,
       taskStatuses,
     });
+
+    // A container idea takes its children's rolled-up status; everything else
+    // uses the status derived from its own proposal/task chain. The board query
+    // is company+project scoped with no status/assignee filter, so any container
+    // in rawIdeas is guaranteed to reappear in its project's board result (a
+    // childless theme included — it just carries its own base status there).
+    // The `?? own` fallback is therefore belt-and-suspenders for the impossible
+    // case where the two queries disagree on company/project.
+    const derivedStatus = idea.isContainer
+      ? containerDerivedStatus.get(idea.uuid) ?? own.derivedStatus
+      : own.derivedStatus;
 
     if (derivedStatus === "done") continue;
 
