@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { MoreHorizontal, Send, Check, X, Archive, Trash2, Undo2, FileText, ListChecks } from "lucide-react";

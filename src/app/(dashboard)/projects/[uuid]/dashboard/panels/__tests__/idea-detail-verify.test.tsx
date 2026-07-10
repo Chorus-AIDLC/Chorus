@@ -33,6 +33,9 @@ const {
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock, push: vi.fn(), replace: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ refresh: refreshMock, push: vi.fn(), replace: vi.fn() }),
+}));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 

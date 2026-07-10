@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { X, Bot, User, CheckCircle2, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";

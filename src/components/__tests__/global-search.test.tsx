@@ -16,6 +16,9 @@ const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
+}));
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../messages/en.json")).default as Record<

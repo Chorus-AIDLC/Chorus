@@ -46,6 +46,9 @@ const stableRouter = { push };
 vi.mock("next/navigation", () => ({
   useRouter: () => stableRouter,
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => stableRouter,
+}));
 
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
 

@@ -10,7 +10,7 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {

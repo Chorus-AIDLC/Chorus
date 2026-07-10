@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card, CardContent } from "@/components/ui/card";

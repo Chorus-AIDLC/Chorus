@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { X, Pencil, Trash2, Loader2, Check, Zap, GitBranch, Plus, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";

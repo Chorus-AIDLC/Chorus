@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { toast } from "sonner";
 import { X, Loader2, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";

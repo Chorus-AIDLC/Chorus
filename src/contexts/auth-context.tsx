@@ -9,7 +9,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import {
   authFetch,
   resyncRefreshTokenFromStore,
