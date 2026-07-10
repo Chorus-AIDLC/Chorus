@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { LocaleProvider } from "@/contexts/locale-context";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ProgressProvider } from "@/components/progress-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -43,7 +44,14 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider>
-          <LocaleProvider>{children}</LocaleProvider>
+          {/*
+            ProgressProvider (top-of-page navigation loading bar) is mounted
+            inside ThemeProvider so its `hsl(var(--primary))` color resolves to
+            the active theme's primary — see progress-provider.tsx.
+          */}
+          <ProgressProvider>
+            <LocaleProvider>{children}</LocaleProvider>
+          </ProgressProvider>
         </ThemeProvider>
       </body>
     </html>

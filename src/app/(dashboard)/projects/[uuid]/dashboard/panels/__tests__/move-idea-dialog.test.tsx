@@ -29,6 +29,9 @@ const { moveIdeaActionMock, moveIdeaPreviewActionMock, getProjectsAndGroupsActio
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock, push: pushMock, replace: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ refresh: refreshMock, push: pushMock, replace: vi.fn() }),
+}));
 
 vi.mock("sonner", () => ({
   toast: { success: toastSuccess, error: toastError },

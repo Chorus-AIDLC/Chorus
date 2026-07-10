@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { createUserManager, storeOidcConfig, type OidcConfig } from "@/lib/oidc";
 import { authFetch, resyncRefreshTokenFromStore } from "@/lib/auth-client";

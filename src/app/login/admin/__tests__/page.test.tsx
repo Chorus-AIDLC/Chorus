@@ -16,6 +16,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush }),
   useSearchParams: () => ({ get: mockSearchParamsGet }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ push: mockRouterPush }),
+}));
 
 // next/link renders its children; we only need the anchor for the back link.
 vi.mock("next/link", () => ({

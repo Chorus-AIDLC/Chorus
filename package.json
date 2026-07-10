@@ -63,6 +63,7 @@
     "prepack": "pnpm build && node scripts/prepack-pglite.mjs"
   },
   "dependencies": {
+    "@bprogress/next": "^3.2.12",
     "@electric-sql/pglite": "^0.4.4",
     "@electric-sql/pglite-socket": "^0.1.4",
     "@floating-ui/dom": "^1.7.5",
