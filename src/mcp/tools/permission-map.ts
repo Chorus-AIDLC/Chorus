@@ -55,8 +55,8 @@ export const TOOL_PERMISSIONS = {
   // See add-idea-completion-report spec delta `mcp-tool-surface`.
   chorus_create_report: "document:write",
   // Reference artifact writes — reuse the `document` resource (no new bit), per
-  // the reference-artifacts Tech Design. Read path is inline on
-  // chorus_get_proposal / chorus_get_task; there is no reference-read tool.
+  // the reference-artifacts Tech Design. Targets idea/proposal/task; read path is
+  // inline on chorus_get_idea / chorus_get_proposal / chorus_get_task; no read tool.
   chorus_add_reference: "document:write",
   chorus_update_reference: "document:write",
   chorus_remove_reference: "document:write",

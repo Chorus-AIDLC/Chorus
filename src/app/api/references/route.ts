@@ -48,7 +48,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   return success({ references });
 });
 
-// POST /api/references — create a reference artifact linked to a proposal/task
+// POST /api/references — create a reference artifact linked to an idea/proposal/task
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await getAuthContext(request);
   if (!auth) {
