@@ -29,6 +29,7 @@ import { locales, defaultLocale, type Locale } from "../config";
 import en from "../../../messages/en.json";
 import zh from "../../../messages/zh.json";
 import ko from "../../../messages/ko.json";
+import ja from "../../../messages/ja.json";
 
 type MessageNode = string | { [key: string]: MessageNode };
 type Messages = Record<string, MessageNode>;
@@ -40,6 +41,7 @@ const MESSAGES: Record<string, Messages> = {
   en: en as Messages,
   zh: zh as Messages,
   ko: ko as Messages,
+  ja: ja as Messages,
 };
 
 const REFERENCE: Locale = defaultLocale; // en
