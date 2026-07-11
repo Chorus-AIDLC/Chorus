@@ -76,10 +76,35 @@ vi.mock("@/services/task.service", () => ({
   checkDependenciesResolved: vi.fn(),
 }));
 
+// Reference-artifact service — benign shapes so happy paths reach 2xx. The
+// gating tests below assert these are NOT called when the gate rejects.
+const mockListReferences = vi.fn();
+const mockCreateReference = vi.fn();
+const mockGetReference = vi.fn();
+const mockUpdateReference = vi.fn();
+const mockDeleteReference = vi.fn();
+
+vi.mock("@/services/reference-artifact.service", () => ({
+  listReferences: (...args: unknown[]) => mockListReferences(...args),
+  createReference: (...args: unknown[]) => mockCreateReference(...args),
+  getReference: (...args: unknown[]) => mockGetReference(...args),
+  updateReference: (...args: unknown[]) => mockUpdateReference(...args),
+  deleteReference: (...args: unknown[]) => mockDeleteReference(...args),
+  // The route imports these constants for target-type validation.
+  REFERENCE_TYPES: ["docs", "repo", "issue_pr", "paper_blog"],
+  REFERENCE_TARGET_TYPES: ["proposal", "task"],
+}));
+
 import { GET as getIdeas, POST as postIdea } from "@/app/api/projects/[uuid]/ideas/route";
 import { GET as getProposals, POST as postProposal } from "@/app/api/projects/[uuid]/proposals/route";
 import { POST as approveProposalHandler } from "@/app/api/proposals/[uuid]/approve/route";
 import { GET as getTaskHandler } from "@/app/api/tasks/[uuid]/route";
+import { GET as getReferences, POST as postReference } from "@/app/api/references/route";
+import {
+  GET as getReference,
+  PATCH as patchReference,
+  DELETE as deleteReference,
+} from "@/app/api/references/[uuid]/route";
 
 const companyUuid = "company-0000-0000-0000-000000000001";
 const projectUuid = "project-0000-0000-0000-000000000001";
@@ -126,6 +151,11 @@ describe("T4: REST API permission gating", () => {
     });
     mockApproveProposal.mockResolvedValue({ uuid: proposalUuid, status: "approved" });
     mockGetTask.mockResolvedValue({ uuid: taskUuid, title: "t" });
+    mockListReferences.mockResolvedValue([]);
+    mockCreateReference.mockResolvedValue({ uuid: "ref-new" });
+    mockGetReference.mockResolvedValue({ uuid: "ref-1" });
+    mockUpdateReference.mockResolvedValue({ uuid: "ref-1", title: "updated" });
+    mockDeleteReference.mockResolvedValue(undefined);
   });
 
   // AC4: agent with idea:read only — GET ideas allowed, POST idea forbidden
@@ -281,6 +311,135 @@ describe("T4: REST API permission gating", () => {
 
       expect(response.status).toBe(200);
       expect(mockApproveProposal).toHaveBeenCalled();
+    });
+  });
+
+  // Reference artifacts reuse the `document` permission resource (no new bit):
+  // reads gate on document:read, mutations on document:write.
+  describe("reference artifacts: document:read / document:write gating", () => {
+    const referenceUuid = "reference-0000-0000-0000-00000000000a";
+
+    // An agent with document:read but NOT document:write.
+    const readOnlyDocPerms = ["document:read"];
+    // An agent with both document:read and document:write.
+    const writeDocPerms = ["document:read", "document:write"];
+
+    it("allows GET /api/references with document:read", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: readOnlyDocPerms }));
+
+      const response = await getReferences(
+        makeRequest(`/api/references?targetType=proposal&targetUuid=${proposalUuid}`),
+        makeContext({}),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockListReferences).toHaveBeenCalled();
+    });
+
+    it("gets 403 on GET /api/references without document:read", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: ["idea:read"] }));
+
+      const response = await getReferences(
+        makeRequest(`/api/references?targetType=proposal&targetUuid=${proposalUuid}`),
+        makeContext({}),
+      );
+
+      expect(response.status).toBe(403);
+      expect(mockListReferences).not.toHaveBeenCalled();
+    });
+
+    it("gets 403 on POST /api/references with document:read but NOT document:write", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: readOnlyDocPerms }));
+
+      const response = await postReference(
+        makeRequest(`/api/references`, {
+          method: "POST",
+          body: JSON.stringify({
+            targetType: "proposal",
+            targetUuid: proposalUuid,
+            type: "repo",
+            url: "https://example.com",
+            title: "Ref",
+          }),
+          headers: { "content-type": "application/json" },
+        }),
+        makeContext({}),
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.error.message).toContain("document:write");
+      expect(mockCreateReference).not.toHaveBeenCalled();
+    });
+
+    it("allows POST /api/references with document:write", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: writeDocPerms }));
+
+      const response = await postReference(
+        makeRequest(`/api/references`, {
+          method: "POST",
+          body: JSON.stringify({
+            targetType: "task",
+            targetUuid: taskUuid,
+            type: "docs",
+            url: "https://example.com/docs",
+            title: "Docs",
+          }),
+          headers: { "content-type": "application/json" },
+        }),
+        makeContext({}),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockCreateReference).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetType: "task",
+          targetUuid: taskUuid,
+          type: "docs",
+          createdByType: "agent",
+          createdByUuid: "agent-read-only",
+        }),
+      );
+    });
+
+    it("gets 403 on PATCH /api/references/[uuid] without document:write", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: readOnlyDocPerms }));
+
+      const response = await patchReference(
+        makeRequest(`/api/references/${referenceUuid}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: "new" }),
+          headers: { "content-type": "application/json" },
+        }),
+        makeContext({ uuid: referenceUuid }),
+      );
+
+      expect(response.status).toBe(403);
+      expect(mockUpdateReference).not.toHaveBeenCalled();
+    });
+
+    it("gets 403 on DELETE /api/references/[uuid] without document:write", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: readOnlyDocPerms }));
+
+      const response = await deleteReference(
+        makeRequest(`/api/references/${referenceUuid}`, { method: "DELETE" }),
+        makeContext({ uuid: referenceUuid }),
+      );
+
+      expect(response.status).toBe(403);
+      expect(mockDeleteReference).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 on GET /api/references/[uuid] when the row is absent/cross-tenant", async () => {
+      mockGetAuthContext.mockResolvedValue(readAuth({ permissions: readOnlyDocPerms }));
+      mockGetReference.mockResolvedValue(null);
+
+      const response = await getReference(
+        makeRequest(`/api/references/${referenceUuid}`),
+        makeContext({ uuid: referenceUuid }),
+      );
+
+      expect(response.status).toBe(404);
     });
   });
 

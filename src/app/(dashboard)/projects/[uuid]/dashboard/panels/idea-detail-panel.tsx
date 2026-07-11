@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/hooks/use-progress-router";
 import { toast } from "sonner";
-import { X, Loader2, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2 } from "lucide-react";
+import { X, Loader2, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,7 @@ import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
+import { ReferencesSection } from "@/components/references-section";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
@@ -914,6 +915,23 @@ export function IdeaDetailPanel({
                         proposals={proposals}
                         onDocClick={openDoc}
                       />
+
+                      {/* References Section — external evidence linked to the
+                          idea (add/edit/delete), mirroring the task panel. */}
+                      <div className="mt-5 space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          <LinkIcon className="h-3.5 w-3.5 text-primary" />
+                          <span className="text-[12px] font-semibold text-foreground/80">
+                            {t("references.title")}
+                          </span>
+                        </div>
+                        <ReferencesSection
+                          targetType="idea"
+                          targetUuid={idea.uuid}
+                          canWrite
+                          compact
+                        />
+                      </div>
                     </div>
                   )}
 

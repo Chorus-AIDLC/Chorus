@@ -60,6 +60,7 @@ vi.mock("@/contexts/realtime-context", () => ({
 // Stub heavy children — not under test here.
 vi.mock("@/components/elaboration-panel", () => ({ ElaborationPanel: () => <div data-testid="elaboration-panel" /> }));
 vi.mock("@/components/unified-comments", () => ({ UnifiedComments: () => <div /> }));
+vi.mock("@/components/references-section", () => ({ ReferencesSection: () => <div /> }));
 vi.mock("@/components/markdown-content", () => ({ MarkdownContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("@/components/mention-renderer", () => ({ ContentWithMentions: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("./assign-idea-modal", () => ({ AssignIdeaModal: () => <div /> }));

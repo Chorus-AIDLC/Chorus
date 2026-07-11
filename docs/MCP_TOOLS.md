@@ -49,6 +49,9 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_pm_create_document` | `document:write` |
 | `chorus_pm_update_document` | `document:write` |
 | `chorus_create_report` | `document:write` |
+| `chorus_add_reference` | `document:write` |
+| `chorus_update_reference` | `document:write` |
+| `chorus_remove_reference` | `document:write` |
 | `chorus_claim_task` | `task:write` |
 | `chorus_release_task` | `task:write` |
 | `chorus_submit_for_verify` | `task:write` |
@@ -271,7 +274,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
 
 > Entity → root-idea lineage resolution is **not** an MCP tool. It is a standalone REST endpoint, `GET /api/entities/{type}/{uuid}/root-idea`, callable with any valid auth (including an agent API key) — see `docs/API.md` / the route at `src/app/api/entities/[type]/[uuid]/root-idea/`.
 
@@ -734,6 +737,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 | draftUuid | string | No | Temporary UUID for intra-batch `dependsOnDraftUuids` references |
 | dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
+| references | array | No | Reference artifacts to attach to this task inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in the response `referenceErrors`, not created. |
 
 **Quick Task example**:
 ```json
@@ -802,6 +806,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 ```
 - `tasks`: One `{ uuid, title }` entry per created task, in input order.
 - `warnings`: Only returned when there are issues creating dependencies (the tasks themselves are created successfully). Acceptance-criteria presence is validated up front — a missing/empty AC set rejects the whole call with `isError` rather than producing a warning.
+- `referenceErrors`: Only returned when an inline `references[]` item fails validation (e.g. a non-http url). Fail-soft — the task is still created and its valid references linked; each entry names the offending task + reason.
 
 > Note: After `chorus_admin_approve_proposal` runs, taskDrafts are auto-materialized into Tasks. Calling `chorus_create_tasks` with the same `proposalUuid` would produce duplicates — only call this for proposal-linked tasks added outside the standard draft-and-approve flow.
 
@@ -1018,6 +1023,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | inputUuids | string[] | Yes | List of input UUIDs |
 | documentDrafts | array | No | List of document drafts |
 | taskDrafts | array | No | List of task drafts |
+| references | array | No | Reference artifacts to attach to the new proposal inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in `referenceErrors`, not created. |
 
 **Theme guard**: When `inputType = "idea"`, the request is rejected if **any** input idea has `isContainer = true` (single or mixed input set), and no proposal row is written. Themes are grouping nodes, not deliverables — derive a child idea (`chorus_pm_create_idea` with `parentUuid`) and create the proposal on the child. Enforced at the service layer (`createProposal`), the single choke point for all creation paths.
 
@@ -1117,6 +1123,58 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | content | string | No | New content (Markdown) |
 
 **Output**: Updated Document JSON
+
+### chorus_add_reference
+
+**Description**: Attach a first-class reference artifact (external evidence — a web link + optional notes) to an idea, proposal, or task. Notes are stored verbatim; the URL is never fetched or snapshotted.
+
+**Required Permission**: `document:write`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| targetType | enum | Yes | Target type: `idea`, `proposal`, or `task` |
+| targetUuid | string (UUID) | Yes | UUID of the idea, proposal, or task to attach to |
+| type | enum | Yes | Reference type: `docs` (official documentation), `repo` (reference implementation), `issue_pr` (issue/PR thread), `paper_blog` (paper/blog post) |
+| url | string | Yes | Web URL — must start with `http://` or `https://` (no local files) |
+| title | string | Yes | Reference title |
+| notes | string | No | Optional human/agent-authored summary (stored verbatim; no fetch) |
+
+**Output**: Created ReferenceArtifact JSON (`{ uuid, targetType, targetUuid, type, url, title, notes, createdBy, createdAt, updatedAt }`)
+
+> **No standalone read tool.** References are read back inline — the `chorus_get_idea`, `chorus_get_proposal`, and `chorus_get_task` responses each carry a `references: [...]` array. Humans read them through the idea/proposal/task detail views. There is deliberately no `chorus_get_references` tool.
+
+> **Inline at creation.** References can also be attached when the host entity is created, via the optional `references[]` param on `chorus_pm_create_idea`, `chorus_pm_create_proposal`, and `chorus_create_tasks` (per-task). This removes the create-then-add round-trip; `chorus_add_reference` remains for post-hoc attach (including task drafts, whose real Task rows only exist after proposal approval). Inline attach is fail-soft: a bad reference is skipped and reported in a `referenceErrors` field without failing the entity creation.
+
+### chorus_update_reference
+
+**Description**: Update a reference artifact. Provide the reference `uuid` plus any of `type`/`url`/`title`/`notes` to change; omitted fields are left unchanged. `type` and `url` are re-validated when present.
+
+**Required Permission**: `document:write`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| uuid | string (UUID) | Yes | Reference artifact UUID |
+| type | enum | No | New reference type: `docs`, `repo`, `issue_pr`, `paper_blog` |
+| url | string | No | New web URL (`http://` or `https://`) |
+| title | string | No | New title |
+| notes | string \| null | No | New notes (`null` clears; omit to leave unchanged) |
+
+**Output**: Updated ReferenceArtifact JSON
+
+### chorus_remove_reference
+
+**Description**: Remove (detach and delete) a reference artifact by its UUID.
+
+**Required Permission**: `document:write`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| uuid | string (UUID) | Yes | Reference artifact UUID |
+
+**Output**: `{ "uuid": "...", "action": "reference_removed" }`
 
 ### chorus_pm_add_document_draft
 
@@ -1337,8 +1395,9 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | content | string | No | Idea detailed description |
 | parentUuid | string | No | Parent Idea UUID to derive from (must be in the same project). Establishes single-parent lineage. |
 | isContainer | boolean | No | Create the Idea as a **theme** (default `false`). A theme groups derived children and may elaborate, but MUST NOT create a proposal (see `chorus_pm_create_proposal`). Orthogonal to `parentUuid` and freely reversible. |
+| references | array | No | Reference artifacts to attach to the new idea inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in `referenceErrors`, not created. |
 
-**Output**: Created Idea JSON (`{ uuid, title, parentUuid }`)
+**Output**: Created Idea JSON (`{ uuid, title, parentUuid }`; adds `referenceErrors` when an inline reference fails)
 
 **Derive-vs-Task heuristic**: derive a **child Idea** (set `parentUuid`) when the new direction needs its own elaboration/proposal lifecycle (it is an independent AI-DLC pass). When the new work is just *how to implement the current idea*, add a **Task** to the current idea's proposal instead. When there is no lineage to the current idea, create a plain top-level Idea (no `parentUuid`). The relation is weak — it never blocks either idea's flow.
 

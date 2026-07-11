@@ -54,6 +54,12 @@ export const TOOL_PERMISSIONS = {
   // Idea-completion report (public-namespaced, gated on document:write).
   // See add-idea-completion-report spec delta `mcp-tool-surface`.
   chorus_create_report: "document:write",
+  // Reference artifact writes — reuse the `document` resource (no new bit), per
+  // the reference-artifacts Tech Design. Read path is inline on
+  // chorus_get_proposal / chorus_get_task; there is no reference-read tool.
+  chorus_add_reference: "document:write",
+  chorus_update_reference: "document:write",
+  chorus_remove_reference: "document:write",
   // Task-editing tools historically on the PM surface.
   // Mapped to proposal:write to preserve 0.6.x dev boundaries (AC4): dev has
   // task:write but not proposal:write, so dev keeps exactly its 0.6.x tool set.

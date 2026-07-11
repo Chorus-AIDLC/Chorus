@@ -62,6 +62,7 @@ vi.mock("../elaboration-view", () => ({ ElaborationView: () => <div data-testid=
 vi.mock("../proposal-view", () => ({ ProposalView: () => <div /> }));
 vi.mock("../overview-timeline", () => ({ OverviewTimeline: () => <div /> }));
 vi.mock("../reports-list", () => ({ ReportsList: () => <div /> }));
+vi.mock("@/components/references-section", () => ({ ReferencesSection: () => <div /> }));
 vi.mock("../task-list-view", () => ({ TaskListView: () => <div /> }));
 vi.mock("../activity-comments-view", () => ({ ActivityCommentsView: () => <div /> }));
 vi.mock("../document-panel", () => ({ DocumentPanel: () => <div /> }));

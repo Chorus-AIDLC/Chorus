@@ -60,6 +60,7 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 | `chorus_pm_create_document` | Create standalone document |
 | `chorus_pm_update_document` | Update document content (increments version) |
 | `chorus_update_task` (with `addDependsOn` / `removeDependsOn`) | Manage dependencies between existing tasks (with cycle detection) |
+| `chorus_add_reference` / `chorus_update_reference` / `chorus_remove_reference` | Attach/edit/remove external-evidence web links (docs/repo/issue_pr/paper_blog) on a proposal or task; no read tool — they come back inline on `chorus_get_proposal` / `chorus_get_task` |
 
 **Shared tools** (checkin, query, comment, search, notifications): see `chorus` skill at `<BASE_URL>/skill/chorus/SKILL.md`
 

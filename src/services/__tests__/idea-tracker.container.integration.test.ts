@@ -13,6 +13,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     task: { findMany: vi.fn() },
     project: { findMany: vi.fn() },
     agentInstance: { findMany: vi.fn() },
+    referenceArtifact: { groupBy: vi.fn() },
   },
 }));
 
@@ -102,6 +103,9 @@ function seed(childCount: number, childDone: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.agentInstance.findMany.mockResolvedValue([]);
+  // Reference-count batching (Thread B) — default to none so the container
+  // rollup assertions are unaffected. clearAllMocks wipes the impl, so re-set.
+  mockPrisma.referenceArtifact.groupBy.mockResolvedValue([]);
 });
 
 describe("buildIdeaTracker container rollup (real getIdeasWithDerivedStatus)", () => {
