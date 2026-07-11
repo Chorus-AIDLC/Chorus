@@ -406,7 +406,6 @@
     "submit": "提交",
     "editIdea": "编辑想法",
     "saveChanges": "保存更改",
-    "completed": "已完成",
     "titleRequired": "标题不能为空",
     "updateFailed": "更新想法失败",
     "deleteIdea": "删除想法",
