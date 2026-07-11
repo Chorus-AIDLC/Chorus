@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Bot,
   User,
+  Link as LinkIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,8 @@ import { ProposalEditor } from "./proposal-editor";
 import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
 import { DiscussionDrawer } from "./discussion-drawer";
+import { ReferencesSection } from "@/components/references-section";
+import { listReferences } from "@/services/reference-artifact.service";
 import { batchCommentCounts } from "@/services/comment.service";
 import { normalizeNewlines } from "../../dashboard/panels/utils";
 
@@ -115,6 +118,13 @@ export default async function ProposalDetailPage({ params }: PageProps) {
   // Fetch comment count for the discussion drawer badge
   const commentCounts = await batchCommentCounts(auth.companyUuid, "proposal", [proposalUuid]);
   const commentCount = commentCounts[proposalUuid] || 0;
+
+  // Fetch linked reference artifacts (external evidence) for the sidebar card.
+  const references = await listReferences({
+    companyUuid: auth.companyUuid,
+    targetType: "proposal",
+    targetUuid: proposalUuid,
+  });
 
   return (
     <div className="px-4 py-4 md:px-10 md:py-8">
@@ -292,6 +302,26 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               currentUserUuid={auth.actorUuid}
             />
           )}
+
+          {/* References Card — external evidence linked to this proposal */}
+          <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+            <CardHeader className="border-b border-secondary px-5 py-4">
+              <div className="flex items-center gap-2">
+                <LinkIcon className="h-4 w-4 text-primary" />
+                <CardTitle className="text-[13px] font-semibold text-foreground">
+                  {t("references.title")}
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="px-5 py-4">
+              <ReferencesSection
+                targetType="proposal"
+                targetUuid={proposal.uuid}
+                canWrite
+                initialReferences={references}
+              />
+            </CardContent>
+          </Card>
 
           {/* Review Info */}
           {proposal.review && (

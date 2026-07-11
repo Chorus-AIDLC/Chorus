@@ -218,6 +218,12 @@ describe("MCP tool permission wiring", () => {
         // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
         // Both pm_agent and admin_agent carry idea:write, so it is visible to both.
         "chorus_edit_idea",
+        // 0.14.0 (reference-artifacts): three document:write-gated reference
+        // write tools. admin_agent carries document:write, so all three are
+        // visible; developer_agent (no document:write) sees none of them.
+        "chorus_add_reference",
+        "chorus_update_reference",
+        "chorus_remove_reference",
       ]);
       expect(registered).toEqual(expected);
     });
@@ -287,6 +293,50 @@ describe("MCP tool permission wiring", () => {
       expect(
         (TOOL_PERMISSIONS as Record<string, string>).chorus_pm_validate_elaboration
       ).toBe("idea:admin");
+    });
+  });
+
+  // Reference artifact write tools (0.14.0, reference-artifacts). All three
+  // reuse the `document` resource — gated on document:write, no new bit. The
+  // read path is inline on chorus_get_proposal / chorus_get_task, so there is
+  // deliberately no chorus_get_references tool.
+  describe("reference artifact write tools wiring", () => {
+    const REFERENCE_WRITE_TOOLS = [
+      "chorus_add_reference",
+      "chorus_update_reference",
+      "chorus_remove_reference",
+    ];
+
+    it("all three reference write tools are mapped to document:write in the permission map", () => {
+      const map = TOOL_PERMISSIONS as Record<string, string>;
+      for (const tool of REFERENCE_WRITE_TOOLS) {
+        expect(map[tool]).toBe("document:write");
+      }
+    });
+
+    it("an agent WITH document:write sees all three reference write tools", () => {
+      const registered = registeredFor(["document:read", "document:write"]);
+      for (const tool of REFERENCE_WRITE_TOOLS) {
+        expect(registered.has(tool)).toBe(true);
+      }
+    });
+
+    it("an agent WITHOUT document:write sees none of the reference write tools", () => {
+      const registered = registeredFor(["document:read"]);
+      for (const tool of REFERENCE_WRITE_TOOLS) {
+        expect(registered.has(tool)).toBe(false);
+      }
+    });
+
+    it("does NOT register a standalone chorus_get_references read tool for any permission set", () => {
+      const allPerms: Permission[] = [...ROLE_PRESETS.admin_agent];
+      const { server, names } = makeCapturingServer();
+      const auth = makeAuth(allPerms);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerPmTools(server as any, auth);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerPublicTools(server as any, auth);
+      expect(names).not.toContain("chorus_get_references");
     });
   });
 });

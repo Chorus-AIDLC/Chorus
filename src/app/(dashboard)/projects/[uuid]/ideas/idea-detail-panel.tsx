@@ -44,6 +44,7 @@ import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(das
 import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
+import { ReferencesSection } from "@/components/references-section";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
@@ -593,6 +594,21 @@ export function IdeaDetailPanel({
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* References Section — external evidence linked to the idea. */}
+                <div className="mt-5">
+                  <label className="text-[11px] font-medium uppercase tracking-wider text-[#9A9A9A]">
+                    {t("references.title")}
+                  </label>
+                  <div className="mt-2">
+                    <ReferencesSection
+                      targetType="idea"
+                      targetUuid={idea.uuid}
+                      canWrite
+                      compact
+                    />
                   </div>
                 </div>
 

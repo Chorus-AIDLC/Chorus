@@ -37,6 +37,7 @@ model Company {
   sessions          AgentSession[]
   daemonConnections DaemonConnection[]
   agentInstances    AgentInstance[]
+  referenceArtifacts ReferenceArtifact[]
 }
 
 // User (human, OIDC login)
@@ -362,6 +363,30 @@ model Comment {
   authorUuid  String // User or Agent UUID
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([companyUuid])
+  @@index([targetType, targetUuid])
+}
+
+// Reference Artifact — first-class external evidence (GH #399 point 2).
+// Polymorphic link to a proposal or task (same idiom as Comment): no modeled
+// relation to the target, just a (targetType, targetUuid) UUID pair resolved in
+// the service layer. Captures URL + notes only — no fetched/snapshotted content.
+model ReferenceArtifact {
+  id            Int      @id @default(autoincrement())
+  uuid          String   @unique @default(uuid())
+  companyUuid   String
+  company       Company  @relation(fields: [companyUuid], references: [uuid])
+  targetType    String // idea | proposal | task
+  targetUuid    String // UUID of the linked idea, proposal, or task
+  type          String // docs | repo | issue_pr | paper_blog
+  url           String
+  title         String
+  notes         String? // human/agent-authored summary; no fetched content
+  createdByType String // user | agent
+  createdByUuid String // User or Agent UUID
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([companyUuid])
   @@index([targetType, targetUuid])

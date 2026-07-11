@@ -36,6 +36,7 @@ import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
 import { markCriteriaAction, selfCheckCriteriaAction, resetCriterionAction } from "./[taskUuid]/criteria-actions";
 import { UnifiedComments } from "@/components/unified-comments";
+import { ReferencesSection } from "@/components/references-section";
 import { getTaskActivitiesAction } from "./[taskUuid]/activity-actions";
 import type { ActivityResponse } from "@/services/activity.service";
 import {
@@ -1226,6 +1227,21 @@ export function TaskDetailPanel({
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* References Section - external evidence, before Comments */}
+                <div className="mt-5">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                    {t("references.title")}
+                  </label>
+                  <div className="mt-2">
+                    <ReferencesSection
+                      targetType="task"
+                      targetUuid={task.uuid}
+                      canWrite
+                      compact
+                    />
                   </div>
                 </div>
 

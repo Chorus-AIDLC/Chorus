@@ -89,6 +89,7 @@ function idea(over: Partial<TrackerIdeaItem> = {}): TrackerIdeaItem {
     parentUuid: null,
     childCount: 0,
     isContainer: false,
+    referenceCount: 0,
     ...over,
   };
 }

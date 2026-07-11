@@ -15,6 +15,9 @@ const { mockPrisma } = vi.hoisted(() => ({
     task: {
       findMany: vi.fn(),
     },
+    referenceArtifact: {
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -484,6 +487,79 @@ describe("getIdeasWithDerivedStatus", () => {
   });
 });
 
+// ===== getIdeasWithDerivedStatus — referenceCount batching (Thread B) =====
+
+describe("getIdeasWithDerivedStatus — referenceCount batching", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks wipes the hoisted default impl; re-establish the no-refs
+    // default so tests that don't care aren't forced to set it.
+    mockPrisma.idea.groupBy.mockResolvedValue([]);
+    mockPrisma.referenceArtifact.groupBy.mockResolvedValue([]);
+  });
+
+  it("folds batched groupBy counts onto each idea row (idea-scoped, no N+1)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("idea-a", "open"),
+      makeIdea("idea-b", "open"),
+      makeIdea("idea-c", "open"),
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.referenceArtifact.groupBy.mockResolvedValue([
+      { targetUuid: "idea-a", _count: { _all: 2 } },
+      { targetUuid: "idea-c", _count: { _all: 5 } },
+    ]);
+
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const byUuid = Object.fromEntries(result.map((r) => [r.uuid, r.referenceCount]));
+
+    expect(byUuid["idea-a"]).toBe(2);
+    expect(byUuid["idea-b"]).toBe(0); // no reference row → default 0
+    expect(byUuid["idea-c"]).toBe(5);
+
+    // Single batched groupBy scoped to idea targets over the visible set (no N+1).
+    expect(mockPrisma.referenceArtifact.groupBy).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.referenceArtifact.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ["targetUuid"],
+        where: expect.objectContaining({
+          companyUuid: COMPANY_UUID,
+          targetType: "idea",
+          targetUuid: { in: ["idea-a", "idea-b", "idea-c"] },
+        }),
+      }),
+    );
+  });
+
+  it("defaults referenceCount to 0 for every row when there are no references", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-a", "open")]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.referenceArtifact.groupBy.mockResolvedValue([]);
+
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    expect(result[0].referenceCount).toBe(0);
+  });
+
+  it("skips the reference groupBy entirely when the project has no ideas", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+
+    await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    expect(mockPrisma.referenceArtifact.groupBy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces referenceCount through getTrackerGroups tracker rows", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-a", "open")]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.referenceArtifact.groupBy.mockResolvedValue([
+      { targetUuid: "idea-a", _count: { _all: 3 } },
+    ]);
+
+    const result = await getTrackerGroups(COMPANY_UUID, PROJECT_UUID);
+    expect(result.groups.todo[0].referenceCount).toBe(3);
+  });
+});
+
 // ===== getIdeaWithDerivedStatus (single idea) =====
 
 describe("getIdeaWithDerivedStatus", () => {
@@ -670,6 +746,7 @@ describe("getTrackerGroups", () => {
       childCount: 0,
       isContainer: undefined,
       childProgress: null,
+      referenceCount: 0,
     });
   });
 

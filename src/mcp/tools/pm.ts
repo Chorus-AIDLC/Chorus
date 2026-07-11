@@ -10,6 +10,11 @@ import * as ideaService from "@/services/idea.service";
 import * as proposalService from "@/services/proposal.service";
 import * as documentService from "@/services/document.service";
 import * as taskService from "@/services/task.service";
+import * as referenceArtifactService from "@/services/reference-artifact.service";
+import {
+  REFERENCE_TYPES,
+  REFERENCE_TARGET_TYPES,
+} from "@/services/reference-artifact.service";
 import * as activityService from "@/services/activity.service";
 import * as elaborationService from "@/services/elaboration.service";
 import { getAgentByUuid } from "@/services/agent.service";
@@ -21,6 +26,28 @@ import { hasPermission } from "@/lib/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
+  // Zod enums derived from the service's allowed sets so the tool schema and the
+  // service validation never drift. z.enum needs a non-empty tuple. Declared at
+  // the top of the function (not beside the reference write tools) so the create
+  // tools registered above them can reuse `referenceTypeEnum` for the inline
+  // `references[]` param without a temporal-dead-zone reference.
+  const referenceTypeEnum = z.enum(
+    REFERENCE_TYPES as unknown as [string, ...string[]]
+  );
+  const referenceTargetTypeEnum = z.enum(
+    REFERENCE_TARGET_TYPES as unknown as [string, ...string[]]
+  );
+
+  // Inline reference item shape (Thread C) reused by chorus_pm_create_idea and
+  // chorus_pm_create_proposal. Matches the createReferences helper's
+  // ReferenceCreateItem ({ type, url, title, notes? }).
+  const referenceInlineItemSchema = z.object({
+    type: referenceTypeEnum.describe("Reference type: docs, repo, issue_pr, or paper_blog"),
+    url: z.string().describe("Web URL (http:// or https://)"),
+    title: z.string().describe("Reference title"),
+    notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+  });
+
   // chorus_claim_idea - Claim an Idea
   registerPermissionedTool(
     server,
@@ -129,16 +156,17 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_create_proposal",
     {
-      description: "Create an empty Proposal container. Use chorus_pm_add_document_draft and chorus_pm_add_task_draft to populate it afterwards.",
+      description: "Create an empty Proposal container. Use chorus_pm_add_document_draft and chorus_pm_add_task_draft to populate it afterwards. Optional `references[]` attaches reference artifacts (external evidence — web link + optional notes) to the new proposal inline; a bad reference is skipped and reported in `referenceErrors` without failing proposal creation.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         title: z.string().describe("Proposal title"),
         description: z.string().optional().describe("Proposal description"),
         inputType: z.enum(["idea", "document"]).describe("Input source type"),
         inputUuids: zArray(z.string()).describe("Input UUID list"),
+        references: zArray(referenceInlineItemSchema).optional().describe("Optional reference artifacts to attach to the new proposal (fail-soft per item)"),
       }),
     },
-    async ({ projectUuid, title, description, inputType, inputUuids }) => {
+    async ({ projectUuid, title, description, inputType, inputUuids, references }) => {
       // Validate project exists
       if (!(await projectExists(auth.companyUuid, projectUuid))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
@@ -181,8 +209,26 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         createdByType: "agent",
       });
 
+      // Inline references (Thread C): materialize AFTER the proposal row exists
+      // so targetUuid is the real DB-generated uuid. Fail-soft — a bad ref is
+      // reported, never aborts proposal creation.
+      const refResult = await referenceArtifactService.createReferences(
+        auth.companyUuid,
+        "proposal",
+        proposal.uuid,
+        references,
+        { type: "agent", uuid: auth.actorUuid }
+      );
+
+      const payload: Record<string, unknown> = {
+        uuid: proposal.uuid,
+        title: proposal.title,
+        status: proposal.status,
+      };
+      if (refResult.errors.length > 0) payload.referenceErrors = refResult.errors;
+
       return {
-        content: [{ type: "text", text: JSON.stringify({ uuid: proposal.uuid, title: proposal.title, status: proposal.status }, null, 2) + reusedWarning }],
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) + reusedWarning }],
       };
     }
   );
@@ -322,6 +368,128 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       return {
         content: [{ type: "text", text: JSON.stringify({ uuid: updated.uuid, version: updated.version }, null, 2) }],
       };
+    }
+  );
+
+  // ===== Reference Artifact Tools =====
+  //
+  // First-class external evidence (GH #399 point 2) linked to an idea/proposal/task.
+  // Write-only surface — there is deliberately NO standalone read tool (q6=a);
+  // agents read references inline via the `references` array on
+  // chorus_get_idea / chorus_get_proposal / chorus_get_task. All three reuse the
+  // `document` bits (document:write) — no new permission resource, matching
+  // chorus_create_report. The referenceTypeEnum / referenceTargetTypeEnum /
+  // referenceInlineItemSchema helpers are declared at the top of registerPmTools
+  // (shared with the inline references[] param on the create tools).
+
+  // chorus_add_reference - Attach a reference artifact to an idea, proposal, or task
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
+    "chorus_add_reference",
+    {
+      description:
+        "Attach a first-class reference artifact (external evidence — a web link + optional notes) to an idea, proposal, or task. `type` is one of docs (official documentation), repo (reference implementation), issue_pr (issue/PR thread), paper_blog (paper/blog post). `url` must be an http:// or https:// web link (no local files). Notes are stored verbatim; the URL is never fetched. Agents read references back inline via chorus_get_idea / chorus_get_proposal / chorus_get_task — there is no separate reference-read tool. References can also be attached at creation via the optional `references[]` param on chorus_pm_create_idea / chorus_pm_create_proposal / chorus_create_tasks; use this tool for post-hoc attach.",
+      inputSchema: z.object({
+        targetType: referenceTargetTypeEnum.describe("Target type: idea, proposal, or task"),
+        targetUuid: z.string().describe("UUID of the idea, proposal, or task to attach to"),
+        type: referenceTypeEnum.describe("Reference type: docs, repo, issue_pr, or paper_blog"),
+        url: z.string().describe("Web URL (http:// or https://)"),
+        title: z.string().describe("Reference title"),
+        notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+      }),
+    },
+    async ({ targetType, targetUuid, type, url, title, notes }) => {
+      try {
+        const reference = await referenceArtifactService.createReference({
+          companyUuid: auth.companyUuid,
+          targetType,
+          targetUuid,
+          type,
+          url,
+          title,
+          notes: notes ?? null,
+          createdByType: "agent",
+          createdByUuid: auth.actorUuid,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(reference, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to add reference: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // chorus_update_reference - Edit a reference artifact's type/url/title/notes
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
+    "chorus_update_reference",
+    {
+      description:
+        "Update a reference artifact. Provide the reference `uuid` plus any of type/url/title/notes to change; omitted fields are left unchanged. type and url are re-validated when present.",
+      inputSchema: z.object({
+        uuid: z.string().describe("Reference artifact UUID"),
+        type: referenceTypeEnum.optional().describe("New reference type"),
+        url: z.string().optional().describe("New web URL (http:// or https://)"),
+        title: z.string().optional().describe("New title"),
+        notes: z.string().nullable().optional().describe("New notes (null clears; omit to leave unchanged)"),
+      }),
+    },
+    async ({ uuid, type, url, title, notes }) => {
+      try {
+        const reference = await referenceArtifactService.updateReference(
+          auth.companyUuid,
+          uuid,
+          {
+            ...(type !== undefined ? { type } : {}),
+            ...(url !== undefined ? { url } : {}),
+            ...(title !== undefined ? { title } : {}),
+            ...(notes !== undefined ? { notes } : {}),
+          }
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(reference, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to update reference: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // chorus_remove_reference - Detach/delete a reference artifact
+  registerPermissionedTool(
+    server,
+    auth,
+    "document:write",
+    "chorus_remove_reference",
+    {
+      description: "Remove (detach and delete) a reference artifact by its UUID.",
+      inputSchema: z.object({
+        uuid: z.string().describe("Reference artifact UUID"),
+      }),
+    },
+    async ({ uuid }) => {
+      try {
+        await referenceArtifactService.deleteReference(auth.companyUuid, uuid);
+        return {
+          content: [{ type: "text", text: JSON.stringify({ uuid, action: "reference_removed" }, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to remove reference: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
     }
   );
 
@@ -988,16 +1156,17 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_create_idea",
     {
-      description: "Create an Idea (submits requirements on behalf of humans). Optional parentUuid derives it from an existing same-project idea (single-parent lineage). Optional isContainer marks it as a theme (groups derived children; may elaborate but cannot create a proposal).",
+      description: "Create an Idea (submits requirements on behalf of humans). Optional parentUuid derives it from an existing same-project idea (single-parent lineage). Optional isContainer marks it as a theme (groups derived children; may elaborate but cannot create a proposal). Optional `references[]` attaches reference artifacts (external evidence — web link + optional notes) to the new idea inline; a bad reference is skipped and reported in `referenceErrors` without failing idea creation.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         title: z.string().describe("Idea title"),
         content: z.string().optional().describe("Idea detailed description"),
         parentUuid: z.string().optional().describe("Same-project parent Idea to derive from (single-parent lineage)"),
         isContainer: z.boolean().optional().describe("Mark as a theme (groups derived children; may elaborate but MUST NOT create a proposal). Defaults to false."),
+        references: zArray(referenceInlineItemSchema).optional().describe("Optional reference artifacts to attach to the new idea (fail-soft per item)"),
       }),
     },
-    async ({ projectUuid, title, content, parentUuid, isContainer }) => {
+    async ({ projectUuid, title, content, parentUuid, isContainer, references }) => {
       const exists = await projectExists(auth.companyUuid, projectUuid);
       if (!exists) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
@@ -1014,8 +1183,26 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           isContainer,
         });
 
+        // Inline references (Thread C): materialize AFTER the idea row exists so
+        // targetUuid is the real DB-generated uuid. Fail-soft — a bad ref is
+        // reported, never aborts idea creation.
+        const refResult = await referenceArtifactService.createReferences(
+          auth.companyUuid,
+          "idea",
+          idea.uuid,
+          references,
+          { type: "agent", uuid: auth.actorUuid }
+        );
+
+        const payload: Record<string, unknown> = {
+          uuid: idea.uuid,
+          title: idea.title,
+          parentUuid: idea.parentUuid ?? null,
+        };
+        if (refResult.errors.length > 0) payload.referenceErrors = refResult.errors;
+
         return {
-          content: [{ type: "text", text: JSON.stringify({ uuid: idea.uuid, title: idea.title, parentUuid: idea.parentUuid ?? null }) }],
+          content: [{ type: "text", text: JSON.stringify(payload) }],
         };
       } catch (error) {
         return {

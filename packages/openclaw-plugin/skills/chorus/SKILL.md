@@ -298,6 +298,7 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_claim_idea` / `chorus_release_idea` / `chorus_move_idea` / `chorus_pm_create_idea` / `chorus_edit_idea` / `chorus_pm_*_elaboration` | `idea:write` | No | Yes | Yes |
 | `chorus_pm_create_proposal` / `chorus_pm_*_proposal` / `chorus_pm_*_draft` / `chorus_create_tasks` / `chorus_pm_assign_task` / `chorus_update_task` (dependency edits via `addDependsOn`/`removeDependsOn`) | `proposal:write` | No | Yes | Yes |
 | `chorus_pm_create_document` / `chorus_pm_update_document` / `chorus_create_report` | `document:write` | No | Yes | Yes |
+| `chorus_add_reference` / `chorus_update_reference` / `chorus_remove_reference` | `document:write` | No | Yes | Yes |
 | `chorus_admin_create_project` / `chorus_admin_*_project_group` / `chorus_admin_move_project_to_group` | `project:write` | No | **Yes** (0.7.0+) | Yes |
 | `chorus_admin_approve_proposal` / `chorus_admin_close_proposal` | `proposal:admin` | No | No | Yes |
 | `chorus_admin_verify_task` / `chorus_admin_reopen_task` / `chorus_admin_close_task` / `chorus_mark_acceptance_criteria` / `chorus_admin_delete_task` | `task:admin` | No | No | Yes |
