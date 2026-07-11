@@ -55,6 +55,12 @@
     "system": "시스템",
     "confirmDelete": "정말 삭제하시겠습니까?"
   },
+  "theme": {
+    "toggleLabel": "테마",
+    "light": "라이트",
+    "dark": "다크",
+    "system": "시스템"
+  },
   "activity": {
     "taskCreated": "{actor}님이 이 작업을 생성했습니다",
     "taskAssigned": "{actor}님이 이 작업에 배정되었습니다",
@@ -678,6 +684,33 @@
     "deleteFailed": "문서를 삭제하지 못했습니다.",
     "deleteFailedNotFound": "이 문서는 더 이상 존재하지 않습니다."
   },
+  "references": {
+    "title": "참고 자료",
+    "empty": "공식 문서, 참고 구현체 또는 이슈 스레드를 연결해 근거를 마련하세요.",
+    "loading": "참고 자료를 불러오는 중...",
+    "add": "추가",
+    "addReference": "참고 자료 추가",
+    "editReference": "참고 자료 편집",
+    "deleteReference": "참고 자료 삭제",
+    "deleteConfirm": "참고 자료 \"{title}\"이(가) 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "typeLabel": "유형",
+    "typeDocs": "문서",
+    "typeRepo": "저장소",
+    "typeIssuePr": "이슈 / PR",
+    "typePaperBlog": "논문 / 블로그",
+    "urlLabel": "URL",
+    "urlPlaceholder": "https://example.com/...",
+    "urlRequired": "URL을 입력하세요",
+    "titleLabel": "제목",
+    "titlePlaceholder": "짧은 제목을 입력하세요",
+    "titleRequired": "제목을 입력하세요",
+    "notesLabel": "메모",
+    "notesPlaceholder": "선택 사항: 요약 또는 관련성 설명",
+    "addFailed": "참고 자료 추가에 실패했습니다",
+    "updateFailed": "참고 자료 업데이트에 실패했습니다",
+    "deleteFailed": "참고 자료 삭제에 실패했습니다",
+    "countLabel": "참고 자료 {count}개"
+  },
   "export": {
     "exportDocument": "내보내기",
     "exportAs": "{format}(으)로 내보내기",
@@ -1213,7 +1246,15 @@
       "pickerTruncated": "처음 200개의 아이디어만 표시됩니다. 원하는 상위 항목이 보이지 않으면 제목으로 검색해 좁혀보세요.",
       "save": "상위 항목으로 설정",
       "saveFailed": "상위 항목 설정에 실패했습니다",
-      "deriveFailed": "아이디어 파생에 실패했습니다"
+      "deriveFailed": "아이디어 파생에 실패했습니다",
+      "container": "테마",
+      "containerDescription": "테마는 관련된 하위 아이디어를 묶어 공통 방향을 정합니다. 구체화는 가능하지만 실제 작업은 테마에서 파생한 아이디어에서 이루어지며, 테마 자체는 제안을 작성하지 않습니다.",
+      "containerBadge": "테마",
+      "typeIdea": "아이디어",
+      "typeTheme": "테마",
+      "makeContainer": "테마로 설정",
+      "containerHint": "테마는 하위 아이디어를 파생하며 진행됩니다.",
+      "childrenDone": "{done}/{total} 완료"
     },
     "actions": {
       "newIdea": "새 아이디어",
@@ -1237,7 +1278,9 @@
       "descriptionPlaceholder": "아이디어를 명확히 하는 데 도움이 되는 배경, 목표, 세부 정보를 추가하세요...",
       "modeForm": "양식 작성",
       "modeConversation": "에이전트에게 설명",
-      "modeConversationOfflineHint": "에이전트에게 설명하려면 온라인 상태인 데몬이 필요합니다."
+      "modeConversationOfflineHint": "에이전트에게 설명하려면 온라인 상태인 데몬이 필요합니다.",
+      "decompose": "하위 아이디어로 나누도록 도와주세요",
+      "decomposeHint": "테마를 생성하고, 에이전트가 확인용 하위 아이디어 후보를 제안하도록 합니다."
     },
     "error": {
       "loadFailed": "아이디어를 불러오지 못했습니다",
@@ -1652,6 +1695,11 @@
     },
     "tooltip": {
       "loading": "로딩 중…"
+    },
+    "zoom": {
+      "in": "확대",
+      "out": "축소",
+      "fit": "화면에 맞추기"
     },
     "status": {
       "unknown": "알 수 없음"

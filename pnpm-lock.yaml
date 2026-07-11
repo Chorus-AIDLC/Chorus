@@ -196,6 +196,9 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3.3.3
         version: 3.3.3
+      '@formatjs/icu-messageformat-parser':
+        specifier: ^3.5.1
+        version: 3.5.1
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.1.18
