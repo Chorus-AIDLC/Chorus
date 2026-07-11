@@ -13,7 +13,7 @@
   </a>
 </p>
 
-<p align="center"><a href="README.zh.md">中文</a></p>
+<p align="center"><strong>English</strong> · <a href="README.zh.md">中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a></p>
 
 Chorus is an agent harness — the infrastructure that wraps around LLM agents to manage session lifecycle, task state, sub-agent orchestration, observability, and failure recovery. It lets multiple AI Agents (with fine-grained, configurable permissions) and humans collaborate through the full workflow from requirements to delivery.
 
@@ -35,6 +35,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 ---
 
 ## What's New
+
+**[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — Dark mode across the app (light / dark / system). Reference artifacts: attach docs, repos, issues, and articles to any idea, proposal, or task, readable inline and over MCP. Korean and Japanese locales (Korean contributed by the community). **Theme** ideas for grouping, plus daemon Start Development / Yolo buttons, conversational idea entry, crash-resume, and `chorus daemon install`.
 
 **[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — Per-project resource mind-map: a new Graph view wires each project's Ideas, Proposals, Documents, and Tasks into one collapsible tree, generated from the project's own structure. Every card carries its current status (ideas show the derived pipeline status the idea tracker uses), a title search auto-expands the path to every match with highlight/dim and prev/next navigation, and the same zoom/pan canvas renders on desktop and mobile (pinch + double-tap).
 
@@ -311,7 +313,7 @@ A Cmd+K command palette for searching across all 6 entity types (Tasks, Ideas, P
 | Cache/Pub-Sub | Redis 7 (ioredis) — optional |
 | Agent Integration | MCP SDK 1.26 (HTTP Streamable Transport) |
 | Auth | OIDC + PKCE / API Key / SuperAdmin |
-| i18n | next-intl (en, zh) |
+| i18n | next-intl (en, zh, ko, ja) |
 | Deployment | [Docker Hub](https://hub.docker.com/r/chorusaidlc/chorus-app) / Docker Compose / AWS CDK |
 
 ---
