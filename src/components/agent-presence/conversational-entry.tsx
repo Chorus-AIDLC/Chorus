@@ -289,7 +289,7 @@ export function ConversationalEntry({
   if (onlineConnections.length === 0) {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-[12.5px] leading-relaxed text-[#6B6B6B]">
+        <p className="text-[12.5px] leading-relaxed text-muted-foreground">
           {t("noOnlineDaemon")}
         </p>
         {offlineFallback ?? <DaemonConnectCta variant="compact" />}
@@ -306,7 +306,7 @@ export function ConversationalEntry({
           name must never be implicit). A sole agent is preselected and the
           Select simply has one option. */}
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {t("agentLabel")}
         </span>
         <Select
@@ -334,7 +334,7 @@ export function ConversationalEntry({
           instance auto-selects). No agent selected yet → prompt instead. */}
       {selectedAgent ? (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("instanceLabel")}
           </span>
           <InstancePicker
@@ -345,7 +345,7 @@ export function ConversationalEntry({
           />
         </div>
       ) : (
-        <p className="text-[12px] text-[#9A9A9A]">{t("pickAgentFirst")}</p>
+        <p className="text-[12px] text-muted-foreground">{t("pickAgentFirst")}</p>
       )}
 
       {/* Description input — plain Enter sends (IME-guarded), Shift+Enter newline. */}
@@ -357,15 +357,15 @@ export function ConversationalEntry({
           disabled={pending}
           placeholder={t("placeholder")}
           rows={5}
-          className="min-h-[120px] resize-none rounded-xl border-[#E5E0D8] bg-white text-[14px] text-[#2C2C2C] placeholder:text-[#9A9A9A] focus-visible:border-[#C67A52] focus-visible:ring-[#C67A52]/30"
+          className="min-h-[120px] resize-none rounded-xl border-border bg-card text-[14px] text-foreground placeholder:text-[#9A9A9A] focus-visible:border-primary focus-visible:ring-primary/30"
         />
         {showCounter && (
           <span
             aria-live="polite"
             className={
               overBudget
-                ? "self-end text-[11px] font-medium text-[#B3261E]"
-                : "self-end text-[11px] text-[#9A9A9A]"
+                ? "self-end text-[11px] font-medium text-[#B3261E] dark:text-[#F08078]"
+                : "self-end text-[11px] text-muted-foreground"
             }
           >
             {t("charCounter", {
@@ -378,7 +378,7 @@ export function ConversationalEntry({
 
       {/* Dispatch error — inline and retryable, never silent. */}
       {sendError && (
-        <div className="flex items-start gap-1.5 text-[12px] font-medium text-[#B45309]">
+        <div className="flex items-start gap-1.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E]">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="min-w-0">{sendError}</span>
         </div>
@@ -388,7 +388,7 @@ export function ConversationalEntry({
         type="button"
         onClick={send}
         disabled={sendDisabled}
-        className="gap-1.5 self-end rounded-lg bg-[#C67A52] px-4 text-[13px] font-medium text-white hover:bg-[#B56A44] disabled:bg-[#E5E0D8] disabled:text-[#9A9A9A]"
+        className="gap-1.5 self-end rounded-lg bg-primary px-4 text-[13px] font-medium text-white hover:bg-[#B56A44] disabled:bg-border disabled:text-[#9A9A9A]"
       >
         {pending ? (
           <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />

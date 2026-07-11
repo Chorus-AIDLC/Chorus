@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { authFetch, resyncRefreshTokenFromStore } from "@/lib/auth-client";
 
@@ -63,8 +63,8 @@ export default function Home() {
   }, [router]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#FAF8F4]">
-      <div className="text-[#737373]">{t("common.loading")}</div>
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="text-muted-foreground">{t("common.loading")}</div>
     </div>
   );
 }

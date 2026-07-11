@@ -40,7 +40,7 @@ import { Progress } from "@/components/ui/progress";
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
 import { CreateProjectGroupDialog } from "@/components/create-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
-import { getProjectInitials, getProjectIconColor } from "@/lib/project-colors";
+import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 
 // Types
 interface ProjectData {
@@ -68,11 +68,32 @@ interface ProjectGroupData {
   updatedAt: string;
 }
 
-function getProgressColor(percent: number): { bar: string; text: string } {
-  if (percent >= 100) return { bar: "#1D9E75", text: "#0F6E56" };
-  if (percent >= 60) return { bar: "#5DCAA5", text: "#0F6E56" };
-  if (percent >= 30) return { bar: "#FAC775", text: "#854F0B" };
-  return { bar: "#F09595", text: "#A32D2D" };
+// Progress colors. `bar` is the (theme-invariant) saturated indicator fill.
+// `text` / `textDark` are the percentage-label colors: the light-mode values are
+// deep tints (dark text) that would be near-invisible on the dark surface, so a
+// lighter same-hue `textDark` is applied under `.dark` via the `.progress-pct`
+// CSS-variable rule (inline styles can't carry a `dark:` variant).
+function getProgressColor(percent: number): {
+  bar: string;
+  text: string;
+  textDark: string;
+} {
+  if (percent >= 100) return { bar: "#1D9E75", text: "#0F6E56", textDark: "#4FD1A0" };
+  if (percent >= 60) return { bar: "#5DCAA5", text: "#0F6E56", textDark: "#6FD1A8" };
+  if (percent >= 30) return { bar: "#FAC775", text: "#854F0B", textDark: "#E0B44E" };
+  return { bar: "#F09595", text: "#A32D2D", textDark: "#F0897E" };
+}
+
+// Inline style exposing both percentage-label colors as CSS vars; `.progress-pct`
+// picks light by default and dark under `.dark`.
+function progressTextStyle(c: {
+  text: string;
+  textDark: string;
+}): React.CSSProperties {
+  return {
+    ["--pct-text" as string]: c.text,
+    ["--pct-text-dark" as string]: c.textDark,
+  };
 }
 
 function useRelativeDate() {
@@ -129,25 +150,25 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
   const isComplete = progress === 100 && !isEmpty;
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-[#E5E2DC] bg-white p-4 transition-colors hover:bg-[#F5F2EC]">
+    <div className="flex flex-col gap-3 rounded-xl border border-[#E5E2DC] dark:border-[#2a2a2e] bg-card p-4 transition-colors hover:bg-secondary">
       {/* Header */}
       <div className="flex items-center gap-2.5">
         <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
-          style={{ backgroundColor: iconColor.bg, color: iconColor.text }}
+          className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
+          style={projectIconStyle(iconColor)}
         >
           {initials}
         </div>
-        <span className="truncate text-[13px] font-semibold text-[#2C2C2C]">
+        <span className="truncate text-[13px] font-semibold text-foreground">
           {project.name}
         </span>
         {isEmpty && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] px-1.5 py-0 text-[10px] font-medium text-[#92400E]">
+          <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
             {t("projects.empty")}
           </Badge>
         )}
         {isComplete && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] px-1.5 py-0 text-[10px] font-medium text-[#065F46]">
+          <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
             {t("projects.complete")}
           </Badge>
         )}
@@ -160,11 +181,11 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
       <div className="flex flex-col gap-1.5">
         <Progress
           value={progress}
-          className="h-1.5 w-full bg-[#F0EDE8]"
+          className="h-1.5 w-full bg-[#F0EDE8] dark:bg-[#1f1e1c]"
           style={{ '--progress-indicator': progressColor.bar } as React.CSSProperties}
         />
         <div className="flex justify-between">
-          <span className="text-[11px] font-semibold" style={{ color: progressColor.text }}>
+          <span className="progress-pct text-[11px] font-semibold" style={progressTextStyle(progressColor)}>
             {progress}%
           </span>
           <span className="text-[11px] text-[#9A9A9A]">
@@ -196,23 +217,23 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
       {/* Line 1: Icon + Name + Badge */}
       <div className="flex items-center gap-2.5 md:min-w-0 md:flex-1 md:gap-4">
         <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold md:h-9 md:w-9 md:rounded-[10px] md:text-[11px]"
-          style={{ backgroundColor: iconColor.bg, color: iconColor.text }}
+          className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold md:h-9 md:w-9 md:rounded-[10px] md:text-[11px]"
+          style={projectIconStyle(iconColor)}
         >
           {initials}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-semibold text-[#2C2C2C]">
+            <span className="truncate text-[13px] font-semibold text-foreground">
               {project.name}
             </span>
             {isEmpty && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] px-1.5 py-0 text-[10px] font-medium text-[#92400E]">
+              <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
                 {t("projects.empty")}
               </Badge>
             )}
             {isComplete && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] px-1.5 py-0 text-[10px] font-medium text-[#065F46]">
+              <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
                 {t("projects.complete")}
               </Badge>
             )}
@@ -231,7 +252,7 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
           <span>&middot;</span>
           <span>{formatRelative(project.updatedAt)}</span>
         </span>
-        <span className="text-[10px] font-semibold" style={{ color: progressColor.text }}>
+        <span className="progress-pct text-[10px] font-semibold" style={progressTextStyle(progressColor)}>
           {progress}%
         </span>
       </div>
@@ -240,7 +261,7 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
       <div className="md:hidden">
         <Progress
           value={progress}
-          className="h-1 w-full bg-[#F0EDE8]"
+          className="h-1 w-full bg-[#F0EDE8] dark:bg-[#1f1e1c]"
           style={{ '--progress-indicator': progressColor.bar } as React.CSSProperties}
         />
       </div>
@@ -249,10 +270,10 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
       <div className="hidden w-[200px] shrink-0 items-center gap-2 md:flex">
         <Progress
           value={progress}
-          className="h-1.5 flex-1 bg-[#F0EDE8]"
+          className="h-1.5 flex-1 bg-[#F0EDE8] dark:bg-[#1f1e1c]"
           style={{ '--progress-indicator': progressColor.bar } as React.CSSProperties}
         />
-        <span className="w-9 text-right text-[11px] font-semibold" style={{ color: progressColor.text }}>
+        <span className="progress-pct w-9 text-right text-[11px] font-semibold" style={progressTextStyle(progressColor)}>
           {progress}%
         </span>
       </div>
@@ -295,26 +316,26 @@ function GroupSection({
         <div ref={provided.innerRef} {...provided.droppableProps}>
           <Collapsible open={isOpen} onOpenChange={setIsOpen}>
             <Card
-              className={`overflow-hidden rounded-2xl border-[#E5E2DC] gap-0 py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
+              className={`overflow-hidden rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] gap-0 py-0 shadow-none transition-colors hover:border-primary/40 ${
                 snapshot.isDraggingOver
-                  ? "border-[#C67A52] bg-[#C67A5208]"
+                  ? "border-primary bg-primary/[0.03]"
                   : ""
               }`}
             >
               {/* Group Header */}
               <div className="flex flex-col gap-2 px-4 py-2.5 md:flex-row md:items-center md:justify-between md:px-6 md:py-3">
                 <CollapsibleTrigger className="flex flex-1 cursor-pointer items-center gap-2.5 text-left md:gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#C67A5215] md:h-9 md:w-9">
-                    <Folder className="h-4 w-4 text-[#C67A52]" />
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.08] md:h-9 md:w-9">
+                    <Folder className="h-4 w-4 text-primary" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 md:gap-2">
-                      <h2 className="truncate text-sm font-semibold text-[#2C2C2C] md:text-base">
+                      <h2 className="truncate text-sm font-semibold text-foreground md:text-base">
                         {group.name}
                       </h2>
                       <Badge
                         variant="secondary"
-                        className="shrink-0 border-0 bg-[#F0EDE8] text-[10px] font-medium text-[#6B6B6B] md:text-[11px]"
+                        className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] text-[10px] font-medium text-muted-foreground md:text-[11px]"
                       >
                         {projects.length}
                       </Badge>
@@ -340,7 +361,7 @@ function GroupSection({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-xs text-[#C67A52] hover:text-[#B56A42]"
+                      className="text-xs text-primary hover:text-[#B56A42]"
                     >
                       {t("projectGroups.viewDashboard")}
                       <ArrowRight className="ml-1 h-3 w-3" />
@@ -349,7 +370,7 @@ function GroupSection({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-[#E5E2DC] text-xs"
+                    className="border-[#E5E2DC] dark:border-[#2a2a2e] text-xs"
                     onClick={onNewProject}
                   >
                     <Plus className="mr-1 h-3 w-3" />
@@ -389,7 +410,7 @@ function GroupSection({
                                 {viewMode === "grid" ? (
                                   <>
                                     {/* Mobile: always list */}
-                                    <div className={`md:hidden transition-colors hover:bg-[#F5F2EC] ${snapshot.isDragging ? "rotate-1 opacity-90 shadow-md rounded-lg bg-white" : ""}`}>
+                                    <div className={`md:hidden transition-colors hover:bg-secondary ${snapshot.isDragging ? "rotate-1 opacity-90 shadow-md rounded-lg bg-card" : ""}`}>
                                       <ProjectListRow project={project} showDivider={index < projects.length - 1} />
                                     </div>
                                     {/* Desktop: grid card */}
@@ -399,9 +420,9 @@ function GroupSection({
                                   </>
                                 ) : (
                                   <div
-                                    className={`transition-colors hover:bg-[#F5F2EC] ${
+                                    className={`transition-colors hover:bg-secondary ${
                                       snapshot.isDragging
-                                        ? "rotate-1 opacity-90 shadow-md rounded-lg bg-white"
+                                        ? "rotate-1 opacity-90 shadow-md rounded-lg bg-card"
                                         : ""
                                     }`}
                                   >
@@ -445,25 +466,25 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
           <div ref={provided.innerRef} {...provided.droppableProps}>
             <Collapsible open={isOpen} onOpenChange={setIsOpen}>
               <Card
-                className={`overflow-hidden rounded-2xl border-[#E5E2DC] gap-0 py-0 shadow-none transition-colors hover:border-[#C67A52]/40 ${
+                className={`overflow-hidden rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] gap-0 py-0 shadow-none transition-colors hover:border-primary/40 ${
                   snapshot.isDraggingOver
-                    ? "border-[#C67A52] bg-[#C67A5208]"
+                    ? "border-primary bg-primary/[0.03]"
                     : ""
                 }`}
               >
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-2.5 md:px-6 md:py-3">
                   <CollapsibleTrigger className="flex flex-1 cursor-pointer items-center gap-2.5 text-left md:gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F0EDE8] md:h-9 md:w-9">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F0EDE8] dark:bg-[#1f1e1c] md:h-9 md:w-9">
                       <FolderOpen className="h-4 w-4 text-[#9A9A9A]" />
                     </div>
                     <div className="flex items-center gap-1.5 md:gap-2">
-                      <h2 className="text-sm font-semibold text-[#6B6B6B] md:text-base">
+                      <h2 className="text-sm font-semibold text-muted-foreground md:text-base">
                         {t("projectGroups.ungrouped")}
                       </h2>
                       <Badge
                         variant="secondary"
-                        className="shrink-0 border-0 bg-[#F0EDE8] text-[10px] font-medium text-[#6B6B6B] md:text-[11px]"
+                        className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] text-[10px] font-medium text-muted-foreground md:text-[11px]"
                       >
                         {projects.length}
                       </Badge>
@@ -478,7 +499,7 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
                     <Button
                       variant="outline"
                       size="sm"
-                      className="shrink-0 border-[#E5E2DC] text-xs"
+                      className="shrink-0 border-[#E5E2DC] dark:border-[#2a2a2e] text-xs"
                       onClick={onNewProject}
                     >
                       <Plus className="mr-1 h-3 w-3" />
@@ -521,9 +542,9 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
                                     </div>
                                   ) : (
                                     <div
-                                      className={`transition-colors hover:bg-[#F5F2EC] ${
+                                      className={`transition-colors hover:bg-secondary ${
                                         snapshot.isDragging
-                                          ? "rotate-1 opacity-90 shadow-md rounded-lg bg-white"
+                                          ? "rotate-1 opacity-90 shadow-md rounded-lg bg-card"
                                           : ""
                                       }`}
                                     >
@@ -705,8 +726,8 @@ export default function ProjectsPage() {
 
   if (loading) {
     return (
-      <div className="bg-[#FAF8F4] p-4 md:px-8 md:py-6">
-          <p className="text-sm text-[#6B6B6B]">
+      <div className="bg-background p-4 md:px-8 md:py-6">
+          <p className="text-sm text-muted-foreground">
             {t("projects.loadingProjects")}
           </p>
       </div>
@@ -716,24 +737,24 @@ export default function ProjectsPage() {
   return (
     <>
       <DragDropContext onDragEnd={handleDragEnd}>
-        <div className="bg-[#FAF8F4] p-4 md:px-8 md:py-6">
+        <div className="bg-background p-4 md:px-8 md:py-6">
           {/* Header */}
           <div className="mb-4 md:mb-6">
             <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-semibold text-[#2C2C2C]">
+              <h1 className="text-2xl font-semibold text-foreground">
                 {t("projects.title")}
               </h1>
               <div className="flex items-center gap-3">
                 {/* View toggle — desktop only, mobile always uses list */}
-                <div className="hidden overflow-hidden rounded-lg border border-[#E5E2DC] md:flex">
+                <div className="hidden overflow-hidden rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] md:flex">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setViewMode("list")}
                     className={`flex items-center gap-1.5 rounded-none px-2.5 py-1.5 text-xs font-medium transition-colors ${
                       viewMode === "list"
-                        ? "bg-[#F5F2EC] text-[#C67A52]"
-                        : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                        ? "bg-secondary text-primary"
+                        : "text-[#9A9A9A] hover:text-muted-foreground"
                     }`}
                   >
                     <List className="h-3.5 w-3.5" />
@@ -745,8 +766,8 @@ export default function ProjectsPage() {
                     onClick={() => setViewMode("grid")}
                     className={`flex items-center gap-1.5 rounded-none px-2.5 py-1.5 text-xs font-medium transition-colors ${
                       viewMode === "grid"
-                        ? "bg-[#F5F2EC] text-[#C67A52]"
-                        : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                        ? "bg-secondary text-primary"
+                        : "text-[#9A9A9A] hover:text-muted-foreground"
                     }`}
                   >
                     <Grid2X2 className="h-3.5 w-3.5" />
@@ -754,7 +775,7 @@ export default function ProjectsPage() {
                   </Button>
                 </div>
                 <Button
-                  className="hidden rounded-xl bg-[#C67A52] px-5 text-white hover:bg-[#B56A42] md:flex"
+                  className="hidden rounded-xl bg-primary px-5 text-white hover:bg-[#B56A42] md:flex"
                   onClick={() => setShowCreateGroup(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
@@ -762,7 +783,7 @@ export default function ProjectsPage() {
                 </Button>
               </div>
             </div>
-            <p className="mt-1 text-sm text-[#6B6B6B]">
+            <p className="mt-1 text-sm text-muted-foreground">
               {t("projects.subtitle")}
             </p>
           </div>
@@ -770,16 +791,16 @@ export default function ProjectsPage() {
           {projects.length === 0 && groups.length === 0 ? (
             <div className="space-y-5">
               {/* Welcome banner */}
-              <Card className="border-[#C67A5230] bg-[#C67A520A] p-6 md:p-8">
+              <Card className="border-primary/[0.19] bg-primary/[0.04] p-6 md:p-8">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#C67A5220]">
-                    <Sparkles className="h-5 w-5 text-[#C67A52]" />
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/[0.13]">
+                    <Sparkles className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold text-[#2C2C2C]">
+                    <h2 className="text-lg font-semibold text-foreground">
                       {t("projects.onboarding.welcomeTitle")}
                     </h2>
-                    <p className="mt-1 text-sm text-[#6B6B6B]">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       {t("projects.onboarding.welcomeDesc")}
                     </p>
                   </div>
@@ -788,54 +809,54 @@ export default function ProjectsPage() {
 
               {/* Concepts: Project Group vs Project */}
               <div className="grid gap-4 md:grid-cols-2">
-                <Card className="border-[#E5E2DC] p-5">
+                <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] p-5">
                   <div className="flex items-center gap-2.5 mb-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C67A5215]">
-                      <Layers className="h-4 w-4 text-[#C67A52]" />
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/[0.08]">
+                      <Layers className="h-4 w-4 text-primary" />
                     </div>
-                    <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                    <h3 className="text-sm font-semibold text-foreground">
                       {t("projects.onboarding.whatIsGroupTitle")}
                     </h3>
                   </div>
-                  <p className="text-[13px] leading-relaxed text-[#6B6B6B]">
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
                     {t("projects.onboarding.whatIsGroupDesc")}
                   </p>
                 </Card>
-                <Card className="border-[#E5E2DC] p-5">
+                <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] p-5">
                   <div className="flex items-center gap-2.5 mb-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C67A5215]">
-                      <FolderOpen className="h-4 w-4 text-[#C67A52]" />
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/[0.08]">
+                      <FolderOpen className="h-4 w-4 text-primary" />
                     </div>
-                    <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                    <h3 className="text-sm font-semibold text-foreground">
                       {t("projects.onboarding.whatIsProjectTitle")}
                     </h3>
                   </div>
-                  <p className="text-[13px] leading-relaxed text-[#6B6B6B]">
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
                     {t("projects.onboarding.whatIsProjectDesc")}
                   </p>
                 </Card>
               </div>
 
               {/* Step-by-step guide */}
-              <Card className="border-[#E5E2DC] p-6 md:p-8">
+              <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] p-6 md:p-8">
                 <div className="space-y-6">
                   {/* Step 1 */}
                   <div className="flex gap-4">
                     <div className="flex flex-col items-center">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#C67A52] text-xs font-bold text-white">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-white">
                         1
                       </div>
-                      <div className="mt-2 h-full w-px bg-[#E5E2DC]" />
+                      <div className="mt-2 h-full w-px bg-[#E5E2DC] dark:bg-[#26241f]" />
                     </div>
                     <div className="flex-1 pb-6">
-                      <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                      <h3 className="text-sm font-semibold text-foreground">
                         {t("projects.onboarding.step1Title")}
                       </h3>
-                      <p className="mt-1 text-[13px] text-[#6B6B6B]">
+                      <p className="mt-1 text-[13px] text-muted-foreground">
                         {t("projects.onboarding.step1Desc")}
                       </p>
                       <Button
-                        className="mt-3 rounded-xl bg-[#C67A52] text-white hover:bg-[#B56A42]"
+                        className="mt-3 rounded-xl bg-primary text-white hover:bg-[#B56A42]"
                         onClick={() => setShowCreateGroup(true)}
                       >
                         <Layers className="mr-2 h-4 w-4" />
@@ -847,7 +868,7 @@ export default function ProjectsPage() {
                   {/* Step 2 */}
                   <div className="flex gap-4">
                     <div className="flex flex-col items-center">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#E5E2DC] text-xs font-bold text-[#9A9A9A]">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#E5E2DC] dark:bg-[#26241f] text-xs font-bold text-[#9A9A9A]">
                         2
                       </div>
                     </div>
@@ -865,26 +886,26 @@ export default function ProjectsPage() {
 
               {/* Admin agent tip */}
               {hasAdminAgent && (
-                <Card className="border-[#E5E2DC] bg-[#F5F2EC] p-5 md:p-6">
+                <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] bg-secondary p-5 md:p-6">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#C67A5215]">
-                      <Bot className="h-4 w-4 text-[#C67A52]" />
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.08]">
+                      <Bot className="h-4 w-4 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-[#2C2C2C]">
+                      <h3 className="text-sm font-semibold text-foreground">
                         {t("projects.onboarding.agentTipTitle")}
                       </h3>
-                      <p className="mt-1 text-[13px] text-[#6B6B6B]">
+                      <p className="mt-1 text-[13px] text-muted-foreground">
                         {t("projects.onboarding.agentTipDesc")}
                       </p>
                       <div className="mt-3 relative">
-                        <pre className="rounded-lg bg-white border border-[#E5E2DC] p-3 pr-10 text-xs text-[#2C2C2C] whitespace-pre-wrap break-words">
+                        <pre className="rounded-lg bg-card border border-[#E5E2DC] dark:border-[#2a2a2e] p-3 pr-10 text-xs text-foreground whitespace-pre-wrap break-words">
                           {t("projects.onboarding.agentPromptDefault")}
                         </pre>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="absolute right-2 top-2 h-7 w-7 text-[#9A9A9A] hover:text-[#C67A52]"
+                          className="absolute right-2 top-2 h-7 w-7 text-[#9A9A9A] hover:text-primary"
                           onClick={() => {
                             navigator.clipboard.writeText(t("projects.onboarding.agentPromptDefault"));
                             setPromptCopied(true);
@@ -936,7 +957,7 @@ export default function ProjectsPage() {
 
               {/* Mobile: full-width New Project Group button */}
               <Button
-                className="w-full rounded-xl bg-[#C67A52] text-white hover:bg-[#B56A42] md:hidden"
+                className="w-full rounded-xl bg-primary text-white hover:bg-[#B56A42] md:hidden"
                 onClick={() => setShowCreateGroup(true)}
               >
                 <Plus className="mr-2 h-4 w-4" />

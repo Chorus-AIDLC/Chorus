@@ -45,7 +45,7 @@ const pipelineColors = [
 ] as const;
 
 const activityDotColors: Record<string, string> = {
-  idea: "bg-[#C67A52]",
+  idea: "bg-primary",
   task: "bg-[#5A9E6F]",
   proposal: "bg-[#1976D2]",
   document: "bg-[#9A9A9A]",
@@ -87,7 +87,7 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-[#9A9A9A]" />
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -103,29 +103,29 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
       label: t("stats.totalIdeas"),
       value: stats.ideas.total,
       badge: stats.ideas.open > 0 ? t("stats.openCount", { count: stats.ideas.open }) : null,
-      badgeStyle: "bg-[#C67A5220] text-[#C67A52]",
+      badgeStyle: "bg-primary/[0.13] text-primary",
       // Idea browsing lives in this Dashboard (the /ideas page was removed).
       href: `/projects/${projectUuid}/dashboard`,
-      iconBg: "bg-[#FFF3E0]",
-      icon: <Lightbulb className="h-5 w-5 text-[#E65100]" />,
+      iconBg: "bg-[#FFF3E0] dark:bg-[#3a2a12]",
+      icon: <Lightbulb className="h-5 w-5 text-[#E65100] dark:text-[#F0A050]" />,
     },
     {
       label: t("stats.totalTasks"),
       value: stats.tasks.total,
       badge: stats.tasks.inProgress > 0 ? t("stats.activeCount", { count: stats.tasks.inProgress }) : null,
-      badgeStyle: "bg-[#5A9E6F20] text-[#5A9E6F]",
+      badgeStyle: "bg-[#5A9E6F20] text-[#5A9E6F] dark:text-[#6FD19A]",
       href: `/projects/${projectUuid}/tasks`,
-      iconBg: "bg-[#E3F2FD]",
-      icon: <LayoutGrid className="h-5 w-5 text-[#1976D2]" />,
+      iconBg: "bg-[#E3F2FD] dark:bg-[#13253a]",
+      icon: <LayoutGrid className="h-5 w-5 text-[#1976D2] dark:text-[#5AA9F0]" />,
     },
     {
       label: t("stats.totalProposals"),
       value: stats.proposals.total,
       badge: stats.proposals.pending > 0 ? t("stats.pendingCount", { count: stats.proposals.pending }) : null,
-      badgeStyle: "bg-[#C67A5220] text-[#C67A52]",
+      badgeStyle: "bg-primary/[0.13] text-primary",
       href: `/projects/${projectUuid}/proposals`,
-      iconBg: "bg-[#F3E5F5]",
-      icon: <ClipboardList className="h-5 w-5 text-[#7B1FA2]" />,
+      iconBg: "bg-[#F3E5F5] dark:bg-[#281630]",
+      icon: <ClipboardList className="h-5 w-5 text-[#7B1FA2] dark:text-[#C98FE0]" />,
     },
     {
       label: t("stats.totalDocuments"),
@@ -133,8 +133,8 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
       badge: null,
       badgeStyle: "",
       href: `/projects/${projectUuid}/documents`,
-      iconBg: "bg-[#E8F5E9]",
-      icon: <FileText className="h-5 w-5 text-[#5A9E6F]" />,
+      iconBg: "bg-[#E8F5E9] dark:bg-[#14281a]",
+      icon: <FileText className="h-5 w-5 text-[#5A9E6F] dark:text-[#6FD19A]" />,
     },
   ];
 
@@ -154,7 +154,7 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         {statCards.map((stat) => (
           <Link key={stat.label} href={stat.href}>
-            <Card className="cursor-pointer rounded-2xl border-0 bg-white p-3 shadow-none transition-all hover:shadow-md md:p-5">
+            <Card className="cursor-pointer rounded-2xl border-0 bg-card p-3 shadow-none transition-all hover:shadow-md md:p-5">
               <div className="mb-2 flex items-center justify-between md:mb-3.5">
                 <div className={`flex h-8 w-8 items-center justify-center rounded-lg md:h-10 md:w-10 md:rounded-xl ${stat.iconBg}`}>
                   {stat.icon}
@@ -165,10 +165,10 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
                   </span>
                 )}
               </div>
-              <div className="text-2xl font-semibold leading-none tracking-tight text-[#2C2C2C] md:text-[32px]">
+              <div className="text-2xl font-semibold leading-none tracking-tight text-foreground md:text-[32px]">
                 {stat.value}
               </div>
-              <div className="mt-0.5 text-[12px] text-[#6B6B6B] md:text-[13px]">{stat.label}</div>
+              <div className="mt-0.5 text-[12px] text-muted-foreground md:text-[13px]">{stat.label}</div>
             </Card>
           </Link>
         ))}
@@ -177,10 +177,10 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
       {/* Bottom Row: Task Pipeline + Recent Activity */}
       <div className="grid min-h-0 gap-5 lg:grid-cols-2">
         {/* Task Pipeline Card */}
-        <Card className="flex flex-col rounded-2xl border-0 bg-white p-6 shadow-none">
+        <Card className="flex flex-col rounded-2xl border-0 bg-card p-6 shadow-none">
           <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-[16px] font-semibold text-[#2C2C2C]">{t("stats.taskPipeline")}</h2>
-            <span className="text-[12px] text-[#9A9A9A]">{t("stats.totalCount", { count: pipelineTotal })}</span>
+            <h2 className="text-[16px] font-semibold text-foreground">{t("stats.taskPipeline")}</h2>
+            <span className="text-[12px] text-muted-foreground">{t("stats.totalCount", { count: pipelineTotal })}</span>
           </div>
 
           {pipelineTotal > 0 ? (
@@ -206,23 +206,23 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
                 {pipelineLegend.map((item) => (
                   <div key={item.color} className="flex items-center gap-1.5">
                     <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
-                    <span className="text-[12px] text-[#6B6B6B]">{item.label}</span>
+                    <span className="text-[12px] text-muted-foreground">{item.label}</span>
                   </div>
                 ))}
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center py-10 text-[13px] text-[#9A9A9A]">
+            <div className="flex flex-1 items-center justify-center py-10 text-[13px] text-muted-foreground">
               {t("stats.noTasks")}
             </div>
           )}
         </Card>
 
         {/* Recent Activity Card */}
-        <Card className="flex flex-col rounded-2xl border-0 bg-white p-6 shadow-none">
+        <Card className="flex flex-col rounded-2xl border-0 bg-card p-6 shadow-none">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[16px] font-semibold text-[#2C2C2C]">{t("stats.recentActivity")}</h2>
-            <Link href={`/projects/${projectUuid}/activity`} className="text-[12px] font-medium text-[#C67A52] hover:underline">
+            <h2 className="text-[16px] font-semibold text-foreground">{t("stats.recentActivity")}</h2>
+            <Link href={`/projects/${projectUuid}/activity`} className="text-[12px] font-medium text-primary hover:underline">
               {t("stats.viewAll")}
             </Link>
           </div>
@@ -232,13 +232,13 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
               {recentActivities.map((activity, i) => {
                 const dotColor = activityDotColors[activity.targetType] || "bg-[#9A9A9A]";
                 return (
-                  <div key={activity.uuid} className={`flex items-start gap-3 py-3 ${i < recentActivities.length - 1 ? "border-b border-[#F5F2EC]" : ""}`}>
+                  <div key={activity.uuid} className={`flex items-start gap-3 py-3 ${i < recentActivities.length - 1 ? "border-b border-secondary" : ""}`}>
                     <div className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
                     <div className="min-w-0 flex-1">
-                      <p className="text-[13px] text-[#2C2C2C]">
+                      <p className="text-[13px] text-foreground">
                         {activity.actorName} {activity.action}
                       </p>
-                      <span className="text-[11px] text-[#9A9A9A]">
+                      <span className="text-[11px] text-muted-foreground">
                         {formatRelativeTime(activity.createdAt, tRoot)}
                       </span>
                     </div>
@@ -247,7 +247,7 @@ export function IdeaTrackerStats({ projectUuid, initialData }: IdeaTrackerStatsP
               })}
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center py-10 text-[13px] text-[#9A9A9A]">
+            <div className="flex flex-1 items-center justify-center py-10 text-[13px] text-muted-foreground">
               {t("stats.noActivity")}
             </div>
           )}

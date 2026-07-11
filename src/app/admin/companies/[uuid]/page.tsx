@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";

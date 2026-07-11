@@ -294,6 +294,15 @@ const PM_AGENT_ADDED_IN_0_10_0 = [
   "chorus_edit_idea",
 ];
 
+// reference-artifacts (0.14.0): three document:write-gated reference write
+// tools. pm_agent (and admin_agent) carry document:write so they appear in
+// their visibility set. Read path is inline; no reference-read tool exists.
+const PM_AGENT_ADDED_IN_0_14_0 = [
+  "chorus_add_reference",
+  "chorus_update_reference",
+  "chorus_remove_reference",
+];
+
 // ===== Shared beforeEach =====
 
 beforeEach(() => {
@@ -467,6 +476,8 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       "chorus_pm_validate_elaboration",
       // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
       ...PM_AGENT_ADDED_IN_0_10_0,
+      // 0.14.0 (reference-artifacts): three document:write-gated write tools.
+      ...PM_AGENT_ADDED_IN_0_14_0,
     ]);
     expect(tools).toEqual(expected);
   });
@@ -490,7 +501,7 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     const tools = enumerateGatedMcpTools(auth);
     const baseline = new Set(OLD_PM_TOOLS);
     const diff = Array.from(tools).filter((t) => !baseline.has(t)).sort();
-    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_IN_0_10_0].sort());
+    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_IN_0_10_0, ...PM_AGENT_ADDED_IN_0_14_0].sort());
   });
 
   it("pm_agent preset does not leak any *:admin-gated tool", () => {

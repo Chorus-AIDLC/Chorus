@@ -47,18 +47,18 @@ export function AssigneeInstanceLine({
       <span
         title={cwdTitle}
         className={cn(
-          "inline-flex min-w-0 items-center gap-1 rounded border border-[#E5E0D8] bg-[#FAF8F4] px-1.5 py-0.5",
+          "inline-flex min-w-0 items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5",
           "font-mono text-[10px]",
-          formattedCwd.isUnknown ? "italic text-[#9A9A9A]" : "text-[#6B6B6B]",
+          formattedCwd.isUnknown ? "italic text-muted-foreground" : "text-muted-foreground",
         )}
       >
-        <Folder className="size-2.5 shrink-0 text-[#9A9A9A]" aria-hidden />
+        <Folder className="size-2.5 shrink-0 text-muted-foreground" aria-hidden />
         <span className="truncate">{cwdLabel}</span>
       </span>
       {showHost && (
         <span
           title={hostTitle}
-          className="shrink-0 truncate font-mono text-[10px] text-[#9A9A9A]"
+          className="shrink-0 truncate font-mono text-[10px] text-muted-foreground"
         >
           {hostLabel}
         </span>

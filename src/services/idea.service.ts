@@ -1397,6 +1397,11 @@ export interface IdeaWithDerivedStatus {
   // Present (total > 0) only on a theme with children; null otherwise. Powers the
   // x/y progress ring and the theme's rolled-up derivedStatus.
   childProgress?: ChildProgress | null;
+  // Count of ReferenceArtifacts (external evidence) attached to THIS idea only —
+  // idea-scoped, no descendant rollup (V2 q5). Batched via a single groupBy over
+  // the visible idea set (no N+1). 0 when none. Drives the tracker's collapsible
+  // references panel (hidden entirely when 0).
+  referenceCount: number;
 }
 
 /**
@@ -1433,6 +1438,26 @@ export async function getIdeasWithDerivedStatus(
   const childCountByParent = new Map<string, number>();
   for (const row of childCountRows) {
     if (row.parentUuid) childCountByParent.set(row.parentUuid, row._count._all);
+  }
+
+  // Query 1c: ReferenceArtifact counts per idea — one batched groupBy over the
+  // visible idea set (no N+1, mirrors the reportCount/childCount batching). Idea-
+  // scoped only: no descendant rollup (V2 q5). Short-circuited when the project
+  // has no ideas so we never issue an `in: []` groupBy.
+  const referenceCountByIdea = new Map<string, number>();
+  if (ideas.length > 0) {
+    const referenceCountRows = (await prisma.referenceArtifact.groupBy({
+      by: ["targetUuid"],
+      where: {
+        companyUuid,
+        targetType: "idea",
+        targetUuid: { in: ideas.map((i) => i.uuid) },
+      },
+      _count: { _all: true },
+    })) ?? [];
+    for (const row of referenceCountRows) {
+      referenceCountByIdea.set(row.targetUuid, row._count._all);
+    }
   }
 
   // Query 2: All proposals (approved + pending) for the project
@@ -1528,6 +1553,7 @@ export async function getIdeasWithDerivedStatus(
       childCount: childCountByParent.get(idea.uuid) ?? 0,
       isContainer: idea.isContainer,
       childProgress: null,
+      referenceCount: referenceCountByIdea.get(idea.uuid) ?? 0,
     };
   });
 
@@ -1574,6 +1600,10 @@ export interface TrackerIdeaItem {
   // Theme rollup: child-completion (done/total) for the x/y ring. Null unless a
   // theme with ≥1 child.
   childProgress?: ChildProgress | null;
+  // Count of ReferenceArtifacts attached to this idea (idea-scoped, no rollup).
+  // Drives the tracker row's collapsible references panel; the panel is hidden
+  // entirely when 0. Always present (0 when none).
+  referenceCount: number;
 }
 
 export interface TrackerGroupsResult {
@@ -1620,6 +1650,7 @@ export async function getTrackerGroups(
       childCount: idea.childCount,
       isContainer: idea.isContainer,
       childProgress: idea.childProgress ?? null,
+      referenceCount: idea.referenceCount ?? 0,
     };
 
     if (groups[ds]) {

@@ -103,7 +103,7 @@ export function YoloButton({
   // matching the optimistic-display contract.
   if (!preconditionsMet || started) {
     return started ? (
-      <span className="text-[11px] text-[#00796B]">{t("startedHint")}</span>
+      <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">{t("startedHint")}</span>
     ) : null;
   }
 
@@ -130,7 +130,7 @@ export function YoloButton({
             like Start Development rather than an icon-only shortcut. */}
         <AlertDialogTrigger asChild>
           <Button
-            className="bg-[#7F5AF0] hover:bg-[#6D48DE] text-white"
+            className="bg-[#7F5AF0] hover:bg-[#6D48DE] dark:bg-[#6E56C8] dark:hover:bg-[#7C63D8] text-white"
             disabled={!enabled}
           >
             <Rocket className="mr-2 h-4 w-4" />
@@ -150,7 +150,7 @@ export function YoloButton({
                 call and close it ourselves in handleConfirm, so the spinner is
                 visible and a failure toast surfaces without a flash-close. */}
             <Button
-              className="bg-[#7F5AF0] hover:bg-[#6D48DE] text-white"
+              className="bg-[#7F5AF0] hover:bg-[#6D48DE] dark:bg-[#6E56C8] dark:hover:bg-[#7C63D8] text-white"
               onClick={handleConfirm}
               disabled={isStarting}
             >
@@ -167,7 +167,7 @@ export function YoloButton({
         </AlertDialogContent>
       </AlertDialog>
       {!agentOnline && (
-        <span className="text-[11px] text-[#9A9A9A]">{t("offlineHint")}</span>
+        <span className="text-[11px] text-muted-foreground">{t("offlineHint")}</span>
       )}
     </>
   );

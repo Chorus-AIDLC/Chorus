@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Check } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -80,39 +80,39 @@ export function CreateProposalForm({
   return (
     <div className="space-y-6">
       {/* Title */}
-      <Card className="border-[#E5E0D8] p-6">
-        <h2 className="mb-4 text-lg font-medium text-[#2C2C2C]">
+      <Card className="border-border p-6">
+        <h2 className="mb-4 text-lg font-medium text-foreground">
           {t("proposals.basicInfo")}
         </h2>
         <div className="space-y-4">
           <div>
-            <Label className="mb-2 block text-[#6B6B6B]">
+            <Label className="mb-2 block text-muted-foreground">
               {t("proposals.title")} *
             </Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={t("proposals.titlePlaceholder")}
-              className="border-[#E5E0D8]"
+              className="border-border"
             />
           </div>
           <div>
-            <Label className="mb-2 block text-[#6B6B6B]">
+            <Label className="mb-2 block text-muted-foreground">
               {t("common.description")}
             </Label>
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("proposals.descriptionPlaceholder")}
-              className="h-24 resize-none border-[#E5E0D8]"
+              className="h-24 resize-none border-border"
             />
           </div>
         </div>
       </Card>
 
       {/* Source Ideas */}
-      <Card className="border-[#E5E0D8] p-6">
-        <h2 className="mb-4 text-lg font-medium text-[#2C2C2C]">
+      <Card className="border-border p-6">
+        <h2 className="mb-4 text-lg font-medium text-foreground">
           {t("proposals.selectSourceIdeas")} *
         </h2>
         {availableIdeas.length === 0 ? (
@@ -125,23 +125,23 @@ export function CreateProposalForm({
                 onClick={() => toggleIdeaSelection(idea.uuid)}
                 className={`flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors ${
                   selectedIdeaUuids.includes(idea.uuid)
-                    ? "border-[#C67A52] bg-[#FFFBF8]"
-                    : "border-[#E5E0D8] hover:border-[#C67A52]"
+                    ? "border-primary bg-[#FFFBF8] dark:bg-[#241d17]"
+                    : "border-border hover:border-primary"
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <div
                     className={`flex h-5 w-5 items-center justify-center rounded border ${
                       selectedIdeaUuids.includes(idea.uuid)
-                        ? "border-[#C67A52] bg-[#C67A52] text-white"
-                        : "border-[#E5E0D8]"
+                        ? "border-primary bg-primary text-white"
+                        : "border-border"
                     }`}
                   >
                     {selectedIdeaUuids.includes(idea.uuid) && (
                       <Check className="h-3 w-3" strokeWidth={3} />
                     )}
                   </div>
-                  <span className="font-medium text-[#2C2C2C]">{idea.title}</span>
+                  <span className="font-medium text-foreground">{idea.title}</span>
                 </div>
                 <Badge variant="outline" className="text-xs">
                   {idea.status}
@@ -154,7 +154,7 @@ export function CreateProposalForm({
 
       {/* Error Message */}
       {error && (
-        <div className="rounded-lg bg-[#FFEBEE] p-3 text-sm text-[#D32F2F]">
+        <div className="rounded-lg bg-[#FFEBEE] dark:bg-[#331619] p-3 text-sm text-[#D32F2F] dark:text-[#F08078]">
           {error}
         </div>
       )}
@@ -165,14 +165,14 @@ export function CreateProposalForm({
           variant="outline"
           onClick={() => router.back()}
           disabled={isPending}
-          className="border-[#E5E0D8]"
+          className="border-border"
         >
           {t("common.cancel")}
         </Button>
         <Button
           onClick={handleSubmit}
           disabled={isPending}
-          className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+          className="bg-primary hover:bg-[#B56A42] text-white"
         >
           {isPending ? t("common.creating") : t("proposals.createAndEdit")}
         </Button>

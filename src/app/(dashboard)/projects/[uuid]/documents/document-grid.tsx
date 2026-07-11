@@ -31,17 +31,17 @@ export function DocumentGrid({ documents, projectUuid }: DocumentGridProps) {
         const Icon = typeConf?.icon || FileText;
         return (
           <PresenceIndicator key={doc.uuid} entityType="document" entityUuid={doc.uuid}>
-            <Card className="group relative flex flex-col border-[#E5E0D8] transition-all hover:border-[#C67A52] hover:shadow-md">
+            <Card className="group relative flex flex-col border-border transition-all hover:border-primary hover:shadow-md">
               <Link
                 href={`/projects/${projectUuid}/documents/${doc.uuid}`}
                 className="flex flex-1 flex-col p-5 pb-0"
               >
                 <div className="mb-3 flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F5F2EC]">
-                    <Icon className="h-5 w-5 text-[#6B6B6B]" />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary">
+                    <Icon className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="font-medium text-[#2C2C2C] leading-snug group-hover:text-[#C67A52] line-clamp-2">
+                    <h3 className="font-medium text-foreground leading-snug group-hover:text-primary line-clamp-2">
                       {doc.title}
                     </h3>
                     <div className="mt-1 flex items-center gap-2 text-xs text-[#9A9A9A]">
@@ -52,7 +52,7 @@ export function DocumentGrid({ documents, projectUuid }: DocumentGridProps) {
                   </div>
                 </div>
               </Link>
-              <div className="flex items-center justify-between border-t border-[#F5F2EC] px-5 py-2.5">
+              <div className="flex items-center justify-between border-t border-secondary px-5 py-2.5">
                 <Badge className={`text-[11px] ${typeConf?.color || ""}`}>
                   {t(typeConf?.labelKey || "documents.typeOther")}
                 </Badge>

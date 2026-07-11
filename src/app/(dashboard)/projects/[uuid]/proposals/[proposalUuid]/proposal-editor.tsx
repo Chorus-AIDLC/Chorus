@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useCallback, useMemo, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import {
   ReactFlow,
@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 import { FileText, ListTodo, Zap, Plus, ChevronDown, ChevronRight, ClipboardCheck, Code, BookOpen, FileCheck, BookMarked, GitBranch } from "lucide-react";
 import { usePresence, injectPresence } from "@/hooks/use-presence";
+import { useDarkClass } from "@/hooks/use-dark-class";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { findNew, findDeleted, shouldRefresh } from "./draft-diff";
@@ -79,9 +80,9 @@ interface TaskDraft {
 
 // Priority color mapping (Industrial Humanist palette)
 const priorityColors: Record<string, { bg: string; text: string }> = {
-  high: { bg: "bg-[#FFEBEE]", text: "text-[#C4574C]" },
-  medium: { bg: "bg-[#FFF3E0]", text: "text-[#E65100]" },
-  low: { bg: "bg-[#F5F2EC]", text: "text-[#6B6B6B]" },
+  high: { bg: "bg-[#FFEBEE] dark:bg-[#331619]", text: "text-[#C4574C] dark:text-[#F0897E]" },
+  medium: { bg: "bg-[#FFF3E0] dark:bg-[#3a2a12]", text: "text-[#E65100] dark:text-[#F0A050]" },
+  low: { bg: "bg-secondary", text: "text-muted-foreground" },
 };
 
 // Document type display labels
@@ -95,11 +96,11 @@ const docTypeKeys: Record<string, string> = {
 
 // Document type icon and color configuration (subtitles use i18n keys)
 const docTypeConfig: Record<string, { icon: typeof FileText; bg: string; fg: string; subtitleKey: string }> = {
-  prd: { icon: FileText, bg: "bg-[#FFF3E0]", fg: "text-[#E07A5F]", subtitleKey: "proposals.docSubtitlePrd" },
-  tech_design: { icon: Code, bg: "bg-[#E8F0FE]", fg: "text-[#4285F4]", subtitleKey: "proposals.docSubtitleTechDesign" },
-  adr: { icon: BookOpen, bg: "bg-[#E8F5E9]", fg: "text-[#4CAF50]", subtitleKey: "proposals.docSubtitleAdr" },
-  spec: { icon: FileCheck, bg: "bg-[#F3E8FD]", fg: "text-[#7C3AED]", subtitleKey: "proposals.docSubtitleSpec" },
-  guide: { icon: BookMarked, bg: "bg-[#FFF8E1]", fg: "text-[#F9A825]", subtitleKey: "proposals.docSubtitleGuide" },
+  prd: { icon: FileText, bg: "bg-[#FFF3E0] dark:bg-[#3a2a12]", fg: "text-[#E07A5F] dark:text-[#F0A088]", subtitleKey: "proposals.docSubtitlePrd" },
+  tech_design: { icon: Code, bg: "bg-[#E8F0FE] dark:bg-[#152438]", fg: "text-[#4285F4] dark:text-[#7AB0F8]", subtitleKey: "proposals.docSubtitleTechDesign" },
+  adr: { icon: BookOpen, bg: "bg-[#E8F5E9] dark:bg-[#14281a]", fg: "text-[#4CAF50] dark:text-[#6FD18A]", subtitleKey: "proposals.docSubtitleAdr" },
+  spec: { icon: FileCheck, bg: "bg-[#F3E8FD] dark:bg-[#261636]", fg: "text-[#7C3AED] dark:text-[#B79AF0]", subtitleKey: "proposals.docSubtitleSpec" },
+  guide: { icon: BookMarked, bg: "bg-[#FFF8E1] dark:bg-[#33270f]", fg: "text-[#F9A825]", subtitleKey: "proposals.docSubtitleGuide" },
 };
 
 // ===== DAG View Components =====
@@ -118,8 +119,8 @@ function TaskDraftNode({ data }: NodeProps<Node<TaskDraftNodeData>>) {
   const prio = priorityColors[data.priority || "medium"] || priorityColors.medium;
 
   return (
-    <div className="rounded-lg border-2 border-[#E5E2DC] bg-white px-4 py-3 shadow-sm min-w-[200px] max-w-[260px] cursor-pointer hover:border-[#C67A52] transition-colors">
-      <Handle type="target" position={Position.Top} className="!bg-[#C67A52] !w-2 !h-2" />
+    <div className="rounded-lg border-2 border-[#E5E2DC] dark:border-[#2a2a2e] bg-card px-4 py-3 shadow-sm min-w-[200px] max-w-[260px] cursor-pointer hover:border-primary transition-colors">
+      <Handle type="target" position={Position.Top} className="!bg-primary !w-2 !h-2" />
       <div className="flex items-center gap-2 mb-1.5">
         {data.priority && (
           <Badge className={`text-[10px] border-0 ${prio.bg} ${prio.text}`}>
@@ -127,10 +128,10 @@ function TaskDraftNode({ data }: NodeProps<Node<TaskDraftNodeData>>) {
           </Badge>
         )}
       </div>
-      <p className="text-xs font-medium text-[#2C2C2C] leading-snug line-clamp-2">
+      <p className="text-xs font-medium text-foreground leading-snug line-clamp-2">
         {data.title}
       </p>
-      <Handle type="source" position={Position.Bottom} className="!bg-[#C67A52] !w-2 !h-2" />
+      <Handle type="source" position={Position.Bottom} className="!bg-primary !w-2 !h-2" />
     </div>
   );
 }
@@ -195,6 +196,7 @@ export function ProposalEditor({
 }: ProposalEditorProps) {
   const t = useTranslations();
   const router = useRouter();
+  const isDark = useDarkClass();
   const [isPending, startTransition] = useTransition();
 
   // Presence tracking
@@ -494,14 +496,14 @@ export function ProposalEditor({
   return (
     <>
       {/* Document Drafts Section */}
-      <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-        <CardHeader className="flex-row items-center justify-between border-b border-[#F5F2EC] px-6 py-4">
+      <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between border-b border-secondary px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <FileText className="h-[18px] w-[18px] text-[#C67A52]" />
+            <FileText className="h-[18px] w-[18px] text-primary" />
             <CardTitle className="text-sm font-semibold text-foreground">
               {t("proposals.documentDrafts")}
             </CardTitle>
-            <Badge variant="secondary" className="border-0 bg-[#F5F2EC] text-[11px] font-medium text-muted-foreground">
+            <Badge variant="secondary" className="border-0 bg-secondary text-[11px] font-medium text-muted-foreground">
               {docs?.length || 0}
             </Badge>
           </div>
@@ -510,7 +512,7 @@ export function ProposalEditor({
               variant="ghost"
               size="sm"
               onClick={openAddDocDialog}
-              className="h-7 gap-1 text-xs font-medium text-[#C67A52] hover:bg-[#FFFBF8] hover:text-[#C67A52]"
+              className="h-7 gap-1 text-xs font-medium text-primary hover:bg-[#FFFBF8] dark:hover:bg-[#1e1d1b] hover:text-primary"
             >
               <Plus className="h-3.5 w-3.5" />
               {t("proposals.addDocumentDraft")}
@@ -519,7 +521,7 @@ export function ProposalEditor({
         </CardHeader>
         <CardContent className="p-0">
           {hasDocuments ? (
-            <div className="space-y-0 divide-y divide-[#F5F2EC]">
+            <div className="space-y-0 divide-y divide-secondary">
               {docs.map((doc) => {
                 const isExpanded = expandedDocs.has(doc.uuid);
                 const typeConf = docTypeConfig[doc.type] || docTypeConfig.guide;
@@ -575,7 +577,7 @@ export function ProposalEditor({
                               size="sm"
                               onClick={() => handleDeleteDoc(doc)}
                               disabled={isPending}
-                              className="h-6 text-[11px] text-[#C4574C] hover:bg-[#FFEBEE] hover:text-[#C4574C]"
+                              className="h-6 text-[11px] text-[#C4574C] dark:text-[#F0897E] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#C4574C]"
                             >
                               {t("proposals.deleteDraft")}
                             </Button>
@@ -585,7 +587,7 @@ export function ProposalEditor({
                     </div>
                     {/* Document content (collapsible) */}
                     {isExpanded && doc.content && (
-                      <div className="mt-3 border-t border-[#F5F2EC] pt-4">
+                      <div className="mt-3 border-t border-secondary pt-4">
                         <div className="prose prose-sm max-w-none text-foreground">
                           <MarkdownContent>{doc.content}</MarkdownContent>
                         </div>
@@ -598,7 +600,7 @@ export function ProposalEditor({
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 py-8">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#F5F2EC]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-secondary">
                 <FileText className="h-[18px] w-[18px] text-[#D0CCC4]" />
               </div>
               <p className="text-[13px] text-muted-foreground">{t("proposals.emptyContainer")}</p>
@@ -608,26 +610,26 @@ export function ProposalEditor({
       </Card>
 
       {/* Task Drafts Section */}
-      <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-        <CardHeader className="flex-row items-center justify-between border-b border-[#F5F2EC] px-6 py-4">
+      <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between border-b border-secondary px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <ListTodo className="h-[18px] w-[18px] text-[#C67A52]" />
+            <ListTodo className="h-[18px] w-[18px] text-primary" />
             <CardTitle className="text-sm font-semibold text-foreground">
               {t("proposals.taskDrafts")}
             </CardTitle>
-            <Badge className="border-0 bg-[#C67A5220] text-[11px] font-semibold text-[#C67A52]">
+            <Badge className="border-0 bg-primary/[0.13] text-[11px] font-semibold text-primary">
               {tasks?.length || 0}
             </Badge>
           </div>
           <div className="flex items-center gap-3">
             {/* View Toggle */}
             {hasTasks && (
-              <div className="flex rounded-lg bg-[#F5F2EC] p-0.5">
+              <div className="flex rounded-lg bg-secondary p-0.5">
                 <button
                   onClick={() => setTaskView("cards")}
                   className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${
                     taskView === "cards"
-                      ? "bg-white text-foreground shadow-sm"
+                      ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -637,7 +639,7 @@ export function ProposalEditor({
                   onClick={() => setTaskView("dag")}
                   className={`rounded-md px-3 py-1 text-[11px] font-medium transition-colors ${
                     taskView === "dag"
-                      ? "bg-white text-foreground shadow-sm"
+                      ? "bg-card text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -653,7 +655,7 @@ export function ProposalEditor({
                   setSelectedTaskDraftUuid(null);
                   setShowCreateTaskPanel(true);
                 }}
-                className="h-7 gap-1 text-xs font-medium text-[#C67A52] hover:bg-[#FFFBF8] hover:text-[#C67A52]"
+                className="h-7 gap-1 text-xs font-medium text-primary hover:bg-[#FFFBF8] dark:hover:bg-[#1e1d1b] hover:text-primary"
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t("proposals.addTaskDraft")}
@@ -678,11 +680,11 @@ export function ProposalEditor({
                         setShowCreateTaskPanel(false);
                         setSelectedTaskDraftUuid(task.uuid);
                       }}
-                      className={`cursor-pointer rounded-[10px] bg-white p-4 transition-all duration-500 flex flex-col gap-2.5 h-full ${
+                      className={`cursor-pointer rounded-[10px] bg-card p-4 transition-all duration-500 flex flex-col gap-2.5 h-full ${
                         deletingIds.has(task.uuid) ? "opacity-0" : ""
                       } ${isSelected
-                          ? "border-[#C67A52] shadow-sm border"
-                          : "border-[#E5E2DC] hover:border-[#C67A52]/50 border"
+                          ? "border-primary shadow-sm border"
+                          : "border-[#E5E2DC] dark:border-[#2a2a2e] hover:border-primary/50 border"
                       }`}
                     >
                       {/* Top row: priority + story points */}
@@ -705,14 +707,14 @@ export function ProposalEditor({
 
                       {/* Task description */}
                       {task.description && (
-                        <p className="text-[11px] leading-relaxed text-[#6B6B6B] line-clamp-2">{task.description}</p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground line-clamp-2">{task.description}</p>
                       )}
 
                       {/* Footer: AC count + dependencies */}
                       <div className="flex items-center gap-3 pt-0.5">
                         {acCount > 0 && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <ClipboardCheck className="h-3 w-3 text-[#4CAF50]" />
+                            <ClipboardCheck className="h-3 w-3 text-[#4CAF50] dark:text-[#6FD18A]" />
                             {t("proposals.acCount", { count: acCount })}
                           </span>
                         )}
@@ -732,12 +734,13 @@ export function ProposalEditor({
               /* DAG View */
               <div className="h-[400px] relative">
                 {dagError && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-xs text-red-700 shadow-sm">
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 dark:bg-[#331619] border border-red-200 dark:border-[#5a2a2e] px-4 py-2 text-xs text-red-700 dark:text-[#F08078] shadow-sm">
                     {dagError}
-                    <button className="ml-2 font-medium hover:text-red-900" onClick={() => setDagError(null)}>x</button>
+                    <button className="ml-2 font-medium hover:text-red-900 dark:hover:text-[#F0A0A0]" onClick={() => setDagError(null)}>x</button>
                   </div>
                 )}
                 <ReactFlow
+                  colorMode={isDark ? "dark" : "light"}
                   nodes={nodes}
                   edges={edges}
                   onNodesChange={onNodesChange}
@@ -754,16 +757,16 @@ export function ProposalEditor({
                   zoomOnPinch={true}
                   panOnDrag={true}
                 >
-                  <Background color="#E5E0D8" gap={20} />
+                  <Background color={isDark ? "#40392f" : "#E5E0D8"} gap={20} />
                   <Controls
-                    className="[&>button]:border-[#E5E0D8] [&>button]:bg-white [&>button]:text-[#2C2C2C] [&>button:hover]:bg-[#FAF8F4]"
+                    className="[&>button]:border-border [&>button]:bg-card [&>button]:text-foreground [&>button:hover]:bg-background"
                   />
                 </ReactFlow>
               </div>
             )
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 py-8">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#F5F2EC]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-secondary">
                 <ListTodo className="h-[18px] w-[18px] text-[#D0CCC4]" />
               </div>
               <p className="text-[13px] text-muted-foreground">{t("proposals.emptyContainer")}</p>
@@ -786,7 +789,7 @@ export function ProposalEditor({
                 {t("proposals.documentType")}
               </Label>
               <Select value={docType} onValueChange={setDocType}>
-                <SelectTrigger className="border-[#E5E2DC]">
+                <SelectTrigger className="border-[#E5E2DC] dark:border-[#2a2a2e]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -806,7 +809,7 @@ export function ProposalEditor({
                 value={docTitle}
                 onChange={(e) => setDocTitle(e.target.value)}
                 placeholder={t("proposals.titlePlaceholder")}
-                className="border-[#E5E2DC]"
+                className="border-[#E5E2DC] dark:border-[#2a2a2e]"
               />
             </div>
             <div>
@@ -816,26 +819,26 @@ export function ProposalEditor({
               <Textarea
                 value={docContent}
                 onChange={(e) => setDocContent(e.target.value)}
-                className="h-64 resize-none border-[#E5E2DC] font-mono"
+                className="h-64 resize-none border-[#E5E2DC] dark:border-[#2a2a2e] font-mono"
                 placeholder="# Document Title&#10;&#10;Write your content in Markdown..."
               />
             </div>
             {error && (
-              <div className="rounded-lg bg-[#FFEBEE] p-3 text-sm text-[#C4574C]">{error}</div>
+              <div className="rounded-lg bg-[#FFEBEE] dark:bg-[#331619] p-3 text-sm text-[#C4574C] dark:text-[#F0897E]">{error}</div>
             )}
             <div className="flex justify-end gap-3">
               <Button
                 variant="outline"
                 onClick={() => setShowDocDialog(false)}
                 disabled={isPending}
-                className="border-[#E5E2DC]"
+                className="border-[#E5E2DC] dark:border-[#2a2a2e]"
               >
                 {t("common.cancel")}
               </Button>
               <Button
                 onClick={handleSaveDoc}
                 disabled={isPending}
-                className="bg-[#C67A52] text-white hover:bg-[#B56A42]"
+                className="bg-primary text-white hover:bg-[#B56A42]"
               >
                 {isPending ? t("common.saving") : t("common.save")}
               </Button>

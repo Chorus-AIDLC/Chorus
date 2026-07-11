@@ -760,7 +760,7 @@ export function DaemonChat() {
     : newConversationPane;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#FAF8F4]">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       {/* MOBILE drill-down detail — a full-height flex column so the transcript
           ScrollArea fills the middle and the reply input lands at the very bottom of
           the (fullscreen on mobile) modal, not floating in a fixed-height box with
@@ -769,12 +769,12 @@ export function DaemonChat() {
           internal scroll. */}
       {mobileDetailOpen && (
         <div className="flex h-full min-h-0 flex-col lg:hidden">
-          <div className="flex shrink-0 items-center gap-1 border-b border-[#EFEBE4] bg-[#FAF8F4] px-3 py-2.5">
+          <div className="flex shrink-0 items-center gap-1 border-b border-[#EFEBE4] dark:border-[#2a2a2e] bg-background px-3 py-2.5">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setMobileDetailOpen(false)}
-              className="h-9 gap-1 px-2 text-[15px] font-normal text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
+              className="h-9 gap-1 px-2 text-[15px] font-normal text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
             >
               <ChevronLeft className="h-5 w-5" />
               {t("mobileBack")}
@@ -795,37 +795,37 @@ export function DaemonChat() {
             and still feeds the hidden DialogDescription in connections-modal.tsx for
             the Radix dialog's accessibility description. */}
         <header className="flex flex-col">
-          <h2 className="text-[22px] font-semibold text-[#2C2C2C] lg:text-[24px]">
+          <h2 className="text-[22px] font-semibold text-foreground lg:text-[24px]">
             {t("title")}
           </h2>
         </header>
 
         {/* Body */}
         {loading ? (
-          <p className="text-sm text-[#6B6B6B]">{t("loading")}</p>
+          <p className="text-sm text-muted-foreground">{t("loading")}</p>
         ) : showListError ? (
-          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] bg-[#FFF9F3] p-8 text-center shadow-none md:p-12">
+          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] dark:border-[#33302a] bg-[#FFF9F3] dark:bg-[#2a2113] p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D9770615]">
-              <WifiOff className="h-6 w-6 text-[#B45309]" />
+              <WifiOff className="h-6 w-6 text-[#B45309] dark:text-[#E0A34E]" />
             </div>
-            <h3 className="text-base font-semibold text-[#92400E]">
+            <h3 className="text-base font-semibold text-[#92400E] dark:text-[#E0A34E]">
               {t("loadErrorTitle")}
             </h3>
-            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
               {t("loadErrorBody")}
             </p>
           </Card>
         ) : noAgentsAtAll ? (
           // The ONLY remaining dead-end: no agent connected AND no history — there is
           // nothing to talk to, so a calm "connect a daemon" card (no composer).
-          <Card className="items-center gap-4 rounded-2xl border-[#E5E0D8] bg-white p-8 text-center shadow-none md:p-12">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#C67A5215]">
-              <MessagesSquare className="h-6 w-6 text-[#C67A52]" />
+          <Card className="items-center gap-4 rounded-2xl border-border bg-card p-8 text-center shadow-none md:p-12">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/[0.08]">
+              <MessagesSquare className="h-6 w-6 text-primary" />
             </div>
-            <h3 className="text-base font-semibold text-[#2C2C2C]">
+            <h3 className="text-base font-semibold text-foreground">
               {t("noAgents.title")}
             </h3>
-            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
               {t("noAgents.body")}
             </p>
             {/* Actionable CTA for the only remaining dead-end (no connected agent
@@ -879,7 +879,7 @@ export function DaemonChat() {
 
               {/* Right pane: the selected transcript, or — when nothing is selected —
                   the new-conversation composer (chat-app default), never a dead end. */}
-              <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border-[#E5E0D8] bg-white p-0 shadow-none">
+              <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
                 {selectedSession ? transcriptPane : newConversationPane}
               </Card>
             </div>

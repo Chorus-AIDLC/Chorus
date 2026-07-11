@@ -53,6 +53,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockRouterReplace, push: mockRouterPush }),
   useSearchParams: () => ({ get: mockSearchParamsGet }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ replace: mockRouterReplace, push: mockRouterPush }),
+}));
 
 // Use real translations so the test asserts on user-visible copy.
 vi.mock("next-intl", async () => {

@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus code-review gateway — independently 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.13.2"
+  version: "0.14.0"
   category: project-management
   mcp_server: chorus
 ---

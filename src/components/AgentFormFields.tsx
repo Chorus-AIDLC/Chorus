@@ -63,7 +63,7 @@ export function AgentFormFields({
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder={t("settings.namePlaceholder")}
-          className="border-[#E5E0D8]"
+          className="border-border"
           required
           disabled={readOnly}
         />

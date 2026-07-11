@@ -338,9 +338,9 @@ export function UnifiedComments({
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
       {/* Input at top */}
-      <div className={`flex items-center ${gap} pb-3 border-b border-[#F0EDE8]`}>
+      <div className={`flex items-center ${gap} pb-3 border-b border-[#F0EDE8] dark:border-[#26241f]`}>
         <Avatar className={`${compact ? "h-6 w-6" : "h-7 w-7"} shrink-0`}>
-          <AvatarFallback className="bg-[#E5E0D8] text-[#6B6B6B]">
+          <AvatarFallback className="bg-border text-muted-foreground">
             <User className={`${compact ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
           </AvatarFallback>
         </Avatar>
@@ -351,7 +351,7 @@ export function UnifiedComments({
             onChange={setComment}
             onSubmit={handleSubmit}
             placeholder={t("comments.addComment")}
-            className="border border-[#E5E0D8] bg-white text-sm rounded-lg"
+            className="border border-border bg-card text-sm rounded-lg"
             disabled={isSubmitting}
           />
         </div>
@@ -372,10 +372,10 @@ export function UnifiedComments({
       {/* Comments List */}
       {isLoading ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         </div>
       ) : loadError ? (
-        <div className="flex flex-col items-center gap-2 py-8 text-sm text-[#9A9A9A]">
+        <div className="flex flex-col items-center gap-2 py-8 text-sm text-muted-foreground">
           <AlertCircle className="h-4 w-4" />
           <p>{t("comments.loadError")}</p>
           <Button variant="outline" size="sm" onClick={loadInitial}>
@@ -383,7 +383,7 @@ export function UnifiedComments({
           </Button>
         </div>
       ) : comments.length === 0 ? (
-        <p className="py-8 text-center text-sm text-[#9A9A9A] italic">
+        <p className="py-8 text-center text-sm text-muted-foreground italic">
           {t("comments.noComments")}
         </p>
       ) : (
@@ -411,14 +411,14 @@ export function UnifiedComments({
           <div ref={sentinelRef} aria-hidden="true" />
           {isLoadingPage ? (
             <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
-              <span className="ml-2 text-xs text-[#9A9A9A]">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-xs text-muted-foreground">
                 {t("comments.loadingMore")}
               </span>
             </div>
           ) : (
             !hasMore && (
-              <p className="py-4 text-center text-xs text-[#BFBFBF] italic">
+              <p className="py-4 text-center text-xs text-muted-foreground italic">
                 {t("comments.noMoreComments")}
               </p>
             )
@@ -454,7 +454,7 @@ function CommentItem({
   const agentBgColor = agentColor ? `${agentColor}18` : undefined;
 
   return (
-    <div className={`flex ${gap} py-3 border-b border-[#F0EDE8] last:border-b-0`}>
+    <div className={`flex ${gap} py-3 border-b border-[#F0EDE8] dark:border-[#26241f] last:border-b-0`}>
       <Avatar className={`${avatarSize} shrink-0`}>
         <AvatarFallback
           style={
@@ -465,7 +465,7 @@ function CommentItem({
           className={
             isAgent
               ? ""
-              : "bg-[#E5E0D8] text-[#6B6B6B] text-[11px] font-medium"
+              : "bg-border text-muted-foreground text-[11px] font-medium"
           }
         >
           {isAgent ? (
@@ -478,7 +478,7 @@ function CommentItem({
       <div className="flex-1 min-w-0">
         {/* Meta line */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={`${compact ? "text-xs" : "text-[13px]"} font-semibold text-[#1A1A1A]`}>
+          <span className={`${compact ? "text-xs" : "text-[13px]"} font-semibold text-[#1A1A1A] dark:text-[#CFCFCF]`}>
             {c.author.name}
           </span>
           <span
@@ -488,12 +488,12 @@ function CommentItem({
                 : undefined
             }
             className={`inline-flex items-center rounded px-1.5 py-px text-[9px] font-medium ${
-              isAgent ? "" : "bg-[#F0EDE8] text-[#6B6B6B]"
+              isAgent ? "" : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
             }`}
           >
             {isAgent ? t("comments.roleAgent") : t("comments.roleHuman")}
           </span>
-          <span className="text-[11px] text-[#BFBFBF]">
+          <span className="text-[11px] text-muted-foreground">
             {formatRelativeTime(c.createdAt, t)}
           </span>
         </div>
@@ -501,14 +501,14 @@ function CommentItem({
         {/* Delegation line */}
         {isAgent && c.author.owner && (
           <div className="flex items-center gap-1 mt-0.5">
-            <span className="text-[11px] text-[#A3A3A3] italic">
+            <span className="text-[11px] text-muted-foreground italic">
               {t("comments.onBehalfOf", { name: c.author.owner.name })}
             </span>
           </div>
         )}
 
         {/* Content */}
-        <div className={`mt-1 ${compact ? "text-xs" : "text-[13px]"} leading-relaxed text-[#3D3D3D] max-w-none [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-[13px] [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5`}>
+        <div className={`mt-1 ${compact ? "text-xs" : "text-[13px]"} leading-relaxed text-[#3D3D3D] dark:text-[#d8d2ca] max-w-none [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:mt-2 [&_h1]:mb-1 [&_h2]:text-[13px] [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_code]:bg-secondary [&_code]:text-foreground [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_a]:text-primary [&_pre]:bg-secondary [&_pre]:text-foreground`}>
           {shouldCollapse && !expanded ? (
             <>
               <ContentWithMentions renderMention={renderCommentMention}>
@@ -518,7 +518,7 @@ function CommentItem({
                 variant="link"
                 size="sm"
                 onClick={() => setExpanded(true)}
-                className="h-auto p-0 text-[#E07A5F] text-xs font-medium mt-1"
+                className="h-auto p-0 text-[#E07A5F] dark:text-[#F0A088] text-xs font-medium mt-1"
               >
                 {t("comments.showMore")}
               </Button>
@@ -533,7 +533,7 @@ function CommentItem({
                   variant="link"
                   size="sm"
                   onClick={() => setExpanded(false)}
-                  className="h-auto p-0 text-[#E07A5F] text-xs font-medium mt-1"
+                  className="h-auto p-0 text-[#E07A5F] dark:text-[#F0A088] text-xs font-medium mt-1"
                 >
                   {t("comments.showLess")}
                 </Button>

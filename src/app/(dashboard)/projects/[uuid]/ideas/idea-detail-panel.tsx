@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { X, Bot, User, CheckCircle2, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,7 @@ import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(das
 import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
+import { ReferencesSection } from "@/components/references-section";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
@@ -81,9 +82,9 @@ interface IdeaDetailPanelProps {
 
 // Status color configuration
 const statusColors: Record<string, string> = {
-  open: "bg-[#FFF3E0] text-[#E65100]",
-  elaborating: "bg-[#E3F2FD] text-[#1976D2]",
-  elaborated: "bg-[#E0F2F1] text-[#00796B]",
+  open: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  elaborating: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  elaborated: "bg-[#E0F2F1] dark:bg-[#12292a] text-[#00796B] dark:text-[#4FD1C0]",
 };
 
 const statusI18nKeys: Record<string, string> = {
@@ -393,17 +394,17 @@ export function IdeaDetailPanel({
       />
 
       {/* Panel */}
-      <div className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`}>
+      <div className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-card shadow-xl border-l border-border ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`}>
         {/* Panel Header */}
-        <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
+        <div className="flex items-center justify-between border-b border-secondary px-6 py-5">
           <div className="flex-1 min-w-0">
             {isEditing ? (
-              <h2 className="text-base font-semibold text-[#2C2C2C]">
+              <h2 className="text-base font-semibold text-foreground">
                 {t("ideas.editIdea")}
               </h2>
             ) : (
               <>
-                <h2 className="text-base font-semibold text-[#2C2C2C] truncate">
+                <h2 className="text-base font-semibold text-foreground truncate">
                   {idea.title}
                 </h2>
                 <div className="mt-1.5 flex items-center gap-2">
@@ -423,31 +424,31 @@ export function IdeaDetailPanel({
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 border-[#E5E0D8]"
+                className="h-8 w-8 border-border"
                 onClick={() => setShowMoveDialog(true)}
                 title={t("ideas.actions.move")}
                 aria-label={t("ideas.actions.move")}
               >
-                <ArrowRightLeft className="h-4 w-4 text-[#6B6B6B]" />
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
               </Button>
             )}
             {canEdit && !isEditing && (
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 border-[#E5E0D8]"
+                className="h-8 w-8 border-border"
                 onClick={handleStartEdit}
               >
-                <Pencil className="h-4 w-4 text-[#6B6B6B]" />
+                <Pencil className="h-4 w-4 text-muted-foreground" />
               </Button>
             )}
             <Button
               variant="outline"
               size="icon"
-              className="h-8 w-8 border-[#E5E0D8]"
+              className="h-8 w-8 border-border"
               onClick={isEditing ? handleCancelEdit : onClose}
             >
-              <X className="h-4 w-4 text-[#6B6B6B]" />
+              <X className="h-4 w-4 text-muted-foreground" />
             </Button>
           </div>
         </div>
@@ -465,20 +466,20 @@ export function IdeaDetailPanel({
                 )}
 
                 <div className="space-y-2">
-                  <Label htmlFor="edit-title" className="text-[13px] font-medium text-[#2C2C2C]">
+                  <Label htmlFor="edit-title" className="text-[13px] font-medium text-foreground">
                     {t("ideas.titleLabel")}
                   </Label>
                   <Input
                     id="edit-title"
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    className="border-[#E5E0D8] text-sm focus-visible:ring-[#C67A52]"
+                    className="border-border text-sm focus-visible:ring-primary"
                     autoFocus
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="edit-content" className="text-[13px] font-medium text-[#2C2C2C]">
+                  <Label htmlFor="edit-content" className="text-[13px] font-medium text-foreground">
                     {t("common.content")}
                   </Label>
                   <Textarea
@@ -486,7 +487,7 @@ export function IdeaDetailPanel({
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
                     rows={8}
-                    className="border-[#E5E0D8] text-sm resize-none focus-visible:ring-[#C67A52]"
+                    className="border-border text-sm resize-none focus-visible:ring-primary"
                   />
                 </div>
               </div>
@@ -498,11 +499,11 @@ export function IdeaDetailPanel({
                   <label className="text-[11px] font-medium uppercase tracking-wider text-[#9A9A9A]">
                     {t("common.assignee")}
                   </label>
-                  <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-3">
+                  <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-background p-3">
                     {idea.assignee ? (
                       <>
                         <Avatar className="h-7 w-7">
-                          <AvatarFallback className={isAgentAssignee(idea.assignee) ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
+                          <AvatarFallback className={isAgentAssignee(idea.assignee) ? "bg-primary text-white" : "bg-border text-muted-foreground"}>
                             {isAgentAssignee(idea.assignee) ? (
                               <Bot className="h-3.5 w-3.5" />
                             ) : (
@@ -511,10 +512,10 @@ export function IdeaDetailPanel({
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-[#2C2C2C]">
+                          <div className="text-sm font-medium text-foreground">
                             {idea.assignee.name}
                           </div>
-                          <div className="text-xs text-[#6B6B6B]">
+                          <div className="text-xs text-muted-foreground">
                             {isAgentAssignee(idea.assignee)
                               ? `${t("common.agent")} • ${idea.assignee.assignedAt ? formatDateTime(idea.assignee.assignedAt) : ""}`
                               : t("common.user")}
@@ -559,7 +560,7 @@ export function IdeaDetailPanel({
                   </label>
                   <div className="mt-2">
                     {idea.content ? (
-                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                         <MarkdownContent>{idea.content}</MarkdownContent>
                       </div>
                     ) : (
@@ -585,7 +586,7 @@ export function IdeaDetailPanel({
                         <div key={activity.uuid} className="flex items-start gap-2.5">
                           <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#9A9A9A]" />
                           <div className="flex-1">
-                            <p className="text-[13px] text-[#2C2C2C]">
+                            <p className="text-[13px] text-foreground">
                               {formatActivityMessage(activity, t)}
                             </p>
                             <p className="text-[11px] text-[#9A9A9A]">{formatRelativeTime(activity.createdAt, t)}</p>
@@ -593,6 +594,21 @@ export function IdeaDetailPanel({
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* References Section — external evidence linked to the idea. */}
+                <div className="mt-5">
+                  <label className="text-[11px] font-medium uppercase tracking-wider text-[#9A9A9A]">
+                    {t("references.title")}
+                  </label>
+                  <div className="mt-2">
+                    <ReferencesSection
+                      targetType="idea"
+                      targetUuid={idea.uuid}
+                      canWrite
+                      compact
+                    />
                   </div>
                 </div>
 
@@ -616,20 +632,20 @@ export function IdeaDetailPanel({
         </ScrollArea>
 
         {/* Panel Footer */}
-        <div className="border-t border-[#F5F2EC] px-6 py-4">
+        <div className="border-t border-secondary px-6 py-4">
           <div className="flex items-center justify-between gap-3">
             {isEditing ? (
               <>
                 <Button
                   variant="outline"
-                  className="border-[#E5E0D8]"
+                  className="border-border"
                   onClick={handleCancelEdit}
                   disabled={isSaving}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button
-                  className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                  className="bg-primary hover:bg-[#B56A42] text-white"
                   onClick={handleSaveEdit}
                   disabled={isSaving || !editTitle.trim()}
                 >
@@ -658,7 +674,7 @@ export function IdeaDetailPanel({
                         <Button
                           variant="outline"
                           size="icon"
-                          className="shrink-0 h-8 w-8 border-[#E5E0D8]"
+                          className="shrink-0 h-8 w-8 border-border"
                           onClick={() => setShowAssignModal(true)}
                           aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
                         >
@@ -677,7 +693,7 @@ export function IdeaDetailPanel({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="border-[#E5E0D8]"
+                      className="border-border"
                       onClick={() => {
                         setSkipReason("");
                         setSkipError(null);
@@ -693,7 +709,7 @@ export function IdeaDetailPanel({
                       create-proposal fallback is offered here. */}
                   {canVerify && !verified && (
                     <Button
-                      className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                      className="bg-primary hover:bg-[#B56A42] text-white"
                       onClick={handleVerify}
                       disabled={isVerifying}
                     >
@@ -711,7 +727,7 @@ export function IdeaDetailPanel({
                     </Button>
                   )}
                   {verified && (
-                    <span className="text-[11px] text-[#00796B]">
+                    <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">
                       {t("elaboration.verifiedQueuedHint")}
                     </span>
                   )}
@@ -750,7 +766,7 @@ export function IdeaDetailPanel({
                     <Button
                       variant="outline"
                       size="icon"
-                      className="shrink-0 h-8 w-8 border-[#E5E0D8] text-[#EF4444] hover:bg-[#FFEBEE] hover:text-[#EF4444] hover:border-[#EF4444]"
+                      className="shrink-0 h-8 w-8 border-border text-[#EF4444] dark:text-[#F0897E] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#EF4444] hover:border-[#EF4444]"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -797,7 +813,7 @@ export function IdeaDetailPanel({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2 py-2">
-            <Label htmlFor="skip-reason" className="text-[13px] font-medium text-[#2C2C2C]">
+            <Label htmlFor="skip-reason" className="text-[13px] font-medium text-foreground">
               {t("elaboration.skipReasonLabel")}
             </Label>
             <Input
@@ -808,7 +824,7 @@ export function IdeaDetailPanel({
                 if (skipError) setSkipError(null);
               }}
               placeholder={t("elaboration.skipReasonPlaceholder")}
-              className="border-[#E5E0D8] text-sm focus-visible:ring-[#C67A52]"
+              className="border-border text-sm focus-visible:ring-primary"
               autoFocus
             />
             {skipError && (
@@ -823,7 +839,7 @@ export function IdeaDetailPanel({
                 handleSkipElaboration();
               }}
               disabled={isSkipping || !skipReason.trim()}
-              className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+              className="bg-primary hover:bg-[#B56A42] text-white"
             >
               {isSkipping ? (
                 <>

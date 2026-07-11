@@ -11,6 +11,8 @@ import * as ideaService from "@/services/idea.service";
 import * as documentService from "@/services/document.service";
 import * as taskService from "@/services/task.service";
 import * as proposalService from "@/services/proposal.service";
+import * as referenceArtifactService from "@/services/reference-artifact.service";
+import { REFERENCE_TYPES } from "@/services/reference-artifact.service";
 import * as activityService from "@/services/activity.service";
 import * as commentService from "@/services/comment.service";
 import * as assignmentService from "@/services/assignment.service";
@@ -31,6 +33,17 @@ import {
 } from "@/lib/acceptance-criteria";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
+  // Inline reference item shape (Thread C) for the per-task references[] on
+  // chorus_create_tasks. Enum derived from the service's allowed set so the
+  // schema and service validation never drift; matches the createReferences
+  // helper's ReferenceCreateItem ({ type, url, title, notes? }).
+  const referenceInlineItemSchema = z.object({
+    type: z.enum(REFERENCE_TYPES as unknown as [string, ...string[]]).describe("Reference type: docs, repo, issue_pr, or paper_blog"),
+    url: z.string().describe("Web URL (http:// or https://)"),
+    title: z.string().describe("Reference title"),
+    notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+  });
+
   // chorus_get_project - Get project details and context
   server.registerTool(
     "chorus_get_project",
@@ -210,8 +223,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
       }
+      // Inline reference read path (q6=a): surface the task's linked reference
+      // artifacts so an authoring/review agent sees the evidence on the same
+      // call. Additive + backward-compatible; no separate reference-read tool.
+      const references = await referenceArtifactService.listReferences({
+        companyUuid: auth.companyUuid,
+        targetType: "task",
+        targetUuid: task.uuid,
+      });
       return {
-        content: [{ type: "text", text: JSON.stringify(task, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify({ ...task, references }, null, 2) }],
       };
     }
   );
@@ -441,8 +462,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (!idea) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }
+      // Inline reference read path (q6=a): surface the idea's linked reference
+      // artifacts so an authoring/review agent sees the evidence on the same
+      // call. Additive + backward-compatible; mirrors get_task / get_proposal.
+      const references = await referenceArtifactService.listReferences({
+        companyUuid: auth.companyUuid,
+        targetType: "idea",
+        targetUuid: idea.uuid,
+      });
       return {
-        content: [{ type: "text", text: JSON.stringify(idea, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify({ ...idea, references }, null, 2) }],
       };
     }
   );
@@ -479,8 +508,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (!proposal) {
         return { content: [{ type: "text", text: "Proposal not found" }], isError: true };
       }
+      // Inline reference read path (q6=a): surface the proposal's linked
+      // reference artifacts alongside every section view. Additive +
+      // backward-compatible; no separate reference-read tool.
+      const references = await referenceArtifactService.listReferences({
+        companyUuid: auth.companyUuid,
+        targetType: "proposal",
+        targetUuid: proposal.uuid,
+      });
       return {
-        content: [{ type: "text", text: JSON.stringify(proposal, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify({ ...proposal, references }, null, 2) }],
       };
     }
   );
@@ -793,7 +830,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches. Flow: create → claim → execute → verify → done.\n\n" +
         "**Proposal-linked** (traditional AI-DLC): pass proposalUuid to associate with an approved proposal.\n\n" +
         "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).\n\n" +
-        "Acceptance criteria are REQUIRED: every task must include at least one acceptanceCriteriaItems entry with a non-blank description, or the entire batch is rejected (no task is created).",
+        "Acceptance criteria are REQUIRED: every task must include at least one acceptanceCriteriaItems entry with a non-blank description, or the entire batch is rejected (no task is created).\n\n" +
+        "Optional per-task `references[]` attaches reference artifacts (external evidence — web link + optional notes) to each created task inline; a bad reference is skipped and reported in the response `referenceErrors` without failing task creation.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional — omit for Quick Task mode)"),
@@ -809,6 +847,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           draftUuid: z.string().optional().describe("Temporary UUID for intra-batch dependsOnDraftUuids references"),
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
           dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
+          references: zArray(referenceInlineItemSchema).optional().describe("Optional reference artifacts to attach to this task (fail-soft per item)"),
         })).describe("Task list"),
       }),
     },
@@ -858,6 +897,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }
 
       const warnings: string[] = [];
+      const referenceErrors: Array<Record<string, unknown>> = [];
       for (let i = 0; i < tasks.length; i++) {
         const task = tasks[i];
         const realUuid = createdTasks[i].uuid;
@@ -894,6 +934,23 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         } catch (error) {
           warnings.push(`Task "${task.title}": failed to create acceptance criteria: ${error instanceof Error ? error.message : "unknown error"}`);
         }
+
+        // Inline references (Thread C): attach AFTER the task row exists so
+        // targetUuid is the real DB-generated uuid — same post-insert sequencing
+        // as deps/AC above. Fail-soft — a bad ref is reported in referenceErrors,
+        // never aborts task creation.
+        if (task.references && task.references.length > 0) {
+          const refResult = await referenceArtifactService.createReferences(
+            auth.companyUuid,
+            "task",
+            realUuid,
+            task.references,
+            { type: "agent", uuid: auth.actorUuid }
+          );
+          for (const err of refResult.errors) {
+            referenceErrors.push({ task: task.title, ...err });
+          }
+        }
       }
 
       // Log activity for each created task
@@ -913,10 +970,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       const result: {
         tasks: { uuid: string; title: string }[];
         warnings?: string[];
+        referenceErrors?: Array<Record<string, unknown>>;
       } = { tasks: createdTasks.map(t => ({ uuid: t.uuid, title: t.title })) };
 
       if (warnings.length > 0) {
         result.warnings = warnings;
+      }
+
+      if (referenceErrors.length > 0) {
+        result.referenceErrors = referenceErrors;
       }
 
       return {

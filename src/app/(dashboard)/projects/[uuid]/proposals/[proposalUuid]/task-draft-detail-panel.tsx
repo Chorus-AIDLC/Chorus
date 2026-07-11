@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { X, Pencil, Trash2, Loader2, Check, Zap, GitBranch, Plus, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -59,9 +59,9 @@ interface TaskDraft {
 
 // Priority color mapping (Industrial Humanist palette)
 const priorityColors: Record<string, { bg: string; text: string }> = {
-  high: { bg: "bg-[#FFEBEE]", text: "text-[#C4574C]" },
-  medium: { bg: "bg-[#FFF3E0]", text: "text-[#E65100]" },
-  low: { bg: "bg-[#F5F2EC]", text: "text-[#6B6B6B]" },
+  high: { bg: "bg-[#FFEBEE] dark:bg-[#331619]", text: "text-[#C4574C] dark:text-[#F0897E]" },
+  medium: { bg: "bg-[#FFF3E0] dark:bg-[#3a2a12]", text: "text-[#E65100] dark:text-[#F0A050]" },
+  low: { bg: "bg-secondary", text: "text-muted-foreground" },
 };
 
 interface TaskDraftDetailPanelProps {
@@ -297,11 +297,11 @@ export function TaskDraftDetailPanel({
           {depTasks.map((dep) => (
             <div
               key={dep.uuid}
-              className="group flex items-center justify-between rounded-lg bg-[#FAF8F4] p-2.5"
+              className="group flex items-center justify-between rounded-lg bg-background p-2.5"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" />
-                <span className="text-xs text-[#2C2C2C] truncate">
+                <GitBranch className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="text-xs text-foreground truncate">
                   {dep.title}
                 </span>
               </div>
@@ -332,7 +332,7 @@ export function TaskDraftDetailPanel({
             key={depTasks.length}
             onValueChange={(uuid) => handleAddDependency(uuid)}
           >
-            <SelectTrigger className="h-8 border-[#E5E0D8] text-xs text-[#6B6B6B] focus:ring-[#C67A52]">
+            <SelectTrigger className="h-8 border-border text-xs text-muted-foreground focus:ring-primary">
               <div className="flex items-center gap-1.5">
                 <Plus className="h-3 w-3" />
                 <SelectValue placeholder={t("proposals.selectDependency")} />
@@ -355,11 +355,11 @@ export function TaskDraftDetailPanel({
   const renderEditForm = () => (
     <div className="space-y-5">
       {error && (
-        <div className="rounded-lg bg-[#FFEBEE] p-3 text-sm text-[#C4574C]">{error}</div>
+        <div className="rounded-lg bg-[#FFEBEE] dark:bg-[#331619] p-3 text-sm text-[#C4574C] dark:text-[#F0897E]">{error}</div>
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="edit-title" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-title" className="text-[13px] font-medium text-foreground">
           {t("proposals.taskTitle")} *
         </Label>
         <Input
@@ -367,13 +367,13 @@ export function TaskDraftDetailPanel({
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
           placeholder={t("proposals.titlePlaceholder")}
-          className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52]"
+          className="border-[#E5E2DC] dark:border-[#2a2a2e] text-sm focus-visible:ring-primary"
           autoFocus
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="edit-description" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-description" className="text-[13px] font-medium text-foreground">
           {t("proposals.taskDescription")}
         </Label>
         <Textarea
@@ -381,18 +381,18 @@ export function TaskDraftDetailPanel({
           value={editDescription}
           onChange={(e) => setEditDescription(e.target.value)}
           rows={4}
-          className="border-[#E5E2DC] text-sm resize-none focus-visible:ring-[#C67A52]"
+          className="border-[#E5E2DC] dark:border-[#2a2a2e] text-sm resize-none focus-visible:ring-primary"
           placeholder={t("proposals.descriptionPlaceholder")}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="edit-priority" className="text-[13px] font-medium text-[#2C2C2C]">
+          <Label htmlFor="edit-priority" className="text-[13px] font-medium text-foreground">
             {t("proposals.taskPriority")}
           </Label>
           <Select value={editPriority} onValueChange={setEditPriority}>
-            <SelectTrigger className="border-[#E5E2DC] text-sm focus:ring-[#C67A52]">
+            <SelectTrigger className="border-[#E5E2DC] dark:border-[#2a2a2e] text-sm focus:ring-primary">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -403,7 +403,7 @@ export function TaskDraftDetailPanel({
           </Select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="edit-story-points" className="text-[13px] font-medium text-[#2C2C2C]">
+          <Label htmlFor="edit-story-points" className="text-[13px] font-medium text-foreground">
             {t("proposals.taskStoryPoints")}
           </Label>
           <Input
@@ -414,15 +414,15 @@ export function TaskDraftDetailPanel({
             value={editStoryPoints}
             onChange={(e) => setEditStoryPoints(e.target.value)}
             placeholder={t("proposals.storyPointsPlaceholder")}
-            className="border-[#E5E2DC] text-sm focus-visible:ring-[#C67A52]"
+            className="border-[#E5E2DC] dark:border-[#2a2a2e] text-sm focus-visible:ring-primary"
           />
         </div>
       </div>
 
       {/* Acceptance Criteria Items (structured) */}
       <div className="space-y-3">
-        <Label className="text-[13px] font-medium text-[#2C2C2C] flex items-center gap-1.5">
-          <ClipboardCheck className="h-3.5 w-3.5 text-[#C67A52]" />
+        <Label className="text-[13px] font-medium text-foreground flex items-center gap-1.5">
+          <ClipboardCheck className="h-3.5 w-3.5 text-primary" />
           {t("acceptanceCriteria.title")}
         </Label>
         <AcceptanceCriteriaEditor
@@ -445,17 +445,17 @@ export function TaskDraftDetailPanel({
       />
 
       {/* Panel */}
-      <div className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`}>
+      <div className={`fixed right-0 top-14 md:top-0 z-50 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-card shadow-xl border-l border-border ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`}>
         {/* Panel Header */}
-        <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
+        <div className="flex items-center justify-between border-b border-secondary px-6 py-5">
           <div className="flex-1 min-w-0">
             {isEditing ? (
-              <h2 className="text-base font-semibold text-[#2C2C2C]">
+              <h2 className="text-base font-semibold text-foreground">
                 {isCreateMode ? t("proposals.newTaskDraft") : t("proposals.editTaskDraft")}
               </h2>
             ) : taskDraft ? (
               <>
-                <h2 className="text-base font-semibold text-[#2C2C2C] truncate">
+                <h2 className="text-base font-semibold text-foreground truncate">
                   {taskDraft.title}
                 </h2>
                 <div className="mt-1.5 flex items-center gap-2">
@@ -465,8 +465,8 @@ export function TaskDraftDetailPanel({
                     </Badge>
                   )}
                   {taskDraft.storyPoints != null && taskDraft.storyPoints > 0 && (
-                    <span className="flex items-center gap-1 rounded bg-[#F5F2EC] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
-                      <Zap className="h-2.5 w-2.5 text-[#C67A52]" />
+                    <span className="flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      <Zap className="h-2.5 w-2.5 text-primary" />
                       {taskDraft.storyPoints} SP
                     </span>
                   )}
@@ -480,20 +480,20 @@ export function TaskDraftDetailPanel({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 gap-1.5 border-[#E5E0D8] text-[#2C2C2C]"
+                className="h-8 gap-1.5 border-border text-foreground"
                 onClick={handleStartEdit}
               >
-                <Pencil className="h-3.5 w-3.5 text-[#6B6B6B]" />
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="text-xs">{t("common.edit")}</span>
               </Button>
             )}
             <Button
               variant="outline"
               size="icon"
-              className="h-8 w-8 border-[#E5E0D8]"
+              className="h-8 w-8 border-border"
               onClick={isEditing && !isCreateMode ? handleCancelEdit : onClose}
             >
-              <X className="h-4 w-4 text-[#6B6B6B]" />
+              <X className="h-4 w-4 text-muted-foreground" />
             </Button>
           </div>
         </div>
@@ -512,7 +512,7 @@ export function TaskDraftDetailPanel({
                   </label>
                   <div className="mt-2">
                     {taskDraft.description ? (
-                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                         <MarkdownContent>{taskDraft.description}</MarkdownContent>
                       </div>
                     ) : (
@@ -528,7 +528,7 @@ export function TaskDraftDetailPanel({
                       {t("tasks.acceptanceCriteria")}
                     </label>
                     <div className="mt-2">
-                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                         <MarkdownContent>{taskDraft.acceptanceCriteria}</MarkdownContent>
                       </div>
                     </div>
@@ -546,16 +546,16 @@ export function TaskDraftDetailPanel({
                       {taskDraft.acceptanceCriteriaItems.map((item, index) => (
                         <div
                           key={index}
-                          className="flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-2.5"
+                          className="flex items-center gap-2.5 rounded-lg bg-background p-2.5"
                         >
-                          <span className="flex-1 text-[13px] text-[#2C2C2C]">
+                          <span className="flex-1 text-[13px] text-foreground">
                             {item.description}
                           </span>
                           <Badge
                             className={`text-[10px] font-medium border-0 shrink-0 ${
                               (item.required ?? true)
-                                ? "bg-[#FFF3E0] text-[#E65100]"
-                                : "bg-[#F5F2EC] text-[#6B6B6B]"
+                                ? "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]"
+                                : "bg-secondary text-muted-foreground"
                             }`}
                           >
                             {(item.required ?? true) ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
@@ -568,7 +568,7 @@ export function TaskDraftDetailPanel({
 
                 {/* Dependencies Section */}
                 {error && (
-                  <div className="mt-5 rounded-lg bg-[#FFEBEE] p-2.5 text-xs text-[#C4574C]">
+                  <div className="mt-5 rounded-lg bg-[#FFEBEE] dark:bg-[#331619] p-2.5 text-xs text-[#C4574C] dark:text-[#F0897E]">
                     {error}
                   </div>
                 )}
@@ -579,20 +579,20 @@ export function TaskDraftDetailPanel({
         </ScrollArea>
 
         {/* Panel Footer */}
-        <div className="border-t border-[#F5F2EC] px-6 py-4">
+        <div className="border-t border-secondary px-6 py-4">
           <div className="flex items-center gap-3">
             {isEditing ? (
               <>
                 <Button
                   variant="outline"
-                  className="border-[#E5E0D8]"
+                  className="border-border"
                   onClick={handleCancelEdit}
                   disabled={isPending}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button
-                  className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                  className="bg-primary hover:bg-[#B56A42] text-white"
                   onClick={handleSave}
                   disabled={isPending || !editTitle.trim()}
                 >
@@ -614,7 +614,7 @@ export function TaskDraftDetailPanel({
                 {canEdit && (
                   <Button
                     variant="outline"
-                    className="border-[#E5E0D8]"
+                    className="border-border"
                     onClick={handleStartEdit}
                   >
                     <Pencil className="mr-2 h-4 w-4" />
@@ -628,7 +628,7 @@ export function TaskDraftDetailPanel({
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-9 w-9 border-[#E5E0D8] text-[#D32F2F] hover:bg-[#FFEBEE] hover:text-[#D32F2F] hover:border-[#D32F2F]"
+                          className="h-9 w-9 border-border text-[#D32F2F] dark:text-[#F08078] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#D32F2F] hover:border-[#D32F2F]"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

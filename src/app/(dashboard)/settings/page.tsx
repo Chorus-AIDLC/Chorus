@@ -251,7 +251,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="text-[#6B6B6B]">{t("common.loading")}</div>
+        <div className="text-muted-foreground">{t("common.loading")}</div>
       </div>
     );
   }
@@ -263,8 +263,8 @@ export default function SettingsPage() {
 
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-[#2C2C2C]">{t("settings.title")}</h1>
-        <p className="mt-1 text-[13px] text-[#6B6B6B]">
+        <h1 className="text-2xl font-semibold text-foreground">{t("settings.title")}</h1>
+        <p className="mt-1 text-[13px] text-muted-foreground">
           {t("settings.subtitle")}
         </p>
       </div>

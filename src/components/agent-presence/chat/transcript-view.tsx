@@ -76,11 +76,11 @@ function DetailField({
 }) {
   return (
     <div>
-      <div className="text-[10px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div
-        className={`mt-0.5 truncate text-[13px] font-medium text-[#2C2C2C] ${mono ? "font-mono" : ""}`}
+        className={`mt-0.5 truncate text-[13px] font-medium text-foreground ${mono ? "font-mono" : ""}`}
       >
         {value}
       </div>
@@ -131,8 +131,8 @@ function InstanceIdentity({
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <span
-        className={`inline-flex max-w-full items-center gap-1.5 rounded-md bg-[#F1ECE3] px-2 py-0.5 ${
-          cwdFmt.isUnknown ? "italic text-[#9A9A9A]" : "text-[#6B6B6B]"
+        className={`inline-flex max-w-full items-center gap-1.5 rounded-md bg-[#F1ECE3] dark:bg-[#201e1a] px-2 py-0.5 ${
+          cwdFmt.isUnknown ? "italic text-muted-foreground" : "text-muted-foreground"
         }`}
         title={`${th("cwdAriaLabel")}: ${cwdTitle}`}
         aria-label={`${th("cwdAriaLabel")}: ${cwdTitle}`}
@@ -144,7 +144,7 @@ function InstanceIdentity({
       </span>
       {hostLabel !== null && (
         <span
-          className="inline-flex max-w-full items-center gap-1 text-[11px] font-medium text-[#9A9A9A]"
+          className="inline-flex max-w-full items-center gap-1 text-[11px] font-medium text-muted-foreground"
           title={`${th("hostAriaLabel")}: ${hostTitle}`}
           aria-label={`${th("hostAriaLabel")}: ${hostTitle}`}
         >
@@ -196,7 +196,7 @@ export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
       title={label}
       aria-label={label}
       aria-live="polite"
-      className="inline-flex h-auto items-center gap-1.5 px-1.5 py-0.5 text-[12px] font-medium text-[#6B6B6B] hover:bg-transparent hover:text-[#2C2C2C]"
+      className="inline-flex h-auto items-center gap-1.5 px-1.5 py-0.5 text-[12px] font-medium text-muted-foreground hover:bg-transparent hover:text-foreground"
     >
       {copied ? (
         <Check className="h-3.5 w-3.5 text-green-600" aria-hidden />
@@ -353,7 +353,7 @@ export function TranscriptView({
             multiple hosts (`originCrossHost`). The chip is gated on `originConnection` —
             without one there is no instance to identify. */}
         <div className="flex items-center justify-between gap-4">
-          <h3 className="truncate text-[17px] font-semibold text-[#2C2C2C] min-w-0">
+          <h3 className="truncate text-[17px] font-semibold text-foreground min-w-0">
             {title}
           </h3>
           {originConnection && (
@@ -372,17 +372,17 @@ export function TranscriptView({
               variant="secondary"
               className={`border-0 px-2 py-0.5 text-[10px] font-medium ${
                 sessionEnded
-                  ? "bg-[#F0EDE8] text-[#6B6B6B]"
-                  : "bg-[#DCFCE7] text-[#15803D]"
+                  ? "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
+                  : "bg-[#DCFCE7] dark:bg-[#13291d] text-[#15803D] dark:text-[#4FD07A]"
               }`}
             >
               {sessionEnded ? t("statusEnded") : t("statusActive")}
             </Badge>
             {currentTurn && currentTurn.status === "running" && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#C67A52]">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary">
                 <span className="relative inline-flex h-2 w-2 items-center justify-center">
-                  <span className="absolute inline-flex h-full w-full rounded-full bg-[#C67A52] opacity-40 motion-safe:animate-ping" />
-                  <span className="relative inline-flex h-1 w-1 rounded-full bg-[#C67A52]" />
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 motion-safe:animate-ping" />
+                  <span className="relative inline-flex h-1 w-1 rounded-full bg-primary" />
                 </span>
                 {t("running")}
                 {/* Live elapsed run time of the conversation's running execution —
@@ -390,7 +390,7 @@ export function TranscriptView({
                     header title stays the only navigational affordance). */}
                 {runningExecution?.startedAt && (
                   <span
-                    className="font-mono tabular-nums text-[#C67A52]"
+                    className="font-mono tabular-nums text-primary"
                     title={t("runningElapsedLabel")}
                   >
                     {formatElapsed(runningExecution.startedAt, nowMs)}
@@ -414,7 +414,7 @@ export function TranscriptView({
                     the status line. The content (host / version / uptime / started via
                     the reused IdentityBlock + formatters) expands below the line. */}
                 {originConnection && (
-                  <CollapsibleTrigger className="group inline-flex items-center gap-1.5 text-[12px] font-medium text-[#6B6B6B] hover:text-[#2C2C2C]">
+                  <CollapsibleTrigger className="group inline-flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-foreground">
                     <Info className="h-3.5 w-3.5" aria-hidden />
                     {t("detailsLabel")}
                     <ChevronDown
@@ -428,7 +428,7 @@ export function TranscriptView({
           </div>
           {originConnection && (
             <CollapsibleContent>
-              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-4">
+              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-4">
                 <IdentityBlock connection={originConnection} size="sm" />
                 <div className="grid grid-cols-2 gap-3">
                   {originOnline && (
@@ -459,26 +459,26 @@ export function TranscriptView({
           )}
         </Collapsible>
       </div>
-      <div className="h-px w-full bg-[#EFEBE4]" />
+      <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
 
       {/* Body */}
       {error ? (
         // Distinct error card — never a silent empty (no-silent-error contract).
         <div className="flex flex-1 items-center justify-center p-8">
-          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] bg-[#FFF9F3] p-8 text-center shadow-none">
+          <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] dark:border-[#33302a] bg-[#FFF9F3] dark:bg-[#2a2113] p-8 text-center shadow-none">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D9770615]">
-              <WifiOff className="h-6 w-6 text-[#B45309]" />
+              <WifiOff className="h-6 w-6 text-[#B45309] dark:text-[#E0A34E]" />
             </div>
-            <h4 className="text-base font-semibold text-[#92400E]">
+            <h4 className="text-base font-semibold text-[#92400E] dark:text-[#E0A34E]">
               {t("loadErrorTitle")}
             </h4>
-            <p className="max-w-md text-[13px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
               {t("loadErrorBody")}
             </p>
           </Card>
         </div>
       ) : loading ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-[13px] text-[#9A9A9A]">
+        <div className="flex flex-1 items-center justify-center p-8 text-[13px] text-muted-foreground">
           {t("transcriptLoading")}
         </div>
       ) : (
@@ -505,7 +505,7 @@ export function TranscriptView({
               and sizes to content regardless of `min-w-0`. */}
           <div className="flex w-full min-w-0 flex-col gap-3 px-6 py-3 lg:gap-5 lg:py-5">
             {/* Privacy note — once per pane: the transcript is daemon-self-reported. */}
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A9A9A]">
+            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
               <Lock className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
               <span>{t("privacyNote")}</span>
             </p>
@@ -519,7 +519,7 @@ export function TranscriptView({
                   size="sm"
                   onClick={onLoadEarlier}
                   disabled={loadingEarlier}
-                  className="h-8 gap-1.5 rounded-lg text-[12px] font-medium text-[#C67A52] hover:bg-[#FBF4EF] hover:text-[#C67A52]"
+                  className="h-8 gap-1.5 rounded-lg text-[12px] font-medium text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
                 >
                   {loadingEarlier ? (
                     <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden />
@@ -555,7 +555,7 @@ export function TranscriptView({
           here". The reply box self-gates on origin-online and shows the read-only
           reason when the daemon is offline; while running the textarea stays usable. */}
       {!error && session && (
-        <div className="flex flex-col gap-3 border-t border-[#EFEBE4] bg-[#FAF8F4] px-6 py-2.5 lg:py-4">
+        <div className="flex flex-col gap-3 border-t border-[#EFEBE4] dark:border-[#2a2a2e] bg-background px-6 py-2.5 lg:py-4">
           <ConversationReplyBox
             sessionUuid={session.uuid}
             originOnline={originOnline}

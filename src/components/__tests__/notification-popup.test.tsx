@@ -51,6 +51,9 @@ const pushSpy = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushSpy, replace: vi.fn(), back: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ push: pushSpy, replace: vi.fn(), back: vi.fn() }),
+}));
 
 // framer-motion: jsdom-safe pass-through; the popup only uses motion.div.
 vi.mock("framer-motion", async () => {

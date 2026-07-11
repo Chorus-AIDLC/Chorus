@@ -33,6 +33,9 @@ const {
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock, push: vi.fn(), replace: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ refresh: refreshMock, push: vi.fn(), replace: vi.fn() }),
+}));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -59,6 +62,7 @@ vi.mock("../elaboration-view", () => ({ ElaborationView: () => <div data-testid=
 vi.mock("../proposal-view", () => ({ ProposalView: () => <div /> }));
 vi.mock("../overview-timeline", () => ({ OverviewTimeline: () => <div /> }));
 vi.mock("../reports-list", () => ({ ReportsList: () => <div /> }));
+vi.mock("@/components/references-section", () => ({ ReferencesSection: () => <div /> }));
 vi.mock("../task-list-view", () => ({ TaskListView: () => <div /> }));
 vi.mock("../activity-comments-view", () => ({ ActivityCommentsView: () => <div /> }));
 vi.mock("../document-panel", () => ({ DocumentPanel: () => <div /> }));

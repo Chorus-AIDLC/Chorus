@@ -12,6 +12,9 @@ importers:
 
   .:
     dependencies:
+      '@bprogress/next':
+        specifier: ^3.2.12
+        version: 3.2.12(next@15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@electric-sql/pglite':
         specifier: ^0.4.4
         version: 0.4.4
@@ -132,6 +135,9 @@ importers:
       next-intl:
         specifier: ^4.8.2
         version: 4.8.2(next@15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)(typescript@5.9.3)
+      next-themes:
+        specifier: ^0.4.6
+        version: 0.4.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       oidc-client-ts:
         specifier: ^3.4.1
         version: 3.4.1
@@ -190,6 +196,9 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3.3.3
         version: 3.3.3
+      '@formatjs/icu-messageformat-parser':
+        specifier: ^3.5.1
+        version: 3.5.1
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.1.18
@@ -506,6 +515,22 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@bprogress/core@1.3.4':
+    resolution: {integrity: sha512-q/AqpurI/1uJzOrQROuZWixn/+ARekh+uvJGwLCP6HQ/EqAX4SkvNf618tSBxL4NysC0MwqAppb/mRw6Tzi61w==}
+
+  '@bprogress/next@3.2.12':
+    resolution: {integrity: sha512-/ZvNwbAd0ty9QiQwCfT2AfwWVdAaEyCPx5RUz3CfiiJS/OLBohhDz/IC/srhwK9GnXeXavvtiUrpKzN5GJDwlw==}
+    peerDependencies:
+      next: '>=13.0.0'
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
+
+  '@bprogress/react@1.2.7':
+    resolution: {integrity: sha512-MqJfHW+R5CQeWqyqrLxUjdBRHk24Xl63OkBLo5DMWqUqocUikRTfCIc/jtQQbPk7BRfdr5OP3Lx7YlfQ9QOZMQ==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   '@braintree/sanitize-url@7.1.2':
     resolution: {integrity: sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA==}
@@ -5765,6 +5790,12 @@ packages:
       typescript:
         optional: true
 
+  next-themes@0.4.6:
+    resolution: {integrity: sha512-pZvgD5L0IEvX5/9GWyHMf3m8BKiVQwsCMHfoFosXtXBMnaS0ZnIJ9ST4b4NqLVKDEm8QBxoNNGNaBv2JNF6XNA==}
+    peerDependencies:
+      react: ^16.8 || ^17 || ^18 || ^19 || ^19.0.0-rc
+      react-dom: ^16.8 || ^17 || ^18 || ^19 || ^19.0.0-rc
+
   next@15.5.12:
     resolution: {integrity: sha512-Fi/wQ4Etlrn60rz78bebG1i1SR20QxvV8tVp6iJspjLUSHcZoeUXCt+vmWoEcza85ElZzExK/jJ/F6SvtGktjA==}
     engines: {node: ^18.18.0 || ^19.8.0 || >= 20.0.0}
@@ -7933,6 +7964,22 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@bprogress/core@1.3.4': {}
+
+  '@bprogress/next@3.2.12(next@15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@bprogress/core': 1.3.4
+      '@bprogress/react': 1.2.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      next: 15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+
+  '@bprogress/react@1.2.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@bprogress/core': 1.3.4
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   '@braintree/sanitize-url@7.1.2': {}
 
@@ -13611,6 +13658,11 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - '@swc/helpers'
+
+  next-themes@0.4.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   next@15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
     dependencies:

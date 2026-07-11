@@ -100,18 +100,18 @@ export function DaemonConnectCta({ variant }: { variant: DaemonConnectCtaVariant
     return (
       <div className="flex flex-col gap-2.5 px-1 py-1.5">
         <div className="flex items-start gap-2">
-          <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-[#C67A52]" aria-hidden />
-          <p className="text-[12.5px] leading-relaxed text-[#6B6B6B]">
+          <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
             {t("body")}
           </p>
         </div>
         <CommandLine command={DAEMON_START_COMMAND} />
-        <p className="text-[11.5px] leading-relaxed text-[#9A9A9A]">
+        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
           {t("loginNote", { command: DAEMON_LOGIN_COMMAND })}
         </p>
         <Link
           href={LEARN_MORE_HREF}
-          className="text-[12px] font-medium text-[#C67A52] hover:text-[#A65F3C] hover:underline"
+          className="text-[12px] font-medium text-primary hover:text-[#A65F3C] hover:underline"
         >
           {t("learnMore")}
         </Link>
@@ -124,21 +124,21 @@ export function DaemonConnectCta({ variant }: { variant: DaemonConnectCtaVariant
   // "installed plugin ≠ resident online" body, command + copy, login note, and
   // the learn-more link.
   return (
-    <div className="flex w-full flex-col gap-3 rounded-xl border border-[#EFEBE4] bg-[#FCFBF8] p-5 text-left">
+    <div className="flex w-full flex-col gap-3 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-5 text-left">
       <div className="flex items-center gap-2">
-        <Terminal className="h-4 w-4 text-[#C67A52]" aria-hidden />
-        <h3 className="text-[14px] font-semibold text-[#2C2C2C]">
+        <Terminal className="h-4 w-4 text-primary" aria-hidden />
+        <h3 className="text-[14px] font-semibold text-foreground">
           {t("headline")}
         </h3>
       </div>
-      <p className="text-[13px] leading-relaxed text-[#6B6B6B]">{t("bodyLong")}</p>
+      <p className="text-[13px] leading-relaxed text-muted-foreground">{t("bodyLong")}</p>
       <CommandLine command={DAEMON_START_COMMAND} />
-      <p className="text-[12px] leading-relaxed text-[#9A9A9A]">
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
         {t("loginNote", { command: DAEMON_LOGIN_COMMAND })}
       </p>
       <Link
         href={LEARN_MORE_HREF}
-        className="text-[12.5px] font-medium text-[#C67A52] hover:text-[#A65F3C] hover:underline"
+        className="text-[12.5px] font-medium text-primary hover:text-[#A65F3C] hover:underline"
       >
         {t("learnMore")}
       </Link>

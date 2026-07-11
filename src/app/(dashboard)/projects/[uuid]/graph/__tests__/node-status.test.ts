@@ -24,10 +24,21 @@ import {
 } from "../node-status";
 import type { ResourceGraphNodeType } from "@/services/resource-graph.service";
 
-// Parse a Tailwind arbitrary-color class string into its bg/fg hex pair.
+// Parse a Tailwind arbitrary-color class string into its LIGHT bg/fg hex pair.
+// Strips `dark:` variants first so a `dark:bg-[#..]` never shadows the light one.
 function parseColorClass(colorClass: string): { bg: string; fg: string } {
-  const bg = colorClass.match(/bg-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
-  const fg = colorClass.match(/text-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
+  const lightOnly = colorClass
+    .replace(/dark:bg-\[#[0-9A-Fa-f]+\]/g, "")
+    .replace(/dark:text-\[#[0-9A-Fa-f]+\]/g, "");
+  const bg = lightOnly.match(/bg-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
+  const fg = lightOnly.match(/text-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
+  return { bg, fg };
+}
+
+// Parse the `dark:bg-[#..] dark:text-[#..]` pair (empty string if absent).
+function parseDarkColorClass(colorClass: string): { bg: string; fg: string } {
+  const bg = colorClass.match(/dark:bg-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
+  const fg = colorClass.match(/dark:text-\[(#[0-9A-Fa-f]+)\]/)?.[1] ?? "";
   return { bg, fg };
 }
 
@@ -59,6 +70,26 @@ describe("resolveNodeStatusVisual — canvas↔DOM color parity", () => {
         );
         expect(parsed.fg.toLowerCase(), `${type}/${value}: fg hex`).toBe(
           visual.fg.toLowerCase(),
+        );
+      }
+    }
+  });
+
+  it("for every status, darkBg/darkFg equal the `dark:` hex in colorClass (or fall back to the light hex)", () => {
+    // The canvas painter picks darkBg/darkFg under `.dark`; they must match the
+    // `dark:` half of the DOM badge's colorClass, or fall back to the light hex
+    // when the status carries no dark variant.
+    for (const type of TYPES) {
+      for (const value of KNOWN_STATUS_VALUES[type]) {
+        const visual = resolveNodeStatusVisual(type, value);
+        const parsedDark = parseDarkColorClass(visual.colorClass);
+        const expectedDarkBg = parsedDark.bg || visual.bg;
+        const expectedDarkFg = parsedDark.fg || visual.fg;
+        expect(visual.darkBg.toLowerCase(), `${type}/${value}: darkBg hex`).toBe(
+          expectedDarkBg.toLowerCase(),
+        );
+        expect(visual.darkFg.toLowerCase(), `${type}/${value}: darkFg hex`).toBe(
+          expectedDarkFg.toLowerCase(),
         );
       }
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import {
@@ -68,7 +68,7 @@ function getTypeIcon(action: string) {
   switch (action) {
     case "task_assigned":
     case "idea_claimed":
-      return { Icon: UserCheck, color: "text-[#C67A52]" }; // terracotta
+      return { Icon: UserCheck, color: "text-primary" }; // terracotta
     case "proposal_approved":
     case "task_verified":
       return { Icon: CheckCircle2, color: "text-green-600" };
@@ -255,7 +255,7 @@ export function NotificationPopup({ onClose }: NotificationPopupProps) {
         {/* Unread dot */}
         <div className="mt-1.5 flex-shrink-0">
           {isUnread ? (
-            <div className="h-2 w-2 rounded-full bg-[#C67A52]" />
+            <div className="h-2 w-2 rounded-full bg-primary" />
           ) : (
             <div className="h-2 w-2" />
           )}

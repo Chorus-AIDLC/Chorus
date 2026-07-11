@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock (hoisted) =====
-const { mockPrisma } = vi.hoisted(() => ({
+const { mockPrisma, mockGetIdeasWithDerivedStatus } = vi.hoisted(() => ({
   mockPrisma: {
     idea: { findMany: vi.fn() },
     proposal: { findMany: vi.fn() },
@@ -9,9 +9,18 @@ const { mockPrisma } = vi.hoisted(() => ({
     project: { findMany: vi.fn() },
     agentInstance: { findMany: vi.fn() },
   },
+  mockGetIdeasWithDerivedStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+
+// Container (theme) ideas roll their status up from their children via the
+// project-wide board builder. Mock only that function; keep computeDerivedStatus
+// (used for every non-container idea) real via importActual.
+vi.mock("@/services/idea.service", async (importActual) => {
+  const actual = await importActual<typeof import("@/services/idea.service")>();
+  return { ...actual, getIdeasWithDerivedStatus: mockGetIdeasWithDerivedStatus };
+});
 
 import { buildIdeaTracker, buildTaskTracker } from "@/services/idea-tracker.service";
 import type { AuthContext } from "@/types/auth";
@@ -51,6 +60,7 @@ function makeIdea(
     status,
     elaborationStatus: null,
     parentUuid: null,
+    isContainer: false,
     projectUuid,
     createdAt: now,
     updatedAt: now,
@@ -85,6 +95,9 @@ beforeEach(() => {
   // By default the agent owns no instances → buildAssigneeMatch omits the
   // agent_instance arm, so the existing OR-shape assertions stay unchanged.
   mockPrisma.agentInstance.findMany.mockResolvedValue([]);
+  // Container rollup source: default to no ideas. Only container-idea tests
+  // populate it; the guard means it isn't called unless a container is present.
+  mockGetIdeasWithDerivedStatus.mockResolvedValue([]);
 });
 
 // ============================================================
@@ -217,6 +230,50 @@ describe("buildIdeaTracker — filters", () => {
     const tracker = await buildIdeaTracker(agentAuth);
     expect(tracker).toEqual({});
     expect(mockPrisma.proposal.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildIdeaTracker — container (theme) rollup", () => {
+  const CONTAINER = "idea-container-cccc-cccc-cccccccccccc";
+
+  it("filters out a container idea whose children are all done", async () => {
+    // A container has no proposal/task chain of its own, so computeDerivedStatus
+    // on its "elaborated" status yields "in_progress" — it must be rolled up from
+    // its children instead. All children done => the container is done => dropped.
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea(CONTAINER, PROJECT_A, "elaborated", { isContainer: true }),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+    mockGetIdeasWithDerivedStatus.mockResolvedValue([
+      { uuid: CONTAINER, isContainer: true, derivedStatus: "done" },
+    ]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker).toEqual({});
+  });
+
+  it("keeps a container idea whose children are still in progress", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea(CONTAINER, PROJECT_A, "elaborated", { isContainer: true }),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+    mockGetIdeasWithDerivedStatus.mockResolvedValue([
+      { uuid: CONTAINER, isContainer: true, derivedStatus: "in_progress" },
+    ]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker[PROJECT_A].ideas.map((i) => i.uuid)).toEqual([CONTAINER]);
+    expect(tracker[PROJECT_A].ideas[0].status).toBe("in_progress");
+  });
+
+  it("does not consult the rollup source when no container ideas are present", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i_plain", PROJECT_A, "open"),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    await buildIdeaTracker(agentAuth);
+    expect(mockGetIdeasWithDerivedStatus).not.toHaveBeenCalled();
   });
 });
 

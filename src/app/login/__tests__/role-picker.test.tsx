@@ -37,6 +37,9 @@ const mockRouterReplace = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
+}));
 
 vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },

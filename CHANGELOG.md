@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0] - 2026-07-11
+
+### Added
+- **Dark mode across the entire app**: A light/dark/system theme (next-themes, `.dark` class on `<html>`, default = system, per-device `chorus-theme`, FOUC-safe), with a combined language/theme control in the sidebar footer. ~2000 hardcoded hex utility classes were migrated to semantic design tokens (byte-identical in light) with hue-matched `dark:` variants for status colors; the three surfaces `dark:` can't reach were handled explicitly — inline-style colors (CSS-var + scoped `.dark` rule), the project graph `<canvas>` (live `.dark` read + MutationObserver repaint), and @xyflow/react's unlayered chrome (`colorMode` prop). Shiki code blocks are theme-aware. (#414)
+- **Korean (ko) locale**: Full Korean translation of the app (1482 keys at parity with en/zh), registered as a first-class locale with automatic browser detection. (#411, #419)
+- **Japanese (ja) locale**: Full Japanese translation (1482 keys at parity), kanji/wago-first glossary (着想/課題/提案/文書), です・ます polite form, auto-detected for ja/ja-JP. (#420)
+- **First-class research/reference artifacts**: A new `ReferenceArtifact` entity so external evidence (docs, reference repos, issue/PR threads, papers/blogs) can be attached to ideas, proposals, and tasks and read back inline. REST `GET/POST /api/references` + `GET/PATCH/DELETE /api/references/[uuid]` (gated on `document:read`/`document:write`, no new permission bit), MCP `chorus_add_reference` / `update_reference` / `remove_reference` plus inline `references[]` on get/create tools, and read-only References sections on idea/proposal/task detail with a batched per-idea reference count in the tracker. (#399, #418)
+- **Top-of-page navigation progress bar**: A slim NProgress-style loading bar pinned to the viewport top during App Router client navigations, themed via the `--primary` token (adapts to light/dark with zero per-theme JS). Programmatic navigation is covered via a shared `use-progress-router` hook. (#416)
+
+### Plugin
+- **Plugin & skill versions → 0.14.0**: Claude Code plugin, Codex plugin, OpenClaw plugin, and standalone skill versions bumped to 0.14.0. The reference MCP tools (`chorus_add_reference` / `update_reference` / `remove_reference`) are documented in the skill tool rows. (#418)
+
+---
+
 ## [0.13.2] - 2026-07-09
 
 ### Added

@@ -8,7 +8,18 @@ const mockProposalService = vi.hoisted(() => ({
   getProposal: vi.fn(),
 }));
 
+const mockReferenceService = vi.hoisted(() => ({
+  listReferences: vi.fn(),
+}));
+
 vi.mock("@/services/proposal.service", () => mockProposalService);
+vi.mock("@/services/reference-artifact.service", () => ({
+  ...mockReferenceService,
+  // public.ts imports these constants at module scope to build the inline
+  // references[] enum (chorus_create_tasks) — provide them so registration works.
+  REFERENCE_TYPES: ["docs", "repo", "issue_pr", "paper_blog"],
+  REFERENCE_TARGET_TYPES: ["proposal", "task", "idea"],
+}));
 
 // Mock remaining imports used by public.ts to avoid import errors
 vi.mock("@/services/project.service", () => ({}));
@@ -58,6 +69,8 @@ beforeEach(() => {
   Object.keys(toolHandlers).forEach((k) => delete toolHandlers[k]);
   Object.keys(toolMeta).forEach((k) => delete toolMeta[k]);
   registeredToolNames = [];
+  // Default: no linked references. Individual tests override as needed.
+  mockReferenceService.listReferences.mockResolvedValue([]);
   registerPublicTools(fakeMcpServer as never, AUTH);
 });
 
@@ -106,6 +119,29 @@ describe("chorus_get_proposal — section parameter", () => {
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.section).toBe("tasks");
+  });
+
+  it("includes the proposal's linked references inline (q6=a read path)", async () => {
+    mockProposalService.getProposalSection.mockResolvedValue({ section: "basic", uuid: "p1" });
+    const refs = [
+      { uuid: "ref-1", type: "repo", url: "https://example.com", title: "Ref 1", notes: null },
+    ];
+    mockReferenceService.listReferences.mockResolvedValue(refs);
+
+    const result = (await toolHandlers["chorus_get_proposal"]({
+      proposalUuid: "p1",
+    })) as { content: { type: string; text: string }[] };
+
+    // References are resolved for the proposal target and embedded additively.
+    expect(mockReferenceService.listReferences).toHaveBeenCalledWith({
+      companyUuid: "company-1",
+      targetType: "proposal",
+      targetUuid: "p1",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.references).toEqual(refs);
+    // Still backward-compatible: the section view is untouched.
+    expect(parsed.section).toBe("basic");
   });
 
   it("input schema accepts the four valid sections and rejects unknown values", () => {

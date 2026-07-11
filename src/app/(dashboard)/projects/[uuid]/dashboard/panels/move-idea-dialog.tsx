@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { toast } from "sonner";
 import { Loader2, AlertTriangle, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -245,13 +245,13 @@ export function MoveIdeaDialog({
         </DialogHeader>
 
         <div className="space-y-3 pt-1">
-          <Label htmlFor="move-target-project" className="text-[13px] font-medium text-[#2C2C2C]">
+          <Label htmlFor="move-target-project" className="text-[13px] font-medium text-foreground">
             {t("moveDialog.targetProjectLabel")}
           </Label>
 
           {isLoadingProjects ? (
-            <div className="flex items-center justify-center h-10 border border-[#E5E0D8] rounded-md">
-              <Loader2 className="h-4 w-4 animate-spin text-[#9A9A9A]" />
+            <div className="flex items-center justify-center h-10 border border-border rounded-md">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
           ) : (
             // Searchable picker — Popover trigger keeps the dialog focused on
@@ -266,8 +266,8 @@ export function MoveIdeaDialog({
                   role="combobox"
                   aria-expanded={isPickerOpen}
                   className={cn(
-                    "w-full justify-between border-[#E5E0D8] font-normal",
-                    !selectedProjectName && "text-[#9A9A9A]",
+                    "w-full justify-between border-border font-normal",
+                    !selectedProjectName && "text-muted-foreground",
                   )}
                 >
                   {selectedProjectName ?? t("moveDialog.targetProjectPlaceholder")}
@@ -331,10 +331,10 @@ export function MoveIdeaDialog({
             <div
               role="status"
               aria-live="polite"
-              className="rounded-lg border border-[#E5E0D8] bg-[#FAF8F4] p-3 text-[13px] text-[#2C2C2C]"
+              className="rounded-lg border border-border bg-background p-3 text-[13px] text-foreground"
             >
               {isLoadingPreview ? (
-                <div className="flex items-center gap-2 text-[#6B6B6B]">
+                <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   <span>{t("moveDialog.previewLoading")}</span>
                 </div>
@@ -346,7 +346,7 @@ export function MoveIdeaDialog({
               ) : preview ? (
                 <div className="space-y-1">
                   <p>{t("moveDialog.previewSummary", { ...preview })}</p>
-                  <p className="text-[12px] text-[#9A9A9A]">{t("moveDialog.previewWarning")}</p>
+                  <p className="text-[12px] text-muted-foreground">{t("moveDialog.previewWarning")}</p>
                 </div>
               ) : null}
             </div>
@@ -362,14 +362,14 @@ export function MoveIdeaDialog({
         <div className="flex justify-end gap-3 pt-2">
           <Button
             variant="outline"
-            className="border-[#E5E0D8]"
+            className="border-border"
             onClick={() => onOpenChange(false)}
             disabled={isMoving}
           >
             {tCommon("cancel")}
           </Button>
           <Button
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+            className="bg-primary hover:bg-[#B56A42] text-white"
             onClick={handleMove}
             disabled={!selectedProjectUuid || !preview || isMoving || isLoadingPreview}
           >

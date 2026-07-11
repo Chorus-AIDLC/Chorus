@@ -55,7 +55,7 @@ export function CollapsibleMarkdown({ content, className }: CollapsibleMarkdownP
           variant="link"
           size="sm"
           onClick={() => setExpanded((value) => !value)}
-          className="h-auto p-0 text-[#E07A5F] text-xs font-medium mt-1"
+          className="h-auto p-0 text-[#E07A5F] dark:text-[#F0A088] text-xs font-medium mt-1"
         >
           {expanded ? t("common.showLess") : t("common.showMore")}
         </Button>

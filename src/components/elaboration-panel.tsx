@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import {
   ChevronDown,
@@ -65,10 +65,10 @@ export function ElaborationPanel({
     <div className="space-y-3">
       {/* Header row */}
       <div className="flex items-center justify-between">
-        <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+        <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {t("title")}
         </label>
-        <span className="text-xs font-medium text-[#C67A52]">
+        <span className="text-xs font-medium text-primary">
           {t("answeredCounter", {
             answered: summary.answeredQuestions,
             total: summary.totalQuestions,
@@ -117,49 +117,49 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div
-        className="overflow-hidden rounded-xl border border-[#E5E0D8] bg-white"
+        className="overflow-hidden rounded-xl border border-border bg-card"
       >
         {/* Collapsible header */}
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors cursor-pointer hover:bg-[#FAF8F4] ${
-              isOpen ? "bg-[#F7F6F3] border-b border-[#E5E0D8]" : ""
+            className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors cursor-pointer hover:bg-background ${
+              isOpen ? "bg-[#F7F6F3] dark:bg-[#1e1d1b] border-b border-border" : ""
             }`}
           >
             <div className="flex items-center gap-2">
               {/* Chevron */}
               {isOpen ? (
-                <ChevronDown className="h-4 w-4 text-[#6B6B6B]" />
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
               ) : (
-                <ChevronRight className="h-4 w-4 text-[#6B6B6B]" />
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
               )}
 
               {/* Round number badge */}
               <span
                 className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white ${
-                  isPending ? "bg-[#C67A52]" : "bg-[#888780]"
+                  isPending ? "bg-primary" : "bg-[#888780]"
                 }`}
               >
                 {round.roundNumber}
               </span>
 
               {/* Label */}
-              <span className="text-[13px] font-semibold text-[#2C2C2C]">
+              <span className="text-[13px] font-semibold text-foreground">
                 {t("roundLabel", { number: round.roundNumber })}
               </span>
 
               {/* Appended (follow-up) badge — muted accent, distinct from
                   the round-number badge and the status badge */}
               {round.isAppended && (
-                <span className="rounded bg-[#EDE7F6] px-2 py-0.5 text-[10px] font-medium text-[#6A4FB6]">
+                <span className="rounded bg-[#EDE7F6] dark:bg-[#221833] px-2 py-0.5 text-[10px] font-medium text-[#6A4FB6] dark:text-[#A99FF0]">
                   {t("appendedBadge")}
                 </span>
               )}
 
               {/* Question count (shown when collapsed) */}
               {!isOpen && (
-                <span className="text-xs text-[#9A9A9A]">
+                <span className="text-xs text-muted-foreground">
                   &middot; {t("questionCount", { count: round.questions.length })}
                 </span>
               )}
@@ -167,11 +167,11 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
 
             {/* Status badge */}
             {isDone ? (
-              <span className="rounded bg-[#E8F5E9] px-2 py-0.5 text-[10px] font-medium text-[#2E7D32]">
+              <span className="rounded bg-[#E8F5E9] dark:bg-[#14281a] px-2 py-0.5 text-[10px] font-medium text-[#2E7D32] dark:text-[#5FD07E]">
                 {t("statusAnswered")}
               </span>
             ) : (
-              <span className="rounded bg-[#FFF3E0] px-2 py-0.5 text-[10px] font-medium text-[#E65100]">
+              <span className="rounded bg-[#FFF3E0] dark:bg-[#3a2a12] px-2 py-0.5 text-[10px] font-medium text-[#E65100] dark:text-[#F0A050]">
                 {t("pendingAnswers")}
               </span>
             )}
@@ -222,7 +222,7 @@ function AnsweredRoundContent({ round }: AnsweredRoundContentProps) {
           <div key={question.uuid}>
             {/* Q row: question text + category right-aligned */}
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs leading-relaxed text-[#6B6B6B]">
+              <span className="text-xs leading-relaxed text-muted-foreground">
                 Q: {question.text}
               </span>
               <span className="shrink-0 text-[11px] italic text-[#B0B0B0]">
@@ -230,12 +230,12 @@ function AnsweredRoundContent({ round }: AnsweredRoundContentProps) {
               </span>
             </div>
             {/* A row */}
-            <p className="mt-1 text-xs font-medium leading-relaxed text-[#2C2C2C]">
+            <p className="mt-1 text-xs font-medium leading-relaxed text-foreground">
               A: {answerText}
             </p>
             {/* Divider (not after last) */}
             {index < round.questions.length - 1 && (
-              <div className="mt-4 h-px bg-[#F0EEEA]" />
+              <div className="mt-4 h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />
             )}
           </div>
         );
@@ -402,18 +402,18 @@ function PendingRoundContent({
       >
       {/* Question text (left) + Nav (right) */}
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 text-sm text-[#6B6B6B]">{question.text}</div>
+        <div className="flex-1 text-sm text-muted-foreground">{question.text}</div>
         <div className="flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => goTo(currentIndex - 1, "right")}
             disabled={currentIndex === 0}
-            className="h-7 w-7 text-[#6B6B6B] disabled:opacity-30"
+            className="h-7 w-7 text-muted-foreground disabled:opacity-30"
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-xs text-[#9A9A9A]">
+          <span className="text-xs text-muted-foreground">
             {t("navCounter", {
               current: currentIndex + 1,
               total: questions.length,
@@ -424,7 +424,7 @@ function PendingRoundContent({
             size="icon"
             onClick={() => goTo(currentIndex + 1, "left")}
             disabled={currentIndex === questions.length - 1}
-            className="h-7 w-7 text-[#6B6B6B] disabled:opacity-30"
+            className="h-7 w-7 text-muted-foreground disabled:opacity-30"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -444,54 +444,54 @@ function PendingRoundContent({
                 }
                 className={`flex w-full items-start justify-between gap-2.5 px-3.5 py-3 h-auto text-left transition-colors rounded-none ${
                   isSelected
-                    ? "bg-[#F7F6F3]"
-                    : "hover:bg-[#FAF8F4]"
+                    ? "bg-[#F7F6F3] dark:bg-[#1e1d1b]"
+                    : "hover:bg-background"
                 }`}
               >
                 <span className="flex flex-1 min-w-0 items-start gap-2.5">
                   <span
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#E5E0D8] text-xs font-medium text-[#5F5E5A]"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-border text-xs font-medium text-foreground/80"
                   >
                     {idx + 1}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col items-start">
-                    <span className="whitespace-normal [overflow-wrap:anywhere] text-[13px] text-[#2C2C2A]">
+                    <span className="whitespace-normal [overflow-wrap:anywhere] text-[13px] text-foreground">
                       {option.label}
                     </span>
                     {option.description && (
-                      <span className="whitespace-normal [overflow-wrap:anywhere] text-[11px] text-[#9A9A9A]">
+                      <span className="whitespace-normal [overflow-wrap:anywhere] text-[11px] text-muted-foreground">
                         {option.description}
                       </span>
                     )}
                   </span>
                 </span>
                 {isSelected && (
-                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-[#888780]" />
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
               </Button>
               {idx < question.options.length - 1 && (
-                <div className="h-px bg-[#F0EEEA]" />
+                <div className="h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />
               )}
             </div>
           );
         })}
 
         {/* Divider before Other */}
-        <div className="h-px bg-[#F0EEEA]" />
+        <div className="h-px bg-[#F0EEEA] dark:bg-[#1f1e1c]" />
 
         {/* Something else (Other) option — inline editable */}
         <div
           className={`flex w-full items-center gap-2.5 px-3.5 py-3 transition-colors ${
-            isOtherSelected ? "bg-[#F7F6F3]" : "hover:bg-[#FAF8F4]"
+            isOtherSelected ? "bg-[#F7F6F3] dark:bg-[#1e1d1b]" : "hover:bg-background"
           }`}
         >
           <span
-            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md bg-[#E5E0D8]"
+            className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md bg-border"
             onClick={() =>
               handleSelectOption(question.questionId, OTHER_OPTION_ID)
             }
           >
-            <Pencil className="h-3.5 w-3.5 text-[#B4B2A9]" />
+            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
           </span>
           {isOtherSelected ? (
             <>
@@ -503,7 +503,7 @@ function PendingRoundContent({
                 }
                 onKeyDown={handleOtherInputKeyDown}
                 placeholder={t("somethingElse")}
-                className="flex-1 border-none bg-transparent text-[13px] text-[#2C2C2A] placeholder:italic placeholder:text-[#B4B2A9] shadow-none focus-visible:ring-0"
+                className="flex-1 border-none bg-transparent text-[13px] text-foreground placeholder:italic placeholder:text-[#B4B2A9] shadow-none focus-visible:ring-0"
                 autoFocus
               />
               {!isLastQuestion && (
@@ -514,7 +514,7 @@ function PendingRoundContent({
                   onClick={handleConfirmOther}
                   disabled={!hasOtherText}
                   aria-label={t("confirmAnswerAria")}
-                  className="h-7 w-7 text-[#6B6B6B] disabled:opacity-30"
+                  className="h-7 w-7 text-muted-foreground disabled:opacity-30"
                 >
                   <Check className="h-4 w-4" />
                 </Button>
@@ -526,7 +526,7 @@ function PendingRoundContent({
               onClick={() =>
                 handleSelectOption(question.questionId, OTHER_OPTION_ID)
               }
-              className="flex-1 justify-start text-left text-[13px] italic text-[#B4B2A9] h-auto p-0 hover:bg-transparent"
+              className="flex-1 justify-start text-left text-[13px] italic text-muted-foreground h-auto p-0 hover:bg-transparent"
             >
               {t("somethingElse")}
             </Button>
@@ -545,13 +545,13 @@ function PendingRoundContent({
       {/* Category (left) + Submit (right) */}
       <div className="mt-3 flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-[11px] text-[#B0B0B0]">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#C67A52]" />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
           {t(`category.${categoryKey}`)}
         </span>
         <Button
           onClick={handleSubmit}
           disabled={!allRequiredAnswered || isSubmitting}
-          className="bg-[#C67A52] hover:bg-[#B56A42] text-white text-[13px]"
+          className="bg-primary hover:bg-[#B56A42] text-white text-[13px]"
         >
           {isSubmitting ? (
             <>

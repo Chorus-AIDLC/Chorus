@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Bot, User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -213,9 +213,9 @@ export function AssignIdeaModal({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      className="bg-white sm:max-w-[400px]"
+      className="bg-card sm:max-w-[400px]"
       header={
-        <ScrollableDialogTitle className="text-base font-semibold text-[#2C2C2C]">
+        <ScrollableDialogTitle className="text-base font-semibold text-foreground">
           {t("ideas.assignIdea")}
         </ScrollableDialogTitle>
       }
@@ -225,14 +225,14 @@ export function AssignIdeaModal({
             variant="outline"
             onClick={onClose}
             disabled={isLoading}
-            className="border-[#E5E0D8]"
+            className="border-border"
           >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleSubmit}
             disabled={isLoading || !canSubmit}
-            className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+            className="bg-primary hover:bg-[#B56A42] text-white"
           >
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -250,10 +250,10 @@ export function AssignIdeaModal({
     >
       {/* Body */}
       {/* Idea Info */}
-          <div className="rounded-lg bg-[#FAF8F4] p-3">
-            <p className="text-[13px] font-medium text-[#2C2C2C]">{idea.title}</p>
+          <div className="rounded-lg bg-background p-3">
+            <p className="text-[13px] font-medium text-foreground">{idea.title}</p>
             {idea.content && (
-              <p className="mt-1 text-[11px] text-[#6B6B6B] line-clamp-2">
+              <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2">
                 {idea.content}
               </p>
             )}
@@ -261,20 +261,20 @@ export function AssignIdeaModal({
 
           {/* Current Assignee (if assigned) */}
           {isAssigned && (
-            <div className="rounded-lg bg-[#E3F2FD] p-3">
-              <p className="text-xs text-[#1976D2]">
+            <div className="rounded-lg bg-[#E3F2FD] dark:bg-[#13253a] p-3">
+              <p className="text-xs text-[#1976D2] dark:text-[#5AA9F0]">
                 {t("common.currentAssignee")}: <span className="font-medium">{idea.assignee?.name}</span>
               </p>
             </div>
           )}
 
           {error && (
-            <div className="rounded-lg bg-[#FEE2E2] p-3">
-              <p className="text-xs text-[#D32F2F]">{error}</p>
+            <div className="rounded-lg bg-[#FEE2E2] dark:bg-[#331619] p-3">
+              <p className="text-xs text-[#D32F2F] dark:text-[#F08078]">{error}</p>
             </div>
           )}
 
-          <p className="text-[13px] text-[#6B6B6B]">
+          <p className="text-[13px] text-muted-foreground">
             {t("ideas.selectIdeaAssignee")}
           </p>
 
@@ -292,18 +292,18 @@ export function AssignIdeaModal({
               <div
                 className={`rounded-[10px] p-4 transition-colors cursor-pointer ${
                   selectedOption === "self"
-                    ? "bg-[#FDF8F6] border-2 border-[#C67A52]"
-                    : "bg-white border border-[#E5E0D8] hover:border-[#C67A52]/50"
+                    ? "bg-[#FDF8F6] dark:bg-[#201d1b] border-2 border-primary"
+                    : "bg-card border border-border hover:border-primary/50"
                 }`}
                 onClick={() => setSelectedOption("self")}
               >
                 <div className="flex items-center gap-2.5">
-                  <RadioGroupItem value="self" id="idea-self" className="border-[#C67A52] text-[#C67A52]" />
-                  <Label htmlFor="idea-self" className="text-sm font-medium text-[#2C2C2C] cursor-pointer">
+                  <RadioGroupItem value="self" id="idea-self" className="border-primary text-primary" />
+                  <Label htmlFor="idea-self" className="text-sm font-medium text-foreground cursor-pointer">
                     {t("assign.assignToMyself")}
                   </Label>
                 </div>
-                <p className="mt-2 ml-6 text-xs text-[#6B6B6B] leading-relaxed">
+                <p className="mt-2 ml-6 text-xs text-muted-foreground leading-relaxed">
                   {t("ideas.assignToMyselfIdeaDesc")}
                 </p>
               </div>
@@ -312,20 +312,20 @@ export function AssignIdeaModal({
               <div
                 className={`rounded-[10px] p-4 transition-colors ${
                   selectedOption === "agent"
-                    ? "bg-[#FDF8F6] border-2 border-[#C67A52]"
-                    : "bg-white border border-[#E5E0D8]"
+                    ? "bg-[#FDF8F6] dark:bg-[#201d1b] border-2 border-primary"
+                    : "bg-card border border-border"
                 }`}
               >
                 <div
                   className="flex items-center gap-2.5 cursor-pointer"
                   onClick={() => setSelectedOption("agent")}
                 >
-                  <RadioGroupItem value="agent" id="idea-agent" className="border-[#C67A52] text-[#C67A52]" />
-                  <Label htmlFor="idea-agent" className="text-sm font-medium text-[#2C2C2C] cursor-pointer">
+                  <RadioGroupItem value="agent" id="idea-agent" className="border-primary text-primary" />
+                  <Label htmlFor="idea-agent" className="text-sm font-medium text-foreground cursor-pointer">
                     {t("ideas.orAssignToPmAgent")}
                   </Label>
                 </div>
-                <p className="mt-2 ml-6 text-xs text-[#6B6B6B] leading-relaxed">
+                <p className="mt-2 ml-6 text-xs text-muted-foreground leading-relaxed">
                   {t("ideas.onlySelectedPmAgentCanWork")}
                 </p>
 
@@ -335,7 +335,7 @@ export function AssignIdeaModal({
                       value={selectedAgentUuid}
                       onValueChange={setSelectedAgentUuid}
                     >
-                      <SelectTrigger className="w-full border-[#E5E0D8]">
+                      <SelectTrigger className="w-full border-border">
                         <SelectValue placeholder={t("ideas.selectPmAgent")} />
                       </SelectTrigger>
                       <SelectContent className="z-[120]">
@@ -343,7 +343,7 @@ export function AssignIdeaModal({
                           agents.map((agent) => (
                             <SelectItem key={agent.uuid} value={agent.uuid}>
                               <div className="flex items-center gap-2">
-                                <Bot className="h-4 w-4 text-[#C67A52]" />
+                                <Bot className="h-4 w-4 text-primary" />
                                 <span>{agent.name}</span>
                               </div>
                             </SelectItem>
@@ -375,7 +375,7 @@ export function AssignIdeaModal({
                             {t("assignInstance.loadingInstances")}
                           </div>
                         ) : instances.length === 0 ? (
-                          <p className="rounded-lg bg-[#FAF8F4] p-2.5 text-[11px] leading-relaxed text-[#6B6B6B]">
+                          <p className="rounded-lg bg-background p-2.5 text-[11px] leading-relaxed text-muted-foreground">
                             {t("assignInstance.noInstances")}
                           </p>
                         ) : (
@@ -402,16 +402,16 @@ export function AssignIdeaModal({
               <div
                 className={`rounded-[10px] p-4 transition-colors ${
                   selectedOption === "user"
-                    ? "bg-[#FDF8F6] border-2 border-[#C67A52]"
-                    : "bg-white border border-[#E5E0D8]"
+                    ? "bg-[#FDF8F6] dark:bg-[#201d1b] border-2 border-primary"
+                    : "bg-card border border-border"
                 }`}
               >
                 <div
                   className="flex items-center gap-2.5 cursor-pointer"
                   onClick={() => setSelectedOption("user")}
                 >
-                  <RadioGroupItem value="user" id="idea-user" className="border-[#C67A52] text-[#C67A52]" />
-                  <Label htmlFor="idea-user" className="text-sm font-medium text-[#2C2C2C] cursor-pointer">
+                  <RadioGroupItem value="user" id="idea-user" className="border-primary text-primary" />
+                  <Label htmlFor="idea-user" className="text-sm font-medium text-foreground cursor-pointer">
                     {t("assign.orAssignToUser")}
                   </Label>
                 </div>
@@ -422,7 +422,7 @@ export function AssignIdeaModal({
                       value={selectedUserUuid}
                       onValueChange={setSelectedUserUuid}
                     >
-                      <SelectTrigger className="w-full border-[#E5E0D8]">
+                      <SelectTrigger className="w-full border-border">
                         <SelectValue placeholder={t("tasks.selectUser")} />
                       </SelectTrigger>
                       <SelectContent className="z-[120]">
@@ -430,7 +430,7 @@ export function AssignIdeaModal({
                           users.map((user) => (
                             <SelectItem key={user.uuid} value={user.uuid}>
                               <div className="flex items-center gap-2">
-                                <User className="h-4 w-4 text-[#6B6B6B]" />
+                                <User className="h-4 w-4 text-muted-foreground" />
                                 <span>{user.name || user.email}</span>
                               </div>
                             </SelectItem>
@@ -451,18 +451,18 @@ export function AssignIdeaModal({
                 <div
                   className={`rounded-[10px] p-4 transition-colors cursor-pointer ${
                     selectedOption === "release"
-                      ? "bg-[#FDF8F6] border-2 border-[#C67A52]"
-                      : "bg-white border border-[#E5E0D8] hover:border-[#C67A52]/50"
+                      ? "bg-[#FDF8F6] dark:bg-[#201d1b] border-2 border-primary"
+                      : "bg-card border border-border hover:border-primary/50"
                   }`}
                   onClick={() => setSelectedOption("release")}
                 >
                   <div className="flex items-center gap-2.5">
-                    <RadioGroupItem value="release" id="idea-release" className="border-[#C67A52] text-[#C67A52]" />
-                    <Label htmlFor="idea-release" className="text-sm font-medium text-[#2C2C2C] cursor-pointer">
+                    <RadioGroupItem value="release" id="idea-release" className="border-primary text-primary" />
+                    <Label htmlFor="idea-release" className="text-sm font-medium text-foreground cursor-pointer">
                       {t("assign.releaseAssignee")}
                     </Label>
                   </div>
-                  <p className="mt-2 ml-6 text-xs text-[#6B6B6B] leading-relaxed">
+                  <p className="mt-2 ml-6 text-xs text-muted-foreground leading-relaxed">
                     {t("ideas.releaseIdeaAssigneeDesc")}
                   </p>
                 </div>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,7 +13,7 @@ import {
   type OidcConfig,
 } from "@/lib/oidc";
 import { clientLogger } from "@/lib/logger-client";
-import { getProjectIconColor, getProjectInitials } from "@/lib/project-colors";
+import { getProjectIconColor, getProjectInitials, projectIconStyle } from "@/lib/project-colors";
 import type { IdentifyCandidate, IdentifyResponse } from "@/types/admin";
 
 type PickerState =
@@ -208,8 +209,8 @@ export default function PickWorkspacePage() {
                       className="flex h-auto w-full items-center gap-3 px-4 py-3 text-left hover:bg-transparent"
                     >
                       <span
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-sm font-semibold"
-                        style={{ backgroundColor: iconColor.bg, color: iconColor.text }}
+                        className="project-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-sm font-semibold"
+                        style={projectIconStyle(iconColor)}
                         aria-hidden="true"
                       >
                         {getProjectInitials(candidate.name)}

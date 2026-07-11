@@ -11,3 +11,4 @@ export * as commentService from "./comment.service";
 export * as activityService from "./activity.service";
 export * as assignmentService from "./assignment.service";
 export * as elaborationService from "./elaboration.service";
+export * as referenceArtifactService from "./reference-artifact.service";

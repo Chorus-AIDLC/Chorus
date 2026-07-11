@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.13.2"
+  version: "0.14.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -60,6 +60,7 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 | `chorus_pm_create_document` | Create standalone document |
 | `chorus_pm_update_document` | Update document content (increments version) |
 | `chorus_update_task` (with `addDependsOn` / `removeDependsOn`) | Manage dependencies between existing tasks (with cycle detection) |
+| `chorus_add_reference` / `chorus_update_reference` / `chorus_remove_reference` | Attach/edit/remove external-evidence web links (docs/repo/issue_pr/paper_blog) on an idea, proposal, or task; also attachable inline at creation via `references[]` on `chorus_pm_create_idea` / `chorus_pm_create_proposal` / `chorus_create_tasks`. No read tool — they come back inline on `chorus_get_idea` / `chorus_get_proposal` / `chorus_get_task` |
 
 **Shared tools** (checkin, query, comment, search, notifications): see `chorus` skill at `<BASE_URL>/skill/chorus/SKILL.md`
 

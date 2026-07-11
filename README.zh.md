@@ -4,7 +4,7 @@
 
 <p align="center"><strong>面向 AI 与人类协作的 Agent Harness</strong></p>
 
-<p align="center"><a href="README.md">English</a></p>
+<p align="center"><a href="README.md">English</a> · <strong>中文</strong> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a></p>
 
 Chorus 是一个 Agent Harness——包裹在 LLM 外面的基础设施层，负责管理会话生命周期、任务状态、子 Agent 编排、可观测性和故障恢复。它让多个具备细粒度权限配置的 AI Agent 和人类在同一平台上协作，完成从需求到交付的全流程。
 
@@ -26,6 +26,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 ---
 
 ## 最近更新
+
+**[v0.14.0](https://chorus-ai.dev/zh/blog/chorus-v0.14.0-release/)** — 全应用深色模式（浅色 / 深色 / 跟随系统）。参考资料可挂到任意想法、提案或任务上，行内可读，也能通过 MCP 读写。新增韩语和日语（韩语由社区贡献）。用于归类的**主题**想法，以及 daemon 的「开始开发」/「Yolo」按钮、对话式建想法、崩溃恢复与 `chorus daemon install`。
 
 **[v0.13.0](https://chorus-ai.dev/zh/blog/chorus-v0.13.0-release/)** — 项目资源思维导图：新增 Graph 视图，把每个项目的想法、提案、文档、任务连成一棵可折叠的树，从项目自身结构自动生成。每张卡片都标着当前状态（想法用想法列表那套派生状态），标题搜索会自动展开命中节点的上游并高亮/调暗、配上下切换定位，同一张可缩放可拖动的图在桌面与手机上通用（捏合 + 双击缩放）。
 
@@ -302,7 +304,7 @@ Cmd+K 命令面板，支持跨 6 种实体类型搜索。支持范围筛选（�
 | 缓存/消息 | Redis 7 (ioredis) — 可选 |
 | Agent 集成 | MCP SDK 1.26 (HTTP Streamable Transport) |
 | 认证 | OIDC + PKCE / API Key / SuperAdmin |
-| i18n | next-intl (en, zh) |
+| i18n | next-intl (en, zh, ko, ja) |
 | 部署 | [Docker Hub](https://hub.docker.com/r/chorusaidlc/chorus-app) / Docker Compose / AWS CDK |
 
 ---

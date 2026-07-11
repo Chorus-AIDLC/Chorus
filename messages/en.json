@@ -55,6 +55,12 @@
     "system": "System",
     "confirmDelete": "Are you sure you want to delete?"
   },
+  "theme": {
+    "toggleLabel": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
   "activity": {
     "taskCreated": "{actor} created this task",
     "taskAssigned": "{actor} was assigned to this task",
@@ -677,6 +683,33 @@
     "deleteSuccess": "Document deleted.",
     "deleteFailed": "Failed to delete document.",
     "deleteFailedNotFound": "This document no longer exists."
+  },
+  "references": {
+    "title": "References",
+    "empty": "Link official docs, a reference implementation, or an issue thread to ground this in evidence.",
+    "loading": "Loading references...",
+    "add": "Add",
+    "addReference": "Add reference",
+    "editReference": "Edit reference",
+    "deleteReference": "Delete reference",
+    "deleteConfirm": "This will permanently remove the reference \"{title}\". This action cannot be undone.",
+    "typeLabel": "Type",
+    "typeDocs": "Docs",
+    "typeRepo": "Repository",
+    "typeIssuePr": "Issue / PR",
+    "typePaperBlog": "Paper / Blog",
+    "urlLabel": "URL",
+    "urlPlaceholder": "https://example.com/...",
+    "urlRequired": "URL is required",
+    "titleLabel": "Title",
+    "titlePlaceholder": "Enter a short title",
+    "titleRequired": "Title is required",
+    "notesLabel": "Notes",
+    "notesPlaceholder": "Optional summary or why this is relevant",
+    "addFailed": "Failed to add reference",
+    "updateFailed": "Failed to update reference",
+    "deleteFailed": "Failed to delete reference",
+    "countLabel": "{count, plural, one {# reference} other {# references}}"
   },
   "export": {
     "exportDocument": "Export",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Card } from "@/components/ui/card";
@@ -38,8 +38,8 @@ export function TaskStatusProgress({ taskUuid, currentStatus }: TaskStatusProgre
   };
 
   return (
-    <Card className="border-[#E5E0D8] p-6">
-      <h2 className="mb-4 text-lg font-medium text-[#2C2C2C]">{t("tasks.statusProgress")}</h2>
+    <Card className="border-border p-6">
+      <h2 className="mb-4 text-lg font-medium text-foreground">{t("tasks.statusProgress")}</h2>
       <div className="flex items-center justify-between">
         {statusOrder.map((status, index) => {
           const isActive = index === currentIndex;
@@ -57,10 +57,10 @@ export function TaskStatusProgress({ taskUuid, currentStatus }: TaskStatusProgre
                 <div
                   className={`flex h-8 w-8 items-center justify-center rounded-full ${
                     isActive
-                      ? "bg-[#C67A52] text-white"
+                      ? "bg-primary text-white"
                       : isComplete
                       ? "bg-[#5A9E6F] text-white"
-                      : "border-2 border-[#E5E0D8] text-[#9A9A9A]"
+                      : "border-2 border-border text-[#9A9A9A]"
                   }`}
                 >
                   {isComplete ? (
@@ -80,14 +80,14 @@ export function TaskStatusProgress({ taskUuid, currentStatus }: TaskStatusProgre
                     <span className="text-xs font-medium">{index + 1}</span>
                   )}
                 </div>
-                <span className="mt-2 text-xs font-medium text-[#6B6B6B]">
+                <span className="mt-2 text-xs font-medium text-muted-foreground">
                   {t(statusI18nKeys[status] || status)}
                 </span>
               </button>
               {index < statusOrder.length - 1 && (
                 <div
                   className={`mx-2 h-0.5 flex-1 ${
-                    index < currentIndex ? "bg-[#5A9E6F]" : "bg-[#E5E0D8]"
+                    index < currentIndex ? "bg-[#5A9E6F]" : "bg-border"
                   }`}
                 />
               )}

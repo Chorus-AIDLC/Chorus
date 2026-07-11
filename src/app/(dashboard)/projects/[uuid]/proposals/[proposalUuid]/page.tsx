@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Bot,
   User,
+  Link as LinkIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -29,24 +30,26 @@ import { ProposalEditor } from "./proposal-editor";
 import { SourceIdeasCard } from "./source-ideas-card";
 import { ProposalValidationChecklist } from "./proposal-validation-checklist";
 import { DiscussionDrawer } from "./discussion-drawer";
+import { ReferencesSection } from "@/components/references-section";
+import { listReferences } from "@/services/reference-artifact.service";
 import { batchCommentCounts } from "@/services/comment.service";
 import { normalizeNewlines } from "../../dashboard/panels/utils";
 
 // Status color configuration
 const statusColors: Record<string, string> = {
-  draft: "bg-[#F5F5F5] text-[#6B6B6B]",
-  pending: "bg-[#FFF3E0] text-[#E65100]",
-  approved: "bg-[#E8F5E9] text-[#5A9E6F]",
-  rejected: "bg-[#FFEBEE] text-[#C4574C]",
-  revised: "bg-[#E3F2FD] text-[#1976D2]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  draft: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
+  pending: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  approved: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  rejected: "bg-[#FFEBEE] dark:bg-[#331619] text-[#C4574C] dark:text-[#F0897E]",
+  revised: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
 };
 
 // Review note background per status
 const reviewNoteColors: Record<string, string> = {
-  approved: "bg-[#E8F5E9] text-[#5A9E6F]",
-  rejected: "bg-[#FFEBEE] text-[#C4574C]",
-  closed: "bg-[#F5F5F5] text-[#6B6B6B]",
+  approved: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  rejected: "bg-[#FFEBEE] dark:bg-[#331619] text-[#C4574C] dark:text-[#F0897E]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
 };
 
 // Status to i18n key mapping
@@ -90,7 +93,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
         <div className="text-muted-foreground">{t("proposals.proposalNotFound")}</div>
-        <Link href={`/projects/${projectUuid}/proposals`} className="mt-4 text-[#C67A52] hover:underline">
+        <Link href={`/projects/${projectUuid}/proposals`} className="mt-4 text-primary hover:underline">
           {t("proposals.backToProposals")}
         </Link>
       </div>
@@ -116,6 +119,13 @@ export default async function ProposalDetailPage({ params }: PageProps) {
   const commentCounts = await batchCommentCounts(auth.companyUuid, "proposal", [proposalUuid]);
   const commentCount = commentCounts[proposalUuid] || 0;
 
+  // Fetch linked reference artifacts (external evidence) for the sidebar card.
+  const references = await listReferences({
+    companyUuid: auth.companyUuid,
+    targetType: "proposal",
+    targetUuid: proposalUuid,
+  });
+
   return (
     <div className="px-4 py-4 md:px-10 md:py-8">
       {/* Breadcrumb */}
@@ -124,14 +134,14 @@ export default async function ProposalDetailPage({ params }: PageProps) {
           {t("nav.proposals")}
         </Link>
         <ChevronRight className="h-3.5 w-3.5 text-[#D0CCC4]" />
-        <span className="font-medium text-[#6B6B6B]">{proposal.title}</span>
+        <span className="font-medium text-muted-foreground">{proposal.title}</span>
       </div>
 
       {/* Header */}
       <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#F5F2EC]">
-            <ClipboardList className="h-6 w-6 text-[#C67A52]" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-secondary">
+            <ClipboardList className="h-6 w-6 text-primary" />
           </div>
           <div>
             <div className="mb-2 flex flex-wrap items-center gap-2.5">
@@ -146,7 +156,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                   {sourceIdeas.map((idea) => (
                     <span
                       key={idea!.uuid}
-                      className="inline-flex items-center gap-1 rounded-md bg-[#C67A5215] px-2 py-0.5 text-[11px] font-medium text-[#C67A52]"
+                      className="inline-flex items-center gap-1 rounded-md bg-primary/[0.08] px-2 py-0.5 text-[11px] font-medium text-primary"
                     >
                       <Lightbulb className="h-3 w-3" />
                       {idea!.title}
@@ -195,14 +205,14 @@ export default async function ProposalDetailPage({ params }: PageProps) {
         <div className="min-w-0 flex-1 space-y-6">
           {/* Description */}
           {proposal.description && (
-            <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0">
-              <CardHeader className="border-b border-[#F5F2EC] px-5 py-4">
+            <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0">
+              <CardHeader className="border-b border-secondary px-5 py-4">
                 <CardTitle className="text-[13px] font-semibold text-foreground">
                   {t("common.description")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-5 py-4">
-                <div className="prose prose-sm max-w-none text-[#6B6B6B]">
+                <div className="prose prose-sm max-w-none text-muted-foreground">
                   <MarkdownContent>{normalizeNewlines(proposal.description)}</MarkdownContent>
                 </div>
               </CardContent>
@@ -232,8 +242,8 @@ export default async function ProposalDetailPage({ params }: PageProps) {
         {/* Sidebar */}
         <div className="w-full lg:w-80 lg:shrink-0 space-y-5">
           {/* Details Card */}
-          <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-            <CardHeader className="border-b border-[#F5F2EC] px-5 py-4">
+          <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+            <CardHeader className="border-b border-secondary px-5 py-4">
               <CardTitle className="text-[13px] font-semibold text-foreground">
                 {t("common.details")}
               </CardTitle>
@@ -255,22 +265,22 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                 <span className="text-xs text-muted-foreground">{t("proposals.creatorType")}</span>
                 <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                   {proposal.createdByType === "agent" ? (
-                    <><Bot className="h-3 w-3 text-[#C67A52]" />{t("common.agent")}</>
+                    <><Bot className="h-3 w-3 text-primary" />{t("common.agent")}</>
                   ) : (
                     <><User className="h-3 w-3 text-muted-foreground" />{t("common.user")}</>
                   )}
                 </span>
               </div>
-              <Separator className="bg-[#F5F2EC]" />
+              <Separator className="bg-secondary" />
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{t("common.created")}</span>
-                <span className="text-xs font-medium text-[#6B6B6B]">
+                <span className="text-xs font-medium text-muted-foreground">
                   <FormattedDateTime date={proposal.createdAt} />
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{t("common.updated")}</span>
-                <span className="text-xs font-medium text-[#6B6B6B]">
+                <span className="text-xs font-medium text-muted-foreground">
                   <FormattedDateTime date={proposal.updatedAt} />
                 </span>
               </div>
@@ -293,10 +303,30 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             />
           )}
 
+          {/* References Card — external evidence linked to this proposal */}
+          <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+            <CardHeader className="border-b border-secondary px-5 py-4">
+              <div className="flex items-center gap-2">
+                <LinkIcon className="h-4 w-4 text-primary" />
+                <CardTitle className="text-[13px] font-semibold text-foreground">
+                  {t("references.title")}
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="px-5 py-4">
+              <ReferencesSection
+                targetType="proposal"
+                targetUuid={proposal.uuid}
+                canWrite
+                initialReferences={references}
+              />
+            </CardContent>
+          </Card>
+
           {/* Review Info */}
           {proposal.review && (
-            <Card className="border-[#E5E2DC] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
-              <CardHeader className="border-b border-[#F5F2EC] px-5 py-4">
+            <Card className="border-[#E5E2DC] dark:border-[#2a2a2e] shadow-none rounded-2xl gap-0 py-0 overflow-hidden">
+              <CardHeader className="border-b border-secondary px-5 py-4">
                 <CardTitle className="text-[13px] font-semibold text-foreground">
                   {t("proposals.reviewInfo")}
                 </CardTitle>
@@ -304,24 +334,24 @@ export default async function ProposalDetailPage({ params }: PageProps) {
               <CardContent className="space-y-3 px-5 py-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">{t("proposals.reviewedBy")}</span>
-                  <span className="text-xs font-medium text-[#6B6B6B]">
+                  <span className="text-xs font-medium text-muted-foreground">
                     {proposal.review.reviewedBy?.name || "-"}
                   </span>
                 </div>
                 {proposal.review.reviewedAt && (
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">{t("proposals.reviewedAt")}</span>
-                    <span className="text-xs font-medium text-[#6B6B6B]">
+                    <span className="text-xs font-medium text-muted-foreground">
                       <FormattedDateTime date={proposal.review.reviewedAt} />
                     </span>
                   </div>
                 )}
                 {proposal.review.reviewNote && (
                   <>
-                    <Separator className="bg-[#F5F2EC]" />
+                    <Separator className="bg-secondary" />
                     <div>
                       <span className="text-[11px] text-muted-foreground">{t("proposals.reviewNote")}</span>
-                      <div className={`mt-1.5 rounded-lg px-3 py-2 text-xs font-medium ${reviewNoteColors[proposal.status] || "bg-[#F5F2EC] text-[#6B6B6B]"}`}>
+                      <div className={`mt-1.5 rounded-lg px-3 py-2 text-xs font-medium ${reviewNoteColors[proposal.status] || "bg-secondary text-muted-foreground"}`}>
                         {proposal.review.reviewNote}
                       </div>
                     </div>
@@ -333,13 +363,13 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
           {/* Rejection / Review Note (shown on draft after reject) */}
           {proposal.status === "draft" && proposal.review?.reviewNote && (
-            <Card className="border-[#C4574C] bg-[#FFEBEE] shadow-none rounded-2xl gap-0 py-0">
+            <Card className="border-[#C4574C] bg-[#FFEBEE] dark:bg-[#331619] shadow-none rounded-2xl gap-0 py-0">
               <CardContent className="p-4">
                 <div className="flex items-start gap-2.5">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#C4574C]" />
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#C4574C] dark:text-[#F0897E]" />
                   <div>
-                    <h3 className="text-xs font-semibold text-[#C4574C]">{t("proposals.rejectionReason")}</h3>
-                    <p className="mt-1 text-xs text-[#6B6B6B]">{proposal.review.reviewNote}</p>
+                    <h3 className="text-xs font-semibold text-[#C4574C] dark:text-[#F0897E]">{t("proposals.rejectionReason")}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{proposal.review.reviewNote}</p>
                     {proposal.review.reviewedBy && (
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         — {proposal.review.reviewedBy.name}
@@ -354,13 +384,13 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
           {/* Closed Reason */}
           {proposal.status === "closed" && proposal.review?.reviewNote && (
-            <Card className="border-[#D0CCC4] bg-[#F5F2EC] shadow-none rounded-2xl gap-0 py-0">
+            <Card className="border-[#D0CCC4] dark:border-[#33322c] bg-secondary shadow-none rounded-2xl gap-0 py-0">
               <CardContent className="p-4">
                 <div className="flex items-start gap-2.5">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div>
-                    <h3 className="text-xs font-semibold text-[#6B6B6B]">{t("proposals.rejectionReason")}</h3>
-                    <p className="mt-1 text-xs text-[#6B6B6B]">{proposal.review.reviewNote}</p>
+                    <h3 className="text-xs font-semibold text-muted-foreground">{t("proposals.rejectionReason")}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{proposal.review.reviewNote}</p>
                     {proposal.review.reviewedBy && (
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         — {proposal.review.reviewedBy.name}
@@ -375,9 +405,9 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
           {/* Draft Notice */}
           {proposal.status === "draft" && (
-            <Card className="border-[#D0CCC4] bg-[#F5F2EC] shadow-none rounded-2xl gap-0 py-0">
+            <Card className="border-[#D0CCC4] dark:border-[#33322c] bg-secondary shadow-none rounded-2xl gap-0 py-0">
               <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-[#6B6B6B]">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Pencil className="h-3.5 w-3.5" />
                   <span className="font-medium">{t("proposals.draftStatus")}</span>
                 </div>
@@ -390,9 +420,9 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
           {/* Pending Review Notice */}
           {proposal.status === "pending" && (
-            <Card className="border-[#C67A52] bg-[#FFFBF8] shadow-none rounded-2xl gap-0 py-0">
+            <Card className="border-primary bg-[#FFFBF8] dark:bg-[#241d17] shadow-none rounded-2xl gap-0 py-0">
               <CardContent className="p-4">
-                <div className="flex items-center gap-2 text-xs text-[#E65100]">
+                <div className="flex items-center gap-2 text-xs text-[#E65100] dark:text-[#F0A050]">
                   <AlertCircle className="h-3.5 w-3.5" />
                   <span className="font-medium">{t("proposals.awaitingReview")}</span>
                 </div>
@@ -405,7 +435,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
 
           {/* Closed Notice */}
           {proposal.status === "closed" && (
-            <Card className="border-[#D0CCC4] bg-[#F5F2EC] shadow-none rounded-2xl gap-0 py-0">
+            <Card className="border-[#D0CCC4] dark:border-[#33322c] bg-secondary shadow-none rounded-2xl gap-0 py-0">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <AlertCircle className="h-3.5 w-3.5" />

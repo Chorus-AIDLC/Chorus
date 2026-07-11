@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Search, Command as CommandIcon, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -55,12 +55,12 @@ type SearchScope = "global" | "group" | "project";
 const FILTER_TYPES: EntityTypeFilter[] = ["all", "task", "idea", "proposal", "document", "project"];
 
 const BADGE_COLORS: Record<string, string> = {
-  task: "bg-[#EBF5FF] text-[#2563EB] border-[#2563EB]/20",
-  idea: "bg-[#FEF9C3] text-[#A16207] border-[#A16207]/20",
-  proposal: "bg-[#FFF7ED] text-[#C67A52] border-[#C67A52]/20",
-  document: "bg-[#F3E8FF] text-[#7C3AED] border-[#7C3AED]/20",
-  project: "bg-[#ECFDF5] text-[#059669] border-[#059669]/20",
-  project_group: "bg-[#F0FDFA] text-[#0D9488] border-[#0D9488]/20",
+  task: "bg-[#EBF5FF] dark:bg-[#132638] text-[#2563EB] dark:text-[#6AA0F5] border-[#2563EB]/20",
+  idea: "bg-[#FEF9C3] dark:bg-[#332e0f] text-[#A16207] dark:text-[#E0B44E] border-[#A16207]/20",
+  proposal: "bg-[#FFF7ED] dark:bg-[#33270f] text-primary border-primary/20",
+  document: "bg-[#F3E8FF] dark:bg-[#261636] text-[#7C3AED] dark:text-[#B79AF0] border-[#7C3AED]/20",
+  project: "bg-[#ECFDF5] dark:bg-[#122a20] text-[#059669] dark:text-[#4FD1A0] border-[#059669]/20",
+  project_group: "bg-[#F0FDFA] dark:bg-[#122a29] text-[#0D9488] dark:text-[#4FD1C0] border-[#0D9488]/20",
 };
 
 const FILTER_KEYS: Record<EntityTypeFilter, string> = {

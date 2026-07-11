@@ -49,15 +49,15 @@ export function MoveProjectConfirmDialog({
         </DialogTitle>
 
         <div className="flex flex-col items-center gap-4 p-6">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#C67A5220]">
-            <ArrowRightLeft className="h-[22px] w-[22px] text-[#C67A52]" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/[0.13]">
+            <ArrowRightLeft className="h-[22px] w-[22px] text-primary" />
           </div>
 
-          <p className="text-base font-semibold text-[#2C2C2C]">
+          <p className="text-base font-semibold text-foreground">
             {t("projectGroups.moveTitle")}
           </p>
 
-          <DialogDescription className="text-center text-[13px] leading-[1.5] text-[#6B6B6B]">
+          <DialogDescription className="text-center text-[13px] leading-[1.5] text-muted-foreground">
             {t("projectGroups.moveDescription", {
               projectName,
               sourceGroupName,
@@ -66,18 +66,18 @@ export function MoveProjectConfirmDialog({
           </DialogDescription>
         </div>
 
-        <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC]">
+        <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC] dark:border-[#2a2a2e]">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="rounded-lg border-[#E5E2DC] text-[13px]"
+            className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleConfirm}
             disabled={isPending}
-            className="rounded-lg bg-[#C67A52] hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
+            className="rounded-lg bg-primary hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
             {isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

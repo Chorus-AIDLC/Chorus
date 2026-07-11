@@ -79,26 +79,88 @@
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 21 49% 55%;
+    /* Warm charcoal, NOT near-black. Hue 24° (warm, echoing the terracotta
+       brand) at low saturation, lightness lifted well off pure black so the
+       theme reads soft rather than aggressive. Surfaces step up in lightness:
+       background < sidebar < card/popover < secondary/muted < accent < border. */
+    --background: 24 9% 12%; /* #211e1c — soft warm charcoal (was near-black) */
+    --foreground: 30 20% 92%; /* #f0ebe4 — warm off-white (not pure white) */
+    --card: 24 8% 15%; /* #29231f — elevated surface */
+    --card-foreground: 30 20% 92%;
+    --popover: 24 8% 15%;
+    --popover-foreground: 30 20% 92%;
+    /* Dark-tuned terracotta: a calm mid-terracotta (NOT a bright glow). On the
+       charcoal surface a lightness ~50% reads as vivid-enough without shouting;
+       white foreground keeps parity with the light-theme brand button. */
+    --primary: 22 50% 50%; /* #bf6f40 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --secondary: 24 7% 20%; /* #332e29 */
+    --secondary-foreground: 30 20% 92%;
+    --muted: 24 7% 20%;
+    --muted-foreground: 28 10% 66%; /* #ab a29a — warm mid grey */
+    --accent: 24 7% 23%;
+    --accent-foreground: 30 20% 92%;
+    --destructive: 2 62% 50%; /* lifted so it reads on dark */
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 21 49% 55%;
+    --border: 24 7% 25%; /* #40392f-ish warm hairline */
+    --input: 24 7% 25%;
+    --ring: 22 50% 50%;
+
+    /* Chart colors — same hues as :root, lightness lifted for legibility on
+       the dark surface. --chart-1 tracks the dark-tuned terracotta. */
+    --chart-1: 22 55% 55%;
+    --chart-2: 142 50% 55%;
+    --chart-3: 212 70% 62%;
+    --chart-4: 280 55% 65%;
+    --chart-5: 32 85% 60%;
+
+    /* Sidebar colors — a hair darker than --background so the rail recedes;
+       warm-neutral accents, dark-tuned terracotta primary. */
+    --sidebar: 24 9% 10%; /* #1c1917 */
+    --sidebar-foreground: 30 20% 92%;
+    --sidebar-primary: 22 50% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 24 7% 18%;
+    --sidebar-accent-foreground: 30 20% 92%;
+    --sidebar-border: 24 7% 20%;
+    --sidebar-ring: 22 50% 50%;
   }
+}
+
+/* Hash-computed project/workspace icon avatars. The color pair is deterministic
+   by name and applied via CSS custom properties (see projectIconStyle); this rule
+   picks the light pair by default and the dark pair under `.dark`, so the pastel
+   light badges become deep muted badges (light text) in dark mode instead of
+   glowing bright on the charcoal surface. */
+.project-icon {
+  background-color: var(--icon-bg);
+  color: var(--icon-text);
+}
+.dark .project-icon {
+  background-color: var(--icon-bg-dark);
+  color: var(--icon-text-dark);
+}
+
+/* Project progress-bar percentage label — the light-theme tint (dark text) is
+   near-invisible on the dark surface, so swap to the lighter same-hue value
+   under `.dark`. Colors are provided inline as CSS vars (see progressTextStyle)
+   because the label color is data-driven and inline styles carry no `dark:`. */
+.progress-pct {
+  color: var(--pct-text);
+}
+.dark .progress-pct {
+  color: var(--pct-text-dark);
+}
+
+/* Resource-graph filter legend dot. The brand type hue is lifted under `.dark`
+   to mirror the canvas painter's TYPE_COLOR_DARK, so the legend dot matches the
+   card chip in both themes. Colors arrive inline as CSS vars (see FILTER_SWATCH
+   / resource-graph.tsx) because inline styles carry no `dark:`. */
+.graph-swatch {
+  background-color: var(--swatch);
+}
+.dark .graph-swatch {
+  background-color: var(--swatch-dark);
 }
 
 /* Streamdown code block fixes - Tailwind @source can't extract all classes from streamdown chunks */
@@ -130,15 +192,21 @@ span[style*="--sdm-tbg"] {
   }
 }
 
-/* Sonner toast theme — Chorus design tokens */
-[data-sonner-toaster] {
-  --normal-bg: var(--color-card);
-  --normal-text: var(--color-foreground);
-  --normal-border: var(--color-border);
-}
-
+/* Sonner toast theme — Chorus design tokens.
+   The toast surface (--normal-bg/-text/-border) is locked to design tokens via
+   inline CSS variables on the Toaster (src/components/ui/sonner.tsx): sonner's own
+   [data-sonner-theme='light'|'dark'] rules hardcode --normal-bg to #fff / #000 at a
+   specificity a plain [data-sonner-toaster] override cannot beat, so the inline
+   style carries them instead. The rules below cover the parts sonner does not read
+   from --normal-* (title/description/close/action button) and the elevation shadow. */
 [data-sonner-toast] {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Dark mode: a light-alpha shadow is invisible on the charcoal surface, so deepen
+   it (next-themes sets `.dark` on <html>) to keep the toast reading as elevated. */
+.dark [data-sonner-toast] {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55) !important;
 }
 
 [data-sonner-toast] [data-title] {

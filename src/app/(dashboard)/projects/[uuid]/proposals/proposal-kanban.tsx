@@ -50,10 +50,10 @@ const columnConfigs = [
 
 // Status badge colors — same palette as task kanban
 const statusColors: Record<string, string> = {
-  draft: "bg-[#F5F5F5] text-[#6B6B6B]",
-  pending: "bg-[#FFF3E0] text-[#E65100]",
-  approved: "bg-[#E8F5E9] text-[#2E7D32]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  draft: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
+  pending: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  approved: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#2E7D32] dark:text-[#5FD07E]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
 };
 
 const statusI18nKeys: Record<string, string> = {
@@ -99,7 +99,7 @@ function ProposalCard({
       className="block"
     >
       <PresenceIndicator entityType="proposal" entityUuid={proposal.uuid}>
-      <Card className="cursor-pointer border-[#E5E0D8] bg-white p-4 transition-all hover:border-[#C67A52] hover:shadow-sm">
+      <Card className="cursor-pointer border-border bg-card p-4 transition-all hover:border-primary hover:shadow-sm">
         {/* Row 1: Status badge + Type tag */}
         <div className="mb-2 flex items-start justify-between">
           <Badge
@@ -112,20 +112,20 @@ function ProposalCard({
             )}
           </Badge>
           {typeTagKey && (
-            <span className="rounded bg-[#FFF3E0] px-2 py-0.5 text-xs font-medium text-[#E65100]">
+            <span className="rounded bg-[#FFF3E0] dark:bg-[#3a2a12] px-2 py-0.5 text-xs font-medium text-[#E65100] dark:text-[#F0A050]">
               {t(typeTagKey)}
             </span>
           )}
         </div>
 
         {/* Title */}
-        <h4 className="mb-1 font-medium text-[#2C2C2C]">
+        <h4 className="mb-1 font-medium text-foreground">
           {proposal.title}
         </h4>
 
         {/* Description */}
         {proposal.description && (
-          <div className="prose prose-sm max-w-none mb-2 line-clamp-2 text-sm text-[#6B6B6B]">
+          <div className="prose prose-sm max-w-none mb-2 line-clamp-2 text-sm text-muted-foreground">
             <MarkdownContent>{proposal.description}</MarkdownContent>
           </div>
         )}
@@ -196,16 +196,16 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
                 onClick={() => setActiveFilter(tab.id)}
                 className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
                   isActive
-                    ? "bg-[#C67A52] text-white"
-                    : "bg-[#F5F2EC] text-[#6B6B6B] hover:bg-[#EDE9E1]"
+                    ? "bg-primary text-white"
+                    : "bg-secondary text-muted-foreground hover:bg-[#EDE9E1] dark:hover:bg-[#2a2a2e]"
                 }`}
               >
                 {t(tab.labelKey)}
                 <span
                   className={`rounded-full px-1.5 py-0.5 text-xs ${
                     isActive
-                      ? "bg-white/20 text-white"
-                      : "bg-white text-[#6B6B6B]"
+                      ? "bg-card/20 text-white"
+                      : "bg-card text-muted-foreground"
                   }`}
                 >
                   {count}
@@ -222,7 +222,7 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
-              className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+              className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-border text-sm text-[#9A9A9A]"
             >
               {t("proposals.noProposals")}
             </motion.div>
@@ -250,15 +250,15 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
         return (
           <div
             key={column.id}
-            className="flex w-[300px] flex-shrink-0 flex-col rounded-xl bg-[#F5F2EC] p-4"
+            className="flex w-[300px] flex-shrink-0 flex-col rounded-xl bg-secondary p-4"
           >
             {/* Column Header — same as task kanban */}
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h3 className="font-medium text-[#2C2C2C]">
+                <h3 className="font-medium text-foreground">
                   {t(column.labelKey)}
                 </h3>
-                <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
+                <span className="rounded-full bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   {columnProposals.length}
                 </span>
               </div>
@@ -272,7 +272,7 @@ export function ProposalKanban({ projectUuid, proposals: initialProposals }: Pro
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.2, ease: [0, 0, 0.2, 1] }}
-                  className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-[#E5E0D8] text-sm text-[#9A9A9A]"
+                  className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-border text-sm text-[#9A9A9A]"
                 >
                   {t("proposals.noProposals")}
                 </motion.div>

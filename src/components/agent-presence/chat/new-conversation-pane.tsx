@@ -50,17 +50,17 @@ export function NewConversationPane({
       {/* Header — mirrors the transcript header's geometry so the panes feel like
           one surface. */}
       <div className="flex flex-col gap-1.5 px-6 py-4">
-        <h3 className="flex items-center gap-2 text-[17px] font-semibold text-[#2C2C2C]">
-          <MessageCirclePlus className="h-[18px] w-[18px] text-[#C67A52]" aria-hidden />
+        <h3 className="flex items-center gap-2 text-[17px] font-semibold text-foreground">
+          <MessageCirclePlus className="h-[18px] w-[18px] text-primary" aria-hidden />
           {t("newConversationTitle")}
         </h3>
-        <p className="text-[13px] leading-relaxed text-[#6B6B6B]">
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
           {agentUuid
             ? t("newConversationBody", { agent: agentName })
             : t("newConversationNoAgent")}
         </p>
       </div>
-      <div className="h-px w-full bg-[#EFEBE4]" />
+      <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
 
       {/* Body — the live composer, or a localized "start the daemon" reason. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
@@ -73,14 +73,14 @@ export function NewConversationPane({
             onStarted={onStarted}
           />
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-[#E7D9C9] bg-[#FFF9F3] p-8 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-[#E7D9C9] dark:border-[#33302a] bg-[#FFF9F3] dark:bg-[#2a2113] p-8 text-center">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#D9770615]">
-              <WifiOff className="h-5 w-5 text-[#B45309]" aria-hidden />
+              <WifiOff className="h-5 w-5 text-[#B45309] dark:text-[#E0A34E]" aria-hidden />
             </div>
-            <p className="text-[13px] font-medium text-[#92400E]">
+            <p className="text-[13px] font-medium text-[#92400E] dark:text-[#E0A34E]">
               {t("newConversationNoOnlineTitle")}
             </p>
-            <p className="max-w-[300px] text-[12px] leading-relaxed text-[#6B6B6B]">
+            <p className="max-w-[300px] text-[12px] leading-relaxed text-muted-foreground">
               {t("newConversationNoOnlineBody")}
             </p>
           </div>

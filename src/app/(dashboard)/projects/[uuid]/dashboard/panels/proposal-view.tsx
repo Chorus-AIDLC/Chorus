@@ -133,7 +133,7 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-[#C67A52]" />
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
       </div>
     );
   }
@@ -141,10 +141,10 @@ export function ProposalView({ idea, projectUuid, onTaskClick, onDocClick, initi
   if (proposals.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F3E5F5]">
-          <ClipboardList className="h-5 w-5 text-[#7B1FA2]" />
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F3E5F5] dark:bg-[#281630]">
+          <ClipboardList className="h-5 w-5 text-[#7B1FA2] dark:text-[#C98FE0]" />
         </div>
-        <p className="text-sm text-[#9A9A9A]">{t("panel.noProposals")}</p>
+        <p className="text-sm text-muted-foreground">{t("panel.noProposals")}</p>
       </div>
     );
   }
@@ -171,12 +171,12 @@ interface MaterializedTask {
 }
 
 const PROPOSAL_STATUS_COLORS: Record<string, string> = {
-  draft: "bg-[#F5F5F5] text-[#6B6B6B]",
-  pending: "bg-[#FFF3E0] text-[#E65100]",
-  approved: "bg-[#E8F5E9] text-[#5A9E6F]",
-  rejected: "bg-[#FFEBEE] text-[#C4574C]",
-  revised: "bg-[#E3F2FD] text-[#1976D2]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  draft: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
+  pending: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  approved: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  rejected: "bg-[#FFEBEE] dark:bg-[#331619] text-[#C4574C] dark:text-[#F0897E]",
+  revised: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground",
 };
 
 function ProposalContent({
@@ -268,7 +268,7 @@ function ProposalContent({
     <div className="space-y-5">
       {/* Title + Status */}
       <div className="flex items-center gap-2">
-        <h3 className="text-[14px] font-semibold text-[#2C2C2C] truncate flex-1">
+        <h3 className="text-[14px] font-semibold text-foreground truncate flex-1">
           {proposal.title}
         </h3>
         <Badge className={`text-[11px] font-semibold border-0 shrink-0 ${PROPOSAL_STATUS_COLORS[proposal.status] || ""}`}>
@@ -278,7 +278,7 @@ function ProposalContent({
 
       {/* Description — plain text, markdown rendered */}
       {proposal.description && (
-        <div className="max-h-[120px] overflow-y-auto text-[13px] leading-relaxed text-[#4A4A4A] prose prose-sm max-w-none [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs [&_p]:text-[13px] [&_p]:text-[#4A4A4A] [&_p]:my-1.5 [&_li]:text-[13px] [&_li]:text-[#4A4A4A] [&_ul]:my-1 [&_ol]:my-1 [&_strong]:text-[#2C2C2C]">
+        <div className="max-h-[120px] overflow-y-auto text-[13px] leading-relaxed text-foreground/80 prose prose-sm max-w-none [&_h1]:text-sm [&_h2]:text-[13px] [&_h3]:text-xs [&_p]:text-[13px] [&_p]:text-foreground/80 [&_p]:my-1.5 [&_li]:text-[13px] [&_li]:text-foreground/80 [&_ul]:my-1 [&_ol]:my-1 [&_strong]:text-foreground [&_code]:bg-secondary [&_code]:text-foreground [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_a]:text-primary">
           <MarkdownContent>{normalizeNewlines(proposal.description)}</MarkdownContent>
         </div>
       )}
@@ -286,7 +286,7 @@ function ProposalContent({
       {/* View Full Proposal Link */}
       <Link
         href={`/projects/${projectUuid}/proposals/${proposal.uuid}`}
-        className="flex items-center gap-1 text-[13px] font-medium text-[#C67A52] hover:underline"
+        className="flex items-center gap-1 text-[13px] font-medium text-primary hover:underline"
       >
         {t("panel.viewProposal")}
         <ChevronRight className="h-3.5 w-3.5" />
@@ -296,27 +296,27 @@ function ProposalContent({
       {docDrafts.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#9A9A9A]">
+            <span className="text-[11px] font-semibold uppercase tracking-[1px] text-muted-foreground">
               {isApproved ? tProposals("documents") : tProposals("documentDrafts")}
             </span>
-            <span className="text-[11px] text-[#9A9A9A]">{docDrafts.length}</span>
+            <span className="text-[11px] text-muted-foreground">{docDrafts.length}</span>
           </div>
           <div className="space-y-0">
             {docDrafts.map((doc, i) => (
               <PresenceIndicator key={doc.uuid || i} entityType="proposal" entityUuid={proposal.uuid} subEntityType="draft" subEntityUuid={doc.uuid || `draft-${i}`} badgeInside>
                 <Button
                   variant="ghost"
-                  className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-[#FAF8F4] transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
+                  className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-3.5 hover:bg-background transition-colors cursor-pointer -mx-1 px-1 rounded-lg"
                   onClick={() => doc.content && onDocClick?.({ title: doc.title, type: doc.type, content: doc.content })}
                 >
-                  <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+                  <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <Badge
                     variant="outline"
-                    className="shrink-0 text-[10px] font-medium border-[#E5E0D8] text-[#6B6B6B] bg-[#F5F2EC] px-2 py-0.5 font-mono"
+                    className="shrink-0 text-[10px] font-medium border-border text-muted-foreground bg-secondary px-2 py-0.5 font-mono"
                   >
                     {tDocs(DOC_TYPE_I18N_KEYS[doc.type] || "typeOther")}
                   </Badge>
-                  <span className="flex-1 min-w-0 text-left text-[13px] text-[#2C2C2A] truncate">
+                  <span className="flex-1 min-w-0 text-left text-[13px] text-foreground truncate">
                     {doc.title}
                   </span>
                 </Button>
@@ -332,32 +332,32 @@ function ProposalContent({
           {/* Header with count + progress */}
           <div className="flex items-center justify-between pb-2">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[1px] text-[#9A9A9A]">
+              <span className="text-[11px] font-semibold uppercase tracking-[1px] text-muted-foreground">
                 {isApproved ? tProposals("tasks") : tProposals("taskDrafts")}
               </span>
-              <span className="text-[11px] text-[#9A9A9A]">
+              <span className="text-[11px] text-muted-foreground">
                 {isApproved && materializedTasks.length > 0 ? materializedTasks.length : taskDrafts.length}
               </span>
             </div>
-            <span className="text-[12px] text-[#9A9A9A]">
+            <span className="text-[12px] text-muted-foreground">
               {completedCount}/{isApproved && materializedTasks.length > 0 ? materializedTasks.length : taskDrafts.length}
             </span>
           </div>
 
           {/* Full-width divider under header */}
-          <div className="-mx-6 border-t border-[#E5E0D8]" />
+          <div className="-mx-6 border-t border-border" />
 
           {/* Cards/DAG toggle (only when deps exist) */}
           {dagEdges.length > 0 && (
-            <div className="flex gap-0.5 rounded-lg border border-[#E5E0D8] bg-[#F7F6F3] p-0.5 mt-3 w-fit">
+            <div className="flex gap-0.5 rounded-lg border border-border bg-[#F7F6F3] dark:bg-[#1e1d1b] p-0.5 mt-3 w-fit">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setTaskView("cards")}
                 className={`rounded-md px-2.5 py-1 h-auto text-[11px] font-medium transition-colors ${
                   taskView === "cards"
-                    ? "bg-white text-[#2C2C2C] shadow-sm"
-                    : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-muted-foreground"
                 }`}
               >
                 {tProposals("cardsView")}
@@ -368,8 +368,8 @@ function ProposalContent({
                 onClick={() => setTaskView("dag")}
                 className={`rounded-md px-2.5 py-1 h-auto text-[11px] font-medium transition-colors ${
                   taskView === "dag"
-                    ? "bg-white text-[#2C2C2C] shadow-sm"
-                    : "text-[#9A9A9A] hover:text-[#6B6B6B]"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-muted-foreground"
                 }`}
               >
                 {tTasks("dagView")}
@@ -422,7 +422,7 @@ function ProposalContent({
 
       {/* Empty state */}
       {docDrafts.length === 0 && taskDrafts.length === 0 && materializedTasks.length === 0 && (
-        <p className="text-xs text-[#9A9A9A] italic">
+        <p className="text-xs text-muted-foreground italic">
           {tProposals("emptyContainer")}
         </p>
       )}
@@ -432,22 +432,22 @@ function ProposalContent({
 
 // Dot color per task status
 const taskDotColor: Record<string, string> = {
-  open: "border-[#D9D9D9] bg-white",                 // hollow gray — not started
+  open: "border-[#D9D9D9] dark:border-[#3a3a40] bg-card",                 // hollow gray — not started
   assigned: "border-[#1976D2] bg-[#1976D2]",         // blue — assigned
   in_progress: "border-[#5A9E6F] bg-[#5A9E6F]",     // green — building
   to_verify: "border-[#7B1FA2] bg-[#7B1FA2]",       // purple — needs verify
   done: "border-[#00796B] bg-[#00796B]",             // teal — done
-  closed: "border-[#9A9A9A] bg-[#9A9A9A]",          // gray — closed
+  closed: "border-[#9A9A9A] bg-[#9A9A9A] dark:border-[#6b6862] dark:bg-[#6b6862]",          // gray — closed
 };
 
 // Badge style per task status (only shown for notable states)
 const taskBadgeStyle: Record<string, { className: string; key: string } | null> = {
   open: null,
   assigned: null,
-  in_progress: { className: "bg-[#E8F5E9] text-[#5A9E6F]", key: "inProgress" },
-  to_verify: { className: "bg-[#F3E5F5] text-[#7B1FA2]", key: "toVerify" },
-  done: { className: "bg-[#E0F2F1] text-[#00796B]", key: "done" },
-  closed: { className: "bg-[#F5F5F5] text-[#9A9A9A]", key: "done" },
+  in_progress: { className: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]", key: "inProgress" },
+  to_verify: { className: "bg-[#F3E5F5] dark:bg-[#281630] text-[#7B1FA2] dark:text-[#C98FE0]", key: "toVerify" },
+  done: { className: "bg-[#E0F2F1] dark:bg-[#12292a] text-[#00796B] dark:text-[#4FD1C0]", key: "done" },
+  closed: { className: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-muted-foreground", key: "done" },
 };
 
 /** Task draft row — opens task detail panel when materialized, expands inline for drafts */
@@ -472,7 +472,7 @@ function TaskDraftRow({
 
   const dotClass = taskStatus
     ? taskDotColor[taskStatus] || taskDotColor.open
-    : "border-[#D9D9D9] bg-white";
+    : "border-[#D9D9D9] dark:border-[#3a3a40] bg-card";
   const badge = taskStatus ? taskBadgeStyle[taskStatus] : null;
 
   const dotEl = (
@@ -480,7 +480,7 @@ function TaskDraftRow({
   );
 
   const titleEl = (
-    <span className="flex-1 min-w-0 text-[13px] leading-snug truncate text-[#6B6B6B]">
+    <span className="flex-1 min-w-0 text-[13px] leading-snug truncate text-muted-foreground">
       {task.title}
     </span>
   );
@@ -497,9 +497,9 @@ function TaskDraftRow({
       <Button
         variant="ghost"
         onClick={onNavigate}
-        className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg transition-colors"
+        className="w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 cursor-pointer hover:bg-background -mx-1 px-1 rounded-lg transition-colors"
       >
-        <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+        <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {dotEl}
         {titleEl}
         {badgeEl}
@@ -514,13 +514,13 @@ function TaskDraftRow({
         variant="ghost"
         onClick={hasDetails ? onToggle : undefined}
         className={`w-full justify-start h-auto text-left flex items-center gap-2.5 py-4 ${
-          hasDetails ? "cursor-pointer hover:bg-[#FAF8F4] -mx-1 px-1 rounded-lg" : ""
+          hasDetails ? "cursor-pointer hover:bg-background -mx-1 px-1 rounded-lg" : ""
         } transition-colors`}
       >
         {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#B4B2A9]" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         {dotEl}
         {titleEl}
@@ -530,26 +530,26 @@ function TaskDraftRow({
       {expanded && hasDetails && (
         <div className="pb-3 pl-5 space-y-3">
           {task.description && (
-            <p className="text-[11px] leading-relaxed text-[#6B6B6B]">
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
               {task.description}
             </p>
           )}
           {acItems.length > 0 && (
-            <div className="rounded-lg bg-[#FAF8F4] p-3 space-y-2">
+            <div className="rounded-lg bg-background p-3 space-y-2">
               <div className="flex items-center gap-1.5">
-                <ListChecks className="h-3.5 w-3.5 text-[#888780]" />
-                <span className="text-[11px] font-semibold text-[#2C2C2C]">
+                <ListChecks className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-semibold text-foreground">
                   {tProposals("taskAcceptanceCriteria")}
                 </span>
               </div>
               <div className="space-y-1.5">
                 {acItems.map((ac, j) => (
                   <div key={j} className="flex items-start justify-between gap-2">
-                    <p className="text-[11px] leading-snug text-[#4A4A4A] flex-1">
+                    <p className="text-[11px] leading-snug text-foreground/80 flex-1">
                       {ac.description}
                     </p>
                     {ac.required !== false && (
-                      <span className="shrink-0 text-[10px] font-medium text-[#E65100]">
+                      <span className="shrink-0 text-[10px] font-medium text-[#E65100] dark:text-[#F0A050]">
                         {tAC("required")}
                       </span>
                     )}

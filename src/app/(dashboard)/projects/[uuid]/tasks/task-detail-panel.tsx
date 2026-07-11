@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { X, Pencil, CheckCircle, Play, Eye, Bot, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,7 @@ import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
 import { markCriteriaAction, selfCheckCriteriaAction, resetCriterionAction } from "./[taskUuid]/criteria-actions";
 import { UnifiedComments } from "@/components/unified-comments";
+import { ReferencesSection } from "@/components/references-section";
 import { getTaskActivitiesAction } from "./[taskUuid]/activity-actions";
 import type { ActivityResponse } from "@/services/activity.service";
 import {
@@ -131,12 +132,12 @@ interface TaskDetailPanelProps {
 
 // Status color configuration
 const statusColors: Record<string, string> = {
-  open: "bg-[#FFF3E0] text-[#E65100]",
-  assigned: "bg-[#E3F2FD] text-[#1976D2]",
-  in_progress: "bg-[#E8F5E9] text-[#5A9E6F]",
-  to_verify: "bg-[#F3E5F5] text-[#7B1FA2]",
-  done: "bg-[#E0F2F1] text-[#00796B]",
-  closed: "bg-[#F5F5F5] text-[#9A9A9A]",
+  open: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  assigned: "bg-[#E3F2FD] dark:bg-[#13253a] text-[#1976D2] dark:text-[#5AA9F0]",
+  in_progress: "bg-[#E8F5E9] dark:bg-[#14281a] text-[#5A9E6F] dark:text-[#6FD19A]",
+  to_verify: "bg-[#F3E5F5] dark:bg-[#281630] text-[#7B1FA2] dark:text-[#C98FE0]",
+  done: "bg-[#E0F2F1] dark:bg-[#12292a] text-[#00796B] dark:text-[#4FD1C0]",
+  closed: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
 };
 
 // Status to i18n key mapping
@@ -151,10 +152,10 @@ const statusI18nKeys: Record<string, string> = {
 
 // Priority color configuration
 const priorityColors: Record<string, string> = {
-  low: "bg-[#F5F5F5] text-[#9A9A9A]",
-  medium: "bg-[#FFF3E0] text-[#E65100]",
-  high: "bg-[#FEE2E2] text-[#D32F2F]",
-  critical: "bg-[#FFCDD2] text-[#B71C1C]",
+  low: "bg-[#F5F5F5] dark:bg-[#1e1e20] text-[#9A9A9A]",
+  medium: "bg-[#FFF3E0] dark:bg-[#3a2a12] text-[#E65100] dark:text-[#F0A050]",
+  high: "bg-[#FEE2E2] dark:bg-[#331619] text-[#D32F2F] dark:text-[#F08078]",
+  critical: "bg-[#FFCDD2] dark:bg-[#3a181c] text-[#B71C1C] dark:text-[#F08078]",
 };
 
 // Priority to i18n key mapping
@@ -186,7 +187,7 @@ function formatRelativeTime(dateString: string, t: any): string {
 function getActivityDotColor(action: string): string {
   switch (action) {
     case "task_created":
-      return "bg-[#C67A52]";
+      return "bg-primary";
     case "task_assigned":
     case "task_claimed":
       return "bg-[#1976D2]";
@@ -200,7 +201,7 @@ function getActivityDotColor(action: string): string {
     case "task_released":
       return "bg-[#E65100]";
     default:
-      return "bg-[#6B6B6B]";
+      return "bg-muted-foreground";
   }
 }
 
@@ -583,20 +584,20 @@ export function TaskDetailPanel({
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="edit-title" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-title" className="text-[13px] font-medium text-foreground">
           {t("tasks.titleLabel")}
         </Label>
         <Input
           id="edit-title"
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
-          className="border-[#E5E0D8] text-sm focus-visible:ring-[#C67A52]"
+          className="border-border text-sm focus-visible:ring-primary"
           autoFocus
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="edit-description" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-description" className="text-[13px] font-medium text-foreground">
           {t("tasks.descriptionLabel")}
         </Label>
         <Textarea
@@ -604,16 +605,16 @@ export function TaskDetailPanel({
           value={editDescription}
           onChange={(e) => setEditDescription(e.target.value)}
           rows={4}
-          className="border-[#E5E0D8] text-sm resize-none focus-visible:ring-[#C67A52]"
+          className="border-border text-sm resize-none focus-visible:ring-primary"
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="edit-priority" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-priority" className="text-[13px] font-medium text-foreground">
           {t("tasks.priorityLabel")}
         </Label>
         <Select value={editPriority} onValueChange={setEditPriority}>
-          <SelectTrigger className="border-[#E5E0D8] text-sm focus:ring-[#C67A52]">
+          <SelectTrigger className="border-border text-sm focus:ring-primary">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -625,7 +626,7 @@ export function TaskDetailPanel({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="edit-story-points" className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label htmlFor="edit-story-points" className="text-[13px] font-medium text-foreground">
           {t("tasks.storyPointsLabel")}
         </Label>
         <Input
@@ -635,12 +636,12 @@ export function TaskDetailPanel({
           step="0.5"
           value={editStoryPoints}
           onChange={(e) => setEditStoryPoints(e.target.value)}
-          className="border-[#E5E0D8] text-sm focus-visible:ring-[#C67A52]"
+          className="border-border text-sm focus-visible:ring-primary"
         />
       </div>
 
       <div className="space-y-2">
-        <Label className="text-[13px] font-medium text-[#2C2C2C]">
+        <Label className="text-[13px] font-medium text-foreground">
           {t("acceptanceCriteria.title")}
         </Label>
         <AcceptanceCriteriaEditor
@@ -652,7 +653,7 @@ export function TaskDetailPanel({
       {/* Dependency picker for create mode */}
       {isCreateMode && (
         <div className="space-y-2">
-          <Label className="text-[13px] font-medium text-[#2C2C2C]">
+          <Label className="text-[13px] font-medium text-foreground">
             {t("tasks.dependencies")}
           </Label>
 
@@ -662,11 +663,11 @@ export function TaskDetailPanel({
               {pendingDeps.map((dep) => (
                 <div
                   key={dep.uuid}
-                  className="group flex items-center justify-between rounded-lg bg-[#FAF8F4] p-2.5"
+                  className="group flex items-center justify-between rounded-lg bg-background p-2.5"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" />
-                    <span className="text-xs text-[#2C2C2C] truncate">{dep.title}</span>
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    <span className="text-xs text-foreground truncate">{dep.title}</span>
                     <Badge className={`shrink-0 text-[10px] ${statusColors[dep.status] || ""}`}>
                       {t(`status.${statusI18nKeys[dep.status] || dep.status}`)}
                     </Badge>
@@ -696,7 +697,7 @@ export function TaskDetailPanel({
                 }
               }}
             >
-              <SelectTrigger className="h-8 border-[#E5E0D8] text-xs text-[#6B6B6B] focus:ring-[#C67A52]">
+              <SelectTrigger className="h-8 border-border text-xs text-muted-foreground focus:ring-primary">
                 <div className="flex items-center gap-1.5">
                   <Plus className="h-3 w-3" />
                   <SelectValue placeholder={t("tasks.addDependency")} />
@@ -732,7 +733,7 @@ export function TaskDetailPanel({
           the idea-detail-panel sidebar's `w-full md:w-[480px]` convention so all
           three panels share one breakpoint. */}
       <div
-        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-white shadow-xl border-l border-[#E5E0D8] ${
+        className={`fixed top-14 md:top-0 flex h-[calc(100%-3.5rem)] md:h-full w-full md:w-[480px] flex-col bg-card shadow-xl border-l border-border ${
           isSideBySide
             ? `z-40 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
             : `z-50 right-0 ${hasAnimated ? "" : "animate-in slide-in-from-right duration-300"}`
@@ -740,7 +741,7 @@ export function TaskDetailPanel({
         style={isSideBySide ? { right: `${PANEL_WIDTH_PX}px` } : undefined}
       >
         {/* Panel Header */}
-        <div className="flex items-center justify-between border-b border-[#F5F2EC] px-6 py-5">
+        <div className="flex items-center justify-between border-b border-secondary px-6 py-5">
           {onBack && (
             <Button
               variant="ghost"
@@ -748,17 +749,17 @@ export function TaskDetailPanel({
               className="mr-2 h-8 w-8 shrink-0"
               onClick={onBack}
             >
-              <ArrowLeft className="h-4 w-4 text-[#6B6B6B]" />
+              <ArrowLeft className="h-4 w-4 text-muted-foreground" />
             </Button>
           )}
           <div className="flex-1 min-w-0">
             {isEditing ? (
-              <h2 className="text-base font-semibold text-[#2C2C2C]">
+              <h2 className="text-base font-semibold text-foreground">
                 {isCreateMode ? t("tasks.createTaskTitle") : t("tasks.editTask")}
               </h2>
             ) : task ? (
               <>
-                <h2 className="text-base font-semibold text-[#2C2C2C] truncate">
+                <h2 className="text-base font-semibold text-foreground truncate">
                   {task.title}
                 </h2>
                 <div className="mt-1.5 flex items-center gap-2">
@@ -769,7 +770,7 @@ export function TaskDetailPanel({
                     {t(`priority.${priorityI18nKeys[task.priority] || task.priority}`)}
                   </Badge>
                   {task.storyPoints && (
-                    <span className="rounded bg-[#F5F2EC] px-2 py-0.5 text-xs font-medium text-[#6B6B6B]">
+                    <span className="rounded bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
                       {task.storyPoints}h
                     </span>
                   )}
@@ -783,20 +784,20 @@ export function TaskDetailPanel({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 gap-1.5 border-[#E5E0D8] text-[#2C2C2C]"
+                className="h-8 gap-1.5 border-border text-foreground"
                 onClick={handleStartEdit}
               >
-                <Pencil className="h-3.5 w-3.5 text-[#6B6B6B]" />
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="text-xs">{t("common.edit")}</span>
               </Button>
             )}
             <Button
               variant="outline"
               size="icon"
-              className="h-8 w-8 border-[#E5E0D8]"
+              className="h-8 w-8 border-border"
               onClick={isEditing && !isCreateMode ? handleCancelEdit : onClose}
             >
-              <X className="h-4 w-4 text-[#6B6B6B]" />
+              <X className="h-4 w-4 text-muted-foreground" />
             </Button>
           </div>
         </div>
@@ -813,11 +814,11 @@ export function TaskDetailPanel({
                   <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
                     {t("common.assignee")}
                   </label>
-                  <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-3">
+                  <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-background p-3">
                     {task.assignee ? (
                       <>
                         <Avatar className="h-7 w-7">
-                          <AvatarFallback className={isAgentAssignee(task.assignee) ? "bg-[#C67A52] text-white" : "bg-[#E5E0D8] text-[#6B6B6B]"}>
+                          <AvatarFallback className={isAgentAssignee(task.assignee) ? "bg-primary text-white" : "bg-border text-muted-foreground"}>
                             {isAgentAssignee(task.assignee) ? (
                               <Bot className="h-3.5 w-3.5" />
                             ) : (
@@ -826,10 +827,10 @@ export function TaskDetailPanel({
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-[#2C2C2C]">
+                          <div className="text-sm font-medium text-foreground">
                             {task.assignee.name}
                           </div>
-                          <div className="text-xs text-[#6B6B6B]">
+                          <div className="text-xs text-muted-foreground">
                             {isAgentAssignee(task.assignee)
                               ? `${t("common.agent")} • ${task.assignee.assignedAt ? formatDateTime(task.assignee.assignedAt) : ''}`
                               : t("common.user")}
@@ -861,11 +862,11 @@ export function TaskDetailPanel({
                       {activeWorkers.map((worker) => (
                         <div
                           key={worker.sessionUuid}
-                          className="flex items-center gap-2.5 rounded-lg bg-[#FAF8F4] p-2.5"
+                          className="flex items-center gap-2.5 rounded-lg bg-background p-2.5"
                         >
                           <div className="h-2 w-2 rounded-full bg-green-500 flex-shrink-0" />
                           <div className="min-w-0">
-                            <div className="text-xs font-medium text-[#2C2C2C] truncate">
+                            <div className="text-xs font-medium text-foreground truncate">
                               {worker.sessionName}
                             </div>
                             <div className="text-[10px] text-[#9A9A9A]">
@@ -885,7 +886,7 @@ export function TaskDetailPanel({
                   </label>
                   <div className="mt-2">
                     {task.description ? (
-                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                         <MarkdownContent>{task.description}</MarkdownContent>
                       </div>
                     ) : (
@@ -901,7 +902,7 @@ export function TaskDetailPanel({
                       {t("tasks.acceptanceCriteria")}
                     </label>
                     <div className="mt-2">
-                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[#2C2C2C]">
+                      <div className="prose prose-sm max-w-none text-[13px] leading-relaxed text-foreground">
                         <MarkdownContent>{task.acceptanceCriteria}</MarkdownContent>
                       </div>
                     </div>
@@ -916,11 +917,11 @@ export function TaskDetailPanel({
                     </label>
                     <a
                       href={`/projects/${projectUuid}/proposals/${source.uuid}`}
-                      className="mt-2 flex items-center justify-between rounded-lg bg-[#FAF8F4] p-3 hover:bg-[#F0EDE5] transition-colors"
+                      className="mt-2 flex items-center justify-between rounded-lg bg-background p-3 hover:bg-[#F0EDE5] dark:hover:bg-[#26241f] transition-colors"
                     >
                       <div className="flex items-center gap-2">
-                        <FileText className="h-3.5 w-3.5 text-[#C67A52]" />
-                        <span className="text-xs text-[#2C2C2C]">{source.title}</span>
+                        <FileText className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-xs text-foreground">{source.title}</span>
                       </div>
                     </a>
                   </div>
@@ -957,11 +958,11 @@ export function TaskDetailPanel({
                             {dependsOn.map((dep) => (
                               <div
                                 key={dep.uuid}
-                                className="group flex items-center justify-between rounded-lg bg-[#FAF8F4] p-3"
+                                className="group flex items-center justify-between rounded-lg bg-background p-3"
                               >
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#C67A52]" />
-                                  <span className="text-xs text-[#2C2C2C] truncate">
+                                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                  <span className="text-xs text-foreground truncate">
                                     {dep.title}
                                   </span>
                                   <Badge className={`shrink-0 text-[10px] ${statusColors[dep.status] || ""}`}>
@@ -995,11 +996,11 @@ export function TaskDetailPanel({
                             {dependedBy.map((dep) => (
                               <div
                                 key={dep.uuid}
-                                className="group flex items-center justify-between rounded-lg bg-[#FAF8F4] p-3"
+                                className="group flex items-center justify-between rounded-lg bg-background p-3"
                               >
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#6B6B6B]" />
-                                  <span className="text-xs text-[#2C2C2C] truncate">
+                                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                  <span className="text-xs text-foreground truncate">
                                     {dep.title}
                                   </span>
                                   <Badge className={`shrink-0 text-[10px] ${statusColors[dep.status] || ""}`}>
@@ -1031,7 +1032,7 @@ export function TaskDetailPanel({
                             key={dependsOn.length}
                             onValueChange={(uuid) => handleAddDependency(uuid)}
                           >
-                            <SelectTrigger className="h-8 border-[#E5E0D8] text-xs text-[#6B6B6B] focus:ring-[#C67A52]">
+                            <SelectTrigger className="h-8 border-border text-xs text-muted-foreground focus:ring-primary">
                               <div className="flex items-center gap-1.5">
                                 <Plus className="h-3 w-3" />
                                 <SelectValue placeholder={t("tasks.addDependency")} />
@@ -1057,15 +1058,15 @@ export function TaskDetailPanel({
                   const summary = task.acceptanceSummary;
 
                   const criterionStatusIcon = (status: string) => {
-                    if (status === "passed") return <CircleCheck className="h-4 w-4 text-green-600" />;
-                    if (status === "failed") return <CircleX className="h-4 w-4 text-red-600" />;
-                    return <Timer className="h-4 w-4 text-yellow-600" />;
+                    if (status === "passed") return <CircleCheck className="h-4 w-4 text-green-600 dark:text-[#6FD19A]" />;
+                    if (status === "failed") return <CircleX className="h-4 w-4 text-red-600 dark:text-[#F08078]" />;
+                    return <Timer className="h-4 w-4 text-yellow-600 dark:text-[#E0B44E]" />;
                   };
 
                   const criterionStatusColor = (status: string) => {
-                    if (status === "passed") return "bg-green-50 text-green-700";
-                    if (status === "failed") return "bg-red-50 text-red-700";
-                    return "bg-yellow-50 text-yellow-700";
+                    if (status === "passed") return "bg-green-50 text-green-700 dark:bg-[#14281a] dark:text-[#6FD19A]";
+                    if (status === "failed") return "bg-red-50 text-red-700 dark:bg-[#331619] dark:text-[#F08078]";
+                    return "bg-yellow-50 text-yellow-700 dark:bg-[#332a12] dark:text-[#E0B44E]";
                   };
 
                   const handleMarkCriterion = async (criterionUuid: string, newStatus: "passed" | "failed") => {
@@ -1097,7 +1098,7 @@ export function TaskDetailPanel({
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-xs text-[#2C2C2C]">{item.description}</span>
+                                  <span className="text-xs text-foreground">{item.description}</span>
                                   <Badge variant="outline" className="text-[10px] shrink-0">
                                     {item.required ? t("acceptanceCriteria.required") : t("acceptanceCriteria.optional")}
                                   </Badge>
@@ -1123,15 +1124,15 @@ export function TaskDetailPanel({
 
                                 {/* Evidence — show both tracks separately */}
                                 {item.devEvidence && (
-                                  <div className="mt-2 rounded bg-[#FAF8F4] p-2">
+                                  <div className="mt-2 rounded bg-background p-2">
                                     <span className="text-[10px] font-medium text-[#9A9A9A]">{t("acceptanceCriteria.devEvidence")}</span>
-                                    <p className="text-[11px] text-[#2C2C2C] mt-0.5">{item.devEvidence}</p>
+                                    <p className="text-[11px] text-foreground mt-0.5">{item.devEvidence}</p>
                                   </div>
                                 )}
                                 {item.evidence && (
-                                  <div className="mt-2 rounded bg-[#FAF8F4] p-2">
+                                  <div className="mt-2 rounded bg-background p-2">
                                     <span className="text-[10px] font-medium text-[#9A9A9A]">{t("acceptanceCriteria.verifyEvidence")}</span>
-                                    <p className="text-[11px] text-[#2C2C2C] mt-0.5">{item.evidence}</p>
+                                    <p className="text-[11px] text-foreground mt-0.5">{item.evidence}</p>
                                   </div>
                                 )}
 
@@ -1141,7 +1142,7 @@ export function TaskDetailPanel({
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="h-8 min-h-[44px] sm:min-h-0 flex-1 sm:flex-none text-xs text-green-700 border-green-200 hover:bg-green-50"
+                                      className="h-8 min-h-[44px] sm:min-h-0 flex-1 sm:flex-none text-xs text-green-700 dark:text-[#6FD19A] border-green-200 dark:border-[#2a4a34] hover:bg-green-50 dark:hover:bg-[#14281a]"
                                       onClick={() => handleMarkCriterion(item.uuid, "passed")}
                                     >
                                       <CircleCheck className="h-3.5 w-3.5 mr-1" />
@@ -1150,7 +1151,7 @@ export function TaskDetailPanel({
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="h-8 min-h-[44px] sm:min-h-0 flex-1 sm:flex-none text-xs text-red-700 border-red-200 hover:bg-red-50"
+                                      className="h-8 min-h-[44px] sm:min-h-0 flex-1 sm:flex-none text-xs text-red-700 dark:text-[#F08078] border-red-200 dark:border-[#5a2a2e] hover:bg-red-50 dark:hover:bg-[#331619]"
                                       onClick={() => handleMarkCriterion(item.uuid, "failed")}
                                     >
                                       <CircleX className="h-3.5 w-3.5 mr-1" />
@@ -1162,7 +1163,7 @@ export function TaskDetailPanel({
                                     <Button
                                       size="sm"
                                       variant="ghost"
-                                      className="h-7 min-h-[44px] sm:min-h-0 text-xs text-[#9A9A9A] hover:text-[#2C2C2C]"
+                                      className="h-7 min-h-[44px] sm:min-h-0 text-xs text-[#9A9A9A] hover:text-foreground"
                                       onClick={async () => {
                                         const result = await resetCriterionAction(task.uuid, item.uuid);
                                         if (result.success) router.refresh();
@@ -1179,17 +1180,17 @@ export function TaskDetailPanel({
 
                         {/* Gate warning */}
                         {summary && (summary.requiredPending > 0 || summary.requiredFailed > 0) && (
-                          <div className="flex items-center gap-2 rounded-lg bg-yellow-50 p-3 mt-2">
-                            <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
-                            <span className="text-xs text-yellow-700">
+                          <div className="flex items-center gap-2 rounded-lg bg-yellow-50 dark:bg-[#332a12] p-3 mt-2">
+                            <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-[#E0B44E] shrink-0" />
+                            <span className="text-xs text-yellow-700 dark:text-[#E0B44E]">
                               {t("acceptanceCriteria.gateBlocked", { count: summary.requiredPending + summary.requiredFailed })}
                             </span>
                           </div>
                         )}
                         {summary && summary.requiredPending === 0 && summary.requiredFailed === 0 && summary.required > 0 && (
-                          <div className="flex items-center gap-2 rounded-lg bg-green-50 p-3 mt-2">
-                            <CircleCheck className="h-4 w-4 text-green-600 shrink-0" />
-                            <span className="text-xs text-green-700">
+                          <div className="flex items-center gap-2 rounded-lg bg-green-50 dark:bg-[#14281a] p-3 mt-2">
+                            <CircleCheck className="h-4 w-4 text-green-600 dark:text-[#6FD19A] shrink-0" />
+                            <span className="text-xs text-green-700 dark:text-[#6FD19A]">
                               {t("acceptanceCriteria.gateReady")}
                             </span>
                           </div>
@@ -1214,11 +1215,11 @@ export function TaskDetailPanel({
                     ) : (
                       activities.map((activity) => (
                         <div key={activity.uuid} className="flex items-start gap-2.5">
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#F5F2EC]">
+                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-secondary">
                             <div className={`h-2 w-2 rounded-full ${getActivityDotColor(activity.action)}`} />
                           </div>
                           <div className="flex-1">
-                            <p className="text-xs text-[#2C2C2C]">
+                            <p className="text-xs text-foreground">
                               {formatActivityMessage(activity, t)}
                             </p>
                             <p className="text-[10px] text-[#9A9A9A]">{formatRelativeTime(activity.createdAt, t)}</p>
@@ -1226,6 +1227,21 @@ export function TaskDetailPanel({
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* References Section - external evidence, before Comments */}
+                <div className="mt-5">
+                  <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                    {t("references.title")}
+                  </label>
+                  <div className="mt-2">
+                    <ReferencesSection
+                      targetType="task"
+                      targetUuid={task.uuid}
+                      canWrite
+                      compact
+                    />
                   </div>
                 </div>
 
@@ -1249,20 +1265,20 @@ export function TaskDetailPanel({
         </ScrollArea>
 
         {/* Panel Footer */}
-        <div className="border-t border-[#F5F2EC] px-6 py-4">
+        <div className="border-t border-secondary px-6 py-4">
           <div className="flex items-center gap-3">
             {isEditing ? (
               <>
                 <Button
                   variant="outline"
-                  className="border-[#E5E0D8]"
+                  className="border-border"
                   onClick={handleCancelEdit}
                   disabled={isSaving}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button
-                  className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                  className="bg-primary hover:bg-[#B56A42] text-white"
                   onClick={handleSaveEdit}
                   disabled={isSaving || !editTitle.trim()}
                 >
@@ -1285,7 +1301,7 @@ export function TaskDetailPanel({
                 {task.status !== "done" && task.status !== "closed" && (
                   <Button
                     variant="outline"
-                    className="border-[#E5E0D8]"
+                    className="border-border"
                     onClick={() => setShowAssignModal(true)}
                     disabled={isLoading}
                   >
@@ -1334,7 +1350,7 @@ export function TaskDetailPanel({
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-9 w-9 border-[#E5E0D8] text-[#D32F2F] hover:bg-[#FFEBEE] hover:text-[#D32F2F] hover:border-[#D32F2F]"
+                        className="h-9 w-9 border-border text-[#D32F2F] dark:text-[#F08078] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#D32F2F] hover:border-[#D32F2F]"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>

@@ -40,10 +40,10 @@ export function NodeTooltip({ title, x, y }: NodeTooltipProps) {
       role="tooltip"
       // pointer-events-none: the tooltip never intercepts a click meant for the
       // canvas, and never blocks moving the pointer onto an adjacent node.
-      className="pointer-events-none absolute z-20 max-w-[260px] rounded-lg border border-[#EAE4DB] bg-white px-3 py-2 shadow-lg"
+      className="pointer-events-none absolute z-20 max-w-[260px] rounded-lg border border-border bg-card px-3 py-2 shadow-lg"
       style={{ left: x, top: y }}
     >
-      <p className="text-sm font-medium leading-snug text-[#2C2C2C]">{title}</p>
+      <p className="text-sm font-medium leading-snug text-foreground">{title}</p>
     </div>
   );
 }

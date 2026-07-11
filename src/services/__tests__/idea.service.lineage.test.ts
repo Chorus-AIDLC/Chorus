@@ -26,6 +26,7 @@ const {
     document: { findMany: vi.fn(), updateMany: vi.fn() },
     task: { findMany: vi.fn(), updateMany: vi.fn() },
     activity: { updateMany: vi.fn(), count: vi.fn() },
+    referenceArtifact: { groupBy: vi.fn() },
     $transaction: vi.fn(),
   },
   mockEventBus: { emitChange: vi.fn() },
@@ -98,6 +99,9 @@ function ideaRow(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reference-count batching (Thread B) in getIdeasWithDerivedStatus — default
+  // to none so the lineage/rollup assertions are unaffected.
+  mockPrisma.referenceArtifact.groupBy.mockResolvedValue([]);
 });
 
 describe("createIdea with parentUuid", () => {

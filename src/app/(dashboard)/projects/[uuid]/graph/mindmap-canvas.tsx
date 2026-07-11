@@ -116,6 +116,20 @@ const TYPE_COLOR: Record<NodeType, string> = {
   document: "#00897B",
 };
 
+// Dark-mode type hues. The four brand colors are painted as a SATURATED CHIP
+// FILL (with a white icon on top) AND as the eyebrow type-label text + selection
+// ring, all from the same `color`. On the charcoal surface the light hues read
+// heavy/muddy — especially the document teal `#00897B` (~27% L, nearly a dark
+// hole) and the proposal blue — so each is lifted in lightness while keeping its
+// hue. Resolved live at paint time via `.dark` on <html> (same convention as
+// resolveSurface / resolveStatusPill; the MutationObserver repaints on flip).
+const TYPE_COLOR_DARK: Record<NodeType, string> = {
+  idea: "#9B82FF", // violet, lifted
+  proposal: "#5A8DEF", // blue, lifted off the muddy #2563EB
+  task: "#F0964E", // amber, slightly lifted
+  document: "#1CA695", // teal, substantially lifted off the near-black #00897B
+};
+
 // Lucide icon geometry per type, matching the lucide-react components the rest
 // of the app uses for these entity types (Lightbulb / ClipboardList /
 // SquareCheckBig / FileText — see the filter swatches in resource-graph.tsx).
@@ -285,7 +299,43 @@ const CHIP = 30;
 const BTN_W = 40;
 
 const TWEEN_MS = 300; // coordinate tween + fade duration (Tech Design D2)
-const BG = "#FAF8F4";
+
+// Canvas 2D fills can't read CSS custom properties, so the theme-dependent
+// SURFACE colors (page bg, card fill/border/divider, title text) are resolved
+// per-frame from the `.dark` class on <html> — the same convention the rest of
+// the app uses (see useDarkClass in markdown-content.tsx). Node/edge CATEGORY
+// colors (TYPE_COLOR / EDGE_COLOR) are theme-invariant brand hues and stay as-is.
+interface SurfacePalette {
+  bg: string;
+  cardFill: string;
+  cardBorder: string;
+  divider: string;
+  title: string;
+}
+const SURFACE_LIGHT: SurfacePalette = {
+  bg: "#FAF8F4",
+  cardFill: "#FFFFFF",
+  cardBorder: "#EAE4DB",
+  divider: "#EFEAE2",
+  title: "#2C2C2C",
+};
+const SURFACE_DARK: SurfacePalette = {
+  // Warm-charcoal palette matching globals.css `.dark` (hue 24°, off pure black).
+  bg: "#211e1c", // --background (24 9% 12%)
+  cardFill: "#29231f", // --card (24 8% 15%) — elevated surface
+  cardBorder: "#40392f", // --border (24 7% 25%) — warm hairline
+  divider: "#332e29", // --secondary (24 7% 20%)
+  title: "#f0ebe4", // --foreground (30 20% 92%) — warm off-white
+};
+function resolveSurface(): SurfacePalette {
+  if (
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("dark")
+  ) {
+    return SURFACE_DARK;
+  }
+  return SURFACE_LIGHT;
+}
 
 // Hover-tooltip anchor geometry (screen pixels). The tooltip is anchored beside
 // the hovered card (Tech Design D2): preferred to the card's right edge with a
@@ -362,7 +412,17 @@ export function MindMapCanvas({
         node.type,
         node.status,
       );
-      return { bg: visual.bg, fg: visual.fg, label: t(visual.labelKey) };
+      // Canvas 2D can't honor `dark:` classes, so pick the dark hex pair when
+      // <html> carries `.dark` — resolved live at paint time, the same way
+      // resolveSurface() reads the class (the MutationObserver repaints on flip).
+      const dark =
+        typeof document !== "undefined" &&
+        document.documentElement.classList.contains("dark");
+      return {
+        bg: dark ? visual.darkBg : visual.bg,
+        fg: dark ? visual.darkFg : visual.fg,
+        label: t(visual.labelKey),
+      };
     },
     [t],
   );
@@ -601,9 +661,13 @@ export function MindMapCanvas({
       }
     }
 
+    // Theme-dependent surface palette, resolved from the `.dark` class each
+    // frame (a theme flip re-arms the render loop via the observer below).
+    const surface = resolveSurface();
+
     // Clear.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = BG;
+    ctx.fillStyle = surface.bg;
     ctx.fillRect(0, 0, width, height);
 
     // Apply the pan/zoom transform (graph → screen). All subsequent geometry is
@@ -638,6 +702,7 @@ export function MindMapCanvas({
         scale = 1 - 0.1 * e;
       }
       paintNode(ctx, anim.node, center, {
+        surface,
         opacity,
         scale,
         hoverId,
@@ -705,6 +770,21 @@ export function MindMapCanvas({
     rafRef.current = requestAnimationFrame(() => renderFrameRef.current());
   }, []);
   // expose to the layout effect (declared before it via hoisting of the const)
+
+  // Repaint on theme flip. The canvas resolves its SURFACE palette from the
+  // `.dark` class on <html> at paint time (Canvas 2D can't read CSS tokens), so
+  // a light↔dark toggle must re-arm the render loop. Observe the class attribute
+  // rather than reading a React theme value so this works regardless of how the
+  // theme is driven (next-themes toggles that class).
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const obs = new MutationObserver(() => scheduleRender());
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => obs.disconnect();
+  }, [scheduleRender]);
 
   // Repaint when presence / hover / selection / size / search state change
   // (these alter the painted frame even when no tween is running).
@@ -1168,7 +1248,7 @@ export function MindMapCanvas({
           is empty. All labels are i18n-driven (graph.zoom.*). */}
       {hasNodes && (
         <TooltipProvider delayDuration={300}>
-          <div className="absolute bottom-3 left-3 flex flex-col gap-1 rounded-lg border border-[#EAE4DB] bg-white/95 p-1 shadow-sm backdrop-blur-sm">
+          <div className="absolute bottom-3 left-3 flex flex-col gap-1 rounded-lg border border-border bg-card/95 p-1 shadow-sm backdrop-blur-sm">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1178,7 +1258,7 @@ export function MindMapCanvas({
                   onClick={zoomInByButton}
                   aria-label={t("graph.zoom.in")}
                   data-testid="graph-zoom-in"
-                  className="text-[#6B6B6B]"
+                  className="text-muted-foreground"
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
@@ -1194,7 +1274,7 @@ export function MindMapCanvas({
                   onClick={zoomOutByButton}
                   aria-label={t("graph.zoom.out")}
                   data-testid="graph-zoom-out"
-                  className="text-[#6B6B6B]"
+                  className="text-muted-foreground"
                 >
                   <Minus className="h-4 w-4" />
                 </Button>
@@ -1210,7 +1290,7 @@ export function MindMapCanvas({
                   onClick={fitByButton}
                   aria-label={t("graph.zoom.fit")}
                   data-testid="graph-zoom-fit"
-                  className="text-[#6B6B6B]"
+                  className="text-muted-foreground"
                 >
                   <Maximize className="h-4 w-4" />
                 </Button>
@@ -1234,6 +1314,8 @@ export const ForceGraphCanvas = MindMapCanvas;
 // ============================================================================
 
 interface PaintNodeOpts {
+  /** Theme-dependent surface colors (card fill/border/divider/title). */
+  surface: SurfacePalette;
   opacity: number;
   scale: number;
   hoverId: string | null;
@@ -1263,6 +1345,7 @@ function paintNode(
   opts: PaintNodeOpts,
 ) {
   const {
+    surface,
     opacity,
     scale,
     hoverId,
@@ -1275,7 +1358,12 @@ function paintNode(
     resolveStatusPill,
   } = opts;
   const type = node.type;
-  const color = TYPE_COLOR[type];
+  // Type hue — lifted variant under `.dark` (Canvas 2D can't honor `dark:`;
+  // read the class live, matching resolveSurface / resolveStatusPill).
+  const isDark =
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("dark");
+  const color = (isDark ? TYPE_COLOR_DARK : TYPE_COLOR)[type];
 
   // Per-node opacity composes hover/selection lineage focus with the search
   // match set, in priority order (Tech Design D4 / Q3=a): a live lineage dims by
@@ -1355,8 +1443,8 @@ function paintNode(
   }
 
   // Card body.
-  ctx.fillStyle = "#FFFFFF";
-  ctx.strokeStyle = isSelected ? color : "#EAE4DB";
+  ctx.fillStyle = surface.cardFill;
+  ctx.strokeStyle = isSelected ? color : surface.cardBorder;
   ctx.lineWidth = isSelected ? 2 : 1;
   roundRect(ctx, left, top, CARD_W, CARD_H, CARD_R);
   ctx.fill();
@@ -1378,14 +1466,25 @@ function paintNode(
     ctx.restore();
   }
 
-  // Type chip.
+  // Type chip. In LIGHT mode it's a saturated hue block with a white icon. In
+  // DARK mode that solid block reads heavy/glaring on the charcoal card, so we
+  // soften it to match the status-badge idiom: a deep hue-tinted background
+  // (the hue at low alpha over the card) with the icon stroked in the hue
+  // itself rather than white. Reads calmer and more clearly "themed".
   const chipX = left + 8;
   const chipY = center.y - CHIP / 2;
-  ctx.fillStyle = color;
-  roundRect(ctx, chipX, chipY, CHIP, CHIP, 9);
-  ctx.fill();
-  // Lucide icon inside the chip (stroked white), replacing the old emoji glyph.
-  paintLucideIcon(ctx, TYPE_ICON_PATHS[type], chipX, chipY, CHIP);
+  if (isDark) {
+    ctx.fillStyle = hexWithAlpha(color, 0.22); // deep hue-tinted fill
+    roundRect(ctx, chipX, chipY, CHIP, CHIP, 9);
+    ctx.fill();
+    paintLucideIcon(ctx, TYPE_ICON_PATHS[type], chipX, chipY, CHIP, color);
+  } else {
+    ctx.fillStyle = color;
+    roundRect(ctx, chipX, chipY, CHIP, CHIP, 9);
+    ctx.fill();
+    // Lucide icon inside the chip (stroked white), replacing the old emoji glyph.
+    paintLucideIcon(ctx, TYPE_ICON_PATHS[type], chipX, chipY, CHIP);
+  }
 
   // Text column. Reserve the right BTN_W strip for the +/- button on hubs.
   const hasBtn = !!node.hasAffordance;
@@ -1446,7 +1545,7 @@ function paintNode(
 
   // Title (truncated to the text column width). Painted AFTER the eyebrow so it
   // sits on its own row below — no interference with the type label / pill.
-  ctx.fillStyle = "#2C2C2C";
+  ctx.fillStyle = surface.title;
   ctx.font = "500 12px ui-sans-serif, system-ui";
   ctx.textAlign = "left";
   ctx.fillText(truncate(ctx, node.title, textW - 4), textX, center.y + 7);
@@ -1455,7 +1554,7 @@ function paintNode(
   if (hasBtn) {
     const btnLeft = left + CARD_W - BTN_W;
     // Divider.
-    ctx.strokeStyle = "#EFEAE2";
+    ctx.strokeStyle = surface.divider;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(btnLeft, top + 7);
@@ -1614,14 +1713,16 @@ function drawElbow(
 // Paint a lucide icon (stroke-based, 24×24 viewBox) into a square chip via
 // Path2D. Canvas 2D can't mount a React component, so we stroke the icon's raw
 // SVG path data — a faithful vector render. The icon is centered in the chip
-// with a small inset and stroked white (round cap/join, matching lucide's
-// default 2px stroke scaled to the chip).
+// with a small inset (round cap/join, matching lucide's default 2px stroke
+// scaled to the chip). `stroke` defaults to white (the solid light chip); the
+// dark chip passes the type hue so the glyph sits on a deep tinted fill.
 function paintLucideIcon(
   ctx: CanvasRenderingContext2D,
   paths: string[],
   chipX: number,
   chipY: number,
   chip: number,
+  stroke = "#FFFFFF",
 ) {
   const inset = chip * 0.22; // padding inside the chip
   const drawn = chip - inset * 2; // glyph box edge
@@ -1629,7 +1730,7 @@ function paintLucideIcon(
   ctx.save();
   ctx.translate(chipX + inset, chipY + inset);
   ctx.scale(scale, scale);
-  ctx.strokeStyle = "#FFFFFF";
+  ctx.strokeStyle = stroke; // white on the solid light chip; the hue on the deep dark chip
   ctx.lineWidth = 2; // lucide default stroke-width (in 24-unit space)
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

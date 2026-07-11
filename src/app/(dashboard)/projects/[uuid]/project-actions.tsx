@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ export function ProjectActions({ projectUuid, projectName }: ProjectActionsProps
         <Button
           variant="outline"
           size="icon"
-          className="h-9 w-9 border-[#E5E0D8] text-[#D32F2F] hover:bg-[#FFEBEE] hover:text-[#D32F2F] hover:border-[#D32F2F]"
+          className="h-9 w-9 border-border text-[#D32F2F] dark:text-[#F08078] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#D32F2F] hover:border-[#D32F2F]"
         >
           <Trash2 className="h-4 w-4" />
         </Button>

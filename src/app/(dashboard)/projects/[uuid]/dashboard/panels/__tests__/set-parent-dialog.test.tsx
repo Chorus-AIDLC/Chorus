@@ -26,6 +26,9 @@ const { getProjectIdeasForPickerActionMock, setIdeaParentActionMock } = vi.hoist
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
 }));
+vi.mock("@/hooks/use-progress-router", () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+}));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 

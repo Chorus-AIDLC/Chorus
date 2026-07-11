@@ -16,6 +16,7 @@ import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useDarkClass } from "@/hooks/use-dark-class";
 import {
   nodeTypes,
   defaultEdgeStyle,
@@ -33,6 +34,7 @@ interface DagViewProps {
 
 export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps) {
   const t = useTranslations();
+  const isDark = useDarkClass();
   const searchParams = useSearchParams();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<TaskNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -122,28 +124,29 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-[#9A9A9A]" />
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (nodes.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-[#9A9A9A]">
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         {t("tasks.noTasksToDisplay")}
       </div>
     );
   }
 
   return (
-    <div className="flex-1 rounded-xl border border-[#E5E0D8] bg-[#FAFAF8] relative">
+    <div className="flex-1 rounded-xl border border-border bg-[#FAFAF8] dark:bg-[#1e1e1c] relative">
       {error && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-xs text-red-700 shadow-sm">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 rounded-lg bg-red-50 dark:bg-[#331619] border border-red-200 dark:border-[#5a2a2e] px-4 py-2 text-xs text-red-700 dark:text-[#F08078] shadow-sm">
           {error}
-          <Button variant="ghost" size="icon" className="ml-2 h-5 w-5 font-medium hover:text-red-900" onClick={() => setError(null)}><X className="h-3 w-3" /></Button>
+          <Button variant="ghost" size="icon" className="ml-2 h-5 w-5 font-medium hover:text-red-900 dark:hover:text-[#F0A0A0]" onClick={() => setError(null)}><X className="h-3 w-3" /></Button>
         </div>
       )}
       <ReactFlow
+        colorMode={isDark ? "dark" : "light"}
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
@@ -160,9 +163,9 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
         zoomOnPinch={true}
         panOnDrag={true}
       >
-        <Background color="#E5E0D8" gap={20} />
+        <Background color={isDark ? "#40392f" : "#E5E0D8"} gap={20} />
         <Controls
-          className="[&>button]:border-[#E5E0D8] [&>button]:bg-white [&>button]:text-[#2C2C2C] [&>button:hover]:bg-[#FAF8F4]"
+          className="[&>button]:border-border [&>button]:bg-card [&>button]:text-foreground [&>button:hover]:bg-background"
         />
       </ReactFlow>
     </div>

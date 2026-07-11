@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { LocaleProvider } from "@/contexts/locale-context";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ProgressProvider } from "@/components/progress-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,11 +35,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: next-themes' pre-hydration script mutates the
+    // <html> class before React hydrates, which would otherwise trip a
+    // hydration mismatch on the class attribute. This suppresses that one
+    // expected diff (it does not silence real mismatches on descendants).
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <LocaleProvider>{children}</LocaleProvider>
+        <ThemeProvider>
+          {/*
+            ProgressProvider (top-of-page navigation loading bar) is mounted
+            inside ThemeProvider so its `hsl(var(--primary))` color resolves to
+            the active theme's primary — see progress-provider.tsx.
+          */}
+          <ProgressProvider>
+            <LocaleProvider>{children}</LocaleProvider>
+          </ProgressProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
