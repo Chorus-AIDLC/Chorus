@@ -64,7 +64,8 @@ export function IdeaReferencesContent({
                 href={ref.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                title={ref.title}
+                className="flex min-w-0 items-center gap-1 text-sm font-medium text-primary hover:underline"
               >
                 <span className="truncate">{ref.title}</span>
                 <ExternalLink className="h-3 w-3 shrink-0" />

@@ -228,6 +228,9 @@ describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
     // (3) general route-through-Chorus rule
     expect(HEADLESS_PREAMBLE).toContain("chorus_add_comment");
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("elaboration");
+    // (4) reference-attachment reflex (strengthen-reference-association)
+    expect(HEADLESS_PREAMBLE).toContain("references[]");
+    expect(HEADLESS_PREAMBLE).toContain("chorus_add_reference");
     // (5) async hand-off — post then end the turn, don't block
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("end the turn");
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("pending");
