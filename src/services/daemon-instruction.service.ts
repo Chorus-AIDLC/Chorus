@@ -611,6 +611,8 @@ export function composeConversationalIdeaInstruction(params: {
       `5. End the turn. The user's answers in the idea's elaboration panel will wake this same conversation (the existing elaboration-answered wake).`,
       `6. On that re-wake, create each ACCEPTED child via chorus_pm_create_idea with parentUuid=${params.ideaUuid}. Each child starts in the "open" state — do NOT auto-elaborate them. The container's OWN status stays "elaborated"; creating children does not advance or alter it.`,
       ``,
+      `Reference reflex: whenever an external link is evidence for this work (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
+      ``,
       `--- User's idea description ---`,
       params.descriptionText,
     ].join("\n");
@@ -624,6 +626,8 @@ export function composeConversationalIdeaInstruction(params: {
     `1. Edit the idea via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning; you may restructure). The current title is a placeholder.`,
     `2. Immediately start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
     `3. End the turn. The user's panel answers will wake this same conversation.`,
+    ``,
+    `Reference reflex: whenever an external link is evidence for this idea (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
     ``,
     `--- User's idea description ---`,
     params.descriptionText,

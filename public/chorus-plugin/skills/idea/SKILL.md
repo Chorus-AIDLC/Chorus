@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.0"
+  version: "0.14.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -114,6 +114,37 @@ Before elaborating, understand the full picture:
    ```
    chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
    ```
+
+### Step 4.4: Attach External References
+
+**Make attaching external references a reflex, not an afterthought.** While gathering context you will often surface external links that are *evidence* for this Idea — a precedent issue or PR, a reference implementation, official documentation, a paper or blog post. The moment you see one, attach it as a reference artifact. References are read back inline by `chorus_get_idea` / `chorus_get_proposal` / `chorus_get_task`, so they carry the "why" forward to whoever picks up the proposal or task next.
+
+**Prefer attaching at creation time** via the inline `references[]` param on `chorus_pm_create_idea` (and later `chorus_pm_create_proposal` / `chorus_create_tasks`) rather than a post-hoc `chorus_add_reference`. Attaching at create means the evidence is present from the first read; use `chorus_add_reference` only when the link surfaces after the entity already exists.
+
+**Pick the `type` that fits the link:**
+
+| `type` | Use for |
+|--------|---------|
+| `docs` | Official documentation — framework / API / library reference |
+| `repo` | A reference implementation or source repository |
+| `issue_pr` | An issue or pull-request thread — precedent, prior art, the delivering PR |
+| `paper_blog` | A paper or blog post — background or design rationale |
+
+**Example** — a new localization Idea, attaching the precedent PR and the framework docs inline at creation:
+
+```
+chorus_pm_create_idea({
+  projectUuid: "<project-uuid>",
+  title: "Add Portuguese (pt) locale",
+  content: "...",
+  references: [
+    { type: "issue_pr", url: "https://github.com/org/repo/pull/411",
+      title: "PR #411 — prior locale work (precedent to mirror)" },
+    { type: "docs", url: "https://next-intl.dev/docs/routing",
+      title: "next-intl routing docs (locale registration)" }
+  ]
+})
+```
 
 ### Step 4.5: Brainstorm Mode (Optional Prelude)
 

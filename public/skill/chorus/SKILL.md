@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.0"
+  version: "0.14.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -197,6 +197,12 @@ Results can be filtered by project(s) using optional HTTP headers in your MCP co
 ### Reports
 
 A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. The `yolo` skill writes one mandatorily; the `develop` skill offers it advisorily on last-task verify.
+
+### References
+
+A **reference** is a first-class external-evidence link (`docs` / `repo` / `issue_pr` / `paper_blog`) attached to an idea / proposal / task via `chorus_add_reference`, or inline at creation via the `references[]` param on `chorus_pm_create_idea` / `chorus_pm_create_proposal` / `chorus_create_tasks`. References read back inline through the `chorus_get_*` tools.
+
+**Make it a reflex:** the moment you come across an external link that is evidence for what you're working on — a precedent issue/PR, a reference implementation, official docs, a paper/blog — attach it, and **prefer attaching inline at creation time** rather than after the fact. See the `idea-chorus` skill (`<BASE_URL>/skill/idea-chorus/SKILL.md`), Step 4.4, for the type-selection criteria and a worked example.
 
 ### Proposals
 
