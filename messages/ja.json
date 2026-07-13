@@ -963,7 +963,7 @@
     "button": "開発を開始",
     "starting": "開始中...",
     "startedHint": "開発を開始しました — エージェントが残りの課題を実行しています",
-    "offlineHint": "割り当てられたエージェントはオフラインです — 再接続するとボタンが有効になります",
+    "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に開発を開始してください。",
     "errorNoApprovedProposal": "この着想にはまだ承認済みの提案がありません",
     "errorNoUnfinishedTasks": "すべての課題はすでに完了しています",
@@ -978,7 +978,7 @@
     "confirmCta": "Yolo を実行",
     "starting": "開始中...",
     "startedHint": "Yolo を開始しました — エージェントがこの着想を完了まで進めています",
-    "offlineHint": "割り当てられたエージェントはオフラインです — 再接続するとボタンが有効になります",
+    "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に Yolo を実行してください。",
     "errorAssigneeNotAgent": "この着想の担当者はエージェントではありません",
     "errorGeneric": "Yolo の開始に失敗しました"

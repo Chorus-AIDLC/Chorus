@@ -26,6 +26,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import {
   canRequestYolo,
@@ -57,6 +63,11 @@ const ERROR_CODE_I18N_KEY: Record<YoloRequestedErrorCode, string> = {
   agent_offline: "errorAgentOffline",
   unknown: "errorGeneric",
 };
+
+// Shared purple styling for the Yolo button — used by the offline (disabled),
+// online (dialog trigger), and confirm-dialog copies so the three never drift.
+const YOLO_BUTTON_CLASS =
+  "bg-[#7F5AF0] hover:bg-[#6D48DE] dark:bg-[#6E56C8] dark:hover:bg-[#7C63D8] text-white";
 
 export function YoloButton({
   ideaUuid,
@@ -122,6 +133,35 @@ export function YoloButton({
     }
   };
 
+  // Offline: the button is disabled and a disabled <button> emits no pointer
+  // events, so the offline explanation rides a tooltip whose trigger is a
+  // focusable wrapper span (tabIndex=0) around the button. We deliberately do
+  // NOT mount the button as an AlertDialogTrigger here — a disabled trigger
+  // opens nothing, and stacking TooltipTrigger asChild onto an already-asChild
+  // AlertDialogTrigger would make two Radix primitives fight over one child.
+  // Offline and interactive states are mutually exclusive, so each path owns a
+  // single trigger.
+  if (!agentOnline) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex">
+              <Button
+                className={YOLO_BUTTON_CLASS}
+                disabled
+              >
+                <Rocket className="mr-2 h-4 w-4" />
+                {t("button")}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t("offlineHint")}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <>
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -130,7 +170,7 @@ export function YoloButton({
             like Start Development rather than an icon-only shortcut. */}
         <AlertDialogTrigger asChild>
           <Button
-            className="bg-[#7F5AF0] hover:bg-[#6D48DE] dark:bg-[#6E56C8] dark:hover:bg-[#7C63D8] text-white"
+            className={YOLO_BUTTON_CLASS}
             disabled={!enabled}
           >
             <Rocket className="mr-2 h-4 w-4" />
@@ -150,7 +190,7 @@ export function YoloButton({
                 call and close it ourselves in handleConfirm, so the spinner is
                 visible and a failure toast surfaces without a flash-close. */}
             <Button
-              className="bg-[#7F5AF0] hover:bg-[#6D48DE] dark:bg-[#6E56C8] dark:hover:bg-[#7C63D8] text-white"
+              className={YOLO_BUTTON_CLASS}
               onClick={handleConfirm}
               disabled={isStarting}
             >
@@ -166,9 +206,6 @@ export function YoloButton({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {!agentOnline && (
-        <span className="text-[11px] text-muted-foreground">{t("offlineHint")}</span>
-      )}
     </>
   );
 }

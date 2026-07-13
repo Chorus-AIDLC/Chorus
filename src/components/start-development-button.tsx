@@ -12,6 +12,12 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import {
   canStartDevelopment,
@@ -112,28 +118,44 @@ export function StartDevelopmentButton({
     }
   };
 
-  return (
-    <>
-      <Button
-        className="bg-primary hover:bg-[#B56A42] text-white"
-        onClick={handleClick}
-        disabled={!enabled || isStarting}
-      >
-        {isStarting ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {t("starting")}
-          </>
-        ) : (
-          <>
-            <Play className="mr-2 h-4 w-4" />
-            {t("button")}
-          </>
-        )}
-      </Button>
-      {!agentOnline && (
-        <span className="text-[11px] text-muted-foreground">{t("offlineHint")}</span>
+  const button = (
+    <Button
+      className="bg-primary hover:bg-[#B56A42] text-white"
+      onClick={handleClick}
+      disabled={!enabled || isStarting}
+    >
+      {isStarting ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          {t("starting")}
+        </>
+      ) : (
+        <>
+          <Play className="mr-2 h-4 w-4" />
+          {t("button")}
+        </>
       )}
-    </>
+    </Button>
   );
+
+  // Offline: the button is disabled and a disabled <button> emits no pointer
+  // events, so the offline explanation rides a tooltip whose trigger is a
+  // focusable wrapper span (tabIndex=0) around the button — reachable by both
+  // hover and keyboard focus. Online: render the button as-is, no wrapper.
+  if (!agentOnline) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex">
+              {button}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t("offlineHint")}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return button;
 }
