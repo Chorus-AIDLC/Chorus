@@ -963,7 +963,7 @@
     "button": "개발 시작",
     "starting": "시작 중...",
     "startedHint": "개발이 시작되었습니다 — 에이전트가 남은 작업을 실행하고 있습니다",
-    "offlineHint": "배정된 에이전트가 오프라인입니다 — 다시 연결되면 버튼이 활성화됩니다",
+    "offlineHint": "에이전트 오프라인 — 재연결 시 사용 가능",
     "errorAgentOffline": "배정된 에이전트가 오프라인입니다. 다시 연결된 후 개발을 시작하세요.",
     "errorNoApprovedProposal": "이 아이디어에는 승인된 제안이 아직 없습니다",
     "errorNoUnfinishedTasks": "모든 작업이 이미 완료되었습니다",
@@ -978,7 +978,7 @@
     "confirmCta": "Yolo 실행",
     "starting": "시작 중...",
     "startedHint": "Yolo가 시작되었습니다 — 에이전트가 이 아이디어를 완료까지 진행시키고 있습니다",
-    "offlineHint": "배정된 에이전트가 오프라인입니다 — 다시 연결되면 버튼이 활성화됩니다",
+    "offlineHint": "에이전트 오프라인 — 재연결 시 사용 가능",
     "errorAgentOffline": "배정된 에이전트가 오프라인입니다. 다시 연결된 후 Yolo를 실행하세요.",
     "errorAssigneeNotAgent": "이 아이디어의 담당자는 에이전트가 아닙니다",
     "errorGeneric": "Yolo를 시작하지 못했습니다"

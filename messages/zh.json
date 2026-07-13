@@ -963,7 +963,7 @@
     "button": "开始开发",
     "starting": "启动中...",
     "startedHint": "开发已启动 —— agent 正在执行剩余任务",
-    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再开始开发。",
     "errorNoApprovedProposal": "该 idea 还没有已批准的 proposal",
     "errorNoUnfinishedTasks": "所有任务都已完成",
@@ -978,7 +978,7 @@
     "confirmCta": "执行 Yolo",
     "starting": "启动中...",
     "startedHint": "Yolo 已启动 —— agent 正在推进这个 idea 到完成",
-    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再执行 Yolo。",
     "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
     "errorGeneric": "启动 Yolo 失败"

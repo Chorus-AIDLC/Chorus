@@ -963,7 +963,7 @@
     "button": "Start Development",
     "starting": "Starting...",
     "startedHint": "Development started — the agent is executing the remaining tasks",
-    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Start development after it reconnects.",
     "errorNoApprovedProposal": "This idea has no approved proposal yet",
     "errorNoUnfinishedTasks": "All tasks are already finished",
@@ -978,7 +978,7 @@
     "confirmCta": "Run Yolo",
     "starting": "Starting...",
     "startedHint": "Yolo started — the agent is driving this idea to done",
-    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
     "errorGeneric": "Failed to start Yolo"

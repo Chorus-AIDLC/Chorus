@@ -10,8 +10,25 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+// The offline hint now rides a Radix Tooltip, whose Popper-based primitives use
+// ResizeObserver + pointer-capture — absent from jsdom. Stub them so focusing
+// the trigger to open the tooltip doesn't throw.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+if (typeof Element !== "undefined" && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.scrollIntoView = () => {};
+}
 
 const { startDevelopmentActionMock, toastSuccessMock, toastErrorMock } = vi.hoisted(() => ({
   startDevelopmentActionMock: vi.fn(),
@@ -114,13 +131,29 @@ describe("StartDevelopmentButton — render gating", () => {
 });
 
 describe("StartDevelopmentButton — presence gating", () => {
-  it("disables with the offline hint when the agent has no online connection", () => {
+  it("disables the button and moves the offline hint into a focusable tooltip trigger (no persistent inline text)", async () => {
     presenceValue.current = {
       connections: [{ agentUuid: "agent-1", effectiveStatus: "offline" }],
     };
     render(<StartDevelopmentButton {...HAPPY_PROPS} />);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Start Development" }).disabled).toBe(true);
-    expect(screen.getByText(/assigned agent is offline/i)).toBeTruthy();
+
+    const btn = screen.getByRole<HTMLButtonElement>("button", { name: "Start Development" });
+    expect(btn.disabled).toBe(true);
+
+    // No persistent inline hint text is rendered up front — it only exists in
+    // the tooltip, which is closed until the trigger is hovered/focused.
+    expect(screen.queryByText(/enables on reconnect/i)).toBeNull();
+
+    // The disabled button is wrapped by a focusable (tabIndex=0) span that owns
+    // the tooltip trigger, so keyboard users can reveal the hint.
+    const trigger = btn.closest<HTMLElement>('[tabindex="0"]');
+    expect(trigger).toBeTruthy();
+
+    // Focusing the trigger opens the tooltip; the shortened offline copy shows.
+    fireEvent.focus(trigger!);
+    await waitFor(() => {
+      expect(screen.getAllByText(/enables on reconnect/i).length).toBeGreaterThan(0);
+    });
   });
 
   it("treats a missing presence provider as offline, never online", () => {
