@@ -31,6 +31,9 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
             <TabsTrigger value="codex" className="flex-1">
               {t("install.tabs.codex")}
             </TabsTrigger>
+            <TabsTrigger value="kiro" className="flex-1">
+              {t("install.tabs.kiro")}
+            </TabsTrigger>
             <TabsTrigger value="opencode" className="flex-1">
               {t("install.tabs.opencode")}
             </TabsTrigger>
@@ -102,6 +105,44 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <p className="text-sm text-muted-foreground">
                 {t("install.codex.step3Desc")}
+              </p>
+            </div>
+          </TabsContent>
+
+          {/* Kiro Tab */}
+          <TabsContent value="kiro" className="mt-4 space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.kiro.step1Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.kiro.step1Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.kiro.step2Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`curl -fsSL ${origin}/install-kiro.sh | bash`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.kiro.step2Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.kiro.step3Title")}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t("install.kiro.step3Desc")}
               </p>
             </div>
           </TabsContent>

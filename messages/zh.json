@@ -1133,6 +1133,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "kiro": "Kiro",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "其他智能体"
@@ -1149,6 +1150,14 @@
         "step2Tip": "脚本会自动注册 plugin marketplace 并写入 ~/.codex/config.toml 的 MCP 服务器配置。",
         "step3Title": "第 3 步：验证连接",
         "step3Desc": "打开 Codex，让它 check in 到 Chorus，例如输入 \"check in to chorus\"。"
+      },
+      "kiro": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，Kiro CLI 会在启动时读取这两个变量。",
+        "step2Title": "第 2 步：运行 Kiro 安装脚本",
+        "step2Tip": "默认全局安装到 ~/.kiro/，Chorus 在任意目录下均可用。若只想安装到当前项目 <cwd>/.kiro/，请追加参数：bash -s -- --workspace。",
+        "step3Title": "第 3 步：验证连接",
+        "step3Desc": "打开 Kiro CLI 并激活 /chorus-idea 技能，或直接以 Chorus agent 启动：kiro-cli --agent chorus。"
       },
       "opencode": {
         "step1Title": "第 1 步：设置环境变量",

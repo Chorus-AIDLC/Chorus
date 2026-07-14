@@ -166,6 +166,17 @@ What this means for clients:
 
 The Agent-level **AgentSession** model (used for swarm-mode observability via `chorus_create_session` / `chorus_session_*`) is an entirely separate concept from MCP transport sessions and is documented under [Session Tools](#session-tools-all-agents) below.
 
+### Client surfaces
+
+Chorus ships **four first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
+
+1. **Claude Code** — `public/chorus-plugin/` (marketplace-installed). See [CONNECT_CLAUDE_CODE.md](./CONNECT_CLAUDE_CODE.md).
+2. **Codex** — `plugins/chorus/` + `public/install-codex.sh`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
+3. **OpenClaw** — `packages/openclaw-plugin/` (TypeScript SSE/MCP runtime).
+4. **Kiro CLI** — `public/kiro-plugin/.kiro/` template tree + `public/install-kiro.sh` (merges into `~/.kiro/`, or `<cwd>/.kiro/` with `--workspace`). See [CONNECT_KIRO.md](./CONNECT_KIRO.md).
+
+For any other MCP-capable agent (Cursor, Continue, custom), see the standalone skill at `public/skill/` and [CONNECT_OTHER_AGENTS.md](./CONNECT_OTHER_AGENTS.md).
+
 ---
 
 ## Public Tools
