@@ -96,6 +96,7 @@ function exec(
     entityType: "task",
     entityUuid: `task-${uuid}`,
     rootIdeaUuid: null,
+    directIdeaUuid: null,
     status,
     interruptedReason: null,
     startedAt: null,

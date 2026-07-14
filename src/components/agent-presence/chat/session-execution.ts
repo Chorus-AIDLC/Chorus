@@ -24,20 +24,27 @@ export type SessionExecStatus = "running" | "interrupted" | "error" | null;
 //  - Ad-hoc conversation → matches its own `daemon_session:<sessionId>` execution.
 //  - Idea-anchored conversation → matches BOTH (a) a direct wake ON the idea
 //    (`idea:<directIdeaUuid>`), AND (b) an autonomous wake on a child resource of that
-//    idea (e.g. `task_assigned` → `task:<taskUuid>` with `rootIdeaUuid === directIdeaUuid`).
-//    A task wake IS the conversation's work on that idea, so it must surface the
-//    conversation's running/interrupt state — matching by `rootIdeaUuid` catches it
-//    (the prior `entityType === "idea"`-only predicate showed such a conversation idle).
+//    idea (e.g. `task_assigned` → `task:<taskUuid>`), matched by the execution's
+//    `directIdeaUuid` (the entity's directly-attached idea — the daemon's session anchor).
+//    A task/proposal wake IS the conversation's work on that idea, so it must surface the
+//    conversation's running/interrupt state.
+//
+//    We match on `directIdeaUuid`, NOT `rootIdeaUuid`: for a DERIVED (child) idea a
+//    child-resource wake resolves `directIdeaUuid = child` (this conversation) but
+//    `rootIdeaUuid = parent`. Matching by root would light up the PARENT conversation and
+//    leave the child (which actually owns the woken session) idle — the exact bug this
+//    fixes. Matching by the direct idea anchors the run on the child only; the parent
+//    shows nothing about the child's run.
 export function executionMatchesSession(
-  exec: Pick<ExecutionView, "entityType" | "entityUuid" | "rootIdeaUuid">,
+  exec: Pick<ExecutionView, "entityType" | "entityUuid" | "directIdeaUuid">,
   session: { sessionId: string; directIdeaUuid: string | null },
 ): boolean {
   if (session.directIdeaUuid) {
-    // Direct wake on the idea itself, OR any wake whose root idea IS this conversation's
+    // Direct wake on the idea itself, OR any wake whose DIRECT idea IS this conversation's
     // idea (its child task/proposal/document wakes).
     return (
       (exec.entityType === "idea" && exec.entityUuid === session.directIdeaUuid) ||
-      exec.rootIdeaUuid === session.directIdeaUuid
+      exec.directIdeaUuid === session.directIdeaUuid
     );
   }
   return (

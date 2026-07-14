@@ -15,6 +15,7 @@ function exec(over: Partial<ExecutionView> = {}): ExecutionView {
     entityType: "daemon_session",
     entityUuid: "sid-1",
     rootIdeaUuid: null,
+    directIdeaUuid: null,
     status: "running",
     interruptedReason: null,
     startedAt: null,
@@ -45,20 +46,59 @@ describe("executionMatchesSession", () => {
     expect(executionMatchesSession(exec({ entityType: "daemon_session", entityUuid: "idea-9", rootIdeaUuid: null }), ideaSession)).toBe(false);
   });
 
-  it("matches an idea-anchored conversation's AUTONOMOUS child wakes via rootIdeaUuid", () => {
-    // A task_assigned wake on the idea reports as task:<taskUuid> with rootIdeaUuid =
-    // the idea. It IS the conversation's work on that idea, so it must match (the old
-    // entityType==idea-only predicate showed such a conversation idle).
+  it("matches an idea-anchored conversation's AUTONOMOUS child wakes via directIdeaUuid", () => {
+    // A task_assigned wake on the idea reports as task:<taskUuid> with directIdeaUuid =
+    // the idea (its session anchor). It IS the conversation's work on that idea, so it
+    // must match (the old entityType==idea-only predicate showed such a conversation idle).
     expect(
       executionMatchesSession(
-        exec({ entityType: "task", entityUuid: "task-77", rootIdeaUuid: "idea-9" }),
+        exec({ entityType: "task", entityUuid: "task-77", directIdeaUuid: "idea-9" }),
         ideaSession,
       ),
     ).toBe(true);
-    // A task whose root idea is a DIFFERENT idea does not match.
+    // A task whose direct idea is a DIFFERENT idea does not match.
     expect(
       executionMatchesSession(
-        exec({ entityType: "task", entityUuid: "task-88", rootIdeaUuid: "idea-OTHER" }),
+        exec({ entityType: "task", entityUuid: "task-88", directIdeaUuid: "idea-OTHER" }),
+        ideaSession,
+      ),
+    ).toBe(false);
+  });
+
+  it("a DERIVED (child) idea's child-resource wake matches the CHILD session, NOT the parent", () => {
+    // The core fix. A task under a child idea resolves directIdeaUuid = child (session
+    // anchor) and rootIdeaUuid = parent. It must surface on the CHILD conversation only.
+    const childSession = { sessionId: "child-idea", directIdeaUuid: "child-idea" };
+    const parentSession = { sessionId: "parent-idea", directIdeaUuid: "parent-idea" };
+    const childTaskExec = exec({
+      entityType: "task",
+      entityUuid: "task-child",
+      directIdeaUuid: "child-idea",
+      rootIdeaUuid: "parent-idea",
+    });
+    // CHILD conversation lights up...
+    expect(executionMatchesSession(childTaskExec, childSession)).toBe(true);
+    // ...and the PARENT conversation shows nothing about the child's run (the bug).
+    expect(executionMatchesSession(childTaskExec, parentSession)).toBe(false);
+  });
+
+  it("does NOT match a child-resource wake by rootIdeaUuid (the old, buggy behavior is gone)", () => {
+    // An execution whose ROOT idea equals the session's idea but whose DIRECT idea is a
+    // child must NOT match this (parent) session — matching by root was the bug.
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-99", directIdeaUuid: "child-idea", rootIdeaUuid: "idea-9" }),
+        ideaSession, // directIdeaUuid: "idea-9" (the parent)
+      ),
+    ).toBe(false);
+  });
+
+  it("an old row with null directIdeaUuid does not match an idea session via root fallback", () => {
+    // Backward-compat: a pre-field daemon reports directIdeaUuid = null. A child-resource
+    // row then cannot match an idea conversation (only a direct entityType==='idea' wake can).
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-old", directIdeaUuid: null, rootIdeaUuid: "idea-9" }),
         ideaSession,
       ),
     ).toBe(false);

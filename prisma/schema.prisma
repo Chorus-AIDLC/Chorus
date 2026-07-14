@@ -546,6 +546,14 @@ model DaemonExecution {
   // → Idea.uuid; the root-idea lineage anchor for grouping/labeling. Null when
   //   the wake has no idea ancestor (e.g. a standalone/quick task).
   rootIdeaUuid   String?
+  // → Idea.uuid; the DIRECT idea (the entity's directly-attached idea — the same
+  //   value the daemon anchors its Claude session on). For a top-level idea this
+  //   equals rootIdeaUuid; for a derived (child) idea it is the child while
+  //   rootIdeaUuid is the topmost ancestor. The chat UI matches a conversation's
+  //   running/interruptible execution by this DIRECT idea, so a child idea's wake
+  //   surfaces on the child conversation, not its parent. Null when the wake has
+  //   no idea ancestor. Weak ref, no DB FK.
+  directIdeaUuid String?
 
   // running | queued | ended | interrupted
   //   `interrupted` is a STICKY status: when a wake's subprocess is stopped (by a

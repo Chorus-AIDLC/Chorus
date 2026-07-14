@@ -89,6 +89,11 @@ export interface SnapshotExecution {
   entityType: ExecutionEntityType;
   entityUuid: string;
   rootIdeaUuid?: string | null;
+  // The DIRECT idea (the entity's directly-attached idea — the daemon's session
+  // anchor). Equals rootIdeaUuid for a top-level idea; for a derived child it is
+  // the child while rootIdeaUuid is the topmost ancestor. Optional/nullable: a
+  // wake with no idea ancestor has none, and an older daemon may omit it.
+  directIdeaUuid?: string | null;
   status: ActiveExecutionStatus; // "running" | "queued" — never "ended"
   startedAt?: Date | null;
 }
@@ -105,6 +110,11 @@ export interface ExecutionView {
   entityType: string; // task | idea | proposal | document | daemon_session
   entityUuid: string;
   rootIdeaUuid: string | null;
+  // The DIRECT idea (the entity's directly-attached idea — the daemon session
+  // anchor). Null when the wake has no idea ancestor or when reported by an older
+  // daemon that predates this field. The chat UI matches a conversation's
+  // execution by this value, not rootIdeaUuid.
+  directIdeaUuid: string | null;
   status: string; // running | queued | ended | interrupted
   // Discriminator for the `interrupted` status: "user" | "crash" | null. Null for
   // any non-interrupted row. The UI uses it to show a manual "Resume" affordance
@@ -151,6 +161,7 @@ interface DaemonExecutionRow {
   entityType: string;
   entityUuid: string;
   rootIdeaUuid: string | null;
+  directIdeaUuid: string | null;
   status: string;
   interruptedReason: string | null;
   startedAt: Date | null;
@@ -192,6 +203,7 @@ function toExecutionView(
     entityType: row.entityType,
     entityUuid: row.entityUuid,
     rootIdeaUuid: row.rootIdeaUuid,
+    directIdeaUuid: row.directIdeaUuid,
     status: row.status,
     interruptedReason: row.interruptedReason,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
@@ -439,6 +451,7 @@ export async function reconcileSnapshot(
         entityType: exec.entityType,
         entityUuid: exec.entityUuid,
         rootIdeaUuid: exec.rootIdeaUuid ?? null,
+        directIdeaUuid: exec.directIdeaUuid ?? null,
         status: exec.status,
         startedAt: exec.startedAt ?? null,
       },
@@ -447,6 +460,7 @@ export async function reconcileSnapshot(
         companyUuid,
         agentUuid,
         rootIdeaUuid: exec.rootIdeaUuid ?? null,
+        directIdeaUuid: exec.directIdeaUuid ?? null,
         status: exec.status,
         startedAt: exec.startedAt ?? null,
         // A reported active status means the daemon is running/queuing this entity

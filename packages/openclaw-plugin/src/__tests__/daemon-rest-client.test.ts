@@ -78,14 +78,15 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     const client = createDaemonRestClient({ ...BASE, getConnectionUuid: () => "conn-1", fetchImpl });
     await client.executionState({
       executions: [
-        { entityType: "task", entityUuid: "task-3", rootIdeaUuid: "idea-root", status: "running", startedAt: "2026-06-20T00:00:00Z" },
+        { entityType: "task", entityUuid: "task-3", rootIdeaUuid: "idea-root", directIdeaUuid: "idea-9", status: "running", startedAt: "2026-06-20T00:00:00Z" },
       ],
     });
     expect(calls[0].url).toBe("https://chorus.example.com/api/daemon/execution-state");
     expect(JSON.parse((calls[0].init as RequestInit).body as string)).toEqual({
       connectionUuid: "conn-1",
       executions: [
-        { entityType: "task", entityUuid: "task-3", rootIdeaUuid: "idea-root", status: "running", startedAt: "2026-06-20T00:00:00Z" },
+        // directIdeaUuid (child) rides the wire distinct from rootIdeaUuid (parent).
+        { entityType: "task", entityUuid: "task-3", rootIdeaUuid: "idea-root", directIdeaUuid: "idea-9", status: "running", startedAt: "2026-06-20T00:00:00Z" },
       ],
     });
   });
