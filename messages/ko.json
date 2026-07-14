@@ -1155,7 +1155,7 @@
         "step1Title": "1단계: 환경 변수 설정",
         "step1Tip": "팁: Kiro CLI가 시작 시 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
         "step2Title": "2단계: Kiro 설치 프로그램 실행",
-        "step2Tip": "기본적으로 ~/.kiro/에 전역 설치되어 모든 디렉터리에서 Chorus를 사용할 수 있습니다. 현재 프로젝트의 <cwd>/.kiro/에만 설치하려면 플래그를 추가하세요: bash -s -- --workspace.",
+        "step2Tip": "기본적으로 ~/.kiro/에 전역 설치되어 모든 디렉터리에서 Chorus를 사용할 수 있습니다. 현재 디렉터리의 .kiro/에만 설치하려면 플래그를 추가하세요: bash -s -- --workspace.",
         "step3Title": "3단계: 연결 확인",
         "step3Desc": "Kiro CLI를 열고 /chorus-idea 스킬을 활성화하거나, Chorus 에이전트로 바로 시작하세요: kiro-cli --agent chorus."
       },

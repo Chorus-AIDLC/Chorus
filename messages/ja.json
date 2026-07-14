@@ -1155,7 +1155,7 @@
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：Kiro インストーラーを実行",
-        "step2Tip": "デフォルトでは ~/.kiro/ にグローバルインストールされ、Chorus をどのディレクトリでも利用できます。現在のプロジェクトの <cwd>/.kiro/ にのみインストールする場合は、フラグを追加してください：bash -s -- --workspace。",
+        "step2Tip": "デフォルトでは ~/.kiro/ にグローバルインストールされ、Chorus をどのディレクトリでも利用できます。現在のディレクトリの .kiro/ にのみインストールする場合は、フラグを追加してください：bash -s -- --workspace。",
         "step3Title": "ステップ 3：接続を確認",
         "step3Desc": "Kiro CLI を開いて /chorus-idea スキルを有効化するか、Chorus エージェントで直接起動してください：kiro-cli --agent chorus。"
       },

@@ -1155,7 +1155,7 @@
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
         "step2Title": "Step 2: Run the Kiro installer",
-        "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into <cwd>/.kiro/ instead, append the flag: bash -s -- --workspace.",
+        "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into the current directory's .kiro/ instead, append the flag: bash -s -- --workspace.",
         "step3Title": "Step 3: Verify connection",
         "step3Desc": "Open Kiro CLI and activate the /chorus-idea skill, or start with the Chorus agent directly: kiro-cli --agent chorus."
       },
