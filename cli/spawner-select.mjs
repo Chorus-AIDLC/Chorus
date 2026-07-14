@@ -11,10 +11,11 @@
 
 import { ClaudeSpawner } from "./claude-spawner.mjs";
 import { CodexSpawner } from "./codex-spawner.mjs";
+import { KiroSpawner } from "./kiro-spawner.mjs";
 
 /**
  * Construct the spawner backend for `agentType`.
- * @param {string} agentType  "claude-code" | "codex" (already validated upstream).
+ * @param {string} agentType  "claude-code" | "codex" | "kiro" (already validated upstream).
  * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string } }} [opts]
  * @returns {import("./codex-spawner.mjs").Spawner}
  */
@@ -22,6 +23,11 @@ export function selectSpawner(agentType, opts = {}) {
   const { logger, permissionMode, creds } = opts;
   if (agentType === "codex") {
     return new CodexSpawner({ logger, permissionMode, creds });
+  }
+  if (agentType === "kiro") {
+    // Kiro follows the Codex model — MCP from the user's plugin config, daemon key
+    // via env — so it takes the same { logger, permissionMode, creds } shape.
+    return new KiroSpawner({ logger, permissionMode, creds });
   }
   // Default / "claude-code": construction byte-identical to the prior daemon
   // (ClaudeSpawner takes only { logger, permissionMode } — creds are not used by

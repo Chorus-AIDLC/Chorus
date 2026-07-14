@@ -13,10 +13,11 @@
  */
 export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
-/** Known agent backends. Only `claude-code` is implemented; the rest reserve
- * the extension point (see daemon-agent-selection). Exported for the resolver
- * the --agent task wires in; parsing here does not validate the value. */
-export const KNOWN_AGENTS = new Set(["claude-code"]);
+/** Known agent backends, kept in sync with the authoritative list in
+ * daemon-agent.mjs (`claude-code`, `codex`, `kiro` — all implemented). This copy
+ * is informational only: parsing here does not validate the value (the resolver
+ * in daemon-agent.mjs is the single source of truth for validation). */
+export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro"]);
 
 /**
  * Parse the client-subcommand flags out of an arg list. Recognizes the
@@ -117,7 +118,7 @@ OPTIONS
   --url <url>              Remote Chorus server URL            (env: CHORUS_URL)
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
   --agent <type>           Local agent backend to wake         (env: CHORUS_AGENT)
-                           (claude-code | codex; default: claude-code)
+                           (claude-code | codex | kiro; default: claude-code)
   --yolo                   Full autonomy for the woken agent   (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes, any
                            command). This is the DEFAULT permission mode.

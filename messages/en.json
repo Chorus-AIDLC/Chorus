@@ -1462,6 +1462,7 @@
     "clientClaudeCode": "Claude Code",
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
+    "clientKiro": "Kiro",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",
