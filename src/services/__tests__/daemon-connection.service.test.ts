@@ -112,8 +112,8 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex", () => {
-    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex"]);
+  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex + kiro", () => {
+    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex", "kiro"]);
   });
 
   it("STALE_THRESHOLD_MS is 90s (3x the 30s heartbeat)", () => {

@@ -29,6 +29,7 @@ import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { resolveClaudePath } from "./claude-spawner.mjs";
 import { resolveCodexPath } from "./codex-spawner.mjs";
+import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { selectSpawner } from "./spawner-select.mjs";
 import {
   createExecutionUploadHooks,
@@ -484,6 +485,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // banner shows the right binary instead of always probing for `claude`.
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
   const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
+  const findKiro = deps.resolveKiroPath ?? resolveKiroPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
   // Resolve the agent backend (default claude-code). An unknown --agent /
@@ -557,10 +559,12 @@ export async function runDaemon(flags = {}, deps = {}) {
 
   // Detect the SELECTED backend's executable (non-fatal): the daemon still
   // subscribes when it's missing; a wake surfaces the error visibly when one
-  // arrives. The resolved path (or absence) is shown in the banner below. codex
-  // → resolveCodexPath, otherwise resolveClaudePath — so a `--agent codex` run
-  // probes (and the banner reports) `codex`, not `claude`.
-  const cliPath = agentType === "codex" ? findCodex() : findClaude();
+  // arrives. The resolved path (or absence) is shown in the banner below. Each
+  // backend probes its own binary — codex → resolveCodexPath, kiro →
+  // resolveKiroPath, otherwise resolveClaudePath — so a `--agent kiro` run probes
+  // (and the banner reports) `kiro-cli`, not `claude`.
+  const cliPath =
+    agentType === "codex" ? findCodex() : agentType === "kiro" ? findKiro() : findClaude();
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
