@@ -1,0 +1,332 @@
+---
+name: chorus-idea
+description: Chorus Idea workflow — claim ideas, run elaboration rounds, and prepare for proposal creation.
+license: AGPL-3.0
+metadata:
+  author: chorus
+  version: "0.14.1"
+  category: project-management
+  mcp_server: chorus
+---
+
+# Chorus Idea Skill
+
+This skill covers the **Ideation** stage of the AI-DLC workflow: claiming Ideas, running structured elaboration rounds to clarify requirements, and preparing for Proposal creation.
+
+---
+
+## Overview
+
+Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) create Ideas describing what they need. The PM Agent claims an Idea, runs elaboration to clarify requirements, and then moves on to `/chorus-proposal` to create a Proposal with document and task drafts.
+
+**Idea status lifecycle (3 stored states):**
+
+```
+open --> elaborating --> elaborated
+```
+
+All post-elaboration progress (planning, building, verifying, done) is **derived** from the state of linked Proposals and Tasks. No agent should set Idea status directly beyond elaboration -- all transitions are side-effects of claiming, releasing, or completing elaboration.
+
+---
+
+## Tools
+
+**Idea Management:**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_pm_create_idea` | Create a new idea in a project (on behalf of humans). Optional `parentUuid` derives a child idea from an existing same-project idea (single-parent lineage). |
+| `chorus_edit_idea` | Edit an existing idea's title, description, and/or lineage parent. `parentUuid`: another same-project idea to reparent under, `null` to detach to top-level, omit to leave unchanged (cycle-checked + same-project). Single-parent **weak** lineage — a parent shows a read-only `+N derived` rollup but never blocks either idea's flow. Records an "edited" activity and signals presence. |
+| `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
+| `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
+
+**Requirements Elaboration:**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_pm_start_elaboration` | Generate an elaboration round (first, follow-up, or appended-after-resolution) |
+| `chorus_pm_validate_elaboration` | Mark the whole elaboration complete (requires `idea:admin`; requires human confirmation first) |
+| `chorus_pm_skip_elaboration` | Skip elaboration for trivially clear Ideas |
+| `chorus_answer_elaboration` | Submit answers for an elaboration round (`roundUuid` optional — auto-locates the active round) |
+| `chorus_get_elaboration` | Get full elaboration state (rounds, questions, answers) |
+
+**Shared tools** (checkin, query, comment, search, notifications): see the `chorus` steering doc.
+
+---
+
+## Workflow
+
+### Step 1: Check In
+
+```
+chorus_checkin()
+```
+
+Review your persona, current assignments, and pending work counts.
+
+### Step 2: Find Work
+
+```
+chorus_get_available_ideas({ projectUuid: "<project-uuid>" })
+```
+
+Or check existing assignments:
+
+```
+chorus_get_my_assignments()
+```
+
+### Step 3: Claim an Idea
+
+Claiming automatically transitions the Idea to `elaborating` status:
+
+```
+chorus_claim_idea({ ideaUuid: "<idea-uuid>" })
+```
+
+### Step 4: Gather Context
+
+Before elaborating, understand the full picture:
+
+1. **Read the idea in detail:**
+   ```
+   chorus_get_idea({ ideaUuid: "<idea-uuid>" })
+   ```
+
+2. **Read existing project documents** (for context, tech stack, conventions):
+   ```
+   chorus_get_documents({ projectUuid: "<project-uuid>" })
+   chorus_get_document({ documentUuid: "<doc-uuid>" })
+   ```
+
+3. **Review past proposals** (to understand patterns and standards):
+   ```
+   chorus_get_proposals({ projectUuid: "<project-uuid>", status: "approved" })
+   ```
+
+4. **Check existing tasks** (to avoid duplication):
+   ```
+   chorus_list_tasks({ projectUuid: "<project-uuid>" })
+   ```
+
+5. **Read comments** on the idea for additional context:
+   ```
+   chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
+   ```
+
+### Step 4.4: Attach External References
+
+**Make attaching external references a reflex, not an afterthought.** While gathering context you will often surface external links that are *evidence* for this Idea — a precedent issue or PR, a reference implementation, official documentation, a paper or blog post. The moment you see one, attach it as a reference artifact. References are read back inline by `chorus_get_idea` / `chorus_get_proposal` / `chorus_get_task`, so they carry the "why" forward to whoever picks up the proposal or task next.
+
+**Prefer attaching at creation time** via the inline `references[]` param on `chorus_pm_create_idea` (and later `chorus_pm_create_proposal` / `chorus_create_tasks`) rather than a post-hoc `chorus_add_reference`. Attaching at create means the evidence is present from the first read; use `chorus_add_reference` only when the link surfaces after the entity already exists.
+
+**Pick the `type` that fits the link:**
+
+| `type` | Use for |
+|--------|---------|
+| `docs` | Official documentation — framework / API / library reference |
+| `repo` | A reference implementation or source repository |
+| `issue_pr` | An issue or pull-request thread — precedent, prior art, the delivering PR |
+| `paper_blog` | A paper or blog post — background or design rationale |
+
+**Example** — a new localization Idea, attaching the precedent PR and the framework docs inline at creation:
+
+```
+chorus_pm_create_idea({
+  projectUuid: "<project-uuid>",
+  title: "Add Portuguese (pt) locale",
+  content: "...",
+  references: [
+    { type: "issue_pr", url: "https://github.com/org/repo/pull/411",
+      title: "PR #411 — prior locale work (precedent to mirror)" },
+    { type: "docs", url: "https://next-intl.dev/docs/routing",
+      title: "next-intl routing docs (locale registration)" }
+  ]
+})
+```
+
+### Step 4.5: Brainstorm Mode (Optional Prelude)
+
+If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer the user a brainstorm prelude before structured elaboration. Ask the user once — a single interactive question (header `"Brainstorm"`, two options: `"Already clear, run structured elaboration"` and `"Brainstorm first to explore directions"`) — and wait for the answer.
+
+- **"Already clear":** Skip to Step 5.
+- **"Brainstorm first":** Invoke the `/chorus-brainstorm` skill. See `/chorus-brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
+
+When `/chorus-brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
+
+- If the synthesized round answers cover everything → obtain human confirmation, then call `chorus_pm_validate_elaboration` to resolve the elaboration. (Resolve needs `idea:admin` — see Step 5.6 if your key is `pm_agent`-preset.)
+- If gaps remain → call `chorus_pm_start_elaboration` again to open a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
+
+Either outcome ends Step 4.5; skip Step 5.
+
+### Step 5: Elaborate on the Idea
+
+**Every Idea should go through elaboration.** Skip only when requirements are completely unambiguous (e.g., bug fix with clear steps). Elaboration improves Proposal quality and reduces rejection cycles.
+
+#### Simple Ideas (skip elaboration)
+
+You may skip elaboration, but **you MUST ask the user for permission first** — an explicit interactive question, wait for their answer — before calling `chorus_pm_skip_elaboration`. Never skip on your own judgment alone.
+
+```
+chorus_pm_skip_elaboration({
+  ideaUuid: "<idea-uuid>",
+  reason: "Bug fix with clear reproduction steps"
+})
+```
+
+#### Standard/Complex Ideas (run elaboration)
+
+> **Elaboration is a loop, not a straight line.** Steps 2–5 below are **one round**. Keep looping back to `chorus_pm_start_elaboration` (a new round) until every open question is settled, then resolve **once** in Step 6. You re-enter the loop whenever:
+> - the answers to a round **derive new questions** or surface a contradiction/gap, **or**
+> - at the resolve gate (Step 5d / Step 6) the **human raises a new concern or correction**.
+>
+> Each new round is just another `chorus_pm_start_elaboration` call — there is no separate "follow-up" flag, and you do not resolve until the loop is genuinely done. Round cap is 10.
+
+1. **Determine depth** based on idea complexity:
+   - `"minimal"` — 2-4 questions (small features, minor enhancements)
+   - `"standard"` — 5-10 questions (typical new features)
+   - `"comprehensive"` — 10-15 questions (large features, architectural changes)
+
+2. **Create elaboration questions:**
+
+   > **Note:** Do NOT include an "Other" option in your questions. The UI automatically adds a free-text "Other" option to every question.
+
+   ```
+   chorus_pm_start_elaboration({
+     ideaUuid: "<idea-uuid>",
+     depth: "standard",
+     questions: [
+       {
+         id: "q1",
+         text: "What user roles should have access to this feature?",
+         category: "functional",
+         options: [
+           { id: "a", label: "All users" },
+           { id: "b", label: "Admin only" },
+           { id: "c", label: "Role-based (configurable)" }
+         ]
+       }
+     ]
+   })
+   ```
+
+3. **Present questions to the user interactively.** Do NOT display questions as an undifferentiated wall of plain text. Ask them as clear, single-purpose questions (one decision at a time, offering the option labels you defined), and wait for the human's selections before continuing.
+
+   After the user answers, map their selections back to option IDs and call `chorus_answer_elaboration`. If the user picks a free-text answer that matches none of the options, set `selectedOptionId: null` and put their input in `customText`.
+
+4. **Submit answers:**
+   ```
+   chorus_answer_elaboration({
+     ideaUuid: "<idea-uuid>",
+     roundUuid: "<round-uuid>",
+     answers: [
+       { questionId: "q1", selectedOptionId: "c", customText: null },
+       { questionId: "q2", selectedOptionId: null, customText: "Custom hybrid approach" }
+     ]
+   })
+   ```
+
+   Answer format:
+   - **Select an option**: `selectedOptionId: "a", customText: null`
+   - **Select an option + add a note**: `selectedOptionId: "a", customText: "additional context"`
+   - **Choose "Other" (free text)**: `selectedOptionId: null, customText: "your answer"` — customText is required when no option is selected
+
+   > `roundUuid` is **optional** on `chorus_answer_elaboration`. Omit it and the service auto-locates the Idea's single active (`pending_answers`) round. Pass it explicitly only when you need to target a specific round.
+
+5. **Review answers and confirm with the owner (@mention flow):**
+
+   After answers are submitted, **@mention the answerer** (typically the agent's owner) with a summary of your understanding. This prevents misinterpretation before you resolve.
+
+   a. **Get owner info** from checkin response (`agent.owner`) or search:
+      ```
+      chorus_search_mentionables({ query: "owner-name" })
+      ```
+
+   b. **Post a summary comment** on the idea:
+      ```
+      chorus_add_comment({
+        targetType: "idea",
+        targetUuid: "<idea-uuid>",
+        content: "@[Owner Name](user:owner-uuid) I've reviewed the elaboration answers. Here's my understanding:\n\n- Key requirement 1: ...\n- Key requirement 2: ...\n\nDoes this match your intent?"
+      })
+      ```
+
+   c. **Wait for confirmation** via comments.
+
+   d. **Based on the response — this is the loop decision point:**
+      - **Confirmed, nothing left to discuss** — Treat this as the human confirmation required to resolve; proceed to Step 6 and call `chorus_pm_validate_elaboration`.
+      - **Human raises a new concern / correction / question** — Do **NOT** resolve. Loop back: open a **new round** with `chorus_pm_start_elaboration` capturing the new questions, collect answers (Steps 2–5 again), and re-confirm. Repeat until the human has no remaining concerns.
+      - **The answers themselves derived new questions or a contradiction** — Same as above: loop back to `chorus_pm_start_elaboration` for another round before resolving.
+      - **Unclear** — Ask clarifying questions via another comment, then continue the loop.
+
+6. **Resolve the elaboration (the single commit gate — only when the loop is done):**
+
+   Resolving marks the **whole elaboration phase** complete — it sets `idea.elaborationStatus = "resolved"` (Idea → `elaborated`), which is the gating signal that lets a downstream Proposal be submitted. It is an **Idea-level** action (takes only `ideaUuid`, does not target a round). Resolve **once**, only after the Step 5d loop has fully settled — every derived question answered and the human has no remaining concerns. If anything is still open, go back to `chorus_pm_start_elaboration` instead of resolving.
+
+   > **Precondition:** resolve requires the Idea to have at least one round and **every** round to be fully answered (none left in `pending_answers`). If a round still has open questions, answer it (or it'll be rejected).
+
+   > **⚠️ Human confirmation required.** Outside YOLO automation you MUST obtain explicit human confirmation before resolving. The "Confirmed" reply in step 5d above counts as that confirmation. Never resolve on your own judgment alone.
+
+   > **Permission (N1): `chorus_pm_validate_elaboration` requires `idea:admin`.** The `pm_agent` preset only grants `idea:write`, so a PM-preset agent **cannot** resolve — it must hand off to an `admin_agent`-preset agent (or an admin-preset API key) to perform the resolve. If your key lacks `idea:admin`, surface this to the human and request the handoff instead of failing silently.
+
+   > **Assignee precondition (N2):** the resolving actor must be the Idea's **assignee**. A separate human reviewer resolving a PM-owned Idea therefore needs **both** `idea:admin` **and** to be assigned the Idea (claim/reassign it first). Admin permission alone is not enough.
+
+   ```
+   chorus_pm_validate_elaboration({
+     ideaUuid: "<idea-uuid>"
+   })
+   ```
+
+   **Want a follow-up round instead of resolving?** Just call `chorus_pm_start_elaboration` again — there is no separate "open a round" flag. It works while still `elaborating` (a normal follow-up round) and, after you've already resolved, as an **appended round** (`isAppended: true`) that keeps the Idea `elaborated` and never blocks an in-flight Proposal. Per-question issue tagging no longer exists.
+
+7. **Check elaboration status** at any time:
+   ```
+   chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
+   ```
+
+**Elaboration as audit trail:** Even if the user discusses requirements with you outside the formal elaboration flow, record key decisions as elaboration rounds so they are persisted and visible to the team.
+
+**Question categories:** `functional`, `non_functional`, `business_context`, `technical_context`, `user_scenario`, `scope`
+
+---
+
+## Idea Lineage (derive vs. task)
+
+Ideas can form a **single-parent forest**: an idea may have one parent (`parentUuid`), establishing a weak lineage. "Weak" means the parent only shows a read-only `+N derived` rollup of its **direct** children — it never blocks or alters either idea's elaboration/proposal/task flow, and a parent is always a full first-class idea (it can have its own content, proposals, and tasks).
+
+When a new direction surfaces (during elaboration, brainstorm, or review), decide where it belongs:
+
+- **Derive a child idea** (`chorus_pm_create_idea` with `parentUuid`, or `chorus_edit_idea` with `parentUuid` to reparent an existing idea) when the new direction needs **its own elaboration/proposal lifecycle** — it is an independent AI-DLC pass.
+- **Add a task** to the current idea's proposal when the new work is just *how to implement the current idea*.
+- **Create a plain top-level idea** (no `parentUuid`) when there is no lineage to the current idea.
+
+This is a soft heuristic, not a rule — use judgment. Cycle prevention is automatic: you cannot set a parent that is the idea itself or one of its descendants. Parent and child must be in the same project (cross-project lineage is not supported yet). Deleting a parent re-parents its children to top-level (it never cascades).
+
+### Theme ideas
+
+A **theme** is an idea that only *groups* related children under a shared direction — it is not a deliverable itself. Set `isContainer: true` on `chorus_pm_create_idea` / `chorus_edit_idea` (or the detail-panel toggle) to make one; it is freely reversible. The one rule that matters: **a theme cannot create a proposal** — to deliver its direction, derive a child idea (`parentUuid = <theme>`) and write the proposal on the child. A theme may still elaborate (its elaboration is shared context for children), and its status/progress rolls up from its children. Everything else is self-documented on the tool params.
+
+#### Theme decompose (daemon-assisted)
+
+When a theme is created via the conversational "help me break this into child ideas" entry, don't create children immediately — **propose then create**: (1) edit the theme + optionally one short scope-elaboration round; (2) propose the candidate children as an elaboration round (`chorus_pm_start_elaboration`), one single-select question per candidate, for the user to accept/decline in the panel; (3) on the answer re-wake, create each accepted child with `chorus_pm_create_idea` (`parentUuid = <theme>`, left in `open`).
+
+---
+
+## Tips
+
+- When combining multiple ideas, explain how they relate in the proposal description
+- Elaboration improves Proposal quality — don't skip it unless the requirements are trivially clear
+- Ask interactive, single-purpose questions for all human decisions — never bury them in a plain-text wall
+- Record decisions made in conversation as elaboration rounds for auditability
+- Always @mention the owner to confirm understanding before resolving
+
+---
+
+## Next
+
+- Once elaboration is resolved, use `/chorus-proposal` to create a Proposal with document and task drafts
+- **Human "Verify Elaborate" handoff:** when a human clicks **Verify Elaborate** on the idea-detail panel, Chorus resolves the elaboration and wakes the Idea's assigned daemon agent to write the proposal — so the woken agent picks up this idea→proposal handoff automatically (no human-authored proposal needed).
+- **Human "Start Development" handoff:** once the proposal is approved and unfinished tasks remain, the idea-detail panel shows a **Start Development** button (enabled while the assignee agent is online). A `start_development` wake means: claim and execute ALL remaining tasks of the idea's approved proposal in dependency order until none are claimable — not just one task.
+- **Human "Yolo" handoff:** the idea-detail panel also shows a **Yolo** button at ANY incomplete stage (enabled while the assignee agent is online), confirmed via a dialog before it fires. A `yolo_requested` wake means: drive the WHOLE idea to done via the `/chorus-yolo` skill (the full-auto AI-DLC pipeline) — read the idea's current state first and resume from whatever phase it is in (self-elaborate + write the proposal if not yet resolved; execute if a proposal is approved with open tasks; etc.), never assuming a fixed stage. Complete through done + the completion report, but never merge or push a PR without explicit human approval.
+- For platform overview and shared tools, see the `chorus` steering doc.

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "chorus": {
+      "type": "http",
+      "url": "${CHORUS_URL}/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:CHORUS_API_KEY}"
+      },
+      "disabled": false
+    }
+  }
+}

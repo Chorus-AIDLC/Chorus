@@ -1,0 +1,50 @@
+{
+  "name": "chorus",
+  "description": "Chorus AI-DLC main agent. Drives the full Idea -> Proposal -> Execute -> Verify -> Done workflow against the Chorus MCP server, pre-loads every chorus-* stage skill and the Chorus steering context, spawns the read-only reviewer subagents, and automates session lifecycle (checkin on spawn, heartbeat/checkout on stop, reviewer nudges after workflow MCP calls).",
+  "prompt": "file://./chorus.md",
+  "includeMcpJson": true,
+  "tools": [
+    "read",
+    "write",
+    "shell",
+    "@chorus",
+    "subagent"
+  ],
+  "resources": [
+    "skill://.kiro/skills/chorus-idea/SKILL.md",
+    "skill://.kiro/skills/chorus-proposal/SKILL.md",
+    "skill://.kiro/skills/chorus-develop/SKILL.md",
+    "skill://.kiro/skills/chorus-yolo/SKILL.md",
+    "skill://.kiro/skills/chorus-review/SKILL.md",
+    "skill://.kiro/skills/chorus-quick-dev/SKILL.md",
+    "skill://.kiro/skills/chorus-brainstorm/SKILL.md",
+    "skill://.kiro/skills/chorus-openspec-aware/SKILL.md",
+    "file://.kiro/steering/chorus.md"
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "__CHORUS_BIN__/on-agent-spawn.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "__CHORUS_BIN__/on-stop.sh"
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "@chorus/chorus_pm_submit_proposal",
+        "command": "__CHORUS_BIN__/on-post-submit-proposal.sh"
+      },
+      {
+        "matcher": "@chorus/chorus_submit_for_verify",
+        "command": "__CHORUS_BIN__/on-post-submit-for-verify.sh"
+      },
+      {
+        "matcher": "@chorus/chorus_admin_verify_task",
+        "command": "__CHORUS_BIN__/on-post-verify-task.sh"
+      }
+    ]
+  }
+}

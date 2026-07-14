@@ -1133,6 +1133,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "kiro": "Kiro",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "Other Agents"
@@ -1149,6 +1150,14 @@
         "step2Tip": "The script registers the plugin marketplace and writes the MCP server entry into ~/.codex/config.toml.",
         "step3Title": "Step 3: Verify connection",
         "step3Desc": "Open Codex and ask it to check in to Chorus — e.g. type \"check in to chorus\"."
+      },
+      "kiro": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
+        "step2Title": "Step 2: Run the Kiro installer",
+        "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into the current directory's .kiro/ instead, append the flag: bash -s -- --workspace.",
+        "step3Title": "Step 3: Verify connection",
+        "step3Desc": "Open Kiro CLI and activate the /chorus-idea skill, or start with the Chorus agent directly: kiro-cli --agent chorus."
       },
       "opencode": {
         "step1Title": "Step 1: Set environment variables",
