@@ -718,16 +718,33 @@ export async function createTurnAndResolveTarget(
     const origin = selection.connection;
     const directed = selection.kind === "directed";
 
-    // (5) Session business key. For a DIRECTED mention/task whose resolved target differs
-    // from the idea's EXISTING session origin (a cross-cwd directed wake), the resolved
-    // INSTANCE participates in the key so each (host, cwd) keeps its OWN cwd-bound
-    // transcript — never re-pointing the existing session's origin. An idea-anchored
-    // session normally keys on directIdeaUuid; here we suffix the resolved connection so
-    // the per-instance session is distinct, and stamp directIdeaUuid = null so this
-    // per-instance conversation is treated as its own thread (the idea's canonical session
-    // keeps its directIdeaUuid intact).
-    let sessionId = directIdeaUuid ?? ctx.entityUuid;
-    let sessionDirectIdeaUuid: string | null = directIdeaUuid;
+    // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
+    // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
+    // An idea-anchored session keys on directIdeaUuid and is NEVER forked into a
+    // per-instance `${idea}::${conn}` thread. For a DIRECTED idea-anchored wake whose
+    // resolved online origin differs from the idea's EXISTING canonical session origin (the
+    // cross-cwd case — a pinned mention, a directed human_instruction, or a task-assignment
+    // pin that resolves to another cwd), RE-POINT that canonical session's
+    // originConnectionUuid to the resolved origin, so the user's turn AND the daemon's later
+    // transcript / turn-lifecycle reports (which re-derive the plain idea uuid from lineage)
+    // land on the SAME conversation — and the running turn stays interruptible from the
+    // thread the user is viewing. This is the second — and only other — deliberate,
+    // companyUuid-scoped reversal of the write-once originConnectionUuid invariant, alongside
+    // repointSessionOriginAndSend (daemon-instruction.service). resolveOrCreateSession does
+    // NOT move originConnectionUuid on an existing row (write-once there), so the re-point
+    // MUST be this explicit update.
+    //
+    // R1 (live old origin): the re-point is UNCONDITIONAL on a directed cross-origin wake —
+    // the newest directed wake defines where the idea's one conversation lives ("follow the
+    // instance", elaboration Q1=a). A turn still running on the OLD origin keeps reporting
+    // correctly (turn lifecycle keys on (agentUuid, sessionId), not the origin) and stays
+    // interruptible via the idea-wide interrupt match, so re-pointing never orphans it.
+    //
+    // Re-pointing is safe for `claude --resume`: the daemon probes the transcript per-cwd,
+    // so a session re-pointed to a new cwd simply starts a fresh session there rather than
+    // failing to resume; the prior turns remain as read-only history on the same row.
+    const sessionId = directIdeaUuid ?? ctx.entityUuid;
+    const sessionDirectIdeaUuid: string | null = directIdeaUuid;
     if (directed && directIdeaUuid) {
       const existing = await prisma.daemonSession.findFirst({
         where: {
@@ -735,14 +752,17 @@ export async function createTurnAndResolveTarget(
           agentUuid: ctx.recipientUuid,
           sessionId: directIdeaUuid,
         },
-        select: { originConnectionUuid: true },
+        select: { uuid: true, originConnectionUuid: true },
       });
       if (existing && existing.originConnectionUuid !== origin.uuid) {
-        // Cross-cwd directed wake: the idea's canonical session lives on a DIFFERENT
-        // connection. Open a per-instance session keyed on (idea, resolved connection) so
-        // the resolved cwd gets its own transcript instead of re-pointing the existing one.
-        sessionId = `${directIdeaUuid}::${origin.uuid}`;
-        sessionDirectIdeaUuid = null;
+        // Cross-cwd directed wake: re-point the idea's canonical session to the resolved
+        // online connection (instead of forking a per-instance thread), keeping the same
+        // sessionId (=== directIdeaUuid) and non-null directIdeaUuid. companyUuid-scoped;
+        // ownership is proven by the same-agent connection resolution above.
+        await prisma.daemonSession.update({
+          where: { uuid: existing.uuid, companyUuid: ctx.companyUuid },
+          data: { originConnectionUuid: origin.uuid },
+        });
       }
     }
 
