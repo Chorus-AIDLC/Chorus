@@ -70,17 +70,22 @@ export function resolveScriptPath() {
 
 /**
  * Build the argv the SUPERVISED daemon runs — the normal long-lived daemon
- * (NO `-d`: the supervisor owns the foreground process). Reflects the flags the
- * operator passed to `install` so the boot-time daemon serves the same paths /
- * agent / permission posture. Pure.
+ * (NO `-d`: the supervisor owns the foreground process). Reflects the `--agent`
+ * / `--chorus-only` posture the operator passed to `install`. The served cwd set
+ * is NOT embedded here — it lives in ~/.chorus/daemon.json `cwds` (single source
+ * of truth) and is read by the daemon via resolveDaemonCwds. Pure.
  * @param {{ cwds?: string[], agent?: string, chorusOnly?: boolean, scriptPath: string }} spec
- * @returns {string[]}  e.g. ["/x/chorus.mjs","daemon","--cwd","/a","--cwd","/b"]
+ * @returns {string[]}  e.g. ["/x/chorus.mjs","daemon","--agent","codex"]
  */
 export function buildServiceArgs(spec) {
   const args = [spec.scriptPath, "daemon"];
-  for (const cwd of spec.cwds ?? []) {
-    if (typeof cwd === "string" && cwd) args.push("--cwd", cwd);
-  }
+  // NOTE: --cwd is deliberately NOT emitted. The set of working directories the
+  // daemon serves is persisted to ~/.chorus/daemon.json `cwds` at install time
+  // (the single source of truth) and read back by the daemon via
+  // resolveDaemonCwds. Baking --cwd into the unit too would let the two sources
+  // drift and would hide the paths from a plain `chorus daemon` run
+  // (fix-daemon-install-config, elaboration Q5-A). `spec.cwds` is still accepted
+  // for signature compatibility but ignored here.
   if (spec.agent) args.push("--agent", spec.agent);
   if (spec.chorusOnly) args.push("--chorus-only");
   return args;
