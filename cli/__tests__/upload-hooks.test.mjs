@@ -211,7 +211,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     // Enqueue: marks the task queued and emits a snapshot.
     waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", directIdeaUuid: DIRECT_IDEA, status: "queued", startedAt: null },
     ]);
     expect(changes).toHaveLength(1);
 
@@ -229,7 +229,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     await waker2.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
 
     expect(snapshotDuringRun).toHaveLength(1);
-    expect(snapshotDuringRun[0]).toMatchObject({ entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", status: "running" });
+    expect(snapshotDuringRun[0]).toMatchObject({ entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", directIdeaUuid: DIRECT_IDEA, status: "running" });
     expect(snapshotDuringRun[0].startedAt).toBeTruthy();
     expect(Number.isNaN(Date.parse(snapshotDuringRun[0].startedAt))).toBe(false);
 
@@ -274,7 +274,8 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     // Idea wake: direct == root == idea-7 (a top-level idea); attribution carries the root.
     waker.markQueued(ideaNotif, "idea:idea-7", { key: "idea:idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7" });
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", status: "queued", startedAt: null },
+      // Top-level idea: direct == root == idea-7.
+      { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7", status: "queued", startedAt: null },
     ]);
     expect(changes).toEqual(["c"]); // tracked → snapshot emitted
   });
@@ -300,13 +301,34 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     await expect(waker.wake(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"))).resolves.toBeUndefined();
   });
 
-  it("per-entity fallback (no idea ancestor) yields a null rootIdeaUuid in the snapshot", () => {
+  it("per-entity fallback (no idea ancestor) yields null rootIdeaUuid AND null directIdeaUuid in the snapshot", () => {
     const hooks = createNoopUploadHooks();
     const { waker } = makeWaker(hooks);
     waker.markQueued(TASK_NOTIF, "entity:task:task-1", { key: "entity:task:task-1", rootIdeaUuid: null, directIdeaUuid: null });
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, directIdeaUuid: null, status: "queued", startedAt: null },
     ]);
+  });
+
+  it("a child-idea wake emits directIdeaUuid = child DISTINCT from rootIdeaUuid = parent", () => {
+    // The core fix: for a derived (child) idea, the task/proposal wake resolves
+    // directIdeaUuid = child (the session anchor) and rootIdeaUuid = the topmost
+    // parent. Both must reach the snapshot, distinctly, so the UI can anchor the
+    // running/interruptible indicator to the CHILD conversation, not the parent.
+    const hooks = createNoopUploadHooks();
+    const { waker } = makeWaker(hooks);
+    const child = "child-idea-2222-4222-8222-222222222222";
+    const parent = "parent-idea-3333-4333-8333-333333333333";
+    waker.markQueued(TASK_NOTIF, `idea:${child}`, {
+      key: `idea:${child}`,
+      rootIdeaUuid: parent,
+      directIdeaUuid: child,
+    });
+    const snap = waker.buildExecutionSnapshot();
+    expect(snap).toEqual([
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: parent, directIdeaUuid: child, status: "queued", startedAt: null },
+    ]);
+    expect(snap[0].directIdeaUuid).not.toBe(snap[0].rootIdeaUuid);
   });
 });
 

@@ -188,12 +188,22 @@ function buildPromptBody(n) {
         `fix issues with chorus_pm_update_task_draft / chorus_pm_update_document_draft, then ` +
         `chorus_pm_validate_proposal and chorus_pm_submit_proposal to resubmit.\n${mentionGuidance(n, "proposal")}`
       );
-    case "proposal_approved":
+    case "proposal_approved": {
+      // Surface the approver's note inline, symmetric with proposal_rejected — so the
+      // daemon knows the reviewer's opinion without a follow-up chorus_get_proposal
+      // fetch. The server bakes the note into n.message as "... approved. Note: <note>"
+      // (buildMessage in notification-listener.ts); an approve WITHOUT a note has no
+      // "Note: " marker, so reviewInfo stays empty and the prompt reads cleanly. This
+      // mirrors the OpenClaw plugin's proposal_approved handler (event-router.ts).
+      const reviewInfo = n.message?.includes("Note: ")
+        ? ` Review note: "${n.message.split("Note: ").pop()}".`
+        : "";
       return (
         `[Chorus] Proposal '${n.entityTitle}' was APPROVED (proposalUuid: ${n.entityUuid}, ` +
-        `projectUuid: ${n.projectUuid}). Its documents and tasks have been created. Use ` +
+        `projectUuid: ${n.projectUuid}).${reviewInfo} Its documents and tasks have been created. Use ` +
         `chorus_get_unblocked_tasks (projectUuid: "${n.projectUuid}") to find tasks ready to start.\n${mentionGuidance(n, "proposal")}`
       );
+    }
     case "idea_claimed":
       return (
         `[Chorus] Idea '${n.entityTitle}' was assigned to you (ideaUuid: ${n.entityUuid}, ` +

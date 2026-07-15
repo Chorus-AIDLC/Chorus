@@ -95,6 +95,10 @@ interface ExecutionEntry {
   entityType: string;
   entityUuid: string;
   rootIdeaUuid: string | null;
+  // The DIRECT idea (session anchor) the UI matches a conversation's execution by,
+  // so a derived child idea's wake surfaces on the child conversation, not its
+  // parent. From the same lineage resolve as rootIdeaUuid (the two-id contract).
+  directIdeaUuid: string | null;
   status: "running" | "queued";
   startedAt: string | null;
 }
@@ -323,6 +327,9 @@ export class OpenClawDaemonClient {
     const entity = entityOf(req);
     const key = entity ? execKey(entity.entityType, entity.entityUuid) : null;
     const rootIdeaUuid = req.rootIdeaUuid ?? null;
+    // DIRECT idea (session anchor) — reported alongside the root so the UI anchors
+    // a conversation's execution to the child idea, not its parent.
+    const directIdeaUuid = req.directIdeaUuid ?? null;
     // Session anchor = the business key: directIdeaUuid when present, else the entity
     // uuid (quick task / standalone doc / ad-hoc daemon_session). This is the `sessionId`
     // used in ALL reports (turn-advance/transcript) — NOT the OpenClaw sessionKey, which
@@ -388,6 +395,7 @@ export class OpenClawDaemonClient {
         entityType: entity.entityType,
         entityUuid: entity.entityUuid,
         rootIdeaUuid,
+        directIdeaUuid,
         status: "running",
         startedAt: new Date().toISOString(),
       });
@@ -494,6 +502,7 @@ export class OpenClawDaemonClient {
       entityType: entity.entityType,
       entityUuid: entity.entityUuid,
       rootIdeaUuid: req.rootIdeaUuid ?? null,
+      directIdeaUuid: req.directIdeaUuid ?? null,
       status: "queued",
       startedAt: existing?.startedAt ?? null,
     });
@@ -509,6 +518,7 @@ export class OpenClawDaemonClient {
       entityType: e.entityType,
       entityUuid: e.entityUuid,
       rootIdeaUuid: e.rootIdeaUuid,
+      directIdeaUuid: e.directIdeaUuid,
       status: e.status,
       startedAt: e.startedAt,
     }));

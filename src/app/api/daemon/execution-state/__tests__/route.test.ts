@@ -117,6 +117,42 @@ describe("POST /api/daemon/execution-state", () => {
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
 
+  it("passes directIdeaUuid through the zod boundary to reconcileSnapshot (child-idea entry)", async () => {
+    const childIdea = "child-idea-0000-0000-0000-0000000c1111";
+    const parentIdea = "parent-idea-0000-0000-0000-000000p22222";
+    const body = {
+      connectionUuid,
+      executions: [
+        {
+          entityType: "task",
+          entityUuid: t1,
+          rootIdeaUuid: parentIdea,
+          directIdeaUuid: childIdea,
+          status: "running",
+          startedAt: "2026-06-15T03:00:00.000Z",
+        },
+      ],
+    };
+
+    const res = await POST(postRequest(body), emptyCtx);
+    expect(res.status).toBe(200);
+
+    // The new field survived zod parsing (not stripped) and reached the service
+    // distinct from rootIdeaUuid.
+    const [, , , execs] = mockReconcileSnapshot.mock.calls[0];
+    expect(execs[0].directIdeaUuid).toBe(childIdea);
+    expect(execs[0].rootIdeaUuid).toBe(parentIdea);
+  });
+
+  it("accepts a snapshot entry that OMITS directIdeaUuid (older daemon) without rejecting", async () => {
+    // validEntry has no directIdeaUuid — the field is optional/nullable.
+    const res = await POST(postRequest(validBody), emptyCtx);
+    expect(res.status).toBe(200);
+    const [, , , execs] = mockReconcileSnapshot.mock.calls[0];
+    // Omitted → undefined at the zod boundary (reconcileSnapshot coerces to null).
+    expect(execs[0].directIdeaUuid ?? null).toBeNull();
+  });
+
   it("foreign connection → 404 not-found, no rows reconciled, no event published", async () => {
     mockConnectionBelongsToAgent.mockResolvedValue(false);
 

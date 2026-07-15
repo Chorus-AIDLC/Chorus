@@ -121,7 +121,12 @@ export class Waker {
     // control handler can target it for an interrupt. `child` is null while queued.
     // buildExecutionSnapshot() maps ONLY the serializable fields and NEVER emits
     // `child` — the handle stays daemon-local and never leaks onto the wire.
-    /** @type {Map<string, { entityType: string, entityUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null, child: import("node:child_process").ChildProcess|null }>} */
+    // The entry also carries the `directIdeaUuid` the waker ALREADY resolved (the
+    // entity's directly-attached idea — the same value used as the session anchor)
+    // so the UI can match a conversation's execution by the DIRECT idea rather than
+    // the root — surfacing a child idea's wake on the child conversation, not its
+    // parent.
+    /** @type {Map<string, { entityType: string, entityUuid: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null, child: import("node:child_process").ChildProcess|null }>} */
     this.executions = new Map();
   }
 
@@ -231,13 +236,14 @@ export class Waker {
    * resource (running or queued), carrying entityType/entityUuid, the reused
    * rootIdeaUuid, and the daemon-side status/startedAt. Returns a fresh array each
    * call so the caller can't mutate internal state. Never throws.
-   * @returns {Array<{ entityType: string, entityUuid: string, rootIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
+   * @returns {Array<{ entityType: string, entityUuid: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
    */
   buildExecutionSnapshot() {
     return [...this.executions.values()].map((e) => ({
       entityType: e.entityType,
       entityUuid: e.entityUuid,
       rootIdeaUuid: e.rootIdeaUuid,
+      directIdeaUuid: e.directIdeaUuid,
       status: e.status,
       startedAt: e.startedAt,
     }));
@@ -253,13 +259,20 @@ export class Waker {
    * task/idea/proposal/document set) is ignored. Never throws.
    * @param {{ entityType?: string, entityUuid?: string }} notification
    * @param {string} key  The serialization key from keyFor (idea:<direct> | entity:…).
-   * @param {{ rootIdeaUuid?: string|null }} [attribution]  Server-resolved root idea.
+   * @param {{ rootIdeaUuid?: string|null, directIdeaUuid?: string|null }} [attribution]
+   *   Server-resolved ids: `rootIdeaUuid` → execution snapshot grouping; `directIdeaUuid`
+   *   → the session anchor the UI matches a conversation's execution by. Both threaded
+   *   from `attribution`, NEVER sliced from `key`.
    */
   markQueued(notification, key, attribution) {
     const entity = this.#entityOf(notification);
     if (!entity) return;
     const execKey = this.#execKey(entity.entityType, entity.entityUuid);
     const rootIdeaUuid = attribution?.rootIdeaUuid ?? null;
+    // The DIRECT idea (session anchor) the UI matches a conversation's execution by
+    // — carried from the SAME server-resolved attribution as rootIdeaUuid, never
+    // sliced from the key.
+    const directIdeaUuid = attribution?.directIdeaUuid ?? null;
     const existing = this.executions.get(execKey);
     // Don't downgrade a running resource to queued if a duplicate dispatch
     // arrives while it's mid-wake; only (re)mark queued when not already running.
@@ -268,6 +281,7 @@ export class Waker {
       entityType: entity.entityType,
       entityUuid: entity.entityUuid,
       rootIdeaUuid,
+      directIdeaUuid,
       status: "queued",
       startedAt: existing?.startedAt ?? null,
       // Queued entries hold no live child yet — only the running entry does (子3).
@@ -346,6 +360,7 @@ export class Waker {
           entityType: entity.entityType,
           entityUuid: entity.entityUuid,
           rootIdeaUuid,
+          directIdeaUuid,
           status: "running",
           startedAt: new Date().toISOString(),
           child: null,

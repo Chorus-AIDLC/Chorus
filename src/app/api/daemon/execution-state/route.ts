@@ -40,13 +40,20 @@ import {
 // `entityUuid` its uuid. `status` is
 // constrained to the two active values a daemon can report — `ended` is a
 // server-only terminal state set by reconcile, never accepted from the wire.
-// `startedAt`/`rootIdeaUuid` are nullable/optional (a queued resource has no
-// start time; a wake with no idea ancestor has no root idea). `startedAt` is
-// coerced from an ISO-8601 string to a Date.
+// `startedAt`/`rootIdeaUuid`/`directIdeaUuid` are nullable/optional (a queued
+// resource has no start time; a wake with no idea ancestor has neither idea id;
+// an older daemon may omit `directIdeaUuid`). `directIdeaUuid` is the entity's
+// direct idea (the daemon session anchor) the chat UI matches a conversation's
+// execution by. `startedAt` is coerced from an ISO-8601 string to a Date.
 const snapshotEntrySchema = z.object({
   entityType: z.enum([...EXECUTION_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
   rootIdeaUuid: z.string().min(1).nullish(),
+  // The DIRECT idea (the entity's directly-attached idea — the daemon session
+  // anchor). Optional + nullable: a wake with no idea ancestor has none, and an
+  // older daemon that predates this field omits it (persisted as null). The chat
+  // UI matches a conversation's execution by this value, not rootIdeaUuid.
+  directIdeaUuid: z.string().min(1).nullish(),
   status: z.enum([...ACTIVE_EXECUTION_STATUSES]),
   startedAt: z.coerce.date().nullish(),
 });
