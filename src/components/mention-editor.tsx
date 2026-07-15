@@ -100,6 +100,82 @@ interface Mentionable {
   // 2+ instances the editor surfaces the secondary picker; a single instance
   // auto-selects; 0 instances → un-pinned mention (behaves as before).
   instances?: InstanceCandidate[];
+  // Root-idea entity-context enrichment (pin-cwd-before-wake, Part 2b), mirrored
+  // from the service `Mentionable` shape (mention.service.ts). Populated for
+  // `type: "agent"` candidates ONLY when the editor requests entity context
+  // (entityType + entityUuid) AND that entity resolves to a root idea.
+  // `isRootIdeaAssignee` is true iff this candidate agent is the owning agent of
+  // the root idea's assignee. `rootIdeaPin` rides ONLY on the assignee candidate,
+  // and only when the root idea is instance-pinned — the editor inherits it with
+  // NO picker (HARD pin: the wake is notify-only if offline, never re-routed).
+  isRootIdeaAssignee?: boolean;
+  rootIdeaPin?: {
+    host: string;
+    cwd: string | null;
+    agentInstanceUuid: string;
+  };
+}
+
+// The durable (host, cwd) "place" a mention pins to. A structural subset of both
+// InstanceCandidate (online picker candidate) and the root idea's inherited
+// `rootIdeaPin` (which may be offline and has no connectionUuid) — the mention
+// markup only ever needs host + cwd.
+export interface MentionPin {
+  host: string;
+  cwd: string | null;
+}
+
+// The decision the mention-selection precedence yields for a chosen candidate:
+//   - "insert" → insert the mention now (pinned to `pin`, or un-pinned when null),
+//   - "pick"   → defer the insert and open the secondary picker over `onlineInstances`.
+export type MentionSelection =
+  | { kind: "insert"; pin: MentionPin | null }
+  | { kind: "pick"; onlineInstances: InstanceCandidate[] };
+
+/**
+ * Decide what happens when an @mention candidate is chosen (pin-cwd-before-wake,
+ * Part 2b). Pure + exported so the precedence can be unit-tested without booting
+ * a Tiptap editor. Precedence (first match wins):
+ *
+ *  1. The candidate IS the root idea's assignee agent AND the root idea is
+ *     instance-pinned (`rootIdeaPin`) → INSERT pinned to the inherited
+ *     `(host, cwd)`, with NO picker — EVEN IF that place is currently offline /
+ *     not among the agent's online instances. This is a HARD inherited pin: the
+ *     resulting wake is notify-only if offline, never re-routed to another cwd.
+ *     Not gated by online status.
+ *  2. The candidate IS the root idea's assignee agent, has NO inherited pin, and
+ *     has ≥2 online instances → PICK (open the picker; the idea is unpinned so we
+ *     prompt on genuine ambiguity).
+ *  3. Otherwise (NOT the assignee, or ≤1 online) → the existing online-instance
+ *     rule: ≥2 online → PICK; exactly 1 online → INSERT auto-pinned to it; 0
+ *     online (or a user candidate) → INSERT un-pinned. This choice is NOT
+ *     persisted to the idea.
+ */
+export function resolveMentionSelection(item: Mentionable): MentionSelection {
+  // Rule 1: inherit the root idea's pin (HARD) — not filtered by online status.
+  if (item.isRootIdeaAssignee && item.rootIdeaPin) {
+    return {
+      kind: "insert",
+      pin: { host: item.rootIdeaPin.host, cwd: item.rootIdeaPin.cwd },
+    };
+  }
+
+  const onlineInstances =
+    item.type === "agent"
+      ? (item.instances ?? []).filter((i) => i.effectiveStatus === "online")
+      : [];
+
+  // Rules 2 + 3 share the same online-instance rule; the assignee-vs-not
+  // distinction only mattered for the inherited-pin fast path above. With no
+  // inheritable pin, an assignee with ≥2 online instances and any other agent
+  // with ≥2 online instances both open the picker.
+  if (onlineInstances.length >= 2) {
+    return { kind: "pick", onlineInstances };
+  }
+  if (onlineInstances.length === 1) {
+    return { kind: "insert", pin: onlineInstances[0] };
+  }
+  return { kind: "insert", pin: null };
 }
 
 export interface MentionEditorProps {
@@ -109,6 +185,14 @@ export interface MentionEditorProps {
   className?: string;
   disabled?: boolean;
   onSubmit?: () => void;
+  // Optional comment entity context (pin-cwd-before-wake, Part 2b). When BOTH
+  // are supplied they are forwarded to `/api/mentionables` (alongside
+  // withInstances=1) so agent candidates carry the comment's root-idea
+  // assignee/pin annotation, letting the editor inherit the idea's pin instead
+  // of prompting. Threaded in by the single production caller (UnifiedComments),
+  // which already knows the comment's targetType/targetUuid.
+  entityType?: "idea" | "proposal" | "task" | "document";
+  entityUuid?: string;
 }
 
 export interface MentionEditorRef {
@@ -585,7 +669,19 @@ export function handleInstancePickConfirm(
 // ── MentionEditor Component ────────────────────────────────────
 
 export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
-  ({ value, onChange, placeholder, className, disabled, onSubmit }, ref) => {
+  (
+    {
+      value,
+      onChange,
+      placeholder,
+      className,
+      disabled,
+      onSubmit,
+      entityType,
+      entityUuid,
+    },
+    ref,
+  ) => {
     const suggestionItemsRef = useRef<Mentionable[]>([]);
     const suggestionLoadingRef = useRef(false);
     const keyDownRef = useRef<KeyDownHandler | null>(null);
@@ -622,9 +718,17 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         // withInstances=1 → candidates carry their live (host, cwd) instances so
         // an agent with 2+ surfaces the secondary picker (cwd-addressable
         // instances, T3). Additive; the suggestion-row rendering is unchanged.
-        const res = await fetch(
-          `/api/mentionables?q=${encodeURIComponent(query)}&limit=10&withInstances=1`
-        );
+        //
+        // entityType/entityUuid (pin-cwd-before-wake, Part 2b) ride alongside
+        // withInstances when both are known, so agent candidates carry the
+        // comment's root-idea assignee/pin annotation (isRootIdeaAssignee /
+        // rootIdeaPin). Appended only when both are present — otherwise the query
+        // is byte-identical to before and the search is unchanged.
+        let url = `/api/mentionables?q=${encodeURIComponent(query)}&limit=10&withInstances=1`;
+        if (entityType && entityUuid) {
+          url += `&entityType=${encodeURIComponent(entityType)}&entityUuid=${encodeURIComponent(entityUuid)}`;
+        }
+        const res = await fetch(url);
         if (res.ok) {
           const json = await res.json();
           if (json.success) {
@@ -637,7 +741,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         suggestionLoadingRef.current = false;
         forceUpdate((n) => n + 1);
       }
-    }, []);
+    }, [entityType, entityUuid]);
 
     const debouncedFetch = useDebouncedCallback(fetchMentionables, 250);
 
@@ -658,8 +762,17 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     } | null>(null);
 
     const insertMention = useCallback(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (item: Mentionable, command: (attrs: any) => void, pin?: InstanceCandidate) => {
+      // The pin only needs the durable (host, cwd) "place" for the mention markup
+      // — NOT the full InstanceCandidate. Widened to `{ host, cwd }` so BOTH an
+      // online InstanceCandidate (secondary picker / auto-pin) AND the root idea's
+      // inherited `rootIdeaPin` (which has no connectionUuid — it may be offline)
+      // satisfy it structurally.
+      (
+        item: Mentionable,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        command: (attrs: any) => void,
+        pin?: { host: string; cwd: string | null },
+      ) => {
         command({
           id: item.uuid,
           label: item.name,
@@ -674,29 +787,22 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     );
 
     // The renderer calls this when a candidate is chosen. Kept in a ref so the
-    // long-lived Tiptap suggestion callbacks always see the current closure.
+    // long-lived Tiptap suggestion callbacks always see the current closure. It
+    // delegates the decision to the exported pure `resolveMentionSelection`
+    // (below) and performs the resulting effect (insert vs. open picker).
     const selectMentionableRef = useRef<
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (item: Mentionable, command: (attrs: any) => void) => void
     >(() => {});
     selectMentionableRef.current = (item, command) => {
-      const liveInstances =
-        item.type === "agent"
-          ? (item.instances ?? []).filter((i) => i.effectiveStatus === "online")
-          : [];
-      if (liveInstances.length >= 2) {
-        // Multiple live (online) instances: open the picker over the online set,
-        // defer the insert.
-        setPendingPick({ item, onlineInstances: liveInstances, command });
+      const decision = resolveMentionSelection(item);
+      if (decision.kind === "pick") {
+        // Open the picker over the online set, defer the insert.
+        setPendingPick({ item, onlineInstances: decision.onlineInstances, command });
         return;
       }
-      if (liveInstances.length === 1) {
-        // Exactly one live instance: auto-select it, no extra interaction.
-        insertMention(item, command, liveInstances[0]);
-        return;
-      }
-      // No live instances (or a user): un-pinned mention, exactly as before.
-      insertMention(item, command);
+      // insert (pinned to decision.pin, or un-pinned when pin is null).
+      insertMention(item, command, decision.pin ?? undefined);
     };
 
     // Stable wrapper passed to the (long-lived) renderer; always dispatches to
