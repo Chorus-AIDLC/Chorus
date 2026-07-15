@@ -965,6 +965,7 @@
     "startedHint": "開発を開始しました — エージェントが残りの課題を実行しています",
     "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に開発を開始してください。",
+    "errorInstanceOffline": "この着想はオフラインのデーモンインスタンスに固定されています。そのインスタンスの再接続後に開発を開始してください。",
     "errorNoApprovedProposal": "この着想にはまだ承認済みの提案がありません",
     "errorNoUnfinishedTasks": "すべての課題はすでに完了しています",
     "errorAssigneeNotAgent": "この着想の担当者はエージェントではありません",
@@ -980,6 +981,7 @@
     "startedHint": "Yolo を開始しました — エージェントがこの着想を完了まで進めています",
     "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に Yolo を実行してください。",
+    "errorInstanceOffline": "この着想はオフラインのデーモンインスタンスに固定されています。そのインスタンスの再接続後に Yolo を実行してください。",
     "errorAssigneeNotAgent": "この着想の担当者はエージェントではありません",
     "errorGeneric": "Yolo の開始に失敗しました"
   },

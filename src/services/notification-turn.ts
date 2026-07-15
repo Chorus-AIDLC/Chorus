@@ -28,17 +28,18 @@
 // TRANSPORT-ONLY to the daemon (see `WakeTurnResult.targetConnectionUuid`) so non-target
 // daemons suppress their broadcast copy.
 //
-// SOFT vs HARD PINS (the offline policy splits on the pin's ORIGIN — resolves the
-// proposal-review BLOCKER; see `PinnedTarget.soft`):
-//   - HARD pin = a `mentioned` wake (a human typed an exact `(host, cwd)` in markup). An
-//     offline hard pin is NOTIFY-ONLY, NO WAKE — a deliberate REVERSAL of #354's "offline
-//     pin → online-first": no turn, no ping, no target; the already-created Notification
-//     stands as the plain record. Silently re-routing a human-typed place to a cwd the
-//     author did not choose is the user-visible defect this preserves the fix for.
-//   - SOFT pin = an ASSIGNMENT wake (the Task's own `agent_instance` override, or the
-//     inherited root-Idea instance). An offline soft pin DEGRADES to the agent's
-//     online-first connection (R2 graceful un-pin) — the unreachable instance is treated as
-//     a plain agent, so the agent still wakes; never notify-only, never a hang.
+// HARD PINS — the UNIFIED offline policy (owner choice B, pin-cwd-before-wake): EVERY pin
+// is HARD. Whether the pin came from a human-typed mention `(host, cwd)` OR from an
+// assignment (the Task's own `agent_instance` override, or the inherited root-Idea
+// instance), an offline pin is NOTIFY-ONLY, NO WAKE — no turn, no ping, no target; the
+// already-created Notification stands as the plain record (recovered on reconnect by the
+// pending-turn backfill for recoverable triggers). This is a deliberate REVERSAL of #354's
+// "offline pin → online-first": silently re-routing a pinned wake to a cwd the owner did
+// NOT choose is the user-visible defect this preserves the fix for. There is NO SOFT
+// assignment pin any more — an assignment pin NEVER degrades to the agent's online-first
+// connection. (The `PinnedTarget.soft` field is RETAINED at always-`false` for a minimal
+// diff — see `PinnedTarget.soft` — so the `soft:true` branch of `selectOriginConnection`
+// is now unreachable dead code kept only for the field's shape; a follow-up may drop it.)
 // An UN-PINNED wake is unaffected and still goes broadcast → online-first.
 //
 // FAILURE ISOLATION (repo "no silent errors" + the wake notification must always
@@ -214,9 +215,9 @@ export interface WakeNotificationContext {
   // connection and pins the session origin there. This is a HARD pin (a human typed an
   // exact place), so an offline mention pin stays notify-only (no wake, no re-route).
   // A `task_assigned` / `idea_claimed` wake does NOT use these — it reads its pin from
-  // the assignment lineage (the Task's / root Idea's `agent_instance` assignee, a SOFT
-  // pin that degrades to online-first when offline). Both undefined/null → no pin
-  // (online-first, exactly as before). `pinnedHost` "" = unknown-host instance;
+  // the assignment lineage (the Task's / root Idea's `agent_instance` assignee, also a
+  // HARD pin now: notify-only when offline, never re-routed). Both undefined/null → no
+  // pin (online-first, exactly as before). `pinnedHost` "" = unknown-host instance;
   // `pinnedCwd` null = unknown-path instance.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
@@ -230,17 +231,19 @@ export interface WakeNotificationContext {
  * equality (then gated on ONLINE by selectOriginConnection). A wake with no pin yields
  * `null` (not this shape).
  *
- * `soft` records the pin's ORIGIN, which governs the offline policy (resolves the
- * proposal-review BLOCKER — see the SOFT vs HARD box in the Tech Design):
+ * `soft` USED to record the pin's ORIGIN and govern a split offline policy. As of the
+ * HARD-pin unification (owner choice B, pin-cwd-before-wake) EVERY pin is HARD, so this
+ * field is now ALWAYS `false` at all three call sites (mention, task override, inherited
+ * idea instance). It is RETAINED (rather than removed) for a minimal diff per Tech Design
+ * D3 — the `soft:true` branch of `selectOriginConnection` is consequently unreachable dead
+ * code that a follow-up cleanup may drop.
  *
- *  - `soft: false` (HARD) — a `mentioned` wake: a human typed an exact `(host, cwd)` in
- *    the mention markup. An offline hard pin stays NOTIFY-ONLY (no wake, no online-first
- *    re-route) so a human-typed place is never silently redirected — the deliberate #354
- *    reversal documented in the file header.
- *  - `soft: true` (SOFT) — an ASSIGNMENT pin: the Task's own `agent_instance` override,
- *    or the inherited root-Idea instance. R2 says a pinned assignment to an unreachable
- *    instance DEGRADES to a plain agent — so an offline soft pin FALLS THROUGH to the
- *    existing online-first selection (the agent wakes anyway), never notify-only.
+ *  - `soft: false` (HARD, the only value produced now) — an offline pin stays NOTIFY-ONLY
+ *    (no wake, no online-first re-route), so a pinned wake is never silently redirected to
+ *    a cwd the owner did not choose — the deliberate #354 reversal documented in the file
+ *    header, now applied uniformly to mention AND assignment pins.
+ *  - `soft: true` (SOFT) — NO LONGER PRODUCED. Historically an assignment pin that degraded
+ *    to online-first when offline; the degrade path is retired by the HARD-pin unification.
  */
 interface PinnedTarget {
   host: string;
@@ -297,16 +300,17 @@ function makePinnedTarget(
  *     exact place in the mention markup, threaded onto the context
  *     (`ctx.pinnedHost`/`ctx.pinnedCwd`) by mention.service. No DB lookup: the registry
  *     match is on `(host, cwd)` directly.
- *  2. task override (SOFT, `soft:true`) — the wake's TASK row is itself pinned
+ *  2. task override (HARD, `soft:false`) — the wake's TASK row is itself pinned
  *     (`assigneeType === "agent_instance"`): resolve that AgentInstance to its place.
- *     The explicit per-task override beats the inherited idea instance.
- *  2.5 own-idea pin (SOFT, `soft:true`) — when the wake's entity IS an idea, its OWN
+ *     The explicit per-task override beats the inherited idea instance. HARD since the
+ *     owner-choice-B unification: an offline task pin is notify-only, never re-routed.
+ *  2.5 own-idea pin (HARD, `soft:false`) — when the wake's entity IS an idea, its OWN
  *     assignee pin (subject to the same-agent guard) beats an ancestor's. Symmetric
  *     with the task override: "the idea I'm acting on" wins over a root ancestor that
  *     is pinned to a different instance of the same agent. Only relevant for a
  *     multi-level idea lineage with divergent same-agent pins; for a top-level idea
  *     the own idea IS the root, so this and step 3 resolve identically.
- *  3. root-idea inheritance (SOFT, `soft:true`) — resolve the wake's ROOT idea; if its
+ *  3. root-idea inheritance (HARD, `soft:false`) — resolve the wake's ROOT idea; if its
  *     assignee is an `agent_instance` AND that instance's `agentUuid` EQUALS the wake's
  *     target agent (`ctx.recipientUuid`, the SAME-AGENT GUARD), inherit the idea's
  *     instance place. A child resource targeting a DIFFERENT agent than the idea's
@@ -333,9 +337,10 @@ async function resolvePinnedTarget(
   // carries no assignment pin → online-first.
   if (!LINEAGE_ENTITY_TYPES.has(ctx.entityType)) return null;
 
-  // (2) Task override — SOFT. The wake's own TASK row is pinned to an instance. Only a
-  // wake anchored directly on a task entity has a per-task override; this beats the
-  // inherited idea instance below.
+  // (2) Task override — HARD (owner choice B). The wake's own TASK row is pinned to an
+  // instance. Only a wake anchored directly on a task entity has a per-task override; this
+  // beats the inherited idea instance below. An offline task pin is notify-only, never
+  // re-routed.
   if (ctx.entityType === "task") {
     const task = await prisma.task.findFirst({
       where: { uuid: ctx.entityUuid, companyUuid: ctx.companyUuid },
@@ -344,13 +349,15 @@ async function resolvePinnedTarget(
     if (task?.assigneeType === "agent_instance" && task.assigneeUuid) {
       const place = await resolveInstancePlace(ctx.companyUuid, task.assigneeUuid);
       if (place) {
-        const pin = makePinnedTarget(place.host, place.cwd, true);
+        // HARD (owner choice B): an assignment pin is never re-routed. An offline
+        // task-override pin is notify-only, identical to a mention pin.
+        const pin = makePinnedTarget(place.host, place.cwd, false);
         if (pin) return pin;
       }
     }
   }
 
-  // (2.5) Own-idea pin — SOFT. When the wake's entity IS an idea, resolve ITS OWN
+  // (2.5) Own-idea pin — HARD (owner choice B). When the wake's entity IS an idea, resolve ITS OWN
   // assignee pin first (its direct-idea anchor), so a directly-pinned child idea wins
   // over an ancestor pinned to a different instance of the same agent. Subject to the
   // same-agent guard. For a top-level idea the direct anchor equals the root, so this
@@ -365,7 +372,7 @@ async function resolvePinnedTarget(
     if (ownPin) return ownPin;
   }
 
-  // (3) Root-idea inheritance — SOFT, gated on the SAME-AGENT GUARD. Resolve the wake's
+  // (3) Root-idea inheritance — HARD (owner choice B), gated on the SAME-AGENT GUARD. Resolve the wake's
   // root idea and read its assignee; inherit ONLY when the idea is instance-pinned AND
   // that instance belongs to the wake's TARGET agent. A cross-agent child does NOT
   // inherit (it resolves against its own agent → online-first).
@@ -374,11 +381,12 @@ async function resolvePinnedTarget(
 }
 
 /**
- * Resolve an idea's own `agent_instance` assignee to a SOFT PinnedTarget, applying the
+ * Resolve an idea's own `agent_instance` assignee to a HARD PinnedTarget, applying the
  * SAME-AGENT GUARD (the idea's instance must belong to the wake's target agent). Returns
  * null when the idea uuid is null, the idea is not instance-pinned, or the guard fails —
  * a legitimate "no pin here" outcome. Shared by the own-idea (step 2.5) and root-idea
- * (step 3) resolution so both apply identical pin + guard semantics.
+ * (step 3) resolution so both apply identical pin + guard semantics. HARD since the
+ * owner-choice-B unification: an offline inherited pin is notify-only, never re-routed.
  */
 async function resolveIdeaInstancePin(
   ctx: WakeNotificationContext,
@@ -393,7 +401,9 @@ async function resolveIdeaInstancePin(
     const place = await resolveInstancePlace(ctx.companyUuid, idea.assigneeUuid);
     // SAME-AGENT GUARD: the idea's instance must belong to the wake's target agent.
     if (place && place.agentUuid === ctx.recipientUuid) {
-      return makePinnedTarget(place.host, place.cwd, true);
+      // HARD (owner choice B): an inherited idea-instance pin is never re-routed. An
+      // offline pin is notify-only, identical to a mention pin.
+      return makePinnedTarget(place.host, place.cwd, false);
     }
   }
   return null;
@@ -447,17 +457,14 @@ type OriginSelection =
  *
  *  - With a pin matching an ONLINE connection: the connection whose `(host, cwd)` EXACTLY
  *    matches the pinned place → `directed`. Only an online match can be woken, so the pin
- *    wakes the daemon at that exact place when it is running. (HARD and SOFT pins behave
- *    identically when the pin IS reachable — they diverge only when it is not.)
- *  - With a pin matching NO online connection — the policy SPLITS on the pin's origin
- *    (`soft`), resolving the proposal-review BLOCKER:
- *      • HARD pin (`soft:false`, a mention) → `offline_pin`: NOTHING is woken. NO durable
- *        queue, NO online-first fallback — silently re-routing a human-typed place to an
- *        unchosen cwd is the defect this preserves the fix for (the #354 REVERSAL).
- *      • SOFT pin (`soft:true`, an assignment / inherited idea instance) → DEGRADE to the
- *        online-first selection below (R2 graceful un-pin): the unreachable instance is
- *        treated as a plain agent, so the agent's online-first connection wakes. Never
- *        notify-only, never a hang.
+ *    wakes the daemon at that exact place when it is running.
+ *  - With a pin matching NO online connection → `offline_pin`: NOTHING is woken. NO durable
+ *    queue, NO online-first fallback — silently re-routing a pinned wake to an unchosen cwd
+ *    is the defect this preserves the fix for (the #354 REVERSAL). As of the owner-choice-B
+ *    HARD-pin unification (pin-cwd-before-wake) this applies to EVERY pin — mention AND
+ *    assignment — since `soft` is now always `false`. The `soft:true` fall-through branch
+ *    below is RETAINED-but-UNREACHABLE dead code (no call site produces a soft pin any more);
+ *    a follow-up cleanup may remove it and the `soft` field entirely.
  *  - With no pin: the online-first selection (`effectiveStatus === "online"`, first entry —
  *    the list is already sorted by stable daemon presence identity) → `online_first`.
  *    None online → `none`.
@@ -480,16 +487,16 @@ function selectOriginConnection(
         c.effectiveStatus === "online",
     );
     if (matched) return { kind: "directed", connection: matched };
-    // Pin matched no ONLINE connection (offline place, or not registered at all). The
-    // offline policy SPLITS on the pin's origin:
-    //   - HARD (mention) → notify-only, NO wake, NO online-first fallback (the #354
-    //     reversal: a human-typed place is never silently re-routed).
-    //   - SOFT (assignment / inherited idea instance) → fall through to online-first
-    //     below (R2: an unreachable assignment pin degrades to a plain agent).
+    // Pin matched no ONLINE connection (offline place, or not registered at all) →
+    // notify-only, NO wake, NO online-first fallback (the #354 reversal: a pinned wake is
+    // never silently re-routed). Since the owner-choice-B HARD-pin unification every pin is
+    // HARD (`soft:false`), so this branch ALWAYS fires for an offline pin. The `soft:true`
+    // fall-through below is retained-but-unreachable dead code (no call site emits a soft
+    // pin any more) — kept for a minimal diff per Tech Design D3.
     if (!pin.soft) {
       return { kind: "offline_pin" };
     }
-    // SOFT-pin degrade → fall through to the online-first selection.
+    // (Unreachable) legacy SOFT-pin degrade → fall through to the online-first selection.
   }
 
   // No pin (or a degraded soft pin) → online-first. The list is pre-sorted
@@ -508,9 +515,9 @@ function selectOriginConnection(
  *
  * This is the LOWER-priority "where does this idea's conversation live" heuristic — the
  * cwd where the idea's transcript already lives. It applies ONLY when the idea is NOT
- * pinned to an instance: an instance-pinned idea is resolved earlier as a SOFT pin (the
- * root-idea step of `resolvePinnedTarget`), which yields a `directed` (or degraded
- * online-first) selection and therefore SKIPS this upgrade. When no idea-anchored session
+ * pinned to an instance: an instance-pinned idea is resolved earlier as a HARD pin (the
+ * root-idea step of `resolvePinnedTarget`), which yields a `directed` (online match) or
+ * `offline_pin` (notify-only) selection and therefore SKIPS this upgrade. When no idea-anchored session
  * exists yet (the idea was elaborated entirely in the UI and the daemon was never woken on
  * it), or that origin is not currently online, this returns null → the caller falls back
  * to online-first (NO directed delivery), byte-identical to the pre-change wake.
@@ -588,18 +595,17 @@ export interface WakeTurnResult {
  *  1. Map `action → trigger`; bail if the action is not wake-triggering.
  *  2. Only agent recipients can be daemons — bail for `user` recipients.
  *  3. Resolve the wake's pinned target instance via assignment LINEAGE (cwd-addressable
- *     instances): the mention's `(host, cwd)` for a `mentioned` wake (HARD); else the
- *     Task's own `agent_instance` override, then the root Idea's `agent_instance` assignee
- *     under the same-agent guard (both SOFT); else none (DEC-5: NEVER inferred from the
- *     project). Select the ONLINE origin, classified by HOW it was chosen:
+ *     instances): the mention's `(host, cwd)` for a `mentioned` wake; else the Task's own
+ *     `agent_instance` override, then the root Idea's `agent_instance` assignee under the
+ *     same-agent guard; else none (DEC-5: NEVER inferred from the project). ALL pins are
+ *     HARD now (owner choice B). Select the ONLINE origin, classified by HOW it was chosen:
  *       - `directed`     — pin matched an ONLINE connection (turn delivered to ONLY it).
- *       - `online_first` — un-pinned (or a SOFT pin that degraded because its instance is
- *                          offline) → first online (broadcast → online-first).
- *       - `offline_pin`  — a HARD (mention) pin matched NO online connection → notify-only,
- *                          NO turn, NO fallback (REVERSES #354). A SOFT pin NEVER lands here.
+ *       - `online_first` — un-pinned → first online (broadcast → online-first).
+ *       - `offline_pin`  — a HARD pin (mention OR assignment) matched NO online connection →
+ *                          notify-only, NO turn, NO fallback (REVERSES #354).
  *       - `none`         — agent fully offline → NO turn (the notification stands).
  *  4. `elaboration_verified` / `idea_claimed`: the idea's `agent_instance` assignee (step 3)
- *     is the HIGHER-priority soft pin and is resolved above. ONLY when the idea has no
+ *     is the HIGHER-priority pin and is resolved above. ONLY when the idea has no
  *     assignee-instance (selection stayed `online_first`) does the LOWER-priority
  *     session-origin heuristic apply: if the idea has an existing ONLINE session origin,
  *     UPGRADE the selection to `directed` on that origin so the proposal-writing wake lands
@@ -670,15 +676,16 @@ export async function createTurnAndResolveTarget(
     // (4) Idea-session-origin upgrade for AUTONOMOUS idea-anchored wakes (the family in
     // IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS: task_assigned — into which proposal_approved /
     // proposal_rejected / idea_claimed / task_* collapse — plus elaboration /
-    // elaboration_verified). The idea's `agent_instance` assignee is the HIGHER-priority soft
-    // pin already resolved in step 3 (resolvePinnedTarget reads the root/own idea's assignee).
-    // When the idea IS instance-pinned and that instance is online, selection is already
-    // `directed` — this upgrade is SKIPPED (the instance wins). ONLY when the idea has no
-    // assignee-instance (or its soft pin degraded because the instance is offline) does
-    // selection stay `online_first`, and THEN this LOWER-priority session-origin heuristic
-    // upgrades to the idea's existing ONLINE session origin (where the idea's conversation
-    // already lives), fixing the proposal approve/reject random-cwd wake. No session, an
-    // offline origin, or a non-idea-anchored wake (directIdeaUuid null) → stays online-first.
+    // elaboration_verified). The idea's `agent_instance` assignee is the HIGHER-priority pin
+    // already resolved in step 3 (resolvePinnedTarget reads the root/own idea's assignee).
+    // When the idea IS instance-pinned, selection is already `directed` (instance online) or
+    // `offline_pin` (instance offline — HARD, notify-only) — either way this upgrade is
+    // SKIPPED (it only fires on `online_first`), so a HARD idea pin is NEVER re-routed to the
+    // session origin. ONLY when the idea has no assignee-instance does selection stay
+    // `online_first`, and THEN this LOWER-priority session-origin heuristic upgrades to the
+    // idea's existing ONLINE session origin (where the idea's conversation already lives),
+    // fixing the proposal approve/reject random-cwd wake. No session, an offline origin, or a
+    // non-idea-anchored wake (directIdeaUuid null) → stays online-first.
     // `mentioned` / `human_instruction` are excluded from the set (they own their own target).
     if (
       IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS.has(trigger) &&

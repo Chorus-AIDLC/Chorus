@@ -61,6 +61,7 @@ const ERROR_CODE_I18N_KEY: Record<YoloRequestedErrorCode, string> = {
   idea_not_found: "errorGeneric",
   assignee_not_agent: "errorAssigneeNotAgent",
   agent_offline: "errorAgentOffline",
+  instance_offline: "errorInstanceOffline",
   unknown: "errorGeneric",
 };
 
