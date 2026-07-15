@@ -181,6 +181,10 @@ DAEMON / LOGIN (client mode)
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill    (env: CHORUS_DAEMON_SIGINT_TIMEOUT)
                            when an interrupt is received (default: 10000).
                            Also configurable via ~/.chorus/daemon.json sigintTimeoutMs.
+  -y, --yes                Non-interactive 'chorus daemon install': skip all install
+                           prompts (credentials are still resolved, persisted, and
+                           validated; install aborts if none resolve). A non-TTY
+                           install behaves as if --yes were passed.
 
   Credential resolution order: flags > CHORUS_URL/CHORUS_API_KEY env >
   ~/.chorus/daemon.json (from 'chorus login') > Claude Code plugin config.

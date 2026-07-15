@@ -26,29 +26,36 @@ const BASE = {
 };
 
 describe("buildServiceArgs", () => {
-  it("emits the normal daemon argv WITHOUT -d, with repeated --cwd", () => {
+  it("emits the normal daemon argv WITHOUT -d and WITHOUT --cwd", () => {
+    // cwds now live in ~/.chorus/daemon.json `cwds` (single source of truth,
+    // persisted at install time), so the unit must NOT embed --cwd or the two
+    // sources drift (elaboration Q5-A).
     const args = buildServiceArgs({ scriptPath: "/x/chorus.mjs", cwds: ["/a", "/b"] });
-    expect(args).toEqual(["/x/chorus.mjs", "daemon", "--cwd", "/a", "--cwd", "/b"]);
+    expect(args).toEqual(["/x/chorus.mjs", "daemon"]);
     expect(args).not.toContain("-d");
+    expect(args).not.toContain("--cwd");
   });
 
-  it("includes --agent and --chorus-only when set; skips blank cwds", () => {
+  it("includes --agent and --chorus-only when set; never emits --cwd", () => {
     const args = buildServiceArgs({ scriptPath: "/x/chorus.mjs", cwds: ["/a", "", undefined], agent: "codex", chorusOnly: true });
-    expect(args).toEqual(["/x/chorus.mjs", "daemon", "--cwd", "/a", "--agent", "codex", "--chorus-only"]);
+    expect(args).toEqual(["/x/chorus.mjs", "daemon", "--agent", "codex", "--chorus-only"]);
+    expect(args).not.toContain("--cwd");
   });
 });
 
 describe("renderSystemdUnit (pure)", () => {
   const unit = renderSystemdUnit({ ...BASE, cwds: ["/a", "/b"] });
 
-  it("uses Type=simple and NO -d in ExecStart", () => {
+  it("uses Type=simple, NO -d, and NO --cwd in ExecStart", () => {
     expect(unit).toMatch(/^Type=simple$/m);
-    expect(unit).toMatch(/ExecStart=\/usr\/bin\/node \/opt\/chorus\/chorus\.mjs daemon --cwd \/a --cwd \/b$/m);
+    // cwds are read from daemon.json, not the unit — ExecStart is just node + script + daemon.
+    expect(unit).toMatch(/ExecStart=\/usr\/bin\/node \/opt\/chorus\/chorus\.mjs daemon$/m);
     // The self-daemonize flag must never appear ON THE ExecStart LINE — that was
     // the boot-loop cause. (Comment lines legitimately mention "-d".)
     const execLine = unit.split("\n").find((l) => l.startsWith("ExecStart="));
     expect(execLine).not.toMatch(/(\s)-d(\s|$)/);
     expect(execLine).not.toMatch(/--detach/);
+    expect(execLine).not.toMatch(/--cwd/);
     expect(unit).not.toMatch(/Type=forking/);
   });
 
@@ -56,15 +63,20 @@ describe("renderSystemdUnit (pure)", () => {
     expect(unit).not.toMatch(/ExecStop=/);
   });
 
-  it("quotes ExecStart tokens containing whitespace so systemd does not mis-split them", () => {
-    const u = renderSystemdUnit({ ...BASE, cwds: ["/home/u/My Projects/repo", "/plain"] });
+  it("carries --agent / --chorus-only on ExecStart but never --cwd", () => {
+    const u = renderSystemdUnit({ ...BASE, cwds: ["/a"], agent: "codex", chorusOnly: true });
     const execLine = u.split("\n").find((l) => l.startsWith("ExecStart="));
-    // The spaced --cwd value must survive as ONE quoted token; the plain one bare.
-    expect(execLine).toContain('--cwd "/home/u/My Projects/repo"');
-    expect(execLine).toContain("--cwd /plain");
-    // Regression guard: the space inside the path must not appear unquoted (which
-    // systemd would tokenize into `--cwd /home/u/My` + stray `Projects/repo`).
-    expect(execLine).not.toMatch(/--cwd \/home\/u\/My Projects/);
+    expect(execLine).toContain("--agent codex");
+    expect(execLine).toContain("--chorus-only");
+    expect(execLine).not.toMatch(/--cwd/);
+  });
+
+  it("never bakes credentials into the unit (no CHORUS_API_KEY / CHORUS_URL env line)", () => {
+    // Credentials live only in the 0600 ~/.chorus/daemon.json — a systemd
+    // Environment= line carrying the secret would be weaker isolation and is a
+    // regression the review flagged.
+    expect(unit).not.toMatch(/CHORUS_API_KEY/);
+    expect(unit).not.toMatch(/CHORUS_URL/);
   });
 
   it("quotes a node/script path that itself contains a space", () => {
@@ -93,14 +105,20 @@ describe("renderSystemdUnit (pure)", () => {
 describe("renderLaunchdPlist (pure)", () => {
   const plist = renderLaunchdPlist({ ...BASE, cwds: ["/a"], logPath: "/home/u/.chorus/daemon.log" });
 
-  it("emits RunAtLoad + KeepAlive and the daemon argv without -d", () => {
+  it("emits RunAtLoad + KeepAlive and the daemon argv without -d or --cwd", () => {
     expect(plist).toContain("<key>RunAtLoad</key>");
     expect(plist).toContain("<key>KeepAlive</key>");
     expect(plist).toContain("<string>/opt/chorus/chorus.mjs</string>");
     expect(plist).toContain("<string>daemon</string>");
-    expect(plist).toContain("<string>--cwd</string>");
+    // cwds live in daemon.json, never in the plist ProgramArguments.
+    expect(plist).not.toContain("<string>--cwd</string>");
     expect(plist).not.toContain("<string>-d</string>");
     expect(plist).toContain("com.chorus.daemon");
+  });
+
+  it("never bakes credentials into the plist", () => {
+    expect(plist).not.toContain("CHORUS_API_KEY");
+    expect(plist).not.toContain("CHORUS_URL");
   });
 
   it("xml-escapes special characters in paths", () => {
@@ -232,7 +250,8 @@ describe("installService", () => {
     expect(r.installed).toBe(false);
     expect(io.writeFileSync).not.toHaveBeenCalled();
     expect(r.unitText).not.toMatch(/ -d(\s|$)/);
-    expect(r.unitText).toContain("daemon --cwd /a");
+    expect(r.unitText).not.toMatch(/--cwd/);
+    expect(r.unitText).toContain("chorus.mjs daemon");
   });
 });
 
