@@ -31,12 +31,16 @@ const mockTaskFindFirst = vi.hoisted(() => vi.fn());
 const mockIdeaFindFirst = vi.hoisted(() => vi.fn());
 const mockAgentInstanceFindFirst = vi.hoisted(() => vi.fn());
 const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
+// fix-daemon-conversation-split-cwd-agent: a cross-cwd directed idea wake RE-POINTS the
+// idea's canonical session (prisma.daemonSession.update) instead of forking a per-instance
+// `${idea}::${conn}` thread. Mock update so we can assert the re-point without a DB.
+const mockDaemonSessionUpdate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { findFirst: mockTaskFindFirst },
     idea: { findFirst: mockIdeaFindFirst },
     agentInstance: { findFirst: mockAgentInstanceFindFirst },
-    daemonSession: { findFirst: mockDaemonSessionFindFirst },
+    daemonSession: { findFirst: mockDaemonSessionFindFirst, update: mockDaemonSessionUpdate },
   },
 }));
 
@@ -221,10 +225,13 @@ beforeEach(() => {
   mockAgentInstanceFindFirst.mockResolvedValue(null);
   // Default: the entity's lineage roots at `ideaUuid` (the canonical idea anchor).
   mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: ideaUuid });
-  // Default: no existing idea-anchored daemon session — so a directed wake creates a
-  // normal session (no cross-cwd suffix) and an elaboration_verified wake has no origin to
-  // upgrade to (online-first fallback). Cross-cwd / origin tests override per-case.
+  // Default: no existing idea-anchored daemon session — so a directed wake creates the
+  // canonical session fresh and an elaboration_verified wake has no origin to upgrade to
+  // (online-first fallback). Cross-cwd / origin tests override per-case.
   mockDaemonSessionFindFirst.mockResolvedValue(null);
+  // Default: the canonical-session re-point update resolves (no-op body) unless a case
+  // asserts on its args.
+  mockDaemonSessionUpdate.mockResolvedValue({});
 });
 
 // ===== Action → trigger mapping =====
@@ -1005,20 +1012,28 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     expect(targetConnectionUuid).toBeNull();
   });
 
-  // ----- (5) cross-cwd mention → per-instance session, never re-point -----
+  // ----- (5) cross-cwd directed idea wake → RE-POINT the canonical session, never fork -----
+  // fix-daemon-conversation-split-cwd-agent (idea 2ddd1d11): the old behavior forked a
+  // per-instance `${idea}::${conn}` session (splitting the user's turn from the AI's replies
+  // → no interrupt). The new behavior keeps ONE conversation per idea and re-points its
+  // origin to the resolved online connection.
 
-  it("a cross-cwd mention (pin differs from the idea's existing session origin) creates a PER-INSTANCE session, never re-pointing", async () => {
-    // The idea's canonical session lives on conn-idea-origin (/dev/ai-pm). A mention pins a
-    // DIFFERENT online instance (/dev/strands). The wake must open a per-instance session
-    // keyed on (idea, resolved connection) with directIdeaUuid = null (its own thread), and
-    // pin its origin to the resolved connection — NEVER re-pointing the idea's session.
+  it("a cross-cwd mention (pin differs from the idea's existing session origin) RE-POINTS the canonical session, never forking a per-instance thread", async () => {
+    // The idea's canonical session (sessionId === ideaUuid) lives on conn-idea-origin
+    // (/dev/ai-pm). A mention pins a DIFFERENT online instance (/dev/strands). The wake must
+    // re-point that SAME session's origin to the resolved connection — keeping sessionId ===
+    // ideaUuid and directIdeaUuid non-null — and NEVER mint an `${idea}::${conn}` thread.
     const ideaSessionOrigin = "conn-idea-origin";
+    const ideaSessionUuid = "sess-idea-canonical";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: ideaSessionOrigin, host: pinnedHost, cwd: "/home/u/dev/ai-pm" }),
       pinnedConn(),
     ]);
     // The existing idea-anchored session (sessionId === ideaUuid) lives on a DIFFERENT cwd.
-    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaSessionOrigin });
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: ideaSessionUuid,
+      originConnectionUuid: ideaSessionOrigin,
+    });
 
     const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
       ctx({
@@ -1030,23 +1045,24 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
       }),
     );
 
-    // Per-instance session: keyed on (idea, resolved connection), directIdeaUuid null,
-    // origin = the resolved (pinned) connection — its OWN cwd-bound transcript.
+    // The canonical session's origin is RE-POINTED (companyUuid-scoped update on its uuid).
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
+      where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
+      data: { originConnectionUuid: pinnedConnUuid },
+    });
+    // The turn lands on the SAME canonical session: sessionId === ideaUuid, directIdeaUuid
+    // non-null, origin = the resolved (pinned) connection. NO `::` per-instance thread.
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: `${ideaUuid}::${pinnedConnUuid}`,
-        directIdeaUuid: null,
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
         originConnectionUuid: pinnedConnUuid,
       }),
     );
-    // The existing idea session's origin is NEVER re-pointed (no resolve on its origin/key).
     expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: ideaSessionOrigin }),
+      expect.objectContaining({ sessionId: `${ideaUuid}::${pinnedConnUuid}` }),
     );
-    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: ideaUuid }),
-    );
-    // Directed delivery to the resolved (per-instance) connection.
+    // Directed delivery to the resolved connection (where the conversation now lives).
     expect(mockDeliverTurnPing).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: pinnedConnUuid, turnUuid: turn?.uuid }),
     );
@@ -1062,7 +1078,10 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
       pinnedConn(),
     ]);
     // The idea's existing session already lives on the pinned connection.
-    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: pinnedConnUuid });
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: "sess-idea-canonical",
+      originConnectionUuid: pinnedConnUuid,
+    });
 
     const { targetConnectionUuid } = await createTurnAndResolveTarget(
       ctx({
@@ -1081,6 +1100,8 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
         originConnectionUuid: pinnedConnUuid,
       }),
     );
+    // Origin already matches → NO re-point (scoped to origin !== resolved).
+    expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBe(pinnedConnUuid);
   });
 
@@ -1096,6 +1117,62 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
 
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("a directed cross-cwd human_instruction RE-POINTS the canonical session, never forking (AC-2 headline bug)", async () => {
+    // The headline bug: a human types an instruction on an idea whose canonical session
+    // lives on /dev/ai-pm, but the idea is instance-pinned to a DIFFERENT online cwd
+    // (/dev/strands). The wake resolves `directed` on the pinned instance, so this MUST
+    // re-point the canonical session (NOT fork `${idea}::${conn}`, which sent the user's
+    // turn to a residual thread while the AI replied on the old one → could not interrupt).
+    const ideaSessionOrigin = "conn-idea-origin";
+    const ideaSessionUuid = "sess-idea-canonical";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: ideaSessionOrigin, host: pinnedHost, cwd: "/home/u/dev/ai-pm" }),
+      pinnedConn(),
+    ]);
+    // The idea is instance-pinned to the (pinned) /dev/strands instance → resolves directed.
+    mockIdeaFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "inst-strands",
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      agentUuid,
+      host: pinnedHost,
+      cwd: pinnedCwd,
+    });
+    // The idea's canonical session lives on the OTHER cwd.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: ideaSessionUuid,
+      originConnectionUuid: ideaSessionOrigin,
+    });
+
+    const { turn } = await createTurnAndResolveTarget(
+      ctx({
+        action: "human_instruction",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        instructionText: "please continue over here",
+      }),
+    );
+
+    // Re-point the canonical session — NOT a per-instance fork.
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
+      where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
+      data: { originConnectionUuid: pinnedConnUuid },
+    });
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
+        originConnectionUuid: pinnedConnUuid,
+      }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: `${ideaUuid}::${pinnedConnUuid}` }),
+    );
+    // The turn's canonical instruction body still lands on the (re-pointed) session.
+    expect(turn?.promptText).toBe("please continue over here");
   });
 
   it("emits exactly ONE directed ping per directed wake (the precise turn, not a connection sweep)", async () => {
