@@ -13,7 +13,11 @@
 // observability idea.
 
 import { resolveCredentials, loginFilePath } from "./credentials.mjs";
-import { prompt, writeLoginFile } from "./login.mjs";
+import { prompt, writeLoginFile, updateDaemonConfig } from "./login.mjs";
+import {
+  resolveInstallCredentials,
+  resolveInstallCwds,
+} from "./daemon-install-config.mjs";
 import {
   resolvePermissionMode,
   yoloWarningLine,
@@ -746,11 +750,51 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
   const svc = service ?? { detectSupervisor: () => ({ kind: "none" }) };
 
   if (action === "install") {
+    // Pre-install config phase (fix-daemon-install-config): BEFORE writing any
+    // unit, guarantee the clean-env boot service can authenticate and knows which
+    // cwds to serve. --yes/-y OR a non-TTY suppress prompts; neither suppresses
+    // the resolve/persist/validate/abort guarantee.
+    const flags = pfDeps?.flags ?? {};
+    const env = pfDeps?.env ?? {};
+    const isTTY = pfDeps?.isTTY ?? false;
+    const skip = flags.yes === true || !isTTY;
+    const installCfg = svc.installConfig ?? {
+      resolveInstallCredentials,
+      resolveInstallCwds,
+    };
+
+    const credResult = await installCfg.resolveInstallCredentials(flags, env, {
+      isTTY,
+      skip,
+      resolve: pfDeps?.resolve,
+      validate: pfDeps?.validate,
+      writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
+      prompt: pfDeps?.askPrompt,
+      log,
+      errLog,
+    });
+    if (!credResult.ok) {
+      // Credentials could not be obtained / validated — never install a service
+      // that would fail to authenticate and crash-loop at boot.
+      errLog("[Chorus] install aborted — no service was written.");
+      return 1;
+    }
+
+    // Configure + persist the served cwd set (single source of truth in
+    // daemon.json; the unit carries no --cwd). Never blocks on a non-TTY.
+    await installCfg.resolveInstallCwds(flags, {
+      isTTY,
+      skip,
+      writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
+      prompt: pfDeps?.askPrompt,
+      log,
+    });
+
     const spec = {
       ...svc.resolveServicePaths(),
-      cwds: pfDeps?.flags?.cwd ?? [],
-      agent: pfDeps?.flags?.agent,
-      chorusOnly: pfDeps?.flags?.chorusOnly === true,
+      cwds: flags.cwd ?? [],
+      agent: flags.agent,
+      chorusOnly: flags.chorusOnly === true,
       workingDir: process.cwd(),
     };
     const r = svc.installService(spec);

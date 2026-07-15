@@ -29,6 +29,13 @@ function fakeService(over = {}) {
     systemctlUser: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     journalctlUser: vi.fn(() => ({ status: 0, stdout: "journal-body", stderr: "" })),
     resolveServicePaths: vi.fn(() => ({ nodePath: "/node", scriptPath: "/x/chorus.mjs", path: "/bin" })),
+    // The install pre-config phase (credential preflight + cwd wizard). Default:
+    // both succeed offline so the install dispatch tests never touch real
+    // credentials / network / TTY. Individual tests override to exercise abort.
+    installConfig: {
+      resolveInstallCredentials: vi.fn(async () => ({ ok: true, creds: { url: "u", apiKey: "cho_k" }, identity: { uuid: "a", name: "Bot" } })),
+      resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
+    },
     ...over,
   };
 }
@@ -232,7 +239,7 @@ describe("runDaemon — supervisor (systemd) delegation", () => {
 });
 
 describe("runDaemon — install / uninstall", () => {
-  it("install passes the invoking --cwd/--agent/--chorus-only into the spec and reports success", async () => {
+  it("install runs the credential + cwd config phase, then passes --agent/--chorus-only into the spec and reports success", async () => {
     const service = fakeService();
     const logs = [];
     const code = await runDaemon(
@@ -240,11 +247,53 @@ describe("runDaemon — install / uninstall", () => {
       { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
+    // Config phase ran before the unit was written.
+    expect(service.installConfig.resolveInstallCredentials).toHaveBeenCalledOnce();
+    expect(service.installConfig.resolveInstallCwds).toHaveBeenCalledOnce();
     const spec = service.installService.mock.calls[0][0];
-    expect(spec.cwds).toEqual(["/a", "/b"]);
     expect(spec.agent).toBe("claude-code");
     expect(spec.chorusOnly).toBe(true);
     expect(logs.join("")).toMatch(/installed and started/);
+  });
+
+  it("install ABORTS (exit 1, no unit written) when the credential preflight fails", async () => {
+    const service = fakeService({
+      installConfig: {
+        resolveInstallCredentials: vi.fn(async () => ({ ok: false })),
+        resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
+      },
+    });
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    // installService must NOT be called on the abort path.
+    expect(service.installService).not.toHaveBeenCalled();
+    // cwd config must not run once credentials aborted.
+    expect(service.installConfig.resolveInstallCwds).not.toHaveBeenCalled();
+    expect(errs.join("")).toMatch(/aborted/i);
+  });
+
+  it("install threads skip=true when --yes is passed", async () => {
+    const service = fakeService();
+    await runDaemon(
+      { action: "install", yes: true },
+      { lifecycle: fakeLifecycle(), service, isTTY: true, log: () => {}, errLog: () => {}, env: {} }
+    );
+    const credOpts = service.installConfig.resolveInstallCredentials.mock.calls[0][2];
+    expect(credOpts.skip).toBe(true);
+  });
+
+  it("install threads skip=true on a non-TTY even without --yes", async () => {
+    const service = fakeService();
+    await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, isTTY: false, log: () => {}, errLog: () => {}, env: {} }
+    );
+    const credOpts = service.installConfig.resolveInstallCredentials.mock.calls[0][2];
+    expect(credOpts.skip).toBe(true);
   });
 
   it("install surfaces a Linux failure as exit 1", async () => {
