@@ -1667,6 +1667,12 @@
     "cancel": "取消",
     "noInstances": "没有在线实例"
   },
+  "wakeCwdPicker": {
+    "title": "选择要运行的工作目录",
+    "subtitle": "{name} 在 {hosts, plural, other {# 台主机}}上有 {count, plural, other {# 个在线实例}}。请选择要固定并唤醒的实例。",
+    "confirm": "固定并继续",
+    "cancel": "取消"
+  },
   "graph": {
     "title": "图谱",
     "subtitle": "本项目想法、提案、任务与文档的思维导图。",

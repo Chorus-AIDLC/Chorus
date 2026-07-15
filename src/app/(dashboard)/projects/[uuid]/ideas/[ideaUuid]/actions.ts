@@ -146,11 +146,15 @@ export async function reassignIdeaInstanceNoWakeAction(
       return { success: false, error: "Idea not found" };
     }
 
-    // Elaborated ideas cannot be reassigned (lifecycle is done)
-    if (idea.status === "elaborated") {
-      return { success: false, error: "Idea is not available for assignment" };
-    }
-
+    // NOTE: no status short-circuit here. This action is the pin step of the
+    // pin-then-wake flow, and its wake surfaces (Start Development / Yolo /
+    // proposal approve-reject) act on ALREADY-elaborated ideas — the pin MUST
+    // persist there for the wake to run in the chosen cwd. `assignIdea` still
+    // rejects an elaborated idea for a genuine REASSIGNMENT; we opt into the
+    // narrow same-owning-agent cwd re-pin exception via
+    // `allowElaboratedInstanceRepin` so a different agent can never be pinned
+    // onto an elaborated idea through this path.
+    //
     // Promote to agent_instance via the non-waking service primitive. A foreign
     // or missing instance is rejected inside assignIdea (resolveAssigneeFields
     // throws) BEFORE any assignee write, so the assignee is left unchanged.
@@ -161,6 +165,7 @@ export async function reassignIdeaInstanceNoWakeAction(
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
       instanceUuid,
+      allowElaboratedInstanceRepin: true,
     });
 
     // NO createActivity({action:"assigned"}) here — that activity is what wakes

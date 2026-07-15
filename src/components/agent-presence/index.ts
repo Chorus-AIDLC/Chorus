@@ -42,6 +42,10 @@ export {
   type InstanceCandidate,
 } from "./instance-picker";
 export {
+  WakeCwdPickerDialog,
+  type WakeCwdPickerDialogProps,
+} from "./wake-cwd-picker-dialog";
+export {
   AssigneeInstanceLine,
   type AssigneeInstanceLineProps,
 } from "./assignee-instance-line";

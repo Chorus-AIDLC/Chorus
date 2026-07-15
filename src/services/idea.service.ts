@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, resolveAssigneeAgentUuid, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -73,6 +73,18 @@ export interface IdeaClaimParams {
   // omitted/null, the assignment behaves exactly as before this change
   // (assigneeType="agent" → un-pinned, online-first at wake time).
   instanceUuid?: string | null;
+  // Allow a SAME-owning-agent cwd re-pin on an ALREADY-elaborated idea
+  // (pin-cwd-before-wake). An elaborated idea normally rejects every assignment
+  // (its elaboration lifecycle is done), but pinning the (host, cwd) of the
+  // idea's EXISTING assignee agent is a wake-target refinement, NOT a
+  // reassignment: the post-elaboration wakes — Start Development / Yolo /
+  // proposal approve-reject — must run in the pinned cwd, and the spec requires
+  // the pin to persist before those wakes fire. Only honored together with
+  // `instanceUuid`, and ONLY when the instance's owning agent equals the idea's
+  // current assignee owning agent; any other assignment on an elaborated idea
+  // stays blocked. The assignee AGENT is unchanged — only its cwd is fixed.
+  // Defaults false → all existing callers behave exactly as before.
+  allowElaboratedInstanceRepin?: boolean;
 }
 
 // API response format
@@ -787,6 +799,32 @@ export async function claimIdea({
 }
 
 // Assign Idea (reassign: works regardless of current assignee, any non-terminal status)
+// Does `instanceUuid` belong to the SAME agent that currently owns the idea's
+// assignment? Used to gate the elaborated-idea cwd re-pin: pinning a cwd of the
+// idea's own assignee agent is a wake-target refinement (allowed post-
+// elaboration), whereas pinning a different agent's instance would be a
+// reassignment (still blocked). Resolves both sides to their owning AGENT uuid
+// (an `agent_instance` assignee → its agent) before comparing. Returns false if
+// the idea has no agent assignee, or the instance is missing/foreign-company.
+async function isSameOwningAgentInstance(
+  companyUuid: string,
+  currentAssigneeType: string | null,
+  currentAssigneeUuid: string | null,
+  instanceUuid: string,
+): Promise<boolean> {
+  const currentAgentUuid = await resolveAssigneeAgentUuid(
+    companyUuid,
+    currentAssigneeType,
+    currentAssigneeUuid,
+  );
+  if (!currentAgentUuid) return false;
+  const instance = await prisma.agentInstance.findFirst({
+    where: { uuid: instanceUuid, companyUuid },
+    select: { agentUuid: true },
+  });
+  return instance?.agentUuid === currentAgentUuid;
+}
+
 export async function assignIdea({
   ideaUuid,
   companyUuid,
@@ -794,6 +832,7 @@ export async function assignIdea({
   assigneeUuid,
   assignedByUuid,
   instanceUuid,
+  allowElaboratedInstanceRepin = false,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -801,7 +840,19 @@ export async function assignIdea({
   if (!existing) throw new Error("Idea not found");
   const normalizedAssignStatus = normalizeIdeaStatus(existing.status);
   if (normalizedAssignStatus === "elaborated") {
-    throw new Error("Cannot assign an elaborated Idea");
+    // An elaborated idea rejects reassignment — EXCEPT a same-owning-agent cwd
+    // re-pin (pin-cwd-before-wake). The post-elaboration wakes must run in the
+    // pinned cwd, so the pin has to persist even though the idea is elaborated.
+    // Guarded three ways: the caller opts in, an instance is actually being
+    // pinned, and the instance's owning agent equals the idea's current
+    // assignee owning agent (a cwd refinement, never an owner change).
+    const isSameAgentRepin =
+      allowElaboratedInstanceRepin &&
+      !!instanceUuid &&
+      (await isSameOwningAgentInstance(companyUuid, existing.assigneeType, existing.assigneeUuid, instanceUuid));
+    if (!isSameAgentRepin) {
+      throw new Error("Cannot assign an elaborated Idea");
+    }
   }
 
   // If currently open, move to elaborating; otherwise keep current status

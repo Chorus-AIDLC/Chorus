@@ -134,7 +134,10 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
 
     expect(result).toEqual({ success: true });
     // Threads the durable instance pin into the non-waking service primitive so
-    // it promotes the row to assigneeType="agent_instance".
+    // it promotes the row to assigneeType="agent_instance". Passes
+    // allowElaboratedInstanceRepin so a same-owning-agent cwd re-pin is honored
+    // even on an elaborated idea (the pin-then-wake surfaces act on elaborated
+    // ideas); assignIdea still enforces the same-agent guard for that exception.
     expect(mockAssignIdea).toHaveBeenCalledTimes(1);
     expect(mockAssignIdea).toHaveBeenCalledWith({
       ideaUuid: IDEA_UUID,
@@ -143,6 +146,7 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
       assigneeUuid: AGENT_UUID,
       assignedByUuid: "user-1",
       instanceUuid: INSTANCE_UUID,
+      allowElaboratedInstanceRepin: true,
     });
     // The crux: NO `assigned` activity — that activity is what wakes today. No
     // activity → no wake notification/turn.
@@ -187,9 +191,15 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
-  it("refuses to reassign an elaborated idea", async () => {
+  it("delegates an elaborated idea to assignIdea with the same-agent re-pin flag (does NOT short-circuit)", async () => {
+    // The pin-then-wake surfaces (Start Development / Yolo / proposal
+    // approve-reject) act on ELABORATED ideas, so this action must NOT reject
+    // them up front — it delegates to assignIdea, opting into the narrow
+    // same-owning-agent cwd re-pin exception. assignIdea itself enforces that the
+    // instance belongs to the idea's current assignee agent.
     mockGetServerAuthContext.mockResolvedValue(humanAuth());
     mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow({ status: "elaborated" }));
+    mockAssignIdea.mockResolvedValue(undefined);
 
     const result = await reassignIdeaInstanceNoWakeAction(
       IDEA_UUID,
@@ -197,11 +207,36 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
       INSTANCE_UUID,
     );
 
-    expect(result).toEqual({
-      success: false,
-      error: "Idea is not available for assignment",
+    expect(result).toEqual({ success: true });
+    expect(mockAssignIdea).toHaveBeenCalledWith({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_A,
+      assigneeType: "agent",
+      assigneeUuid: AGENT_UUID,
+      assignedByUuid: "user-1",
+      instanceUuid: INSTANCE_UUID,
+      allowElaboratedInstanceRepin: true,
     });
-    expect(mockAssignIdea).not.toHaveBeenCalled();
+    // Still no wake activity — this is the pin step only.
     expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a clean error when assignIdea rejects a cross-agent re-pin on an elaborated idea", async () => {
+    // assignIdea throws "Cannot assign an elaborated Idea" when the instance's
+    // owning agent is NOT the idea's assignee agent (the same-agent guard fails).
+    // The action must surface a clean error without leaking the raw message.
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow({ status: "elaborated" }));
+    mockAssignIdea.mockRejectedValue(new Error("Cannot assign an elaborated Idea"));
+
+    const result = await reassignIdeaInstanceNoWakeAction(
+      IDEA_UUID,
+      AGENT_UUID,
+      INSTANCE_UUID,
+    );
+
+    expect(result).toEqual({ success: false, error: "Failed to reassign idea" });
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -1667,6 +1667,12 @@
     "cancel": "Cancel",
     "noInstances": "No live instances"
   },
+  "wakeCwdPicker": {
+    "title": "Pick a working directory to run in",
+    "subtitle": "{name} is online in {count, plural, one {# instance} other {# instances}} across {hosts, plural, one {# host} other {# hosts}}. Choose which one to pin and wake.",
+    "confirm": "Pin & continue",
+    "cancel": "Cancel"
+  },
   "graph": {
     "title": "Graph",
     "subtitle": "A mind-map of this project's Ideas, Proposals, Tasks, and Documents.",
