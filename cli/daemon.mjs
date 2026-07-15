@@ -526,7 +526,14 @@ export async function runDaemon(flags = {}, deps = {}) {
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
   // the detach/restart paths run the SAME (injectable) preflight, not the real
   // implementations. Threaded into startDetached so tests can drive it offline.
-  const pfDeps = { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, log, errLog };
+  // writeConfig / readJson / loginPath are optional injectable IO used by the
+  // `install` config phase — default (undefined) means the real 0600 login file.
+  const pfDeps = {
+    flags, env, isTTY, resolve, validate, writeCreds, askPrompt, log, errLog,
+    writeConfig: deps.writeConfig,
+    readJson: deps.readJson,
+    loginPath: deps.loginPath,
+  };
 
   const action = flags.action ?? "run";
   if (action !== "run") {
@@ -782,10 +789,14 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
 
     // Configure + persist the served cwd set (single source of truth in
     // daemon.json; the unit carries no --cwd). Never blocks on a non-TTY.
+    // readJson / loginPath are optional injectable seams (default to the real
+    // login file) so the config phase can be exercised hermetically in tests.
     await installCfg.resolveInstallCwds(flags, {
       isTTY,
       skip,
       writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
+      readJson: pfDeps?.readJson,
+      loginPath: pfDeps?.loginPath,
       prompt: pfDeps?.askPrompt,
       log,
     });
