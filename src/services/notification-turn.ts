@@ -534,7 +534,7 @@ function selectOriginConnection(
  * already resolved by the caller. A query failure propagates to the caller's
  * failure-isolation guard.
  */
-async function resolveIdeaSessionOriginTarget(
+export async function resolveIdeaSessionOriginTarget(
   companyUuid: string,
   agentUuid: string,
   directIdeaUuid: string | null,
