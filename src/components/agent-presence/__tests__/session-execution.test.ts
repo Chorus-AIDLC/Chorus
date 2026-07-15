@@ -4,6 +4,7 @@ import {
   executionMatchesSession,
   executionsForSession,
   sessionExecStatus,
+  sessionExecutionsForComposer,
 } from "../chat/session-execution";
 import type { ExecutionView } from "../types";
 
@@ -103,6 +104,57 @@ describe("executionMatchesSession", () => {
       ),
     ).toBe(false);
   });
+
+  // fix-daemon-conversation-split-cwd-agent: heal interrupt on a LEGACY residual
+  // per-instance session `${ideaUuid}::${connectionUuid}` (directIdeaUuid = null), created
+  // by the removed cross-cwd fork. The idea is recovered from the `::`-prefix (fix-forward,
+  // UI-only, no row migration).
+  const residualSession = { sessionId: "idea-9::conn-xyz", directIdeaUuid: null };
+
+  it("tolerates the legacy residual `::` key: recovers the idea from the prefix and matches its executions", () => {
+    // A direct wake on the idea, reported by the daemon as idea:<idea-9>, matches the
+    // residual thread even though its directIdeaUuid is null.
+    expect(
+      executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-9" }), residualSession),
+    ).toBe(true);
+    // A child-resource wake whose direct idea is idea-9 also matches.
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-77", directIdeaUuid: "idea-9" }),
+        residualSession,
+      ),
+    ).toBe(true);
+    // A different idea does NOT match.
+    expect(
+      executionMatchesSession(exec({ entityType: "idea", entityUuid: "idea-OTHER" }), residualSession),
+    ).toBe(false);
+  });
+
+  it("a genuinely ad-hoc session (no `::`, null directIdeaUuid) keeps its daemon_session:<sessionId> match unchanged", () => {
+    // The `::` heal must not misfire on a real ad-hoc conversation whose sessionId is a
+    // random uuid with no separator — it still matches only its own daemon_session row.
+    expect(executionMatchesSession(exec({ entityType: "daemon_session", entityUuid: "sid-1" }), adHoc)).toBe(true);
+    // And it must NOT be treated as an idea (an idea:<sid-1> wake must not match an ad-hoc).
+    expect(executionMatchesSession(exec({ entityType: "idea", entityUuid: "sid-1" }), adHoc)).toBe(false);
+  });
+
+  it("matches strictly by the DIRECT idea, never the root idea — a sibling idea's run is not matched (R2)", () => {
+    // A running execution on a SIBLING idea (its own directIdeaUuid, unrelated root) must
+    // never match this idea's conversation.
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "idea", entityUuid: "idea-SIBLING", directIdeaUuid: "idea-SIBLING", rootIdeaUuid: "idea-SIBLING" }),
+        ideaSession,
+      ),
+    ).toBe(false);
+    // Even sharing a root idea does not match if the direct idea differs.
+    expect(
+      executionMatchesSession(
+        exec({ entityType: "task", entityUuid: "task-sib", directIdeaUuid: "idea-SIBLING", rootIdeaUuid: "idea-9" }),
+        ideaSession,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("executionsForSession", () => {
@@ -113,6 +165,70 @@ describe("executionsForSession", () => {
       exec({ uuid: "task", entityType: "task", entityUuid: "sid-1" }),
     ];
     expect(executionsForSession(slice, adHoc).map((e) => e.uuid)).toEqual(["mine"]);
+  });
+});
+
+// fix-daemon-conversation-split-cwd-agent: the composer's controllable-execution source
+// must reach the idea's running turn from ANY thread, so Interrupt works after a cwd or
+// agent switch.
+describe("sessionExecutionsForComposer", () => {
+  const ideaComposerSession = {
+    sessionId: "idea-9",
+    directIdeaUuid: "idea-9",
+    originConnectionUuid: "conn-origin",
+  };
+
+  it("prefers the viewed session's own origin-connection slice when it has a match", () => {
+    const byConn = {
+      "conn-origin": [exec({ uuid: "own", entityType: "idea", entityUuid: "idea-9", connectionUuid: "conn-origin" })],
+      "conn-other": [exec({ uuid: "other", entityType: "idea", entityUuid: "idea-9", connectionUuid: "conn-other" })],
+    };
+    // Only the origin slice's match is returned (scoped), not the other connection's.
+    expect(sessionExecutionsForComposer(byConn, ideaComposerSession).map((e) => e.uuid)).toEqual(["own"]);
+  });
+
+  it("falls back across ALL slices when the origin slice has no match (cwd-switch case)", () => {
+    // The idea's running turn lives on a DIFFERENT connection than the viewed session's
+    // origin — the origin slice is empty/unrelated, so the fallback finds it elsewhere.
+    const byConn = {
+      "conn-origin": [exec({ uuid: "unrelated", entityType: "idea", entityUuid: "idea-OTHER", connectionUuid: "conn-origin" })],
+      "conn-running": [
+        exec({ uuid: "running", entityType: "idea", entityUuid: "idea-9", status: "running", connectionUuid: "conn-running" }),
+      ],
+    };
+    const result = sessionExecutionsForComposer(byConn, ideaComposerSession);
+    expect(result.map((e) => e.uuid)).toEqual(["running"]);
+    // The matched execution carries its OWN connectionUuid so Interrupt targets it correctly.
+    expect(result[0]?.connectionUuid).toBe("conn-running");
+  });
+
+  it("falls back for the agent-switch case: the running turn is on another agent's row/connection", () => {
+    // Agent B's conversation for idea-9 is viewed (origin conn-b, no live exec), while agent
+    // A's still-running turn for the same idea is on conn-a. The composer must find it.
+    const byConn = {
+      "conn-b": [],
+      "conn-a": [
+        exec({ uuid: "agentA-run", agentUuid: "agent-A", entityType: "idea", entityUuid: "idea-9", status: "running", connectionUuid: "conn-a" }),
+      ],
+    };
+    const viewedOnB = { sessionId: "idea-9", directIdeaUuid: "idea-9", originConnectionUuid: "conn-b" };
+    expect(sessionExecutionsForComposer(byConn, viewedOnB).map((e) => e.uuid)).toEqual(["agentA-run"]);
+  });
+
+  it("heals a legacy residual `::` session by recovering the idea and matching across slices", () => {
+    const residual = { sessionId: "idea-9::conn-xyz", directIdeaUuid: null, originConnectionUuid: "conn-xyz" };
+    const byConn = {
+      "conn-xyz": [],
+      "conn-running": [exec({ uuid: "run", entityType: "idea", entityUuid: "idea-9", status: "running", connectionUuid: "conn-running" })],
+    };
+    expect(sessionExecutionsForComposer(byConn, residual).map((e) => e.uuid)).toEqual(["run"]);
+  });
+
+  it("returns nothing when no slice has the idea's execution (idle from every thread)", () => {
+    const byConn = {
+      "conn-origin": [exec({ entityType: "idea", entityUuid: "idea-OTHER" })],
+    };
+    expect(sessionExecutionsForComposer(byConn, ideaComposerSession)).toEqual([]);
   });
 });
 
