@@ -965,6 +965,7 @@
     "startedHint": "Development started — the agent is executing the remaining tasks",
     "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Start development after it reconnects.",
+    "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Start development after that instance reconnects.",
     "errorNoApprovedProposal": "This idea has no approved proposal yet",
     "errorNoUnfinishedTasks": "All tasks are already finished",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
@@ -980,6 +981,7 @@
     "startedHint": "Yolo started — the agent is driving this idea to done",
     "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
+    "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Run Yolo after that instance reconnects.",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
     "errorGeneric": "Failed to start Yolo"
   },
@@ -1664,6 +1666,12 @@
     "confirm": "Pin instance",
     "cancel": "Cancel",
     "noInstances": "No live instances"
+  },
+  "wakeCwdPicker": {
+    "title": "Pick a working directory to run in",
+    "subtitle": "{name} is online in {count, plural, one {# instance} other {# instances}} across {hosts, plural, one {# host} other {# hosts}}. Choose which one to pin and wake.",
+    "confirm": "Pin & continue",
+    "cancel": "Cancel"
   },
   "graph": {
     "title": "Graph",

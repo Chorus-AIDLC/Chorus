@@ -29,10 +29,17 @@ import {
   startDevelopmentAction,
   type StartDevelopmentErrorCode,
 } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/stage-advance-actions";
+import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
+import { usePinThenWake } from "@/hooks/use-pin-then-wake";
+import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 
 interface StartDevelopmentButtonProps {
   ideaUuid: string;
   assignee: StartDevelopmentAssignee | null | undefined;
+  // Assignee agent display name — shown in the cwd picker subtitle when the
+  // pin-then-wake flow prompts (`pick` outcome). Optional; the panels pass
+  // idea.assignee.name.
+  assigneeName?: string | null;
   proposals: { status: string }[] | null | undefined;
   tasks: { status: string }[] | null | undefined;
   // Called after a successful start so the panel can refresh its data.
@@ -49,12 +56,14 @@ const ERROR_CODE_I18N_KEY: Record<StartDevelopmentErrorCode, string> = {
   no_approved_proposal: "errorNoApprovedProposal",
   no_unfinished_tasks: "errorNoUnfinishedTasks",
   agent_offline: "errorAgentOffline",
+  instance_offline: "errorInstanceOffline",
   unknown: "errorGeneric",
 };
 
 export function StartDevelopmentButton({
   ideaUuid,
   assignee,
+  assigneeName,
   proposals,
   tasks,
   onStarted,
@@ -65,6 +74,19 @@ export function StartDevelopmentButton({
   const connections = useAgentPresenceOptional()?.connections ?? [];
   const [isStarting, setIsStarting] = useState(false);
   const [started, setStarted] = useState(false);
+  // Pin-then-wake: before firing the wake, consult the wake-target preview and
+  // (pick) prompt for a cwd / (auto_pin) persist the sole cwd / (direct) wake
+  // as-is. The picker dialog is mounted below, driven by pickerState.
+  // `isResolving` is true while the preview fetch is in flight — the button is
+  // disabled through it so a second click can't kick off a duplicate
+  // preview→wake before the first resolves.
+  const {
+    start: startPinThenWake,
+    pickerState,
+    confirmPick,
+    cancelPick,
+    isResolving,
+  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
 
   // The started hint is transient: it clears when the panel moves to another
   // idea, and — because a wake normally flips a task to in_progress quickly —
@@ -104,7 +126,10 @@ export function StartDevelopmentButton({
     ) : null;
   }
 
-  const handleClick = async () => {
+  // The actual wake — fired directly on `direct`/`auto_pin`, or after the human
+  // picks a cwd on `pick`. The server re-validates every precondition (incl. the
+  // HARD instance-offline check → instance_offline error code).
+  const runWake = async () => {
     setIsStarting(true);
     const result = await startDevelopmentAction(ideaUuid);
     setIsStarting(false);
@@ -118,11 +143,18 @@ export function StartDevelopmentButton({
     }
   };
 
+  const handleClick = () => {
+    // Route through the pin-then-wake flow: it fetches the preview and either
+    // wakes immediately (direct/auto_pin) or opens the picker (pick), then calls
+    // runWake once the cwd is resolved.
+    startPinThenWake({ ideaUuid, wake: runWake });
+  };
+
   const button = (
     <Button
       className="bg-primary hover:bg-[#B56A42] text-white"
       onClick={handleClick}
-      disabled={!enabled || isStarting}
+      disabled={!enabled || isStarting || isResolving}
     >
       {isStarting ? (
         <>
@@ -157,5 +189,19 @@ export function StartDevelopmentButton({
     );
   }
 
-  return button;
+  return (
+    <>
+      {button}
+      {/* Pin-then-wake cwd picker — mounted only on the online path (the offline
+          path keeps the button disabled, so it never opens). Driven by the hook;
+          on confirm it persists the pin then fires runWake. */}
+      <WakeCwdPickerDialog
+        open={pickerState !== null}
+        agentName={assigneeName ?? ""}
+        instances={pickerState?.instances ?? []}
+        onConfirm={confirmPick}
+        onCancel={cancelPick}
+      />
+    </>
+  );
 }

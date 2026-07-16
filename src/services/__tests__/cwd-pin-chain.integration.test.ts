@@ -35,10 +35,10 @@
 //       reads the threaded (host, cwd) → origin pinned to the matching LIVE connection.
 //   (2) KEY ASSERTION: the write shape ≡ the read shape (assigneeType/assigneeUuid), proven
 //       on both ends (a plain-agent assignment resolves no pin, not passes silently).
-//   (3) OFFLINE assignment (SOFT) pin / fully-offline agent: a SOFT assignment pin to an
-//       offline instance DEGRADES to online-first (R2 graceful un-pin); a fully-offline
-//       agent has nothing to degrade to → NO turn, the Notification stands. (A HARD mention
-//       pin's notify-only policy is exercised in the unit tests.)
+//   (3) OFFLINE assignment (HARD) pin / fully-offline agent: an assignment pin is HARD now
+//       (owner choice B, pin-cwd-before-wake), so an offline pin is NOTIFY-ONLY — NO turn,
+//       NEVER re-routed to online-first — identical to a HARD mention pin; a fully-offline
+//       agent likewise records only the plain Notification.
 //   (4) live ad-hoc send to an OFFLINE instance → rejected (409). Online-only holds end
 //       to end on the live-send side.
 
@@ -758,17 +758,19 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT assignment sha
 });
 
 // ===========================================================================================
-// THREAD 3 — OFFLINE assignment (SOFT) pin / fully-offline agent. An offline assignment pin
-// is SOFT: it DEGRADES to online-first (R2 graceful un-pin), NOT notify-only (that policy is
-// reserved for a HARD mention pin). A fully-offline agent has nothing to degrade to → no turn.
+// THREAD 3 — OFFLINE assignment (HARD) pin / fully-offline agent. An assignment pin is now
+// HARD (owner choice B, pin-cwd-before-wake), identical to a mention pin: an offline pin is
+// NOTIFY-ONLY (no turn, no session), NEVER re-routed to the agent's online-first connection.
+// A fully-offline agent likewise records only the plain Notification. This INVERTS the former
+// SOFT "degrade to online-first" behavior.
 // ===========================================================================================
 
-describe("integration: an OFFLINE assignment (SOFT) pin degrades to online-first; a fully-offline agent records a plain notification", () => {
-  it("a task_assigned wake pinned (agent_instance, SOFT) to an OFFLINE place DEGRADES to the online-elsewhere instance (R2 graceful un-pin)", async () => {
-    // The assignment is pinned to the (PIN_HOST, PIN_CWD) instance. This is a SOFT pin
-    // (an assignment, not a human-typed mention): when its instance is offline, R2 says it
-    // degrades to a plain agent and wakes the agent's online-first connection — NOT
-    // notify-only (that is reserved for a HARD mention pin, covered in the unit tests).
+describe("integration: an OFFLINE assignment (HARD) pin is notify-only (never re-routed); a fully-offline agent records a plain notification", () => {
+  it("a task_assigned wake pinned (agent_instance, HARD) to an OFFLINE place is notify-only (NO re-route to the online-elsewhere instance)", async () => {
+    // The assignment is pinned to the (PIN_HOST, PIN_CWD) instance. This is now a HARD pin
+    // (owner choice B): when its instance is offline the wake is notify-only — NO turn, NO
+    // session — and is NEVER re-routed to the agent's online-elsewhere connection (routing to
+    // an unchosen cwd is the defect this preserves the fix for).
     seedInstance(PIN_HOST, PIN_CWD);
     seedTask({
       status: "assigned",
@@ -777,8 +779,8 @@ describe("integration: an OFFLINE assignment (SOFT) pin degrades to online-first
       assignedByUuid: USER,
     });
 
-    // The pinned place is OFFLINE; another instance is online elsewhere. The SOFT pin
-    // degrades to the online-elsewhere connection.
+    // The pinned place is OFFLINE; another instance is online elsewhere. The HARD pin must
+    // NOT re-route to the online-elsewhere connection.
     mockListConnectionsForAgent.mockResolvedValue([
       connView({ uuid: OTHER_CONN, host: "other-host", cwd: "/home/u/dev/other", effectiveStatus: "online" }),
       connView({ uuid: PINNED_CONN, host: PIN_HOST, cwd: PIN_CWD, status: "offline", effectiveStatus: "offline" }),
@@ -800,10 +802,10 @@ describe("integration: an OFFLINE assignment (SOFT) pin degrades to online-first
       actorName: "Alice",
     });
 
-    // Graceful degrade: a turn IS created on the online-elsewhere connection (NOT notify-only).
-    expect(store.data.daemonSessionTurn).toHaveLength(1);
-    expect(store.data.daemonSession).toHaveLength(1);
-    expect(store.data.daemonSession[0].originConnectionUuid).toBe(OTHER_CONN);
+    // HARD offline pin → notify-only: NO turn, NO session; only the plain Notification stands.
+    // Crucially it did NOT re-route to the online-elsewhere connection.
+    expect(store.data.daemonSessionTurn).toHaveLength(0);
+    expect(store.data.daemonSession).toHaveLength(0);
     expect(store.data.notification).toHaveLength(1);
     expect(mockLogger.error).not.toHaveBeenCalled();
   });

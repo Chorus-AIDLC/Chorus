@@ -429,12 +429,13 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
 // ===== Pinned-target instance routing (cwd-addressable instances, T11) =====
 //
 // The wake honors a pinned (host, cwd): a `mentioned` wake carries the pin on the
-// context (threaded from the mention markup by mention.service — a HARD pin); an
-// assignment wake (task_assigned / idea_claimed) reads it from the Task's / root Idea's
-// `agent_instance` assignee, resolved to its place (a SOFT pin). ONLINE-ONLY selection:
+// context (threaded from the mention markup by mention.service); an assignment wake
+// (task_assigned / idea_claimed) reads it from the Task's / root Idea's `agent_instance`
+// assignee, resolved to its place. ALL pins are HARD now (owner choice B,
+// pin-cwd-before-wake) — there is no SOFT assignment pin any more. ONLINE-ONLY selection:
 //   - pin matches an ONLINE connection       → pin the session origin THERE (not [0])
-//   - HARD pin matches NO online connection   → offline_pin: notify-only, NO wake (#354)
-//   - SOFT pin matches NO online connection   → DEGRADE to online-first (R2 graceful un-pin)
+//   - HARD pin matches NO online connection   → offline_pin: notify-only, NO wake (#354),
+//                                               NEVER re-routed (mention AND assignment)
 //   - no pin at all                           → online-first (unchanged)
 //   - no online connection at all             → no turn (the notification stands)
 // DEC-5: the cwd is ONLY ever the explicit pin — never inferred from the project.
@@ -478,9 +479,9 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockTaskFindFirst).not.toHaveBeenCalled();
   });
 
-  // ----- task_assigned wake: SOFT pin read from the Task's agent_instance assignee -----
+  // ----- task_assigned wake: HARD pin read from the Task's agent_instance assignee -----
 
-  it("reads the Task's agent_instance override and pins the matching LIVE connection for a task_assigned wake (SOFT)", async () => {
+  it("reads the Task's agent_instance override and pins the matching LIVE connection for a task_assigned wake (HARD)", async () => {
     pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
@@ -541,14 +542,15 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  // ----- SOFT pin offline = DEGRADE to online-first (R2 graceful un-pin) -----
+  // ----- HARD assignment pin offline = notify-only, NO re-route (owner choice B) -----
   //
-  // An assignment pin (Task agent_instance override / inherited idea instance) is SOFT:
-  // when its instance has no online connection, R2 says it degrades to a plain agent and
-  // wakes the agent's online-first connection — it is NEVER notify-only (that policy is
-  // reserved for HARD mention pins). suppressWake stays false; the turn IS created.
+  // An assignment pin (Task agent_instance override / inherited idea instance) is now HARD
+  // (owner choice B, pin-cwd-before-wake), identical to a mention pin: when its instance has
+  // no online connection the wake is offline_pin (notify-only, suppressWake TRUE) — it is
+  // NEVER re-routed to the agent's online-first connection. This INVERTS the former SOFT
+  // "degrade to online-first" behavior.
 
-  it("offline SOFT Task pin (place not registered): DEGRADES to online-first (turn created, no suppress)", async () => {
+  it("offline HARD Task pin (place not registered): notify-only, suppressWake TRUE, NO re-route to online-first", async () => {
     // Task pinned to an instance whose place is not registered online for this agent at all.
     pinTaskToInstance("ghost-host", "/no/such/path");
     const onlineFirst = "conn-online-first";
@@ -560,23 +562,22 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
       ctx({ action: "task_assigned" }),
     );
 
-    // Graceful degrade: the turn IS created on the agent's online-first connection.
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
-    // A degraded soft pin is a broadcast → online-first wake: no directed ping/target,
-    // and crucially NOT notify-only (suppressWake false — distinct from a HARD offline pin).
+    // HARD offline pin → notify-only: NO turn, NO ping, NO target.
+    expect(turn).toBeNull();
     expect(targetConnectionUuid).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // Crucially it must NOT re-route to the agent's online-first connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    // The offline-pin discriminator: suppressWake TRUE so every connection suppresses.
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("offline SOFT Task pin matching an OFFLINE connection (online-elsewhere): DEGRADES to the online-elsewhere connection", async () => {
-    // The pinned instance is OFFLINE; another instance is online. A SOFT pin degrades to
-    // that online-elsewhere connection (the opposite of a HARD mention pin, which would be
-    // notify-only and never re-route).
+  it("offline HARD Task pin matching an OFFLINE connection (online-elsewhere): notify-only, NO re-route", async () => {
+    // The pinned instance is OFFLINE; another instance is online. A HARD pin is notify-only
+    // and NEVER re-routes to the online-elsewhere connection (routing to an unchosen cwd is
+    // the defect).
     pinTaskToInstance(pinnedHost, pinnedCwd);
     const onlineElsewhere = "conn-online-elsewhere";
     mockListConnectionsForAgent.mockResolvedValue([
@@ -588,17 +589,17 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
       ctx({ action: "task_assigned" }),
     );
 
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineElsewhere }),
-    );
+    expect(turn).toBeNull();
     expect(targetConnectionUuid).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // Must NOT re-route to the online-elsewhere connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("a pin matching an OFFLINE connection (online-elsewhere) creates NO turn, NO ping, NO target (no silent re-route)", async () => {
+  it("a mention pin matching an OFFLINE connection (online-elsewhere) creates NO turn, NO ping, NO target (no silent re-route)", async () => {
     // The pinned (host, cwd) instance is OFFLINE; another instance is online. The wake must
     // NOT fall back to that online-elsewhere instance — routing to an unchosen cwd is the
     // defect. Notify-only, no wake anywhere.
@@ -622,11 +623,11 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("a SOFT Task pin with NO online connection at all creates NO turn (none — the notification stands)", async () => {
-    // Agent is FULLY offline (the soft pin degrades to online-first, but there IS no online
-    // connection to degrade to → `none`). NO turn — the already-created Notification stands
-    // as the plain record. suppressWake stays FALSE (no one is connected to suppress, and a
-    // momentary-no-online wake must stay byte-identical to before).
+  it("a HARD Task pin whose only connection is the offline pinned one → offline_pin, suppressWake TRUE", async () => {
+    // The pinned instance is offline and it is the agent's ONLY connection. With a HARD pin
+    // this is still offline_pin (a pin was present and matched no ONLINE connection), NOT
+    // `none` — so suppressWake is TRUE. `none` is reserved for a genuinely UN-pinned wake
+    // with no online connection. NO turn either way — the notification stands.
     pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
@@ -635,7 +636,7 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     const { turn, suppressWake } = await createTurnAndResolveTarget(ctx({ action: "task_assigned" }));
 
     expect(turn).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(suppressWake).toBe(true);
     expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
     expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     // Not an error — a fully-offline target is a notification-only event.
@@ -1325,13 +1326,14 @@ describe("maybeCreateTurnForWakeNotification — failure isolation", () => {
   });
 });
 
-// ===== Instance-based pin LINEAGE: soft/hard, same-agent guard, idea inheritance (T11) =====
+// ===== Instance-based pin LINEAGE: HARD pins, same-agent guard, idea inheritance (T11) =====
 //
-// resolvePinnedTarget now resolves the pin from an INSTANCE lineage, tagging each pin with
-// its origin (`soft`) so selectOriginConnection applies the right offline policy:
+// resolvePinnedTarget resolves the pin from an INSTANCE lineage. ALL pins are HARD now
+// (owner choice B, pin-cwd-before-wake), so selectOriginConnection applies the uniform
+// offline policy (offline_pin / suppressWake — never a degrade to online-first):
 //   1. mention pin (HARD, soft:false)             — covered above (offline_pin / suppressWake)
-//   2. task override (SOFT, soft:true)            — Task's own agent_instance assignee
-//   3. root-idea inheritance (SOFT, soft:true)    — root Idea's instance, SAME-AGENT only
+//   2. task override (HARD, soft:false)           — Task's own agent_instance assignee
+//   3. root-idea inheritance (HARD, soft:false)   — root Idea's instance, SAME-AGENT only
 //   4. else null → online-first
 // This block exercises the lineage priority order, the same-agent guard, the idea-instance
 // priority over the elaboration_verified session-origin heuristic, and idea_claimed (which
@@ -1437,7 +1439,8 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
     );
-    // Un-pinned (degraded-to-online-first) → no directed delivery.
+    // The same-agent guard blocked inheritance → genuinely un-pinned → online-first, no
+    // directed delivery (this is NOT a HARD-pin offline_pin: no pin was ever resolved).
     expect(targetConnectionUuid).toBeNull();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
   });
@@ -1673,9 +1676,13 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(targetConnectionUuid).toBe(ideaConnUuid);
   });
 
-  // ----- a SOFT idea-inherited pin that is OFFLINE degrades to online-first (no suppress) -----
+  // ----- a HARD idea-inherited pin that is OFFLINE is notify-only, NEVER re-routed -----
 
-  it("an inherited (SOFT) idea-instance pin that is OFFLINE degrades to online-first, suppressWake false", async () => {
+  it("an inherited (HARD) idea-instance pin that is OFFLINE is notify-only, suppressWake TRUE, NO re-route", async () => {
+    // The inherited idea-instance pin is now HARD (owner choice B): when its instance is
+    // offline the wake is offline_pin (notify-only, suppressWake TRUE) even though the agent
+    // has another online connection — it is NEVER re-routed to online-first. This INVERTS
+    // the former SOFT degrade-to-online-first behavior.
     pinIdeaToInstance(ideaHost, ideaCwd); // same agent → inherited, but offline below
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
@@ -1687,13 +1694,14 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
       ctx({ action: "task_assigned" }),
     );
 
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
+    // HARD offline pin → notify-only: NO turn, NO re-route to the online-first connection.
+    expect(turn).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBeNull();
-    // SOFT → degrade, NEVER notify-only.
-    expect(suppressWake).toBe(false);
+    // HARD → notify-only, suppress on every connection.
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });

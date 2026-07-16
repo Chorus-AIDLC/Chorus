@@ -89,28 +89,6 @@ existing online-first / session-origin behavior apply.
 - **THEN** the wake targets instance A, taking priority over the existing idea-session-origin
   upgrade and over agent-overall online-first
 
-### Requirement: An unreachable assignment-pinned instance degrades to a plain agent
-
-The system SHALL distinguish a soft pin (an assignment: a Task `agent_instance` override or an
-inherited Idea instance) from a hard pin (a mention's typed `?cwd=&host=` markup). When a soft
-pin resolves to an instance that has no online connection, the system SHALL NOT hang or error;
-it SHALL degrade gracefully to treating the target as a plain agent and wake the agent's
-online-first connection. A degraded assignment behaves as an un-pinned `agent` assignment for
-downstream inheritance: later resolve wakes have no instance to inherit and resolve
-online-first. A hard mention pin SHALL retain the existing notify-only behavior (no wake, no
-online-first re-route) so a human-typed place is never silently redirected.
-
-#### Scenario: Soft assignment pin to an offline instance falls to online-first
-
-- **WHEN** a wake for a Task/Idea assignment resolves to instance A, A has no online
-  connection, and the agent has another online connection
-- **THEN** the wake is delivered to the agent's online-first connection rather than failing
-
-#### Scenario: Hard mention pin to an offline instance stays notify-only
-
-- **WHEN** a wake from a mention's `?cwd=&host=` markup resolves to an offline instance
-- **THEN** no wake is delivered (notify-only) and the wake is NOT re-routed to online-first
-
 ### Requirement: Instance selection at assignment offers only online instances
 
 When assigning an Idea or Task to an instance, the instance picker SHALL offer only instances
@@ -144,4 +122,31 @@ tokens SHALL require no migration.
   exists for that agent at `(host="prod", cwd="/work")`
 - **THEN** the mention resolves to that `AgentInstance` for wake targeting, with no change to
   the stored token
+
+### Requirement: An unreachable assignment-pinned instance stays notify-only
+
+An assignment pin (a Task `agent_instance` override or an inherited Idea instance) SHALL be a **HARD** pin, with the same offline policy as a mention's typed `?cwd=&host=` markup pin. When a HARD pin resolves to an instance that has no online connection, the system SHALL NOT hang, error opaquely, or silently re-route the wake to a different connection of the same agent; the wake SHALL be notify-only (no wake/turn delivered, recovered by the existing reconnect backfill for recoverable triggers). For a `require_online` stage-advance action, the action SHALL fail with a distinguishable instance-offline error rather than waking a different cwd. A HARD assignment pin SHALL NOT degrade to an un-pinned `agent` for downstream inheritance: it remains the pinned instance, and later resolve wakes continue to target that instance (notify-only while it is offline). This unifies the offline policy of assignment pins with mention pins — there is no SOFT assignment pin.
+
+#### Scenario: Assignment pin to an offline instance stays notify-only
+
+- **WHEN** a wake for a Task/Idea assignment resolves to instance A, A has no online connection, and the agent has another online connection
+- **THEN** the wake MUST be notify-only and MUST NOT be re-routed to the agent's other online connection
+
+#### Scenario: A require-online action on an offline pinned instance fails distinguishably
+
+- **GIVEN** an Idea pinned to instance A which currently has no online connection
+- **WHEN** a user invokes a `require_online` stage-advance action (Start Development or Yolo) for that Idea
+- **THEN** the action MUST fail with an instance-offline error distinguishable from other precondition failures
+- **AND** no other cwd of the agent MUST be woken
+
+#### Scenario: Mention pin to an offline instance stays notify-only
+
+- **WHEN** a wake from a mention's `?cwd=&host=` markup resolves to an offline instance
+- **THEN** no wake is delivered (notify-only) and the wake is NOT re-routed to online-first
+
+#### Scenario: An offline pinned instance that reconnects wakes at that instance
+
+- **GIVEN** an Idea pinned to instance A that was offline when a recoverable wake was queued
+- **WHEN** instance A reconnects
+- **THEN** the backfilled wake MUST target instance A (the pin is retained, not degraded to online-first)
 

@@ -31,7 +31,8 @@
 //   2. Assign the idea to instance A → idea.assigneeType = "agent_instance".
 //   3. The derived task (agent X, no override) wake resolves to instance A (inherited).
 //   4. A cross-agent task (agent Y) in the SAME idea resolves to Y, NOT instance A.
-//   5. Take instance A offline → the task wake DEGRADES to agent-X online-first (soft pin).
+//   5. Take instance A offline → the task wake is NOTIFY-ONLY (HARD pin, owner choice B):
+//      NO turn, suppressWake TRUE, NEVER re-routed to agent-X online-first (B).
 //   6. Re-assign the idea to instance B → the wake resolves to B.
 //   7. Revert the idea to plain agent → the wake resolves online-first (no pin).
 //   8. Throughout, the agent's ideaTracker NEVER drops the instance-pinned idea.
@@ -47,6 +48,7 @@ import {
   buildMockPrisma,
   seedAgentInstanceScenario,
   takeInstanceOffline,
+  bringInstanceOnline,
   agentAuth,
   type AgentInstanceScenario,
 } from "@/__tests__/fixtures/agentInstanceFixture";
@@ -214,7 +216,7 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     expect(session.agentUuid).toBe(s.agentY);
   });
 
-  it("AC#1 (degrade): instance A offline → the inherit-task wake DEGRADES to agent-X online-first (no hang/error)", async () => {
+  it("AC#1 (HARD offline): instance A offline → the inherit-task wake is notify-only (suppressWake), NOT re-routed to B", async () => {
     const s = seedAgentInstanceScenario();
     await assignIdea({
       ideaUuid: s.ideaUuid,
@@ -232,21 +234,48 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     takeInstanceOffline(s.connA);
     instances = await listInstancesForAgent(s.companyUuid, s.agentX);
     expect(instances.find((i) => i.uuid === s.instanceA)?.online).toBe(false);
-    // Instance B is still online → it is the agent's online-first fallback.
+    // Instance B is still online — but a HARD pin must NOT re-route to it.
     expect(instances.find((i) => i.uuid === s.instanceB)?.online).toBe(true);
 
-    // The wake is a SOFT pin (inherited idea instance). An offline soft pin
-    // DEGRADES to the agent's online-first connection — never notify-only, never
-    // a hang. A turn IS created, on the surviving online connection (B).
+    // The wake is a HARD pin now (inherited idea instance, owner choice B). An offline
+    // HARD pin is NOTIFY-ONLY: NO turn, suppressWake TRUE, and it is NEVER re-routed to
+    // the agent's online-first connection (B). This INVERTS the former SOFT degrade.
     const result = await createTurnAndResolveTarget(taskWake(s, s.taskInherit, s.agentX));
-    expect(result.suppressWake).toBe(false); // NOT an offline-pin suppression
-    // Degraded → online_first → no directed target.
+    expect(result.suppressWake).toBe(true); // offline-pin suppression on every connection
     expect(result.targetConnectionUuid).toBeNull();
+    expect(result.turn).toBeNull(); // no turn created — never re-routed to B
+  });
+
+  it("AC#1 (reconnect retains the pin): instance A comes back online → the wake targets A again, never degraded to online-first", async () => {
+    // The HARD pin is never degraded to a plain agent when offline (owner choice B): the
+    // assignment row keeps pointing at instance A. So when A reconnects, re-resolving the
+    // same wake DIRECTS it back to A (connA) — proving the pin was RETAINED, not un-pinned.
+    const s = seedAgentInstanceScenario();
+    await assignIdea({
+      ideaUuid: s.ideaUuid,
+      companyUuid: s.companyUuid,
+      assigneeType: "agent",
+      assigneeUuid: s.agentX,
+      instanceUuid: s.instanceA,
+    });
+
+    // A goes offline: the wake is notify-only, never re-routed to B.
+    takeInstanceOffline(s.connA);
+    const offlineResult = await createTurnAndResolveTarget(taskWake(s, s.taskInherit, s.agentX));
+    expect(offlineResult.turn).toBeNull();
+    expect(offlineResult.suppressWake).toBe(true);
+
+    // A reconnects. The assignment still pins instance A (never degraded), so the
+    // re-resolved wake is DIRECTED back to A — NOT online-first (which would pick B).
+    bringInstanceOnline(s.connA);
+    const result = await createTurnAndResolveTarget(taskWake(s, s.taskInherit, s.agentX));
+    expect(result.targetConnectionUuid).toBe(s.connA);
+    expect(result.suppressWake).toBe(false);
     expect(result.turn).not.toBeNull();
     const session = agentInstanceStore.daemonSessions.find(
       (ss) => ss.uuid === result.turn!.sessionUuid,
     )!;
-    expect(session.originConnectionUuid).toBe(s.connB); // online-first survivor
+    expect(session.originConnectionUuid).toBe(s.connA);
   });
 
   it("AC#1 (re-pin): re-assign the idea to instance B → the inherit-task wake resolves to B", async () => {
@@ -371,7 +400,7 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     });
 
     // The Verify-Elaborate handoff wake (write-the-proposal) is idea-anchored.
-    // Because the idea is instance-pinned, the root-idea SOFT pin leads and the
+    // Because the idea is instance-pinned, the root-idea HARD pin leads and the
     // wake is DIRECTED to instance A — ahead of (and instead of) the lower-priority
     // session-origin heuristic.
     const result = await createTurnAndResolveTarget(elaborationVerifiedWake(s, s.agentX));
@@ -380,7 +409,7 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     expect(result.turn).not.toBeNull();
   });
 
-  it("AC#3 (degrade): elaboration_verified on an A-pinned idea whose A is offline degrades to online-first (B)", async () => {
+  it("AC#3 (HARD offline): elaboration_verified on an A-pinned idea whose A is offline is notify-only, NOT re-routed to B", async () => {
     const s = seedAgentInstanceScenario();
     await claimIdea({
       ideaUuid: s.ideaUuid,
@@ -391,17 +420,14 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     });
     takeInstanceOffline(s.connA);
 
-    // Idea soft pin → A offline → degrade to agent-X online-first (B). No idea
-    // session exists yet, so the session-origin heuristic finds nothing and the
-    // selection stays online-first → no directed target, but a turn is created.
+    // Idea HARD pin → A offline → offline_pin (notify-only, suppressWake TRUE). The pin
+    // resolves to `offline_pin` BEFORE the session-origin heuristic (which only fires on
+    // online_first), so the wake is NEVER re-routed to agent-X online-first (B). NO turn.
+    // This INVERTS the former SOFT degrade.
     const result = await createTurnAndResolveTarget(elaborationVerifiedWake(s, s.agentX));
-    expect(result.suppressWake).toBe(false);
+    expect(result.suppressWake).toBe(true);
     expect(result.targetConnectionUuid).toBeNull();
-    expect(result.turn).not.toBeNull();
-    const session = agentInstanceStore.daemonSessions.find(
-      (ss) => ss.uuid === result.turn!.sessionUuid,
-    )!;
-    expect(session.originConnectionUuid).toBe(s.connB);
+    expect(result.turn).toBeNull();
   });
 });
 

@@ -96,6 +96,21 @@ beforeEach(() => {
   presenceValue.current = {
     connections: [{ agentUuid: "agent-1", effectiveStatus: "online" }],
   };
+  // Pin-then-wake fetches GET /api/ideas/:uuid/wake-preview on click. Default to
+  // the `direct` outcome so these tests exercise the wake path with no picker /
+  // reassign (the pin-then-wake branches have their own unit tests in
+  // use-pin-then-wake.test.tsx). A deterministic stub also removes the noisy
+  // "Invalid URL" error jsdom's fetch would otherwise log.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { outcome: "direct", assigneeAgentUuid: null, onlineInstances: [] },
+      }),
+    })),
+  );
 });
 
 describe("StartDevelopmentButton — render gating", () => {

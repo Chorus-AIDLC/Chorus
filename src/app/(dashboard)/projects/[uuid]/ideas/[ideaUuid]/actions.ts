@@ -119,6 +119,68 @@ export async function claimIdeaToAgentAction(
   }
 }
 
+// Pin an idea's assignee to a specific DURABLE AgentInstance WITHOUT waking the
+// agent (pin-cwd-before-wake, D2). This is the non-waking sibling of
+// `claimIdeaToAgentAction`: it calls the same non-waking `assignIdea` service
+// (which promotes the row to assigneeType="agent_instance" via
+// resolveAssigneeFields and emits only emitChange('updated')) but DELIBERATELY
+// omits the `createActivity({action:"assigned"})` call — that activity is what
+// triggers the wake today. The result is a durably-pinned idea that has NOT been
+// woken; the caller (the pin-then-wake button flow) fires the wake as a separate
+// step. `instanceUuid` MUST be one of the agent's own AgentInstance uuids;
+// assignIdea validates it belongs to the company and throws otherwise, which we
+// surface as a clean error result without mutating the assignee.
+export async function reassignIdeaInstanceNoWakeAction(
+  ideaUuid: string,
+  agentUuid: string,
+  instanceUuid: string,
+) {
+  const auth = await getServerAuthContext();
+  if (!auth || auth.type !== "user") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
+    if (!idea) {
+      return { success: false, error: "Idea not found" };
+    }
+
+    // NOTE: no status short-circuit here. This action is the pin step of the
+    // pin-then-wake flow, and its wake surfaces (Start Development / Yolo /
+    // proposal approve-reject) act on ALREADY-elaborated ideas — the pin MUST
+    // persist there for the wake to run in the chosen cwd. `assignIdea` still
+    // rejects an elaborated idea for a genuine REASSIGNMENT; we opt into the
+    // narrow same-owning-agent cwd re-pin exception via
+    // `allowElaboratedInstanceRepin` so a different agent can never be pinned
+    // onto an elaborated idea through this path.
+    //
+    // Promote to agent_instance via the non-waking service primitive. A foreign
+    // or missing instance is rejected inside assignIdea (resolveAssigneeFields
+    // throws) BEFORE any assignee write, so the assignee is left unchanged.
+    await assignIdea({
+      ideaUuid,
+      companyUuid: auth.companyUuid,
+      assigneeType: "agent",
+      assigneeUuid: agentUuid,
+      assignedByUuid: auth.actorUuid,
+      instanceUuid,
+      allowElaboratedInstanceRepin: true,
+    });
+
+    // NO createActivity({action:"assigned"}) here — that activity is what wakes
+    // the daemon today. This action pins only; the wake is a separate step.
+
+    revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
+    revalidatePath(`/projects/${idea.projectUuid}/ideas`);
+
+    return { success: true };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to reassign idea instance (no wake)");
+    return { success: false, error: "Failed to reassign idea" };
+  }
+}
+
 // Claim idea to a specific user (all their PM agents can see it)
 export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) {
   const auth = await getServerAuthContext();

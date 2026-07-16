@@ -154,6 +154,20 @@ beforeEach(() => {
   getIdeaActivitiesActionMock.mockResolvedValue({ activities: [] });
   getElaborationActionMock.mockResolvedValue(elaborationResponse("answered"));
   verifyElaborationActionMock.mockResolvedValue({ success: true, data: {} });
+  // Verify Elaborate now runs through pin-then-wake, which fetches
+  // GET /api/ideas/:uuid/wake-preview. Default to the `direct` outcome so verify
+  // wakes with no picker/reassign (the branch logic is unit-tested separately),
+  // and jsdom's fetch doesn't log an "Invalid URL" error for the relative path.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { outcome: "direct", assigneeAgentUuid: null, onlineInstances: [] },
+      }),
+    })),
+  );
 });
 
 describe("/ideas IdeaDetailPanel — Verify Elaborate replaces Create Proposal", () => {

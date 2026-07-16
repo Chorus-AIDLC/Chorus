@@ -43,10 +43,17 @@ import {
   yoloRequestedAction,
   type YoloRequestedErrorCode,
 } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/stage-advance-actions";
+import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
+import { usePinThenWake } from "@/hooks/use-pin-then-wake";
+import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 
 interface YoloButtonProps {
   ideaUuid: string;
   assignee: YoloAssignee | null | undefined;
+  // Assignee agent display name — shown in the cwd picker subtitle when the
+  // pin-then-wake flow prompts (`pick` outcome). Optional; the panels pass
+  // idea.assignee.name.
+  assigneeName?: string | null;
   proposals: { status: string }[] | null | undefined;
   tasks: { status: string }[] | null | undefined;
   // Called after a successful request so the panel can refresh its data.
@@ -61,6 +68,7 @@ const ERROR_CODE_I18N_KEY: Record<YoloRequestedErrorCode, string> = {
   idea_not_found: "errorGeneric",
   assignee_not_agent: "errorAssigneeNotAgent",
   agent_offline: "errorAgentOffline",
+  instance_offline: "errorInstanceOffline",
   unknown: "errorGeneric",
 };
 
@@ -72,6 +80,7 @@ const YOLO_BUTTON_CLASS =
 export function YoloButton({
   ideaUuid,
   assignee,
+  assigneeName,
   proposals,
   tasks,
   onStarted,
@@ -83,6 +92,18 @@ export function YoloButton({
   const [isStarting, setIsStarting] = useState(false);
   const [started, setStarted] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Pin-then-wake: after the human confirms the Yolo run, consult the wake-target
+  // preview and (pick) prompt for a cwd / (auto_pin) persist the sole cwd /
+  // (direct) wake as-is. The picker dialog is mounted below, driven by pickerState.
+  // `isResolving` is true while the preview fetch is in flight — the confirm CTA
+  // is disabled through it so a double-tap can't fire two preview→wake runs.
+  const {
+    start: startPinThenWake,
+    pickerState,
+    confirmPick,
+    cancelPick,
+    isResolving,
+  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
 
   // The started hint is transient: it clears when the panel moves to another
   // idea, and — because a wake normally flips the idea into motion quickly —
@@ -118,11 +139,13 @@ export function YoloButton({
     ) : null;
   }
 
-  const handleConfirm = async () => {
+  // The actual wake — fired directly on `direct`/`auto_pin`, or after the human
+  // picks a cwd on `pick`. The server re-validates every precondition (incl. the
+  // HARD instance-offline check → instance_offline error code).
+  const runWake = async () => {
     setIsStarting(true);
     const result = await yoloRequestedAction(ideaUuid);
     setIsStarting(false);
-    setDialogOpen(false);
 
     if (result.success) {
       setStarted(true);
@@ -131,6 +154,14 @@ export function YoloButton({
     } else {
       toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
     }
+  };
+
+  const handleConfirm = () => {
+    // The human has committed to the Yolo run (this IS the confirm step). Close
+    // the confirm dialog, then route through pin-then-wake: it wakes immediately
+    // (direct/auto_pin) or opens the cwd picker (pick) before firing runWake.
+    setDialogOpen(false);
+    startPinThenWake({ ideaUuid, wake: runWake });
   };
 
   // Offline: the button is disabled and a disabled <button> emits no pointer
@@ -192,7 +223,7 @@ export function YoloButton({
             <Button
               className={YOLO_BUTTON_CLASS}
               onClick={handleConfirm}
-              disabled={isStarting}
+              disabled={isStarting || isResolving}
             >
               {isStarting ? (
                 <>
@@ -206,6 +237,16 @@ export function YoloButton({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* Pin-then-wake cwd picker — opens after the Yolo confirm dialog closes,
+          only for the `pick` outcome. On confirm it persists the pin then fires
+          runWake. */}
+      <WakeCwdPickerDialog
+        open={pickerState !== null}
+        agentName={assigneeName ?? ""}
+        instances={pickerState?.instances ?? []}
+        onConfirm={confirmPick}
+        onCancel={cancelPick}
+      />
     </>
   );
 }

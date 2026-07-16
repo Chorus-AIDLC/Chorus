@@ -101,6 +101,20 @@ beforeEach(() => {
   presenceValue.current = {
     connections: [{ agentUuid: "agent-1", effectiveStatus: "online" }],
   };
+  // Pin-then-wake fetches GET /api/ideas/:uuid/wake-preview after the Yolo
+  // confirm. Default to `direct` so these tests exercise the wake path with no
+  // picker / reassign (the branch logic has dedicated unit tests). Also silences
+  // jsdom's "Invalid URL" fetch error on the relative path.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { outcome: "direct", assigneeAgentUuid: null, onlineInstances: [] },
+      }),
+    })),
+  );
 });
 
 describe("YoloButton — render gating", () => {

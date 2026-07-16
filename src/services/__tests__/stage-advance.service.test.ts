@@ -213,11 +213,19 @@ describe("executeStageAdvance — offline policy", () => {
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
-  it("require_online resolves an agent_instance assignee to its owning agent", async () => {
+  it("require_online on an agent_instance assignee checks the PINNED INSTANCE's own connection (host+cwd), not just the agent", async () => {
+    // HARD-pin split: an instance-pinned idea's require_online check must target the exact
+    // (host, cwd) place of the pinned instance — a wake there is notify-only when offline, so
+    // "some other online connection of the agent" is NOT sufficient.
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
     );
-    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: AGENT_UUID });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-pinned" });
 
     await executeStageAdvance(
       makeDefinition({ offlinePolicy: "require_online" }),
@@ -229,11 +237,63 @@ describe("executeStageAdvance — offline policy", () => {
         where: expect.objectContaining({ uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID }),
       })
     );
+    // The liveness query is scoped to the pinned instance's exact (agent, host, cwd) place.
     expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ agentUuid: AGENT_UUID }),
+        where: expect.objectContaining({
+          agentUuid: AGENT_UUID,
+          host: "Laptop-Q3",
+          cwd: "/home/u/dev/payments",
+          status: "online",
+          lastSeenAt: expect.objectContaining({ gte: expect.any(Date) }),
+        }),
       })
     );
+    expect(mockCreateActivity).toHaveBeenCalled();
+  });
+
+  it("require_online throws INSTANCE_OFFLINE when the pinned instance has no online connection (agent online elsewhere)", async () => {
+    // The idea is pinned to instance A. A has no online connection, though the agent may have
+    // one elsewhere — a HARD pin is notify-only, so the stage-advance must fail distinguishably
+    // rather than "succeed" while its wake silently no-ops.
+    const transition = vi.fn();
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
+    );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(
+      executeStageAdvance(
+        makeDefinition({ offlinePolicy: "require_online", transition }),
+        HUMAN_PARAMS
+      )
+    ).rejects.toMatchObject({ code: "INSTANCE_OFFLINE" });
+
+    expect(transition).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("require_online throws INSTANCE_OFFLINE when the pinned AgentInstance row is missing (stale pin)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
+    );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+
+    await expect(
+      executeStageAdvance(
+        makeDefinition({ offlinePolicy: "require_online" }),
+        HUMAN_PARAMS
+      )
+    ).rejects.toMatchObject({ code: "INSTANCE_OFFLINE" });
+
+    // A missing instance short-circuits before any connection query.
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
   it("require_online throws ASSIGNEE_NOT_AGENT for a human assignee and emits nothing", async () => {

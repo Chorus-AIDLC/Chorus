@@ -182,6 +182,19 @@ beforeEach(() => {
   getTaskActionMock.mockResolvedValue({ success: false });
   getElaborationActionMock.mockResolvedValue(elaborationResponse("answered"));
   verifyElaborationActionMock.mockResolvedValue({ success: true, data: {} });
+  // Verify Elaborate now routes through pin-then-wake (fetches the wake-target
+  // preview). Default to `direct` so verify wakes with no picker/reassign and
+  // jsdom's fetch doesn't log an "Invalid URL" error on the relative path.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { outcome: "direct", assigneeAgentUuid: null, onlineInstances: [] },
+      }),
+    })),
+  );
 });
 
 describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {

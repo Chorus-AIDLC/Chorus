@@ -195,6 +195,11 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             projectUuid={projectUuid}
             status={proposal.status}
             materializedEntities={materializedEntities}
+            // The proposal's input idea drives the approve/reject wake target, so
+            // the pin-then-wake preview is resolved from it (idea-scoped). null
+            // for a non-idea-input proposal → approve/reject wake with no preview.
+            inputIdeaUuid={sourceIdeas[0]?.uuid ?? null}
+            inputIdeaAssigneeName={sourceIdeas[0]?.assignee?.name ?? null}
           />
         </div>
       </div>
