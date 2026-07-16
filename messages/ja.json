@@ -709,7 +709,8 @@
     "addFailed": "参考資料の追加に失敗しました",
     "updateFailed": "参考資料の更新に失敗しました",
     "deleteFailed": "参考資料の削除に失敗しました",
-    "countLabel": "参考資料 {count} 件"
+    "countLabel": "参考資料 {count} 件",
+    "toggleNotes": "概要を全文表示"
   },
   "export": {
     "exportDocument": "エクスポート",

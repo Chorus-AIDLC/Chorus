@@ -62,6 +62,7 @@ import {
   referenceTypeConfig as typeConfig,
   isKnownReferenceType as isKnownType,
 } from "@/components/reference-type-config";
+import { ReferenceNotes } from "@/components/reference-notes";
 
 interface ReferencesSectionProps {
   targetType: "proposal" | "task" | "idea";
@@ -233,11 +234,7 @@ export function ReferencesSection({
                       <span className="truncate">{ref.title}</span>
                       <ExternalLink className="h-3 w-3 shrink-0" />
                     </a>
-                    {ref.notes && (
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {ref.notes}
-                      </p>
-                    )}
+                    <ReferenceNotes notes={ref.notes} />
                   </div>
 
                   {canWrite && (

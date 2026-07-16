@@ -709,7 +709,8 @@
     "addFailed": "Failed to add reference",
     "updateFailed": "Failed to update reference",
     "deleteFailed": "Failed to delete reference",
-    "countLabel": "{count, plural, one {# reference} other {# references}}"
+    "countLabel": "{count, plural, one {# reference} other {# references}}",
+    "toggleNotes": "Show full notes"
   },
   "export": {
     "exportDocument": "Export",
