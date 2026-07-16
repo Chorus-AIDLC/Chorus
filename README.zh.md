@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/chorus-slug.png" alt="Chorus" width="240" />
+  <img src="packages/landing/public/images/chorus-slug.png" alt="Chorus" width="240" />
 </p>
 
 <p align="center"><strong>面向 AI 与人类协作的 Agent Harness</strong></p>
@@ -171,7 +171,7 @@ daemon 启动时的横幅会打印它**实际读取的 `daemon.json` 路径**（
 
 ### 远程唤醒 Agent——派活到指定目录，实时看它跑
 
-![远程唤醒 Agent](docs/images/agent-daemon-wake.gif)
+![远程唤醒 Agent](packages/landing/public/images/agent-daemon-wake.gif)
 
 把一条想法派给远程 Agent 的某个目录，打开对话窗口，就能实时看到本地的 Claude Code 接活、开跑，全程不用碰终端，也不用手动 resume。
 
@@ -183,7 +183,7 @@ Chorus 自动把整个项目整理成一张思维导图——想法、提案、�
 
 ### Proposal——AI Agent 实时生成计划
 
-![Proposal Presence](docs/images/proposal-presence.gif)
+![Proposal Presence](packages/landing/public/images/proposal-presence.gif)
 
 PM Agent 分析需求并实时生成包含 PRD 和任务 DAG 的提案，Presence 指示器实时显示 Agent 活动状态。
 
@@ -195,37 +195,37 @@ PM Agent 分析需求并实时生成包含 PRD 和任务 DAG 的提案，Presenc
 
 ### Kanban——任务状态实时流转
 
-![Kanban Presence](docs/images/kanban-presence.gif)
+![Kanban Presence](packages/landing/public/images/kanban-presence.gif)
 
 Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In Progress → To Verify 之间实时流转。Presence 指示器高亮显示正在被操作的资源。
 
 ### 看板 & 任务 DAG
 
-![Kanban & Task DAG](docs/images/kanan-dag.png)
+![Kanban & Task DAG](packages/landing/public/images/kanban-dag.png)
 
 看板追踪任务状态，DAG 展示依赖关系和并行路径，一目了然。
 
 ### Idea & 需求细化
 
-![Idea & Elaboration](docs/images/idea-elaborate.png)
+![Idea & Elaboration](packages/landing/public/images/idea-elaborate.png)
 
 PM Agent 在创建 Proposal 前，通过结构化问答轮次澄清需求。面板展示 Idea 详情及已完成的细化轮次。
 
 ### 提案审阅
 
-![Proposal Review](docs/images/proposal.png)
+![Proposal Review](packages/landing/public/images/proposal.png)
 
 PM Agent 生成的 Proposal 包含文档草稿和任务 DAG 草稿，Admin 在此面板审阅并决定批准或驳回。
 
 ### 验收标准——双路验证
 
-![Acceptance Criteria](docs/images/task-ac.png)
+![Acceptance Criteria](packages/landing/public/images/task-ac.png)
 
 Dev Agent 自检 + Admin 独立审核，每条验收标准都有结构化的通过/失败证据。
 
 ### Universal Search——Cmd+K 全局搜索
 
-![Universal Search](docs/images/universal-search.png)
+![Universal Search](packages/landing/public/images/universal-search.png)
 
 Cmd+K 命令面板，支持跨 6 种实体类型搜索。支持范围筛选（全局/项目组/单项目）、按类型切换 Tab、键盘导航。Web UI 和 AI Agent（通过 `chorus_search` MCP 工具）共享同一搜索后端。
 
@@ -393,7 +393,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 
 在 Web UI 的 **Settings → Agents → Create API Key** 创建 API Key。Key 以 `cho_` 开头，仅在创建时显示一次。
 
-![Create API Key](docs/images/create-key.png)
+![Create API Key](packages/landing/public/images/create-key.png)
 
 ---
 

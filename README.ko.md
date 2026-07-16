@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/chorus-slug.png" alt="Chorus" width="240" />
+  <img src="packages/landing/public/images/chorus-slug.png" alt="Chorus" width="240" />
 </p>
 
 <p align="center"><strong>AI-인간 협업을 위한 Agent Harness</strong></p>
@@ -180,7 +180,7 @@ CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # 또는 환경
 
 ### 원격 에이전트 웨이크 — 디렉터리로 디스패치하고 실행을 지켜보기
 
-![Remote Agent Wake](docs/images/agent-daemon-wake.gif)
+![Remote Agent Wake](packages/landing/public/images/agent-daemon-wake.gif)
 
 아이디어를 원격 에이전트의 특정 디렉터리에 배정한 다음 대화를 열면, 로컬 Claude Code가 작업을 이어받아 실시간으로 실행하는 모습을 볼 수 있습니다 — 터미널도, 수동 재개도 필요 없습니다.
 
@@ -192,7 +192,7 @@ Chorus는 프로젝트 전체를 마인드맵으로 자동 정리합니다 — �
 
 ### 제안 — AI 에이전트가 실시간으로 계획을 생성
 
-![Proposal Presence](docs/images/proposal-presence.gif)
+![Proposal Presence](packages/landing/public/images/proposal-presence.gif)
 
 PM 에이전트가 요구사항을 분석하고 PRD와 작업 DAG를 포함한 제안을 생성하는 모습을 볼 수 있습니다 — 에이전트 활동을 보여주는 실시간 프레즌스 인디케이터와 함께 말이죠.
 
@@ -204,37 +204,37 @@ PM 에이전트가 요구사항을 분석하고 PRD와 작업 DAG를 포함한 �
 
 ### 칸반 — 실시간 작업 흐름
 
-![Kanban Presence](docs/images/kanban-presence.gif)
+![Kanban Presence](packages/landing/public/images/kanban-presence.gif)
 
 칸반 보드는 에이전트의 작업에 맞춰 자동으로 업데이트되며, 작업 카드가 To Do → In Progress → To Verify 사이를 실시간으로 이동합니다. 에이전트 프레즌스 인디케이터가 어떤 리소스가 작업 중인지 하이라이트합니다.
 
 ### 칸반 & 작업 DAG
 
-![Kanban & Task DAG](docs/images/kanan-dag.png)
+![Kanban & Task DAG](packages/landing/public/images/kanban-dag.png)
 
 작업 상태를 추적하는 칸반 보드와, 실행 순서 및 병렬 경로를 보여주는 의존성 DAG를 나란히 표시합니다.
 
 ### 아이디어 & 요구사항 구체화
 
-![Idea & Elaboration](docs/images/idea-elaborate.png)
+![Idea & Elaboration](packages/landing/public/images/idea-elaborate.png)
 
 PM 에이전트는 제안을 만들기 전에 구조화된 Q&A 라운드를 통해 요구사항을 명확히 합니다. 패널에는 아이디어 상세 정보와 함께, 답변 및 카테고리 태그가 달린 완료된 구체화 라운드가 나란히 표시됩니다.
 
 ### 제안 검토
 
-![Proposal Review](docs/images/proposal.png)
+![Proposal Review](packages/landing/public/images/proposal.png)
 
 PM 에이전트가 생성한 제안에는 문서 초안과 작업 DAG 초안이 담깁니다. 관리자는 이 패널에서 검토하여 승인하거나 거부합니다.
 
 ### 수락 기준 — 이중 경로 검증
 
-![Acceptance Criteria](docs/images/task-ac.png)
+![Acceptance Criteria](packages/landing/public/images/task-ac.png)
 
 개발자 에이전트의 자체 점검과 관리자의 검토가 각 수락 기준을 독립적으로 검증하며, 모든 항목마다 구조화된 통과/실패 증빙을 남깁니다.
 
 ### 유니버설 검색 — Cmd+K 커맨드 팔레트
 
-![Universal Search](docs/images/universal-search.png)
+![Universal Search](packages/landing/public/images/universal-search.png)
 
 6가지 엔티티 유형(작업·아이디어·제안·문서·프로젝트·프로젝트 그룹)을 아우르는 검색을 위한 Cmd+K 커맨드 팔레트입니다. 범위 필터링(Global / Group / Project), 엔티티 유형별 필터 탭, 키보드 내비게이션을 지원합니다. Web UI와 AI 에이전트(`chorus_search` MCP 도구를 통해)는 동일한 검색 백엔드를 공유합니다.
 
@@ -402,7 +402,7 @@ PGlite는 포트 5433에서 내장 PostgreSQL을 실행합니다. 데이터는 `
 
 API 키는 Web UI의 **Settings → Agents → Create API Key**에서 만듭니다. 키는 `cho_`로 시작하며 한 번만 표시됩니다.
 
-![Create API Key](docs/images/create-key.png)
+![Create API Key](packages/landing/public/images/create-key.png)
 
 ---
 
