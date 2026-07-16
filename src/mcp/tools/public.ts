@@ -41,7 +41,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     type: z.enum(REFERENCE_TYPES as unknown as [string, ...string[]]).describe("Reference type: docs, repo, issue_pr, or paper_blog"),
     url: z.string().describe("Web URL (http:// or https://)"),
     title: z.string().describe("Reference title"),
-    notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+    notes: z.string().optional().describe("Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch."),
   });
 
   // chorus_get_project - Get project details and context

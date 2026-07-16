@@ -17,6 +17,7 @@ import {
   referenceTypeConfig as typeConfig,
   isKnownReferenceType as isKnownType,
 } from "@/components/reference-type-config";
+import { ReferenceNotes } from "@/components/reference-notes";
 import type { ReferenceArtifactResponse } from "@/services/reference-artifact.service";
 
 interface IdeaReferencesContentProps {
@@ -70,11 +71,7 @@ export function IdeaReferencesContent({
                 <span className="truncate">{ref.title}</span>
                 <ExternalLink className="h-3 w-3 shrink-0" />
               </a>
-              {ref.notes && (
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {ref.notes}
-                </p>
-              )}
+              <ReferenceNotes notes={ref.notes} />
             </div>
           );
         })

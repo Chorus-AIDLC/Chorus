@@ -709,7 +709,8 @@
     "addFailed": "添加参考资料失败",
     "updateFailed": "更新参考资料失败",
     "deleteFailed": "删除参考资料失败",
-    "countLabel": "{count, plural, other {# 条参考资料}}"
+    "countLabel": "{count, plural, other {# 条参考资料}}",
+    "toggleNotes": "显示完整说明"
   },
   "export": {
     "exportDocument": "导出",

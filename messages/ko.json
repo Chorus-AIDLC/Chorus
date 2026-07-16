@@ -709,7 +709,8 @@
     "addFailed": "참고 자료 추가에 실패했습니다",
     "updateFailed": "참고 자료 업데이트에 실패했습니다",
     "deleteFailed": "참고 자료 삭제에 실패했습니다",
-    "countLabel": "참고 자료 {count}개"
+    "countLabel": "참고 자료 {count}개",
+    "toggleNotes": "전체 메모 보기"
   },
   "export": {
     "exportDocument": "내보내기",

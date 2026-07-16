@@ -1149,7 +1149,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | type | enum | Yes | Reference type: `docs` (official documentation), `repo` (reference implementation), `issue_pr` (issue/PR thread), `paper_blog` (paper/blog post) |
 | url | string | Yes | Web URL — must start with `http://` or `https://` (no local files) |
 | title | string | Yes | Reference title |
-| notes | string | No | Optional human/agent-authored summary (stored verbatim; no fetch) |
+| notes | string | No | Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch. |
 
 **Output**: Created ReferenceArtifact JSON (`{ uuid, targetType, targetUuid, type, url, title, notes, createdBy, createdAt, updatedAt }`)
 
@@ -1170,7 +1170,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | type | enum | No | New reference type: `docs`, `repo`, `issue_pr`, `paper_blog` |
 | url | string | No | New web URL (`http://` or `https://`) |
 | title | string | No | New title |
-| notes | string \| null | No | New notes (`null` clears; omit to leave unchanged) |
+| notes | string \| null | No | New notes — one concise sentence (~200 chars, ≤2 lines; the UI clamps the display to 2 lines). `null` clears; omit to leave unchanged. |
 
 **Output**: Updated ReferenceArtifact JSON
 
