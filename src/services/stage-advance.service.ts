@@ -26,11 +26,21 @@ import { STALE_THRESHOLD_MS } from "@/services/daemon-connection.service";
 
 // Machine-readable failure codes so callers (server actions) can map each
 // failure to a distinct i18n message instead of parsing error prose.
+//
+// AGENT_OFFLINE vs INSTANCE_OFFLINE — the HARD-pin split (pin-cwd-before-wake,
+// owner choice B): a BARE-agent assignee's wake goes online-first, so require_online
+// only needs SOME online connection of the agent → AGENT_OFFLINE when none. An
+// `agent_instance`-pinned assignee's wake is a HARD pin: it targets that exact
+// `(host, cwd)` and is notify-only (never re-routed) when offline — so require_online
+// must check the PINNED INSTANCE's own connection and fail with the distinguishable
+// INSTANCE_OFFLINE when only that instance (not the agent) is offline. This keeps a
+// stage-advance from "succeeding" while the wake it triggers silently no-ops.
 export type StageAdvanceErrorCode =
   | "NOT_HUMAN"
   | "IDEA_NOT_FOUND"
   | "PRECONDITION_FAILED"
   | "AGENT_OFFLINE"
+  | "INSTANCE_OFFLINE"
   | "ASSIGNEE_NOT_AGENT";
 
 export class StageAdvanceError extends Error {
@@ -85,17 +95,51 @@ export interface StageAdvanceDefinition {
 }
 
 /**
- * Effectively-online check for the `require_online` policy. Reuses the single
- * liveness rule (`status === "online"` AND `lastSeenAt` within
- * STALE_THRESHOLD_MS — the exported constant, never a restated number). Any
- * online connection of the owning agent qualifies: the wake chokepoint's
- * session-origin upgrade picks the right cwd, not this gate.
+ * Effectively-online check for the `require_online` policy on a BARE `agent` assignee.
+ * Reuses the single liveness rule (`status === "online"` AND `lastSeenAt` within
+ * STALE_THRESHOLD_MS — the exported constant, never a restated number). ANY online
+ * connection of the owning agent qualifies: a bare-agent wake goes online-first, so the
+ * wake chokepoint's session-origin upgrade picks the right cwd, not this gate.
  */
 async function hasEffectivelyOnlineConnection(agentUuid: string): Promise<boolean> {
   const staleFloor = new Date(Date.now() - STALE_THRESHOLD_MS);
   const online = await prisma.daemonConnection.findFirst({
     where: {
       agentUuid,
+      status: "online",
+      lastSeenAt: { gte: staleFloor },
+    },
+    select: { uuid: true },
+  });
+  return online !== null;
+}
+
+/**
+ * Effectively-online check for the `require_online` policy on an `agent_instance`-pinned
+ * assignee — the HARD-pin case (pin-cwd-before-wake, owner choice B). The wake targets the
+ * pinned instance's EXACT `(host, cwd)` and is notify-only (never re-routed) when that
+ * place has no online connection, so require_online must verify THAT instance's own
+ * connection — not merely that the agent has some online connection elsewhere. Resolves the
+ * `AgentInstance.uuid` to its `(host, cwd)` place (company-scoped), then applies the same
+ * liveness rule to a connection at that exact place. A stale/missing instance row → false
+ * (treated as offline: the wake would find no place to land). The connection match uses the
+ * registry's sentinels (host defaults to "", cwd nullable) exactly as the wake path does.
+ */
+async function hasEffectivelyOnlineInstance(
+  companyUuid: string,
+  instanceUuid: string,
+): Promise<boolean> {
+  const instance = await prisma.agentInstance.findFirst({
+    where: { uuid: instanceUuid, companyUuid },
+    select: { agentUuid: true, host: true, cwd: true },
+  });
+  if (!instance) return false;
+  const staleFloor = new Date(Date.now() - STALE_THRESHOLD_MS);
+  const online = await prisma.daemonConnection.findFirst({
+    where: {
+      agentUuid: instance.agentUuid,
+      host: instance.host,
+      cwd: instance.cwd,
       status: "online",
       lastSeenAt: { gte: staleFloor },
     },
@@ -165,24 +209,41 @@ export async function executeStageAdvance(
   const activityValue = await definition.precondition(ctx);
 
   // 4. Offline policy. "queue" never blocks on liveness; "require_online"
-  // resolves the assignee to its owning agent and demands a live connection.
+  // resolves the assignee and demands a live connection. The check SPLITS on the
+  // assignee kind because pins are HARD (pin-cwd-before-wake, owner choice B):
+  //   - `agent_instance` (a HARD pin): the wake targets that exact instance and is
+  //     notify-only when offline, so we must verify THAT instance's own connection and
+  //     fail with the distinguishable INSTANCE_OFFLINE — never wake a different cwd.
+  //   - bare `agent`: the wake goes online-first, so ANY online connection of the agent
+  //     suffices → AGENT_OFFLINE when none.
   if (definition.offlinePolicy === "require_online") {
-    const agentUuid = await resolveAssigneeAgentUuid(
-      companyUuid,
-      ctx.idea.assigneeType,
-      ctx.idea.assigneeUuid
-    );
-    if (!agentUuid) {
-      throw new StageAdvanceError(
-        "ASSIGNEE_NOT_AGENT",
-        "The Idea's assignee is not an agent — there is no daemon to wake"
+    if (ctx.idea.assigneeType === "agent_instance" && ctx.idea.assigneeUuid) {
+      if (
+        !(await hasEffectivelyOnlineInstance(companyUuid, ctx.idea.assigneeUuid))
+      ) {
+        throw new StageAdvanceError(
+          "INSTANCE_OFFLINE",
+          "The Idea is pinned to a daemon instance that has no online connection"
+        );
+      }
+    } else {
+      const agentUuid = await resolveAssigneeAgentUuid(
+        companyUuid,
+        ctx.idea.assigneeType,
+        ctx.idea.assigneeUuid
       );
-    }
-    if (!(await hasEffectivelyOnlineConnection(agentUuid))) {
-      throw new StageAdvanceError(
-        "AGENT_OFFLINE",
-        "The assigned agent has no online daemon connection"
-      );
+      if (!agentUuid) {
+        throw new StageAdvanceError(
+          "ASSIGNEE_NOT_AGENT",
+          "The Idea's assignee is not an agent — there is no daemon to wake"
+        );
+      }
+      if (!(await hasEffectivelyOnlineConnection(agentUuid))) {
+        throw new StageAdvanceError(
+          "AGENT_OFFLINE",
+          "The assigned agent has no online daemon connection"
+        );
+      }
     }
   }
 

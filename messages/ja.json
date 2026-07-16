@@ -709,7 +709,8 @@
     "addFailed": "参考資料の追加に失敗しました",
     "updateFailed": "参考資料の更新に失敗しました",
     "deleteFailed": "参考資料の削除に失敗しました",
-    "countLabel": "参考資料 {count} 件"
+    "countLabel": "参考資料 {count} 件",
+    "toggleNotes": "概要を全文表示"
   },
   "export": {
     "exportDocument": "エクスポート",
@@ -963,8 +964,9 @@
     "button": "開発を開始",
     "starting": "開始中...",
     "startedHint": "開発を開始しました — エージェントが残りの課題を実行しています",
-    "offlineHint": "割り当てられたエージェントはオフラインです — 再接続するとボタンが有効になります",
+    "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に開発を開始してください。",
+    "errorInstanceOffline": "この着想はオフラインのデーモンインスタンスに固定されています。そのインスタンスの再接続後に開発を開始してください。",
     "errorNoApprovedProposal": "この着想にはまだ承認済みの提案がありません",
     "errorNoUnfinishedTasks": "すべての課題はすでに完了しています",
     "errorAssigneeNotAgent": "この着想の担当者はエージェントではありません",
@@ -978,8 +980,9 @@
     "confirmCta": "Yolo を実行",
     "starting": "開始中...",
     "startedHint": "Yolo を開始しました — エージェントがこの着想を完了まで進めています",
-    "offlineHint": "割り当てられたエージェントはオフラインです — 再接続するとボタンが有効になります",
+    "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に Yolo を実行してください。",
+    "errorInstanceOffline": "この着想はオフラインのデーモンインスタンスに固定されています。そのインスタンスの再接続後に Yolo を実行してください。",
     "errorAssigneeNotAgent": "この着想の担当者はエージェントではありません",
     "errorGeneric": "Yolo の開始に失敗しました"
   },
@@ -1133,6 +1136,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "kiro": "Kiro",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "その他のエージェント"
@@ -1149,6 +1153,14 @@
         "step2Tip": "このスクリプトはプラグインマーケットプレイスを登録し、MCP サーバーのエントリを ~/.codex/config.toml に書き込みます。",
         "step3Title": "ステップ 3：接続を確認",
         "step3Desc": "Codex を開いて Chorus へのチェックインを依頼してください — 例：「check in to chorus」と入力します。"
+      },
+      "kiro": {
+        "step1Title": "ステップ 1：環境変数を設定",
+        "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
+        "step2Title": "ステップ 2：Kiro インストーラーを実行",
+        "step2Tip": "デフォルトでは ~/.kiro/ にグローバルインストールされ、Chorus をどのディレクトリでも利用できます。現在のディレクトリの .kiro/ にのみインストールする場合は、フラグを追加してください：bash -s -- --workspace。",
+        "step3Title": "ステップ 3：接続を確認",
+        "step3Desc": "Kiro CLI を開いて /chorus-idea スキルを有効化するか、Chorus エージェントで直接起動してください：kiro-cli --agent chorus。"
       },
       "opencode": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1453,6 +1465,7 @@
     "clientClaudeCode": "Claude Code",
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
+    "clientKiro": "Kiro",
     "clientUnknown": "不明なクライアント",
     "uptimeMonoDays": "{days}日 {time}",
     "mobileBack": "接続",
@@ -1654,6 +1667,12 @@
     "confirm": "インスタンスをピン留め",
     "cancel": "キャンセル",
     "noInstances": "稼働中のインスタンスはありません"
+  },
+  "wakeCwdPicker": {
+    "title": "実行する作業ディレクトリを選択してください",
+    "subtitle": "{name} は {hosts} 台のホストの {count} 件のインスタンスでオンラインです。ピン留めして起動するインスタンスを選択してください。",
+    "confirm": "ピン留めして続行",
+    "cancel": "キャンセル"
   },
   "graph": {
     "title": "グラフ",

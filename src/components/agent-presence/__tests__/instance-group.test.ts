@@ -40,6 +40,7 @@ function exec(overrides: Partial<ExecutionView> & { uuid: string }): ExecutionVi
     entityType: "task",
     entityUuid: "task-" + overrides.uuid,
     rootIdeaUuid: null,
+    directIdeaUuid: null,
     status: "running",
     interruptedReason: null,
     startedAt: NOW,

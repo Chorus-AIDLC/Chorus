@@ -810,6 +810,15 @@ export function takeInstanceOffline(connectionUuid: string) {
   if (conn) conn.status = "offline";
 }
 
+/** Reverse of takeInstanceOffline: the connection reconnects (status→online, fresh lastSeenAt). */
+export function bringInstanceOnline(connectionUuid: string) {
+  const conn = agentInstanceStore.daemonConnections.find((c) => c.uuid === connectionUuid);
+  if (conn) {
+    conn.status = "online";
+    conn.lastSeenAt = new Date();
+  }
+}
+
 /** Build an agent AuthContext for the helper/tracker calls. */
 export function agentAuth(actorUuid: string, ownerUuid: string | null = OWNER): AuthContext {
   return {

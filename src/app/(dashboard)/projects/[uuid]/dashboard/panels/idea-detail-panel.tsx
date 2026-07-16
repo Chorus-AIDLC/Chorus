@@ -45,6 +45,9 @@ import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
+import { usePinThenWake } from "@/hooks/use-pin-then-wake";
+import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
+import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
@@ -198,6 +201,17 @@ export function IdeaDetailPanel({
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
+
+  // Pin-then-wake for Verify Elaborate — same preview→(pick/auto_pin/direct)
+  // flow as the /ideas panel. The idea is `elaborating` here, so the non-waking
+  // reassign persists the chosen instance fully before the wake.
+  const {
+    start: startVerifyPinThenWake,
+    pickerState: verifyPickerState,
+    confirmPick: confirmVerifyPick,
+    cancelPick: cancelVerifyPick,
+    isResolving: isResolvingVerify,
+  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -527,7 +541,7 @@ export function IdeaDetailPanel({
     }
   };
 
-  const handleVerify = async () => {
+  const runVerifyWake = async () => {
     if (!idea) return;
     setIsVerifying(true);
     setVerifyError(null);
@@ -547,6 +561,12 @@ export function IdeaDetailPanel({
     } else {
       setVerifyError(result.error || t("elaboration.verifyFailed"));
     }
+  };
+
+  const handleVerify = () => {
+    if (!idea) return;
+    // Route through pin-then-wake: `pick` opens the cwd picker before waking.
+    startVerifyPinThenWake({ ideaUuid: idea.uuid, wake: runVerifyWake });
   };
 
   // Toggle the container flag. Freely reversible; passes the current
@@ -1043,7 +1063,7 @@ export function IdeaDetailPanel({
                     <Button
                       className="bg-primary hover:bg-[#B56A42] text-white"
                       onClick={handleVerify}
-                      disabled={isVerifying}
+                      disabled={isVerifying || isResolvingVerify}
                     >
                       {isVerifying ? (
                         <>
@@ -1073,6 +1093,7 @@ export function IdeaDetailPanel({
                   <StartDevelopmentButton
                     ideaUuid={idea.uuid}
                     assignee={idea.assignee}
+                    assigneeName={idea.assignee?.name}
                     proposals={proposals}
                     tasks={tasks}
                     onStarted={() => {
@@ -1086,6 +1107,7 @@ export function IdeaDetailPanel({
                   <YoloButton
                     ideaUuid={idea.uuid}
                     assignee={idea.assignee}
+                    assigneeName={idea.assignee?.name}
                     proposals={proposals}
                     tasks={tasks}
                     onStarted={() => {
@@ -1197,6 +1219,15 @@ export function IdeaDetailPanel({
           }}
         />
       )}
+
+      {/* Verify Elaborate cwd picker — pin-then-wake `pick` outcome. */}
+      <WakeCwdPickerDialog
+        open={verifyPickerState !== null}
+        agentName={idea?.assignee?.name ?? ""}
+        instances={verifyPickerState?.instances ?? []}
+        onConfirm={confirmVerifyPick}
+        onCancel={cancelVerifyPick}
+      />
 
       {/* Task Detail Panel */}
       {selectedTaskUuid && selectedTask && (

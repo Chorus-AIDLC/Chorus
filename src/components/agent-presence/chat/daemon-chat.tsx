@@ -52,7 +52,10 @@ import {
 } from "./conversation-list";
 import { TranscriptView } from "./transcript-view";
 import { NewConversationPane } from "./new-conversation-pane";
-import { executionsForSession, sessionExecStatus } from "./session-execution";
+import {
+  sessionExecStatus,
+  sessionExecutionsForComposer,
+} from "./session-execution";
 import { DaemonConnectCta } from "../daemon-connect-cta";
 
 const PAGE_SIZE = 12;
@@ -555,11 +558,20 @@ export function DaemonChat() {
   // footer's Interrupt/Resume card showing only THIS conversation's in-flight work,
   // not every execution on the connection (which would cram unrelated task cards above
   // the reply box).
+  //
+  // Interrupt hardening (fix-daemon-conversation-split-cwd-agent): the origin-connection
+  // slice misses the idea's running turn when it lives on a DIFFERENT connection —
+  // after a cwd switch (a re-pointed / legacy-residual session) or an agent switch (the
+  // running turn is on another agent's `(agentUuid, idea)` row). When the origin slice has
+  // NO matching execution, fall back to searching ALL connection slices for THIS idea's
+  // execution, so the composer's Interrupt control reaches the running turn from any
+  // thread. The InterruptButton targets the matched exec's own connectionUuid/entityType/
+  // entityUuid, so a cross-connection match still stops the correct subprocess. Matched
+  // strictly by the direct idea (never the root idea).
   const sessionExecutions = useMemo(() => {
     const s = detail?.session;
     if (!s) return [];
-    const slice = executionsByConnection[s.originConnectionUuid] ?? [];
-    return executionsForSession(slice, s);
+    return sessionExecutionsForComposer(executionsByConnection, s);
   }, [detail, executionsByConnection]);
 
   // The session's executions keyed by uuid, so an entity-bearing turn resolves its deep

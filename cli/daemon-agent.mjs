@@ -1,12 +1,14 @@
 // cli/daemon-agent.mjs
 // Pure resolution + validation of the daemon's `--agent <type>` selection.
-// `claude-code` (the default) and `codex` are both implemented backends
-// (add-daemon-codex-backend cashed in the reserved `codex` slot). Resolving an
-// unknown value is a hard error (no silent fallback). Zero dependencies.
+// `claude-code` (the default), `codex`, and `kiro` are all implemented backends
+// (add-daemon-codex-backend cashed in the reserved `codex` slot;
+// add-daemon-kiro-backend adds `kiro`). Resolving an unknown value is a hard
+// error (no silent fallback). Zero dependencies.
 
-/** The agent backends the daemon recognizes. Both are implemented (claude-code
- * via ClaudeSpawner, codex via CodexSpawner — see spawner-select.mjs). */
-export const KNOWN_AGENTS = ["claude-code", "codex"];
+/** The agent backends the daemon recognizes. All are implemented (claude-code
+ * via ClaudeSpawner, codex via CodexSpawner, kiro via KiroSpawner — see
+ * spawner-select.mjs). */
+export const KNOWN_AGENTS = ["claude-code", "codex", "kiro"];
 
 /** The default agent backend when neither --agent nor CHORUS_AGENT is set. */
 export const DEFAULT_AGENT = "claude-code";
@@ -21,6 +23,7 @@ export const DEFAULT_AGENT = "claude-code";
  */
 export function backendCli(agentType) {
   if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
+  if (agentType === "kiro") return { name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" };
   return { name: "claude", envVar: "CHORUS_CLAUDE_PATH" };
 }
 
@@ -33,7 +36,9 @@ export function backendCli(agentType) {
  * @returns {string}
  */
 export function backendClientType(agentType) {
-  return agentType === "codex" ? "codex" : "claude_code";
+  if (agentType === "codex") return "codex";
+  if (agentType === "kiro") return "kiro";
+  return "claude_code";
 }
 
 /**

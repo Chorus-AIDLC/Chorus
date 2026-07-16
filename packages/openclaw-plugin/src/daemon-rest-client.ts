@@ -22,7 +22,8 @@
 //                      { sessionId, messages: [{ role, text }] }
 //   executionState   → POST /api/daemon/execution-state
 //                      { connectionUuid, executions: [{ entityType, entityUuid,
-//                                                       rootIdeaUuid|null, status,
+//                                                       rootIdeaUuid|null,
+//                                                       directIdeaUuid|null, status,
 //                                                       startedAt|null }] }
 //   reportInterrupt  → POST /api/daemon/report-interrupt
 //                      { connectionUuid, entityType, entityUuid, reason }
@@ -60,6 +61,9 @@ export interface DaemonExecutionRow {
   entityType: string;
   entityUuid: string;
   rootIdeaUuid: string | null;
+  // The DIRECT idea (session anchor) — the UI matches a conversation's execution
+  // by this, not rootIdeaUuid. Null when the wake has no idea ancestor.
+  directIdeaUuid: string | null;
   status: "running" | "queued";
   startedAt: string | null;
 }

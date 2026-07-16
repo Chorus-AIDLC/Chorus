@@ -13,10 +13,11 @@
  */
 export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
-/** Known agent backends. Only `claude-code` is implemented; the rest reserve
- * the extension point (see daemon-agent-selection). Exported for the resolver
- * the --agent task wires in; parsing here does not validate the value. */
-export const KNOWN_AGENTS = new Set(["claude-code"]);
+/** Known agent backends, kept in sync with the authoritative list in
+ * daemon-agent.mjs (`claude-code`, `codex`, `kiro` — all implemented). This copy
+ * is informational only: parsing here does not validate the value (the resolver
+ * in daemon-agent.mjs is the single source of truth for validation). */
+export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro"]);
 
 /**
  * Parse the client-subcommand flags out of an arg list. Recognizes the
@@ -38,7 +39,7 @@ export const KNOWN_AGENTS = new Set(["claude-code"]);
  * @returns {{
  *   url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: string,
  *   agent?: string, chorusOnly?: boolean, verbose?: boolean, detach?: boolean,
- *   cwd?: string[], force?: boolean, help?: boolean,
+ *   cwd?: string[], force?: boolean, yes?: boolean, help?: boolean,
  * }}
  */
 export function parseClientFlags(argv) {
@@ -63,6 +64,7 @@ export function parseClientFlags(argv) {
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
     else if (a === "--force") out.force = true;
+    else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
@@ -117,7 +119,7 @@ OPTIONS
   --url <url>              Remote Chorus server URL            (env: CHORUS_URL)
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
   --agent <type>           Local agent backend to wake         (env: CHORUS_AGENT)
-                           (claude-code | codex; default: claude-code)
+                           (claude-code | codex | kiro; default: claude-code)
   --yolo                   Full autonomy for the woken agent   (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes, any
                            command). This is the DEFAULT permission mode.
@@ -130,6 +132,10 @@ OPTIONS
                            local paths at once. Default: the directory it was launched
                            from. (Also configurable as "cwds":[…] in ~/.chorus/daemon.json.)
   -d, --detach             Run detached in the background (pidfile + logfile)
+  -y, --yes                Non-interactive install: skip all 'chorus daemon
+                           install' prompts (credentials still resolved, persisted,
+                           and validated; install aborts if none resolve). A non-TTY
+                           install behaves as if --yes were passed.
   --verbose                More detailed per-wake logging
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill
                            (env: CHORUS_DAEMON_SIGINT_TIMEOUT; default 10000)
@@ -147,8 +153,13 @@ SERVICE (install)
   starts at login, restarts on failure, and 'systemctl --user stop' shuts it
   down gracefully. Do NOT hand-write a Type=forking unit around 'chorus daemon
   -d' — the daemon self-daemonizes, which systemd cannot track and which loops
-  on restart. The install captures the --cwd / --agent / --chorus-only flags you
-  pass. On macOS/Windows install prints a correct template you install manually.
+  on restart. Before writing the unit, install resolves + persists + validates
+  your credentials into ~/.chorus/daemon.json (so the clean boot environment can
+  authenticate) and configures the served working directories there too (prompting
+  interactively for one or more when none are set — pass -y/--yes or run non-TTY to
+  skip prompts). The unit captures --agent / --chorus-only but NOT --cwd (cwds live
+  in daemon.json). On macOS/Windows install prints a correct template you install
+  manually.
 
 EXAMPLES
   chorus daemon                        # Foreground, default yolo (TTY confirms once)

@@ -125,6 +125,63 @@ export async function claimTaskToAgentAction(
   }
 }
 
+// Pin a task's assignee to a specific DURABLE AgentInstance WITHOUT waking the
+// agent (pin-cwd-before-wake, D2). This is the non-waking sibling of
+// `claimTaskToAgentAction`: it calls the same non-waking `claimTask` service
+// (which promotes the row to assigneeType="agent_instance" via
+// resolveTaskAssigneeFields and emits only emitChange('updated')) but
+// DELIBERATELY omits the `createActivity({action:"assigned"})` call — that
+// activity is what triggers the wake today. The result is a durably-pinned task
+// that has NOT been woken; the caller (the pin-then-wake button flow) fires the
+// wake as a separate step. `instanceUuid` MUST be one of the agent's own
+// AgentInstance uuids; claimTask validates it belongs to the company and throws
+// otherwise, which we surface as a clean error result without mutating the
+// assignee.
+export async function reassignTaskInstanceNoWakeAction(
+  taskUuid: string,
+  agentUuid: string,
+  instanceUuid: string,
+) {
+  const auth = await getServerAuthContext();
+  if (!auth || auth.type !== "user") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const task = await getTaskByUuid(auth.companyUuid, taskUuid);
+    if (!task) {
+      return { success: false, error: "Task not found" };
+    }
+
+    if (task.status !== "open" && task.status !== "assigned") {
+      return { success: false, error: "Task is not available for claiming" };
+    }
+
+    // Promote to agent_instance via the non-waking service primitive. A foreign
+    // or missing instance is rejected inside claimTask (resolveTaskAssigneeFields
+    // throws) BEFORE any assignee write, so the assignee is left unchanged.
+    await claimTask({
+      taskUuid,
+      companyUuid: auth.companyUuid,
+      assigneeType: "agent",
+      assigneeUuid: agentUuid,
+      assignedByUuid: auth.actorUuid,
+      instanceUuid,
+    });
+
+    // NO createActivity({action:"assigned"}) here — that activity is what wakes
+    // the daemon today. This action pins only; the wake is a separate step.
+
+    revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
+    revalidatePath(`/projects/${task.projectUuid}/tasks`);
+
+    return { success: true };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to reassign task instance (no wake)");
+    return { success: false, error: "Failed to reassign task" };
+  }
+}
+
 export async function releaseTaskAction(taskUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {

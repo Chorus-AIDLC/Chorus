@@ -107,7 +107,7 @@ export function resolveSigintTimeoutMs(flags = {}, deps = {}) {
 // The Waker/SseListener treat an `undefined` entry as "use process.cwd()".
 
 /** Expand a leading `~` to the home dir and resolve to an absolute path. */
-function normalizeCwd(value, home) {
+export function normalizeCwd(value, home) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -125,7 +125,7 @@ function normalizeCwd(value, home) {
  * @param {Array<unknown>} list @param {string} home
  * @returns {string[]}
  */
-function cleanCwdList(list, home) {
+export function cleanCwdList(list, home) {
   const seen = new Set();
   const out = [];
   for (const raw of Array.isArray(list) ? list : []) {

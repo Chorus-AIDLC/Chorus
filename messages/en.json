@@ -709,7 +709,8 @@
     "addFailed": "Failed to add reference",
     "updateFailed": "Failed to update reference",
     "deleteFailed": "Failed to delete reference",
-    "countLabel": "{count, plural, one {# reference} other {# references}}"
+    "countLabel": "{count, plural, one {# reference} other {# references}}",
+    "toggleNotes": "Show full notes"
   },
   "export": {
     "exportDocument": "Export",
@@ -963,8 +964,9 @@
     "button": "Start Development",
     "starting": "Starting...",
     "startedHint": "Development started — the agent is executing the remaining tasks",
-    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Start development after it reconnects.",
+    "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Start development after that instance reconnects.",
     "errorNoApprovedProposal": "This idea has no approved proposal yet",
     "errorNoUnfinishedTasks": "All tasks are already finished",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
@@ -978,8 +980,9 @@
     "confirmCta": "Run Yolo",
     "starting": "Starting...",
     "startedHint": "Yolo started — the agent is driving this idea to done",
-    "offlineHint": "The assigned agent is offline — the button enables when it reconnects",
+    "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
+    "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Run Yolo after that instance reconnects.",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
     "errorGeneric": "Failed to start Yolo"
   },
@@ -1133,6 +1136,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "kiro": "Kiro",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "Other Agents"
@@ -1149,6 +1153,14 @@
         "step2Tip": "The script registers the plugin marketplace and writes the MCP server entry into ~/.codex/config.toml.",
         "step3Title": "Step 3: Verify connection",
         "step3Desc": "Open Codex and ask it to check in to Chorus — e.g. type \"check in to chorus\"."
+      },
+      "kiro": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
+        "step2Title": "Step 2: Run the Kiro installer",
+        "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into the current directory's .kiro/ instead, append the flag: bash -s -- --workspace.",
+        "step3Title": "Step 3: Verify connection",
+        "step3Desc": "Open Kiro CLI and activate the /chorus-idea skill, or start with the Chorus agent directly: kiro-cli --agent chorus."
       },
       "opencode": {
         "step1Title": "Step 1: Set environment variables",
@@ -1453,6 +1465,7 @@
     "clientClaudeCode": "Claude Code",
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
+    "clientKiro": "Kiro",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",
@@ -1654,6 +1667,12 @@
     "confirm": "Pin instance",
     "cancel": "Cancel",
     "noInstances": "No live instances"
+  },
+  "wakeCwdPicker": {
+    "title": "Pick a working directory to run in",
+    "subtitle": "{name} is online in {count, plural, one {# instance} other {# instances}} across {hosts, plural, one {# host} other {# hosts}}. Choose which one to pin and wake.",
+    "confirm": "Pin & continue",
+    "cancel": "Cancel"
   },
   "graph": {
     "title": "Graph",

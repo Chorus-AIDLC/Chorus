@@ -166,6 +166,17 @@ What this means for clients:
 
 The Agent-level **AgentSession** model (used for swarm-mode observability via `chorus_create_session` / `chorus_session_*`) is an entirely separate concept from MCP transport sessions and is documented under [Session Tools](#session-tools-all-agents) below.
 
+### Client surfaces
+
+Chorus ships **four first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
+
+1. **Claude Code** — `public/chorus-plugin/` (marketplace-installed). See [CONNECT_CLAUDE_CODE.md](./CONNECT_CLAUDE_CODE.md).
+2. **Codex** — `plugins/chorus/` + `public/install-codex.sh`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
+3. **OpenClaw** — `packages/openclaw-plugin/` (TypeScript SSE/MCP runtime).
+4. **Kiro CLI** — `public/kiro-plugin/.kiro/` template tree + `public/install-kiro.sh` (merges into `~/.kiro/`, or `<cwd>/.kiro/` with `--workspace`). See [CONNECT_KIRO.md](./CONNECT_KIRO.md).
+
+For any other MCP-capable agent (Cursor, Continue, custom), see the standalone skill at `public/skill/` and [CONNECT_OTHER_AGENTS.md](./CONNECT_OTHER_AGENTS.md).
+
 ---
 
 ## Public Tools
@@ -1138,7 +1149,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | type | enum | Yes | Reference type: `docs` (official documentation), `repo` (reference implementation), `issue_pr` (issue/PR thread), `paper_blog` (paper/blog post) |
 | url | string | Yes | Web URL — must start with `http://` or `https://` (no local files) |
 | title | string | Yes | Reference title |
-| notes | string | No | Optional human/agent-authored summary (stored verbatim; no fetch) |
+| notes | string | No | Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch. |
 
 **Output**: Created ReferenceArtifact JSON (`{ uuid, targetType, targetUuid, type, url, title, notes, createdBy, createdAt, updatedAt }`)
 
@@ -1159,7 +1170,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | type | enum | No | New reference type: `docs`, `repo`, `issue_pr`, `paper_blog` |
 | url | string | No | New web URL (`http://` or `https://`) |
 | title | string | No | New title |
-| notes | string \| null | No | New notes (`null` clears; omit to leave unchanged) |
+| notes | string \| null | No | New notes — one concise sentence (~200 chars, ≤2 lines; the UI clamps the display to 2 lines). `null` clears; omit to leave unchanged. |
 
 **Output**: Updated ReferenceArtifact JSON
 

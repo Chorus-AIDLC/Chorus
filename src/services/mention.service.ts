@@ -3,7 +3,16 @@
 // Content format: @[DisplayName](user:uuid) or @[DisplayName](agent:uuid)
 
 import { prisma } from "@/lib/prisma";
-import { getActorName } from "@/lib/uuid-resolver";
+import {
+  getActorName,
+  resolveAssigneeAgentUuid,
+  resolveAssigneeInstanceInfo,
+} from "@/lib/uuid-resolver";
+// Type-only import (fully erased at compile) of the entity-kind union the
+// root-idea resolver accepts. The VALUE `resolveRootIdea` is pulled in lazily
+// inside enrichIdeaContext (see the note there) to break the module cycle
+// mention.service → lineage.service → idea/task.service → mention.service.
+import type { LineageEntityType } from "@/services/lineage.service";
 import * as notificationService from "@/services/notification.service";
 // Pure mention-markup codec, shared with the client editor so producer and
 // parser of the on-disk markup cannot drift (cwd-addressable instances, T3).
@@ -111,6 +120,40 @@ export interface Mentionable {
   // field are unaffected. Undefined when not enriched (e.g. user candidates, or
   // the empty-query / search paths that don't request instances).
   instances?: MentionableInstance[];
+  // Direct-idea entity-context enrichment (pin-cwd-before-wake, Part 2a),
+  // populated for `type: "agent"` candidates ONLY when searchMentionables was
+  // given both `entityType` and `entityUuid` AND the entity resolves to a DIRECT
+  // idea. The DIRECT idea is the idea the comment attaches to — for an idea
+  // entity it is that idea ITSELF (NOT its lineage parent/root); for a
+  // task/proposal/document it is the input idea. `isIdeaAssignee` is true iff
+  // this candidate agent is the owning agent of that direct idea's assignee (an
+  // `agent_instance` assignee is resolved to its owning agent first). ADDITIVE:
+  // undefined on every candidate when no entity context is supplied, or the
+  // entity has no idea ancestor, or for user candidates — so the payload is
+  // byte-identical to the pre-change search in those cases. The client
+  // (mention-editor) reads it to decide whether to inherit the idea's pin
+  // instead of prompting.
+  //
+  // WHY the DIRECT idea, not the lineage root (fixed after live testing): a
+  // derived child idea with no assignee must NOT auto-inherit its pinned root's
+  // pin — @-mentioning in the child resolves against the child's OWN assignee,
+  // falling back to normal (non-inherit) picker behavior when the child is
+  // unassigned. Matches owner intent q8 ("respect the idea's pin" = the
+  // resource's direct idea, not a walk to the top).
+  isIdeaAssignee?: boolean;
+  // The direct idea's pinned `(host, cwd)` place + its durable AgentInstance
+  // reference, present ONLY on the candidate that IS the direct idea's assignee
+  // agent AND only when that idea is instance-pinned (`assigneeType ===
+  // "agent_instance"`). The client inherits this pin with NO picker (HARD pin —
+  // the resulting wake is notify-only if offline, never re-routed). Absent when
+  // the direct idea is assigned to a bare agent (not instance-pinned), or for any
+  // non-assignee / user candidate. `host` is "" for an unknown-host instance;
+  // `cwd` is null for an unknown-path instance (same sentinels as elsewhere).
+  ideaPin?: {
+    host: string;
+    cwd: string | null;
+    agentInstanceUuid: string;
+  };
 }
 
 export interface CreateMentionsParams {
@@ -138,6 +181,16 @@ export interface SearchMentionablesParams {
   // sort/slice still runs on liveness only; instances are attached AFTER the
   // slice so we query connections only for the agents actually returned.
   withInstances?: boolean;
+  // Optional comment entity context (pin-cwd-before-wake, Part 2a). When BOTH
+  // are supplied, the returned agent candidates are annotated with
+  // `isIdeaAssignee` (and, when the comment's DIRECT idea is instance-pinned,
+  // `ideaPin`) so the @mention editor can inherit that idea's pin instead of
+  // prompting. `entityType` is the comment's target kind
+  // (idea/task/proposal/document); `entityUuid` its uuid. When either is absent
+  // (or the entity has no idea ancestor) no annotation is added and the search
+  // is identical to before this change.
+  entityType?: LineageEntityType;
+  entityUuid?: string;
 }
 
 // ===== Service Methods =====
@@ -475,13 +528,122 @@ export async function enrichAgentInstances(
 }
 
 /**
+ * Annotate agent candidates with the comment's DIRECT-idea assignment context
+ * (pin-cwd-before-wake, Part 2a), so the @mention editor can inherit that idea's
+ * pin instead of prompting.
+ *
+ * The DIRECT idea is the idea the comment attaches to — NOT the lineage root:
+ * for an idea entity it is that idea ITSELF (a derived child idea resolves to
+ * itself, never its parent/root); for a task/proposal/document it is the input
+ * idea. This is the fix for the live-testing bug where a derived child idea with
+ * no assignee still auto-inherited its pinned root's pin. `resolveRootIdea`
+ * returns BOTH `rootIdeaUuid` and `directIdeaUuid` from the same lineage walk; we
+ * key on `directIdeaUuid` here.
+ *
+ * Given entity context (`entityType` + `entityUuid`), this:
+ *   1. Resolves the comment's DIRECT idea via the shared `resolveRootIdea` lineage
+ *      resolver (company-scoped). No idea ancestor (`directIdeaUuid === null`) →
+ *      NO annotations, identical to before.
+ *   2. Reads the direct idea's `assigneeType`/`assigneeUuid` and resolves it to its
+ *      OWNING agent uuid (`resolveAssigneeAgentUuid` maps an `agent_instance`
+ *      assignee back to its agent). No agent assignee (user/unassigned) → still
+ *      sets `isIdeaAssignee: false` on every agent candidate (a defined
+ *      annotation the client can read), but no candidate matches → no pin.
+ *   3. When the direct idea is instance-pinned (`assigneeType === "agent_instance"`),
+ *      reads the pinned instance's durable `(host, cwd)` place once
+ *      (`resolveAssigneeInstanceInfo`).
+ *   4. Marks each agent candidate `isIdeaAssignee` (candidate uuid === the direct
+ *      idea's owning agent uuid) and attaches `ideaPin` to the matching assignee
+ *      candidate when the idea is instance-pinned.
+ *
+ * BATCHED / bounded: exactly one lineage resolve + at most one owning-agent
+ * resolve + at most one instance-place lookup, regardless of candidate count —
+ * NO per-candidate query. `companyUuid`-scoped throughout (the resolver and both
+ * uuid-resolver helpers are company-scoped or key on a company-scoped uuid); no
+ * new permission bit and no widening of candidate visibility (the annotation only
+ * marks candidates already returned by the owner-scoped search). Users are never
+ * annotated. Mutates the `isIdeaAssignee`/`ideaPin` fields in `results`.
+ *
+ * NOTE — deliberate lazy `await import()` of `lineage.service`: importing it at
+ * module top level creates the cycle mention.service → lineage.service →
+ * idea/task.service → mention.service. A dynamic import defers the load to call
+ * time (only when entity context is actually supplied), so the cycle never forms
+ * at module-init. The `LineageEntityType` TYPE is imported statically above
+ * (type-only imports are erased and carry no runtime edge).
+ */
+export async function enrichIdeaContext(
+  companyUuid: string,
+  results: Mentionable[],
+  entityType: LineageEntityType,
+  entityUuid: string,
+): Promise<void> {
+  // Cheap empty path: no agent candidates → nothing to annotate, no resolve.
+  const hasAgent = results.some((r) => r.type === "agent");
+  if (!hasAgent) return;
+
+  // Lazy value import — breaks the module cycle (see the note above).
+  const { resolveRootIdea } = await import("@/services/lineage.service");
+  // Key on the DIRECT idea (the idea the comment attaches to), NOT the lineage
+  // root — a derived child idea resolves to itself, so its own (possibly empty)
+  // assignee governs, and a pinned root is never inherited into an unassigned child.
+  const { directIdeaUuid } = await resolveRootIdea(companyUuid, entityType, entityUuid);
+  // No idea ancestor → no annotations, identical to the pre-change search.
+  if (!directIdeaUuid) return;
+
+  // The direct idea's assignee (company-scoped read). A missing idea (should not
+  // happen — resolveRootIdea just returned it) leaves everything un-annotated.
+  const directIdea = await prisma.idea.findFirst({
+    where: { uuid: directIdeaUuid, companyUuid },
+    select: { assigneeType: true, assigneeUuid: true },
+  });
+  if (!directIdea) return;
+
+  // The direct idea's OWNING agent (an `agent_instance` assignee → its agent). The
+  // single agent-identity value every candidate is compared against.
+  const assigneeAgentUuid = await resolveAssigneeAgentUuid(
+    companyUuid,
+    directIdea.assigneeType,
+    directIdea.assigneeUuid,
+  );
+
+  // The idea's pinned place — resolved AT MOST ONCE, only when the idea is
+  // instance-pinned. `resolveAssigneeInstanceInfo` returns null for a non-instance
+  // assignee, so this is a single lookup gated on the instance-pinned case.
+  const pinInfo =
+    directIdea.assigneeType === "agent_instance"
+      ? await resolveAssigneeInstanceInfo(directIdea.assigneeType, directIdea.assigneeUuid)
+      : null;
+
+  for (const r of results) {
+    if (r.type !== "agent") continue;
+    const isAssignee =
+      assigneeAgentUuid !== null && r.uuid === assigneeAgentUuid;
+    r.isIdeaAssignee = isAssignee;
+    // The pin rides ONLY on the assignee candidate, and only when instance-pinned.
+    // `agentInstanceUuid` is the assignee's own uuid (the AgentInstance.uuid) — a
+    // durable handle the client can persist.
+    if (isAssignee && pinInfo && directIdea.assigneeUuid) {
+      r.ideaPin = {
+        host: pinInfo.host,
+        cwd: pinInfo.cwd,
+        agentInstanceUuid: directIdea.assigneeUuid,
+      };
+    }
+  }
+}
+
+/**
  * Search for mentionable users and agents within a company.
  * Permission scoping:
  * - User caller: all company users + own agents (agents with ownerUuid = actorUuid)
  * - Agent caller: all company users + same-owner agents (agents with same ownerUuid)
  */
 export async function searchMentionables(params: SearchMentionablesParams): Promise<Mentionable[]> {
-  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10, withInstances = false } = params;
+  const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10, withInstances = false, entityType, entityUuid } = params;
+  // Entity context is opt-in and requires BOTH parts; either alone is ignored
+  // (treated as "no context" → the search is unchanged). Computed once here so
+  // both the empty-query and search return paths share the same guard.
+  const hasEntityContext = !!entityType && !!entityUuid;
 
   const effectiveLimit = Math.min(limit, 50);
   const results: Mentionable[] = [];
@@ -534,6 +696,9 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     // Attach per-instance candidates AFTER the slice so we only query connections
     // for the agents actually returned (cwd-addressable instances, T3).
     if (withInstances) await enrichAgentInstances(companyUuid, sliced);
+    // Annotate root-idea assignment context AFTER the slice too (pin-cwd-before-wake,
+    // Part 2a) — the resolve is bounded (single root-idea resolve, no per-candidate query).
+    if (hasEntityContext) await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
     return sliced;
   }
   // Search users (all company users are mentionable)
@@ -611,6 +776,9 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   // Attach per-instance candidates AFTER the slice so we only query connections
   // for the agents actually returned (cwd-addressable instances, T3).
   if (withInstances) await enrichAgentInstances(companyUuid, sliced);
+  // Annotate root-idea assignment context AFTER the slice too (pin-cwd-before-wake,
+  // Part 2a) — the resolve is bounded (single root-idea resolve, no per-candidate query).
+  if (hasEntityContext) await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
   return sliced;
 }
 

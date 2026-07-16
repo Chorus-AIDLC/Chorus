@@ -104,10 +104,16 @@ describe("requestYolo — success", () => {
     expect(mockCreateActivity).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts an agent_instance assignee, resolving it to the owning agent for the online check", async () => {
+  it("accepts an agent_instance assignee, checking that pinned instance's own connection is online", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
     );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-pinned" });
 
     await requestYolo(PARAMS);
 
@@ -119,9 +125,15 @@ describe("requestYolo — success", () => {
         }),
       })
     );
+    // HARD pin: the liveness check targets the pinned instance's exact (host, cwd) place.
     expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ agentUuid: AGENT_UUID }),
+        where: expect.objectContaining({
+          agentUuid: AGENT_UUID,
+          host: "Laptop-Q3",
+          cwd: "/home/u/dev/payments",
+          status: "online",
+        }),
       })
     );
     expect(mockCreateActivity).toHaveBeenCalled();
@@ -156,6 +168,26 @@ describe("requestYolo — precondition failures (each emits nothing)", () => {
 
     await expect(requestYolo(PARAMS)).rejects.toMatchObject({
       code: "AGENT_OFFLINE",
+    });
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects with INSTANCE_OFFLINE when the pinned instance has no online connection", async () => {
+    // An agent_instance-pinned idea whose pinned (host, cwd) is offline: HARD pin → the wake
+    // would be notify-only, so Yolo fails distinguishably (INSTANCE_OFFLINE, not AGENT_OFFLINE)
+    // and wakes no other cwd.
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
+    );
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(requestYolo(PARAMS)).rejects.toMatchObject({
+      code: "INSTANCE_OFFLINE",
     });
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });

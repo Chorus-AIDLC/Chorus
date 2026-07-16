@@ -353,6 +353,11 @@ export function UnifiedComments({
             placeholder={t("comments.addComment")}
             className="border border-border bg-card text-sm rounded-lg"
             disabled={isSubmitting}
+            // Thread the comment's target entity so the @mention picker can
+            // inherit the root idea's pin for the idea's assignee agent
+            // (pin-cwd-before-wake, Part 2b).
+            entityType={targetType}
+            entityUuid={targetUuid}
           />
         </div>
         <Button

@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.14.1](https://chorus-ai.dev/zh/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI 成为第四种接入方式（Kiro CLI v2）：一条命令的 `install-kiro.sh` 插件，以及 `--agent kiro` 的 daemon 后端，另有若干 daemon 修复。
+
 **[v0.14.0](https://chorus-ai.dev/zh/blog/chorus-v0.14.0-release/)** — 全应用深色模式（浅色 / 深色 / 跟随系统）。参考资料可挂到任意想法、提案或任务上，行内可读，也能通过 MCP 读写。新增韩语和日语（韩语由社区贡献）。用于归类的**主题**想法，以及 daemon 的「开始开发」/「Yolo」按钮、对话式建想法、崩溃恢复与 `chorus daemon install`。
 
 **[v0.13.0](https://chorus-ai.dev/zh/blog/chorus-v0.13.0-release/)** — 项目资源思维导图：新增 Graph 视图，把每个项目的想法、提案、文档、任务连成一棵可折叠的树，从项目自身结构自动生成。每张卡片都标着当前状态（想法用想法列表那套派生状态），标题搜索会自动展开命中节点的上游并高亮/调暗、配上下切换定位，同一张可缩放可拖动的图在桌面与手机上通用（捏合 + 双击缩放）。
@@ -375,7 +377,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 
 ### 连接 AI Agent
 
-最快的方式是用应用内的 setup 向导：打开 Web UI，进入 **Settings → Setup Guide → 打开设置向导**，按照向导给出的分步指引接入自己的客户端（Claude Code、Codex、OpenCode、OpenClaw 或其他 agent）。向导会帮你创建 API Key、展示完整命令，并引导你验证连接。
+最快的方式是用应用内的 setup 向导：打开 Web UI，进入 **Settings → Setup Guide → 打开设置向导**，按照向导给出的分步指引接入自己的客户端（Claude Code、Codex、Kiro、OpenCode、OpenClaw 或其他 agent）。向导会帮你创建 API Key、展示完整命令，并引导你验证连接。
 
 如果偏好文档：
 
@@ -383,6 +385,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 |--------|---------|
 | Claude Code | [CONNECT_CLAUDE_CODE.zh.md](docs/CONNECT_CLAUDE_CODE.zh.md) |
 | Codex CLI | [CONNECT_CODEX.zh.md](docs/CONNECT_CODEX.zh.md) |
+| Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.zh.md](docs/CONNECT_OPENCODE.zh.md) |
 | 其他 MCP agent（Cursor / Continue / 自研等） | [CONNECT_OTHER_AGENTS.zh.md](docs/CONNECT_OTHER_AGENTS.zh.md) |
 

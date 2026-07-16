@@ -199,6 +199,12 @@ describe("composeConversationalIdeaInstruction", () => {
     expect(text).toContain("End the turn");
   });
 
+  it("carries the reference-attachment reflex nudge (strengthen-reference-association)", () => {
+    const text = composeConversationalIdeaInstruction(base);
+    expect(text).toContain("references[]");
+    expect(text).toContain("chorus_add_reference");
+  });
+
   it("contains NO create-idea or claim directives (the idea pre-exists, assigned)", () => {
     const text = composeConversationalIdeaInstruction(base);
     expect(text).not.toContain("chorus_pm_create_idea");
@@ -237,6 +243,12 @@ describe("composeConversationalIdeaInstruction", () => {
       expect(text).toContain("isContainer");
       expect(text).toContain("chorus_pm_start_elaboration");
       expect(text).toContain("End the turn");
+    });
+
+    it("also carries the reference-attachment reflex nudge (both modes)", () => {
+      const text = decomposeText();
+      expect(text).toContain("references[]");
+      expect(text).toContain("chorus_add_reference");
     });
 
     it("proposes children as a one-question-per-child elaboration round (single-select, ≤15, no multi-select)", () => {

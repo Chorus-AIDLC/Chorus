@@ -41,6 +41,7 @@ import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dial
 import { CreateProjectGroupDialog } from "@/components/create-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
+import { readExpandedGroups, writeExpandedGroups } from "./group-expansion-preference";
 
 // Types
 interface ProjectData {
@@ -293,18 +294,19 @@ function GroupSection({
   projects,
   stats,
   onNewProject,
-  defaultOpen = false,
+  open,
+  onOpenChange,
   viewMode,
 }: {
   group: ProjectGroupData;
   projects: ProjectData[];
   stats: { totalTasks: number; completedTasks: number; openIdeas: number };
   onNewProject: () => void;
-  defaultOpen?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   viewMode: ViewMode;
 }) {
   const t = useTranslations();
-  const [isOpen, setIsOpen] = useState(defaultOpen);
   const completionRate =
     stats.totalTasks > 0
       ? Math.round((stats.completedTasks / stats.totalTasks) * 100)
@@ -314,7 +316,7 @@ function GroupSection({
     <Droppable droppableId={group.uuid}>
       {(provided, snapshot) => (
         <div ref={provided.innerRef} {...provided.droppableProps}>
-          <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+          <Collapsible open={open} onOpenChange={onOpenChange}>
             <Card
               className={`overflow-hidden rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] gap-0 py-0 shadow-none transition-colors hover:border-primary/40 ${
                 snapshot.isDraggingOver
@@ -350,7 +352,7 @@ function GroupSection({
                       </span>
                     </div>
                   </div>
-                  {isOpen ? (
+                  {open ? (
                     <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
                   ) : (
                     <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
@@ -447,9 +449,8 @@ function GroupSection({
   );
 }
 
-function UngroupedSection({ projects, onNewProject, viewMode }: { projects: ProjectData[]; onNewProject: () => void; viewMode: ViewMode }) {
+function UngroupedSection({ projects, onNewProject, viewMode, open, onOpenChange }: { projects: ProjectData[]; onNewProject: () => void; viewMode: ViewMode; open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useTranslations();
-  const [isOpen, setIsOpen] = useState(false);
 
   return (
     <Droppable droppableId={UNGROUPED_DROPPABLE_ID}>
@@ -464,7 +465,7 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
 
         return (
           <div ref={provided.innerRef} {...provided.droppableProps}>
-            <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+            <Collapsible open={open} onOpenChange={onOpenChange}>
               <Card
                 className={`overflow-hidden rounded-2xl border-[#E5E2DC] dark:border-[#2a2a2e] gap-0 py-0 shadow-none transition-colors hover:border-primary/40 ${
                   snapshot.isDraggingOver
@@ -489,7 +490,7 @@ function UngroupedSection({ projects, onNewProject, viewMode }: { projects: Proj
                         {projects.length}
                       </Badge>
                     </div>
-                    {isOpen ? (
+                    {open ? (
                       <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
                     ) : (
                       <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
@@ -594,6 +595,28 @@ export default function ProjectsPage() {
   useEffect(() => {
     localStorage.setItem("chorus_projects_view_mode", viewMode);
   }, [viewMode]);
+
+  // Which group cards are expanded, remembered across visits. Seed empty (so
+  // server and first client render agree) and hydrate from localStorage after
+  // mount — no flash, since the group cards only render once fetchData resolves.
+  // A key absent from the set is collapsed, so first visits / new groups start
+  // collapsed (elaboration Q2). Real groups key on group.uuid; the Ungrouped
+  // section keys on UNGROUPED_DROPPABLE_ID.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setExpandedGroups(readExpandedGroups());
+  }, []);
+  const toggleGroup = useCallback((key: string, open: boolean) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(key);
+      else next.delete(key);
+      // Persist inside the callback (not a blanket effect) so the transient
+      // empty seed never overwrites real saved state.
+      writeExpandedGroups(next);
+      return next;
+    });
+  }, []);
 
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [createProjectTarget, setCreateProjectTarget] = useState<{ groupUuid: string | null; groupName: string } | null>(null);
@@ -932,7 +955,7 @@ export default function ProjectsPage() {
           ) : (
             <div className="space-y-4">
               {/* Groups */}
-              {groups.map((group, index) => {
+              {groups.map((group) => {
                 const groupProjects = projectsByGroup.get(group.uuid) || [];
                 const stats = getGroupStats(groupProjects);
                 return (
@@ -941,7 +964,8 @@ export default function ProjectsPage() {
                     group={group}
                     projects={groupProjects}
                     stats={stats}
-                    defaultOpen={index === 0}
+                    open={expandedGroups.has(group.uuid)}
+                    onOpenChange={(o) => toggleGroup(group.uuid, o)}
                     viewMode={viewMode}
                     onNewProject={() => setCreateProjectTarget({ groupUuid: group.uuid, groupName: group.name })}
                   />
@@ -952,6 +976,8 @@ export default function ProjectsPage() {
               <UngroupedSection
                 projects={ungroupedProjects}
                 viewMode={viewMode}
+                open={expandedGroups.has(UNGROUPED_DROPPABLE_ID)}
+                onOpenChange={(o) => toggleGroup(UNGROUPED_DROPPABLE_ID, o)}
                 onNewProject={() => setCreateProjectTarget({ groupUuid: null, groupName: t("projectGroups.ungrouped") })}
               />
 

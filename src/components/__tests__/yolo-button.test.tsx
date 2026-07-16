@@ -14,7 +14,7 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // The Yolo confirm step uses a shadcn (Radix) AlertDialog, whose Popper-based
@@ -101,6 +101,20 @@ beforeEach(() => {
   presenceValue.current = {
     connections: [{ agentUuid: "agent-1", effectiveStatus: "online" }],
   };
+  // Pin-then-wake fetches GET /api/ideas/:uuid/wake-preview after the Yolo
+  // confirm. Default to `direct` so these tests exercise the wake path with no
+  // picker / reassign (the branch logic has dedicated unit tests). Also silences
+  // jsdom's "Invalid URL" fetch error on the relative path.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { outcome: "direct", assigneeAgentUuid: null, onlineInstances: [] },
+      }),
+    })),
+  );
 });
 
 describe("YoloButton — render gating", () => {
@@ -149,13 +163,30 @@ describe("YoloButton — render gating", () => {
 });
 
 describe("YoloButton — presence gating", () => {
-  it("disables with the offline hint when the agent has no online connection", () => {
+  it("disables the button and moves the offline hint into a focusable tooltip trigger (no persistent inline text, no dialog trigger)", async () => {
     presenceValue.current = {
       connections: [{ agentUuid: "agent-1", effectiveStatus: "offline" }],
     };
     render(<YoloButton {...HAPPY_PROPS} />);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" }).disabled).toBe(true);
-    expect(screen.getByText(/assigned agent is offline/i)).toBeTruthy();
+
+    const btn = screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" });
+    expect(btn.disabled).toBe(true);
+
+    // No persistent inline hint text — it lives only in the (closed) tooltip.
+    expect(screen.queryByText(/enables on reconnect/i)).toBeNull();
+
+    // The disabled button is wrapped by a focusable tooltip-trigger span, and on
+    // the offline path it is NOT an AlertDialogTrigger (so the two asChild
+    // triggers never conflict).
+    const trigger = btn.closest<HTMLElement>('[tabindex="0"]');
+    expect(trigger).toBeTruthy();
+    expect(btn.getAttribute("aria-haspopup")).not.toBe("dialog");
+
+    // Focusing the trigger opens the tooltip; the shortened offline copy shows.
+    fireEvent.focus(trigger!);
+    await waitFor(() => {
+      expect(screen.getAllByText(/enables on reconnect/i).length).toBeGreaterThan(0);
+    });
   });
 
   it("treats a missing presence provider as offline, never online", () => {

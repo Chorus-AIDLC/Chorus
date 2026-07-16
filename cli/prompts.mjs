@@ -53,6 +53,8 @@ function mentionGuidance(n, entityType) {
  * `chorus_pm_start_elaboration` / `chorus_pm_validate_elaboration` tool names, because
  * this preamble rides EVERY wake including `elaboration_verified` (write-the-proposal),
  * whose contract is that it never mentions the answer-questions tools. Keep it that way.
+ * The reference-attachment nudge (strengthen-reference-association) names `references[]` /
+ * `chorus_add_reference` only — never the elaboration tools — so it is safe on every wake.
  *
  * Kept compact: it is paid on every wake, so each line costs tokens per wake.
  */
@@ -71,6 +73,11 @@ export const HEADLESS_PREAMBLE = [
   "answer in the UI; when a skill says to ask permission before skipping a step, do not skip",
   "silently — record the reason in a Chorus comment; when a skill offers to write a report,",
   "create it directly or skip it, never prompt for it.",
+  "",
+  "When working an idea/proposal/task, if you come across an external link that is evidence",
+  "(a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it",
+  "via references — prefer the inline references[] param at creation time over a post-hoc",
+  "chorus_add_reference. Make it a reflex, not an afterthought.",
   "",
   "After you post something that needs a human decision, END THE TURN and leave the work",
   "pending — do not poll or wait for a synchronous reply. The human's later comment or",
@@ -181,12 +188,22 @@ function buildPromptBody(n) {
         `fix issues with chorus_pm_update_task_draft / chorus_pm_update_document_draft, then ` +
         `chorus_pm_validate_proposal and chorus_pm_submit_proposal to resubmit.\n${mentionGuidance(n, "proposal")}`
       );
-    case "proposal_approved":
+    case "proposal_approved": {
+      // Surface the approver's note inline, symmetric with proposal_rejected — so the
+      // daemon knows the reviewer's opinion without a follow-up chorus_get_proposal
+      // fetch. The server bakes the note into n.message as "... approved. Note: <note>"
+      // (buildMessage in notification-listener.ts); an approve WITHOUT a note has no
+      // "Note: " marker, so reviewInfo stays empty and the prompt reads cleanly. This
+      // mirrors the OpenClaw plugin's proposal_approved handler (event-router.ts).
+      const reviewInfo = n.message?.includes("Note: ")
+        ? ` Review note: "${n.message.split("Note: ").pop()}".`
+        : "";
       return (
         `[Chorus] Proposal '${n.entityTitle}' was APPROVED (proposalUuid: ${n.entityUuid}, ` +
-        `projectUuid: ${n.projectUuid}). Its documents and tasks have been created. Use ` +
+        `projectUuid: ${n.projectUuid}).${reviewInfo} Its documents and tasks have been created. Use ` +
         `chorus_get_unblocked_tasks (projectUuid: "${n.projectUuid}") to find tasks ready to start.\n${mentionGuidance(n, "proposal")}`
       );
+    }
     case "idea_claimed":
       return (
         `[Chorus] Idea '${n.entityTitle}' was assigned to you (ideaUuid: ${n.entityUuid}, ` +

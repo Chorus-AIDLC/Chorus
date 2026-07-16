@@ -56,19 +56,52 @@ The UI SHALL provide a shared formatting rule for instance paths and hosts so th
 
 ### Requirement: An owner SHALL be able to pin a target instance when @-mentioning an agent
 
-When an owner @-mentions an agent in a comment, the mention SHALL remain addressed to the agent. When the mentioned agent has two or more live instances, the UI SHALL present a secondary picker letting the owner choose which `(host, cwd)` instance the mention targets; when the agent has exactly one live instance the UI SHALL auto-select it with no additional interaction. The chosen instance SHALL be pinned to the mention so that the resulting autonomous wake routes to that instance. The pinned target SHALL be expressed as `(host, cwd)` (a durable "place") rather than a specific connection id, and SHALL never be inferred from the comment's project. A mention that carries no pin SHALL behave exactly as before this change.
+When an owner @-mentions an agent in a comment, the mention SHALL remain addressed to the agent. The picker-trigger behavior SHALL first honor the pin state of the comment's **root Idea** (resolved via the shared root-idea resolver) for the Idea's assignee agent:
 
-#### Scenario: Two live instances trigger a secondary picker
+- **When the @-mentioned agent IS the root Idea's assignee agent AND the root Idea is pinned to an instance** (`assigneeType = "agent_instance"`), the mention SHALL inherit that idea's `(host, cwd)` pin with NO picker — even when that instance is currently offline (the inherited pin is HARD: the resulting wake is notify-only, never re-routed to another cwd). The system SHALL NOT prompt the owner to re-choose a cwd that the Idea already fixes.
+- **When the @-mentioned agent IS the root Idea's assignee agent AND the root Idea is NOT instance-pinned**, the picker SHALL follow the online-instance rule below (two or more online instances → picker; exactly one → auto-select; none → un-pinned).
+- **When the @-mentioned agent is NOT the root Idea's assignee agent** (a different agent, or the comment has no root Idea), the picker SHALL follow the online-instance rule below, and the chosen instance SHALL NOT be persisted to the Idea — the owner re-chooses on each such mention.
 
-- **GIVEN** an owner @-mentions an agent that has two live instances
-- **WHEN** the mention is being composed
-- **THEN** the UI MUST present a secondary picker of the agent's live `(host, cwd)` instances for the owner to choose from
+The online-instance rule (applied in the two non-inheriting cases above): when the mentioned agent has two or more live instances, the UI SHALL present a secondary picker letting the owner choose which `(host, cwd)` instance the mention targets; when the agent has exactly one live instance the UI SHALL auto-select it with no additional interaction. The pin inherited or chosen SHALL always be the root Idea's pin (never a per-resource / per-task pin) when inheriting, and SHALL be expressed as `(host, cwd)` (a durable "place") rather than a specific connection id, and SHALL never be inferred from the comment's project. A mention that carries no pin SHALL behave exactly as before this change.
+
+#### Scenario: Mentioning the idea's assignee agent inherits the idea's pin with no picker
+
+- **GIVEN** a comment box on an Idea (or a Task derived from that Idea) whose root Idea is pinned to instance A of agent G
+- **WHEN** the owner @-mentions agent G
+- **THEN** the mention MUST inherit instance A's `(host, cwd)` pin
+- **AND** no secondary picker MUST be presented, even if agent G has other online instances
+
+#### Scenario: Mentioning the idea's assignee agent when the idea is unpinned still prompts on ambiguity
+
+- **GIVEN** a comment box whose root Idea is assigned to a bare agent G (not instance-pinned) and G has two or more online instances
+- **WHEN** the owner @-mentions agent G
+- **THEN** the UI MUST present the secondary picker of G's online instances
+
+#### Scenario: Mentioning a different agent is not persisted and prompts each time
+
+- **GIVEN** a comment box whose root Idea is pinned to agent G, and a different agent H with two or more online instances
+- **WHEN** the owner @-mentions agent H
+- **THEN** the UI MUST present the secondary picker for H
+- **AND** the chosen instance MUST NOT change the Idea's assignee (it is re-chosen on the next such mention)
+
+#### Scenario: Inheriting an offline idea pin stays notify-only
+
+- **GIVEN** a comment box whose root Idea is pinned to instance A of agent G, and instance A currently has no online connection
+- **WHEN** the owner @-mentions agent G and posts the comment
+- **THEN** the mention MUST carry instance A's pin
+- **AND** the resulting wake MUST be notify-only (not re-routed to another online cwd of G)
 
 #### Scenario: A single live instance is auto-selected
 
-- **GIVEN** an owner @-mentions an agent that has exactly one live instance
+- **GIVEN** an owner @-mentions an agent that has exactly one live instance and no inheritable idea pin applies
 - **WHEN** the mention is being composed
 - **THEN** that instance MUST be auto-selected with no additional picker interaction required
+
+#### Scenario: A mention with no pin behaves as before
+
+- **GIVEN** an owner @-mentions an agent with no live instances and no inheritable idea pin
+- **WHEN** the mention is composed and posted
+- **THEN** the mention MUST carry no pin and behave exactly as before this change
 
 ### Requirement: Instance pickers SHALL show only online instances; a fully-offline agent SHALL receive a plain notification
 
@@ -117,6 +150,8 @@ When a `task_assigned` or `mentioned` notification wakes an agent, the connectio
 
 Beyond selecting the origin connection, the LIVE wake for a PINNED `task_assigned` or `mentioned` notification SHALL be DIRECTED so that only the daemon at the resolved online `(host, cwd)` instance wakes and answers. The server SHALL emit a `deliver_turn` control ping on the resolved target connection's `control:{connectionUuid}` channel carrying the created turn's precise `turnUuid`, reusing the existing reverse-control / pending-turn machinery that already delivers `human_instruction` turns. Because the notification SSE stream is per-agent (every online connection of the agent receives the same `new_notification`), the resolved target connection SHALL ALSO be communicated to the daemon as transport-only data on the notification the daemon reads (NOT a persisted column) so that each daemon can compare it to its own registered connection identity: a daemon whose own connection identity is NOT the resolved target SHALL suppress the broadcast wake for that pinned notification; the daemon whose connection identity IS the target SHALL wake (and the target's broadcast copy and `deliver_turn` delivery SHALL collapse to exactly one wake via the shared dedup set). A wake that carries NO resolved target (an un-pinned `task_assigned`/`mentioned`, or a pinned/offline wake for which no turn was created) SHALL behave exactly as before this change — no `deliver_turn` is emitted, no suppression occurs, and an un-pinned broadcast wakes the online-first daemon. A daemon that has not yet learned its own connection identity (before the SSE handshake completes) SHALL treat a targeted wake as "not mine" and suppress it, relying on the `deliver_turn` delivery to the actual target and the reconnect pending-turn backfill. The directed-delivery transport SHALL reuse the existing reverse control channel and pending-turn machinery (`control:{connectionUuid}` / `deliver_turn` / the connection-scoped pending-turns read); it SHALL NOT add a new transport, a new permission bit, or a schema migration.
 
+For the session business key, a DIRECTED idea-anchored wake SHALL keep ONE conversation per idea per agent (`sessionId === directIdeaUuid`) and SHALL NOT fork a per-instance session. When the resolved online origin connection differs from the idea's existing canonical session origin (the cross-cwd case), the wake SHALL RE-POINT that canonical session's `originConnectionUuid` to the resolved online origin and create the turn on the SAME session row, so the user's turn and the daemon's transcript/turn-lifecycle reports land on the same conversation. This re-point is the second — and only other — deliberate, companyUuid-scoped reversal of the write-once `originConnectionUuid` invariant, alongside the explicit `repointSessionOriginAndSend` send path; the autonomous wake SHALL NOT create a `${directIdeaUuid}::${connectionUuid}` per-instance session. Re-pointing is safe because the daemon probes the on-disk transcript per-cwd and starts a fresh session in a new cwd rather than failing `claude --resume`; prior turns remain as read-only history on the same row. This re-point SHALL NOT add a schema migration, a new column, or a new endpoint.
+
 #### Scenario: A pinned online instance is honored at wake time
 
 - **GIVEN** a `task_assigned` notification whose assignment pinned `(Laptop-Q3, dev/chorus)`
@@ -161,13 +196,14 @@ Beyond selecting the origin connection, the LIVE wake for a PINNED `task_assigne
 - **THEN** it MUST treat the targeted wake as "not mine" and suppress it
 - **AND** delivery MUST rely on the precise reverse-channel delivery / reconnect pending-turn backfill to the actual target
 
-#### Scenario: A cross-cwd mention opens a per-instance session rather than re-pointing
+#### Scenario: A cross-cwd directed idea wake re-points the canonical session instead of forking
 
-- **GIVEN** an idea whose existing daemon session origin is `(Laptop-Q3, dev/ai-pm)`
-- **AND** a new `mentioned` pin resolves to a different online instance `(Laptop-Q3, dev/strands)`
+- **GIVEN** an idea whose existing daemon session origin is the ONLINE-or-offline instance `(Laptop-Q3, dev/ai-pm)` and whose session has `sessionId === directIdeaUuid`
+- **AND** a directed idea-anchored wake (e.g. a pinned `task_assigned`, or a `human_instruction` resolved to a different instance) resolves to a different ONLINE instance `(Laptop-Q3, dev/strands)`
 - **WHEN** the wake creates the turn
-- **THEN** it MUST target a per-instance session for `(Laptop-Q3, dev/strands)` with its own cwd-bound transcript
-- **AND** it MUST NOT re-point the existing `dev/ai-pm` session's origin to `dev/strands` (which would fail `claude --resume` with "No conversation found")
+- **THEN** it MUST re-point the SAME canonical session's `originConnectionUuid` to `(Laptop-Q3, dev/strands)` and create the turn on that same session row (keeping `sessionId === directIdeaUuid`, `directIdeaUuid` non-null)
+- **AND** it MUST NOT create a `${directIdeaUuid}::${connectionUuid}` per-instance session
+- **AND** the user's turn and the daemon's later transcript/turn-lifecycle reports MUST land on the same conversation so the running turn is interruptible from the thread the user is viewing
 
 ### Requirement: The chat transcript header SHALL surface the session's cwd
 

@@ -63,6 +63,25 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
   buildAssigneeMatch: mockBuildAssigneeMatch,
+  // Real logic (mirrors src/lib/uuid-resolver): an `agent` assignee resolves to
+  // itself; an `agent_instance` resolves to its owning agent via the (mocked)
+  // prisma.agentInstance lookup. Used by assignIdea's elaborated cwd-re-pin guard.
+  resolveAssigneeAgentUuid: async (
+    companyUuid: string,
+    assigneeType: string | null,
+    assigneeUuid: string | null,
+  ) => {
+    if (!assigneeType || !assigneeUuid) return null;
+    if (assigneeType === "agent") return assigneeUuid;
+    if (assigneeType === "agent_instance") {
+      const inst = await mockPrisma.agentInstance.findFirst({
+        where: { uuid: assigneeUuid, companyUuid },
+        select: { agentUuid: true },
+      });
+      return inst?.agentUuid ?? null;
+    }
+    return null;
+  },
 }));
 vi.mock("@/services/mention.service", () => ({
   parseMentions: mockParseMentions,
@@ -531,6 +550,116 @@ describe("assignIdea", () => {
         data: expect.objectContaining({ assigneeType: "agent", assigneeUuid: ACTOR_UUID }),
       }),
     );
+  });
+
+  // Elaborated-idea cwd re-pin exception (pin-cwd-before-wake, task 1d). An
+  // elaborated idea rejects reassignment, EXCEPT a same-owning-agent cwd re-pin
+  // opted into via `allowElaboratedInstanceRepin` — the post-elaboration wakes
+  // (Start Development / Yolo / proposal approve-reject) must run in the pinned
+  // cwd, so the pin has to persist even though the idea is elaborated.
+  const AGENT_X = "agent-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+
+  it("allows a SAME-owning-agent cwd re-pin on an elaborated idea when opted in", async () => {
+    // Idea already assigned to a bare agent AGENT_X; pin instance A (owned by
+    // AGENT_X). The elaborated guard is bypassed because the owning agent matches.
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
+    );
+    // 1st agentInstance.findFirst = the same-agent guard lookup (isSameOwningAgent
+    // → instance A owned by AGENT_X); 2nd = resolveAssigneeFields promoting to
+    // agent_instance. Both resolve to instance A.
+    mockPrisma.agentInstance.findFirst
+      .mockResolvedValueOnce({ agentUuid: AGENT_X })
+      .mockResolvedValueOnce({ uuid: INSTANCE_A });
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborated", assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: AGENT_X,
+      assignedByUuid: "admin-uuid",
+      instanceUuid: INSTANCE_A,
+      allowElaboratedInstanceRepin: true,
+    });
+
+    // The pin persisted (assigneeType promoted) despite the elaborated status.
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
+      }),
+    );
+  });
+
+  it("rejects a DIFFERENT-agent instance re-pin on an elaborated idea even when opted in", async () => {
+    // Idea assigned to AGENT_X; the instance being pinned is owned by a DIFFERENT
+    // agent → the same-agent guard fails → still "Cannot assign an elaborated Idea".
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
+    );
+    // The guard lookup returns a foreign owning agent → not the same agent.
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: "other-agent",
+        assignedByUuid: "admin-uuid",
+        instanceUuid: INSTANCE_B,
+        allowElaboratedInstanceRepin: true,
+      }),
+    ).rejects.toThrow("Cannot assign an elaborated Idea");
+
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an elaborated re-pin when the idea has no agent assignee (nothing to match)", async () => {
+    // A user-assigned (or unassigned) elaborated idea has no owning agent, so the
+    // same-agent guard can't pass → the elaborated rejection stands even with the
+    // flag set. This exercises the `!currentAgentUuid → false` guard branch.
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborated", assigneeType: "user", assigneeUuid: ACTOR_UUID }),
+    );
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: AGENT_X,
+        assignedByUuid: "admin-uuid",
+        instanceUuid: INSTANCE_A,
+        allowElaboratedInstanceRepin: true,
+      }),
+    ).rejects.toThrow("Cannot assign an elaborated Idea");
+
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an elaborated re-pin when the flag is NOT set (default behavior unchanged)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
+    );
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: AGENT_X,
+        assignedByUuid: "admin-uuid",
+        instanceUuid: INSTANCE_A,
+        // allowElaboratedInstanceRepin omitted → defaults false
+      }),
+    ).rejects.toThrow("Cannot assign an elaborated Idea");
+
+    // Guard never even consulted — the flag gates it before any instance lookup.
+    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 });
 

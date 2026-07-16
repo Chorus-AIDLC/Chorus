@@ -709,7 +709,8 @@
     "addFailed": "添加参考资料失败",
     "updateFailed": "更新参考资料失败",
     "deleteFailed": "删除参考资料失败",
-    "countLabel": "{count, plural, other {# 条参考资料}}"
+    "countLabel": "{count, plural, other {# 条参考资料}}",
+    "toggleNotes": "显示完整说明"
   },
   "export": {
     "exportDocument": "导出",
@@ -963,8 +964,9 @@
     "button": "开始开发",
     "starting": "启动中...",
     "startedHint": "开发已启动 —— agent 正在执行剩余任务",
-    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再开始开发。",
+    "errorInstanceOffline": "该 idea 已固定到一个离线的 daemon 实例，请等该实例重新连接后再开始开发。",
     "errorNoApprovedProposal": "该 idea 还没有已批准的 proposal",
     "errorNoUnfinishedTasks": "所有任务都已完成",
     "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
@@ -978,8 +980,9 @@
     "confirmCta": "执行 Yolo",
     "starting": "启动中...",
     "startedHint": "Yolo 已启动 —— agent 正在推进这个 idea 到完成",
-    "offlineHint": "该 agent 当前离线，重新连接后按钮将可用",
+    "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再执行 Yolo。",
+    "errorInstanceOffline": "该 idea 已固定到一个离线的 daemon 实例，请等该实例重新连接后再执行 Yolo。",
     "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
     "errorGeneric": "启动 Yolo 失败"
   },
@@ -1133,6 +1136,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "kiro": "Kiro",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "其他智能体"
@@ -1149,6 +1153,14 @@
         "step2Tip": "脚本会自动注册 plugin marketplace 并写入 ~/.codex/config.toml 的 MCP 服务器配置。",
         "step3Title": "第 3 步：验证连接",
         "step3Desc": "打开 Codex，让它 check in 到 Chorus，例如输入 \"check in to chorus\"。"
+      },
+      "kiro": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，Kiro CLI 会在启动时读取这两个变量。",
+        "step2Title": "第 2 步：运行 Kiro 安装脚本",
+        "step2Tip": "默认全局安装到 ~/.kiro/，Chorus 在任意目录下均可用。若只想安装到当前项目目录下的 .kiro/，请追加参数：bash -s -- --workspace。",
+        "step3Title": "第 3 步：验证连接",
+        "step3Desc": "打开 Kiro CLI 并激活 /chorus-idea 技能，或直接以 Chorus agent 启动：kiro-cli --agent chorus。"
       },
       "opencode": {
         "step1Title": "第 1 步：设置环境变量",
@@ -1453,6 +1465,7 @@
     "clientClaudeCode": "Claude Code",
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
+    "clientKiro": "Kiro",
     "clientUnknown": "未知客户端",
     "uptimeMonoDays": "{days}天 {time}",
     "mobileBack": "返回连接列表",
@@ -1654,6 +1667,12 @@
     "confirm": "固定实例",
     "cancel": "取消",
     "noInstances": "没有在线实例"
+  },
+  "wakeCwdPicker": {
+    "title": "选择要运行的工作目录",
+    "subtitle": "{name} 在 {hosts, plural, other {# 台主机}}上有 {count, plural, other {# 个在线实例}}。请选择要固定并唤醒的实例。",
+    "confirm": "固定并继续",
+    "cancel": "取消"
   },
   "graph": {
     "title": "图谱",

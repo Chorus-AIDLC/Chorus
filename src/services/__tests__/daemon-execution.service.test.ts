@@ -217,14 +217,38 @@ describe("reconcileSnapshot", () => {
     expect(queuedUpsert.create.startedAt).toBeNull();
   });
 
-  it("coerces missing rootIdeaUuid/startedAt to null", async () => {
+  it("coerces missing rootIdeaUuid/directIdeaUuid/startedAt to null", async () => {
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
       { entityType: "task", entityUuid: t1, status: "queued" },
     ]);
     const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
     expect(upArg.create.rootIdeaUuid).toBeNull();
+    expect(upArg.create.directIdeaUuid).toBeNull();
     expect(upArg.create.startedAt).toBeNull();
     expect(upArg.update.rootIdeaUuid).toBeNull();
+    expect(upArg.update.directIdeaUuid).toBeNull();
+  });
+
+  it("persists directIdeaUuid distinct from rootIdeaUuid for a child-idea wake (create + update)", async () => {
+    // A derived (child) idea: the wake's direct idea is the child; the root idea
+    // is the topmost parent. Both must persist, distinctly, on both upsert arms.
+    const childIdea = "child-idea-0000-0000-0000-0000000c1111";
+    const parentIdea = "parent-idea-0000-0000-0000-000000p22222";
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
+      {
+        entityType: "task",
+        entityUuid: t1,
+        rootIdeaUuid: parentIdea,
+        directIdeaUuid: childIdea,
+        status: "running",
+        startedAt: new Date(),
+      },
+    ]);
+    const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
+    expect(upArg.create.rootIdeaUuid).toBe(parentIdea);
+    expect(upArg.create.directIdeaUuid).toBe(childIdea);
+    expect(upArg.update.rootIdeaUuid).toBe(parentIdea);
+    expect(upArg.update.directIdeaUuid).toBe(childIdea);
   });
 
   it("an empty snapshot ends ALL of the connection's active rows", async () => {
@@ -320,6 +344,7 @@ describe("getVisibleExecutions", () => {
       entityType: "task",
       entityUuid: t1,
       rootIdeaUuid: null,
+      directIdeaUuid: null,
       status: "running",
       interruptedReason: null,
       startedAt: new Date("2026-06-15T03:00:00.000Z"),
@@ -359,6 +384,7 @@ describe("getVisibleExecutions", () => {
       entityType: "task",
       entityUuid: t1,
       rootIdeaUuid: null,
+      directIdeaUuid: null,
       status: "running",
       interruptedReason: null,
       startedAt: "2026-06-15T03:00:00.000Z",

@@ -45,7 +45,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     type: referenceTypeEnum.describe("Reference type: docs, repo, issue_pr, or paper_blog"),
     url: z.string().describe("Web URL (http:// or https://)"),
     title: z.string().describe("Reference title"),
-    notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+    notes: z.string().optional().describe("Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch."),
   });
 
   // chorus_claim_idea - Claim an Idea
@@ -397,7 +397,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         type: referenceTypeEnum.describe("Reference type: docs, repo, issue_pr, or paper_blog"),
         url: z.string().describe("Web URL (http:// or https://)"),
         title: z.string().describe("Reference title"),
-        notes: z.string().optional().describe("Optional human/agent-authored summary (stored verbatim; no fetch)"),
+        notes: z.string().optional().describe("Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch."),
       }),
     },
     async ({ targetType, targetUuid, type, url, title, notes }) => {
@@ -439,7 +439,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         type: referenceTypeEnum.optional().describe("New reference type"),
         url: z.string().optional().describe("New web URL (http:// or https://)"),
         title: z.string().optional().describe("New title"),
-        notes: z.string().nullable().optional().describe("New notes (null clears; omit to leave unchanged)"),
+        notes: z.string().nullable().optional().describe("New notes — one concise sentence (~200 chars, ≤2 lines; the UI clamps the display to 2 lines). null clears; omit to leave unchanged."),
       }),
     },
     async ({ uuid, type, url, title, notes }) => {

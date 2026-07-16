@@ -31,12 +31,16 @@ const mockTaskFindFirst = vi.hoisted(() => vi.fn());
 const mockIdeaFindFirst = vi.hoisted(() => vi.fn());
 const mockAgentInstanceFindFirst = vi.hoisted(() => vi.fn());
 const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
+// fix-daemon-conversation-split-cwd-agent: a cross-cwd directed idea wake RE-POINTS the
+// idea's canonical session (prisma.daemonSession.update) instead of forking a per-instance
+// `${idea}::${conn}` thread. Mock update so we can assert the re-point without a DB.
+const mockDaemonSessionUpdate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { findFirst: mockTaskFindFirst },
     idea: { findFirst: mockIdeaFindFirst },
     agentInstance: { findFirst: mockAgentInstanceFindFirst },
-    daemonSession: { findFirst: mockDaemonSessionFindFirst },
+    daemonSession: { findFirst: mockDaemonSessionFindFirst, update: mockDaemonSessionUpdate },
   },
 }));
 
@@ -221,10 +225,13 @@ beforeEach(() => {
   mockAgentInstanceFindFirst.mockResolvedValue(null);
   // Default: the entity's lineage roots at `ideaUuid` (the canonical idea anchor).
   mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: ideaUuid });
-  // Default: no existing idea-anchored daemon session — so a directed wake creates a
-  // normal session (no cross-cwd suffix) and an elaboration_verified wake has no origin to
-  // upgrade to (online-first fallback). Cross-cwd / origin tests override per-case.
+  // Default: no existing idea-anchored daemon session — so a directed wake creates the
+  // canonical session fresh and an elaboration_verified wake has no origin to upgrade to
+  // (online-first fallback). Cross-cwd / origin tests override per-case.
   mockDaemonSessionFindFirst.mockResolvedValue(null);
+  // Default: the canonical-session re-point update resolves (no-op body) unless a case
+  // asserts on its args.
+  mockDaemonSessionUpdate.mockResolvedValue({});
 });
 
 // ===== Action → trigger mapping =====
@@ -422,12 +429,13 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
 // ===== Pinned-target instance routing (cwd-addressable instances, T11) =====
 //
 // The wake honors a pinned (host, cwd): a `mentioned` wake carries the pin on the
-// context (threaded from the mention markup by mention.service — a HARD pin); an
-// assignment wake (task_assigned / idea_claimed) reads it from the Task's / root Idea's
-// `agent_instance` assignee, resolved to its place (a SOFT pin). ONLINE-ONLY selection:
+// context (threaded from the mention markup by mention.service); an assignment wake
+// (task_assigned / idea_claimed) reads it from the Task's / root Idea's `agent_instance`
+// assignee, resolved to its place. ALL pins are HARD now (owner choice B,
+// pin-cwd-before-wake) — there is no SOFT assignment pin any more. ONLINE-ONLY selection:
 //   - pin matches an ONLINE connection       → pin the session origin THERE (not [0])
-//   - HARD pin matches NO online connection   → offline_pin: notify-only, NO wake (#354)
-//   - SOFT pin matches NO online connection   → DEGRADE to online-first (R2 graceful un-pin)
+//   - HARD pin matches NO online connection   → offline_pin: notify-only, NO wake (#354),
+//                                               NEVER re-routed (mention AND assignment)
 //   - no pin at all                           → online-first (unchanged)
 //   - no online connection at all             → no turn (the notification stands)
 // DEC-5: the cwd is ONLY ever the explicit pin — never inferred from the project.
@@ -471,9 +479,9 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockTaskFindFirst).not.toHaveBeenCalled();
   });
 
-  // ----- task_assigned wake: SOFT pin read from the Task's agent_instance assignee -----
+  // ----- task_assigned wake: HARD pin read from the Task's agent_instance assignee -----
 
-  it("reads the Task's agent_instance override and pins the matching LIVE connection for a task_assigned wake (SOFT)", async () => {
+  it("reads the Task's agent_instance override and pins the matching LIVE connection for a task_assigned wake (HARD)", async () => {
     pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: "conn-online-first", host: "other-host", cwd: "/home/u/dev/other" }),
@@ -534,14 +542,15 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  // ----- SOFT pin offline = DEGRADE to online-first (R2 graceful un-pin) -----
+  // ----- HARD assignment pin offline = notify-only, NO re-route (owner choice B) -----
   //
-  // An assignment pin (Task agent_instance override / inherited idea instance) is SOFT:
-  // when its instance has no online connection, R2 says it degrades to a plain agent and
-  // wakes the agent's online-first connection — it is NEVER notify-only (that policy is
-  // reserved for HARD mention pins). suppressWake stays false; the turn IS created.
+  // An assignment pin (Task agent_instance override / inherited idea instance) is now HARD
+  // (owner choice B, pin-cwd-before-wake), identical to a mention pin: when its instance has
+  // no online connection the wake is offline_pin (notify-only, suppressWake TRUE) — it is
+  // NEVER re-routed to the agent's online-first connection. This INVERTS the former SOFT
+  // "degrade to online-first" behavior.
 
-  it("offline SOFT Task pin (place not registered): DEGRADES to online-first (turn created, no suppress)", async () => {
+  it("offline HARD Task pin (place not registered): notify-only, suppressWake TRUE, NO re-route to online-first", async () => {
     // Task pinned to an instance whose place is not registered online for this agent at all.
     pinTaskToInstance("ghost-host", "/no/such/path");
     const onlineFirst = "conn-online-first";
@@ -553,23 +562,22 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
       ctx({ action: "task_assigned" }),
     );
 
-    // Graceful degrade: the turn IS created on the agent's online-first connection.
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
-    // A degraded soft pin is a broadcast → online-first wake: no directed ping/target,
-    // and crucially NOT notify-only (suppressWake false — distinct from a HARD offline pin).
+    // HARD offline pin → notify-only: NO turn, NO ping, NO target.
+    expect(turn).toBeNull();
     expect(targetConnectionUuid).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // Crucially it must NOT re-route to the agent's online-first connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    // The offline-pin discriminator: suppressWake TRUE so every connection suppresses.
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("offline SOFT Task pin matching an OFFLINE connection (online-elsewhere): DEGRADES to the online-elsewhere connection", async () => {
-    // The pinned instance is OFFLINE; another instance is online. A SOFT pin degrades to
-    // that online-elsewhere connection (the opposite of a HARD mention pin, which would be
-    // notify-only and never re-route).
+  it("offline HARD Task pin matching an OFFLINE connection (online-elsewhere): notify-only, NO re-route", async () => {
+    // The pinned instance is OFFLINE; another instance is online. A HARD pin is notify-only
+    // and NEVER re-routes to the online-elsewhere connection (routing to an unchosen cwd is
+    // the defect).
     pinTaskToInstance(pinnedHost, pinnedCwd);
     const onlineElsewhere = "conn-online-elsewhere";
     mockListConnectionsForAgent.mockResolvedValue([
@@ -581,17 +589,17 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
       ctx({ action: "task_assigned" }),
     );
 
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineElsewhere }),
-    );
+    expect(turn).toBeNull();
     expect(targetConnectionUuid).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // Must NOT re-route to the online-elsewhere connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("a pin matching an OFFLINE connection (online-elsewhere) creates NO turn, NO ping, NO target (no silent re-route)", async () => {
+  it("a mention pin matching an OFFLINE connection (online-elsewhere) creates NO turn, NO ping, NO target (no silent re-route)", async () => {
     // The pinned (host, cwd) instance is OFFLINE; another instance is online. The wake must
     // NOT fall back to that online-elsewhere instance — routing to an unchosen cwd is the
     // defect. Notify-only, no wake anywhere.
@@ -615,11 +623,11 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
-  it("a SOFT Task pin with NO online connection at all creates NO turn (none — the notification stands)", async () => {
-    // Agent is FULLY offline (the soft pin degrades to online-first, but there IS no online
-    // connection to degrade to → `none`). NO turn — the already-created Notification stands
-    // as the plain record. suppressWake stays FALSE (no one is connected to suppress, and a
-    // momentary-no-online wake must stay byte-identical to before).
+  it("a HARD Task pin whose only connection is the offline pinned one → offline_pin, suppressWake TRUE", async () => {
+    // The pinned instance is offline and it is the agent's ONLY connection. With a HARD pin
+    // this is still offline_pin (a pin was present and matched no ONLINE connection), NOT
+    // `none` — so suppressWake is TRUE. `none` is reserved for a genuinely UN-pinned wake
+    // with no online connection. NO turn either way — the notification stands.
     pinTaskToInstance(pinnedHost, pinnedCwd);
     mockListConnectionsForAgent.mockResolvedValue([
       offlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
@@ -628,7 +636,7 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     const { turn, suppressWake } = await createTurnAndResolveTarget(ctx({ action: "task_assigned" }));
 
     expect(turn).toBeNull();
-    expect(suppressWake).toBe(false);
+    expect(suppressWake).toBe(true);
     expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
     expect(mockCreatePendingTurn).not.toHaveBeenCalled();
     // Not an error — a fully-offline target is a notification-only event.
@@ -1005,20 +1013,28 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     expect(targetConnectionUuid).toBeNull();
   });
 
-  // ----- (5) cross-cwd mention → per-instance session, never re-point -----
+  // ----- (5) cross-cwd directed idea wake → RE-POINT the canonical session, never fork -----
+  // fix-daemon-conversation-split-cwd-agent (idea 2ddd1d11): the old behavior forked a
+  // per-instance `${idea}::${conn}` session (splitting the user's turn from the AI's replies
+  // → no interrupt). The new behavior keeps ONE conversation per idea and re-points its
+  // origin to the resolved online connection.
 
-  it("a cross-cwd mention (pin differs from the idea's existing session origin) creates a PER-INSTANCE session, never re-pointing", async () => {
-    // The idea's canonical session lives on conn-idea-origin (/dev/ai-pm). A mention pins a
-    // DIFFERENT online instance (/dev/strands). The wake must open a per-instance session
-    // keyed on (idea, resolved connection) with directIdeaUuid = null (its own thread), and
-    // pin its origin to the resolved connection — NEVER re-pointing the idea's session.
+  it("a cross-cwd mention (pin differs from the idea's existing session origin) RE-POINTS the canonical session, never forking a per-instance thread", async () => {
+    // The idea's canonical session (sessionId === ideaUuid) lives on conn-idea-origin
+    // (/dev/ai-pm). A mention pins a DIFFERENT online instance (/dev/strands). The wake must
+    // re-point that SAME session's origin to the resolved connection — keeping sessionId ===
+    // ideaUuid and directIdeaUuid non-null — and NEVER mint an `${idea}::${conn}` thread.
     const ideaSessionOrigin = "conn-idea-origin";
+    const ideaSessionUuid = "sess-idea-canonical";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: ideaSessionOrigin, host: pinnedHost, cwd: "/home/u/dev/ai-pm" }),
       pinnedConn(),
     ]);
     // The existing idea-anchored session (sessionId === ideaUuid) lives on a DIFFERENT cwd.
-    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaSessionOrigin });
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: ideaSessionUuid,
+      originConnectionUuid: ideaSessionOrigin,
+    });
 
     const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
       ctx({
@@ -1030,23 +1046,24 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
       }),
     );
 
-    // Per-instance session: keyed on (idea, resolved connection), directIdeaUuid null,
-    // origin = the resolved (pinned) connection — its OWN cwd-bound transcript.
+    // The canonical session's origin is RE-POINTED (companyUuid-scoped update on its uuid).
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
+      where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
+      data: { originConnectionUuid: pinnedConnUuid },
+    });
+    // The turn lands on the SAME canonical session: sessionId === ideaUuid, directIdeaUuid
+    // non-null, origin = the resolved (pinned) connection. NO `::` per-instance thread.
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: `${ideaUuid}::${pinnedConnUuid}`,
-        directIdeaUuid: null,
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
         originConnectionUuid: pinnedConnUuid,
       }),
     );
-    // The existing idea session's origin is NEVER re-pointed (no resolve on its origin/key).
     expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: ideaSessionOrigin }),
+      expect.objectContaining({ sessionId: `${ideaUuid}::${pinnedConnUuid}` }),
     );
-    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: ideaUuid }),
-    );
-    // Directed delivery to the resolved (per-instance) connection.
+    // Directed delivery to the resolved connection (where the conversation now lives).
     expect(mockDeliverTurnPing).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: pinnedConnUuid, turnUuid: turn?.uuid }),
     );
@@ -1062,7 +1079,10 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
       pinnedConn(),
     ]);
     // The idea's existing session already lives on the pinned connection.
-    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: pinnedConnUuid });
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: "sess-idea-canonical",
+      originConnectionUuid: pinnedConnUuid,
+    });
 
     const { targetConnectionUuid } = await createTurnAndResolveTarget(
       ctx({
@@ -1081,6 +1101,8 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
         originConnectionUuid: pinnedConnUuid,
       }),
     );
+    // Origin already matches → NO re-point (scoped to origin !== resolved).
+    expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBe(pinnedConnUuid);
   });
 
@@ -1096,6 +1118,62 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
 
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("a directed cross-cwd human_instruction RE-POINTS the canonical session, never forking (AC-2 headline bug)", async () => {
+    // The headline bug: a human types an instruction on an idea whose canonical session
+    // lives on /dev/ai-pm, but the idea is instance-pinned to a DIFFERENT online cwd
+    // (/dev/strands). The wake resolves `directed` on the pinned instance, so this MUST
+    // re-point the canonical session (NOT fork `${idea}::${conn}`, which sent the user's
+    // turn to a residual thread while the AI replied on the old one → could not interrupt).
+    const ideaSessionOrigin = "conn-idea-origin";
+    const ideaSessionUuid = "sess-idea-canonical";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: ideaSessionOrigin, host: pinnedHost, cwd: "/home/u/dev/ai-pm" }),
+      pinnedConn(),
+    ]);
+    // The idea is instance-pinned to the (pinned) /dev/strands instance → resolves directed.
+    mockIdeaFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "inst-strands",
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      agentUuid,
+      host: pinnedHost,
+      cwd: pinnedCwd,
+    });
+    // The idea's canonical session lives on the OTHER cwd.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: ideaSessionUuid,
+      originConnectionUuid: ideaSessionOrigin,
+    });
+
+    const { turn } = await createTurnAndResolveTarget(
+      ctx({
+        action: "human_instruction",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        instructionText: "please continue over here",
+      }),
+    );
+
+    // Re-point the canonical session — NOT a per-instance fork.
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
+      where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
+      data: { originConnectionUuid: pinnedConnUuid },
+    });
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: ideaUuid,
+        directIdeaUuid: ideaUuid,
+        originConnectionUuid: pinnedConnUuid,
+      }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: `${ideaUuid}::${pinnedConnUuid}` }),
+    );
+    // The turn's canonical instruction body still lands on the (re-pointed) session.
+    expect(turn?.promptText).toBe("please continue over here");
   });
 
   it("emits exactly ONE directed ping per directed wake (the precise turn, not a connection sweep)", async () => {
@@ -1248,13 +1326,14 @@ describe("maybeCreateTurnForWakeNotification — failure isolation", () => {
   });
 });
 
-// ===== Instance-based pin LINEAGE: soft/hard, same-agent guard, idea inheritance (T11) =====
+// ===== Instance-based pin LINEAGE: HARD pins, same-agent guard, idea inheritance (T11) =====
 //
-// resolvePinnedTarget now resolves the pin from an INSTANCE lineage, tagging each pin with
-// its origin (`soft`) so selectOriginConnection applies the right offline policy:
+// resolvePinnedTarget resolves the pin from an INSTANCE lineage. ALL pins are HARD now
+// (owner choice B, pin-cwd-before-wake), so selectOriginConnection applies the uniform
+// offline policy (offline_pin / suppressWake — never a degrade to online-first):
 //   1. mention pin (HARD, soft:false)             — covered above (offline_pin / suppressWake)
-//   2. task override (SOFT, soft:true)            — Task's own agent_instance assignee
-//   3. root-idea inheritance (SOFT, soft:true)    — root Idea's instance, SAME-AGENT only
+//   2. task override (HARD, soft:false)           — Task's own agent_instance assignee
+//   3. root-idea inheritance (HARD, soft:false)   — root Idea's instance, SAME-AGENT only
 //   4. else null → online-first
 // This block exercises the lineage priority order, the same-agent guard, the idea-instance
 // priority over the elaboration_verified session-origin heuristic, and idea_claimed (which
@@ -1360,7 +1439,8 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: ideaConnUuid }),
     );
-    // Un-pinned (degraded-to-online-first) → no directed delivery.
+    // The same-agent guard blocked inheritance → genuinely un-pinned → online-first, no
+    // directed delivery (this is NOT a HARD-pin offline_pin: no pin was ever resolved).
     expect(targetConnectionUuid).toBeNull();
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
   });
@@ -1596,9 +1676,13 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(targetConnectionUuid).toBe(ideaConnUuid);
   });
 
-  // ----- a SOFT idea-inherited pin that is OFFLINE degrades to online-first (no suppress) -----
+  // ----- a HARD idea-inherited pin that is OFFLINE is notify-only, NEVER re-routed -----
 
-  it("an inherited (SOFT) idea-instance pin that is OFFLINE degrades to online-first, suppressWake false", async () => {
+  it("an inherited (HARD) idea-instance pin that is OFFLINE is notify-only, suppressWake TRUE, NO re-route", async () => {
+    // The inherited idea-instance pin is now HARD (owner choice B): when its instance is
+    // offline the wake is offline_pin (notify-only, suppressWake TRUE) even though the agent
+    // has another online connection — it is NEVER re-routed to online-first. This INVERTS
+    // the former SOFT degrade-to-online-first behavior.
     pinIdeaToInstance(ideaHost, ideaCwd); // same agent → inherited, but offline below
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
@@ -1610,13 +1694,14 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
       ctx({ action: "task_assigned" }),
     );
 
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
+    // HARD offline pin → notify-only: NO turn, NO re-route to the online-first connection.
+    expect(turn).toBeNull();
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBeNull();
-    // SOFT → degrade, NEVER notify-only.
-    expect(suppressWake).toBe(false);
+    // HARD → notify-only, suppress on every connection.
+    expect(suppressWake).toBe(true);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });

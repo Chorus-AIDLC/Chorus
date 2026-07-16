@@ -44,6 +44,11 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(parseClientFlags(["--force"]).force).toBe(true);
   });
 
+  it("parses boolean --yes / -y into yes:true (non-interactive install)", () => {
+    expect(parseClientFlags(["--yes"]).yes).toBe(true);
+    expect(parseClientFlags(["-y"]).yes).toBe(true);
+  });
+
   it("parses --help / -h into help:true", () => {
     expect(parseClientFlags(["--help"]).help).toBe(true);
     expect(parseClientFlags(["-h"]).help).toBe(true);
@@ -57,6 +62,7 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(f.detach).toBeUndefined();
     expect(f.agent).toBeUndefined();
     expect(f.force).toBeUndefined();
+    expect(f.yes).toBeUndefined();
     expect(f.help).toBeUndefined();
   });
 
@@ -112,6 +118,7 @@ describe("daemonHelpText", () => {
       "--agent",
       "--verbose",
       "-d",
+      "--yes",
       "stop",
       "status",
       "restart",

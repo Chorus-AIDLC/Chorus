@@ -63,6 +63,55 @@ describe("buildPrompt", () => {
     }
   });
 
+  it("proposal_approved surfaces the reviewer's note inline when message carries one", () => {
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "proposal_approved",
+      entityType: "proposal",
+      entityUuid: "prop-1",
+      entityTitle: "My Proposal",
+      message: 'Proposal "My Proposal" has been approved. Note: ship it but rename the flag',
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("APPROVED");
+    // The reviewer's opinion is inline so the daemon needs no follow-up fetch.
+    expect(p).toContain("Review note:");
+    expect(p).toContain("ship it but rename the flag");
+    // Still points at the unblocked-tasks tool.
+    expect(p).toContain("chorus_get_unblocked_tasks");
+  });
+
+  it("proposal_approved WITHOUT a note reads cleanly (no empty note text)", () => {
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "proposal_approved",
+      entityType: "proposal",
+      entityUuid: "prop-1",
+      entityTitle: "My Proposal",
+      message: 'Proposal "My Proposal" has been approved',
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("APPROVED");
+    // No "Note: " marker in the message → no review-note fragment, no empty placeholder.
+    expect(p).not.toContain("Review note:");
+    expect(p).toContain("chorus_get_unblocked_tasks");
+  });
+
+  it("proposal_rejected still embeds the reviewer's reason (unchanged by the approve-note fix)", () => {
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      action: "proposal_rejected",
+      entityType: "proposal",
+      entityUuid: "prop-1",
+      entityTitle: "My Proposal",
+      message: "too risky, split it",
+    });
+    expect(p).not.toBeNull();
+    expect(p).toContain("REJECTED");
+    expect(p).toContain('Review note: "too risky, split it"');
+    expect(p).toContain("chorus_pm_submit_proposal");
+  });
+
   it("resource_resumed is an entity-generic wake action with a continue prompt (子3)", () => {
     expect(WAKE_ACTIONS.has("resource_resumed")).toBe(true);
     // Resume is entity-generic and arrives off the control channel as a synthetic
@@ -228,6 +277,9 @@ describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
     // (3) general route-through-Chorus rule
     expect(HEADLESS_PREAMBLE).toContain("chorus_add_comment");
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("elaboration");
+    // (4) reference-attachment reflex (strengthen-reference-association)
+    expect(HEADLESS_PREAMBLE).toContain("references[]");
+    expect(HEADLESS_PREAMBLE).toContain("chorus_add_reference");
     // (5) async hand-off — post then end the turn, don't block
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("end the turn");
     expect(HEADLESS_PREAMBLE.toLowerCase()).toContain("pending");
@@ -482,7 +534,7 @@ describe("Waker interrupt / crash reporting (子3)", () => {
     expect(snapshotDuringRun).toHaveLength(1);
     expect(snapshotDuringRun[0]).not.toHaveProperty("child");
     expect(Object.keys(snapshotDuringRun[0]).sort()).toEqual(
-      ["entityType", "entityUuid", "rootIdeaUuid", "startedAt", "status"].sort()
+      ["directIdeaUuid", "entityType", "entityUuid", "rootIdeaUuid", "startedAt", "status"].sort()
     );
   });
 

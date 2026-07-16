@@ -165,7 +165,7 @@ describe("runWake — lifecycle reporting", () => {
     });
   });
 
-  it("publishes an execution snapshot with rootIdeaUuid + startedAt while running, then empty when ended", async () => {
+  it("publishes an execution snapshot with rootIdeaUuid + directIdeaUuid + startedAt while running, then empty when ended", async () => {
     const rest = makeRestClient();
     let snapshotWhileRunning: unknown;
     const runEmbeddedAgent = vi.fn(async () => {
@@ -190,12 +190,17 @@ describe("runWake — lifecycle reporting", () => {
         expect.objectContaining({
           entityType: "task",
           entityUuid: "task-3",
+          // Child-idea case: rootIdeaUuid (parent) and directIdeaUuid (child) are
+          // distinct and BOTH reach the snapshot — the UI anchors on the direct id.
           rootIdeaUuid: "idea-root",
+          directIdeaUuid: "idea-9",
           status: "running",
           startedAt: expect.any(String),
         }),
       ],
     });
+    const running = (snapshotWhileRunning as { executions: Array<Record<string, unknown>> }).executions[0];
+    expect(running.directIdeaUuid).not.toBe(running.rootIdeaUuid);
     // Last snapshot after the run finishes is empty (absence == ended server-side).
     const last = rest.executionState.mock.calls[rest.executionState.mock.calls.length - 1][0];
     expect(last).toEqual({ executions: [] });
