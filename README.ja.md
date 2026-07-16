@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/chorus-slug.png" alt="Chorus" width="240" />
+  <img src="packages/landing/public/images/chorus-slug.png" alt="Chorus" width="240" />
 </p>
 
 <p align="center"><strong>AI と人間の協働のための Agent Harness</strong></p>
@@ -180,7 +180,7 @@ CHORUS_DAEMON_CWDS="~/work/repo-a:~/work/repo-b" chorus daemon   # または環�
 
 ### リモートエージェントのウェイク — ディレクトリにディスパッチし、実行を見守る
 
-![Remote Agent Wake](docs/images/agent-daemon-wake.gif)
+![Remote Agent Wake](packages/landing/public/images/agent-daemon-wake.gif)
 
 着想をリモートエージェントの特定のディレクトリに割り当て、会話を開くと、ローカルの Claude Code が作業を引き受けてリアルタイムで実行する様子を見られます — ターミナルも手動の resume も不要です。
 
@@ -192,7 +192,7 @@ Chorus はプロジェクト全体を自動でマインドマップに整理し�
 
 ### 提案 — AI エージェントがリアルタイムで計画を生成
 
-![Proposal Presence](docs/images/proposal-presence.gif)
+![Proposal Presence](packages/landing/public/images/proposal-presence.gif)
 
 PM エージェントが要件を分析し、PRD と課題 DAG を含む提案を生成する様子を見られます — エージェントの活動を示すリアルタイムのプレゼンスインジケーター付きです。
 
@@ -204,37 +204,37 @@ PM エージェントが要件を分析し、PRD と課題 DAG を含む提案�
 
 ### カンバン — リアルタイムな課題フロー
 
-![Kanban Presence](docs/images/kanban-presence.gif)
+![Kanban Presence](packages/landing/public/images/kanban-presence.gif)
 
 カンバンボードはエージェントの作業に合わせて自動更新され、課題カードが To Do → In Progress → To Verify の間をリアルタイムで移動します。エージェントのプレゼンスインジケーターが、どのリソースが作業中かをハイライトします。
 
 ### カンバンと課題 DAG
 
-![Kanban & Task DAG](docs/images/kanan-dag.png)
+![Kanban & Task DAG](packages/landing/public/images/kanban-dag.png)
 
 課題のステータスを追跡するカンバンボードと、実行順序や並行経路を示す依存関係 DAG を並べて表示します。
 
 ### 着想と要件詳細化
 
-![Idea & Elaboration](docs/images/idea-elaborate.png)
+![Idea & Elaboration](packages/landing/public/images/idea-elaborate.png)
 
 PM エージェントは、提案を作成する前に、構造化された Q&A ラウンドを通じて要件を明確にします。パネルには、着想の詳細と、回答・カテゴリタグ付きの完了した詳細化ラウンドが並んで表示されます。
 
 ### 提案のレビュー
 
-![Proposal Review](docs/images/proposal.png)
+![Proposal Review](packages/landing/public/images/proposal.png)
 
 PM エージェントが生成した提案には、文書ドラフトと課題 DAG のドラフトが含まれます。管理者はこのパネルでレビューし、承認または却下します。
 
 ### 受け入れ基準 — 二経路の検証
 
-![Acceptance Criteria](docs/images/task-ac.png)
+![Acceptance Criteria](packages/landing/public/images/task-ac.png)
 
 開発エージェントのセルフチェックと管理者のレビューが、各受け入れ基準を独立して検証し、項目ごとに構造化された合格／不合格の根拠を残します。
 
 ### ユニバーサル検索 — Cmd+K コマンドパレット
 
-![Universal Search](docs/images/universal-search.png)
+![Universal Search](packages/landing/public/images/universal-search.png)
 
 6 種類すべてのエンティティ（課題・着想・提案・文書・プロジェクト・プロジェクトグループ）を横断して検索する Cmd+K コマンドパレットです。スコープの絞り込み（Global / Group / Project）、エンティティ種別ごとのフィルタタブ、キーボードナビゲーションに対応します。Web UI と AI エージェント（`chorus_search` MCP ツール経由）は、同じ検索バックエンドを共有します。
 
@@ -402,7 +402,7 @@ PGlite はポート 5433 で組み込み PostgreSQL を実行します。デー�
 
 API キーは Web UI の **Settings → Agents → Create API Key** から作成します。キーは `cho_` で始まり、一度しか表示されません。
 
-![Create API Key](docs/images/create-key.png)
+![Create API Key](packages/landing/public/images/create-key.png)
 
 ---
 

@@ -77,37 +77,37 @@ Words are always abstract — let's look at some actual screenshots.
 
 **Kanban Board — Real-time Agent Work Tracking**
 
-![Kanban Board](../images/kanban-auto-update.gif)
+![Kanban Board](../../packages/landing/public/images/kanban-auto-update.gif)
 
 This is the core view of Chorus. Colored badges on each Task card show the Agent Sessions currently working on that Task. When a Sub-Agent calls `chorus_session_checkin_task`, the badge appears in real-time; it disappears after `checkout`. Task movement between columns (Open → In Progress → To Verify → Done) is driven by Agents through MCP tools.
 
 **Task Dependency Graph (DAG)**
 
-![DAG](../images/dag.png)
+![DAG](../../packages/landing/public/images/dag.png)
 
 Tasks in Chorus can declare dependencies, forming a directed acyclic graph. The PM Agent sets dependencies via `dependsOnDraftUuids` when creating Proposals. The UI uses dagre for automatic layout. The Team Lead can use this to decide spawn order — process Tasks with no dependencies first; when upstream Tasks complete, downstream Tasks automatically become unblocked.
 
 **Elaboration — Structured Requirements Clarification**
 
-![Elaboration](../images/elaboration.png)
+![Elaboration](../../packages/landing/public/images/elaboration.png)
 
 Before an Idea becomes a Proposal, the PM Agent initiates Elaboration: structured questions about scope, technical choices, priorities, etc. Humans answer via interactive options. All Q&A is persisted as an audit trail on the Idea, ensuring design decisions are traceable — even verbal agreements from chat conversations get recorded.
 
 **Proposal — AI Proposes, Humans Review**
 
-![Proposal](../images/proposal.png)
+![Proposal](../../packages/landing/public/images/proposal.png)
 
 This embodies the AI-DLC core philosophy of "Reversed Conversation": the PM Agent builds on the Elaboration conclusions to create a Proposal containing PRD document drafts and Task drafts. After Admin (human) approval, drafts are automatically materialized into real Document and Task entities.
 
 **Task Detail — Session Tracking**
 
-![Task Tracking](../images/task-tracking.png)
+![Task Tracking](../../packages/landing/public/images/task-tracking.png)
 
 The Task detail page shows complete work history: which Sessions have checked in to this Task, the checkin/checkout times, and the Agent's work reports. This is Chorus's observability — even with 5 Agents working simultaneously, you can clearly see what everyone is doing.
 
 **Pixel Office — Agent Virtual Workstations**
 
-![Pixel Workspace](../images/pixcel-workspace.gif)
+![Pixel Workspace](../../packages/landing/public/images/pixcel-workspace.gif)
 
 This is a fun feature of Chorus: each active Agent Session has its own workstation in a pixel art office. Agents start a "working" animation when checked in to a Task, rest when idle, and celebrate when done. Purely visual entertainment, but you can see the team's work status at a glance.
 
