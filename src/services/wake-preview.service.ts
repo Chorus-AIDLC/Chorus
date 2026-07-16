@@ -3,33 +3,39 @@
 //
 // Before a wake-triggering UI action (Verify Elaborate / Start Development / Yolo /
 // Proposal approve-reject) fires, the client needs to know whether to PROMPT for a
-// cwd, silently PIN a cwd, or wake DIRECTLY. That decision depends on server-only
-// state (the idea's `DaemonSession.originConnectionUuid` liveness), so it CANNOT be
-// computed client-side. This module exposes exactly that decision as a read-only,
-// company-scoped preview — a pure COMPOSITION of the wake path's own primitives:
+// cwd, silently PIN a cwd, or wake DIRECTLY. The connection-count part could be
+// computed client-side, but the assignee → owning-agent resolution is server-side, so
+// this module exposes the whole decision as a read-only, company-scoped preview — a
+// pure COMPOSITION of the wake path's own primitives:
 //
 //   - `resolveAssigneeAgentUuid` (uuid-resolver) — the idea's assignee → owning agent
 //   - `listConnectionsForAgent` (daemon-connection.service) — the agent's live registry,
 //     from which we take the ONLINE subset as the picker's candidate instances
-//   - `resolveIdeaSessionOriginTarget` (notification-turn) — the SAME server-only
-//     session-origin online check the real wake applies (reads
-//     `DaemonSession.originConnectionUuid` gated on `effectiveStatus === "online"`)
 //
-// The three-way outcome mirrors Tech Design D1 EXACTLY:
+// The three-way outcome (owner choice B, superseding the original Tech Design D1
+// session-origin short-circuit):
 //
 //   if assignee is `agent_instance`            → direct   (already pinned)
 //   elif no online connection                  → direct   (nothing to pick; server
 //                                                           handles the offline case)
 //   elif exactly one online connection          → auto_pin (persist the sole cwd, no prompt)
-//   elif idea has an ONLINE session-origin conn → direct   (server session-origin upgrade
-//                                                           targets the existing cwd)
-//   else (bare agent, >=2 online, no origin)    → pick     (ambiguous → prompt)
+//   else (bare agent, >=2 online)               → pick     (ALWAYS prompt + persist)
+//
+// WHY no session-origin short-circuit (owner choice B, live-test decision on idea
+// 8380b9ad): the original D1 returned `direct` when the idea already had an ONLINE
+// `DaemonSession.originConnectionUuid` (the server upgrade would target that existing
+// cwd). But a conversational-entry / already-elaborated idea ALWAYS has a session-origin
+// before Yolo/Start-Dev is clicked, so the picker never fired and the idea was never
+// durably pinned — it just kept waking the same session cwd without ever becoming an
+// `agent_instance` assignee. The owner wants a bare agent with >=2 online to ALWAYS
+// prompt and PERSIST the choice (so the pinned cwd shows on the idea's assignee line),
+// so this branch now always yields `pick` regardless of session-origin.
 //
 // READ-ONLY CONTRACT: this NEVER wakes, NEVER mutates the assignee, and NEVER emits an
-// activity. It issues only reads (one idea lookup, the connection registry read, and —
-// only in the >=2-online branch — one session-origin lookup). "Effectively online"
-// reuses the daemon-connection registry's existing status+staleness rule verbatim (via
-// the ConnectionView `effectiveStatus` the registry already derives) — no new threshold.
+// activity. It issues only reads (one idea lookup + the connection registry read).
+// "Effectively online" reuses the daemon-connection registry's existing status+staleness
+// rule verbatim (via the ConnectionView `effectiveStatus` the registry already derives)
+// — no new threshold.
 
 import { prisma } from "@/lib/prisma";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
@@ -37,21 +43,20 @@ import {
   listConnectionsForAgent,
   type ConnectionView,
 } from "@/services/daemon-connection.service";
-import { resolveIdeaSessionOriginTarget } from "@/services/notification-turn";
 // Type-only import (erased at compile) of the ONE canonical selectable-instance shape,
 // so the preview's `onlineInstances` are byte-compatible with what the InstancePicker
 // consumes and what a subsequent non-waking reassign persists (via `agentInstanceUuid`).
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 
 /**
- * The three pre-wake outcomes (Tech Design D1). Exactly one applies per preview:
- *  - `pick`     — ambiguous: bare `agent`, >=2 effectively-online connections, AND no
- *                 online session-origin. The client prompts with `onlineInstances`.
+ * The three pre-wake outcomes (owner choice B). Exactly one applies per preview:
+ *  - `pick`     — bare `agent` with >=2 effectively-online connections. The client ALWAYS
+ *                 prompts with `onlineInstances` and persists the choice (regardless of any
+ *                 existing session-origin — see the module header for why).
  *  - `auto_pin` — bare `agent` with EXACTLY ONE effectively-online connection. The client
  *                 silently persists that sole instance, then wakes.
- *  - `direct`   — every other case (already `agent_instance`; OR >=2 online but an online
- *                 session-origin exists; OR zero online; OR no assignee agent). The client
- *                 wakes as-is, no prompt, no reassign.
+ *  - `direct`   — every other case (already `agent_instance`; OR zero online; OR no
+ *                 assignee agent). The client wakes as-is, no prompt, no reassign.
  */
 export type WakeTargetOutcome = "pick" | "auto_pin" | "direct";
 
@@ -66,7 +71,7 @@ export type WakeTargetOutcome = "pick" | "auto_pin" | "direct";
  * `onlineInstances` is the assignee agent's currently effectively-online `(host, cwd)`
  * candidate instances, each carrying its durable `agentInstanceUuid` so a subsequent pin
  * can persist it. It is the picker's candidate list for the `pick`/`auto_pin` outcomes; it
- * is still populated (harmlessly) for `direct` when an assignee agent exists.
+ * is still populated (harmlessly) for the `direct` already-pinned case.
  */
 export interface WakeTargetPreview {
   outcome: WakeTargetOutcome;
@@ -97,11 +102,8 @@ function toInstanceCandidate(c: ConnectionView): InstanceCandidate {
  * 404 — the same not-found path a cross-company idea takes, so tenant isolation is a
  * plain not-found, never a cross-company disclosure).
  *
- * The idea's session anchor is its OWN uuid: for an idea entity the wake path's
- * `directIdeaUuid` (the first idea node on its lineage) IS the idea itself, so the
- * session-origin lookup keys on `ideaUuid` — identical to what the real wake resolves.
- *
- * Side-effect free: only reads. NEVER wakes, mutates the assignee, or emits an activity.
+ * Side-effect free: only reads (one idea lookup + the connection registry read). NEVER
+ * wakes, mutates the assignee, or emits an activity.
  */
 export async function previewIdeaWakeTarget(
   companyUuid: string,
@@ -156,19 +158,11 @@ export async function previewIdeaWakeTarget(
     return { outcome: "auto_pin", assigneeAgentUuid, onlineInstances };
   }
 
-  // >=2 online. If the idea already has an ONLINE session-origin connection, the server's
-  // session-origin upgrade will target that existing cwd — so there is nothing ambiguous
-  // to prompt → `direct`. Otherwise the wake target is genuinely ambiguous → `pick`.
-  // Uses the SAME server-only check the real wake applies (notification-turn), so the gate
-  // matches the wake's true target exactly.
-  const sessionOrigin = await resolveIdeaSessionOriginTarget(
-    companyUuid,
-    assigneeAgentUuid,
-    ideaUuid,
-    connections,
-  );
-  if (sessionOrigin) {
-    return { outcome: "direct", assigneeAgentUuid, onlineInstances };
-  }
+  // >=2 online, bare agent → ALWAYS prompt + persist (owner choice B). We deliberately do
+  // NOT short-circuit to `direct` when the idea has an online session-origin: a
+  // conversational-entry / already-elaborated idea always has one before the wake button
+  // is clicked, which previously suppressed the picker and left the idea un-pinned forever.
+  // See the module header. The chosen cwd is persisted as an `agent_instance` assignee by
+  // the client's pin-then-wake flow, so it surfaces on the idea's assignee line.
   return { outcome: "pick", assigneeAgentUuid, onlineInstances };
 }

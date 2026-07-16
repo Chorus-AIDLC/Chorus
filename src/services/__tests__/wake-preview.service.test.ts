@@ -31,14 +31,13 @@ vi.mock("@/services/daemon-connection.service", () => ({
   listConnectionsForAgent: mockListConnectionsForAgent,
 }));
 
-// notification-turn: the preview uses ONLY `resolveIdeaSessionOriginTarget` (a read).
-// `createTurnAndResolveTarget` / `maybeCreateTurnForWakeNotification` are the WAKE
-// entry points — provided as spies so we can assert the preview never wakes.
-const mockResolveIdeaSessionOriginTarget = vi.hoisted(() => vi.fn());
+// notification-turn: the preview no longer consults the session-origin (owner choice B —
+// a bare agent with >=2 online ALWAYS prompts). `createTurnAndResolveTarget` /
+// `maybeCreateTurnForWakeNotification` are the WAKE entry points — provided as spies so we
+// can assert the preview never wakes.
 const mockCreateTurnAndResolveTarget = vi.hoisted(() => vi.fn());
 const mockMaybeCreateTurnForWakeNotification = vi.hoisted(() => vi.fn());
 vi.mock("@/services/notification-turn", () => ({
-  resolveIdeaSessionOriginTarget: mockResolveIdeaSessionOriginTarget,
   createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
   maybeCreateTurnForWakeNotification: mockMaybeCreateTurnForWakeNotification,
 }));
@@ -95,21 +94,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   connSeq = 0;
   // Sensible defaults: idea exists, assigned to a bare agent, agent resolves to itself,
-  // no online session-origin. Individual tests override the pieces they exercise.
+  // no connections. Individual tests override the pieces they exercise.
   mockIdeaFindFirst.mockResolvedValue({
     assigneeType: "agent",
     assigneeUuid: agentUuid,
   });
   mockResolveAssigneeAgentUuid.mockResolvedValue(agentUuid);
   mockListConnectionsForAgent.mockResolvedValue([]);
-  mockResolveIdeaSessionOriginTarget.mockResolvedValue(null);
 });
 
 describe("previewIdeaWakeTarget — outcome classification", () => {
-  it("pick: bare agent, >=2 online, no online session-origin", async () => {
+  it("pick: bare agent, >=2 online", async () => {
     const conns = [makeConnection(), makeConnection()];
     mockListConnectionsForAgent.mockResolvedValue(conns);
-    mockResolveIdeaSessionOriginTarget.mockResolvedValue(null);
 
     const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid);
 
@@ -117,13 +114,22 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
     expect(preview!.outcome).toBe("pick");
     expect(preview!.assigneeAgentUuid).toBe(agentUuid);
     expect(preview!.onlineInstances).toHaveLength(2);
-    // Session-origin check ran with the idea's OWN uuid as the anchor.
-    expect(mockResolveIdeaSessionOriginTarget).toHaveBeenCalledWith(
-      companyUuid,
-      agentUuid,
-      ideaUuid,
-      conns,
-    );
+    expectNoSideEffects();
+  });
+
+  it("pick: a bare agent with >=2 online ALWAYS prompts even when the idea has an online session-origin (owner choice B)", async () => {
+    // Regression for the live-test decision: previously an idea with an existing online
+    // session-origin short-circuited to `direct` (the picker never fired for
+    // conversational-entry / already-elaborated ideas). Owner choice B: a bare agent with
+    // >=2 online ALWAYS prompts + persists, regardless of session-origin. The preview no
+    // longer consults the session-origin at all — proven below by asserting `pick`.
+    const conns = [makeConnection(), makeConnection()];
+    mockListConnectionsForAgent.mockResolvedValue(conns);
+
+    const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid);
+
+    expect(preview!.outcome).toBe("pick");
+    expect(preview!.onlineInstances).toHaveLength(2);
     expectNoSideEffects();
   });
 
@@ -134,9 +140,6 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
 
     expect(preview!.outcome).toBe("auto_pin");
     expect(preview!.onlineInstances).toHaveLength(1);
-    // With exactly one online connection the session-origin check is short-circuited
-    // (auto_pin is decided before it).
-    expect(mockResolveIdeaSessionOriginTarget).not.toHaveBeenCalled();
     expectNoSideEffects();
   });
 
@@ -155,22 +158,6 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
 
     expect(preview!.outcome).toBe("direct");
     expect(preview!.assigneeAgentUuid).toBe(agentUuid);
-    // Never falls through to the ambiguity (session-origin) check.
-    expect(mockResolveIdeaSessionOriginTarget).not.toHaveBeenCalled();
-    expectNoSideEffects();
-  });
-
-  it("direct (sub-case: online session-origin present): >=2 online but the idea has an online origin", async () => {
-    const conns = [makeConnection(), makeConnection()];
-    mockListConnectionsForAgent.mockResolvedValue(conns);
-    // The idea's existing session-origin connection is online → the server upgrade
-    // targets it → nothing ambiguous → direct.
-    mockResolveIdeaSessionOriginTarget.mockResolvedValue(conns[0]);
-
-    const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid);
-
-    expect(preview!.outcome).toBe("direct");
-    expect(mockResolveIdeaSessionOriginTarget).toHaveBeenCalledTimes(1);
     expectNoSideEffects();
   });
 
@@ -186,8 +173,6 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
 
     expect(preview!.outcome).toBe("direct");
     expect(preview!.onlineInstances).toHaveLength(0);
-    // Zero online → decided before the session-origin check.
-    expect(mockResolveIdeaSessionOriginTarget).not.toHaveBeenCalled();
     expectNoSideEffects();
   });
 
@@ -257,7 +242,7 @@ describe("previewIdeaWakeTarget — candidate shape & scoping", () => {
 
     const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid);
 
-    // Two online → pick (no session-origin by default); offline one is excluded.
+    // Two online → pick (owner choice B); offline one is excluded.
     expect(preview!.outcome).toBe("pick");
     expect(preview!.onlineInstances.map((i) => i.connectionUuid)).toEqual([
       "on-1",

@@ -7,19 +7,26 @@ TBD - created by archiving change pin-cwd-before-wake. Update Purpose after arch
 
 The system SHALL provide a read-only, company-scoped endpoint that reports, for a given Idea and its resolved assignee agent, which of three pre-wake outcomes applies, so the client knows whether to prompt for a cwd, silently pin a cwd, or wake directly. The preview SHALL classify the outcome as exactly one of:
 
-- **`pick`** — the wake target is **ambiguous**: the Idea's assignee is a bare agent (`assigneeType = "agent"`, not `"agent_instance"`), that agent has **two or more** effectively-online daemon connections, AND the Idea has no effectively-online session-origin connection (no online `DaemonSession.originConnectionUuid` for the idea-anchored session). The client SHALL prompt with the online instance list.
+- **`pick`** — the Idea's assignee is a bare agent (`assigneeType = "agent"`, not `"agent_instance"`) and that agent has **two or more** effectively-online daemon connections. The client SHALL prompt with the online instance list and persist the choice. This outcome SHALL NOT be suppressed by the Idea already having an online session-origin connection — a bare agent with two or more online connections ALWAYS prompts, so a conversational-entry / already-elaborated Idea (which always has a session-origin before the wake button is clicked) is still durably pinned to the chosen cwd rather than silently re-waking its existing session.
 - **`auto_pin`** — the assignee is a bare agent with **exactly one** effectively-online connection. The client SHALL persist that single instance as the assignee (no prompt) before waking, so the Idea becomes durably pinned to the cwd it will actually run in.
-- **`direct`** — every other case: the Idea is already `agent_instance`-pinned; OR the agent has two or more online connections but the Idea has an effectively-online session-origin connection (the server session-origin upgrade targets the existing cwd); OR the agent has no online connection. The client SHALL wake directly with no prompt and no reassign.
+- **`direct`** — every other case: the Idea is already `agent_instance`-pinned; OR the agent has no online connection; OR the Idea has no agent assignee. The client SHALL wake directly with no prompt and no reassign.
 
 The preview SHALL return the agent's currently-online `(host, cwd)` candidate instances, each carrying its durable `AgentInstance` reference so a subsequent pin can persist it, plus the resolved assignee agent uuid. The preview SHALL NOT wake the agent, mutate the assignee, or emit any activity. "Effectively online" SHALL reuse the daemon-connection registry's existing status+staleness rule rather than defining a new threshold.
 
-#### Scenario: A bare-agent idea with two online cwds and no session origin yields pick
+#### Scenario: A bare-agent idea with two online cwds yields pick
 
 - **GIVEN** an Idea assigned to a bare `agent` whose agent has two effectively-online daemon connections on different cwds
-- **AND** the Idea has no online session-origin connection
 - **WHEN** the wake-target preview is requested for that Idea
 - **THEN** the preview MUST report outcome `pick`
 - **AND** it MUST return both online `(host, cwd)` instances with their durable `AgentInstance` references
+
+#### Scenario: A bare-agent idea with two online cwds still yields pick even with an online session-origin
+
+- **GIVEN** an Idea assigned to a bare `agent` whose agent has two effectively-online daemon connections
+- **AND** the Idea already has an effectively-online session-origin connection
+- **WHEN** the wake-target preview is requested for that Idea
+- **THEN** the preview MUST report outcome `pick` (the session-origin MUST NOT suppress the prompt)
+- **AND** the chosen instance MUST be persisted as the Idea's assignee so its cwd shows on the assignee line
 
 #### Scenario: A bare-agent idea with exactly one online connection yields auto_pin
 
@@ -27,13 +34,6 @@ The preview SHALL return the agent's currently-online `(host, cwd)` candidate in
 - **WHEN** the wake-target preview is requested
 - **THEN** the preview MUST report outcome `auto_pin`
 - **AND** it MUST return that single online instance with its durable `AgentInstance` reference
-
-#### Scenario: An idea with an online session origin yields direct
-
-- **GIVEN** an Idea assigned to a bare `agent` with two online connections
-- **AND** the Idea already has an effectively-online session-origin connection
-- **WHEN** the wake-target preview is requested
-- **THEN** the preview MUST report outcome `direct` (the server session-origin upgrade will target the existing cwd)
 
 #### Scenario: An already-instance-pinned idea yields direct
 
