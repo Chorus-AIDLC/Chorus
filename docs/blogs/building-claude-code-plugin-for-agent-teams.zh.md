@@ -77,37 +77,37 @@ Chorus 通过 **Session** 机制追踪这一切——每个工作中的 Agent �
 
 **Kanban 看板 — 实时追踪 Agent 工作状态**
 
-![Kanban 看板](../images/kanban-auto-update.gif)
+![Kanban 看板](../../packages/landing/public/images/kanban-auto-update.gif)
 
 这是 Chorus 的核心视图。每个 Task 卡片上的彩色徽章显示当前正在处理该 Task 的 Agent Session。当 Sub-Agent 调用 `chorus_session_checkin_task` 后，徽章实时出现；调用 `checkout` 后消失。Task 在不同列之间的移动（Open → In Progress → To Verify → Done）由 Agent 通过 MCP 工具驱动。
 
 **Task 依赖图（DAG）**
 
-![DAG](../images/dag.png)
+![DAG](../../packages/landing/public/images/dag.png)
 
 Chorus 中的 Task 可以声明依赖关系，形成有向无环图。PM Agent 在创建 Proposal 时通过 `dependsOnDraftUuids` 设置依赖。UI 使用 dagre 自动布局。Team Lead 可以据此决定 spawn 顺序——先处理没有依赖的 Task，被依赖的 Task 完成后，下游 Task 自动解除阻塞。
 
 **Elaboration — 结构化需求细化**
 
-![Elaboration](../images/elaboration.png)
+![Elaboration](../../packages/landing/public/images/elaboration.png)
 
 在 Idea 进入 Proposal 之前，PM Agent 会发起 Elaboration（需求细化）：针对 Idea 提出结构化问题（功能范围、技术选型、优先级等），人类通过交互式选项回答。所有问答作为审计轨迹持久化到 Idea 上，确保设计决策有据可查——即使是口头讨论中达成的共识，也会被记录下来。
 
 **Proposal — AI 提出方案，人类审核**
 
-![Proposal](../images/proposal.png)
+![Proposal](../../packages/landing/public/images/proposal.png)
 
 这是 AI-DLC 的核心理念"反转对话"的体现：PM Agent 基于 Elaboration 的结论，创建包含 PRD 文档草案和 Task 草案的 Proposal。Admin（人类）审核通过后，草案自动物化为真实的 Document 和 Task 实体。
 
 **Task 详情 — Session 追踪**
 
-![Task Tracking](../images/task-tracking.png)
+![Task Tracking](../../packages/landing/public/images/task-tracking.png)
 
 Task 详情页展示了完整的工作历史：哪些 Session 曾经 checkin 过这个 Task，每次 checkin/checkout 的时间，以及 Agent 提交的工作报告。这就是 Chorus 的可观测性——即使 5 个 Agent 同时工作，你也能清楚看到每个人在做什么。
 
 **像素办公室 — Agent 的虚拟工位**
 
-![Pixel Workspace](../images/pixcel-workspace.gif)
+![Pixel Workspace](../../packages/landing/public/images/pixcel-workspace.gif)
 
 这是 Chorus 的趣味功能：每个活跃的 Agent Session 在像素办公室里有自己的工位。Agent checkin 到 Task 时开始"工作"动画，idle 时休息，完成时庆祝。纯粹的可视化娱乐，但能一眼看出团队的工作状态。
 
