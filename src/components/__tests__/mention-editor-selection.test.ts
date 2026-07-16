@@ -1,5 +1,5 @@
 // Unit tests for resolveMentionSelection — the @mention-selection precedence
-// that inherits the root idea's pin (pin-cwd-before-wake, Part 2b).
+// that inherits the direct idea's pin (pin-cwd-before-wake, Part 2b).
 //
 // The precedence is exported as a pure function so it can be exercised directly,
 // without booting a Tiptap editor + suggestion flow. It decides, for a chosen
@@ -7,9 +7,9 @@
 // open the secondary cwd PICKER.
 //
 // Three branches under test (mirroring the AC):
-//   (a) assignee + rootIdeaPin → insert with the inherited pin, NO picker — even
+//   (a) assignee + ideaPin → insert with the inherited pin, NO picker — even
 //       when that place is offline / not among the agent's online instances,
-//   (b) assignee + no rootIdeaPin + >=2 online → picker,
+//   (b) assignee + no ideaPin + >=2 online → picker,
 //   (c) non-assignee agent + >=2 online → picker (existing behavior unchanged),
 //   plus the auto-pin / un-pinned / user fall-throughs.
 
@@ -45,14 +45,14 @@ function offlineInstance(
   };
 }
 
-describe("resolveMentionSelection — inherit the root idea's pin", () => {
-  it("(a) assignee + rootIdeaPin → insert with the inherited pin, NO picker (even when that place is offline)", () => {
+describe("resolveMentionSelection — inherit the direct idea's pin", () => {
+  it("(a) assignee + ideaPin → insert with the inherited pin, NO picker (even when that place is offline)", () => {
     const decision = resolveMentionSelection({
       type: "agent",
       uuid: "agent-G",
       name: "Agent G",
-      isRootIdeaAssignee: true,
-      rootIdeaPin: {
+      isIdeaAssignee: true,
+      ideaPin: {
         host: "build-box",
         cwd: "/srv/repo",
         agentInstanceUuid: "inst-pinned",
@@ -75,8 +75,8 @@ describe("resolveMentionSelection — inherit the root idea's pin", () => {
       type: "agent",
       uuid: "agent-G",
       name: "Agent G",
-      isRootIdeaAssignee: true,
-      rootIdeaPin: {
+      isIdeaAssignee: true,
+      ideaPin: {
         host: "host-1",
         cwd: "/srv/repo",
         agentInstanceUuid: "inst-pinned",
@@ -94,14 +94,14 @@ describe("resolveMentionSelection — inherit the root idea's pin", () => {
       type: "agent",
       uuid: "agent-G",
       name: "Agent G",
-      isRootIdeaAssignee: true,
-      rootIdeaPin: { host: "", cwd: null, agentInstanceUuid: "inst-x" },
+      isIdeaAssignee: true,
+      ideaPin: { host: "", cwd: null, agentInstanceUuid: "inst-x" },
       instances: [],
     });
     expect(decision).toEqual({ kind: "insert", pin: { host: "", cwd: null } });
   });
 
-  it("(b) assignee + NO rootIdeaPin + >=2 online → picker over the online set", () => {
+  it("(b) assignee + NO ideaPin + >=2 online → picker over the online set", () => {
     const online = [
       onlineInstance("conn-a", "/cwd/a"),
       onlineInstance("conn-b", "/cwd/b"),
@@ -110,7 +110,7 @@ describe("resolveMentionSelection — inherit the root idea's pin", () => {
       type: "agent",
       uuid: "agent-G",
       name: "Agent G",
-      isRootIdeaAssignee: true, // unpinned idea → still prompt on ambiguity
+      isIdeaAssignee: true, // unpinned idea → still prompt on ambiguity
       instances: online,
     });
     expect(decision).toEqual({ kind: "pick", onlineInstances: online });
@@ -125,14 +125,14 @@ describe("resolveMentionSelection — inherit the root idea's pin", () => {
       type: "agent",
       uuid: "agent-H",
       name: "Agent H",
-      isRootIdeaAssignee: false,
+      isIdeaAssignee: false,
       instances: online,
     });
     expect(decision).toEqual({ kind: "pick", onlineInstances: online });
   });
 
   it("(c) non-assignee agent with no annotation at all + >=2 online → picker", () => {
-    // No entity context was supplied, so isRootIdeaAssignee/rootIdeaPin are absent.
+    // No entity context was supplied, so isIdeaAssignee/ideaPin are absent.
     const online = [
       onlineInstance("conn-a", "/cwd/a"),
       onlineInstance("conn-b", "/cwd/b"),
@@ -202,7 +202,7 @@ describe("resolveMentionSelection — inherit the root idea's pin", () => {
       type: "agent",
       uuid: "agent-G",
       name: "Agent G",
-      isRootIdeaAssignee: true, // assignee but no rootIdeaPin
+      isIdeaAssignee: true, // assignee but no ideaPin
       instances: [sole],
     });
     expect(decision).toEqual({ kind: "insert", pin: sole });

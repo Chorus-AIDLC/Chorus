@@ -28,8 +28,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const withInstances = query.withInstances === "1" || query.withInstances === "true";
 
   // Optional comment entity context (pin-cwd-before-wake, Part 2a): the comment's
-  // target entity, so the search can resolve the comment's root idea and annotate
-  // each agent candidate with `isRootIdeaAssignee` + the idea's pin. Only accepted
+  // target entity, so the search can resolve the comment's direct idea and annotate
+  // each agent candidate with `isIdeaAssignee` + the idea's pin. Only accepted
   // when BOTH parts are present and `entityType` is a recognized kind — otherwise
   // omitted (the service treats a missing part as "no context" → unchanged search).
   const entityType = VALID_ENTITY_TYPES.includes(query.entityType as LineageEntityType)

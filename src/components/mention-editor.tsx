@@ -100,16 +100,17 @@ interface Mentionable {
   // 2+ instances the editor surfaces the secondary picker; a single instance
   // auto-selects; 0 instances → un-pinned mention (behaves as before).
   instances?: InstanceCandidate[];
-  // Root-idea entity-context enrichment (pin-cwd-before-wake, Part 2b), mirrored
+  // Direct-idea entity-context enrichment (pin-cwd-before-wake, Part 2b), mirrored
   // from the service `Mentionable` shape (mention.service.ts). Populated for
   // `type: "agent"` candidates ONLY when the editor requests entity context
-  // (entityType + entityUuid) AND that entity resolves to a root idea.
-  // `isRootIdeaAssignee` is true iff this candidate agent is the owning agent of
-  // the root idea's assignee. `rootIdeaPin` rides ONLY on the assignee candidate,
-  // and only when the root idea is instance-pinned — the editor inherits it with
+  // (entityType + entityUuid) AND that entity resolves to a DIRECT idea (the idea
+  // the comment attaches to — for an idea entity itself, NOT its lineage root).
+  // `isIdeaAssignee` is true iff this candidate agent is the owning agent of
+  // that idea's assignee. `ideaPin` rides ONLY on the assignee candidate,
+  // and only when that idea is instance-pinned — the editor inherits it with
   // NO picker (HARD pin: the wake is notify-only if offline, never re-routed).
-  isRootIdeaAssignee?: boolean;
-  rootIdeaPin?: {
+  isIdeaAssignee?: boolean;
+  ideaPin?: {
     host: string;
     cwd: string | null;
     agentInstanceUuid: string;
@@ -117,8 +118,8 @@ interface Mentionable {
 }
 
 // The durable (host, cwd) "place" a mention pins to. A structural subset of both
-// InstanceCandidate (online picker candidate) and the root idea's inherited
-// `rootIdeaPin` (which may be offline and has no connectionUuid) — the mention
+// InstanceCandidate (online picker candidate) and the direct idea's inherited
+// `ideaPin` (which may be offline and has no connectionUuid) — the mention
 // markup only ever needs host + cwd.
 export interface MentionPin {
   host: string;
@@ -137,13 +138,13 @@ export type MentionSelection =
  * Part 2b). Pure + exported so the precedence can be unit-tested without booting
  * a Tiptap editor. Precedence (first match wins):
  *
- *  1. The candidate IS the root idea's assignee agent AND the root idea is
- *     instance-pinned (`rootIdeaPin`) → INSERT pinned to the inherited
+ *  1. The candidate IS the direct idea's assignee agent AND that idea is
+ *     instance-pinned (`ideaPin`) → INSERT pinned to the inherited
  *     `(host, cwd)`, with NO picker — EVEN IF that place is currently offline /
  *     not among the agent's online instances. This is a HARD inherited pin: the
  *     resulting wake is notify-only if offline, never re-routed to another cwd.
  *     Not gated by online status.
- *  2. The candidate IS the root idea's assignee agent, has NO inherited pin, and
+ *  2. The candidate IS the direct idea's assignee agent, has NO inherited pin, and
  *     has ≥2 online instances → PICK (open the picker; the idea is unpinned so we
  *     prompt on genuine ambiguity).
  *  3. Otherwise (NOT the assignee, or ≤1 online) → the existing online-instance
@@ -152,11 +153,11 @@ export type MentionSelection =
  *     persisted to the idea.
  */
 export function resolveMentionSelection(item: Mentionable): MentionSelection {
-  // Rule 1: inherit the root idea's pin (HARD) — not filtered by online status.
-  if (item.isRootIdeaAssignee && item.rootIdeaPin) {
+  // Rule 1: inherit the direct idea's pin (HARD) — not filtered by online status.
+  if (item.isIdeaAssignee && item.ideaPin) {
     return {
       kind: "insert",
-      pin: { host: item.rootIdeaPin.host, cwd: item.rootIdeaPin.cwd },
+      pin: { host: item.ideaPin.host, cwd: item.ideaPin.cwd },
     };
   }
 
@@ -187,7 +188,7 @@ export interface MentionEditorProps {
   onSubmit?: () => void;
   // Optional comment entity context (pin-cwd-before-wake, Part 2b). When BOTH
   // are supplied they are forwarded to `/api/mentionables` (alongside
-  // withInstances=1) so agent candidates carry the comment's root-idea
+  // withInstances=1) so agent candidates carry the comment's direct-idea
   // assignee/pin annotation, letting the editor inherit the idea's pin instead
   // of prompting. Threaded in by the single production caller (UnifiedComments),
   // which already knows the comment's targetType/targetUuid.
@@ -721,8 +722,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         //
         // entityType/entityUuid (pin-cwd-before-wake, Part 2b) ride alongside
         // withInstances when both are known, so agent candidates carry the
-        // comment's root-idea assignee/pin annotation (isRootIdeaAssignee /
-        // rootIdeaPin). Appended only when both are present — otherwise the query
+        // comment's direct-idea assignee/pin annotation (isIdeaAssignee /
+        // ideaPin). Appended only when both are present — otherwise the query
         // is byte-identical to before and the search is unchanged.
         let url = `/api/mentionables?q=${encodeURIComponent(query)}&limit=10&withInstances=1`;
         if (entityType && entityUuid) {
@@ -764,8 +765,8 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     const insertMention = useCallback(
       // The pin only needs the durable (host, cwd) "place" for the mention markup
       // — NOT the full InstanceCandidate. Widened to `{ host, cwd }` so BOTH an
-      // online InstanceCandidate (secondary picker / auto-pin) AND the root idea's
-      // inherited `rootIdeaPin` (which has no connectionUuid — it may be offline)
+      // online InstanceCandidate (secondary picker / auto-pin) AND the direct idea's
+      // inherited `ideaPin` (which has no connectionUuid — it may be offline)
       // satisfy it structurally.
       (
         item: Mentionable,
