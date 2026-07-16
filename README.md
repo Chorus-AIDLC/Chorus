@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI is the fourth way to connect (Kiro CLI v2): a one-command `install-kiro.sh` plugin and a `--agent kiro` daemon backend, plus daemon fixes.
+
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — Dark mode across the app (light / dark / system). Reference artifacts: attach docs, repos, issues, and articles to any idea, proposal, or task, readable inline and over MCP. Korean and Japanese locales (Korean contributed by the community). **Theme** ideas for grouping, plus daemon Start Development / Yolo buttons, conversational idea entry, crash-resume, and `chorus daemon install`.
 
 **[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — Per-project resource mind-map: a new Graph view wires each project's Ideas, Proposals, Documents, and Tasks into one collapsible tree, generated from the project's own structure. Every card carries its current status (ideas show the derived pipeline status the idea tracker uses), a title search auto-expands the path to every match with highlight/dim and prev/next navigation, and the same zoom/pan canvas renders on desktop and mobile (pinch + double-tap).
@@ -384,7 +386,7 @@ The interactive installer provisions VPC, Aurora Serverless v2, ElastiCache Serv
 
 ### Connect AI Agents
 
-The fastest path is the in-app setup wizard: open the Web UI, go to **Settings → Setup Guide → Open setup guide**, and follow the step-by-step instructions for your client (Claude Code, Codex, OpenCode, OpenClaw, or other agents). The wizard creates the API key for you, shows the exact commands, and walks through verifying the connection.
+The fastest path is the in-app setup wizard: open the Web UI, go to **Settings → Setup Guide → Open setup guide**, and follow the step-by-step instructions for your client (Claude Code, Codex, Kiro, OpenCode, OpenClaw, or other agents). The wizard creates the API key for you, shows the exact commands, and walks through verifying the connection.
 
 If you'd rather read the full docs:
 
@@ -392,6 +394,7 @@ If you'd rather read the full docs:
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | Other MCP agents (Cursor, Continue, custom, …) | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
 

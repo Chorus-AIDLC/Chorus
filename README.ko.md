@@ -36,6 +36,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI가 네 번째 연결 방식이 되었습니다(Kiro CLI v2): 명령 한 줄로 설치하는 `install-kiro.sh` 플러그인과 `--agent kiro` 데몬 백엔드, 여기에 몇 가지 데몬 수정.
+
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — 앱 전체 다크 모드(라이트 / 다크 / 시스템). 참고 자료를 어떤 아이디어·제안·작업에도 첨부할 수 있고, 인라인으로도 MCP를 통해서도 읽을 수 있습니다. 한국어와 일본어 추가(한국어는 커뮤니티 기여). 그룹화를 위한 **테마** 아이디어, 그리고 데몬의 개발 시작 / Yolo 버튼, 대화식 아이디어 입력, 크래시 복구, `chorus daemon install`.
 
 **[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — 프로젝트별 리소스 마인드맵: 새로운 Graph 뷰가 각 프로젝트의 아이디어·제안·문서·작업을 프로젝트 자체 구조에서 생성한 하나의 접을 수 있는 트리로 엮습니다. 모든 카드에 현재 상태가 표시되며(아이디어는 아이디어 트래커가 사용하는 파생 파이프라인 상태를 보여줍니다), 제목 검색은 모든 일치 항목까지의 경로를 자동으로 펼쳐 하이라이트/디밍하고 이전/다음 탐색을 제공합니다. 동일한 줌/팬 캔버스가 데스크톱과 모바일 모두에서 렌더링됩니다(핀치 + 더블탭).
@@ -384,7 +386,7 @@ PGlite는 포트 5433에서 내장 PostgreSQL을 실행합니다. 데이터는 `
 
 ### AI 에이전트 연결하기
 
-가장 빠른 방법은 앱 내 설정 마법사입니다: Web UI를 열고 **Settings → Setup Guide → Open setup guide**로 이동한 뒤, 사용하는 클라이언트(Claude Code, Codex, OpenCode, OpenClaw, 또는 그 밖의 에이전트)에 맞는 단계별 안내를 따르세요. 마법사가 API 키를 만들어 주고, 정확한 명령을 보여주며, 연결 확인까지 안내합니다.
+가장 빠른 방법은 앱 내 설정 마법사입니다: Web UI를 열고 **Settings → Setup Guide → Open setup guide**로 이동한 뒤, 사용하는 클라이언트(Claude Code, Codex, Kiro, OpenCode, OpenClaw, 또는 그 밖의 에이전트)에 맞는 단계별 안내를 따르세요. 마법사가 API 키를 만들어 주고, 정확한 명령을 보여주며, 연결 확인까지 안내합니다.
 
 전체 문서를 읽고 싶다면:
 
@@ -392,6 +394,7 @@ PGlite는 포트 5433에서 내장 PostgreSQL을 실행합니다. 데이터는 `
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | 그 밖의 MCP 에이전트(Cursor, Continue, 커스텀 등) | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
 

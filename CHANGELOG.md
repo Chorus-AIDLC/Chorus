@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.14.1] - 2026-07-16
+
+### Added
+- **Amazon Kiro CLI integration (4th plugin surface)**: A Chorus plugin for Amazon Kiro CLI — installed via a one-shot `install-kiro.sh` that merges loose `.kiro/{agents,skills,steering,settings}` templates (the Chorus MCP server, eight `chorus-*` workflow skills, a `chorus` main agent with session-lifecycle hooks, and three read-only reviewer subagents) into your Kiro config, global or `--workspace`-local. Paired with a `--agent kiro` daemon backend (wake / resume / interrupt / transcript) so a remote dispatch can drive a local Kiro headlessly. Documented in `docs/CONNECT_KIRO.md`, linked from every README locale. (#425, #427)
+- **Pin a cwd before waking a daemon**: Waking a daemon-hosted agent now prompts for the target working directory instead of defaulting to the first daemon — a cwd picker on wake, non-waking reassign, HARD pins that stick, and `@mention` inheriting the idea's pin. (#431)
+- **Persist project-group expand/collapse state**: The project-list group open/closed state is now remembered across visits via `localStorage`. (#424)
+
+### Changed
+- **External-reference attachment is now an agent reflex**: The idea/skill workflow nudges agents to attach reference artifacts (a `### References` step + wake-prompt nudge), and reference `notes` are clamped to 2 lines in the UI with a hover tooltip + tap-to-expand; the MCP docs nudge concise notes. (#423, #432)
+- **Offline hint on stage-advance buttons moved into a tooltip**: The Start Development / Yolo buttons show their offline hint as a tooltip rather than inline text. (#422)
+
+### Fixed
+- **`chorus daemon install` drops credentials under systemd**: The install path now persists + validates `CHORUS_URL` / `CHORUS_API_KEY` into `daemon.json` for the boot service (systemd `--user` clean-env stripped them), plus an interactive multi-cwd setup wizard. (#430)
+- **Daemon conversation forks on cwd/agent switch**: Switching an idea's cwd or agent re-points the existing conversation instead of forking a residual chat, and interrupt is now reachable from any thread. (#429)
+- **Child-idea wake lit the parent chat**: Child-idea wake is now anchored to the child conversation, and the approve note is delivered inline. (#428)
+
+### Plugin
+- **Plugin & skill versions → 0.14.1**: Claude Code, Codex, and OpenClaw plugins plus the standalone skill are bumped to 0.14.1, with the new Kiro plugin surface added. (#423)
+
+---
+
 ## [0.14.0] - 2026-07-11
 
 ### Added
