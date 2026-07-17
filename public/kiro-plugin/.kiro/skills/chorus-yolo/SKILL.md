@@ -508,7 +508,7 @@ After all waves complete, output a markdown summary:
 
 ### Phase 5b: Idea Completion Report (mandatory)
 
-A successful `/chorus-yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The tool's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
+A successful `/chorus-yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The `content` parameter's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
 
 > **Order:** the completion report is written only **after** the Phase 4.5 code-review gateway returns PASS / PASS WITH NOTES. Never write it while a code-review FAIL is outstanding — the report is a ship-time summary, and the gateway is what clears the feature to ship.
 

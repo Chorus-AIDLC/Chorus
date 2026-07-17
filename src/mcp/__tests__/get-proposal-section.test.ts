@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { z } from "zod";
 
 // ===== Module mocks (hoisted) =====
 
@@ -162,12 +163,18 @@ describe("chorus_get_proposal — section parameter", () => {
     expect(proposalGetTools).toEqual(["chorus_get_proposal"]);
   });
 
-  it("documents all four sections and the basic default in its description", () => {
-    const desc = toolMeta["chorus_get_proposal"].description;
-    expect(desc).toContain("basic");
-    expect(desc).toContain("documents");
-    expect(desc).toContain("tasks");
-    expect(desc).toContain("full");
-    expect(desc).toMatch(/default/i);
+  it("documents all four sections and the basic default in the section param describe", () => {
+    // After description slimming (slim-mcp-tool-descriptions-enums), the per-section
+    // detail lives in the `section` param's .describe(), not the top-level description.
+    // The description is trimmed to what/when; the section values remain enumerated on the param.
+    const schema = toolMeta["chorus_get_proposal"].inputSchema as unknown as z.ZodType;
+    const sectionDesc =
+      (z.toJSONSchema(schema, { io: "input" }) as { properties?: Record<string, { description?: string }> })
+        .properties?.section?.description ?? "";
+    expect(sectionDesc).toContain("basic");
+    expect(sectionDesc).toContain("documents");
+    expect(sectionDesc).toContain("tasks");
+    expect(sectionDesc).toContain("full");
+    expect(sectionDesc).toMatch(/default/i);
   });
 });

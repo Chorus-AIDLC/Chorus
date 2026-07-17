@@ -248,7 +248,7 @@ branch_idea_report_reminder() {
 [Chorus — Idea-Completion Report Trigger]
 All tasks of proposal ${PROPOSAL_UUID} are now done; no completion report yet.
 
-ACTION REQUESTED: create idea-completion report for this Idea. Call \`chorus_create_report\` with proposalUuid="${PROPOSAL_UUID}". The tool description carries the Summary / Decisions / Follow-ups template.
+ACTION REQUESTED: create idea-completion report for this Idea. Call \`chorus_create_report\` with proposalUuid="${PROPOSAL_UUID}". The \`content\` parameter's description carries the Summary / Decisions / Follow-ups template.
 CTX
 }
 

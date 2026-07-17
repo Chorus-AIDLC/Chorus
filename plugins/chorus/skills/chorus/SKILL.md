@@ -142,7 +142,7 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 ### Reports
 
-A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. `$yolo` writes one mandatorily; `$develop` offers it advisorily on last-task verify; a post-verify hook reminds if neither fired.
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The `content` parameter's description carries the section template — read it there. `$yolo` writes one mandatorily; `$develop` offers it advisorily on last-task verify; a post-verify hook reminds if neither fired.
 
 ### References
 

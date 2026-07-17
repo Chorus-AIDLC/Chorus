@@ -390,12 +390,12 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_add_reference",
     {
       description:
-        "Attach a first-class reference artifact (external evidence — a web link + optional notes) to an idea, proposal, or task. `type` is one of docs (official documentation), repo (reference implementation), issue_pr (issue/PR thread), paper_blog (paper/blog post). `url` must be an http:// or https:// web link (no local files). Notes are stored verbatim; the URL is never fetched. Agents read references back inline via chorus_get_idea / chorus_get_proposal / chorus_get_task — there is no separate reference-read tool. References can also be attached at creation via the optional `references[]` param on chorus_pm_create_idea / chorus_pm_create_proposal / chorus_create_tasks; use this tool for post-hoc attach.",
+        "Attach external evidence (a web link + optional notes) to an idea, proposal, or task, for post-hoc attach. Prefer the inline `references[]` param on chorus_pm_create_idea / chorus_pm_create_proposal / chorus_create_tasks when attaching at creation time; references are read back inline via chorus_get_idea / _get_proposal / _get_task (no separate read tool).",
       inputSchema: z.object({
         targetType: referenceTargetTypeEnum.describe("Target type: idea, proposal, or task"),
         targetUuid: z.string().describe("UUID of the idea, proposal, or task to attach to"),
-        type: referenceTypeEnum.describe("Reference type: docs, repo, issue_pr, or paper_blog"),
-        url: z.string().describe("Web URL (http:// or https://)"),
+        type: referenceTypeEnum.describe("Reference type: docs (official documentation), repo (reference implementation), issue_pr (issue/PR thread), or paper_blog (paper/blog post)"),
+        url: z.string().describe("Web URL (http:// or https://; no local files — never fetched)"),
         title: z.string().describe("Reference title"),
         notes: z.string().optional().describe("Optional one-line summary of why this reference is relevant — keep it to a single concise sentence (~200 chars, ≤2 lines); the UI clamps the display to 2 lines. Stored verbatim; no fetch."),
       }),
@@ -505,7 +505,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       description: "Add a document draft to a pending Proposal container",
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
-        type: z.string().describe("Document type (prd, tech_design, adr, spec, guide, report)"),
+        type: z.enum(["prd", "tech_design", "adr", "spec", "guide", "report"]).describe("Document type"),
         title: z.string().describe("Document title"),
         content: z.string().describe("Document content (Markdown)"),
       }),
@@ -584,7 +584,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
         draftUuid: z.string().describe("Document draft UUID"),
-        type: z.string().optional().describe("Document type"),
+        type: z.enum(["prd", "tech_design", "adr", "spec", "guide", "report"]).optional().describe("Document type"),
         title: z.string().optional().describe("Document title"),
         content: z.string().optional().describe("Document content (Markdown)"),
       }),
@@ -735,14 +735,14 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status). Optionally pin the task to a specific AgentInstance by passing its `instanceUuid` (the durable (agent, host, cwd) identity from chorus presence/daemon tools): when provided the task is assigned as `agent_instance` and the autonomous wake targets that instance; when omitted the task is a plain `agent` assignment whose wake-time instance is inherited from the root idea. The instance must belong to the target agent's company, else the call is rejected.",
+      description: "Assign a task to an agent that has task:write permission; the task must be in open or assigned status. Optionally pin it to a specific AgentInstance via `instanceUuid`.",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
         agentUuid: z.string().describe("Target Agent UUID (must have task:write permission)"),
         instanceUuid: z
           .string()
           .nullish()
-          .describe("Optional AgentInstance UUID to pin the task to (assigns as agent_instance). Omit for a plain agent assignment (backward-compatible)."),
+          .describe("Optional AgentInstance UUID — the durable (agent, host, cwd) identity from chorus presence/daemon tools. When provided the task is assigned as `agent_instance` and the autonomous wake targets that instance; omit for a plain `agent` assignment whose wake-time instance is inherited from the root idea. The instance must belong to the target agent's company, else the call is rejected."),
       }),
     },
     async ({ taskUuid, agentUuid, instanceUuid }) => {
@@ -886,7 +886,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_start_elaboration",
     {
-      description: "Start an elaboration round for an Idea. Creates structured questions for the Idea creator/stakeholder to answer, clarifying requirements before proposal creation. Recommended for every Idea. Structured elaboration improves Proposal quality and reduces rejection cycles. IMPORTANT: After this tool returns pending_answers, you MUST use an interactive prompt tool (e.g., AskUserQuestion in Claude Code) to present the questions to the user — do NOT display questions as plain text. Collect answers interactively, then call chorus_answer_elaboration. IMPORTANT: Even if the user discusses requirements with you outside of elaboration (e.g., in chat), you should still record key decisions and clarifications as elaboration rounds so they are persisted to the Idea as an audit trail. Do NOT include an 'Other' option — the UI automatically adds a free-text 'Other' option to every question.",
+      description: "Open a round of structured questions on an Idea to clarify requirements before a proposal is written; recommended for every Idea. Record decisions here even when requirements were discussed outside the tool (chat) — this round is the persisted audit trail.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         depth: z.enum(["minimal", "standard", "comprehensive"]).describe("Elaboration depth level"),
@@ -898,9 +898,9 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
             id: z.string().describe("Option identifier"),
             label: z.string().describe("Option label"),
             description: z.string().optional().describe("Option description"),
-          })).describe("Answer options (2-5). Do NOT include 'Other' — the UI adds it automatically."),
+          })).describe("Answer options (2-5). Do NOT include an 'Other' option — the UI adds a free-text 'Other' to every question automatically."),
           required: z.boolean().optional().describe("Whether the question is required (default: true)"),
-        })).describe("Questions to ask (1-15 per round)"),
+        })).describe("Questions to ask (1-15 per round). Present these to the user via an interactive prompt (not plain text), then submit their answers with chorus_answer_elaboration."),
       }),
     },
     async ({ ideaUuid, depth, questions }) => {

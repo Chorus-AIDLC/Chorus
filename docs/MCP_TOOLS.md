@@ -262,7 +262,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| status | string | No | Filter by status: open, elaborating, proposal_created, completed, closed |
+| status | enum | No | Filter by status: `open` \| `elaborating` \| `elaborated` (the 3 stored states; post-elaboration progress is derived, not filterable) |
 | page | number | No | Page number (default 1) |
 | pageSize | number | No | Items per page (default 20) |
 
@@ -297,7 +297,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| type | string | No | Filter by type: prd, tech_design, adr, spec, guide, report |
+| type | enum | No | Filter by type: `prd` \| `tech_design` \| `adr` \| `spec` \| `guide` \| `report` |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
 
@@ -322,7 +322,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| status | string | No | Filter by status: draft, pending, approved, rejected, revised |
+| status | enum | No | Filter by status: `draft` \| `pending` \| `approved` \| `closed` (a rejected proposal returns to `draft`, so there is no stored `rejected`/`revised` value) |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
 
@@ -356,8 +356,8 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| status | string | No | Filter by status: open, assigned, in_progress, to_verify, done, closed |
-| priority | string | No | Filter by priority: low, medium, high |
+| status | enum | No | Filter by status: `open` \| `assigned` \| `in_progress` \| `to_verify` \| `done` \| `closed` |
+| priority | enum | No | Filter by priority: `low` \| `medium` \| `high` |
 | proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
@@ -1197,7 +1197,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | proposalUuid | string | Yes | Proposal UUID |
-| type | string | Yes | Document type |
+| type | enum | Yes | Document type: `prd` \| `tech_design` \| `adr` \| `spec` \| `guide` \| `report` |
 | title | string | Yes | Document title |
 | content | string | Yes | Document content (Markdown) |
 
@@ -1235,7 +1235,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 |-----------|------|----------|-------------|
 | proposalUuid | string | Yes | Proposal UUID |
 | draftUuid | string | Yes | Document draft UUID |
-| type | string | No | Document type |
+| type | enum | No | Document type: `prd` \| `tech_design` \| `adr` \| `spec` \| `guide` \| `report` |
 | title | string | No | Document title |
 | content | string | No | Document content |
 
