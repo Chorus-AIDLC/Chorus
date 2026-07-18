@@ -146,6 +146,26 @@ export class LineageResolver {
         `[Chorus] lineage: non-string directIdeaUuid for ${entityType}:${entityUuid}`
       );
     }
+    // A non-null ROOT idea with a null/absent DIRECT idea is a lineage gap: the wake will
+    // anchor the execution on the entity (task/proposal), never on the idea conversation,
+    // so its run shows no running indicator / Interrupt on the idea chat — permanently, for
+    // this class of wake. The overwhelmingly likely cause is a Chorus server that predates
+    // the `directIdeaUuid` field on the /root-idea endpoint. Surface it as a visible WARN
+    // rather than folding it into the generic success `info` below (where it is
+    // indistinguishable from the legitimate "no idea ancestor" outcome, root=direct=null).
+    // Diagnostic ONLY — we do NOT substitute the root for the missing direct idea: for a
+    // DERIVED child idea root ≠ direct, so falling back to root would light the PARENT
+    // conversation and leave the child (which owns the woken session) idle. The correct fix
+    // is server-side; this warn points the operator straight at it.
+    if (root !== null && direct === null) {
+      this.logger.warn(
+        `[Chorus] lineage: ${entityType}:${entityUuid} resolved a root idea (${root}) but NO ` +
+          `directIdeaUuid — this wake will anchor on the entity, not the idea conversation, ` +
+          `so its run will not show a running indicator / Interrupt on the idea chat. Most ` +
+          `likely the Chorus server predates the directIdeaUuid field on /root-idea; upgrade ` +
+          `the server to restore child-wake → idea-conversation matching.`
+      );
+    }
     this.logger.info(
       `[Chorus] lineage: ${entityType}:${entityUuid} → root ${root ?? "none"}, direct ${direct ?? "none"}` +
         (typeof data.resolvedVia === "string" ? ` (${data.resolvedVia})` : "")
