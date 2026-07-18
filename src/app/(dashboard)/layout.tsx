@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
@@ -30,6 +30,11 @@ import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
+import {
+  ProjectQuickAccessProvider,
+  useProjectQuickAccess,
+} from "@/contexts/project-quick-access-context";
+import { SidebarProjectQuickAccess } from "@/components/sidebar-project-quick-access";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { GlobalSearch } from "@/components/global-search";
@@ -65,6 +70,32 @@ function extractProjectUuid(pathname: string): string | null {
 function extractGroupUuid(pathname: string): string | null {
   const match = pathname.match(/^\/project-groups\/([a-f0-9-]{36})(\/|$)/);
   return match ? match[1] : null;
+}
+
+// Records a project visit once per distinct project UUID entered, so the visited
+// project floats to the top of the sidebar's recent list. Mounted inside the
+// ProjectQuickAccessProvider (it consumes the shared aggregate). A ref guards
+// against re-render spam within the same project; the record call is
+// fire-and-forget (the provider swallows failures). Rendered separately from the
+// layout shell so it can sit under the provider without the layout itself needing
+// to consume it.
+function ProjectVisitRecorder({
+  currentProjectUuid,
+}: {
+  currentProjectUuid: string | null;
+}) {
+  const { recordVisit } = useProjectQuickAccess();
+  const lastRecordedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!currentProjectUuid) return;
+    if (lastRecordedRef.current === currentProjectUuid) return;
+    lastRecordedRef.current = currentProjectUuid;
+    // Fire-and-forget; the provider swallows failures (best-effort).
+    void recordVisit(currentProjectUuid);
+  }, [currentProjectUuid, recordVisit]);
+
+  return null;
 }
 
 export default function DashboardLayout({
@@ -453,6 +484,17 @@ export default function DashboardLayout({
         </nav>
       </div>
 
+      {/* Project quick-access region — pinned + recently-visited projects.
+          Rendered below the nav block and above the footer in BOTH the desktop
+          aside and the mobile Sheet (SidebarContent is shared). Consumes the
+          shell-level ProjectQuickAccessProvider (single source of truth), so a
+          pin/unpin/visit from any surface is reflected here with no reload.
+          Expanded on global pages; a collapsible header row inside a project. */}
+      <SidebarProjectQuickAccess
+        mobile={mobile}
+        collapsedInProject={Boolean(isProjectContext)}
+      />
+
       {/* Bottom-pinned rail footer: Settings + appearance/language utility row
           above the user-profile block. Grouped into ONE flex child so the rail's
           justify-between pins the whole footer to the bottom-left. The former
@@ -536,6 +578,17 @@ export default function DashboardLayout({
         rendered comment body). Without it, useAuth() throws and any agent mention
         in a comment crashes the comment area. */}
     <AuthProvider>
+    {/* ProjectQuickAccessProvider — single source of truth for the sidebar's
+        pinned + recently-visited projects. Mounted ONCE here wrapping the whole
+        shell (sidebar + main) so BOTH the persistent sidebar region AND the
+        /projects page cards read/write the SAME { pinned, recent } aggregate; a
+        pin or a visit from either surface updates the shared state and every
+        consumer re-renders with no reload. */}
+    <ProjectQuickAccessProvider>
+    {/* Records a visit once per distinct project entered so it floats to the top
+        of the sidebar recent list (best-effort, ref-guarded). Under the provider
+        so it can consume the shared aggregate. */}
+    <ProjectVisitRecorder currentProjectUuid={currentProjectUuid} />
     {/* AgentPresenceProvider is the single shell-level data spine for the
         bottom-right daemon-presence entry + its roster popover + the chat modal.
         Mounted ONCE here, wrapping the whole shell (sidebar + main), so it
@@ -614,6 +667,7 @@ export default function DashboardLayout({
     </div>
     </PixelActivityProvider>
     </AgentPresenceProvider>
+    </ProjectQuickAccessProvider>
     </AuthProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
