@@ -37,6 +37,11 @@ import {
   readQuickAccessExpanded,
   writeQuickAccessExpanded,
 } from "@/app/(dashboard)/projects/sidebar-quick-access-collapse-preference";
+import {
+  getProjectInitials,
+  getProjectIconColor,
+  projectIconStyle,
+} from "@/lib/project-colors";
 
 /** Recent rows shown (the service already caps this; we slice defensively). */
 const RECENT_LIMIT = 5;
@@ -63,6 +68,14 @@ function QuickAccessRow({
 }) {
   const t = useTranslations();
   const nameSize = mobile ? "text-[14px]" : "text-[13px]";
+  // Sidebar-sized project icon — same hash color + initials as the /projects
+  // list, but scaled down to fit the 220px sidebar row (20px desktop / 24px
+  // mobile) vs. the list's 32-36px badge.
+  const initials = getProjectInitials(project.name);
+  const iconColor = getProjectIconColor(project.name);
+  const iconSize = mobile
+    ? "h-6 w-6 rounded-md text-[9px]"
+    : "h-5 w-5 rounded text-[8px]";
 
   const handleToggle = () => {
     if (pinnedRow) onUnpin(project.uuid);
@@ -73,16 +86,25 @@ function QuickAccessRow({
     <div className="group relative flex items-center rounded-md transition-colors hover:bg-secondary">
       <Link
         href={`/projects/${project.uuid}/dashboard`}
-        className="flex min-w-0 flex-1 flex-col px-2 py-1.5 leading-tight"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 leading-tight"
       >
-        <span className={`truncate text-foreground ${nameSize}`}>
-          {project.name}
+        <span
+          className={`project-icon flex shrink-0 items-center justify-center font-bold ${iconSize}`}
+          style={projectIconStyle(iconColor)}
+          aria-hidden="true"
+        >
+          {initials}
         </span>
-        {project.groupName && (
-          <span className="truncate text-[11px] text-muted-foreground">
-            {project.groupName}
+        <span className="flex min-w-0 flex-col">
+          <span className={`truncate text-foreground ${nameSize}`}>
+            {project.name}
           </span>
-        )}
+          {project.groupName && (
+            <span className="truncate text-[11px] text-muted-foreground">
+              {project.groupName}
+            </span>
+          )}
+        </span>
       </Link>
       <Button
         variant="ghost"
