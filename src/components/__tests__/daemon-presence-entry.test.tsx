@@ -1,21 +1,22 @@
 // @vitest-environment jsdom
 //
-// Component tests for the sidebar AgentPresencePill (T4 — pill + popover).
+// Component tests for the bottom-right DaemonPresenceEntry (the single floating
+// affordance that replaced the sidebar presence pill + the pixel-canvas button).
 //
 // Focus: the three non-silent presence states the AC calls out, rendered on the
-// resident trigger pill:
+// floating trigger button:
 //   - idle (0 online)  → visible, shows the localized "0 online", static dot,
 //   - loading          → muted placeholder, NO count flash (no number shown),
 //   - error            → distinguished "Agents unavailable", NEVER "0 online".
 // Plus: online (count > 0) emphasizes the count and uses the pulsing-green dot
 // (halo gated behind motion-safe so reduced-motion degrades to a static dot),
-// and the popover lists online connections' running/queued executions (dropping
-// interrupted rows) with a "View all" footer that calls setModalOpen(true).
+// the popover lists online connections' running/queued executions (dropping
+// interrupted rows), and a PROMINENT "Open chat" action opens the chat modal
+// directly via setModalOpen(true) (no "View all" intermediate step).
 //
 // Test seam: useAgentPresence is mocked per-test to feed each state; next-intl
 // resolves the real en strings so a missing/renamed key surfaces as its dotted
-// path and fails the assertion (mirrors the agent-connections page tests). Plain
-// DOM assertions only (the repo does not load @testing-library/jest-dom).
+// path and fails the assertion. Plain DOM assertions only.
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -59,8 +60,6 @@ vi.mock("next-intl", async () => {
   // for the pluralized unit string (en `one`/`other`). Handles the single-arg
   // form `{name, plural, one {…} other {…}}` with `#` → value substitution.
   function evalPlural(s: string, params: Record<string, string | number>): string {
-    // Greedy `(.+)` + single trailing `\}` so the last branch keeps its own
-    // closing brace (a lazy `.+?\}\}` would eat it and break the `other` match).
     return s.replace(
       /\{(\w+),\s*plural,\s*(.+)\}/g,
       (_full, argName: string, branches: string) => {
@@ -107,16 +106,23 @@ vi.mock("@/contexts/agent-presence-context", () => ({
   useAgentPresence: () => mockPresence(),
 }));
 
-import { AgentPresencePill } from "../agent-presence-pill";
+// usePixelActivityOptional is the shell↔project bridge for the "View activity"
+// affordance; mock it per-test. Default: null (no project context) — the entry
+// then omits the affordance. Tests that assert its presence set a value.
+const mockPixelActivity = vi.fn(() => null as unknown);
+vi.mock("@/contexts/pixel-activity-context", () => ({
+  usePixelActivityOptional: () => mockPixelActivity(),
+}));
+
+import { DaemonPresenceEntry } from "../daemon-presence-entry";
 import { ExecutionRow } from "@/components/agent-presence";
 
 const TRIGGER_LABEL = "Online agents — open details";
 
-// T11: the agent group is COLLAPSED by default in the popover, so its per-cwd
+// The agent group is COLLAPSED by default in the popover, so its per-cwd
 // instance rows (and their executions / idle line / Interrupt control) only
 // render after the agent header toggle is clicked. Expand every agent so the
-// nested rows under test become visible (the header `aria-label` is
-// "Show <agent>'s working directories" while collapsed).
+// nested rows under test become visible.
 async function expandAgents(user: ReturnType<typeof userEvent.setup>) {
   const toggles = await screen.findAllByRole("button", {
     name: /Show .*working directories/,
@@ -183,49 +189,44 @@ function setPresence(over: Partial<AgentPresenceValue>) {
   return value;
 }
 
-describe("AgentPresencePill — three presence states", () => {
+describe("DaemonPresenceEntry — three presence states", () => {
   beforeEach(() => {
     mockPresence.mockReset();
+    mockPixelActivity.mockReset();
+    mockPixelActivity.mockReturnValue(null);
   });
 
   it("idle (0 online): visible, shows the full '0 agents online' unit, no error text", () => {
     setPresence({ status: "ok", onlineCount: 0, connections: [] });
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
-    // The count glyph "0" + the spelled-out plural unit (not a bare "online").
     expect(text).toContain("0");
     expect(text).toContain("agents online");
-    // It must NOT read as the error state.
     expect(text).not.toContain("Agents unavailable");
-    // Pill stays mounted/visible regardless of count.
     expect(trigger).toBeTruthy();
   });
 
   it("loading: muted placeholder, NO count flash (no digit shown)", () => {
     setPresence({ status: "loading", onlineCount: 0, connections: [] });
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
     expect(text).toContain("Checking agents");
-    // No count flash: the loading state shows no numeric count and no "online" word.
     expect(text).not.toMatch(/\d/);
     expect(text).not.toContain("online");
     expect(text).not.toContain("Agents unavailable");
   });
 
   it("error: distinguished 'Agents unavailable', never shown as 0 online", () => {
-    // A failed poll flips status to error; even so the pill must NOT render a
-    // count — it shows the distinguished unavailable label.
     setPresence({ status: "error", onlineCount: 0, connections: [] });
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
     expect(text).toContain("Agents unavailable");
-    // Never masquerade as "0 online".
     expect(text).not.toContain("online");
     expect(text).not.toMatch(/\d/);
   });
@@ -236,11 +237,10 @@ describe("AgentPresencePill — three presence states", () => {
       onlineCount: 3,
       connections: [makeConnection()],
     });
-    const { container } = render(<AgentPresencePill />);
+    const { container } = render(<DaemonPresenceEntry />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
-    // Count glyph + the plural unit "agents online" (3 → plural form).
     expect(text).toContain("3");
     expect(text).toContain("agents online");
     // The pulsing-green dot reuses motion-safe:animate-ping (static under
@@ -254,26 +254,27 @@ describe("AgentPresencePill — three presence states", () => {
       onlineCount: 1,
       connections: [makeConnection()],
     });
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
 
     const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
     const text = trigger.textContent ?? "";
     expect(text).toContain("1");
-    // Singular unit — not "agents online".
     expect(text).toContain("agent online");
     expect(text).not.toContain("agents online");
   });
 
   it("idle / error dots do NOT animate (no motion-safe:animate-ping)", () => {
     setPresence({ status: "error", onlineCount: 0, connections: [] });
-    const { container } = render(<AgentPresencePill />);
+    const { container } = render(<DaemonPresenceEntry />);
     expect(container.querySelector(".motion-safe\\:animate-ping")).toBeNull();
   });
 });
 
-describe("AgentPresencePill — popover content", () => {
+describe("DaemonPresenceEntry — popover content", () => {
   beforeEach(() => {
     mockPresence.mockReset();
+    mockPixelActivity.mockReset();
+    mockPixelActivity.mockReturnValue(null);
   });
 
   it("lists online connections with running/queued executions and drops interrupted rows", async () => {
@@ -306,13 +307,11 @@ describe("AgentPresencePill — popover content", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
 
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
 
-    // PopoverContent renders in a portal — assert against the document text.
     await screen.findByText("Builder Bot");
-    // T11: expand the (default-collapsed) agent so its execution rows render.
     await expandAgents(user);
     const popoverText = document.body.textContent ?? "";
     expect(popoverText).toContain("Running task A");
@@ -330,9 +329,8 @@ describe("AgentPresencePill — popover content", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
-    // T11: expand the (default-collapsed) agent so its idle line renders.
     await expandAgents(user);
 
     expect(
@@ -340,7 +338,7 @@ describe("AgentPresencePill — popover content", () => {
     ).toBeTruthy();
   });
 
-  it("default COLLAPSED: agent header shows name + count but hides instance rows until expanded (T11)", async () => {
+  it("default COLLAPSED: agent header shows name + count but hides instance rows until expanded", async () => {
     setPresence({
       status: "ok",
       onlineCount: 1,
@@ -349,21 +347,18 @@ describe("AgentPresencePill — popover content", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
 
-    // The collapsed agent header is present (a real toggle, aria-expanded=false)…
     const toggle = await screen.findByRole("button", {
       name: /Show .*working directories/,
     });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(await screen.findByText("Builder Bot")).toBeTruthy();
-    // …but the per-cwd idle line is NOT visible while collapsed.
     expect(
       screen.queryByText("Idle — no running or queued work."),
     ).toBeNull();
 
-    // Expanding flips aria-expanded and reveals the rows.
     await user.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(
@@ -371,7 +366,7 @@ describe("AgentPresencePill — popover content", () => {
     ).toBeTruthy();
   });
 
-  it("'View all' footer calls setModalOpen(true) and does not navigate", async () => {
+  it("'Open chat' action calls setModalOpen(true) and does not navigate", async () => {
     const setModalOpen = vi.fn();
     setPresence({
       status: "ok",
@@ -382,11 +377,13 @@ describe("AgentPresencePill — popover content", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
 
-    const viewAll = await screen.findByRole("button", { name: "View all" });
-    await user.click(viewAll);
+    // The prominent open-chat action opens the daemon chat modal directly —
+    // no intermediate "View all" step.
+    const openChat = await screen.findByRole("button", { name: "Open chat" });
+    await user.click(openChat);
     expect(setModalOpen).toHaveBeenCalledWith(true);
   });
 
@@ -399,18 +396,12 @@ describe("AgentPresencePill — popover content", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
 
-    // The dead-end "No agents are online right now." statement is replaced by an
-    // actionable CTA: the npx start command (verbatim from the single constant)
-    // plus a copy control. Asserting the command text guards against the literal
-    // being moved into i18n by mistake.
     expect(
       await screen.findByText("npx @chorus-aidlc/chorus daemon"),
     ).toBeTruthy();
-    // The compact CTA body prose resolves from the shared daemonConnectCta
-    // namespace (a renamed/missing key would surface as its dotted path).
     expect(screen.getByText(enMessages.daemonConnectCta.body)).toBeTruthy();
     expect(
       screen.getByRole("button", { name: enMessages.daemonConnectCta.copy }),
@@ -418,14 +409,16 @@ describe("AgentPresencePill — popover content", () => {
   });
 });
 
-describe("AgentPresencePill — widened popover + stacked task rows", () => {
+describe("DaemonPresenceEntry — widened popover + stacked task rows", () => {
   beforeEach(() => {
     mockPresence.mockReset();
+    mockPixelActivity.mockReset();
+    mockPixelActivity.mockReturnValue(null);
   });
 
-  // AC1: the popover is widened from the old w-[300px] to a viewport-clamped
-  // ~400px so titles get room and it never overflows a phone.
-  it("popover content is widened to a viewport-clamped ~400px (not the old 300px)", async () => {
+  // The popover is a viewport-clamped ~400px so titles get room and it never
+  // overflows a phone.
+  it("popover content is viewport-clamped ~400px (not the old 300px)", async () => {
     setPresence({
       status: "ok",
       onlineCount: 1,
@@ -434,24 +427,19 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
-    // T11: expand the (default-collapsed) agent so the idle line (used as the
-    // "portal mounted" proof) renders.
     await expandAgents(user);
-    // The popover empty-connection line proves the portal content has mounted.
     await screen.findByText("Idle — no running or queued work.");
 
-    // PopoverContent renders in a portal; find it by its viewport-clamped width.
     const content = document.querySelector('[class*="min(92vw,400px)"]');
     expect(content).not.toBeNull();
-    // The old fixed narrow width must be gone.
     expect(document.querySelector('[class*="w-[300px]"]')).toBeNull();
   });
 
-  // AC3: a running row in the popover keeps the elapsed timer + Interrupt control
-  // but stacks them on a second line (flex-col <li>) so the title isn't crowded;
-  // the title relaxes from a hard truncate to a two-line clamp.
+  // A running row in the popover keeps the elapsed timer + Interrupt control but
+  // stacks them on a second line (flex-col <li>) so the title isn't crowded; the
+  // title relaxes from a hard truncate to a two-line clamp.
   it("running row in the popover stacks controls on a second line and keeps Interrupt + elapsed", async () => {
     const conn = makeConnection({ uuid: "conn-1", agentName: "Builder Bot" });
     setPresence({
@@ -470,23 +458,19 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     });
 
     const user = userEvent.setup();
-    render(<AgentPresencePill />);
+    render(<DaemonPresenceEntry />);
     await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
-    // T11: expand the (default-collapsed) agent so its running row renders.
     await expandAgents(user);
 
-    // Interrupt control is still present in the popover (controls retained).
     const interruptBtn = await screen.findByRole("button", {
       name: "Interrupt this running execution",
     });
     expect(interruptBtn).toBeTruthy();
 
-    // The row <li> uses the stacked (flex-col) layout, not the inline flex row.
     const row = interruptBtn.closest("li");
     expect(row).not.toBeNull();
     expect(row?.className).toContain("flex-col");
 
-    // The title relaxes to a two-line clamp (readable) rather than a hard truncate.
     const titleEl = screen.getByText(
       "A very long running task title that used to truncate",
     );
@@ -494,16 +478,14 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     expect(titleEl.className).not.toContain("truncate");
   });
 
-  // AC2 (consumer side): the modal/connection-view keep the default inline
-  // single-line layout — ExecutionRow's default must be inline. We assert the
-  // default-rendered row is NOT flex-col by rendering ExecutionRow directly.
+  // The modal/connection-view keep the default inline single-line layout —
+  // ExecutionRow's default must be inline.
   it("ExecutionRow defaults to the inline single-line layout (modal unchanged)", () => {
     const exec = makeExecution({
       uuid: "run-2",
       status: "running",
       entityTitle: "Inline task",
     });
-    // Default layout (no prop) = inline. Render the row inside a <ul> for valid DOM.
     const { container } = render(
       <ul>
         <ExecutionRow exec={exec} nowMs={Date.parse(exec.startedAt as string) + 5000} />
@@ -511,8 +493,70 @@ describe("AgentPresencePill — widened popover + stacked task rows", () => {
     );
     const row = container.querySelector("li");
     expect(row).not.toBeNull();
-    // Inline rows are a centered flex row, never flex-col.
     expect(row?.className).toContain("items-center");
     expect(row?.className).not.toContain("flex-col");
+  });
+});
+
+describe("DaemonPresenceEntry — pixel 'Open pixel workspace' affordance", () => {
+  beforeEach(() => {
+    mockPresence.mockReset();
+    mockPixelActivity.mockReset();
+  });
+
+  it("shows 'Open pixel workspace' and opens the pixel view when a project context is available", async () => {
+    setPresence({ status: "ok", onlineCount: 0, connections: [] });
+    const setOpen = vi.fn();
+    // Inside a project context: the bridge exists and reports available.
+    mockPixelActivity.mockReturnValue({
+      open: false,
+      setOpen,
+      available: true,
+      setAvailable: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    render(<DaemonPresenceEntry />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+
+    const openPixel = await screen.findByRole("button", {
+      name: "Open pixel workspace",
+    });
+    await user.click(openPixel);
+    expect(setOpen).toHaveBeenCalledWith(true);
+  });
+
+  it("omits 'Open pixel workspace' on a global page (bridge absent → null)", async () => {
+    setPresence({ status: "ok", onlineCount: 0, connections: [] });
+    mockPixelActivity.mockReturnValue(null);
+
+    const user = userEvent.setup();
+    render(<DaemonPresenceEntry />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+
+    // The roster/CTA renders (portal mounted) but no "Open pixel workspace" action.
+    await screen.findByText("npx @chorus-aidlc/chorus daemon");
+    expect(
+      screen.queryByRole("button", { name: "Open pixel workspace" }),
+    ).toBeNull();
+  });
+
+  it("omits 'Open pixel workspace' when the bridge exists but reports NOT available (project unmounted)", async () => {
+    setPresence({ status: "ok", onlineCount: 0, connections: [] });
+    mockPixelActivity.mockReturnValue({
+      open: false,
+      setOpen: vi.fn(),
+      available: false,
+      setAvailable: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    render(<DaemonPresenceEntry />);
+    await user.click(screen.getByRole("button", { name: TRIGGER_LABEL }));
+
+    await screen.findByText("npx @chorus-aidlc/chorus daemon");
+    expect(
+      screen.queryByRole("button", { name: "Open pixel workspace" }),
+    ).toBeNull();
   });
 });

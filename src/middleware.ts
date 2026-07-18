@@ -112,10 +112,10 @@ export async function middleware(request: NextRequest) {
   }
 
   // The standalone /agent-connections page was removed — that view now lives in
-  // the "View all" modal opened from the sidebar presence pill. Keep bookmarked /
-  // external links alive by 308-redirecting the former path (and any sub-path) to
-  // the dashboard (the /projects landing) rather than returning a broken route.
-  // Same convention as the /ideas redirect above.
+  // the daemon chat modal opened from the bottom-right daemon-presence entry. Keep
+  // bookmarked / external links alive by 308-redirecting the former path (and any
+  // sub-path) to the dashboard (the /projects landing) rather than returning a
+  // broken route. Same convention as the /ideas redirect above.
   if (pathname === "/agent-connections" || pathname.startsWith("/agent-connections/")) {
     const url = request.nextUrl.clone();
     url.pathname = "/projects";

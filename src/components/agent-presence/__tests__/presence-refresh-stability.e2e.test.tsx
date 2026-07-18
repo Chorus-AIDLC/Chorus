@@ -58,7 +58,7 @@ vi.mock("@/lib/logger-client", () => ({
 }));
 
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
-import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 
 class MockEventSource {
   static CONNECTING = 0;
@@ -182,7 +182,7 @@ describe("daemon presence refresh stability E2E", () => {
 
     render(
       <AgentPresenceProvider>
-        <AgentPresencePill />
+        <DaemonPresenceEntry />
       </AgentPresenceProvider>,
     );
 

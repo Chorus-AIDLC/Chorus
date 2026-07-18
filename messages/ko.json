@@ -1604,13 +1604,14 @@
   },
   "agentPresence": {
     "online": "온라인",
-    "onlineUnit": "에이전트 {count}명 온라인",
+    "onlineUnit": "{count, plural, other {에이전트 온라인}}",
     "loading": "에이전트 확인 중…",
     "unavailable": "에이전트를 사용할 수 없습니다",
     "pillAria": "온라인 에이전트 — 세부 정보 열기",
     "popoverTitle": "온라인 에이전트",
     "connectionIdle": "유휴 상태 — 실행 중이거나 대기 중인 작업이 없습니다.",
-    "viewAll": "전체 보기",
+    "openChat": "대화 열기",
+    "openPixelWorkspace": "픽셀 워크스페이스 열기",
     "unknownPath": "알 수 없는 경로",
     "unknownHost": "알 수 없는 호스트",
     "drilldown": {
