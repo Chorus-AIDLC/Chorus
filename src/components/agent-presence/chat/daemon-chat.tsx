@@ -53,7 +53,7 @@ import {
 import { TranscriptView } from "./transcript-view";
 import { NewConversationPane } from "./new-conversation-pane";
 import {
-  sessionExecStatus,
+  sessionExecStatusForRow,
   sessionExecutionsForComposer,
 } from "./session-execution";
 import { DaemonConnectCta } from "../daemon-connect-cta";
@@ -328,11 +328,13 @@ export function DaemonChat() {
         // An idea-anchored conversation gets a resource badge before its name; an ad-hoc
         // one (named by the human's opening message) does not.
         ideaAnchored: session.directIdeaUuid != null,
-        // This conversation's own live status from its origin connection's slice.
-        status: sessionExecStatus(
-          executionsByConnection[session.originConnectionUuid] ?? [],
-          session,
-        ),
+        // This conversation's own live status — resolved from the SAME cross-connection
+        // match the composer's Interrupt uses (origin slice preferred, all-slice fallback),
+        // so the row's dot and the composer's Interrupt button can never disagree after a
+        // cwd/agent switch or a session re-point moved the running turn off the origin
+        // connection. Matched strictly by this conversation's own idea/session id (no
+        // cross-borrow).
+        status: sessionExecStatusForRow(executionsByConnection, session),
       }));
   }, [sessions, selectedAgentUuid, executionsByConnection, conversationName]);
 

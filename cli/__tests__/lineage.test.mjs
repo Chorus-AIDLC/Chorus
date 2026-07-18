@@ -206,3 +206,69 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     expect(infos.some((m) => /lineage: idea:x → root r, direct none \(root_idea\)/.test(m))).toBe(true);
   });
 });
+
+describe("LineageResolver missing-directIdeaUuid diagnostic", () => {
+  /** A logger that records info + warn lines separately. */
+  function capturingLogger() {
+    const infos = [];
+    const warns = [];
+    return {
+      logger: { info: (m) => infos.push(m), warn: (m) => warns.push(m), error() {} },
+      infos,
+      warns,
+    };
+  }
+
+  it("warns when a non-null root idea resolves with NO directIdeaUuid (older-server fingerprint)", async () => {
+    const { logger, warns } = capturingLogger();
+    // root present, direct absent — the lineage gap this diagnostic targets.
+    const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: "root-x", lineage: [] }));
+    const r = makeResolver(fetchImpl, logger);
+    const res = await r.resolve({ entityType: "task", entityUuid: "t1" });
+
+    // Return value is UNCHANGED — no fallback substitution of root for the missing direct.
+    expect(res).toEqual({ rootIdeaUuid: "root-x", directIdeaUuid: null });
+    // Exactly one warn, naming the entity + directIdeaUuid + the likely cause.
+    const hit = warns.find((m) => /task:t1/.test(m) && /directIdeaUuid/.test(m));
+    expect(hit).toBeTruthy();
+    expect(/root-x/.test(hit)).toBe(true);
+    expect(/predates|upgrade/.test(hit)).toBe(true);
+  });
+
+  it("also warns when directIdeaUuid is explicitly null (not just absent)", async () => {
+    const { logger, warns } = capturingLogger();
+    const fetchImpl = fakeFetch(() =>
+      rootIdeaData({ rootIdeaUuid: "root-x", directIdeaUuid: null, lineage: [] })
+    );
+    const r = makeResolver(fetchImpl, logger);
+    await r.resolve({ entityType: "proposal", entityUuid: "p9" });
+    expect(warns.some((m) => /proposal:p9/.test(m) && /directIdeaUuid/.test(m))).toBe(true);
+  });
+
+  it("does NOT warn when the entity legitimately has no idea ancestor (root null)", async () => {
+    const { logger, warns, infos } = capturingLogger();
+    const fetchImpl = fakeFetch(() =>
+      rootIdeaData({ rootIdeaUuid: null, lineage: [], resolvedVia: "no_proposal" })
+    );
+    const r = makeResolver(fetchImpl, logger);
+    const res = await r.resolve({ entityType: "task", entityUuid: "t2" });
+
+    expect(res).toEqual({ rootIdeaUuid: null, directIdeaUuid: null });
+    // No missing-direct warning for the normal no-ancestor case…
+    expect(warns.some((m) => /directIdeaUuid/.test(m))).toBe(false);
+    // …but still a (non-alarming) success info line.
+    expect(infos.some((m) => /lineage: task:t2 → root none, direct none/.test(m))).toBe(true);
+  });
+
+  it("does NOT warn when BOTH root and direct are present", async () => {
+    const { logger, warns } = capturingLogger();
+    const fetchImpl = fakeFetch(() =>
+      rootIdeaData({ rootIdeaUuid: "root-x", directIdeaUuid: "direct-y", lineage: [] })
+    );
+    const r = makeResolver(fetchImpl, logger);
+    const res = await r.resolve({ entityType: "idea", entityUuid: "child-1" });
+
+    expect(res).toEqual({ rootIdeaUuid: "root-x", directIdeaUuid: "direct-y" });
+    expect(warns.some((m) => /directIdeaUuid/.test(m))).toBe(false);
+  });
+});
