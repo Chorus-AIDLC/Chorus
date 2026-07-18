@@ -1724,5 +1724,12 @@
     "status": {
       "unknown": "Unknown"
     }
+  },
+  "quickAccess": {
+    "title": "Recent Projects",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "pinProject": "Pin {name}",
+    "unpinProject": "Unpin {name}"
   }
 }

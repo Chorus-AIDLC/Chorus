@@ -730,6 +730,28 @@ model NotificationPreference {
   @@index([companyUuid])
 }
 
+// Per-user project quick-access state: recency + pin. One row per (user, project).
+// User-only surface (agents never render the sidebar), so keyed on userUuid rather
+// than the polymorphic ownerType/ownerUuid pair NotificationPreference uses.
+// Mirrors the NotificationPreference convention: scalar companyUuid only, no
+// `company Company @relation` field (relationMode = "prisma", app-level scoping).
+model ProjectVisit {
+  id            Int       @id @default(autoincrement())
+  uuid          String    @unique @default(uuid())
+  companyUuid   String
+  userUuid      String
+  projectUuid   String
+  lastVisitedAt DateTime  @default(now()) // updated on every project-page entry
+  pinnedAt      DateTime? // non-null = pinned; ordering key for the pinned list
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userUuid, projectUuid])
+  @@index([companyUuid])
+  @@index([userUuid, pinnedAt])
+  @@index([userUuid, lastVisitedAt])
+}
+
 // Mention (tracks @mentions in comments, tasks, ideas)
 model Mention {
   id            Int      @id @default(autoincrement())

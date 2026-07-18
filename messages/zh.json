@@ -1724,5 +1724,12 @@
     "status": {
       "unknown": "未知"
     }
+  },
+  "quickAccess": {
+    "title": "最近项目",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "pinProject": "置顶 {name}",
+    "unpinProject": "取消置顶 {name}"
   }
 }

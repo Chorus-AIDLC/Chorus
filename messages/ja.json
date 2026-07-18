@@ -1724,5 +1724,12 @@
     "status": {
       "unknown": "不明"
     }
+  },
+  "quickAccess": {
+    "title": "最近のプロジェクト",
+    "pin": "ピン留め",
+    "unpin": "ピン留め解除",
+    "pinProject": "{name} をピン留め",
+    "unpinProject": "{name} のピン留めを解除"
   }
 }
