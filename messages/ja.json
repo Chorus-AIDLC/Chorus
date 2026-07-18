@@ -1604,13 +1604,14 @@
   },
   "agentPresence": {
     "online": "オンライン",
-    "onlineUnit": "{count} 体のエージェントがオンライン",
+    "onlineUnit": "{count, plural, other {エージェントがオンライン}}",
     "loading": "エージェントを確認中…",
     "unavailable": "エージェントは利用できません",
     "pillAria": "オンラインのエージェント — 詳細を開く",
     "popoverTitle": "オンラインのエージェント",
     "connectionIdle": "アイドル — 実行中またはキュー待ちの作業はありません。",
-    "viewAll": "すべて表示",
+    "openChat": "会話を開く",
+    "openPixelWorkspace": "ピクセルワークスペースを開く",
     "unknownPath": "不明なパス",
     "unknownHost": "不明なホスト",
     "drilldown": {

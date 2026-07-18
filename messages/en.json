@@ -1610,7 +1610,8 @@
     "pillAria": "Online agents — open details",
     "popoverTitle": "Online agents",
     "connectionIdle": "Idle — no running or queued work.",
-    "viewAll": "View all",
+    "openChat": "Open chat",
+    "openPixelWorkspace": "Open pixel workspace",
     "unknownPath": "unknown path",
     "unknownHost": "unknown host",
     "drilldown": {

@@ -1610,7 +1610,8 @@
     "pillAria": "在线智能体 — 打开详情",
     "popoverTitle": "在线智能体",
     "connectionIdle": "空闲 — 没有正在运行或排队的工作。",
-    "viewAll": "查看全部",
+    "openChat": "打开会话",
+    "openPixelWorkspace": "打开像素工作区",
     "unknownPath": "未知路径",
     "unknownHost": "未知主机",
     "drilldown": {
