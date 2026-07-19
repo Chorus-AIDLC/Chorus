@@ -71,13 +71,23 @@ fi
 # When the folder is present but the CLI is missing, surface that as a
 # specific reason so the user-visible toast can hint at the install step
 # instead of silently falling back.
+#
+# The inactive states split into two user-facing kinds:
+#   - OPENSPEC_OPTOUT=1 — the user explicitly turned OpenSpec off (plugin
+#     toggle or env var). Respect it: show a neutral note, no nag.
+#   - OPENSPEC_OPTOUT=0 — OpenSpec is simply not set up (no folder, or folder
+#     without the CLI). Point the user at `/chorus enable openspec`, which walks
+#     the actual install/init steps — the banner stays a one-liner.
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
 OPENSPEC_HINT=""
+OPENSPEC_OPTOUT=0
 if [ "${CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC:-true}" != "true" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
+  OPENSPEC_OPTOUT=1
   OPENSPEC_REASON="enableOpenSpec userConfig=false (plugin-level opt-out)"
 elif [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
+  OPENSPEC_OPTOUT=1
   OPENSPEC_REASON="CHORUS_OPENSPEC_MODE=off (explicit opt-out)"
 elif [ ! -d "${PROJECT_ROOT}/openspec" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
@@ -114,10 +124,18 @@ else
   CONTEXT="${CONTEXT}
 
 OpenSpec mode is **inactive** for this session. The proposal / develop / yolo skills follow their free-form path; do NOT scaffold \`openspec/changes/\`, do NOT add an \`OpenSpec change slug:\` line to proposal descriptions, and do NOT route document mirror calls through \`chorus-api.sh\`."
-  if [ -n "$OPENSPEC_HINT" ]; then
+  if [ "$OPENSPEC_OPTOUT" = "1" ]; then
     CONTEXT="${CONTEXT}
 
-Note: this repo has an \`openspec/\` directory, so the user likely intends to use OpenSpec mode but the \`openspec\` CLI is not installed. Surface this to the user (e.g. \"This repo is OpenSpec-init'd but the \\\`openspec\\\` CLI isn't installed locally — ${OPENSPEC_HINT}\") before authoring documents so they can install it and re-launch the session if they want spec-driven mode."
+OpenSpec was **explicitly turned off** (${OPENSPEC_REASON}), so this is a deliberate choice — do NOT nag the user to enable it. If they ask to turn it back on, point them at re-enabling the plugin's \`enableOpenSpec\` toggle / unsetting \`CHORUS_OPENSPEC_MODE\`, then the OpenSpec setup section in the \`/chorus\` skill."
+  elif [ -n "$OPENSPEC_HINT" ]; then
+    CONTEXT="${CONTEXT}
+
+Note: this repo has an \`openspec/\` directory, so the user likely intends to use OpenSpec mode but the \`openspec\` CLI is not installed. Surface this to the user (e.g. \"This repo is OpenSpec-init'd but the \\\`openspec\\\` CLI isn't installed locally — ${OPENSPEC_HINT}\") before authoring documents. To set it up, run \`/chorus enable openspec\` (§6 walks the install + re-launch)."
+  else
+    CONTEXT="${CONTEXT}
+
+Note: OpenSpec is not set up in this repo (${OPENSPEC_REASON}). Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode (proposal.md / design.md / spec deltas mirrored into Chorus), run \`/chorus enable openspec\` — §6 walks the \`npm i -g @fission-ai/openspec\` + \`openspec init\` steps and the re-launch."
   fi
 fi
 
@@ -139,12 +157,18 @@ Resuming with existing Chorus session: ${MAIN_SESSION}"
   "$API" mcp-tool "chorus_session_heartbeat" "$(printf '{"sessionUuid":"%s"}' "$MAIN_SESSION")" >/dev/null 2>&1 || true
 fi
 
-# Build user-visible message
+# Build user-visible message. When OpenSpec is off-but-enable-able, point the
+# user at `/chorus enable openspec` — the skill walks the actual install/init.
+#   active            -> (OpenSpec Enabled)
+#   not set up        -> (OpenSpec off — run `/chorus enable openspec` to set it up)
+#   explicit opt-out  -> (OpenSpec off)  [neutral, no nag — respects the choice]
 USER_MSG="Chorus connected at ${CHORUS_URL}"
 if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
   USER_MSG="${USER_MSG} (OpenSpec Enabled)"
-elif [ -n "$OPENSPEC_HINT" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec repo detected — ${OPENSPEC_HINT})"
+elif [ "$OPENSPEC_OPTOUT" = "1" ]; then
+  USER_MSG="${USER_MSG} (OpenSpec off)"
+else
+  USER_MSG="${USER_MSG} (OpenSpec off — run \`/chorus enable openspec\` to set it up)"
 fi
 if [ -n "$MAIN_SESSION" ]; then
   USER_MSG="${USER_MSG} (resumed session)"

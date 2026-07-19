@@ -342,6 +342,21 @@ To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.c
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus:quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Disabling reduces token usage but removes the independent quality gate.
 
+### 6. Enable OpenSpec Mode (Optional)
+
+Opt-in spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. Activates only when all three hold: the `enableOpenSpec` toggle is on (default) and `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
+
+**When the user wants it on** (e.g. they ran `/chorus enable openspec` after the `(OpenSpec off — …)` banner), actually **enable it for them** — run whichever steps are missing, don't just describe them:
+
+```bash
+npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (global, pure Node)
+openspec init --tools claude        # 2. scaffold openspec/ + wire up Claude Code's native commands/skills
+```
+
+`openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The OpenSpec signal is read **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the banner then reads `(OpenSpec Enabled)` and the stage skills fold in the `openspec-aware` skill automatically.
+
+To turn it off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutral `(OpenSpec off)`.
+
 ---
 
 ## Execution Rules
