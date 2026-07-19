@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.2] - 2026-07-19
+
+### Added
+- **Sidebar project quick-access (recent + pinned)**: The left sidebar gains a project quick-access region — one merged list of pinned projects (unlimited, pin-time order) followed by up to 5 recently visited, each row showing its project-group sub-line and the same hash-computed color+initials icon as the /projects list. Pin/unpin works from both sidebar rows and /projects cards via a shared client provider (reflects across surfaces with no reload). Recent (unpinned) rows get a ⋯ overflow menu with Pin / Remove-from-recent; remove is a soft-remove (returns on next visit). Backed by an account-level, cross-device `ProjectVisit` model (per user × project, `lastVisitedAt` + nullable `pinnedAt`) under user-only `/api/project-visits`. (#438, #440)
+
+### Changed
+- **Unified daemon presence into one bottom-right entry**: The two disjoint bottom-corner daemon affordances — the bottom-left sidebar presence pill and the bottom-right pixel-canvas widget — are merged into a single bottom-right floating entry. One click opens a slim online-agent roster with a prominent "Open chat" action (collapsing the old pill → popover → "View all" → modal chain); the pixel-canvas view is retained as a project-scoped "Open pixel workspace" secondary. Global Settings also moved from the project-conditional global nav into the resident sidebar footer. Frontend-only refactor over the existing presence spine. (#437)
+- **Slimmer MCP tool surface for long-context stability**: Compressed 7 over-long MCP tool descriptions to ≤2 sentences and converted 6 filter/type params from free-form strings to strict enums, cutting every-turn `tools/list` cost that drives long-context tool-call degradation (top-level descriptions −71%). Enums use verified current stored domains; behavior red-lines relocated to per-param `.describe()`. (#436)
+
+### Fixed
+- **Daemon session running indicator disagreed with Interrupt**: The conversation-list running dot read only the origin-connection execution slice while Interrupt searched all slices, so after a cwd/agent switch or session re-point the dot could read idle while Interrupt still worked — now both derive from the same matched set via `sessionExecStatusForRow`. Also emits a visible warn on the "non-null root idea, null `directIdeaUuid`" lineage gap (a pre-`directIdeaUuid` server fingerprint that breaks child-wake matching). (#439)
+
+### Plugin
+- **Plugin & skill versions → 0.14.2**: Claude Code, Codex, OpenClaw, and Kiro plugins plus the standalone skill bumped to 0.14.2. (#441)
+- **SessionStart nudges OpenSpec setup when off**: When OpenSpec mode is inactive because it isn't set up, the SessionStart banner now shows `(OpenSpec off — run `/chorus enable openspec` to set it up)` (`$chorus` on Codex), while an explicit opt-out still shows a neutral `(OpenSpec off)`. A new "Enable OpenSpec Mode (Optional)" skill section on all four plugin surfaces instructs the agent to run the install/init for the user. (#442)
+
+---
+
 ## [0.14.1] - 2026-07-16
 
 ### Added
