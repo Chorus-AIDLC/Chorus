@@ -27,8 +27,14 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
-import { Pin, ChevronDown, ChevronRight } from "lucide-react";
+import { Pin, MoreHorizontal, ChevronDown, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   useProjectQuickAccess,
   type QuickAccessProjectRef,
@@ -58,13 +64,15 @@ function QuickAccessRow({
   mobile,
   onPin,
   onUnpin,
+  onRemove,
 }: {
   project: QuickAccessProjectRef;
-  /** True when this row is a pinned project (filled marker + unpin toggle). */
+  /** True when this row is a pinned project (filled marker + direct unpin). */
   pinnedRow: boolean;
   mobile: boolean;
   onPin: (uuid: string) => void;
   onUnpin: (uuid: string) => void;
+  onRemove: (uuid: string) => void;
 }) {
   const t = useTranslations();
   const nameSize = mobile ? "text-[14px]" : "text-[13px]";
@@ -77,10 +85,16 @@ function QuickAccessRow({
     ? "h-6 w-6 rounded-md text-[9px]"
     : "h-5 w-5 rounded text-[8px]";
 
-  const handleToggle = () => {
-    if (pinnedRow) onUnpin(project.uuid);
-    else onPin(project.uuid);
-  };
+  // The action control lives OUTSIDE the <Link> (sibling), so activating it
+  // never navigates. Pinned rows keep a one-tap unpin button; recent rows get
+  // a ⋯ overflow menu ({ Pin to sidebar, Remove from recent }).
+  //
+  // Reveal rules: mobile has no hover, so the trigger is always visible there;
+  // on desktop it fades in on row hover / keyboard focus (matching the prior
+  // pin button's affordance).
+  const revealClass = mobile
+    ? ""
+    : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100";
 
   return (
     <div className="group relative flex items-center rounded-md transition-colors hover:bg-secondary">
@@ -106,24 +120,42 @@ function QuickAccessRow({
           )}
         </span>
       </Link>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={handleToggle}
-        aria-label={
-          pinnedRow
-            ? t("quickAccess.unpinProject", { name: project.name })
-            : t("quickAccess.pinProject", { name: project.name })
-        }
-        title={pinnedRow ? t("quickAccess.unpin") : t("quickAccess.pin")}
-        className={`mr-1 h-6 w-6 shrink-0 hover:text-primary ${
-          pinnedRow
-            ? "text-primary"
-            : "text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-        }`}
-      >
-        <Pin className={`h-3.5 w-3.5 ${pinnedRow ? "fill-current" : ""}`} />
-      </Button>
+
+      {pinnedRow ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onUnpin(project.uuid)}
+          aria-label={t("quickAccess.unpinProject", { name: project.name })}
+          title={t("quickAccess.unpin")}
+          className="mr-1 h-6 w-6 shrink-0 text-primary hover:text-primary"
+        >
+          <Pin className="h-3.5 w-3.5 fill-current" />
+        </Button>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t("quickAccess.moreActions", { name: project.name })}
+              className={`mr-1 h-6 w-6 shrink-0 text-muted-foreground hover:text-primary data-[state=open]:opacity-100 ${revealClass}`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[10rem]">
+            <DropdownMenuItem onClick={() => onPin(project.uuid)}>
+              <Pin className="h-4 w-4" />
+              {t("quickAccess.pinToSidebar")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onRemove(project.uuid)}>
+              <X className="h-4 w-4" />
+              {t("quickAccess.removeFromRecent")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -133,7 +165,7 @@ export function SidebarProjectQuickAccess({
   collapsedInProject = false,
 }: SidebarProjectQuickAccessProps) {
   const t = useTranslations();
-  const { pinned, recent, pin, unpin } = useProjectQuickAccess();
+  const { pinned, recent, pin, unpin, remove } = useProjectQuickAccess();
 
   // In-project: seed collapsed (the SSR-safe default so server/first-client
   // markup agree), then hydrate the persisted choice after mount. Global pages
@@ -198,6 +230,7 @@ export function SidebarProjectQuickAccess({
               mobile={mobile}
               onPin={pin}
               onUnpin={unpin}
+              onRemove={remove}
             />
           ))}
           {recentCapped.map((project) => (
@@ -208,6 +241,7 @@ export function SidebarProjectQuickAccess({
               mobile={mobile}
               onPin={pin}
               onUnpin={unpin}
+              onRemove={remove}
             />
           ))}
         </div>

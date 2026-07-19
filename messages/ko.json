@@ -1730,6 +1730,9 @@
     "pin": "고정",
     "unpin": "고정 해제",
     "pinProject": "{name} 고정",
-    "unpinProject": "{name} 고정 해제"
+    "unpinProject": "{name} 고정 해제",
+    "pinToSidebar": "사이드바에 고정",
+    "removeFromRecent": "최근에서 제거",
+    "moreActions": "{name} 추가 작업"
   }
 }

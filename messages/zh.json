@@ -1730,6 +1730,9 @@
     "pin": "置顶",
     "unpin": "取消置顶",
     "pinProject": "置顶 {name}",
-    "unpinProject": "取消置顶 {name}"
+    "unpinProject": "取消置顶 {name}",
+    "pinToSidebar": "置顶到侧边栏",
+    "removeFromRecent": "从最近移除",
+    "moreActions": "{name} 的更多操作"
   }
 }

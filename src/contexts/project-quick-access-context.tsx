@@ -56,6 +56,12 @@ interface ProjectQuickAccessContextValue {
   pin: (projectUuid: string) => Promise<void>;
   /** Unpin a project — persists then replaces state with the fresh aggregate. */
   unpin: (projectUuid: string) => Promise<void>;
+  /**
+   * Forget a project's visit ("remove from recent") — persists then replaces
+   * state with the fresh aggregate. Soft-remove: only affects non-pinned rows
+   * (the server guards pinned rows), so the project returns on the next visit.
+   */
+  remove: (projectUuid: string) => Promise<void>;
   /** Record a visit (best-effort) then re-read the aggregate so recent updates live. */
   recordVisit: (projectUuid: string) => Promise<void>;
   /** True when the project is currently in the pinned list. */
@@ -148,6 +154,28 @@ export function ProjectQuickAccessProvider({ children }: { children: ReactNode }
     }
   }, []);
 
+  const remove = useCallback(async (projectUuid: string) => {
+    try {
+      const res = await authFetch("/api/project-visits", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectUuid }),
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      // The DELETE endpoint returns the FRESH aggregate — replace state in one
+      // round-trip so the removed row disappears from every consumer immediately.
+      if (json?.success && json.data) {
+        setAggregate({
+          pinned: json.data.pinned ?? [],
+          recent: json.data.recent ?? [],
+        });
+      }
+    } catch (error) {
+      clientLogger.error("Failed to remove project from recent:", error);
+    }
+  }, []);
+
   const recordVisit = useCallback(
     async (projectUuid: string) => {
       try {
@@ -190,10 +218,11 @@ export function ProjectQuickAccessProvider({ children }: { children: ReactNode }
       loaded,
       pin,
       unpin,
+      remove,
       recordVisit,
       isPinned,
     }),
-    [aggregate.pinned, aggregate.recent, loaded, pin, unpin, recordVisit, isPinned],
+    [aggregate.pinned, aggregate.recent, loaded, pin, unpin, remove, recordVisit, isPinned],
   );
 
   return (

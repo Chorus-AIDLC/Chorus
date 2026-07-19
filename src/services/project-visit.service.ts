@@ -100,6 +100,29 @@ export async function unpinProject(
 }
 
 /**
+ * Forget a project's visit for the user — the "remove from recent" action.
+ * Deletes the (user, project) row so the project drops out of recent; the next
+ * visit re-creates it (soft-remove: zero regret, no permanent hidden state).
+ *
+ * PINNED-GUARD: the `pinnedAt: null` predicate is in the WHERE clause, so a
+ * pinned project's row is NEVER deleted by a remove — a pinned project only
+ * leaves the sidebar via unpin. Uses `deleteMany` (not `delete`) so an absent or
+ * pinned row is a zero-row no-op rather than a throw, matching `unpinProject`'s
+ * idempotent posture. Scoped by company + user; no forged-UUID pre-check is
+ * needed because the scope predicate already bounds the delete and removing a
+ * non-existent row is harmless (unlike the create paths).
+ */
+export async function forgetVisit(
+  companyUuid: string,
+  userUuid: string,
+  projectUuid: string
+): Promise<void> {
+  await prisma.projectVisit.deleteMany({
+    where: { companyUuid, userUuid, projectUuid, pinnedAt: null },
+  });
+}
+
+/**
  * Read the sidebar quick-access aggregate for a user:
  *   - `pinned`: rows with `pinnedAt` set, ordered by pin time ascending (unlimited).
  *   - `recent`: rows with `pinnedAt` null, ordered by `lastVisitedAt` descending,
