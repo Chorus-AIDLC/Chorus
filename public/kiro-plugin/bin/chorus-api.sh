@@ -240,7 +240,7 @@ cmd_mcp_tool() {
     # Step 1: Initialize MCP session
     local init_payload
     init_payload=$(cat <<JSONEOF
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.1.1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.14.2"}}}
 JSONEOF
 )
 
