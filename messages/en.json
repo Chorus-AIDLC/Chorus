@@ -1730,6 +1730,9 @@
     "pin": "Pin",
     "unpin": "Unpin",
     "pinProject": "Pin {name}",
-    "unpinProject": "Unpin {name}"
+    "unpinProject": "Unpin {name}",
+    "pinToSidebar": "Pin to sidebar",
+    "removeFromRecent": "Remove from recent",
+    "moreActions": "More actions for {name}"
   }
 }

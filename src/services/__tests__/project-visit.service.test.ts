@@ -13,6 +13,7 @@ const mockPrisma = vi.hoisted(() => ({
     upsert: vi.fn(),
     findUnique: vi.fn(),
     updateMany: vi.fn(),
+    deleteMany: vi.fn(),
     findMany: vi.fn(),
   },
 }));
@@ -22,6 +23,7 @@ import {
   recordVisit,
   pinProject,
   unpinProject,
+  forgetVisit,
   getSidebarQuickAccess,
 } from "@/services/project-visit.service";
 
@@ -152,6 +154,40 @@ describe("unpinProject", () => {
 
     await expect(unpinProject(companyUuid, userUuid, projectUuid)).resolves.toBeUndefined();
     expect(mockPrisma.projectVisit.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===== forgetVisit =====
+describe("forgetVisit", () => {
+  it("deletes the (user,project) row with a pinnedAt:null guard, scoped by company + user", async () => {
+    mockPrisma.projectVisit.deleteMany.mockResolvedValue({ count: 1 });
+
+    await forgetVisit(companyUuid, userUuid, projectUuid);
+
+    // The pinnedAt:null predicate lives in the WHERE clause — this is the
+    // pinned-guard that ensures a pinned project's row is never deleted.
+    expect(mockPrisma.projectVisit.deleteMany).toHaveBeenCalledWith({
+      where: { companyUuid, userUuid, projectUuid, pinnedAt: null },
+    });
+  });
+
+  it("does NOT delete a pinned row (pinnedAt guard ⇒ zero rows deleted)", async () => {
+    // A pinned row has pinnedAt != null, so the pinnedAt:null WHERE predicate
+    // matches nothing — the DB deletes zero rows. We assert the query is always
+    // issued with the guard so a pinned project can never be forgotten.
+    mockPrisma.projectVisit.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(forgetVisit(companyUuid, userUuid, projectUuid)).resolves.toBeUndefined();
+    const args = mockPrisma.projectVisit.deleteMany.mock.calls[0][0];
+    expect(args.where.pinnedAt).toBeNull();
+    expect(args.where).toMatchObject({ companyUuid, userUuid, projectUuid });
+  });
+
+  it("is no-op-safe when the row is absent (deletes zero rows, does not throw)", async () => {
+    mockPrisma.projectVisit.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(forgetVisit(companyUuid, userUuid, projectUuid)).resolves.toBeUndefined();
+    expect(mockPrisma.projectVisit.deleteMany).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -7,6 +7,7 @@ const mockGetSidebarQuickAccess = vi.fn();
 const mockRecordVisit = vi.fn();
 const mockPinProject = vi.fn();
 const mockUnpinProject = vi.fn();
+const mockForgetVisit = vi.fn();
 
 vi.mock("@/lib/auth", async () => {
   const actual = await vi.importActual<typeof import("@/lib/auth")>("@/lib/auth");
@@ -21,9 +22,10 @@ vi.mock("@/services/project-visit.service", () => ({
   recordVisit: (...args: unknown[]) => mockRecordVisit(...args),
   pinProject: (...args: unknown[]) => mockPinProject(...args),
   unpinProject: (...args: unknown[]) => mockUnpinProject(...args),
+  forgetVisit: (...args: unknown[]) => mockForgetVisit(...args),
 }));
 
-import { GET } from "@/app/api/project-visits/route";
+import { GET, DELETE as DELETE_VISIT } from "@/app/api/project-visits/route";
 import { POST } from "@/app/api/project-visits/visit/route";
 import { PUT, DELETE } from "@/app/api/project-visits/pin/route";
 
@@ -65,6 +67,7 @@ beforeEach(() => {
   mockRecordVisit.mockResolvedValue(undefined);
   mockPinProject.mockResolvedValue(undefined);
   mockUnpinProject.mockResolvedValue(undefined);
+  mockForgetVisit.mockResolvedValue(undefined);
 });
 
 describe("GET /api/project-visits", () => {
@@ -205,5 +208,48 @@ describe("DELETE /api/project-visits/pin", () => {
     const res = await DELETE(req("DELETE", "/api/project-visits/pin", {}), emptyCtx);
     expect(res.status).toBe(422);
     expect(mockUnpinProject).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/project-visits (forget visit — remove from recent)", () => {
+  it("forgets the visit and returns the fresh aggregate", async () => {
+    const res = await DELETE_VISIT(req("DELETE", "/api/project-visits", { projectUuid }), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual(aggregate);
+    expect(mockForgetVisit).toHaveBeenCalledWith(companyUuid, userUuid, projectUuid);
+    expect(mockGetSidebarQuickAccess).toHaveBeenCalledWith(companyUuid, userUuid);
+  });
+
+  it("401 when unauthenticated; no forget", async () => {
+    mockGetAuthContext.mockResolvedValue(null);
+    const res = await DELETE_VISIT(req("DELETE", "/api/project-visits", { projectUuid }), emptyCtx);
+    expect(res.status).toBe(401);
+    expect(mockForgetVisit).not.toHaveBeenCalled();
+  });
+
+  it("403 for an agent API key (human-only surface); no forget", async () => {
+    mockGetAuthContext.mockResolvedValue(agentAuth);
+    const res = await DELETE_VISIT(req("DELETE", "/api/project-visits", { projectUuid }), emptyCtx);
+    const body = await res.json();
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe("FORBIDDEN");
+    expect(mockForgetVisit).not.toHaveBeenCalled();
+  });
+
+  it("422 when projectUuid is missing; no forget", async () => {
+    const res = await DELETE_VISIT(req("DELETE", "/api/project-visits", {}), emptyCtx);
+    const body = await res.json();
+    expect(res.status).toBe(422);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+    expect(mockForgetVisit).not.toHaveBeenCalled();
+  });
+
+  it("422 when projectUuid is blank; no forget", async () => {
+    const res = await DELETE_VISIT(req("DELETE", "/api/project-visits", { projectUuid: "  " }), emptyCtx);
+    expect(res.status).toBe(422);
+    expect(mockForgetVisit).not.toHaveBeenCalled();
   });
 });

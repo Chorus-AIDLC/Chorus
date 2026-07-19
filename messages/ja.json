@@ -1730,6 +1730,9 @@
     "pin": "ピン留め",
     "unpin": "ピン留め解除",
     "pinProject": "{name} をピン留め",
-    "unpinProject": "{name} のピン留めを解除"
+    "unpinProject": "{name} のピン留めを解除",
+    "pinToSidebar": "サイドバーにピン留め",
+    "removeFromRecent": "最近から削除",
+    "moreActions": "{name} のその他の操作"
   }
 }
