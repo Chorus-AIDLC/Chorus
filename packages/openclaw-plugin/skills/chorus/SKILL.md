@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.1"
+  version: "0.14.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -130,7 +130,7 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 ### Reports
 
-A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. `/yolo` writes one mandatorily; `/develop` offers it advisorily on last-task verify.
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The `content` parameter's description carries the section template — read it there. `/yolo` writes one mandatorily; `/develop` offers it advisorily on last-task verify.
 
 ### References
 
@@ -318,6 +318,19 @@ The plugin bundles three independent **review skills**: `/proposal-reviewer`, `/
 **How review runs on OpenClaw.** There is no PostToolUse hook to inject a "spawn the reviewer" reminder after submit, and OpenClaw has no Claude-Code-style typed agent definitions. Instead, the proposal/develop/yolo skills put the reviewer step **inline**: the orchestrating agent uses the OpenClaw `sessions_spawn` tool to spawn a sub-agent and instructs it (in the spawn `task`) to **run the `/proposal-reviewer`, `/task-reviewer`, or `/code-reviewer` skill** against the entity (passing the `ideaUuid` for code review), then waits for the VERDICT (poll `subagents` / `sessions_yield`). Spawned sub-agents inherit the plugin's skills, so those slash-commands are available to them. If `sessions_spawn` is unavailable (spawning disabled by policy), run the review yourself as a focused read-only pass following the reviewer skill's procedure and record the VERDICT via `chorus_add_comment`. See the relevant stage skill for the exact procedure.
 
 Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, fix it via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it (do not reopen old tasks), then execute → verify and re-run.
+
+### 6. Enable OpenSpec Mode (Optional)
+
+Opt-in spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. The stage skills re-check the three activation signals inline (OpenClaw has no SessionStart hook): `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+
+**When the user wants it on**, actually **enable it for them** — run whichever steps are missing, don't just describe them:
+
+```bash
+npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (global, pure Node)
+openspec init --tools none          # 2. scaffold the openspec/ directory
+```
+
+OpenSpec has no OpenClaw integration (it's not in the `--tools` list), so `--tools none` is correct — Chorus's detection only needs the `openspec/` directory and the stage skills drive the CLI directly. There's no SessionStart banner on OpenClaw — the stage skills re-check the three signals inline, so once the directory and CLI are both present they fold in `/openspec-aware` automatically. To turn it off, set `CHORUS_OPENSPEC_MODE=off`.
 
 ---
 

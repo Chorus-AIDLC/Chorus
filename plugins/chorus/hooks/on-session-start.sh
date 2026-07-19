@@ -37,10 +37,19 @@ CHECKIN=$("${DIR}/chorus-mcp-call.sh" chorus_checkin '{}' 2>/dev/null) || {
 # signals are present — same precedence as the original detection contract).
 # Codex doesn't expose a project-dir env var, so we use $PWD (Codex hooks
 # run from the project root).
+#
+# The inactive states split into two user-facing kinds (same as the Claude
+# Code hook, minus the plugin toggle Codex doesn't have):
+#   - OPENSPEC_OPTOUT=1 — CHORUS_OPENSPEC_MODE=off, an explicit choice. Show a
+#     neutral note, no nag.
+#   - OPENSPEC_OPTOUT=0 — OpenSpec is simply not set up. Point the user at
+#     `$chorus enable openspec`, which walks the actual install/init steps.
 PROJECT_ROOT="$PWD"
 OPENSPEC_HINT=""
+OPENSPEC_OPTOUT=0
 if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
+  OPENSPEC_OPTOUT=1
   OPENSPEC_REASON="CHORUS_OPENSPEC_MODE=off (explicit opt-out)"
 elif [ ! -d "${PROJECT_ROOT}/openspec" ]; then
   CHORUS_OPENSPEC_ACTIVE=0
@@ -76,10 +85,18 @@ else
   CTX="${CTX}
 
 OpenSpec mode is **inactive** for this session. The proposal / develop / yolo skills follow their free-form path; do NOT scaffold \`openspec/changes/\`, do NOT add an \`OpenSpec change slug:\` line to proposal descriptions, and do NOT route document mirror calls through \`chorus-mcp-call.sh\`."
-  if [ -n "$OPENSPEC_HINT" ]; then
+  if [ "$OPENSPEC_OPTOUT" = "1" ]; then
     CTX="${CTX}
 
-Note: this repo has an \`openspec/\` directory, so the user likely intends to use OpenSpec mode but the \`openspec\` CLI is not installed. Surface this to the user (e.g. \"This repo is OpenSpec-init'd but the \\\`openspec\\\` CLI isn't installed locally — ${OPENSPEC_HINT}\") before authoring documents so they can install it and re-launch the session if they want spec-driven mode."
+OpenSpec was **explicitly turned off** (${OPENSPEC_REASON}), so this is a deliberate choice — do NOT nag the user to enable it. If they ask to turn it back on, point them at unsetting \`CHORUS_OPENSPEC_MODE\`, then the OpenSpec setup section in the \`\$chorus\` skill."
+  elif [ -n "$OPENSPEC_HINT" ]; then
+    CTX="${CTX}
+
+Note: this repo has an \`openspec/\` directory, so the user likely intends to use OpenSpec mode but the \`openspec\` CLI is not installed. Surface this to the user (e.g. \"This repo is OpenSpec-init'd but the \\\`openspec\\\` CLI isn't installed locally — ${OPENSPEC_HINT}\") before authoring documents. To set it up, run \`\$chorus enable openspec\` (§6 walks the install + restart)."
+  else
+    CTX="${CTX}
+
+Note: OpenSpec is not set up in this repo (${OPENSPEC_REASON}). Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode (proposal.md / design.md / spec deltas mirrored into Chorus), run \`\$chorus enable openspec\` — §6 walks the \`npm i -g @fission-ai/openspec\` + \`openspec init\` steps and the restart."
   fi
 fi
 
@@ -92,11 +109,17 @@ CTX="${CTX}
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
 - **Reviewer sub-agents**: mount the reviewer skill into a default sub-agent — \`spawn_agent(agent_type=\"default\", items=[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <uuid>.\"}])\` after \`chorus_pm_submit_proposal\`; same pattern with \`chorus:chorus-task-reviewer\` after \`chorus_submit_for_verify\`. Codex 0.125 only ships three built-in roles (default / explorer / worker) — custom agent_types like \`chorus-proposal-reviewer\` will be rejected. Remember \`close_agent\` after \`wait_agent\`; completed ≠ closed, 6 concurrent max."
 
+# User-visible parens (mirrors the Claude Code hook; Codex skill prefix is $chorus):
+#   active            -> (OpenSpec Enabled)
+#   not set up        -> (OpenSpec off — run `$chorus enable openspec` to set it up)
+#   explicit opt-out  -> (OpenSpec off)  [neutral, no nag]
 USER_MSG="Chorus connected at ${CHORUS_URL}"
 if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
   USER_MSG="${USER_MSG} (OpenSpec Enabled)"
-elif [ -n "$OPENSPEC_HINT" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec repo detected — ${OPENSPEC_HINT})"
+elif [ "$OPENSPEC_OPTOUT" = "1" ]; then
+  USER_MSG="${USER_MSG} (OpenSpec off)"
+else
+  USER_MSG="${USER_MSG} (OpenSpec off — run \`\$chorus enable openspec\` to set it up)"
 fi
 
 hook_output "$USER_MSG" "$CTX" "SessionStart"

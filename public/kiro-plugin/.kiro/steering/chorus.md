@@ -143,7 +143,7 @@ Main agent: no session needed — call tools without `sessionUuid`. See `/chorus
 
 ### Reports
 
-A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The tool's description carries the section template — read it there. `/chorus-yolo` writes one mandatorily; `/chorus-develop` offers it advisorily on last-task verify.
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The `content` parameter's description carries the section template — read it there. `/chorus-yolo` writes one mandatorily; `/chorus-develop` offers it advisorily on last-task verify.
 
 ### References
 
@@ -319,6 +319,19 @@ The plugin ships three read-only reviewer subagents (`chorus-code-reviewer`, `ch
 | `chorus-code-reviewer` | `chorus_admin_verify_task` (last task of the idea) | The idea's aggregate code change (posts VERDICT on the idea) |
 
 Reviewers post a VERDICT comment with one of three outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus-quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway.
+
+### 6. Enable OpenSpec Mode (Optional)
+
+Opt-in spec-driven path: `/chorus-proposal`, `/chorus-develop`, `/chorus-yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. The stage skills re-check the three activation signals inline (the Kiro spawn hook shows no OpenSpec banner): `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+
+**When the user wants it on**, actually **enable it for them** — run whichever steps are missing, don't just describe them:
+
+```bash
+npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (global, pure Node)
+openspec init --tools kiro          # 2. scaffold openspec/ + wire up Kiro's native integration
+```
+
+`openspec init` is interactive if you omit `--tools`; pass `--tools kiro` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Kiro also gives OpenSpec its own integration. There's no SessionStart banner on Kiro — the stage skills re-check the three signals inline, so once the directory and CLI are both present they fold in `/chorus-openspec-aware` automatically (no re-launch needed). To turn it off, set `CHORUS_OPENSPEC_MODE=off`.
 
 ---
 

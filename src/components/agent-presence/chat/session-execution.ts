@@ -110,3 +110,25 @@ export function sessionExecStatus(
   }
   return null;
 }
+
+// The conversation-LIST row's display status, resolved from the SAME cross-connection
+// execution set the composer's Interrupt control uses (`sessionExecutionsForComposer`),
+// then reduced by `sessionExecStatus`. This is what keeps the list-row running dot and
+// the composer's Interrupt button in agreement: previously the row read ONLY the origin
+// connection's slice, so after a cwd/agent switch or a session re-point (the running turn
+// living on a DIFFERENT connection) the composer could still offer Interrupt while the
+// row showed idle. Composing the two helpers means both derive from the exact same matched
+// set — with the same origin-preferred, all-slice-fallback rule and the same strict
+// direct-idea / session-id match (never the root idea, so it can't borrow another
+// conversation's run).
+//
+// The second filter inside `sessionExecStatus` (via `executionsForSession`) is idempotent
+// over an already-matched set, so this is exactly "reduce the composer's matched
+// executions to one status" — the match rule and the reduce rule each live in one place.
+export function sessionExecStatusForRow(
+  executionsByConnection: Record<string, ExecutionView[]>,
+  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string },
+): SessionExecStatus {
+  const execs = sessionExecutionsForComposer(executionsByConnection, session);
+  return sessionExecStatus(execs, session);
+}

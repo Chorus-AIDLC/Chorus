@@ -5,6 +5,7 @@
 // drives it directly.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { z } from "zod";
 
 // ===== Module mocks (hoisted) =====
 
@@ -139,19 +140,26 @@ describe("chorus_create_report registration gating", () => {
 // ============================================================
 
 describe("chorus_create_report description (template constraint)", () => {
-  it("description carries the three report section headers", () => {
+  it("the three report section headers live in the content param describe", () => {
     const server = makeServer();
     registerPublicTools(server as never, makeAuth(["document:write"]));
-    const desc = tools["chorus_create_report"].config.description ?? "";
 
-    // Each header must appear verbatim in the LLM-visible description so the
-    // calling agent has a single source of truth for the report shape.
-    expect(desc).toContain("Summary");
-    expect(desc).toContain("Decisions");
-    expect(desc).toContain("Follow-ups");
-    // Description must teach the agent about the default-reject duplicate
-    // behavior — pointing at `force: true` as the explicit opt-in.
-    expect(desc.toLowerCase()).toContain("force");
+    // After description slimming (slim-mcp-tool-descriptions-enums), the 3-section
+    // contract moved OUT of the top-level description INTO the `content` param's
+    // .describe() — still LLM-visible, but no longer bloating every-turn tool text.
+    const schema = tools["chorus_create_report"].config.inputSchema as unknown as z.ZodType;
+    const props = (z.toJSONSchema(schema, { io: "input" }) as {
+      properties?: Record<string, { description?: string }>;
+    }).properties;
+    const contentDesc = props?.content?.description ?? "";
+    expect(contentDesc).toContain("Summary");
+    expect(contentDesc).toContain("Decisions");
+    expect(contentDesc).toContain("Follow-ups");
+
+    // The default-reject duplicate behavior (force: true opt-in) stays taught on
+    // the `force` param's describe.
+    const forceDesc = props?.force?.description ?? "";
+    expect(forceDesc.toLowerCase()).toContain("force");
   });
 });
 

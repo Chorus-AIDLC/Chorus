@@ -67,3 +67,8 @@ export {
   DAEMON_START_COMMAND,
   DAEMON_LOGIN_COMMAND,
 } from "./daemon-connect-cta";
+export {
+  PresenceRosterBody,
+  PillDot,
+  deriveDotState,
+} from "./presence-roster";

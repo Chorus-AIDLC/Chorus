@@ -94,7 +94,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        status: z.string().optional().describe("Filter by status: open, elaborating, proposal_created, completed, closed"),
+        status: z.enum(["open", "elaborating", "elaborated"]).optional().describe("Filter by status"),
         page: z.number().optional().default(1).describe("Page number"),
         pageSize: z.number().optional().default(20).describe("Items per page"),
       }),
@@ -128,7 +128,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get the list of Documents for a project",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        type: z.string().optional().describe("Filter by type: prd, tech_design, adr, spec, guide, report"),
+        type: z.enum(["prd", "tech_design", "adr", "spec", "guide", "report"]).optional().describe("Filter by type"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
       }),
@@ -182,7 +182,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get the list of Proposals and their statuses for a project",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        status: z.string().optional().describe("Filter by status: pending, approved, rejected, revised"),
+        status: z.enum(["draft", "pending", "approved", "closed"]).optional().describe("Filter by status"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
       }),
@@ -244,8 +244,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "List Tasks for a project",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        status: z.string().optional().describe("Filter by status: open, assigned, in_progress, to_verify, done, closed"),
-        priority: z.string().optional().describe("Filter by priority: low, medium, high"),
+        status: z.enum(["open", "assigned", "in_progress", "to_verify", "done", "closed"]).optional().describe("Filter by status"),
+        priority: z.enum(["low", "medium", "high"]).optional().describe("Filter by priority"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
         page: z.number().optional().default(1),
         pageSize: z.number().optional().default(20),
@@ -481,24 +481,14 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_get_proposal",
     {
       description:
-        "Get a single Proposal, sliced into one section to avoid oversized payloads. " +
-        "The `section` parameter selects the view (default `basic`):\n" +
-        "- `basic` (default): proposal metadata + a lightweight index of document drafts " +
-        "(uuid, type, title, contentLength) and task drafts (uuid, title, priority, storyPoints, " +
-        "acceptanceCriteriaCount, dependsOnDraftUuids). No document content or full task descriptions.\n" +
-        "- `documents`: proposal metadata + the FULL document drafts (with content).\n" +
-        "- `tasks`: proposal metadata + the FULL task drafts (with descriptions and acceptance criteria).\n" +
-        "- `full`: the entire proposal (all document and task drafts) in one payload.\n" +
-        "Start with `basic` to see what exists, then drill into `documents` or `tasks` " +
-        "using the same `proposalUuid`. Every response includes a `section` field echoing the view returned.",
+        "Get a single Proposal, sliced into one section to avoid oversized payloads. Start with the default `basic` view to see what exists, then drill into a heavier section using the same `proposalUuid`.",
       inputSchema: z.object({
         proposalUuid: z.string().describe("Proposal UUID"),
         section: z
           .enum(["basic", "documents", "tasks", "full"])
           .optional()
           .describe(
-            "Which slice to return. Default `basic` (metadata + lightweight draft index). " +
-              "Use `documents`/`tasks` for full drafts of one kind, or `full` for everything."
+            "Which slice to return (default `basic`). `basic`: metadata + a lightweight index of document drafts (uuid, type, title, contentLength) and task drafts (uuid, title, priority, storyPoints, acceptanceCriteriaCount, dependsOnDraftUuids) — no content. `documents`: metadata + FULL document drafts (with content). `tasks`: metadata + FULL task drafts (descriptions + acceptance criteria). `full`: everything in one payload. Every response echoes the view in a `section` field."
           ),
       }),
     },
@@ -826,15 +816,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_create_tasks",
     {
       description:
-        "Batch create tasks in a project. Two modes:\n\n" +
-        "**Quick Task** (skip Idea→Proposal): omit proposalUuid. Ideal for bug fixes, small features, post-delivery patches. Flow: create → claim → execute → verify → done.\n\n" +
-        "**Proposal-linked** (traditional AI-DLC): pass proposalUuid to associate with an approved proposal.\n\n" +
-        "Supports batch creation with intra-batch dependencies (draftUuid + dependsOnDraftUuids) and dependencies on existing tasks (dependsOnTaskUuids).\n\n" +
-        "Acceptance criteria are REQUIRED: every task must include at least one acceptanceCriteriaItems entry with a non-blank description, or the entire batch is rejected (no task is created).\n\n" +
-        "Optional per-task `references[]` attaches reference artifacts (external evidence — web link + optional notes) to each created task inline; a bad reference is skipped and reported in the response `referenceErrors` without failing task creation.",
+        "Batch-create tasks in a project — either Quick Task mode (omit proposalUuid) or linked to an approved proposal (pass proposalUuid). Every task must include at least one acceptance criterion, or the whole batch is rejected.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        proposalUuid: z.string().optional().describe("Associated Proposal UUID (optional — omit for Quick Task mode)"),
+        proposalUuid: z.string().optional().describe("Associated Proposal UUID. Omit for Quick Task mode (bug fixes, small features, post-delivery patches; flow: create → claim → execute → verify → done); pass it to link to an approved proposal in the traditional AI-DLC flow. Intra-batch dependencies use draftUuid + dependsOnDraftUuids; dependencies on existing tasks use dependsOnTaskUuids."),
         tasks: zArray(z.object({
           title: z.string().describe("Task title"),
           description: z.string().optional().describe("Task description"),
@@ -992,14 +977,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_update_task",
     {
       description:
-        "Update a task — edit fields, manage dependencies, or change status.\n\n" +
-        "**Field editing** (any role): title, description, priority, storyPoints, addDependsOn/removeDependsOn (incremental dependency management).\n\n" +
-        "**Acceptance criteria editing** (any role): pass acceptanceCriteriaItems to REPLACE the task's acceptance criteria with the provided non-empty set. Omit it to leave AC untouched. It cannot be used to clear AC — an empty or all-blank array is rejected. Replacing discards any prior dev/admin verification marks on the old criteria.\n\n" +
-        "**Status update** (assignee only): in_progress (requires all dependencies resolved), to_verify.\n\n" +
-        "For Quick Tasks: create → claim → edit details → execute → verify → done.",
+        "Update a task: edit fields (title, description, priority, storyPoints), manage dependencies, replace acceptance criteria, or change status. Field/AC/dependency edits are open to any role; status changes are assignee-only.",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        status: z.enum(["in_progress", "to_verify"]).optional().describe("New status (assignee only)"),
+        status: z.enum(["in_progress", "to_verify"]).optional().describe("New status (assignee only). `in_progress` requires all dependencies resolved; `to_verify` submits for verification."),
         sessionUuid: z.string().optional().describe("Session UUID for sub-agent identification"),
         title: z.string().optional().describe("New task title"),
         description: z.string().optional().describe("New task description (supports @mentions)"),
@@ -1008,9 +989,9 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         acceptanceCriteriaItems: zArray(z.object({
           description: z.string().describe("Criterion description"),
           required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
-        })).optional().describe("Replace the task's acceptance criteria with this non-empty set. Omit to leave AC unchanged; cannot be used to clear AC (empty/all-blank is rejected)."),
-        addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies"),
-        removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies"),
+        })).optional().describe("Replace the task's acceptance criteria with this non-empty set. Omit to leave AC unchanged; cannot be used to clear AC (empty/all-blank is rejected). Replacing discards any prior dev/admin verification marks on the old criteria."),
+        addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies (incremental)"),
+        removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies (incremental)"),
       }),
     },
     async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
@@ -1184,25 +1165,23 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_create_report",
     {
       description:
-        "Persist an idea-completion summary as a Document (type=\"report\") under the given Proposal. Only write a report once every Task in the Proposal is complete. By default a proposal already carrying a report rejects further calls — pass `force: true` to add another deliberately. Keep it short — this is a summary, not a write-up.\n\n" +
-        "Markdown `content` MUST use these three sections in this order:\n\n" +
-        "## Summary\n" +
-        "1-3 sentences on what shipped. Plain prose. No bullet lists here.\n\n" +
-        "## Decisions\n" +
-        "Terse bullets — the key calls made during elaboration / proposal review and why this option not the alternative. Skip obvious / trivial decisions; capture the ones a future reader would want context on.\n\n" +
-        "## Follow-ups\n" +
-        "What's still open — link to a new Idea / blog / doc-update if tracked elsewhere; write \"None\" if there are no follow-ups.\n\n" +
-        "Section bodies are free-form Markdown (links and inline code are fine). The three headers are the contract — keep them verbatim, top-level (`##`), in this order.",
+        "Persist an idea-completion summary as a Document (type=\"report\") under the given Proposal, once every Task in the Proposal is complete. Keep it short — a summary, not a write-up.",
       inputSchema: z.object({
         proposalUuid: z.string().uuid().describe("Proposal UUID whose tasks have all reached a terminal state"),
         title: z.string().min(1).max(200).describe("Report title (e.g. 'Idea X — completion report')"),
-        content: z.string().min(1).describe("Markdown body — Summary / Decisions / Follow-ups"),
+        content: z.string().min(1).describe(
+          "Markdown body. MUST use these three top-level headers verbatim, in this order:\n" +
+          "## Summary — 1-3 sentences on what shipped (plain prose, no bullets).\n" +
+          "## Decisions — terse bullets: the key calls made during elaboration / proposal review and why this option not the alternative; skip trivial ones.\n" +
+          "## Follow-ups — what's still open (link a new Idea / blog / doc-update if tracked elsewhere); write \"None\" if there are none.\n" +
+          "Section bodies are free-form Markdown (links and inline code fine); the three headers are the contract."
+        ),
         force: z
           .boolean()
           .optional()
           .default(false)
           .describe(
-            "Default false. When false, calls against a proposal that already has a report return an error and create nothing. Set true only to deliberately add another report to the same proposal."
+            "Default false. When false, calls against a proposal that already has a report return an error and create nothing. Set force true only to deliberately add another report to the same proposal."
           ),
       }),
     },

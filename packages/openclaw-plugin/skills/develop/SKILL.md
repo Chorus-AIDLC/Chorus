@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.1"
+  version: "0.14.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -279,7 +279,7 @@ Once Admin verifies (status: `done`), move to the next available task (back to S
 
 ### Step 11: Idea Completion Report (advisory)
 
-If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report`. On OpenClaw, ask the user as a plain-text prompt (e.g. "This was the last task of the idea. Want me to write a completion report? Reply yes/no.") — there is no `AskUserQuestion` primitive. The tool description carries the section template. Skip on decline.
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report`. On OpenClaw, ask the user as a plain-text prompt (e.g. "This was the last task of the idea. Want me to write a completion report? Reply yes/no.") — there is no `AskUserQuestion` primitive. The `content` parameter's description carries the section template. Skip on decline.
 
 ---
 

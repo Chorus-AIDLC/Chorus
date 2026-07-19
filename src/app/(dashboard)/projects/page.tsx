@@ -35,12 +35,14 @@ import {
   Bot,
   Layers,
   Sparkles,
+  Pin,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { MoveProjectConfirmDialog } from "@/components/move-project-confirm-dialog";
 import { CreateProjectGroupDialog } from "@/components/create-project-group-dialog";
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
+import { useProjectQuickAccess } from "@/contexts/project-quick-access-context";
 import { readExpandedGroups, writeExpandedGroups } from "./group-expansion-preference";
 
 // Types
@@ -138,6 +140,46 @@ function ProjectStats({ counts, compact = false }: { counts: ProjectData["counts
   );
 }
 
+// Pin/unpin toggle rendered on each project card. It consumes the SHARED
+// ProjectQuickAccessProvider (mounted at the dashboard shell) — reading pin
+// state via isPinned() and mutating via pin()/unpin() — so a card pin updates
+// the SAME aggregate the sidebar reads and appears there immediately, no
+// reload. NEVER fetch the aggregate independently here: the shared provider is
+// exactly what closes the cross-surface gap (the review blocker). The card is
+// wrapped in a <Link>, so the click must stop propagation + prevent default to
+// toggle the pin without navigating into the project.
+function ProjectPinToggle({ project }: { project: ProjectData }) {
+  const t = useTranslations();
+  const { isPinned, pin, unpin } = useProjectQuickAccess();
+  const pinned = isPinned(project.uuid);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pinned) void unpin(project.uuid);
+    else void pin(project.uuid);
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={handleClick}
+      aria-label={
+        pinned
+          ? t("quickAccess.unpinProject", { name: project.name })
+          : t("quickAccess.pinProject", { name: project.name })
+      }
+      title={pinned ? t("quickAccess.unpin") : t("quickAccess.pin")}
+      className={`h-6 w-6 shrink-0 hover:text-primary ${
+        pinned ? "text-primary" : "text-muted-foreground"
+      }`}
+    >
+      <Pin className={`h-3.5 w-3.5 ${pinned ? "fill-current" : ""}`} />
+    </Button>
+  );
+}
+
 function ProjectGridCard({ project }: { project: ProjectData }) {
   const t = useTranslations();
   const formatRelative = useRelativeDate();
@@ -160,7 +202,7 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
         >
           {initials}
         </div>
-        <span className="truncate text-[13px] font-semibold text-foreground">
+        <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
           {project.name}
         </span>
         {isEmpty && (
@@ -173,6 +215,9 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
             {t("projects.complete")}
           </Badge>
         )}
+        <div className="ml-auto -mr-1 shrink-0">
+          <ProjectPinToggle project={project} />
+        </div>
       </div>
 
       {/* Stats */}
@@ -243,6 +288,9 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
           <div className="hidden md:block">
             <ProjectStats counts={project.counts} />
           </div>
+        </div>
+        <div className="-mr-1 shrink-0">
+          <ProjectPinToggle project={project} />
         </div>
       </div>
 

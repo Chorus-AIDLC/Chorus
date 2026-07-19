@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
@@ -24,11 +24,17 @@ import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-cl
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { PixelActivityProvider } from "@/contexts/pixel-activity-context";
 import { AuthProvider } from "@/contexts/auth-context";
-import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
+import {
+  ProjectQuickAccessProvider,
+  useProjectQuickAccess,
+} from "@/contexts/project-quick-access-context";
+import { SidebarProjectQuickAccess } from "@/components/sidebar-project-quick-access";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { GlobalSearch } from "@/components/global-search";
@@ -64,6 +70,32 @@ function extractProjectUuid(pathname: string): string | null {
 function extractGroupUuid(pathname: string): string | null {
   const match = pathname.match(/^\/project-groups\/([a-f0-9-]{36})(\/|$)/);
   return match ? match[1] : null;
+}
+
+// Records a project visit once per distinct project UUID entered, so the visited
+// project floats to the top of the sidebar's recent list. Mounted inside the
+// ProjectQuickAccessProvider (it consumes the shared aggregate). A ref guards
+// against re-render spam within the same project; the record call is
+// fire-and-forget (the provider swallows failures). Rendered separately from the
+// layout shell so it can sit under the provider without the layout itself needing
+// to consume it.
+function ProjectVisitRecorder({
+  currentProjectUuid,
+}: {
+  currentProjectUuid: string | null;
+}) {
+  const { recordVisit } = useProjectQuickAccess();
+  const lastRecordedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!currentProjectUuid) return;
+    if (lastRecordedRef.current === currentProjectUuid) return;
+    lastRecordedRef.current = currentProjectUuid;
+    // Fire-and-forget; the provider swallows failures (best-effort).
+    void recordVisit(currentProjectUuid);
+  }, [currentProjectUuid, recordVisit]);
+
+  return null;
 }
 
 export default function DashboardLayout({
@@ -259,12 +291,14 @@ export default function DashboardLayout({
 
   // Global navigation items.
   // Note: the former /agent-connections page + its RadioTower nav item were
-  // removed — that view now lives in the "View all" modal opened from the
-  // sidebar presence pill (the former path is redirected to the dashboard in
-  // middleware). See AgentConnectionsModal mounted in the shell below.
+  // removed — that view now lives in the daemon chat modal opened from the
+  // bottom-right daemon-presence entry (the former path is redirected to the
+  // dashboard in middleware). See AgentConnectionsModal + DaemonPresenceEntry
+  // mounted in the shell below.
+  // Settings is NOT here — it moved to the resident footer (below), so it shows
+  // on every dashboard page (project + global), not just the global-nav branch.
   const globalNavItems = [
     { href: "/projects", label: t("nav.projects"), icon: FolderKanban },
-    { href: "/settings", label: t("nav.settings"), icon: Settings },
   ];
 
   const isNavActive = (href: string) => {
@@ -450,20 +484,57 @@ export default function DashboardLayout({
         </nav>
       </div>
 
-      {/* Bottom-pinned rail footer: the agent-presence pill sits directly above
-          the user-profile block. Grouped into ONE flex child so the rail's
-          justify-between pins the whole footer to the bottom-left (with two
-          children — nav + footer — the pill no longer floats mid-rail). */}
-      <div className="mt-auto flex flex-col gap-1 px-4 pb-4">
-        {/* Appearance + language — a quiet paired utility row sitting ABOVE the
-            presence pill. Compact icon-triggers (theme glyph + locale code) so
-            preferences read as low-key, not primary nav. Rendered in both the
-            desktop aside and the mobile Sheet (both render SidebarContent). */}
-        <SidebarPreferences mobile={mobile} />
+      {/* Project quick-access region — pinned + recently-visited projects.
+          Rendered below the nav block and above the footer in BOTH the desktop
+          aside and the mobile Sheet (SidebarContent is shared). Consumes the
+          shell-level ProjectQuickAccessProvider (single source of truth), so a
+          pin/unpin/visit from any surface is reflected here with no reload.
+          Expanded on global pages; a collapsible header row inside a project. */}
+      <SidebarProjectQuickAccess
+        mobile={mobile}
+        collapsedInProject={Boolean(isProjectContext)}
+      />
 
-        {/* Agent Presence pill — resident rail affordance (online-agent count +
-            click popover). Reads from the shell-level AgentPresenceProvider. */}
-        <AgentPresencePill mobile={mobile} />
+      {/* Bottom-pinned rail footer: Settings + appearance/language utility row
+          above the user-profile block. Grouped into ONE flex child so the rail's
+          justify-between pins the whole footer to the bottom-left. The former
+          agent-presence pill was removed here — daemon presence now lives in the
+          single bottom-right floating DaemonPresenceEntry (mounted at the shell);
+          Settings moved INTO this footer (from the global nav) so it is reachable
+          from every page without backing out to the projects list first. */}
+      <div className="mt-auto flex flex-col gap-1 px-4 pb-4">
+        {/* Settings — resident footer entry, present on EVERY dashboard page
+            (project + global), so a user deep in a project can reach it without
+            navigating back out. Active-state styling mirrors the nav items. */}
+        <Link href="/settings">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`relative w-full justify-start gap-2.5 ${navTextSize} ${navItemPy} ${
+              isNavActive("/settings")
+                ? "font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {isNavActive("/settings") && (
+              <motion.div
+                layoutId="nav-active"
+                className="absolute inset-0 rounded-md bg-secondary"
+                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+              />
+            )}
+            <span className="relative flex items-center gap-2.5">
+              <Settings className={`${navIconSize} ${isNavActive("/settings") ? "text-primary" : ""}`} />
+              {t("nav.settings")}
+            </span>
+          </Button>
+        </Link>
+
+        {/* Appearance + language — a quiet paired utility row. Compact
+            icon-triggers (theme glyph + locale code) so preferences read as
+            low-key, not primary nav. Rendered in both the desktop aside and the
+            mobile Sheet (both render SidebarContent). */}
+        <SidebarPreferences mobile={mobile} />
 
         {/* User Profile */}
         <div className="px-2 pt-1">
@@ -507,16 +578,38 @@ export default function DashboardLayout({
         rendered comment body). Without it, useAuth() throws and any agent mention
         in a comment crashes the comment area. */}
     <AuthProvider>
+    {/* ProjectQuickAccessProvider — single source of truth for the sidebar's
+        pinned + recently-visited projects. Mounted ONCE here wrapping the whole
+        shell (sidebar + main) so BOTH the persistent sidebar region AND the
+        /projects page cards read/write the SAME { pinned, recent } aggregate; a
+        pin or a visit from either surface updates the shared state and every
+        consumer re-renders with no reload. */}
+    <ProjectQuickAccessProvider>
+    {/* Records a visit once per distinct project entered so it floats to the top
+        of the sidebar recent list (best-effort, ref-guarded). Under the provider
+        so it can consume the shared aggregate. */}
+    <ProjectVisitRecorder currentProjectUuid={currentProjectUuid} />
     {/* AgentPresenceProvider is the single shell-level data spine for the
-        sidebar presence pill + popover + modal. Mounted ONCE here, wrapping the
-        whole shell (sidebar + main), so it survives route changes (does not
-        remount per navigation) and is independent of the per-route, project-
-        scoped RealtimeProvider branches below. */}
+        bottom-right daemon-presence entry + its roster popover + the chat modal.
+        Mounted ONCE here, wrapping the whole shell (sidebar + main), so it
+        survives route changes (does not remount per navigation) and is
+        independent of the per-route, project-scoped RealtimeProvider branches
+        below. */}
     <AgentPresenceProvider>
+    {/* PixelActivityProvider — the shell↔project bridge that lets the shell-level
+        DaemonPresenceEntry open the project-scoped pixel-canvas activity view.
+        Wraps both the entry (reads `available` + toggles `open`) and the
+        project-branch PixelCanvasWidget (registers `available`, consumes `open`). */}
+    <PixelActivityProvider>
     {/* "View all" modal — mounted once in the shell, open-state bound to the
-        provider's modalOpen/setModalOpen. The sidebar popover's "View all"
-        button opens it via setModalOpen(true); there is no standalone route. */}
+        provider's modalOpen/setModalOpen. The floating entry's "Open chat"
+        action opens it via setModalOpen(true); there is no standalone route. */}
     <AgentConnectionsModal />
+    {/* Daemon presence entry — the single bottom-right floating affordance
+        (online-agent count + roster popover + direct open-chat). Mounted once
+        here under AgentPresenceProvider so it is company-wide and appears on
+        every dashboard page (replacing the sidebar pill). */}
+    <DaemonPresenceEntry />
     <div className="flex min-h-screen bg-background">
       {/* Mobile Header - visible below md */}
       <header className="fixed top-0 left-0 right-0 z-30 border-b border-border bg-card md:hidden">
@@ -572,7 +665,9 @@ export default function DashboardLayout({
         <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
       )}
     </div>
+    </PixelActivityProvider>
     </AgentPresenceProvider>
+    </ProjectQuickAccessProvider>
     </AuthProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>

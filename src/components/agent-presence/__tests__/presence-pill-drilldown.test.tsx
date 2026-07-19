@@ -68,7 +68,7 @@ vi.mock("@/lib/logger-client", () => ({
 }));
 
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
-import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 
 class MockEventSource {
   static CONNECTING = 0;
@@ -125,7 +125,7 @@ async function openPopover(connections: unknown[], executions: unknown[] = []) {
   routeFetch(connections, executions);
   render(
     <AgentPresenceProvider>
-      <AgentPresencePill />
+      <DaemonPresenceEntry />
     </AgentPresenceProvider>,
   );
   // Wait for the first poll to settle (the pill shows the online count).
