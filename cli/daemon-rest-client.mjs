@@ -136,10 +136,12 @@ export function createDaemonRestClient(opts) {
      * server resolves the turn by the session BUSINESS KEY (`sessionId`); the optional
      * `entityType`/`entityUuid` stamp the weak executionUuid link. An `interrupted`
      * status may carry `interruptedReason` (`user`/`crash`/`shutdown` — the server
-     * rejects `offline`, which is its own reconcile verdict). Requires the
+     * rejects `offline`, which is its own reconcile verdict). A terminal edge may also
+     * carry `transcriptRelayError` — the daemon-known reason its transcript upload
+     * finally failed (fix #444 follow-up), persisted as a turn annotation. Requires the
      * connectionUuid (the server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -154,6 +156,9 @@ export function createDaemonRestClient(opts) {
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        // Transcript-relay failure annotation (fix #444 follow-up): only sent when the
+        // daemon actually knows the upload failed (a truthy reason on a terminal edge).
+        ...(transcriptRelayError ? { transcriptRelayError } : {}),
       };
       return post(
         "turn-advance",

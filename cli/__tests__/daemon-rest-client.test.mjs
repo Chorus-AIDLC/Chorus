@@ -71,6 +71,27 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(body).not.toHaveProperty("entityType");
   });
 
+  it("turnAdvance sends transcriptRelayError on the wire when set (fix #444 follow-up)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({
+      sessionId: "idea-1",
+      status: "ended",
+      transcriptRelayError: "transcript upload returned 502",
+    });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.transcriptRelayError).toBe("transcript upload returned 502");
+  });
+
+  it("turnAdvance omits transcriptRelayError when falsy (clean relay)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", transcriptRelayError: null });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("transcriptRelayError");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId

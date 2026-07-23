@@ -354,6 +354,16 @@ export function createTranscriptUploadHooks(opts) {
     logger,
   });
 
+  // NOTE ON SCOPE: this instance's `currentSessionId` / `pending` / `chain` /
+  // `lastRelayError` are per-hook-instance, and the daemon builds ONE transcript-hook
+  // instance per connection (per cwd) — see daemon.mjs. The per-(agent,session) WakeQueue
+  // serializes wakes of the SAME session, but different sessions (root-idea keys) on the
+  // same cwd can run concurrently (maxConcurrency). This single-session-batching state
+  // therefore assumes at most one ACTIVE session producing transcript at a time on a given
+  // cwd, which holds for today's usage (one dispatched conversation per cwd at a time); it
+  // is NOT a general guarantee. `lastRelayError` inherits exactly this scope — no stronger,
+  // no weaker — so it is only as isolated as the batching state it rides alongside.
+  //
   // The session this batch belongs to (set by onSessionStart, and re-affirmed by each
   // message's observed session id from the stream). Messages queued for one session
   // are flushed before the session changes, so they always target the right turn.
@@ -363,11 +373,12 @@ export function createTranscriptUploadHooks(opts) {
   let timer = null;
   // Serialize POSTs so an earlier batch can never land after a later one on the wire.
   let chain = Promise.resolve();
-  // The final upload failure reason for the CURRENT session's most recent batch, or null
+  // The final upload failure reason for the current session's most recent batch, or null
   // when the last upload succeeded/was skipped (fix #444 follow-up). `onSessionEnd`
   // returns this so the waker can annotate the terminal turn with WHY its transcript is
-  // missing. Reset per session in `onSessionStart`; set only when a batch exhausts its
-  // retry budget (a transient failure that a later batch recovers is NOT surfaced).
+  // missing. Reset in `onSessionStart`; set only when a batch exhausts its retry budget
+  // (a transient failure that a later batch recovers is NOT surfaced). Its isolation is
+  // exactly the single-active-session scope described above.
   let lastRelayError = null;
 
   /**
@@ -452,8 +463,10 @@ export function createTranscriptUploadHooks(opts) {
       // so its messages don't get re-tagged to the new session.
       if (currentSessionId && currentSessionId !== sessionId) flush();
       currentSessionId = sessionId || currentSessionId || null;
-      // Fresh wake → clear any relay error carried from a prior session's uploads so it
-      // can't leak onto this turn (fix #444 follow-up).
+      // A new wake starts → clear the previous wake's relay error so a stale drop from an
+      // earlier turn isn't re-reported here (fix #444 follow-up). This is sequential-reuse
+      // hygiene; it does NOT defend against two sessions overlapping on one hook instance
+      // (see the scope note where `lastRelayError` is declared).
       lastRelayError = null;
     },
     /**
