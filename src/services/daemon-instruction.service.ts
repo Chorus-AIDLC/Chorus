@@ -846,6 +846,7 @@ export async function createConversationalIdeaSession(
     promptText: turnRow.promptText,
     status: turnRow.status,
     interruptedReason: turnRow.interruptedReason,
+    relayError: turnRow.relayError,
     executionUuid: turnRow.executionUuid,
     startedAt: turnRow.startedAt ? turnRow.startedAt.toISOString() : null,
     endedAt: turnRow.endedAt ? turnRow.endedAt.toISOString() : null,

@@ -354,8 +354,10 @@ export function ConversationReplyBox({
         toast.error(await extractError(res, t("instructionError")));
         return;
       }
-      // No success toast: the sent turn appears in the transcript live (SSE), so a
-      // toast would be redundant noise. Errors still toast (no silent failure).
+      // Clearing the composer is the success signal — a success toast was tried but read
+      // as annoying noise. Duplicate sends are already made safe server-side by the T2
+      // idempotency collapse (fix #444), so we don't need a toast to discourage re-sends.
+      // Errors still toast (no silent failure).
       setValue("");
     } catch (error) {
       clientLogger.error("Failed to send daemon instruction:", error);
@@ -812,7 +814,7 @@ export function SendInstructionBox({
         toast.error(await extractError(res, t("instructionError")));
         return;
       }
-      toast.success(t("instructionSent"));
+      // Clearing the composer is the success signal (no success toast — read as noise).
       setValue("");
     } catch (error) {
       clientLogger.error("Failed to send daemon instruction:", error);

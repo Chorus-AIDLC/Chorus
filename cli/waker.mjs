@@ -469,6 +469,30 @@ export class Waker {
       const wasInterrupting = entity && execKey ? this.interrupting.has(execKey) : false;
       const cleanExit = result && result.exitCode === 0;
 
+      // Transcript flush-on-exit (fix #444): the subprocess has exited, but the transcript
+      // hook batches user/assistant text on a short debounce — the LAST batch may still be
+      // buffered right now. Flush it and AWAIT it BEFORE advancing the turn to a terminal
+      // status, so the trailing reply is persisted while the turn is still `running` (the
+      // server attaches transcript to the running turn). Without this, a clean-exiting wake
+      // advanced straight to `ended` and the buffered reply was dropped → the "该回合没有
+      // 保留对话记录" empty turn in #444. Guarded + non-throwing (onSessionEnd swallows its
+      // own failures; this try is belt-and-braces) so a flush error never crashes the wake.
+      // `onSessionEnd` returns `{ relayError }` — the final transcript-upload failure
+      // reason (retry exhausted / non-2xx / network) when the reply was produced but never
+      // reached Chorus, else null. Forwarded onto the terminal turn-advance below so the UI
+      // can say "reply couldn't be uploaded (reason)" rather than the misleading "no reply
+      // received" (fix #444 follow-up). Guarded — a hook failure never crashes the exit path
+      // and simply leaves the annotation absent.
+      let transcriptRelayError = null;
+      if (sessionId) {
+        try {
+          const outcome = await this.hooks?.onSessionEnd?.({ sessionId });
+          transcriptRelayError = outcome?.relayError ?? null;
+        } catch (err) {
+          this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
+        }
+      }
+
       // Turn lifecycle: the subprocess has exited — advance the server turn from
       // `running` to its OUTCOME-AWARE terminal state (fix-daemon-exit-orphan-running-
       // turn): `ended` on a clean exit, `interrupted` with the classified reason
@@ -478,10 +502,12 @@ export class Waker {
       // rejected server-side as invalid_transition). Swallow-safe; never throws.
       if (sessionId && turnAdvancedToRunning) {
         if (cleanExit) {
-          await this.#advanceTurn(sessionId, "ended", entity);
+          // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
+          // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
+          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError);
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason);
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError);
         }
       }
 
@@ -565,11 +591,16 @@ export class Waker {
    * its classified `interruptedReason` (user/crash/shutdown). Never throws into the
    * wake path — a reporter failure is logged and swallowed (the REST reporter
    * already swallows; this is belt-and-braces, matching #report).
+   *
+   * `transcriptRelayError` (fix #444 follow-up) annotates a terminal turn whose transcript
+   * upload finally failed — the reply was produced but never reached Chorus. Forwarded only
+   * when set (a clean relay leaves it null so the field stays absent from the payload).
    * @param {string} sessionId @param {"running"|"ended"|"interrupted"} status
    * @param {{ entityType: string, entityUuid: string }|null} entity
    * @param {"user"|"crash"|"shutdown"|null} [interruptedReason]
+   * @param {string|null} [transcriptRelayError]
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -577,6 +608,7 @@ export class Waker {
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        ...(transcriptRelayError ? { transcriptRelayError } : {}),
       });
     } catch (err) {
       this.logger.warn(

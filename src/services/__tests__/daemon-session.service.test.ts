@@ -69,6 +69,7 @@ import {
   resolveOrCreateSession,
   resolveDirectIdeaUuid,
   createPendingTurn,
+  findReusablePendingInstructionTurn,
   advanceTurn,
   getVisibleSessions,
   getSessionTurns,
@@ -118,6 +119,7 @@ function turnRow(overrides: Partial<Record<string, unknown>> = {}) {
     promptText: null,
     status: "pending",
     interruptedReason: null,
+    relayError: null,
     executionUuid: null,
     startedAt: null,
     endedAt: null,
@@ -461,6 +463,41 @@ describe("createPendingTurn", () => {
   });
 });
 
+// ===== findReusablePendingInstructionTurn (fix #444 idempotency) =====
+describe("findReusablePendingInstructionTurn", () => {
+  it("returns the matching pending human_instruction turn's view when one exists", async () => {
+    const existing = turnRow({
+      seq: 3,
+      trigger: "human_instruction",
+      promptText: "does app/samples exist?",
+      status: "pending",
+    });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(existing);
+
+    const view = await findReusablePendingInstructionTurn(sessionUuid, "does app/samples exist?");
+
+    // Scoped query: same session + pending + human_instruction + exact text, oldest-first.
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: {
+        sessionUuid,
+        status: "pending",
+        trigger: "human_instruction",
+        promptText: "does app/samples exist?",
+      },
+      orderBy: { seq: "asc" },
+    });
+    expect(view).not.toBeNull();
+    expect(view?.uuid).toBe(turnUuid);
+    expect(view?.status).toBe("pending");
+  });
+
+  it("returns null when no matching pending instruction turn exists (different text / already running / none)", async () => {
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(null);
+    const view = await findReusablePendingInstructionTurn(sessionUuid, "a fresh instruction");
+    expect(view).toBeNull();
+  });
+});
+
 // ===== advanceTurn (strict pending → running → ended | interrupted) =====
 describe("advanceTurn", () => {
   it("running → interrupted: persists status + interruptedReason + endedAt, emits turn_status_changed", async () => {
@@ -560,6 +597,61 @@ describe("advanceTurn", () => {
     const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
     expect(data.status).toBe("ended");
     expect(data).not.toHaveProperty("interruptedReason");
+  });
+
+  it("PERSISTS relayError on a → ended edge and surfaces it in the view (fix #444 follow-up)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "ended", relayError: "transcript upload returned 502" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurn(turnUuid, "ended", {
+      relayError: "transcript upload returned 502",
+    });
+    expect(res).toMatchObject({ ok: true });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.relayError).toBe("transcript upload returned 502");
+    // Surfaced in the emitted view so a live viewer patches the row without a refetch.
+    const [, payload] = mockEventBus.emit.mock.calls[0];
+    expect(payload.turn.relayError).toBe("transcript upload returned 502");
+  });
+
+  it("PERSISTS relayError on a → interrupted edge too (a dirty exit can still lose transcript)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "interrupted", interruptedReason: "crash", relayError: "boom" }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurn(turnUuid, "interrupted", {
+      interruptedReason: "crash",
+      relayError: "boom",
+    });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data.relayError).toBe("boom");
+  });
+
+  it("IGNORES relayError on a → running edge (annotation is terminal-only)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "pending",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "running" }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurn(turnUuid, "running", { relayError: "should be ignored" });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("relayError");
   });
 
   it("pending → running: updates status, records startedAt + executionUuid, emits turn_status_changed", async () => {
@@ -1905,6 +1997,24 @@ describe("advanceTurnForWake", () => {
     expect(updateArg.data.status).toBe("interrupted");
     expect(updateArg.data.interruptedReason).toBe("shutdown");
     expect(updateArg.data.endedAt).toBeInstanceOf(Date);
+  });
+
+  it("forwards relayError onto the terminal turn-advance (fix #444 follow-up)", async () => {
+    ownedSessionWithLatestTurn("running");
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "ended",
+      relayError: "transcript upload returned 502",
+    });
+
+    expect(res).toMatchObject({ ok: true });
+    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    expect(updateArg.data.status).toBe("ended");
+    expect(updateArg.data.relayError).toBe("transcript upload returned 502");
   });
 
   it("returns not_found when the agent has no such session (non-disclosure)", async () => {

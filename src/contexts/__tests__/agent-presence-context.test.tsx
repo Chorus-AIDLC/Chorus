@@ -122,6 +122,7 @@ function transcriptEvent(over: Partial<TranscriptEvent> = {}): TranscriptEvent {
       promptText: null,
       status: "running",
       interruptedReason: null,
+      relayError: null,
       executionUuid: null,
       startedAt: null,
       endedAt: null,

@@ -568,6 +568,47 @@ describe("AC1 — instruction lands on the SAME idea-anchored DaemonSession (ses
     expect(store.data.notification[0].entityType).toBe("idea");
     expect(store.data.notification[0].entityUuid).toBe(IDEA);
   });
+
+  // fix #444 — idempotent human_instruction: a retry of the identical instruction while the
+  // first is still UNCONSUMED (pending) must NOT mint a duplicate empty turn (the 2/3/4 bug).
+  it("collapses a re-sent identical instruction to the SAME pending turn (no duplicate 2/3/4); a different text or a started turn still creates a new one", async () => {
+    const { uuid: sessionUuid } = seedIdeaAnchoredSession();
+    const INSTRUCTION = "does app/samples exist? is it repo-managed?";
+
+    // First send → one pending human_instruction turn.
+    const first = await instructionService.sendInstruction(agentAuth, {
+      sessionUuid,
+      instructionText: INSTRUCTION,
+    });
+    expect(store.data.daemonSessionTurn).toHaveLength(1);
+    expect(store.data.daemonSessionTurn[0].status).toBe("pending");
+
+    // Re-send the IDENTICAL text while the first is still pending → reuse, no new turn.
+    const second = await instructionService.sendInstruction(agentAuth, {
+      sessionUuid,
+      instructionText: INSTRUCTION,
+    });
+    expect(store.data.daemonSessionTurn).toHaveLength(1); // still ONE — collapsed
+    expect(second.turn.uuid).toBe(first.turn.uuid); // same turn returned
+
+    // A DIFFERENT instruction still creates a new turn.
+    await instructionService.sendInstruction(agentAuth, {
+      sessionUuid,
+      instructionText: "actually, also check app/lib",
+    });
+    expect(store.data.daemonSessionTurn).toHaveLength(2);
+
+    // Once the original turn has STARTED (running), a re-send of its text is NOT collapsed
+    // — the agent already consumed it, so the user genuinely wants it run again.
+    const firstTurnRow = store.data.daemonSessionTurn.find((t) => t.uuid === first.turn.uuid);
+    if (!firstTurnRow) throw new Error("seed error: first turn row missing");
+    firstTurnRow.status = "running";
+    await instructionService.sendInstruction(agentAuth, {
+      sessionUuid,
+      instructionText: INSTRUCTION,
+    });
+    expect(store.data.daemonSessionTurn).toHaveLength(3);
+  });
 });
 
 // ===== AC2: origin-only delivery — live control event targets ONLY the origin =====

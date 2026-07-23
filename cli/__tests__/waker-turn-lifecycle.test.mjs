@@ -196,6 +196,142 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(warns.join("")).toMatch(/advanceTurn failed/);
   });
 
+  it("flushes the transcript (onSessionEnd) BEFORE advancing the turn to ended (fix #444)", async () => {
+    // The order guarantee: the server attaches transcript to the RUNNING turn, so the
+    // flush must land before running→ended. We record an ordered log of both events.
+    const order = [];
+    const advanceTurn = vi.fn(async ({ status }) => {
+      order.push(`advance:${status}`);
+    });
+    const hooks = {
+      onSessionEnd: vi.fn(async ({ sessionId }) => {
+        order.push(`flush:${sessionId}`);
+      }),
+    };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(hooks.onSessionEnd).toHaveBeenCalledWith({ sessionId: DIRECT_IDEA });
+    // running → flush → ended: the flush is strictly between the running and ended advances.
+    expect(order).toEqual([`advance:running`, `flush:${DIRECT_IDEA}`, "advance:ended"]);
+  });
+
+  it("flushes the transcript before advancing to interrupted on a dirty exit (fix #444)", async () => {
+    const order = [];
+    const advanceTurn = vi.fn(async ({ status }) => {
+      order.push(`advance:${status}`);
+    });
+    const hooks = { onSessionEnd: vi.fn(async () => order.push("flush")) };
+    const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(2) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(order).toEqual(["advance:running", "flush", "advance:interrupted"]);
+  });
+
+  it("flushes the transcript during shutdown, before interrupted(shutdown) — so daemon.stop()'s queue.drain covers the flush (fix #444 AC4)", async () => {
+    // daemon.stop() interrupts each wake then awaits queue.drain(...). The flush rides the
+    // SAME exit path as the turn-advance report, so draining the wake drains the flush too.
+    // Here we prove the flush happens (before the shutdown terminal advance) when the waker
+    // is shutting down and the subprocess is killed (dirty exit).
+    const order = [];
+    const advanceTurn = vi.fn(async ({ status, interruptedReason }) => {
+      order.push(`advance:${status}${interruptedReason ? `(${interruptedReason})` : ""}`);
+    });
+    const hooks = { onSessionEnd: vi.fn(async () => order.push("flush")) };
+    const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(130) });
+    waker.shuttingDown = true;
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(hooks.onSessionEnd).toHaveBeenCalledWith({ sessionId: DIRECT_IDEA });
+    expect(order).toEqual(["advance:running", "flush", "advance:interrupted(shutdown)"]);
+  });
+
+  it("a throwing onSessionEnd never crashes the wake and still advances the turn (fix #444)", async () => {
+    const warns = [];
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = {
+      onSessionEnd: vi.fn(async () => {
+        throw new Error("flush boom");
+      }),
+    };
+    const { waker } = makeWaker({
+      advanceTurn,
+      hooks,
+      logger: { ...silent, warn: (m) => warns.push(m) },
+    });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await expect(waker.wake(TASK_NOTIF, resolved.key, resolved)).resolves.toBeUndefined();
+    // The flush failure is surfaced, and the turn still reached its terminal state.
+    expect(warns.join("")).toMatch(/onSessionEnd flush failed/);
+    expect(advanceTurn.mock.calls.map((c) => c[0].status)).toEqual(["running", "ended"]);
+  });
+
+  it("threads onSessionEnd's relayError onto the ended turn-advance (fix #444 follow-up)", async () => {
+    // A clean exit whose transcript upload finally failed: the reply ran but never landed.
+    // The waker must forward the KNOWN relay error onto the (still-clean) ended advance.
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = {
+      onSessionEnd: vi.fn(async () => ({ relayError: "transcript upload returned 502" })),
+    };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    expect(endedCall.transcriptRelayError).toBe("transcript upload returned 502");
+  });
+
+  it("threads relayError onto the interrupted edge too (a dirty exit can still lose transcript)", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = {
+      onSessionEnd: vi.fn(async () => ({ relayError: "transcript upload returned 502" })),
+    };
+    const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(2) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const terminal = advanceTurn.mock.calls.find((c) => c[0].status === "interrupted")[0];
+    expect(terminal.transcriptRelayError).toBe("transcript upload returned 502");
+  });
+
+  it("omits transcriptRelayError from the turn-advance when the relay succeeded (null)", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null })) };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    // A clean relay leaves the field absent from the payload (not sent as null noise).
+    expect(endedCall).not.toHaveProperty("transcriptRelayError");
+  });
+
+  it("tolerates a legacy onSessionEnd that returns undefined (no relay error surfaced)", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = { onSessionEnd: vi.fn(async () => undefined) };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    expect(endedCall).not.toHaveProperty("transcriptRelayError");
+  });
+
+  it("does not attempt a transcript flush when the subprocess never spawned (no sessionId turn ran)", async () => {
+    // A never-spawned wake leaves the turn pending; onSessionEnd is keyed on sessionId,
+    // which is still resolved, so the flush is harmlessly a no-op batch. Assert it does
+    // not throw and no terminal advance happens.
+    const hooks = { onSessionEnd: vi.fn(async () => {}) };
+    const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatNeverSpawns(), hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    // No running turn ⇒ no ended; the flush still runs (best-effort) but advances nothing.
+    expect(advanceTurn).not.toHaveBeenCalled();
+  });
+
   it("defaults to a no-op-with-log reporter when none is injected (existing Wakers keep working)", async () => {
     const infos = [];
     // Build a Waker WITHOUT advanceTurn — the default no-op-with-log must be used.

@@ -142,6 +142,42 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(arg.interruptedReason).toBe("shutdown");
   });
 
+  it("passes transcriptRelayError through as relayError on a terminal edge (fix #444 follow-up)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        transcriptRelayError: "transcript upload returned 502",
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.status).toBe("ended");
+    expect(arg.relayError).toBe("transcript upload returned 502");
+  });
+
+  it("omits relayError (undefined) when the body carries no transcriptRelayError", async () => {
+    await POST(postRequest({ connectionUuid, sessionId, status: "ended" }), emptyCtx);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.relayError).toBeUndefined();
+  });
+
+  it("rejects a transcriptRelayError over the length bound (422)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        transcriptRelayError: "x".repeat(501),
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
   it("rejects interruptedReason=offline (server-reconcile verdict, not daemon-reportable) at the zod boundary", async () => {
     const res = await POST(
       postRequest({ connectionUuid, sessionId, status: "interrupted", interruptedReason: "offline" }),

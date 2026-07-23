@@ -434,27 +434,276 @@ describe("createTranscriptUploadHooks — warn-not-throw (fire-and-forget)", () 
     expect(warns.join("")).toMatch(/transcript upload returned 404/);
   });
 
-  it("an upload failure does not wedge the chain — a later batch still posts", async () => {
+  it("a permanently failing batch does not wedge the chain — a later batch still posts", async () => {
     let call = 0;
     const posts = [];
+    // First batch fails EVERY retry attempt (3), so it is dropped; later calls succeed.
     const fetchImpl = vi.fn(async (url, init) => {
       call += 1;
-      if (call === 1) throw new Error("boom");
+      if (call <= 3) throw new Error("boom");
       posts.push(JSON.parse(init.body));
       return { ok: true, status: 200, async json() { return {}; } };
     });
-    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    // retryBackoffMs: 0 keeps the test fast under fake timers.
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      retryBackoffMs: 0,
+    });
 
     await hooks.onSessionStart({ sessionId: SID, isNew: true });
     await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
     await vi.runAllTimersAsync();
-    // Second turn/batch after the first failed.
+    // Second turn/batch after the first was dropped — the chain must not be wedged.
     await hooks.onTranscriptMessage({ sessionId: SID, message: USER_TEXT_STRING });
     await vi.runAllTimersAsync();
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // batch 1: 3 failed attempts (then dropped). batch 2: 1 successful attempt.
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(posts).toHaveLength(1);
     expect(posts[0].messages).toEqual([{ role: "user", text: "Please read /etc/hostname." }]);
+  });
+});
+
+describe("createTranscriptUploadHooks — flush-on-exit (onSessionEnd, fix #444)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("onSessionEnd flushes a still-buffered batch and awaits it (no lost trailing transcript)", async () => {
+    const { posts, fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      batchDelayMs: 50,
+    });
+
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    // A trailing reply arrives; the subprocess then exits WITHIN the debounce window
+    // (nothing posted yet).
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    // The waker calls onSessionEnd BEFORE advancing the turn to ended. Awaiting it must
+    // drain the buffered batch — without needing the debounce timer to fire.
+    await hooks.onSessionEnd({ sessionId: SID });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toEqual({
+      sessionId: SID,
+      messages: [{ role: "assistant", text: "The hostname is `ip-172`." }],
+    });
+  });
+
+  it("onSessionEnd cancels the pending debounce timer (no duplicate POST when timers later run)", async () => {
+    const { posts, fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      batchDelayMs: 50,
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await hooks.onSessionEnd({ sessionId: SID });
+    // Any leftover debounce timer must have been cancelled by the flush.
+    await vi.runAllTimersAsync();
+    expect(posts).toHaveLength(1);
+  });
+
+  it("onSessionEnd re-affirms the session id when the stream never set one", async () => {
+    const { posts, fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    // No onSessionStart, and the message carries no session id — but the waker knows it.
+    await hooks.onTranscriptMessage({ message: ASSISTANT_TEXT });
+    await hooks.onSessionEnd({ sessionId: SID });
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body.sessionId).toBe(SID);
+  });
+
+  it("onSessionEnd is a no-op (no POST) when nothing is buffered", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    // Nothing buffered → no upload happened → no relay error to surface.
+    await expect(hooks.onSessionEnd({ sessionId: SID })).resolves.toEqual({ relayError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("onSessionEnd never throws even when the flush POST fails", async () => {
+    const warns = [];
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      fetchImpl,
+      retryBackoffMs: 0,
+      // Resolve the backoff synchronously — under fake timers a setTimeout-backed sleep
+      // would never fire while we await the flush chain directly (no runAllTimers here).
+      sleepImpl: () => Promise.resolve(),
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    // Never throws; resolves with the relay error (a network cause) rather than crashing.
+    const outcome = await hooks.onSessionEnd({ sessionId: SID });
+    expect(outcome.relayError).toMatch(/transcript upload request failed/i);
+    // The failure is surfaced (no silent errors) but never crashes the wake exit path.
+    expect(warns.join("")).toMatch(/transcript upload/i);
+  });
+});
+
+describe("createTranscriptUploadHooks — bounded upload retry (fix #444)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("retries a transient failure and then succeeds (no transcript lost)", async () => {
+    let call = 0;
+    const posts = [];
+    // First attempt returns a transient 502; the retry succeeds.
+    const fetchImpl = vi.fn(async (url, init) => {
+      call += 1;
+      if (call === 1) return { ok: false, status: 502, async json() { return {}; } };
+      posts.push(JSON.parse(init.body));
+      return { ok: true, status: 200, async json() { return {}; } };
+    });
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      retryBackoffMs: 0,
+      sleepImpl: () => Promise.resolve(),
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await hooks.onSessionEnd({ sessionId: SID });
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // 1 failed + 1 retry that succeeded
+    expect(posts).toHaveLength(1);
+    expect(posts[0].messages).toEqual([{ role: "assistant", text: "The hostname is `ip-172`." }]);
+  });
+
+  it("gives up after the attempt cap and drops with a loud warn naming the message count", async () => {
+    const warns = [];
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 502, async json() { return {}; } }));
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      fetchImpl,
+      maxUploadAttempts: 3,
+      retryBackoffMs: 0,
+      sleepImpl: () => Promise.resolve(),
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: USER_TEXT_STRING });
+    await hooks.onSessionEnd({ sessionId: SID });
+    expect(fetchImpl).toHaveBeenCalledTimes(3); // exhausted the 3-attempt budget
+    // Dropped loudly, naming how many messages were lost (the batch had 2).
+    expect(warns.join("")).toMatch(/gave up after 3 attempt\(s\).*dropping 2 message\(s\)/i);
+  });
+
+  it("maxUploadAttempts: 1 disables retry (single-shot)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 502, async json() { return {}; } }));
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      maxUploadAttempts: 1,
+      retryBackoffMs: 0,
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await hooks.onSessionEnd({ sessionId: SID });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createTranscriptUploadHooks — onSessionEnd surfaces the relay error (fix #444 follow-up)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("returns the final failure reason (non-2xx status) after retries are exhausted", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 502, async json() { return {}; } }));
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      maxUploadAttempts: 3,
+      retryBackoffMs: 0,
+      sleepImpl: () => Promise.resolve(),
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    const { relayError } = await hooks.onSessionEnd({ sessionId: SID });
+    // The client's structured error carries the status so the UI can name the cause.
+    expect(relayError).toMatch(/transcript upload returned 502/i);
+  });
+
+  it("returns null when the upload succeeds (no false relay error)", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    const { relayError } = await hooks.onSessionEnd({ sessionId: SID });
+    expect(relayError).toBeNull();
+  });
+
+  it("a later successful batch CLEARS an earlier transient failure (not surfaced)", async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      // Attempt 1 fails, its retry (attempt 2) succeeds → the reply DID land.
+      if (call === 1) return { ok: false, status: 502, async json() { return {}; } };
+      return { ok: true, status: 200, async json() { return {}; } };
+    });
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      maxUploadAttempts: 3,
+      retryBackoffMs: 0,
+      sleepImpl: () => Promise.resolve(),
+    });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    const { relayError } = await hooks.onSessionEnd({ sessionId: SID });
+    expect(relayError).toBeNull();
+  });
+
+  it("onSessionStart resets a relay error carried from a prior session", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 502, async json() { return {}; } }));
+    const hooks = createTranscriptUploadHooks({
+      url: "https://c",
+      apiKey: "k",
+      logger: silent,
+      fetchImpl,
+      maxUploadAttempts: 1,
+      retryBackoffMs: 0,
+    });
+    // First session fails.
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    expect((await hooks.onSessionEnd({ sessionId: SID })).relayError).toMatch(/502/);
+    // A fresh session that produced NO transcript must not inherit the prior error.
+    await hooks.onSessionStart({ sessionId: "other-session", isNew: true });
+    expect((await hooks.onSessionEnd({ sessionId: "other-session" })).relayError).toBeNull();
   });
 });
 
@@ -465,6 +714,7 @@ describe("mergeUploadHooks — compose execution + transcript concerns", () => {
       ...createNoopUploadHooks(),
       onSessionStart: async () => calls.push("ts:start"),
       onTranscriptMessage: async () => calls.push("ts:msg"),
+      onSessionEnd: async () => calls.push("ts:end"),
     };
     const execution = {
       ...createNoopUploadHooks(),
@@ -474,9 +724,10 @@ describe("mergeUploadHooks — compose execution + transcript concerns", () => {
 
     await merged.onSessionStart({ sessionId: SID });
     await merged.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await merged.onSessionEnd({ sessionId: SID });
     merged.onExecutionChange();
 
-    expect(calls).toEqual(["ts:start", "ts:msg", "ex:change"]);
+    expect(calls).toEqual(["ts:start", "ts:msg", "ts:end", "ex:change"]);
   });
 
   it("a throwing delegate never breaks the others or the caller", async () => {
