@@ -42,6 +42,17 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  * @property {(info: { host: string, agentUuid?: string }) => Promise<void>} onConnect
  * @property {(info: { rootIdeaKey: string, sessionId: string, isNew: boolean }) => Promise<void>} onSessionStart
  * @property {(info: { rootIdeaKey: string, sessionId: string, message: any }) => Promise<void>} onTranscriptMessage
+ * @property {(info: { sessionId: string }) => Promise<{ relayError: string|null }>} [onSessionEnd]
+ *   Fire-and-forget + await-able: the wake's subprocess has exited. FLUSH any buffered
+ *   (debounced) transcript for the session NOW and await it, so a turn's trailing
+ *   user/assistant text is persisted BEFORE the waker advances the turn to a terminal
+ *   status (fix #444 — transcript-relay flush-on-exit). Best-effort + non-throwing.
+ *   RETURNS `{ relayError }`: the final terminal upload failure reason for this session
+ *   (retry exhausted / non-2xx / network) when the reply was produced but never reached
+ *   Chorus, else `null` (a later success clears it). The waker forwards this onto the
+ *   exit-path turn-advance so the UI can say "reply couldn't be uploaded (reason)" rather
+ *   than the misleading "no reply received". No-op (`{ relayError: null }`) in the noop
+ *   hooks and in the execution-only hooks.
  * @property {() => void} [onExecutionChange]  Fire-and-forget: upload a fresh
  *   execution snapshot. The waker calls this on every lifecycle transition
  *   (enqueue / wake start / wake finish). No-op in the noop hooks.
@@ -58,6 +69,9 @@ export function createNoopUploadHooks() {
     async onConnect() {},
     async onSessionStart() {},
     async onTranscriptMessage() {},
+    async onSessionEnd() {
+      return { relayError: null };
+    },
     onExecutionChange() {},
   };
 }
@@ -87,6 +101,7 @@ export function mergeUploadHooks(...args) {
       typeof a.onConnect === "function" ||
       typeof a.onSessionStart === "function" ||
       typeof a.onTranscriptMessage === "function" ||
+      typeof a.onSessionEnd === "function" ||
       typeof a.onExecutionChange === "function";
     if (!looksLikeHooks && a.logger) {
       logger = a.logger;
@@ -96,23 +111,43 @@ export function mergeUploadHooks(...args) {
   }
 
   async function fanOutAsync(name, info) {
-    await Promise.all(
+    const results = await Promise.all(
       sets.map(async (s) => {
         const fn = s[name];
-        if (typeof fn !== "function") return;
+        if (typeof fn !== "function") return undefined;
         try {
-          await fn.call(s, info);
+          return await fn.call(s, info);
         } catch (err) {
           logger.warn(`[Chorus] ${name} hook failed: ${err}`);
+          return undefined;
         }
       })
     );
+    return results;
   }
 
   return {
-    onConnect: (info) => fanOutAsync("onConnect", info),
-    onSessionStart: (info) => fanOutAsync("onSessionStart", info),
-    onTranscriptMessage: (info) => fanOutAsync("onTranscriptMessage", info),
+    // The void-returning hooks discard the internal results array (they resolve to
+    // `undefined`, matching the single-hook contract — nothing downstream reads them).
+    onConnect: async (info) => {
+      await fanOutAsync("onConnect", info);
+    },
+    onSessionStart: async (info) => {
+      await fanOutAsync("onSessionStart", info);
+    },
+    onTranscriptMessage: async (info) => {
+      await fanOutAsync("onTranscriptMessage", info);
+    },
+    // Fan out to every set, then AGGREGATE the transcript relay outcome: the first
+    // set that reports a non-null `relayError` wins (only the transcript hook produces
+    // one; others resolve `{ relayError: null }` or undefined). The waker forwards this
+    // onto the exit-path turn-advance (fix #444 follow-up — surface a KNOWN relay drop).
+    onSessionEnd: async (info) => {
+      const results = await fanOutAsync("onSessionEnd", info);
+      const relayError =
+        results.find((r) => r && r.relayError)?.relayError ?? null;
+      return { relayError };
+    },
     onExecutionChange: () => {
       for (const s of sets) {
         if (typeof s.onExecutionChange !== "function") continue;
@@ -286,6 +321,15 @@ export function extractTranscriptText(obj) {
  *                                 (default 50ms). 0 → flush on the next microtask.
  *   setTimeoutImpl?: typeof setTimeout,  Injectable timer for tests.
  *   clearTimeoutImpl?: typeof clearTimeout,
+ *   maxUploadAttempts?: number,   Bounded retry for a failed transcript POST (transient
+ *                                 network error / non-2xx). Total attempts including the
+ *                                 first (default 3). ≤1 disables retry. fix #444 — a
+ *                                 transient Docker-proxy 502 must not silently drop a turn's
+ *                                 transcript.
+ *   retryBackoffMs?: number,      Base backoff between attempts (default 200ms); the Nth
+ *                                 retry waits `retryBackoffMs * N`.
+ *   sleepImpl?: (ms: number) => Promise<void>,  Injectable backoff sleep for tests (default
+ *                                 a real setTimeout-based delay).
  * }} opts
  * @returns {UploadHooks}
  */
@@ -294,6 +338,13 @@ export function createTranscriptUploadHooks(opts) {
   const batchDelayMs = opts.batchDelayMs ?? 50;
   const setTimeoutImpl = opts.setTimeoutImpl ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutImpl ?? clearTimeout;
+  // Bounded retry for a failed transcript POST (fix #444 — no more silent drops on a
+  // transient non-2xx / network blip). Retry lives HERE, in the host-side hook, NOT in
+  // the shared daemon-rest-client (which stays a single-shot transport by contract).
+  const maxUploadAttempts = Math.max(1, opts.maxUploadAttempts ?? 3);
+  const retryBackoffMs = opts.retryBackoffMs ?? 200;
+  const sleepImpl =
+    opts.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeoutImpl(resolve, ms)));
   // Transport via the shared client (transcript has no connectionUuid concern — the agent
   // key + sessionId resolve the turn server-side, so getConnectionUuid is unused here).
   const client = createDaemonRestClient({
@@ -312,15 +363,50 @@ export function createTranscriptUploadHooks(opts) {
   let timer = null;
   // Serialize POSTs so an earlier batch can never land after a later one on the wire.
   let chain = Promise.resolve();
+  // The final upload failure reason for the CURRENT session's most recent batch, or null
+  // when the last upload succeeded/was skipped (fix #444 follow-up). `onSessionEnd`
+  // returns this so the waker can annotate the terminal turn with WHY its transcript is
+  // missing. Reset per session in `onSessionStart`; set only when a batch exhausts its
+  // retry budget (a transient failure that a later batch recovers is NOT surfaced).
+  let lastRelayError = null;
 
-  /** POST one batch for a session via the shared client. Never throws. */
+  /**
+   * POST one batch for a session via the shared client, with bounded retry. Never throws.
+   *
+   * The client POSTs `{ sessionId, messages }` to /api/daemon/transcript with Bearer auth
+   * and returns a structured `{ ok }` result (it logs its own request-failed / non-2xx /
+   * success lines). A transient failure (`ok === false`) is retried up to
+   * `maxUploadAttempts` total with an increasing backoff; on the final failure the batch
+   * is dropped with ONE loud warn naming the lost message count (fix #444 — a Docker-proxy
+   * 502 previously dropped the turn's transcript silently on the first try). A `skipped`
+   * result (empty batch / no session) is a success no-op, never retried.
+   */
   async function upload(sessionId, messages) {
     if (!sessionId || messages.length === 0) return;
-    // The client POSTs `{ sessionId, messages }` to /api/daemon/transcript with Bearer
-    // auth and logs "transcript upload request failed" / "transcript upload returned N"
-    // on failure (no-silent-errors) and "transcript uploaded (N msg) ..." on success. We
-    // swallow the structured result so a failed upload never breaks the wake path.
-    await client.transcript({ sessionId, messages });
+    for (let attempt = 1; attempt <= maxUploadAttempts; attempt += 1) {
+      const result = await client.transcript({ sessionId, messages });
+      // ok (2xx) or an intentional skip → done. A success CLEARS any prior relay error
+      // (a transient failure that a later batch recovered must not be surfaced as a drop).
+      if (!result || result.ok || result.skipped) {
+        lastRelayError = null;
+        return;
+      }
+      if (attempt < maxUploadAttempts) {
+        // Wait then retry — the client already logged the failure cause for this attempt.
+        await sleepImpl(retryBackoffMs * attempt);
+        continue;
+      }
+      // Exhausted the budget: drop LOUDLY (no silent errors), naming what was lost, AND
+      // record the reason so `onSessionEnd` can surface it on the turn (fix #444 follow-up).
+      // Prefer the client's structured `error` (e.g. "transcript upload returned 502");
+      // fall back to a generic phrasing so the field is never an empty string.
+      lastRelayError =
+        result.error ?? `transcript upload failed for session ${sessionId}`;
+      logger.warn(
+        `[Chorus] transcript upload gave up after ${maxUploadAttempts} attempt(s) — ` +
+          `dropping ${messages.length} message(s) for session ${sessionId}`,
+      );
+    }
   }
 
   /** Drain `pending` for `currentSessionId` into a serialized fire-and-forget POST. */
@@ -366,6 +452,9 @@ export function createTranscriptUploadHooks(opts) {
       // so its messages don't get re-tagged to the new session.
       if (currentSessionId && currentSessionId !== sessionId) flush();
       currentSessionId = sessionId || currentSessionId || null;
+      // Fresh wake → clear any relay error carried from a prior session's uploads so it
+      // can't leak onto this turn (fix #444 follow-up).
+      lastRelayError = null;
     },
     /**
      * One stream-json object. Keep only user/assistant text; queue it for a batched
@@ -386,6 +475,40 @@ export function createTranscriptUploadHooks(opts) {
       if (!extracted) return; // not a keepable conversation text message
       pending.push(extracted);
       scheduleFlush();
+    },
+    /**
+     * The wake's subprocess has exited (fix #444 — flush-on-exit). Cancel the debounce
+     * timer, drain the buffered batch onto the serialized chain NOW, and AWAIT the chain
+     * so the trailing transcript is persisted BEFORE the waker advances the turn to a
+     * terminal status. Awaiting matters: the server attaches transcript to the session's
+     * `running` turn, so the flush must land while the turn is still `running`. Best-effort
+     * + non-throwing — a flush failure is already logged inside `upload`, and we swallow
+     * anything else so a flush error never crashes the wake exit path.
+     *
+     * `sessionId` (from the caller — the waker's session anchor) re-affirms the batch's
+     * attribution in case no stream line ever set `currentSessionId` (e.g. a run that
+     * produced only a trailing message right before exit).
+     *
+     * Returns `{ relayError }`: the final terminal upload failure reason (retry exhausted)
+     * after the flush settles, or null when every batch landed. The waker forwards it onto
+     * the exit-path turn-advance so a KNOWN relay drop is surfaced on the turn (fix #444
+     * follow-up) rather than misread as "no reply received".
+     * @param {{ sessionId?: string }} info
+     * @returns {Promise<{ relayError: string|null }>}
+     */
+    async onSessionEnd({ sessionId } = {}) {
+      if (sessionId) currentSessionId = sessionId;
+      try {
+        flush();
+        // Await the serialized chain so all queued POSTs (this batch + any still in flight)
+        // settle before we return. `chain` never rejects (upload swallows), but guard anyway.
+        await chain;
+      } catch (err) {
+        logger.warn(`[Chorus] transcript flush on session end failed: ${err}`);
+      }
+      // `lastRelayError` reflects the outcome of the FINAL batch's upload (set on retry
+      // exhaustion, cleared on success) — read it AFTER the chain settles.
+      return { relayError: lastRelayError };
     },
     onExecutionChange() {},
   };

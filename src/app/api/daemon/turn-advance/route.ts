@@ -49,6 +49,12 @@ const bodySchema = z
     startedAt: z.coerce.date().nullish(),
     endedAt: z.coerce.date().nullish(),
     interruptedReason: z.enum([...DAEMON_REPORTABLE_INTERRUPT_REASONS]).nullish(),
+    // Transcript-relay failure annotation (fix #444 follow-up): the daemon KNEW this turn's
+    // transcript upload finally failed (retry exhausted / non-2xx / network) even though the
+    // wake exited. Free-text cause (e.g. "transcript upload returned 502"); bounded so a
+    // malformed/huge value can't bloat the row. Meaningful only on a terminal edge — the
+    // service ignores it on → running.
+    transcriptRelayError: z.string().min(1).max(500).nullish(),
   })
   .refine((b) => b.status === "interrupted" || b.interruptedReason == null, {
     message: "interruptedReason is only valid with status=interrupted",
@@ -86,6 +92,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     startedAt,
     endedAt,
     interruptedReason,
+    transcriptRelayError,
   } = parsed.data;
 
   // Ownership fence: the connection must belong to the authenticated agent within its
@@ -108,6 +115,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     startedAt: startedAt ?? undefined,
     endedAt: endedAt ?? undefined,
     interruptedReason: interruptedReason ?? undefined,
+    relayError: transcriptRelayError ?? undefined,
   });
 
   if (!result.ok) {

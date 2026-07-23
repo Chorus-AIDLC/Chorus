@@ -75,6 +75,8 @@ export function TurnBand({
   // stopped — structurally quiet like `ended` (no pulse, no spinner, no timer) but
   // labeled distinctly so an abnormal termination never masquerades as a clean end.
   const interrupted = turn.status === "interrupted";
+  // A turn is TERMINAL once it has ended or been interrupted — no more output will come.
+  const terminal = turn.status === "ended" || interrupted;
 
   // Live status label (pending → Queued, running → Running, interrupted →
   // Interrupted, ended → Ended). One generic "Interrupted" label covers every
@@ -101,6 +103,29 @@ export function TurnBand({
   // (proposal/document also route through execHref but read as task-shaped work).
   const linkLabel =
     linkedExecution?.entityType === "idea" ? t("openIdea") : t("openTask");
+
+  // fix #444 — a terminal `human_instruction` turn that produced NO visible messages is
+  // the "该回合没有保留对话记录" dead-end the user hit. Present it honestly as "ended
+  // without a reply" (the user can simply re-ask in the reply box below). Autonomous turns
+  // (no promptText) legitimately may produce only tool calls, so they keep the neutral
+  // placeholder.
+  const promptText = turn.promptText?.trim() ?? "";
+  const isEmptyTerminalInstruction =
+    terminal &&
+    turn.trigger === "human_instruction" &&
+    visibleMessages.length === 0 &&
+    promptText.length > 0;
+
+  // fix #444 follow-up — the daemon reported that THIS turn's transcript upload finally
+  // failed: the agent DID reply, but it never reached Chorus (a Docker-proxy 502, a
+  // network blip, retry exhausted). This is a KNOWN cause, distinct from "the agent
+  // produced nothing" — so when it's set on a terminal turn that shows no messages, we
+  // say so honestly (with the reason) instead of the misleading "no reply received".
+  // Guarded on `terminal` + empty so a turn that DID relay some text (a partial drop is
+  // out of scope) still renders its messages normally.
+  const relayError = turn.relayError?.trim() ?? "";
+  const hasRelayError =
+    terminal && visibleMessages.length === 0 && relayError.length > 0;
 
   return (
     <div className="flex gap-3">
@@ -190,6 +215,29 @@ export function TurnBand({
             visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
+          ) : hasRelayError ? (
+            // Honest KNOWN-relay-drop state (fix #444 follow-up): the agent replied but the
+            // reply could not be uploaded. Same warning-muted band; the localized
+            // explanation plus the daemon's raw reason shown DIRECTLY beneath it (no hover,
+            // no retry — the already-produced reply can't be recovered, so we simply report
+            // the cause so it never masquerades as "the agent said nothing").
+            <div className="flex flex-col gap-1 rounded-lg border border-[#EADFCB] dark:border-[#3a3222] bg-[#FBF5EA] dark:bg-[#221d14] px-3 py-2.5">
+              <p className="text-[12px] leading-relaxed text-[#8A6D3B] dark:text-[#D9B473]">
+                {t("turnRelayFailed")}
+              </p>
+              <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[#A98B54] dark:text-[#B89355]">
+                {relayError}
+              </p>
+            </div>
+          ) : isEmptyTerminalInstruction ? (
+            // Honest empty-terminal instruction state (fix #444): the turn ended without a
+            // reply. Warning-muted tint (matches the interrupted styling); it simply reads
+            // honestly — no retry button (the user can re-ask in the reply box below).
+            <div className="flex flex-col gap-2 rounded-lg border border-[#EADFCB] dark:border-[#3a3222] bg-[#FBF5EA] dark:bg-[#221d14] px-3 py-2.5">
+              <p className="text-[12px] leading-relaxed text-[#8A6D3B] dark:text-[#D9B473]">
+                {t("turnEndedNoReply")}
+              </p>
+            </div>
           ) : (
             <p className="text-[12px] italic text-muted-foreground">
               {t("turnNoMessages")}

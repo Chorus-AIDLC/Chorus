@@ -55,6 +55,7 @@ import { prisma } from "@/lib/prisma";
 import {
   resolveOrCreateSession,
   createPendingTurn,
+  findReusablePendingInstructionTurn,
   resolveDirectIdeaUuid,
   type TurnTrigger,
   type TurnView,
@@ -788,11 +789,24 @@ export async function createTurnAndResolveTarget(
     const promptText =
       trigger === "human_instruction" ? ctx.instructionText ?? null : null;
 
-    const turn = await createPendingTurn({
-      sessionUuid: session.uuid,
-      trigger,
-      promptText,
-    });
+    // Idempotency (fix #444 — duplicate empty turns 2/3/4): a `human_instruction` whose
+    // identical text already has an UNCONSUMED (`pending`) turn on this session is a user
+    // re-send (they saw no reply and hit send again). Reuse that turn instead of minting a
+    // duplicate — the re-issued deliver_turn ping below still nudges the daemon. Scoped to
+    // pending + human_instruction + exact text, so a distinct instruction, or a re-send
+    // after the prior turn has already started (`running`), still creates a new turn.
+    // Autonomous triggers (promptText === null) skip this entirely.
+    let turn =
+      trigger === "human_instruction" && promptText
+        ? await findReusablePendingInstructionTurn(session.uuid, promptText)
+        : null;
+    if (!turn) {
+      turn = await createPendingTurn({
+        sessionUuid: session.uuid,
+        trigger,
+        promptText,
+      });
+    }
 
     // (7) DIRECTED wake: deliver to ONLY the resolved target via the human_instruction
     // keystone — a `deliver_turn` control ping on control:{connectionUuid} carrying the

@@ -56,6 +56,7 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
     promptText: null,
     status: "ended",
     interruptedReason: null,
+    relayError: null,
     executionUuid: null,
     startedAt: "2026-07-04T03:00:00.000Z",
     endedAt: "2026-07-04T03:05:00.000Z",
@@ -111,5 +112,201 @@ describe("TurnBand interrupted presentation", () => {
     renderBand(turn({ status: "interrupted", interruptedReason: null }));
     const badge = screen.getByText("Interrupted");
     expect(badge.closest("[title]")).toBeNull();
+  });
+});
+
+describe("TurnBand empty-terminal instruction (fix #444)", () => {
+  const emptyInstruction = (overrides: Partial<TurnWithMessagesView> = {}) =>
+    turn({
+      trigger: "human_instruction",
+      promptText: "does app/samples exist?",
+      status: "ended",
+      messages: [],
+      ...overrides,
+    });
+
+  it("renders the 'ended without a reply' band (no retry button) for an empty terminal human_instruction turn", () => {
+    render(<TurnBand turn={emptyInstruction()} agentName="Alpha" linkedExecution={null} />);
+    expect(screen.getByText("No reply was received from the agent on this turn.")).toBeTruthy();
+    // The neutral placeholder is NOT shown for this case, and there is no retry button
+    // (the user simply re-asks in the reply box below).
+    expect(screen.queryByText("No transcript retained for this turn.")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  });
+
+  it("also covers an INTERRUPTED empty human_instruction turn (terminal)", () => {
+    render(
+      <TurnBand
+        turn={emptyInstruction({ status: "interrupted", interruptedReason: "offline" })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.getByText("No reply was received from the agent on this turn.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  });
+
+  it("keeps the neutral placeholder for an empty AUTONOMOUS turn", () => {
+    render(
+      <TurnBand
+        turn={turn({ trigger: "task_assigned", promptText: null, status: "ended", messages: [] })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.getByText("No transcript retained for this turn.")).toBeTruthy();
+    expect(screen.queryByText("No reply was received from the agent on this turn.")).toBeNull();
+  });
+
+  it("does NOT show the no-reply band for a still-RUNNING instruction turn (not terminal)", () => {
+    render(
+      <TurnBand
+        turn={emptyInstruction({ status: "running", endedAt: null })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.queryByText("No reply was received from the agent on this turn.")).toBeNull();
+  });
+});
+
+describe("TurnBand transcript-relay failure (fix #444 follow-up)", () => {
+  const RELAY_MSG = "The agent replied, but the reply could not be uploaded to Chorus:";
+  const NO_REPLY_MSG = "No reply was received from the agent on this turn.";
+
+  it("shows the 'reply couldn't be uploaded' band (not 'no reply') when relayError is set", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "does app/samples exist?",
+          status: "ended",
+          relayError: "transcript upload returned 502",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.getByText(RELAY_MSG)).toBeTruthy();
+    // The KNOWN-cause copy REPLACES the misleading "no reply received" wording.
+    expect(screen.queryByText(NO_REPLY_MSG)).toBeNull();
+  });
+
+  it("shows the raw daemon reason DIRECTLY (inline, no hover)", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "p",
+          status: "ended",
+          relayError: "transcript upload returned 502",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    // The error text is rendered as its own visible line, not tucked behind a title attr.
+    expect(screen.getByText("transcript upload returned 502")).toBeTruthy();
+  });
+
+  it("never offers a Retry for a relay-drop (the produced reply can't be recovered)", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "does app/samples exist?",
+          status: "ended",
+          relayError: "network error",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  });
+
+  it("covers a relay-drop on an INTERRUPTED terminal turn too", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "p",
+          status: "interrupted",
+          interruptedReason: "crash",
+          relayError: "transcript upload returned 502",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.getByText(RELAY_MSG)).toBeTruthy();
+    expect(screen.getByText("transcript upload returned 502")).toBeTruthy();
+  });
+
+  it("shows the relay-drop band for an autonomous turn too (cause reported, no retry)", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "task_assigned",
+          promptText: null,
+          status: "ended",
+          relayError: "transcript upload returned 502",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.getByText(RELAY_MSG)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  });
+
+  it("does NOT show the relay band when the turn actually has messages (partial drop out of scope)", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "p",
+          status: "ended",
+          relayError: "transcript upload returned 502",
+          messages: [
+            {
+              uuid: "m1",
+              turnUuid: "t1",
+              role: "assistant",
+              text: "partial reply that did land",
+              seq: 1,
+              createdAt: "2026-07-04T03:01:00.000Z",
+            },
+          ],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.queryByText(RELAY_MSG)).toBeNull();
+    expect(screen.getByText("partial reply that did land")).toBeTruthy();
+  });
+
+  it("does NOT show the relay band on a still-RUNNING turn (not terminal)", () => {
+    render(
+      <TurnBand
+        turn={turn({
+          trigger: "human_instruction",
+          promptText: "p",
+          status: "running",
+          endedAt: null,
+          relayError: "transcript upload returned 502",
+          messages: [],
+        })}
+        agentName="Alpha"
+        linkedExecution={null}
+      />,
+    );
+    expect(screen.queryByText(RELAY_MSG)).toBeNull();
   });
 });

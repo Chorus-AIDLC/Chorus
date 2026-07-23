@@ -139,6 +139,11 @@ export interface TurnView {
   promptText: string | null;
   status: string; // pending | running | ended | interrupted
   interruptedReason: string | null; // user | crash | shutdown | offline; set iff interrupted
+  // Transcript-relay failure annotation (fix #444 follow-up): non-null when the daemon KNEW
+  // this turn's transcript upload finally failed (retry exhausted / non-2xx / network) even
+  // though the wake exited — the reply was produced but never reached Chorus. Orthogonal to
+  // `status`; lets the UI say "reply couldn't be uploaded (reason)" vs "no reply received".
+  relayError: string | null;
   executionUuid: string | null;
   startedAt: string | null; // ISO-8601
   endedAt: string | null; // ISO-8601
@@ -198,6 +203,7 @@ interface DaemonSessionTurnRow {
   promptText: string | null;
   status: string;
   interruptedReason: string | null;
+  relayError: string | null;
   executionUuid: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
@@ -230,6 +236,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     promptText: row.promptText,
     status: row.status,
     interruptedReason: row.interruptedReason,
+    relayError: row.relayError,
     executionUuid: row.executionUuid,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
@@ -468,6 +475,35 @@ export async function createPendingTurn(params: {
   return view;
 }
 
+/**
+ * Idempotency guard for `human_instruction` turns (fix #444 — duplicate empty turns
+ * 2/3/4). Find an existing UNCONSUMED (`status = "pending"`) `human_instruction` turn on
+ * this session whose `promptText` EXACTLY matches `promptText`, and return its view — so a
+ * user who re-sends the identical instruction while the first is still queued does not mint
+ * a second turn. Returns null when there is no such turn (a different text, or the prior
+ * identical turn has already advanced to `running`/terminal, still creates a new turn).
+ *
+ * Scope is deliberately tight — same session + `pending` + `human_instruction` + exact text
+ * — so autonomous triggers and legitimate re-sends after a turn has started are unaffected.
+ * Returns the OLDEST match (`seq asc`) for determinism. A query failure propagates to the
+ * caller, which runs inside the notification chokepoint's failure-isolation try/catch.
+ */
+export async function findReusablePendingInstructionTurn(
+  sessionUuid: string,
+  promptText: string,
+): Promise<TurnView | null> {
+  const row = await prisma.daemonSessionTurn.findFirst({
+    where: {
+      sessionUuid,
+      status: "pending",
+      trigger: "human_instruction",
+      promptText,
+    },
+    orderBy: { seq: "asc" },
+  });
+  return row ? toTurnView(row) : null;
+}
+
 /** Outcome of an attempted turn status transition, so the route maps a precise code. */
 export type AdvanceTurnResult =
   | { ok: true; turn: TurnView }
@@ -520,6 +556,10 @@ export async function advanceTurn(
     endedAt?: Date | null;
     executionUuid?: string | null;
     interruptedReason?: string | null;
+    // Transcript-relay failure annotation (fix #444 follow-up). Written on a terminal edge
+    // when the daemon reports the turn's transcript upload finally failed. Meaningful only
+    // on → ended/interrupted; ignored on → running (the run hasn't produced transcript yet).
+    relayError?: string | null;
   } = {},
 ): Promise<AdvanceTurnResult> {
   const turn = await prisma.daemonSessionTurn.findUnique({
@@ -544,6 +584,7 @@ export async function advanceTurn(
     endedAt?: Date | null;
     executionUuid?: string | null;
     interruptedReason?: string | null;
+    relayError?: string | null;
   } = { status };
   if (opts.startedAt !== undefined) data.startedAt = opts.startedAt;
   if (opts.endedAt !== undefined) data.endedAt = opts.endedAt;
@@ -552,6 +593,15 @@ export async function advanceTurn(
   // keeps the "non-null iff interrupted" column invariant without trusting callers.
   if (status === "interrupted" && opts.interruptedReason !== undefined) {
     data.interruptedReason = opts.interruptedReason;
+  }
+  // The relay-error annotation is meaningful only on a TERMINAL edge (the daemon reports it
+  // at subprocess exit). Persist it on → ended/interrupted; ignore on → running so a resume
+  // can't carry a stale drop forward. Only write when the caller passed a value.
+  if (
+    (status === "ended" || status === "interrupted") &&
+    opts.relayError !== undefined
+  ) {
+    data.relayError = opts.relayError;
   }
 
   const updated = await prisma.daemonSessionTurn.update({
@@ -1521,6 +1571,9 @@ export async function advanceTurnForWake(params: {
   startedAt?: Date | null;
   endedAt?: Date | null;
   interruptedReason?: string | null;
+  // Transcript-relay failure annotation forwarded from the daemon's exit-path report
+  // (fix #444 follow-up). Persisted on the terminal edge only.
+  relayError?: string | null;
 }): Promise<AdvanceTurnForWakeResult> {
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
@@ -1604,6 +1657,7 @@ export async function advanceTurnForWake(params: {
     ...(params.interruptedReason !== undefined
       ? { interruptedReason: params.interruptedReason }
       : {}),
+    ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
   });
 
   if (result.ok) return { ok: true, turn: result.turn };

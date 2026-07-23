@@ -8,8 +8,8 @@
 //
 // Covers the 5-AC scope:
 //   1. A send box (Textarea + Button) renders in the detail pane; a direct send
-//      POSTs to /api/daemon-sessions/{uuid}/instruction, clears the input, and
-//      shows a success toast.
+//      POSTs to /api/daemon-sessions/{uuid}/instruction and clears the input
+//      (clearing IS the success signal — no success toast).
 //   2. The direct send is DISABLED with a visible localized reason when the
 //      target session's origin is offline; a 409/400 response surfaces its
 //      localized server reason (not a generic failure).

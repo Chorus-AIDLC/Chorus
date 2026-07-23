@@ -637,6 +637,13 @@ model DaemonSessionTurn {
   // `interrupted` (resumable), a turn's `interrupted` is TERMINAL — it is durable
   // conversation history, never resumed or auto-retried.
   interruptedReason String?
+  // Transcript-relay failure annotation (fix #444 follow-up). Non-null when the daemon
+  // KNEW the turn's transcript upload finally failed (retry exhausted / non-2xx / network)
+  // even though the wake itself exited cleanly — the reply WAS produced but never reached
+  // Chorus. Orthogonal to `status`: the turn is still a clean `ended`; this only records
+  // WHY its transcript is missing so the UI can say "reply couldn't be uploaded (reason)"
+  // instead of the misleading "no reply received". Null on a successful/skipped upload.
+  relayError    String?
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
   executionUuid String?
