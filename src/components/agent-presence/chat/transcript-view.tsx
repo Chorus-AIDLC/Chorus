@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/collapsible";
 import { clientLogger } from "@/lib/logger-client";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
+import { SessionUsageBadge } from "./token-usage-badge";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -291,6 +292,17 @@ export function TranscriptView({
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
 
+  // Conversation token usage (daemon-token-usage): the header renders the SAME badge a turn
+  // shows — a compact in+out SUM on the face, with the full breakdown (Input / Output /
+  // Cache read / Cache write) in the hover/tap tooltip. All four come from the session's
+  // authoritative scalar rollup, so every figure — face and tooltip — is at the SAME
+  // whole-session scope (covering paginated-out turns too), with no scope mismatch. Cache is
+  // in the tooltip only, never folded into the face sum (cache-read can be 100× input).
+  const totalInputTokens = session?.totalInputTokens ?? 0;
+  const totalOutputTokens = session?.totalOutputTokens ?? 0;
+  const totalCacheReadTokens = session?.totalCacheReadTokens ?? 0;
+  const totalCacheCreationTokens = session?.totalCacheCreationTokens ?? 0;
+
   // The conversation's single composer-hosted execution — its origin connection's
   // CURRENT in-flight work that the reply box's action row reflects. Priority:
   // running (→ Interrupt) > user-interrupted (→ Resume) > crash-interrupted (→ the
@@ -384,7 +396,10 @@ export function TranscriptView({
                   <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 motion-safe:animate-ping" />
                   <span className="relative inline-flex h-1 w-1 rounded-full bg-primary" />
                 </span>
-                {t("running")}
+                {/* The word "Running" is hidden < sm so the status row doesn't wrap on
+                    mobile once the token badge is present; the pulse dot + elapsed timer
+                    already convey "running" in the tight space. Full label shows ≥ sm. */}
+                <span className="hidden sm:inline">{t("running")}</span>
                 {/* Live elapsed run time of the conversation's running execution —
                     ticks every second off `useNowTick()` (no deep-link; the <h3>
                     header title stays the only navigational affordance). */}
@@ -398,6 +413,16 @@ export function TranscriptView({
                 )}
               </span>
             )}
+            {/* Conversation token usage (daemon-token-usage): the SAME badge a turn shows —
+                a compact SUMMED total (input+output) with the breakdown on hover/tap — driven
+                by the session rollup. `SessionUsageBadge` renders nothing when the rollup is
+                all-zero, so an all-silent conversation stays clean. Cache is per-turn only. */}
+            <SessionUsageBadge
+              totalInputTokens={totalInputTokens}
+              totalOutputTokens={totalOutputTokens}
+              totalCacheReadTokens={totalCacheReadTokens}
+              totalCacheCreationTokens={totalCacheCreationTokens}
+            />
             {/* Right-aligned action group — the "Copy session ID" button and the
                 "Connection details" disclosure trigger sit ADJACENT at the end of the
                 status line. `ml-auto` lives on this wrapper (not on the trigger) so the

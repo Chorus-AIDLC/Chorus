@@ -28,6 +28,7 @@ function turn(
     promptText: null,
     status: "pending",
     interruptedReason: null,
+    usage: null,
     relayError: null,
     executionUuid: null,
     startedAt: null,

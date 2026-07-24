@@ -835,6 +835,11 @@ export async function createConversationalIdeaSession(
     status: sessionRow.status,
     title: sessionRow.title,
     lastTurnAt: sessionRow.lastTurnAt.toISOString(),
+    // A freshly-created session has no reported turns yet → zero rollup (daemon-token-usage).
+    totalInputTokens: sessionRow.totalInputTokens,
+    totalOutputTokens: sessionRow.totalOutputTokens,
+    totalCacheReadTokens: sessionRow.totalCacheReadTokens,
+    totalCacheCreationTokens: sessionRow.totalCacheCreationTokens,
     createdAt: sessionRow.createdAt.toISOString(),
     updatedAt: sessionRow.updatedAt.toISOString(),
   };
@@ -847,6 +852,8 @@ export async function createConversationalIdeaSession(
     status: turnRow.status,
     interruptedReason: turnRow.interruptedReason,
     relayError: turnRow.relayError,
+    // A just-created `pending` turn has not run yet → no usage (daemon-token-usage).
+    usage: null,
     executionUuid: turnRow.executionUuid,
     startedAt: turnRow.startedAt ? turnRow.startedAt.toISOString() : null,
     endedAt: turnRow.endedAt ? turnRow.endedAt.toISOString() : null,
@@ -1022,6 +1029,10 @@ export async function repointSessionOriginAndSend(
     status: updated.status,
     title: updated.title,
     lastTurnAt: updated.lastTurnAt.toISOString(),
+    totalInputTokens: updated.totalInputTokens,
+    totalOutputTokens: updated.totalOutputTokens,
+    totalCacheReadTokens: updated.totalCacheReadTokens,
+    totalCacheCreationTokens: updated.totalCacheCreationTokens,
     createdAt: updated.createdAt.toISOString(),
     updatedAt: updated.updatedAt.toISOString(),
   };

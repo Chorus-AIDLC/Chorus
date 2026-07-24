@@ -9,8 +9,8 @@
 // next-intl resolves real en.json strings (a missing key surfaces as its dotted
 // path and fails the assertion), matching the sibling agent-presence tests.
 
-import { describe, expect, it, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
@@ -57,6 +57,7 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
     status: "ended",
     interruptedReason: null,
     relayError: null,
+    usage: null,
     executionUuid: null,
     startedAt: "2026-07-04T03:00:00.000Z",
     endedAt: "2026-07-04T03:05:00.000Z",
@@ -69,6 +70,17 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
 function renderBand(t: TurnWithMessagesView) {
   return render(<TurnBand turn={t} agentName="Alpha" linkedExecution={null} />);
 }
+
+beforeEach(() => {
+  // jsdom lacks ResizeObserver; Radix Popover content uses it when opened (the badge tests).
+  if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
+});
 
 afterEach(() => cleanup());
 
@@ -308,5 +320,105 @@ describe("TurnBand transcript-relay failure (fix #444 follow-up)", () => {
       />,
     );
     expect(screen.queryByText(RELAY_MSG)).toBeNull();
+  });
+});
+
+describe("TurnBand — per-turn token usage badge (daemon-token-usage)", () => {
+  const usage = {
+    inputTokens: 1200,
+    outputTokens: 340,
+    cacheCreationTokens: 24701,
+    cacheReadTokens: 0,
+    model: "claude-opus-4-8",
+    source: "claude_code",
+  };
+
+  it("shows a compact input+output total (cache NOT folded in)", () => {
+    renderBand(turn({ status: "ended", usage }));
+    // 1200 + 340 = 1540 → "1.5k tok" (cache 24701 is excluded from the headline).
+    expect(screen.getByText("1.5k tok")).toBeTruthy();
+    // The alarming cache number must NOT appear as the badge's visible headline.
+    expect(screen.queryByText(/24,?701 tok/)).toBeNull();
+  });
+
+  it("exposes the summed total via an aria-label on the badge trigger", () => {
+    renderBand(turn({ status: "ended", usage }));
+    // Headline aria (input + output = 1540). The breakdown Popover content isn't in the DOM
+    // until the badge is clicked, so we assert the always-present accessible label here.
+    expect(screen.getByLabelText(/1540 tokens/)).toBeTruthy();
+  });
+
+  it("opens the breakdown on CLICK and it PERSISTS (Popover, not a hover tooltip)", () => {
+    renderBand(turn({ status: "ended", usage }));
+    const badge = screen.getByLabelText(/Token usage/);
+    fireEvent.click(badge);
+    // Breakdown rows are present after the click and stay (Popover) — includes cache since
+    // the per-turn badge tooltip carries it. Portalled + possibly duplicated → getAllByText.
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache read").length).toBeGreaterThan(0);
+    // Still open after a microtask tick (no hover-out auto-close) — content persists.
+    expect(screen.getAllByText("Model").length).toBeGreaterThan(0);
+  });
+
+  it("renders NO badge for a turn with null usage (no misleading zero)", () => {
+    renderBand(turn({ status: "ended", usage: null }));
+    expect(screen.queryByText(/tok$/)).toBeNull();
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+
+  it("renders NO badge when usage exists but both token counts are null", () => {
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: null,
+          outputTokens: null,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          model: "claude-opus-4-8",
+          source: "claude_code",
+        },
+      }),
+    );
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+
+  it("renders NO badge for an all-ZERO usage (superseded/duplicate turn — no misleading '0 tok')", () => {
+    // Seen live on turn 8: a duplicate/superseded instruction produced a 0/0/0/0 result
+    // frame. Per the no-misleading-zeros rule the badge must render nothing, not "0 tok".
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          model: null,
+          source: "claude_code",
+        },
+      }),
+    );
+    expect(screen.queryByText(/tok$/)).toBeNull();
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+
+  it("DOES render when only cache tokens are present (cache-only turn still had activity)", () => {
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1200,
+          model: "claude-opus-4-8",
+          source: "claude_code",
+        },
+      }),
+    );
+    // Headline is in+out = 0, but the turn DID consume cache → badge shows (tooltip has cache).
+    expect(screen.getByText("0 tok")).toBeTruthy();
   });
 });

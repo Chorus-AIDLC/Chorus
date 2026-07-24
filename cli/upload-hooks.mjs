@@ -42,17 +42,21 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  * @property {(info: { host: string, agentUuid?: string }) => Promise<void>} onConnect
  * @property {(info: { rootIdeaKey: string, sessionId: string, isNew: boolean }) => Promise<void>} onSessionStart
  * @property {(info: { rootIdeaKey: string, sessionId: string, message: any }) => Promise<void>} onTranscriptMessage
- * @property {(info: { sessionId: string }) => Promise<{ relayError: string|null }>} [onSessionEnd]
+ * @property {(info: { sessionId: string }) => Promise<{ relayError: string|null, usage: TokenUsage|null }>} [onSessionEnd]
  *   Fire-and-forget + await-able: the wake's subprocess has exited. FLUSH any buffered
  *   (debounced) transcript for the session NOW and await it, so a turn's trailing
  *   user/assistant text is persisted BEFORE the waker advances the turn to a terminal
  *   status (fix #444 — transcript-relay flush-on-exit). Best-effort + non-throwing.
- *   RETURNS `{ relayError }`: the final terminal upload failure reason for this session
- *   (retry exhausted / non-2xx / network) when the reply was produced but never reached
- *   Chorus, else `null` (a later success clears it). The waker forwards this onto the
- *   exit-path turn-advance so the UI can say "reply couldn't be uploaded (reason)" rather
- *   than the misleading "no reply received". No-op (`{ relayError: null }`) in the noop
- *   hooks and in the execution-only hooks.
+ *   RETURNS `{ relayError, usage }`:
+ *     • `relayError` — the final terminal upload failure reason for this session (retry
+ *       exhausted / non-2xx / network) when the reply was produced but never reached
+ *       Chorus, else `null` (a later success clears it). The waker forwards it onto the
+ *       exit-path turn-advance so the UI can say "reply couldn't be uploaded (reason)"
+ *       rather than the misleading "no reply received".
+ *     • `usage` — the turn's authoritative per-turn {@link TokenUsage} (daemon-token-usage),
+ *       or `null` when the run emitted no `result` frame. The waker forwards it onto the
+ *       same terminal turn-advance so the server persists it.
+ *   No-op (`{ relayError: null, usage: null }`) in the noop hooks and the execution-only hooks.
  * @property {() => void} [onExecutionChange]  Fire-and-forget: upload a fresh
  *   execution snapshot. The waker calls this on every lifecycle transition
  *   (enqueue / wake start / wake finish). No-op in the noop hooks.
@@ -70,7 +74,7 @@ export function createNoopUploadHooks() {
     async onSessionStart() {},
     async onTranscriptMessage() {},
     async onSessionEnd() {
-      return { relayError: null };
+      return { relayError: null, usage: null };
     },
     onExecutionChange() {},
   };
@@ -138,15 +142,18 @@ export function mergeUploadHooks(...args) {
     onTranscriptMessage: async (info) => {
       await fanOutAsync("onTranscriptMessage", info);
     },
-    // Fan out to every set, then AGGREGATE the transcript relay outcome: the first
-    // set that reports a non-null `relayError` wins (only the transcript hook produces
-    // one; others resolve `{ relayError: null }` or undefined). The waker forwards this
-    // onto the exit-path turn-advance (fix #444 follow-up — surface a KNOWN relay drop).
+    // Fan out to every set, then AGGREGATE the transcript relay outcome + the token usage:
+    // the first set that reports a non-null `relayError` wins, and independently the first
+    // that reports a non-null `usage` wins (only the transcript hook produces either; others
+    // resolve nulls or undefined). The waker forwards BOTH onto the exit-path turn-advance
+    // (fix #444 relay drop + daemon-token-usage). Aggregated independently so one being null
+    // never suppresses the other.
     onSessionEnd: async (info) => {
       const results = await fanOutAsync("onSessionEnd", info);
       const relayError =
         results.find((r) => r && r.relayError)?.relayError ?? null;
-      return { relayError };
+      const usage = results.find((r) => r && r.usage)?.usage ?? null;
+      return { relayError, usage };
     },
     onExecutionChange: () => {
       for (const s of sets) {
@@ -200,6 +207,99 @@ export function mergeUploadHooks(...args) {
 
 /** Top-level stream-json envelope types that carry a conversation message. */
 const CONVERSATION_TYPES = new Set(["user", "assistant"]);
+
+// ─── Per-turn token usage capture (daemon-token-usage) ──────────────────────
+//
+// The normalized token-usage shape carried end-to-end — the SINGLE contract every
+// later agent-backend integration (Codex, OpenClaw, Kiro) normalizes toward. All
+// token fields + `model` are NULLABLE (a backend fills only what it can obtain);
+// `source` is always set so partial data is interpretable. Tokens ONLY — no cost
+// field this slice (the elaboration-locked scope decision).
+//
+/**
+ * @typedef {Object} TokenUsage
+ * @property {number|null} inputTokens          New (non-cache) input tokens.
+ * @property {number|null} outputTokens         Generated tokens.
+ * @property {number|null} cacheCreationTokens  Cache-WRITE tokens (Claude only; others null).
+ * @property {number|null} cacheReadTokens      Cache-READ tokens.
+ * @property {string|null} model                Model id (canonical where known). NOT read from
+ *                                              the `usage` object — Anthropic's usage carries no
+ *                                              model key (verified against a live CLI stream).
+ * @property {string} source                    Backend id — always set (e.g. "claude_code").
+ */
+
+/** The `source` tag stamped on usage captured from a Claude Code stream. */
+export const CLAUDE_CODE_USAGE_SOURCE = "claude_code";
+
+/**
+ * Coerce a value to a non-negative integer token count, or null. Guards against a
+ * CLI that ever emits a string / float / negative — a garbled count becomes null
+ * (renders no badge) rather than a bogus number. Never throws.
+ * @param {unknown} v
+ * @returns {number|null}
+ */
+function toTokenInt(v) {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
+  return Math.round(v);
+}
+
+/**
+ * Extract the AUTHORITATIVE per-turn token usage from a Claude Code stream object,
+ * or null when the object is not a usage-bearing `result` envelope.
+ *
+ * Source of truth = the `type:"result"` envelope's `.usage` (verified against a live
+ * `claude -p --output-format stream-json --verbose` capture, CLI 2.1.x): it carries
+ * the cumulative token counts for the WHOLE turn, so we read THAT and never sum the
+ * per-message `assistant.message.usage` frames (double-count avoidance — the
+ * elaboration-locked decision). The on-disk JSONL is never consulted (its
+ * output_tokens is a known upstream placeholder, anthropics/claude-code#25941).
+ *
+ * Token field names on `.usage` are canonical snake_case: `input_tokens`,
+ * `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`.
+ *
+ * MODEL LOCATION (verified, non-obvious): `.usage` carries NO model key, and on a
+ * Bedrock-backed run the envelope's top-level `.model` is `null`. The model is only
+ * reliably present in the `.modelUsage` map (keyed by model id, each entry exposing a
+ * clean `canonicalModel`). We therefore source `model` from: top-level `.model` when a
+ * non-empty string, else the `canonicalModel` (or the key) of the first `.modelUsage`
+ * entry, else null. Never from `.usage`.
+ *
+ * Returns null for every non-result frame (system/assistant/user), so the existing
+ * `extractTranscriptText` path is completely untouched. Never throws — an unrecognized
+ * shape yields null (defensive against CLI drift).
+ *
+ * @param {any} obj  One parsed stream NDJSON object.
+ * @returns {TokenUsage | null}
+ */
+export function extractTurnUsage(obj) {
+  if (!obj || typeof obj !== "object" || obj.type !== "result") return null;
+  const usage = obj.usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  // Model: prefer a non-empty top-level string; else the modelUsage map's canonical
+  // name (or its key). Never the `usage` object.
+  let model = typeof obj.model === "string" && obj.model.trim() ? obj.model : null;
+  if (!model && obj.modelUsage && typeof obj.modelUsage === "object") {
+    const keys = Object.keys(obj.modelUsage);
+    if (keys.length > 0) {
+      const first = obj.modelUsage[keys[0]];
+      const canonical =
+        first && typeof first === "object" && typeof first.canonicalModel === "string"
+          ? first.canonicalModel
+          : null;
+      model = canonical || keys[0] || null;
+    }
+  }
+
+  return {
+    inputTokens: toTokenInt(usage.input_tokens),
+    outputTokens: toTokenInt(usage.output_tokens),
+    cacheCreationTokens: toTokenInt(usage.cache_creation_input_tokens),
+    cacheReadTokens: toTokenInt(usage.cache_read_input_tokens),
+    model,
+    source: CLAUDE_CODE_USAGE_SOURCE,
+  };
+}
 
 /**
  * Remove `<system-reminder>…</system-reminder>` spans from a retained text block
@@ -380,6 +480,14 @@ export function createTranscriptUploadHooks(opts) {
   // (a transient failure that a later batch recovers is NOT surfaced). Its isolation is
   // exactly the single-active-session scope described above.
   let lastRelayError = null;
+  // The most recent per-turn token usage seen on THIS session's stream (daemon-token-usage).
+  // Captured from the authoritative `result` envelope in `onTranscriptMessage`; the LAST one
+  // wins (a turn emits exactly one result frame, but last-wins is safe either way). Returned
+  // by `onSessionEnd` so the waker forwards it onto the terminal turn-advance. Shares EXACTLY
+  // the single-active-session scope of `lastRelayError` above — no stronger, no weaker. Reset
+  // in `onSessionStart` so a new wake never inherits the prior turn's usage.
+  /** @type {TokenUsage|null} */
+  let lastUsage = null;
 
   /**
    * POST one batch for a session via the shared client, with bounded retry. Never throws.
@@ -468,6 +576,9 @@ export function createTranscriptUploadHooks(opts) {
       // hygiene; it does NOT defend against two sessions overlapping on one hook instance
       // (see the scope note where `lastRelayError` is declared).
       lastRelayError = null;
+      // Same hygiene for token usage (daemon-token-usage): a new wake must not inherit the
+      // prior turn's usage. Cleared here so a turn that emits NO result frame reports null.
+      lastUsage = null;
     },
     /**
      * One stream-json object. Keep only user/assistant text; queue it for a batched
@@ -478,6 +589,16 @@ export function createTranscriptUploadHooks(opts) {
       // The stream stamps the authoritative session id on every line; prefer it so a
       // session resolved only from the stream (not onSessionStart) is still attributed.
       if (sessionId) currentSessionId = sessionId;
+      // Capture per-turn token usage from the authoritative `result` envelope
+      // (daemon-token-usage). Returns null for every non-result frame, so this is a
+      // cheap no-op on the vast majority of lines and never touches the transcript path.
+      // Guarded so a malformed frame can never break transcript relay (no-silent: warn).
+      try {
+        const usage = extractTurnUsage(message);
+        if (usage) lastUsage = usage;
+      } catch (err) {
+        logger.warn(`[Chorus] token usage extract failed: ${err}`);
+      }
       let extracted;
       try {
         extracted = extractTranscriptText(message);
@@ -502,12 +623,14 @@ export function createTranscriptUploadHooks(opts) {
      * attribution in case no stream line ever set `currentSessionId` (e.g. a run that
      * produced only a trailing message right before exit).
      *
-     * Returns `{ relayError }`: the final terminal upload failure reason (retry exhausted)
-     * after the flush settles, or null when every batch landed. The waker forwards it onto
-     * the exit-path turn-advance so a KNOWN relay drop is surfaced on the turn (fix #444
-     * follow-up) rather than misread as "no reply received".
+     * Returns `{ relayError, usage }`: `relayError` is the final terminal upload failure
+     * reason (retry exhausted) after the flush settles, or null when every batch landed
+     * (the waker forwards it so a KNOWN relay drop is surfaced rather than misread as "no
+     * reply received", fix #444 follow-up). `usage` is the turn's authoritative per-turn
+     * token usage captured from the `result` frame, or null when none was seen
+     * (daemon-token-usage) — the waker forwards it onto the same terminal turn-advance.
      * @param {{ sessionId?: string }} info
-     * @returns {Promise<{ relayError: string|null }>}
+     * @returns {Promise<{ relayError: string|null, usage: TokenUsage|null }>}
      */
     async onSessionEnd({ sessionId } = {}) {
       if (sessionId) currentSessionId = sessionId;
@@ -520,8 +643,9 @@ export function createTranscriptUploadHooks(opts) {
         logger.warn(`[Chorus] transcript flush on session end failed: ${err}`);
       }
       // `lastRelayError` reflects the outcome of the FINAL batch's upload (set on retry
-      // exhaustion, cleared on success) — read it AFTER the chain settles.
-      return { relayError: lastRelayError };
+      // exhaustion, cleared on success) — read it AFTER the chain settles. `lastUsage` is
+      // the turn's authoritative token usage (null if the run emitted no result frame).
+      return { relayError: lastRelayError, usage: lastUsage };
     },
     onExecutionChange() {},
   };

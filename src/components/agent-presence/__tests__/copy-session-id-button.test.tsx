@@ -88,6 +88,10 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     status: "active",
     title: "Refactor auth",
     lastTurnAt: NOW,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheCreationTokens: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -130,6 +134,14 @@ beforeEach(() => {
   // calls it on mount. Stub it so the full-header render tests don't throw.
   if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = vi.fn();
+  }
+  // jsdom lacks ResizeObserver; Radix Tooltip content uses it when opened (the tap test).
+  if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
   }
 });
 
@@ -289,5 +301,60 @@ describe("CopySessionIdButton — inside the TranscriptView header", () => {
     installClipboard();
     render(<TranscriptView {...transcriptProps(null)} />);
     expect(screen.queryByRole("button", { name: "Copy session ID" })).toBeNull();
+  });
+});
+
+describe("TranscriptView header — conversation token total (daemon-token-usage)", () => {
+  it("shows the SUMMED total on the header badge (same badge as a turn)", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 176, totalOutputTokens: 84643 });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    // 176 + 84643 = 84819 → "84.8k tok" on the badge face (summed, not "N in / N out").
+    expect(screen.getByText("84.8k tok")).toBeTruthy();
+    expect(screen.queryByText(/ in \/ /)).toBeNull();
+    // Accessible name carries the whole-conversation total.
+    expect(screen.getByLabelText(/Conversation token usage: 84819 tokens/)).toBeTruthy();
+  });
+
+  it("renders no header badge for an all-silent conversation (zero rollup)", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 0, totalOutputTokens: 0 });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    expect(screen.queryByLabelText(/Conversation token usage/)).toBeNull();
+    expect(screen.queryByText(/tok$/)).toBeNull();
+  });
+
+  it("opens the breakdown tooltip on TAP (mobile) — Input, Output AND cache read/write (whole-session)", () => {
+    installClipboard();
+    const session = sessionView({
+      totalInputTokens: 176,
+      totalOutputTokens: 84643,
+      totalCacheReadTokens: 9738735,
+      totalCacheCreationTokens: 588599,
+    });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    const badge = screen.getByLabelText(/Conversation token usage/);
+    // Popover content isn't in the DOM until opened; a click/tap opens it and it persists.
+    fireEvent.click(badge);
+    // Breakdown shows Input/Output AND Cache read/Cache write, all whole-session. Popover
+    // content is portalled + may be duplicated for a11y, so use getAllByText.
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache read").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache write").length).toBeGreaterThan(0);
+  });
+
+  it("omits cache rows from the header tooltip when the conversation used no cache", () => {
+    installClipboard();
+    const session = sessionView({
+      totalInputTokens: 176,
+      totalOutputTokens: 84643,
+      totalCacheReadTokens: 0,
+      totalCacheCreationTokens: 0,
+    });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    fireEvent.click(screen.getByLabelText(/Conversation token usage/));
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Cache/i)).toBeNull();
   });
 });

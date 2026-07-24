@@ -52,6 +52,7 @@ import {
 } from "./conversation-list";
 import { TranscriptView } from "./transcript-view";
 import { NewConversationPane } from "./new-conversation-pane";
+import { rollupDeltaForTurn } from "./live-rollup";
 import {
   sessionExecStatusForRow,
   sessionExecutionsForComposer,
@@ -375,6 +376,14 @@ export function DaemonChat() {
   } | null>(null);
   // Guard against an out-of-order response overwriting a newer selection.
   const detailReqRef = useRef(0);
+  // Turn uuids whose usage is ALREADY reflected in `detail.session`'s scalar rollup
+  // (daemon-token-usage). Seeded from the fetched page (the server rollup already counted
+  // every terminal turn at fetch time) so a live terminal event for a turn we already
+  // fetched can't double-add; a genuinely-new terminal turn's usage is folded in locally
+  // and its uuid recorded here. Reset on session switch. This is the "increment the header
+  // total locally on the terminal event" path the Tech Design calls for — the SSE event
+  // carries only the turn, not the session, so the rollup would otherwise never update live.
+  const rolledUpTurnsRef = useRef<Set<string>>(new Set());
 
   const openUuid = selectedSession?.session.uuid ?? null;
 
@@ -394,9 +403,13 @@ export function DaemonChat() {
       setDetailError(false);
       setHasMoreEarlier(false);
       setOldestCursor(null);
+      rolledUpTurnsRef.current = new Set();
       return;
     }
     const reqId = ++detailReqRef.current;
+    // New selection → the fetched rollup is the fresh baseline; forget the prior session's
+    // counted-turns set.
+    rolledUpTurnsRef.current = new Set();
     setDetailLoading(true);
     setDetailError(false);
     setHasMoreEarlier(false);
@@ -419,6 +432,14 @@ export function DaemonChat() {
         if (json.success) {
           const data = json.data as SessionDetailView;
           setDetail(data);
+          // The server rollup on `data.session` already accounts for every terminal turn
+          // that existed at fetch time — record their uuids so a live terminal event for
+          // one of them can't double-count into the local header total (daemon-token-usage).
+          for (const tn of data.turns ?? []) {
+            if (tn.status === "ended" || tn.status === "interrupted") {
+              rolledUpTurnsRef.current.add(tn.uuid);
+            }
+          }
           // MERGE rather than blind-replace: a live turn_created / transcript_appended
           // that arrived after the GET was issued but before it resolved is already in
           // `prev` — replacing would drop it until the next reselect. Union by uuid
@@ -495,6 +516,38 @@ export function DaemonChat() {
     if (!openUuid) return;
     const unsubscribe = subscribeTranscript((event) => {
       setTurns((prev) => applyTranscriptEvent(prev, event));
+      // Live-update the header conversation total (daemon-token-usage). The SSE event
+      // carries only the turn (not the session), so the scalar rollup on `detail.session`
+      // would otherwise stay frozen until a refetch. On a terminal edge carrying usage,
+      // fold its input/output into the local rollup ONCE (deduped by turn uuid against both
+      // the fetched baseline and prior live events), mirroring the server's atomic
+      // increment. See `rollupDeltaForTurn` for the terminal/usage/dedup/zero rules.
+      if (event.trigger === "turn_status_changed") {
+        const delta = rollupDeltaForTurn(rolledUpTurnsRef.current, event.turn);
+        if (delta) {
+          setDetail((prev) => {
+            // Only bank the uuid + apply the increment when `detail` actually exists. If the
+            // GET is still in-flight (prev null), do NOT bank it — otherwise the turn is
+            // marked "counted" while its tokens never landed, and the fetch baseline (which
+            // seeds the ref from the returned terminal turns) would then skip it too. Leaving
+            // it unbanked lets that fetch baseline count it. (Closes the round-2 timing NOTE.)
+            if (!prev) return prev;
+            rolledUpTurnsRef.current.add(event.turn.uuid);
+            return {
+              ...prev,
+              session: {
+                ...prev.session,
+                totalInputTokens: prev.session.totalInputTokens + delta.addInput,
+                totalOutputTokens: prev.session.totalOutputTokens + delta.addOutput,
+                totalCacheReadTokens:
+                  prev.session.totalCacheReadTokens + delta.addCacheRead,
+                totalCacheCreationTokens:
+                  prev.session.totalCacheCreationTokens + delta.addCacheWrite,
+              },
+            };
+          });
+        }
+      }
     });
     return unsubscribe;
   }, [openUuid, subscribeTranscript]);

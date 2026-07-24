@@ -92,6 +92,44 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("transcriptRelayError");
   });
 
+  it("turnAdvance sends the nested usage object on a terminal edge (daemon-token-usage)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    };
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", usage });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    // Carried as ONE nested object matching the TokenUsage contract 1:1.
+    expect(body.usage).toEqual(usage);
+  });
+
+  it("turnAdvance omits usage on the → running edge (usage is terminal-only)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({
+      sessionId: "idea-1",
+      status: "running",
+      usage: { inputTokens: 1, outputTokens: 2, cacheCreationTokens: null, cacheReadTokens: null, model: null, source: "claude_code" },
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
+  });
+
+  it("turnAdvance omits usage when null (clean, no usage captured)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", usage: null });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId

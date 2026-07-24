@@ -55,6 +55,23 @@ const bodySchema = z
     // malformed/huge value can't bloat the row. Meaningful only on a terminal edge — the
     // service ignores it on → running.
     transcriptRelayError: z.string().min(1).max(500).nullish(),
+    // Per-turn token usage (daemon-token-usage): the whole normalized TokenUsage object,
+    // captured by the daemon from the Claude Code `result` envelope. Token fields are
+    // non-negative ints (nullable — a backend fills only what it can report); `model` is a
+    // bounded string; `source` names the producing backend. Meaningful only on a terminal
+    // edge — the service persists it on → ended/interrupted and ignores it on → running.
+    // `.strict()` rejects unknown keys so a malformed/oversized blob can't ride through.
+    usage: z
+      .object({
+        inputTokens: z.number().int().nonnegative().nullish(),
+        outputTokens: z.number().int().nonnegative().nullish(),
+        cacheCreationTokens: z.number().int().nonnegative().nullish(),
+        cacheReadTokens: z.number().int().nonnegative().nullish(),
+        model: z.string().max(200).nullish(),
+        source: z.string().min(1).max(60),
+      })
+      .strict()
+      .nullish(),
   })
   .refine((b) => b.status === "interrupted" || b.interruptedReason == null, {
     message: "interruptedReason is only valid with status=interrupted",
@@ -93,6 +110,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     endedAt,
     interruptedReason,
     transcriptRelayError,
+    usage,
   } = parsed.data;
 
   // Ownership fence: the connection must belong to the authenticated agent within its
@@ -116,6 +134,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     endedAt: endedAt ?? undefined,
     interruptedReason: interruptedReason ?? undefined,
     relayError: transcriptRelayError ?? undefined,
+    // Normalize the Zod-parsed usage (optional fields are number|null|undefined) into the
+    // clean TokenUsage shape (number|null) the service persists — undefined → null so the
+    // stored JSON has an explicit null for a field the backend didn't report.
+    usage: usage
+      ? {
+          inputTokens: usage.inputTokens ?? null,
+          outputTokens: usage.outputTokens ?? null,
+          cacheCreationTokens: usage.cacheCreationTokens ?? null,
+          cacheReadTokens: usage.cacheReadTokens ?? null,
+          model: usage.model ?? null,
+          source: usage.source,
+        }
+      : undefined,
   });
 
   if (!result.ok) {
