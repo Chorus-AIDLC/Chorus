@@ -314,22 +314,24 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
     };
   }
 
-  it("shows the headline in+out total from the session rollup (cache excluded)", () => {
+  it("shows input and output SEPARATELY from the session rollup (not summed)", () => {
     installClipboard();
-    const session = sessionView({ totalInputTokens: 1200, totalOutputTokens: 340 });
-    // 1200 + 340 = 1540 → "1.5k tokens" in the header.
+    const session = sessionView({ totalInputTokens: 176, totalOutputTokens: 84643 });
     render(<TranscriptView {...transcriptProps(session)} />);
-    expect(screen.getByText("1.5k tokens")).toBeTruthy();
-  });
-
-  it("shows no total for an all-silent conversation (zero rollup, no cache) — no '0 tokens'", () => {
-    installClipboard();
-    const session = sessionView({ totalInputTokens: 0, totalOutputTokens: 0 });
-    render(<TranscriptView {...transcriptProps(session)} />);
+    // Separate in/out — NOT a summed "84.8k tokens". 84643 → "84.6k out"; 176 → "176 in".
+    expect(screen.getByText("176 in / 84.6k out")).toBeTruthy();
+    // The old summed headline must be gone.
     expect(screen.queryByText(/tokens$/)).toBeNull();
   });
 
-  it("shows a cache line ONLY when a loaded turn reported cache tokens", () => {
+  it("shows no header line for an all-silent conversation (zero rollup) — no '0 in / 0 out'", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 0, totalOutputTokens: 0 });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    expect(screen.queryByText(/ in \/ /)).toBeNull();
+  });
+
+  it("does NOT render any cache figure in the header (cache is per-turn tooltip only)", () => {
     installClipboard();
     const session = sessionView({ totalInputTokens: 1200, totalOutputTokens: 340 });
     const props = {
@@ -346,8 +348,9 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
       ],
     } as Parameters<typeof TranscriptView>[0];
     render(<TranscriptView {...props} />);
-    // Headline stays in+out; the cache line surfaces cache read/write separately.
-    expect(screen.getByText("1.5k tokens")).toBeTruthy();
-    expect(screen.getByText(/cache 24\.7k↓ \/ 500↑/)).toBeTruthy();
+    // Header shows separate in/out; NO cache anywhere in the header.
+    expect(screen.getByText("1.2k in / 340 out")).toBeTruthy();
+    expect(screen.queryByText(/cache/i)).toBeNull();
+    expect(screen.queryByText(/24\.7k/)).toBeNull();
   });
 });

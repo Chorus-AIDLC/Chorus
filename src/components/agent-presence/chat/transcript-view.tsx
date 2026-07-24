@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/collapsible";
 import { clientLogger } from "@/lib/logger-client";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
-import { formatCompactTokens, headlineTokenTotal } from "@/lib/token-usage-format";
+import { formatCompactTokens } from "@/lib/token-usage-format";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -292,33 +292,16 @@ export function TranscriptView({
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
 
-  // Conversation token usage (daemon-token-usage). The HEADLINE total is input + output,
-  // sourced from the session's authoritative scalar rollup (totalInputTokens/Output) — it
-  // covers ALL reporting turns, even those paginated out of the loaded window. Cache is
-  // NEVER in the headline (cache-read can be 100× input). The secondary CACHE line is
-  // derived from the LOADED turns' usage (there's no session-level cache rollup) and shown
-  // only when at least one loaded turn actually reported cache tokens.
-  const headlineTokens = session
-    ? headlineTokenTotal(session.totalInputTokens, session.totalOutputTokens)
-    : 0;
-  const cacheTotals = useMemo(() => {
-    let read = 0;
-    let write = 0;
-    let has = false;
-    for (const tn of turns) {
-      const u = tn.usage;
-      if (!u) continue;
-      if (u.cacheReadTokens != null) {
-        read += u.cacheReadTokens;
-        has = true;
-      }
-      if (u.cacheCreationTokens != null) {
-        write += u.cacheCreationTokens;
-        has = true;
-      }
-    }
-    return { read, write, has };
-  }, [turns]);
+  // Conversation token usage (daemon-token-usage). The header shows INPUT and OUTPUT
+  // SEPARATELY (never summed — the owner's post-live-test decision: a single summed number
+  // was ambiguous), both from the session's authoritative scalar rollup
+  // (totalInputTokens/totalOutputTokens), covering ALL reporting turns incl. paginated-out
+  // ones. Cache is NOT shown in the header at all — it lives only in each turn's hover
+  // tooltip (token-usage-badge.tsx), where it's a bounded, meaningful per-turn figure. (A
+  // whole-conversation cache line was removed: the loaded-turns scope mismatched the
+  // whole-session headline and cache-read's cumulative re-reads read as alarming, e.g. 46.9M.)
+  const totalInputTokens = session?.totalInputTokens ?? 0;
+  const totalOutputTokens = session?.totalOutputTokens ?? 0;
 
   // The conversation's single composer-hosted execution — its origin connection's
   // CURRENT in-flight work that the reply box's action row reflects. Priority:
@@ -427,23 +410,16 @@ export function TranscriptView({
                 )}
               </span>
             )}
-            {/* Conversation token total (daemon-token-usage): headline = input+output from
-                the session rollup; a secondary cache line only when loaded turns reported
-                cache. Shown once the conversation has any reported usage (headline > 0 or
-                cache present) so an all-silent conversation stays clean (no "0 tokens"). */}
-            {(headlineTokens > 0 || cacheTotals.has) && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                <span className="tabular-nums">
-                  {t("conversationTokens", { total: formatCompactTokens(headlineTokens) })}
-                </span>
-                {cacheTotals.has && (
-                  <span className="text-[10px] opacity-70" title={t("conversationCacheTitle")}>
-                    {t("conversationCache", {
-                      read: formatCompactTokens(cacheTotals.read),
-                      write: formatCompactTokens(cacheTotals.write),
-                    })}
-                  </span>
-                )}
+            {/* Conversation token usage (daemon-token-usage): input and output shown
+                SEPARATELY (never summed) from the session rollup. Cache is intentionally NOT
+                here — it's in each turn's hover tooltip. Shown once the conversation has any
+                reported in/out so an all-silent conversation stays clean (no "0 in / 0 out"). */}
+            {(totalInputTokens > 0 || totalOutputTokens > 0) && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground tabular-nums">
+                {t("conversationTokensInOut", {
+                  input: formatCompactTokens(totalInputTokens),
+                  output: formatCompactTokens(totalOutputTokens),
+                })}
               </span>
             )}
             {/* Right-aligned action group — the "Copy session ID" button and the
