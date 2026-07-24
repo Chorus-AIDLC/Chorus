@@ -9,8 +9,8 @@
 // next-intl resolves real en.json strings (a missing key surfaces as its dotted
 // path and fails the assertion), matching the sibling agent-presence tests.
 
-import { describe, expect, it, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
@@ -70,6 +70,17 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
 function renderBand(t: TurnWithMessagesView) {
   return render(<TurnBand turn={t} agentName="Alpha" linkedExecution={null} />);
 }
+
+beforeEach(() => {
+  // jsdom lacks ResizeObserver; Radix Popover content uses it when opened (the badge tests).
+  if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
+});
 
 afterEach(() => cleanup());
 
@@ -330,11 +341,24 @@ describe("TurnBand — per-turn token usage badge (daemon-token-usage)", () => {
     expect(screen.queryByText(/24,?701 tok/)).toBeNull();
   });
 
-  it("exposes the full breakdown via an aria-label on the badge", () => {
+  it("exposes the summed total via an aria-label on the badge trigger", () => {
     renderBand(turn({ status: "ended", usage }));
-    // Headline aria (input + output = 1540). Radix tooltip content is not in the DOM until
-    // hover, so we assert the always-present accessible label instead.
+    // Headline aria (input + output = 1540). The breakdown Popover content isn't in the DOM
+    // until the badge is clicked, so we assert the always-present accessible label here.
     expect(screen.getByLabelText(/1540 tokens/)).toBeTruthy();
+  });
+
+  it("opens the breakdown on CLICK and it PERSISTS (Popover, not a hover tooltip)", () => {
+    renderBand(turn({ status: "ended", usage }));
+    const badge = screen.getByLabelText(/Token usage/);
+    fireEvent.click(badge);
+    // Breakdown rows are present after the click and stay (Popover) — includes cache since
+    // the per-turn badge tooltip carries it. Portalled + possibly duplicated → getAllByText.
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache read").length).toBeGreaterThan(0);
+    // Still open after a microtask tick (no hover-out auto-close) — content persists.
+    expect(screen.getAllByText("Model").length).toBeGreaterThan(0);
   });
 
   it("renders NO badge for a turn with null usage (no misleading zero)", () => {

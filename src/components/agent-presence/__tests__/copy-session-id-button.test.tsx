@@ -334,9 +334,9 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
     });
     render(<TranscriptView {...transcriptProps(session)} />);
     const badge = screen.getByLabelText(/Conversation token usage/);
-    // Radix tooltip content isn't in the DOM until opened; a tap (pointerup) opens it on touch.
-    fireEvent.pointerUp(badge);
-    // Breakdown shows Input/Output AND Cache read/Cache write, all whole-session. Tooltip
+    // Popover content isn't in the DOM until opened; a click/tap opens it and it persists.
+    fireEvent.click(badge);
+    // Breakdown shows Input/Output AND Cache read/Cache write, all whole-session. Popover
     // content is portalled + may be duplicated for a11y, so use getAllByText.
     expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
@@ -353,7 +353,7 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
       totalCacheCreationTokens: 0,
     });
     render(<TranscriptView {...transcriptProps(session)} />);
-    fireEvent.pointerUp(screen.getByLabelText(/Conversation token usage/));
+    fireEvent.click(screen.getByLabelText(/Conversation token usage/));
     expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Cache/i)).toBeNull();
   });

@@ -14,23 +14,23 @@
 //     can be 100× input). Cache appears only in the per-turn tooltip breakdown.
 //   • Tooltip rows omit any null field.
 //
-// Mobile: Radix Tooltip is hover/focus-only by default, so it never opens on touch. We make
-// it a CONTROLLED tooltip that also toggles open on TAP (pointerup) — desktop hover + keyboard
-// focus still open it via `onOpenChange`. This is why each badge instance owns its own
-// TooltipProvider + open state (there is no app-global provider — mirrors reference-notes.tsx).
+// Interaction: the breakdown uses a Radix **Popover**, NOT a Tooltip. A Tooltip is
+// hover/focus-driven and never opens reliably on touch (an earlier controlled-Tooltip + tap
+// hack raced Radix's own pointer handling and made the panel flicker/vanish on mobile — the
+// owner hit exactly that). A Popover opens on click/TAP and STAYS open until click-outside /
+// Escape / re-tap — identical for mouse and touch, no hover dependency, keyboard-accessible
+// (trigger is a focusable button; Enter/Space opens).
 //
-// Theme: semantic tokens (bg-secondary / text-muted-foreground) + the shared TooltipContent
-// (bg-foreground / text-background), correct in both light and dark with no fixed-light hex.
+// Theme: semantic tokens (bg-secondary / text-muted-foreground on the face; the shared
+// PopoverContent is bg-popover / text-popover-foreground), correct in both light and dark.
 
-import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Coins } from "lucide-react";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { formatCompactTokens, headlineTokenTotal } from "@/lib/token-usage-format";
 import type { TokenUsage } from "@/services/daemon-session.service";
 
@@ -40,9 +40,9 @@ export interface UsageBadgeRow {
 }
 
 /**
- * The shared presentational badge: a compact label (already humanized) + a breakdown
- * tooltip. Hover/focus opens it on desktop; a tap toggles it on touch (controlled `open`).
- * `ariaLabel` is the accessible name of the badge face.
+ * The shared presentational badge: a compact label (already humanized) + a breakdown panel
+ * that opens on click/tap and stays open (Popover). `ariaLabel` is the accessible name of
+ * the badge face.
  */
 export function UsageBadge({
   label,
@@ -53,39 +53,30 @@ export function UsageBadge({
   ariaLabel: string;
   rows: UsageBadgeRow[];
 }) {
-  // Controlled so a TAP can open it on touch devices (Radix hover/focus won't fire there).
-  // `onOpenChange` keeps desktop hover + keyboard focus working; the tap handler toggles.
-  const [open, setOpen] = useState(false);
-
   return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip open={open} onOpenChange={setOpen}>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            // Toggle on tap/click (covers touch, where hover never fires). `onPointerUp`
-            // fires for both mouse and touch; we flip the controlled state so a second tap
-            // closes it. Desktop hover still opens via onOpenChange before any click.
-            onPointerUp={() => setOpen((v) => !v)}
-            className="inline-flex cursor-default items-center gap-1 rounded-md bg-secondary px-1.5 py-0 text-[10px] font-medium tabular-nums text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            aria-label={ariaLabel}
-          >
-            <Coins className="h-2.5 w-2.5" aria-hidden />
-            {label}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-xs">
-          <div className="flex flex-col gap-0.5 text-[11px]">
-            {rows.map((r) => (
-              <div key={r.label} className="flex items-center justify-between gap-4">
-                <span className="opacity-70">{r.label}</span>
-                <span className="font-mono tabular-nums">{r.value}</span>
-              </div>
-            ))}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-secondary px-1.5 py-0 text-[10px] font-medium tabular-nums text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label={ariaLabel}
+        >
+          <Coins className="h-2.5 w-2.5" aria-hidden />
+          {label}
+        </button>
+      </PopoverTrigger>
+      {/* Compact panel (override the default w-72 p-4). Semantic tokens → both themes. */}
+      <PopoverContent align="start" className="w-fit min-w-[8rem] rounded-md p-2">
+        <div className="flex flex-col gap-0.5 text-[11px]">
+          {rows.map((r) => (
+            <div key={r.label} className="flex items-center justify-between gap-4">
+              <span className="opacity-70">{r.label}</span>
+              <span className="font-mono tabular-nums">{r.value}</span>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

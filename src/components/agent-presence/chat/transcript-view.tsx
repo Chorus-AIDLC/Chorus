@@ -396,7 +396,10 @@ export function TranscriptView({
                   <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 motion-safe:animate-ping" />
                   <span className="relative inline-flex h-1 w-1 rounded-full bg-primary" />
                 </span>
-                {t("running")}
+                {/* The word "Running" is hidden < sm so the status row doesn't wrap on
+                    mobile once the token badge is present; the pulse dot + elapsed timer
+                    already convey "running" in the tight space. Full label shows ≥ sm. */}
+                <span className="hidden sm:inline">{t("running")}</span>
                 {/* Live elapsed run time of the conversation's running execution —
                     ticks every second off `useNowTick()` (no deep-link; the <h3>
                     header title stays the only navigational affordance). */}
