@@ -525,19 +525,23 @@ export function DaemonChat() {
       if (event.trigger === "turn_status_changed") {
         const delta = rollupDeltaForTurn(rolledUpTurnsRef.current, event.turn);
         if (delta) {
-          rolledUpTurnsRef.current.add(event.turn.uuid);
-          setDetail((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  session: {
-                    ...prev.session,
-                    totalInputTokens: prev.session.totalInputTokens + delta.addInput,
-                    totalOutputTokens: prev.session.totalOutputTokens + delta.addOutput,
-                  },
-                }
-              : prev,
-          );
+          setDetail((prev) => {
+            // Only bank the uuid + apply the increment when `detail` actually exists. If the
+            // GET is still in-flight (prev null), do NOT bank it — otherwise the turn is
+            // marked "counted" while its tokens never landed, and the fetch baseline (which
+            // seeds the ref from the returned terminal turns) would then skip it too. Leaving
+            // it unbanked lets that fetch baseline count it. (Closes the round-2 timing NOTE.)
+            if (!prev) return prev;
+            rolledUpTurnsRef.current.add(event.turn.uuid);
+            return {
+              ...prev,
+              session: {
+                ...prev.session,
+                totalInputTokens: prev.session.totalInputTokens + delta.addInput,
+                totalOutputTokens: prev.session.totalOutputTokens + delta.addOutput,
+              },
+            };
+          });
         }
       }
     });
