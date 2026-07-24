@@ -11,6 +11,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractTranscriptText,
+  extractTurnUsage,
+  CLAUDE_CODE_USAGE_SOURCE,
   createTranscriptUploadHooks,
   mergeUploadHooks,
   createExecutionUploadHooks,
@@ -530,8 +532,11 @@ describe("createTranscriptUploadHooks — flush-on-exit (onSessionEnd, fix #444)
     const { fetchImpl } = fakeServer();
     const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
     await hooks.onSessionStart({ sessionId: SID, isNew: true });
-    // Nothing buffered → no upload happened → no relay error to surface.
-    await expect(hooks.onSessionEnd({ sessionId: SID })).resolves.toEqual({ relayError: null });
+    // Nothing buffered → no upload happened → no relay error to surface, and no usage seen.
+    await expect(hooks.onSessionEnd({ sessionId: SID })).resolves.toEqual({
+      relayError: null,
+      usage: null,
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -777,5 +782,163 @@ describe("mergeUploadHooks — compose execution + transcript concerns", () => {
     const urls = posts.map((p) => p.url);
     expect(urls).toContain("https://c/api/daemon/transcript");
     expect(urls).toContain("https://c/api/daemon/execution-state");
+  });
+});
+
+// ── Per-turn token usage capture (daemon-token-usage) ──
+// Fixtures below are trimmed from a REAL `claude -p --output-format stream-json --verbose`
+// capture (CLI 2.1.x, Bedrock): the `result` envelope's top-level `.model` is null and the
+// model is only in `.modelUsage[<id>].canonicalModel`; token counts are snake_case on `.usage`.
+const RESULT_WITH_USAGE = {
+  type: "result",
+  subtype: "success",
+  session_id: SID,
+  result: "done",
+  model: null, // Bedrock: top-level model is null — must fall back to modelUsage
+  usage: {
+    input_tokens: 10,
+    output_tokens: 214,
+    cache_creation_input_tokens: 24701,
+    cache_read_input_tokens: 0,
+    service_tier: "standard",
+  },
+  modelUsage: {
+    "claude-haiku-4-5-20251001": { canonicalModel: "claude-haiku-4-5", provider: "bedrock" },
+  },
+  total_cost_usd: 0.03195625,
+};
+
+describe("extractTurnUsage — normalize the Claude Code result envelope", () => {
+  it("maps a full result envelope to the TokenUsage shape (tokens + canonical model, no cost)", () => {
+    expect(extractTurnUsage(RESULT_WITH_USAGE)).toEqual({
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: CLAUDE_CODE_USAGE_SOURCE,
+    });
+    // Tokens-only contract: no cost field leaks through even though the frame has one.
+    expect(extractTurnUsage(RESULT_WITH_USAGE)).not.toHaveProperty("costUsd");
+    expect(extractTurnUsage(RESULT_WITH_USAGE)).not.toHaveProperty("totalCostUsd");
+  });
+
+  it("prefers a non-empty top-level model over modelUsage", () => {
+    const r = { ...RESULT_WITH_USAGE, model: "claude-opus-4-8" };
+    expect(extractTurnUsage(r).model).toBe("claude-opus-4-8");
+  });
+
+  it("nulls absent token fields (partial usage — e.g. a backend with no cache-write)", () => {
+    const r = { type: "result", session_id: SID, usage: { input_tokens: 5, output_tokens: 7 } };
+    expect(extractTurnUsage(r)).toEqual({
+      inputTokens: 5,
+      outputTokens: 7,
+      cacheCreationTokens: null,
+      cacheReadTokens: null,
+      model: null,
+      source: CLAUDE_CODE_USAGE_SOURCE,
+    });
+  });
+
+  it("coerces a garbled (string/negative/NaN) token count to null, never a bogus number", () => {
+    const r = {
+      type: "result",
+      session_id: SID,
+      usage: { input_tokens: "12", output_tokens: -3, cache_read_input_tokens: 1.9 },
+    };
+    const u = extractTurnUsage(r);
+    expect(u.inputTokens).toBeNull(); // string → null
+    expect(u.outputTokens).toBeNull(); // negative → null
+    expect(u.cacheReadTokens).toBe(2); // 1.9 rounded
+  });
+
+  it("returns null for every non-result frame (transcript path untouched)", () => {
+    expect(extractTurnUsage(ASSISTANT_TEXT)).toBeNull();
+    expect(extractTurnUsage(ASSISTANT_THINKING)).toBeNull();
+    expect(extractTurnUsage(SYSTEM_INIT)).toBeNull();
+    expect(
+      extractTurnUsage({
+        type: "user",
+        session_id: SID,
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      }),
+    ).toBeNull();
+    // A result frame with no usage object is not usage-bearing.
+    expect(extractTurnUsage(RESULT_ENVELOPE)).toBeNull();
+  });
+
+  it("never throws on a malformed / non-object input", () => {
+    expect(extractTurnUsage(null)).toBeNull();
+    expect(extractTurnUsage(undefined)).toBeNull();
+    expect(extractTurnUsage("result")).toBeNull();
+    expect(extractTurnUsage({ type: "result", usage: 42 })).toBeNull();
+  });
+
+  it("does NOT read the token counts from per-message assistant.usage (result is authoritative)", () => {
+    // An assistant frame carries its own usage, but extractTurnUsage ignores it entirely.
+    const assistantWithUsage = {
+      type: "assistant",
+      session_id: SID,
+      message: { role: "assistant", model: "x", usage: { input_tokens: 999, output_tokens: 999 } },
+    };
+    expect(extractTurnUsage(assistantWithUsage)).toBeNull();
+  });
+});
+
+describe("createTranscriptUploadHooks — onSessionEnd returns captured token usage", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("captures the result-frame usage and returns it from onSessionEnd", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: RESULT_WITH_USAGE });
+    const outcome = await hooks.onSessionEnd({ sessionId: SID });
+    expect(outcome.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: CLAUDE_CODE_USAGE_SOURCE,
+    });
+    expect(outcome.relayError).toBeNull();
+  });
+
+  it("returns usage:null when the run emitted no result frame (no fabricated zeros)", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    const outcome = await hooks.onSessionEnd({ sessionId: SID });
+    expect(outcome.usage).toBeNull();
+  });
+
+  it("resets usage on a new wake so a later turn never inherits the prior turn's usage", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    // First wake reports usage.
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: RESULT_WITH_USAGE });
+    expect((await hooks.onSessionEnd({ sessionId: SID })).usage).not.toBeNull();
+    // Second wake (same hook instance) reports NO result frame → usage must be null, not stale.
+    await hooks.onSessionStart({ sessionId: SID, isNew: false });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    expect((await hooks.onSessionEnd({ sessionId: SID })).usage).toBeNull();
+  });
+});
+
+describe("mergeUploadHooks — aggregates usage independently of relayError", () => {
+  it("surfaces the transcript hook's usage through the merged onSessionEnd", async () => {
+    const { fetchImpl } = fakeServer();
+    const transcript = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    const merged = mergeUploadHooks(transcript, createNoopUploadHooks(), { logger: silent });
+    await merged.onSessionStart({ sessionId: SID, isNew: true });
+    await merged.onTranscriptMessage({ sessionId: SID, message: RESULT_WITH_USAGE });
+    const outcome = await merged.onSessionEnd({ sessionId: SID });
+    expect(outcome.usage?.outputTokens).toBe(214);
+    expect(outcome.relayError).toBeNull();
   });
 });
