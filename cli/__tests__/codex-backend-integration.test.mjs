@@ -16,12 +16,27 @@ import { EventEmitter } from "node:events";
 import { buildDaemon } from "../daemon.mjs";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
+import { Waker } from "../waker.mjs";
+import { createTranscriptUploadHooks } from "../upload-hooks.mjs";
 import { killProcessTree } from "../process-killer.mjs";
 
 const CREDS = { url: "https://chorus.test", apiKey: "cho_daemonkey" };
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
 const TID = "019f091a-844e-7b43-8c31-6b04ffa38149";
 const silent = { info() {}, warn() {}, error() {} };
+
+// Real codex-cli 0.145.0 turn.completed usage frame (verified live + against
+// ../codex/codex-rs/exec/src/exec_events.rs Usage struct).
+const CODEX_TURN_COMPLETED_FULL = {
+  type: "turn.completed",
+  usage: {
+    input_tokens: 13497,
+    cached_input_tokens: 4096,
+    cache_write_input_tokens: 512,
+    output_tokens: 5,
+    reasoning_output_tokens: 2000,
+  },
+};
 
 function makeFakeChild(pid = 9100) {
   const child = new EventEmitter();
@@ -50,6 +65,8 @@ describe("interrupt parity — CodexSpawner detached group is reaped by the exis
       logger: silent,
       getThreadIdFn: () => null,
       setThreadIdFn: () => {},
+      getUsageSnapshotFn: () => null,
+      setUsageSnapshotFn: () => {},
       spawnImpl: (_c, _a, opts) => {
         spawnOpts = opts;
         return child;
@@ -147,5 +164,124 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
     child.emit("close", 0);
     await p;
     expect(calls.argv.slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
+  });
+});
+
+describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner → real transcript hooks → Waker terminal turn-advance", () => {
+  const DIRECT_IDEA = "33333333-3333-4333-8333-333333333333";
+  const NOTIF = {
+    uuid: "notif-codex-1",
+    projectUuid: "proj-1",
+    entityType: "task",
+    entityUuid: "task-codex-1",
+    entityTitle: "Codex task",
+    action: "task_assigned",
+    message: "",
+    actorType: "user",
+    actorUuid: "user-1",
+    actorName: "Alice",
+  };
+
+  /** A no-op fetch so the real transcript hooks' fire-and-forget POSTs never hit the network. */
+  function noopFetch() {
+    return vi.fn(async () => ({ ok: true, status: 200, async json() { return { success: true, data: {} }; } }));
+  }
+
+  /**
+   * Build a Waker driven by the REAL CodexSpawner (fake child process) and the REAL
+   * transcript upload hooks, capturing every advanceTurn payload. The stream frames the
+   * fake codex child emits on stdout are the test's input. This exercises capture →
+   * onSessionEnd → waker #advanceTurn (terminal edge) together — no mocked usage.
+   */
+  function makeCodexWaker({ streamFrames, exitCode = 0, batchDelayMs = 0 } = {}) {
+    const child = makeFakeChild();
+    const spawner = new CodexSpawner({
+      codexPath: "/usr/bin/codex",
+      platform: "linux",
+      permissionMode: "yolo",
+      creds: CREDS,
+      logger: silent,
+      getThreadIdFn: () => null,
+      setThreadIdFn: () => {},
+      // Emit the stream frames + close AFTER the spawner has attached its stdout/close
+      // listeners. spawnImpl returns synchronously and the listeners are wired right after;
+      // queueMicrotask defers the emission just past that synchronous wiring so `close`
+      // is observed (emitting eagerly here would fire into the void → wake never resolves).
+      spawnImpl: () => {
+        queueMicrotask(() => {
+          for (const frame of streamFrames) {
+            child.stdout.emit("data", JSON.stringify(frame) + "\n");
+          }
+          child.emit("close", exitCode);
+        });
+        return child;
+      },
+    });
+    const hooks = createTranscriptUploadHooks({
+      url: CREDS.url,
+      apiKey: CREDS.apiKey,
+      logger: silent,
+      fetchImpl: noopFetch(),
+      batchDelayMs,
+    });
+    const advanceCalls = [];
+    const waker = new Waker({
+      creds: CREDS,
+      lineage: { resolve: async () => ({ rootIdeaUuid: DIRECT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
+      spawner,
+      cwd: "/work/dir",
+      hooks,
+      logger: silent,
+      writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
+      isNewSessionFn: vi.fn(() => true),
+      reportInterrupt: vi.fn(async () => {}),
+      advanceTurn: vi.fn(async (payload) => {
+        advanceCalls.push(payload);
+      }),
+    });
+    return { waker, advanceCalls };
+  }
+
+  it("a Codex wake emitting turn.completed produces a terminal turn-advance carrying usage {source:'codex'} with the mapped fields", async () => {
+    const { waker, advanceCalls } = makeCodexWaker({
+      streamFrames: [
+        { type: "thread.started", thread_id: TID },
+        { type: "turn.started" },
+        { type: "item.completed", item: { id: "i0", type: "agent_message", text: "done" } },
+        CODEX_TURN_COMPLETED_FULL,
+      ],
+    });
+    const resolved = await waker.keyFor(NOTIF);
+    await waker.wake(NOTIF, resolved.key, resolved);
+
+    const statuses = advanceCalls.map((c) => c.status);
+    expect(statuses).toEqual(["running", "ended"]);
+    const ended = advanceCalls.find((c) => c.status === "ended");
+    expect(ended.usage).toEqual({
+      inputTokens: 8889, // input_tokens excludes cache categories in the shared shape
+      outputTokens: 5, // output_tokens ALONE — reasoning is a subdivision inside it, not added
+      cacheCreationTokens: 512, // cache_write_input_tokens — POPULATED for Codex 0.145.0
+      cacheReadTokens: 4096,
+      model: null,
+      source: "codex",
+    });
+    // The → running advance must never carry usage.
+    const running = advanceCalls.find((c) => c.status === "running");
+    expect(running).not.toHaveProperty("usage");
+  });
+
+  it("a Codex wake with NO turn.completed advances ended with usage absent (no fabricated zeros)", async () => {
+    const { waker, advanceCalls } = makeCodexWaker({
+      streamFrames: [
+        { type: "thread.started", thread_id: TID },
+        { type: "item.completed", item: { id: "i0", type: "agent_message", text: "hi" } },
+      ],
+    });
+    const resolved = await waker.keyFor(NOTIF);
+    await waker.wake(NOTIF, resolved.key, resolved);
+
+    const ended = advanceCalls.find((c) => c.status === "ended");
+    expect(ended).toBeDefined();
+    expect(ended).not.toHaveProperty("usage");
   });
 });

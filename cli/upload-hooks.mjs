@@ -231,6 +231,11 @@ const CONVERSATION_TYPES = new Set(["user", "assistant"]);
 /** The `source` tag stamped on usage captured from a Claude Code stream. */
 export const CLAUDE_CODE_USAGE_SOURCE = "claude_code";
 
+/** The `source` tag stamped on usage captured from a Codex stream. MUST equal the
+ * daemon's Codex client type (`"codex"`, per cli/daemon-agent.mjs `backendClientType`)
+ * so persisted usage is attributable to the right backend / connection. */
+export const CODEX_USAGE_SOURCE = "codex";
+
 /**
  * Coerce a value to a non-negative integer token count, or null. Guards against a
  * CLI that ever emits a string / float / negative — a garbled count becomes null
@@ -298,6 +303,63 @@ export function extractTurnUsage(obj) {
     cacheReadTokens: toTokenInt(usage.cache_read_input_tokens),
     model,
     source: CLAUDE_CODE_USAGE_SOURCE,
+  };
+}
+
+/**
+ * Extract the per-turn token usage from a Codex `codex exec --json` stream object,
+ * or null when the object is not a usage-bearing `turn.completed` event. The Codex
+ * counterpart to {@link extractTurnUsage} — the two are discriminated purely by the
+ * top-level event type (`turn.completed` vs `result`), which are disjoint, so no
+ * backend flag is needed (same as `extractTranscriptText`'s dual dialect).
+ *
+ * Source of truth = the `turn.completed` event's `.usage` (verified against a live
+ * `codex exec --json` run on codex-cli 0.145.0 and ../codex/codex-rs/exec/src/exec_events.rs
+ * `Usage`). Field names are snake_case: `input_tokens`, `cached_input_tokens`,
+ * `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`.
+ *
+ * Mapping into the shared TokenUsage shape:
+ *   • inputTokens         ← input_tokens
+ *   • outputTokens        ← output_tokens  (ALONE — see below; matches Claude, whose
+ *       output already folds thinking.)
+ *   • cacheReadTokens     ← cached_input_tokens
+ *   • cacheCreationTokens ← cache_write_input_tokens
+ *   • model               ← null  (the Codex --json stream carries no model id on ANY event)
+ *   • source              ← CODEX_USAGE_SOURCE
+ *
+ * `reasoning_output_tokens` is deliberately NOT added to `output_tokens`: in Codex /
+ * the OpenAI Responses API it is a SUBDIVISION *inside* `output_tokens`
+ * (`output_tokens_details.reasoning_tokens`), not a separate bucket — adding it would
+ * double-count. Verified against ../codex/codex-rs/codex-api/src/sse/responses.rs
+ * (`From<ResponseCompletedUsage>` sources reasoning_output_tokens from the output
+ * details; its test asserts input:100 + output:10 = total:110 with reasoning:5 inside
+ * output) and protocol.rs `blended_total()` = non_cached_input + output_tokens (reasoning
+ * is shown only as a parenthetical, never summed).
+ *
+ * An older codex-cli that omits `cache_write_input_tokens` degrades gracefully (reads
+ * null) — no version pin. Every numeric field is `toTokenInt`-guarded (garble → null).
+ * Returns null for every non-`turn.completed` frame (item.completed/thread.started/
+ * turn.started AND Claude's `result`), so the transcript-text path and the Claude usage
+ * path are both untouched. Never throws — an unrecognized shape yields null (defensive
+ * against CLI drift).
+ *
+ * @param {any} obj  One parsed stream NDJSON object.
+ * @returns {TokenUsage | null}
+ */
+export function extractCodexTurnUsage(obj) {
+  if (!obj || typeof obj !== "object" || obj.type !== "turn.completed") return null;
+  const usage = obj.usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  return {
+    inputTokens: toTokenInt(usage.input_tokens),
+    // output_tokens ALREADY includes reasoning_output_tokens (a subdivision, not a
+    // separate bucket) — do NOT add reasoning or it double-counts.
+    outputTokens: toTokenInt(usage.output_tokens),
+    cacheCreationTokens: toTokenInt(usage.cache_write_input_tokens),
+    cacheReadTokens: toTokenInt(usage.cached_input_tokens),
+    model: null, // Codex stream carries no model id on any event
+    source: CODEX_USAGE_SOURCE,
   };
 }
 
@@ -589,12 +651,15 @@ export function createTranscriptUploadHooks(opts) {
       // The stream stamps the authoritative session id on every line; prefer it so a
       // session resolved only from the stream (not onSessionStart) is still attributed.
       if (sessionId) currentSessionId = sessionId;
-      // Capture per-turn token usage from the authoritative `result` envelope
-      // (daemon-token-usage). Returns null for every non-result frame, so this is a
-      // cheap no-op on the vast majority of lines and never touches the transcript path.
-      // Guarded so a malformed frame can never break transcript relay (no-silent: warn).
+      // Capture per-turn token usage from EITHER backend's authoritative usage frame
+      // (daemon-token-usage): the Claude Code `result` envelope or the Codex
+      // `turn.completed` event. The two extractors are discriminated purely by top-level
+      // event type (disjoint), so at most one returns non-null — same dual-dialect pattern
+      // as extractTranscriptText. Returns null for every other frame, so this is a cheap
+      // no-op on the vast majority of lines and never touches the transcript path. Guarded
+      // so a malformed frame can never break transcript relay (no-silent: warn).
       try {
-        const usage = extractTurnUsage(message);
+        const usage = extractTurnUsage(message) ?? extractCodexTurnUsage(message);
         if (usage) lastUsage = usage;
       } catch (err) {
         logger.warn(`[Chorus] token usage extract failed: ${err}`);

@@ -26,6 +26,11 @@ import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
+import {
+  getCodexUsageSnapshot as defaultGetUsageSnapshot,
+  normalizeCodexUsageEvent,
+  setCodexUsageSnapshot as defaultSetUsageSnapshot,
+} from "./codex-usage-map.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -163,6 +168,8 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getThreadIdFn]  Injectable session-map read.
  * @property {(anchor: string, threadId: string) => void} [setThreadIdFn]  Injectable session-map write.
+ * @property {(anchor: string, threadId: string) => object|null} [getUsageSnapshotFn]
+ * @property {(anchor: string, threadId: string, usage: object) => void} [setUsageSnapshotFn]
  */
 
 export class CodexSpawner {
@@ -176,6 +183,8 @@ export class CodexSpawner {
     this.platform = opts.platform ?? process.platform;
     this.getThreadIdFn = opts.getThreadIdFn ?? defaultGetThreadId;
     this.setThreadIdFn = opts.setThreadIdFn ?? defaultSetThreadId;
+    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? defaultGetUsageSnapshot;
+    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? defaultSetUsageSnapshot;
     this.resolveCodexPathFn = opts.resolveCodexPathFn ?? resolveCodexPath;
   }
 
@@ -198,6 +207,13 @@ export class CodexSpawner {
     // waker's Claude transcript probe: a recorded thread id means resume.
     const knownThreadId = anchor ? this.getThreadIdFn(anchor) : null;
     const isNew = !knownThreadId;
+    let previousUsage = knownThreadId
+      ? this.getUsageSnapshotFn(anchor, knownThreadId)
+      : null;
+    // Existing threads created before this baseline store was introduced cannot
+    // yield a trustworthy first delta. Seed once and omit that turn's usage
+    // instead of publishing the entire historical cumulative total.
+    let needsUsageSeed = Boolean(knownThreadId && !previousUsage);
 
     const codexPath = this.codexPath ?? this.resolveCodexPathFn();
     if (!codexPath) {
@@ -258,9 +274,20 @@ export class CodexSpawner {
           (obj) => {
             const tid = extractThreadId(obj);
             if (tid) observedThreadId = tid;
+            let delivered = obj;
+            if (obj?.type === "turn.completed" && obj.usage) {
+              delivered = needsUsageSeed
+                ? { ...obj, usage: null }
+                : normalizeCodexUsageEvent(obj, previousUsage);
+              if (anchor && observedThreadId) {
+                this.setUsageSnapshotFn(anchor, observedThreadId, obj.usage);
+              }
+              previousUsage = obj.usage;
+              needsUsageSeed = false;
+            }
             if (onMessage) {
               try {
-                onMessage(obj);
+                onMessage(delivered);
               } catch (err) {
                 this.logger.warn(`[Chorus] onMessage handler threw: ${err}`);
               }
