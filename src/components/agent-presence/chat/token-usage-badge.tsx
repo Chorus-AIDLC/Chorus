@@ -33,9 +33,19 @@ import type { TokenUsage } from "@/services/daemon-session.service";
 export function TokenUsageBadge({ usage }: { usage: TokenUsage | null }) {
   const t = useTranslations("daemonChat");
 
-  // No-data → no badge (contract). A turn with a usage object but both token counts null
-  // (e.g. a backend that reported only a model) is still "no headline number" → bare.
-  if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return null;
+  // No-data → no badge (contract: no misleading zeros). We hide the badge unless the turn
+  // has POSITIVE token activity in at least one field. This covers three no-data shapes:
+  //   • usage is null (pre-feature / silent turn),
+  //   • a usage object whose token fields are all null (e.g. only a model reported),
+  //   • an all-ZERO usage object — e.g. a superseded/duplicate instruction whose result
+  //     frame reported 0/0/0/0 (seen live on turn 8). "0 tok" is exactly the misleading
+  //     zero the elaboration decision forbids, so it renders nothing too.
+  const anyTokens =
+    (usage?.inputTokens ?? 0) +
+    (usage?.outputTokens ?? 0) +
+    (usage?.cacheCreationTokens ?? 0) +
+    (usage?.cacheReadTokens ?? 0);
+  if (!usage || anyTokens <= 0) return null;
 
   const total = headlineTokenTotal(usage.inputTokens, usage.outputTokens);
   const compact = formatCompactTokens(total);

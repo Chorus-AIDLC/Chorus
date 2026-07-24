@@ -359,4 +359,42 @@ describe("TurnBand — per-turn token usage badge (daemon-token-usage)", () => {
     );
     expect(screen.queryByLabelText(/Token usage/)).toBeNull();
   });
+
+  it("renders NO badge for an all-ZERO usage (superseded/duplicate turn — no misleading '0 tok')", () => {
+    // Seen live on turn 8: a duplicate/superseded instruction produced a 0/0/0/0 result
+    // frame. Per the no-misleading-zeros rule the badge must render nothing, not "0 tok".
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          model: null,
+          source: "claude_code",
+        },
+      }),
+    );
+    expect(screen.queryByText(/tok$/)).toBeNull();
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+
+  it("DOES render when only cache tokens are present (cache-only turn still had activity)", () => {
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1200,
+          model: "claude-opus-4-8",
+          source: "claude_code",
+        },
+      }),
+    );
+    // Headline is in+out = 0, but the turn DID consume cache → badge shows (tooltip has cache).
+    expect(screen.getByText("0 tok")).toBeTruthy();
+  });
 });
