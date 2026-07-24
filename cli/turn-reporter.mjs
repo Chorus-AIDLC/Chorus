@@ -46,7 +46,7 @@ export const TURN_INTERRUPT_REASONS = new Set(["user", "crash", "shutdown"]);
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null, transcriptRelayError?: string|null }) => Promise<void>}
+ * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -68,6 +68,7 @@ export function createTurnReporter(opts) {
     entityUuid,
     interruptedReason,
     transcriptRelayError,
+    usage,
   }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
@@ -99,6 +100,9 @@ export function createTurnReporter(opts) {
       entityUuid,
       interruptedReason,
       transcriptRelayError,
+      // Per-turn token usage (daemon-token-usage): the client spreads it into the body
+      // only on a terminal edge. No validation here — usage is an opaque nested object.
+      usage,
     });
   };
 }

@@ -309,6 +309,60 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(endedCall).not.toHaveProperty("transcriptRelayError");
   });
 
+  it("threads onSessionEnd's usage onto the ended turn-advance (daemon-token-usage)", async () => {
+    // The B1 fix: the waker must read outcome.usage from the SAME onSessionEnd call it reads
+    // relayError from, and forward it onto the terminal advance — or captured usage is dropped.
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    };
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage })) };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    expect(endedCall.usage).toEqual(usage);
+  });
+
+  it("threads usage onto the interrupted edge too (an interrupted turn still consumed tokens)", async () => {
+    const usage = {
+      inputTokens: 5,
+      outputTokens: 3,
+      cacheCreationTokens: null,
+      cacheReadTokens: null,
+      model: null,
+      source: "claude_code",
+    };
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage })) };
+    const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(2) });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const terminal = advanceTurn.mock.calls.find((c) => c[0].status === "interrupted")[0];
+    expect(terminal.usage).toEqual(usage);
+  });
+
+  it("omits usage from the turn-advance when the run reported none (null)", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage: null })) };
+    const { waker } = makeWaker({ advanceTurn, hooks });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    // No usage captured → the field is absent, and the → running advance never carried it.
+    expect(endedCall).not.toHaveProperty("usage");
+    const runningCall = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    expect(runningCall).not.toHaveProperty("usage");
+  });
+
   it("tolerates a legacy onSessionEnd that returns undefined (no relay error surfaced)", async () => {
     const advanceTurn = vi.fn(async () => {});
     const hooks = { onSessionEnd: vi.fn(async () => undefined) };

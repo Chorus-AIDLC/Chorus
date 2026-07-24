@@ -56,6 +56,22 @@ export interface DaemonTranscriptMessage {
   text: string;
 }
 
+/**
+ * Normalized per-turn token usage (daemon-token-usage). Byte-for-byte mirror of the CLI
+ * client's `TokenUsage` JSDoc typedef (cli/upload-hooks.mjs). All token fields + `model`
+ * are nullable (a backend fills only what it can obtain); `source` is always set. Tokens
+ * only — no cost field. The OpenClaw plugin does not currently PRODUCE this, but the wire
+ * contract must not drift between the two daemon hosts.
+ */
+export interface TokenUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+  model: string | null;
+  source: string;
+}
+
 /** One execution-snapshot row, in the server's exact `execution-state` shape. */
 export interface DaemonExecutionRow {
   entityType: string;
@@ -113,9 +129,13 @@ export interface CreateDaemonRestClientOptions {
 export interface DaemonRestClient {
   turnAdvance(p: {
     sessionId: string;
-    status: "running" | "ended";
+    status: "running" | "ended" | "interrupted";
     entityType?: string | null;
     entityUuid?: string | null;
+    interruptedReason?: "user" | "crash" | "shutdown" | null;
+    transcriptRelayError?: string | null;
+    // Per-turn token usage (daemon-token-usage); sent only on a terminal edge.
+    usage?: TokenUsage | null;
   }): Promise<DaemonRestResult>;
   transcript(p: {
     sessionId: string;
@@ -186,22 +206,33 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
     /**
      * POST /api/daemon/turn-advance — advance a wake's DaemonSessionTurn lifecycle.
      * The server resolves the turn by the session BUSINESS KEY (`sessionId`); the
-     * optional `entityType`/`entityUuid` stamp the weak executionUuid link. Requires
-     * the connectionUuid.
+     * optional `entityType`/`entityUuid` stamp the weak executionUuid link. A terminal
+     * edge may also carry `interruptedReason`, `transcriptRelayError`, and the whole
+     * normalized `usage` (daemon-token-usage) — byte-for-byte the CLI client's shape.
+     * Requires the connectionUuid.
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
         logger.warn(`[Chorus] ${error}`);
         return { ok: false, status: null, error, skipped: true };
       }
+      // Per-turn token usage rides the TERMINAL edge only (daemon-token-usage), matching the
+      // CLI client. Guarded on the terminal status so a stray usage on → running is never sent.
+      const isTerminal = status === "ended" || status === "interrupted";
       const body = {
         connectionUuid,
         sessionId,
         status,
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
+        // Only meaningful alongside status=interrupted; never sent otherwise.
+        ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        // Transcript-relay failure annotation (fix #444 follow-up): only when truthy.
+        ...(transcriptRelayError ? { transcriptRelayError } : {}),
+        // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
+        ...(usage && isTerminal ? { usage } : {}),
       };
       return post(
         "turn-advance",

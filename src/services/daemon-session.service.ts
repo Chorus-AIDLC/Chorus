@@ -90,6 +90,21 @@ export type SessionStatus = (typeof SESSION_STATUSES)[number];
 export const TRANSCRIPT_ROLES = ["user", "assistant"] as const;
 export type TranscriptRole = (typeof TRANSCRIPT_ROLES)[number];
 
+// The normalized per-turn token usage (daemon-token-usage) — the single shape carried
+// end-to-end from the daemon's capture (cli/upload-hooks.mjs `TokenUsage`) through the
+// wire and persisted verbatim in `DaemonSessionTurn.usage` (one JSON column). All token
+// fields + `model` are nullable (a backend fills only what it can obtain); `source`
+// identifies the producing backend and is always set. Tokens ONLY — no cost field this
+// slice. This is the reuse target every later agent-backend integration normalizes toward.
+export interface TokenUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+  model: string | null;
+  source: string;
+}
+
 // Rolling-window cap: the maximum number of transcript messages RETAINED per session
 // (across all of its turns). When an append pushes the session's stored count over
 // this, the OLDEST messages are trimmed back to the cap — in application code, NOT a
@@ -560,6 +575,10 @@ export async function advanceTurn(
     // when the daemon reports the turn's transcript upload finally failed. Meaningful only
     // on → ended/interrupted; ignored on → running (the run hasn't produced transcript yet).
     relayError?: string | null;
+    // Per-turn token usage (daemon-token-usage). Persisted verbatim in the turn's single
+    // `usage` JSON column on a terminal edge; ignored on → running. The actual column write
+    // + session rollup increment are wired in the persist task (Task 3).
+    usage?: TokenUsage | null;
   } = {},
 ): Promise<AdvanceTurnResult> {
   const turn = await prisma.daemonSessionTurn.findUnique({
@@ -1574,6 +1593,9 @@ export async function advanceTurnForWake(params: {
   // Transcript-relay failure annotation forwarded from the daemon's exit-path report
   // (fix #444 follow-up). Persisted on the terminal edge only.
   relayError?: string | null;
+  // Per-turn token usage forwarded from the daemon's exit-path report (daemon-token-usage).
+  // Persisted verbatim on the terminal edge only; ignored on → running.
+  usage?: TokenUsage | null;
 }): Promise<AdvanceTurnForWakeResult> {
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
@@ -1658,6 +1680,7 @@ export async function advanceTurnForWake(params: {
       ? { interruptedReason: params.interruptedReason }
       : {}),
     ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
+    ...(params.usage !== undefined ? { usage: params.usage } : {}),
   });
 
   if (result.ok) return { ok: true, turn: result.turn };

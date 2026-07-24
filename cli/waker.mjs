@@ -38,7 +38,7 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown" }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
    *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
    *     → interrupted with the classified reason otherwise) to advance the server-side
@@ -484,10 +484,16 @@ export class Waker {
       // received" (fix #444 follow-up). Guarded — a hook failure never crashes the exit path
       // and simply leaves the annotation absent.
       let transcriptRelayError = null;
+      // The turn's authoritative per-turn token usage (daemon-token-usage), captured from
+      // the Claude Code `result` frame by the transcript hook and returned alongside
+      // relayError from the SAME onSessionEnd call. Forwarded onto the terminal turn-advance
+      // below so the server persists it. Null when the run emitted no result frame.
+      let turnUsage = null;
       if (sessionId) {
         try {
           const outcome = await this.hooks?.onSessionEnd?.({ sessionId });
           transcriptRelayError = outcome?.relayError ?? null;
+          turnUsage = outcome?.usage ?? null;
         } catch (err) {
           this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
         }
@@ -504,10 +510,11 @@ export class Waker {
         if (cleanExit) {
           // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
           // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
-          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError);
+          // `turnUsage` rides the same terminal advance (daemon-token-usage).
+          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage);
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError);
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage);
         }
       }
 
@@ -599,8 +606,10 @@ export class Waker {
    * @param {{ entityType: string, entityUuid: string }|null} entity
    * @param {"user"|"crash"|"shutdown"|null} [interruptedReason]
    * @param {string|null} [transcriptRelayError]
+   * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
+   *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -609,6 +618,7 @@ export class Waker {
         entityUuid: entity?.entityUuid ?? null,
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
+        ...(usage ? { usage } : {}),
       });
     } catch (err) {
       this.logger.warn(

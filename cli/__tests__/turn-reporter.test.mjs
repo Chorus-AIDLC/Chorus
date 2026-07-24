@@ -93,6 +93,31 @@ describe("createTurnReporter", () => {
     expect(body).not.toHaveProperty("transcriptRelayError");
   });
 
+  it("forwards usage into the POST body on a terminal edge (daemon-token-usage)", async () => {
+    // Same B1 guard as transcriptRelayError above: the reporter's closure MUST destructure
+    // and forward `usage`, or the captured token usage is silently dropped at this hop.
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: silent,
+      fetchImpl,
+    });
+
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    };
+    await advance({ sessionId: "idea-1", status: "ended", usage });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.usage).toEqual(usage);
+  });
+
   it("skips (logged, no fetch) when the connection uuid is not known yet", async () => {
     const fetchImpl = okFetch();
     const warns = [];
