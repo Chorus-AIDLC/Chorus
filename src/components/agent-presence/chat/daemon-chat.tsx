@@ -539,6 +539,10 @@ export function DaemonChat() {
                 ...prev.session,
                 totalInputTokens: prev.session.totalInputTokens + delta.addInput,
                 totalOutputTokens: prev.session.totalOutputTokens + delta.addOutput,
+                totalCacheReadTokens:
+                  prev.session.totalCacheReadTokens + delta.addCacheRead,
+                totalCacheCreationTokens:
+                  prev.session.totalCacheCreationTokens + delta.addCacheWrite,
               },
             };
           });

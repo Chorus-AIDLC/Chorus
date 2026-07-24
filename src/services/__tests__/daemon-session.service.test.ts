@@ -110,6 +110,8 @@ function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
     lastTurnAt: new Date("2026-06-15T03:00:00.000Z"),
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheCreationTokens: 0,
     createdAt: new Date("2026-06-15T03:00:00.000Z"),
     updatedAt: new Date("2026-06-15T03:00:00.000Z"),
     ...overrides,
@@ -690,11 +692,14 @@ describe("advanceTurn", () => {
     // Turn update wrote the whole usage object verbatim into the single JSON column.
     const turnData = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
     expect(turnData.usage).toEqual(sampleUsage);
-    // Session rollup used Prisma's atomic increment (NOT a read-modify-write) with in/out.
+    // Session rollup used Prisma's atomic increment (NOT a read-modify-write) for ALL FOUR
+    // fields — in/out AND cache-read/cache-write (whole-session cache for the header tooltip).
     const sessionData = mockPrisma.daemonSession.update.mock.calls[0][0];
     expect(sessionData.where).toEqual({ uuid: sessionUuid });
     expect(sessionData.data.totalInputTokens).toEqual({ increment: 10 });
     expect(sessionData.data.totalOutputTokens).toEqual({ increment: 214 });
+    expect(sessionData.data.totalCacheReadTokens).toEqual({ increment: 0 });
+    expect(sessionData.data.totalCacheCreationTokens).toEqual({ increment: 24701 });
     // The view surfaces the usage object.
     const [, payload] = mockEventBus.emit.mock.calls[0];
     expect(payload.turn.usage).toEqual(sampleUsage);

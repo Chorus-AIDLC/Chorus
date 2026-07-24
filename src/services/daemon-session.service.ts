@@ -139,11 +139,15 @@ export interface SessionView {
   status: string; // active | ended
   title: string | null;
   lastTurnAt: string; // ISO-8601
-  // Running conversation token rollup (daemon-token-usage): the authoritative headline
-  // input+output totals across all reporting turns. The header renders these directly (no
-  // need to load every turn); the per-turn cache line is derived UI-side from loaded turns.
+  // Running conversation token rollup (daemon-token-usage): the authoritative whole-session
+  // totals across all reporting turns. The header badge renders the in+out sum on its face
+  // and cache read/write in its tooltip — all four at the same whole-session scope, so the
+  // tooltip never mismatches the face. The header renders these directly (no need to load
+  // every turn).
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601
 }
@@ -218,6 +222,8 @@ interface DaemonSessionRow {
   lastTurnAt: Date;
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -276,6 +282,8 @@ function toSessionView(row: DaemonSessionRow): SessionView {
     lastTurnAt: row.lastTurnAt.toISOString(),
     totalInputTokens: row.totalInputTokens,
     totalOutputTokens: row.totalOutputTokens,
+    totalCacheReadTokens: row.totalCacheReadTokens,
+    totalCacheCreationTokens: row.totalCacheCreationTokens,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -688,6 +696,8 @@ export async function advanceTurn(
         data: {
           totalInputTokens: { increment: opts.usage?.inputTokens ?? 0 },
           totalOutputTokens: { increment: opts.usage?.outputTokens ?? 0 },
+          totalCacheReadTokens: { increment: opts.usage?.cacheReadTokens ?? 0 },
+          totalCacheCreationTokens: { increment: opts.usage?.cacheCreationTokens ?? 0 },
         },
       }),
     ]);

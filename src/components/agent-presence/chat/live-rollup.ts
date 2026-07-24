@@ -32,7 +32,12 @@ export interface LiveRollupState {
 export function rollupDeltaForTurn(
   counted: ReadonlySet<string>,
   turn: { uuid: string; status?: string; usage?: TokenUsage | null },
-): { addInput: number; addOutput: number } | null {
+): {
+  addInput: number;
+  addOutput: number;
+  addCacheRead: number;
+  addCacheWrite: number;
+} | null {
   const terminal = turn.status === "ended" || turn.status === "interrupted";
   if (!terminal) return null;
   const usage = turn.usage ?? null;
@@ -40,6 +45,13 @@ export function rollupDeltaForTurn(
   if (counted.has(turn.uuid)) return null;
   const addInput = usage.inputTokens ?? 0;
   const addOutput = usage.outputTokens ?? 0;
-  if (addInput === 0 && addOutput === 0) return null;
-  return { addInput, addOutput };
+  const addCacheRead = usage.cacheReadTokens ?? 0;
+  const addCacheWrite = usage.cacheCreationTokens ?? 0;
+  // Roll up when the turn had ANY positive token activity (not just in/out) so a
+  // cache-heavy turn still updates the header tooltip's cache totals live. An all-zero
+  // usage (superseded/duplicate turn) contributes nothing → skip.
+  if (addInput === 0 && addOutput === 0 && addCacheRead === 0 && addCacheWrite === 0) {
+    return null;
+  }
+  return { addInput, addOutput, addCacheRead, addCacheWrite };
 }

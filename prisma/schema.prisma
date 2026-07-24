@@ -616,6 +616,11 @@ model DaemonSession {
   // reads a valid zero total with no backfill.
   totalInputTokens     Int                 @default(0)
   totalOutputTokens    Int                 @default(0)
+  // Whole-session cache rollup (daemon-token-usage): so the header badge's tooltip can show
+  // cache read/write at the SAME whole-session scope as its in+out face (not loaded-turns
+  // scope). Scalar Int for the same atomic-increment reason as the in/out rollup.
+  totalCacheReadTokens     Int             @default(0)
+  totalCacheCreationTokens Int             @default(0)
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   turns                DaemonSessionTurn[]

@@ -838,6 +838,8 @@ export async function createConversationalIdeaSession(
     // A freshly-created session has no reported turns yet → zero rollup (daemon-token-usage).
     totalInputTokens: sessionRow.totalInputTokens,
     totalOutputTokens: sessionRow.totalOutputTokens,
+    totalCacheReadTokens: sessionRow.totalCacheReadTokens,
+    totalCacheCreationTokens: sessionRow.totalCacheCreationTokens,
     createdAt: sessionRow.createdAt.toISOString(),
     updatedAt: sessionRow.updatedAt.toISOString(),
   };
@@ -1029,6 +1031,8 @@ export async function repointSessionOriginAndSend(
     lastTurnAt: updated.lastTurnAt.toISOString(),
     totalInputTokens: updated.totalInputTokens,
     totalOutputTokens: updated.totalOutputTokens,
+    totalCacheReadTokens: updated.totalCacheReadTokens,
+    totalCacheCreationTokens: updated.totalCacheCreationTokens,
     createdAt: updated.createdAt.toISOString(),
     updatedAt: updated.updatedAt.toISOString(),
   };

@@ -140,18 +140,30 @@ export function TokenUsageBadge({ usage }: { usage: TokenUsage | null }) {
 export function SessionUsageBadge({
   totalInputTokens,
   totalOutputTokens,
+  totalCacheReadTokens,
+  totalCacheCreationTokens,
 }: {
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
 }) {
   const t = useTranslations("daemonChat");
   const total = totalInputTokens + totalOutputTokens;
   if (total <= 0) return null;
 
+  // Face = in+out sum (cache excluded — cache-read can be 100× input). Tooltip breaks down
+  // Input / Output AND Cache read / Cache write, all at the WHOLE-SESSION scope (the same
+  // scope as the face's sum) so the tooltip never mismatches the face. Cache rows appear
+  // only when > 0 (a conversation with no cache stays clean).
   const rows: UsageBadgeRow[] = [
     { label: t("usageInput"), value: totalInputTokens.toLocaleString() },
     { label: t("usageOutput"), value: totalOutputTokens.toLocaleString() },
   ];
+  if (totalCacheReadTokens > 0)
+    rows.push({ label: t("usageCacheRead"), value: totalCacheReadTokens.toLocaleString() });
+  if (totalCacheCreationTokens > 0)
+    rows.push({ label: t("usageCacheWrite"), value: totalCacheCreationTokens.toLocaleString() });
 
   return (
     <UsageBadge

@@ -292,16 +292,16 @@ export function TranscriptView({
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
 
-  // Conversation token usage (daemon-token-usage). The header shows INPUT and OUTPUT
-  // SEPARATELY (never summed — the owner's post-live-test decision: a single summed number
-  // was ambiguous), both from the session's authoritative scalar rollup
-  // (totalInputTokens/totalOutputTokens), covering ALL reporting turns incl. paginated-out
-  // ones. Cache is NOT shown in the header at all — it lives only in each turn's hover
-  // tooltip (token-usage-badge.tsx), where it's a bounded, meaningful per-turn figure. (A
-  // whole-conversation cache line was removed: the loaded-turns scope mismatched the
-  // whole-session headline and cache-read's cumulative re-reads read as alarming, e.g. 46.9M.)
+  // Conversation token usage (daemon-token-usage): the header renders the SAME badge a turn
+  // shows — a compact in+out SUM on the face, with the full breakdown (Input / Output /
+  // Cache read / Cache write) in the hover/tap tooltip. All four come from the session's
+  // authoritative scalar rollup, so every figure — face and tooltip — is at the SAME
+  // whole-session scope (covering paginated-out turns too), with no scope mismatch. Cache is
+  // in the tooltip only, never folded into the face sum (cache-read can be 100× input).
   const totalInputTokens = session?.totalInputTokens ?? 0;
   const totalOutputTokens = session?.totalOutputTokens ?? 0;
+  const totalCacheReadTokens = session?.totalCacheReadTokens ?? 0;
+  const totalCacheCreationTokens = session?.totalCacheCreationTokens ?? 0;
 
   // The conversation's single composer-hosted execution — its origin connection's
   // CURRENT in-flight work that the reply box's action row reflects. Priority:
@@ -417,6 +417,8 @@ export function TranscriptView({
             <SessionUsageBadge
               totalInputTokens={totalInputTokens}
               totalOutputTokens={totalOutputTokens}
+              totalCacheReadTokens={totalCacheReadTokens}
+              totalCacheCreationTokens={totalCacheCreationTokens}
             />
             {/* Right-aligned action group — the "Copy session ID" button and the
                 "Connection details" disclosure trigger sit ADJACENT at the end of the

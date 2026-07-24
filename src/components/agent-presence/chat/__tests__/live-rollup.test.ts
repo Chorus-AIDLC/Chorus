@@ -12,10 +12,15 @@ const usage = (over: Partial<Record<string, unknown>> = {}) => ({
 });
 
 describe("rollupDeltaForTurn — live header-total increment (daemon-token-usage)", () => {
-  it("returns the in/out delta for a newly-terminal turn carrying usage", () => {
+  it("returns the in/out AND cache delta for a newly-terminal turn carrying usage", () => {
     const d = rollupDeltaForTurn(new Set(), { uuid: "t7", status: "ended", usage: usage() });
-    // Only input+output — cache is never rolled into the header total.
-    expect(d).toEqual({ addInput: 33, addOutput: 29844 });
+    // All four roll up (cache feeds the header tooltip; it is NOT folded into the face sum).
+    expect(d).toEqual({
+      addInput: 33,
+      addOutput: 29844,
+      addCacheRead: 9738735,
+      addCacheWrite: 588599,
+    });
   });
 
   it("also rolls up an interrupted terminal turn", () => {
@@ -50,8 +55,17 @@ describe("rollupDeltaForTurn — live header-total increment (daemon-token-usage
     const d = rollupDeltaForTurn(new Set(), {
       uuid: "t",
       status: "ended",
-      usage: usage({ inputTokens: 10, outputTokens: null }),
+      usage: usage({ inputTokens: 10, outputTokens: null, cacheCreationTokens: null, cacheReadTokens: null }),
     });
-    expect(d).toEqual({ addInput: 10, addOutput: 0 });
+    expect(d).toEqual({ addInput: 10, addOutput: 0, addCacheRead: 0, addCacheWrite: 0 });
+  });
+
+  it("rolls up a cache-ONLY terminal turn (in+out 0 but cache > 0 still updates the tooltip)", () => {
+    const d = rollupDeltaForTurn(new Set(), {
+      uuid: "tc",
+      status: "ended",
+      usage: usage({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 500, cacheCreationTokens: 0 }),
+    });
+    expect(d).toEqual({ addInput: 0, addOutput: 0, addCacheRead: 500, addCacheWrite: 0 });
   });
 });

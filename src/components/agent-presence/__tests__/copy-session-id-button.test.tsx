@@ -90,6 +90,8 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     lastTurnAt: NOW,
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheCreationTokens: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -322,17 +324,37 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
     expect(screen.queryByText(/tok$/)).toBeNull();
   });
 
-  it("opens the breakdown tooltip on TAP (mobile) — Input & Output, no cache in the header badge", () => {
+  it("opens the breakdown tooltip on TAP (mobile) — Input, Output AND cache read/write (whole-session)", () => {
     installClipboard();
-    const session = sessionView({ totalInputTokens: 176, totalOutputTokens: 84643 });
+    const session = sessionView({
+      totalInputTokens: 176,
+      totalOutputTokens: 84643,
+      totalCacheReadTokens: 9738735,
+      totalCacheCreationTokens: 588599,
+    });
     render(<TranscriptView {...transcriptProps(session)} />);
     const badge = screen.getByLabelText(/Conversation token usage/);
     // Radix tooltip content isn't in the DOM until opened; a tap (pointerup) opens it on touch.
     fireEvent.pointerUp(badge);
-    // Breakdown shows Input/Output (whole-session rollup). Tooltip content is portalled and
-    // may be duplicated for a11y, so use getAllByText. No cache row in the header badge.
+    // Breakdown shows Input/Output AND Cache read/Cache write, all whole-session. Tooltip
+    // content is portalled + may be duplicated for a11y, so use getAllByText.
     expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache read").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cache write").length).toBeGreaterThan(0);
+  });
+
+  it("omits cache rows from the header tooltip when the conversation used no cache", () => {
+    installClipboard();
+    const session = sessionView({
+      totalInputTokens: 176,
+      totalOutputTokens: 84643,
+      totalCacheReadTokens: 0,
+      totalCacheCreationTokens: 0,
+    });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    fireEvent.pointerUp(screen.getByLabelText(/Conversation token usage/));
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Cache/i)).toBeNull();
   });
 });
