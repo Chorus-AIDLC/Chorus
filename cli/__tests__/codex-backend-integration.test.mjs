@@ -65,6 +65,8 @@ describe("interrupt parity — CodexSpawner detached group is reaped by the exis
       logger: silent,
       getThreadIdFn: () => null,
       setThreadIdFn: () => {},
+      getUsageSnapshotFn: () => null,
+      setUsageSnapshotFn: () => {},
       spawnImpl: (_c, _a, opts) => {
         spawnOpts = opts;
         return child;
@@ -256,7 +258,7 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
     expect(statuses).toEqual(["running", "ended"]);
     const ended = advanceCalls.find((c) => c.status === "ended");
     expect(ended.usage).toEqual({
-      inputTokens: 13497,
+      inputTokens: 8889, // input_tokens excludes cache categories in the shared shape
       outputTokens: 5, // output_tokens ALONE — reasoning is a subdivision inside it, not added
       cacheCreationTokens: 512, // cache_write_input_tokens — POPULATED for Codex 0.145.0
       cacheReadTokens: 4096,
