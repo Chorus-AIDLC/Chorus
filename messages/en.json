@@ -1572,7 +1572,7 @@
     "usageCacheRead": "Cache read",
     "usageCacheWrite": "Cache write",
     "usageModel": "Model",
-    "conversationTokensInOut": "{input} in / {output} out",
+    "conversationUsageAria": "Conversation token usage: {total} tokens (input + output)",
     "openTask": "Open task",
     "openIdea": "Open idea",
     "roleYou": "You",

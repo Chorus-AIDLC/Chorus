@@ -133,6 +133,14 @@ beforeEach(() => {
   if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = vi.fn();
   }
+  // jsdom lacks ResizeObserver; Radix Tooltip content uses it when opened (the tap test).
+  if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
 });
 
 afterEach(() => {
@@ -295,62 +303,36 @@ describe("CopySessionIdButton — inside the TranscriptView header", () => {
 });
 
 describe("TranscriptView header — conversation token total (daemon-token-usage)", () => {
-  function turnWithUsage(usage: unknown) {
-    return {
-      uuid: "t-usage",
-      sessionUuid: "sess-1",
-      seq: 1,
-      trigger: "task_assigned",
-      promptText: null,
-      status: "ended",
-      interruptedReason: null,
-      relayError: null,
-      usage,
-      executionUuid: null,
-      startedAt: NOW,
-      endedAt: NOW,
-      createdAt: NOW,
-      messages: [],
-    };
-  }
-
-  it("shows input and output SEPARATELY from the session rollup (not summed)", () => {
+  it("shows the SUMMED total on the header badge (same badge as a turn)", () => {
     installClipboard();
     const session = sessionView({ totalInputTokens: 176, totalOutputTokens: 84643 });
     render(<TranscriptView {...transcriptProps(session)} />);
-    // Separate in/out — NOT a summed "84.8k tokens". 84643 → "84.6k out"; 176 → "176 in".
-    expect(screen.getByText("176 in / 84.6k out")).toBeTruthy();
-    // The old summed headline must be gone.
-    expect(screen.queryByText(/tokens$/)).toBeNull();
+    // 176 + 84643 = 84819 → "84.8k tok" on the badge face (summed, not "N in / N out").
+    expect(screen.getByText("84.8k tok")).toBeTruthy();
+    expect(screen.queryByText(/ in \/ /)).toBeNull();
+    // Accessible name carries the whole-conversation total.
+    expect(screen.getByLabelText(/Conversation token usage: 84819 tokens/)).toBeTruthy();
   });
 
-  it("shows no header line for an all-silent conversation (zero rollup) — no '0 in / 0 out'", () => {
+  it("renders no header badge for an all-silent conversation (zero rollup)", () => {
     installClipboard();
     const session = sessionView({ totalInputTokens: 0, totalOutputTokens: 0 });
     render(<TranscriptView {...transcriptProps(session)} />);
-    expect(screen.queryByText(/ in \/ /)).toBeNull();
+    expect(screen.queryByLabelText(/Conversation token usage/)).toBeNull();
+    expect(screen.queryByText(/tok$/)).toBeNull();
   });
 
-  it("does NOT render any cache figure in the header (cache is per-turn tooltip only)", () => {
+  it("opens the breakdown tooltip on TAP (mobile) — Input & Output, no cache in the header badge", () => {
     installClipboard();
-    const session = sessionView({ totalInputTokens: 1200, totalOutputTokens: 340 });
-    const props = {
-      ...transcriptProps(session),
-      turns: [
-        turnWithUsage({
-          inputTokens: 1200,
-          outputTokens: 340,
-          cacheCreationTokens: 500,
-          cacheReadTokens: 24701,
-          model: "claude-opus-4-8",
-          source: "claude_code",
-        }),
-      ],
-    } as Parameters<typeof TranscriptView>[0];
-    render(<TranscriptView {...props} />);
-    // Header shows separate in/out; NO cache anywhere in the header.
-    expect(screen.getByText("1.2k in / 340 out")).toBeTruthy();
-    expect(screen.queryByText(/cache/i)).toBeNull();
-    expect(screen.queryByText(/24\.7k/)).toBeNull();
+    const session = sessionView({ totalInputTokens: 176, totalOutputTokens: 84643 });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    const badge = screen.getByLabelText(/Conversation token usage/);
+    // Radix tooltip content isn't in the DOM until opened; a tap (pointerup) opens it on touch.
+    fireEvent.pointerUp(badge);
+    // Breakdown shows Input/Output (whole-session rollup). Tooltip content is portalled and
+    // may be duplicated for a11y, so use getAllByText. No cache row in the header badge.
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Cache/i)).toBeNull();
   });
 });

@@ -1,24 +1,28 @@
 "use client";
 
-// Per-turn token-usage badge (daemon-token-usage) — sits beside the status Badge in the
-// turn band. It shows a COMPACT total (input + output, humanized) and reveals the full
-// breakdown (input / output / cache-read / cache-write / model) in a hover/tap tooltip.
+// Token-usage badge (daemon-token-usage). ONE shared badge shape used in two places:
+//   • per-turn, beside the status Badge in the turn band (`TokenUsageBadge`), and
+//   • the conversation header total in transcript-view (`SessionUsageBadge`).
+// Both render the SAME `UsageBadge`: a compact SUMMED number (input + output, humanized)
+// with a Coins glyph, and a tooltip that reveals the detail breakdown. The owner wanted
+// the header to look exactly like a turn's badge — sum on the face, detail on hover.
 //
-// Contract (elaboration-locked):
-//   • Render NOTHING when the turn reported no usage (usage null, or both token counts
-//     null) — no number, no "not reported" text, no placeholder. A no-data turn is simply
-//     bare, per the container-scope decision (the "not reported" label is reserved for the
-//     structurally-silent Kiro backend, its own idea).
+// Contract:
+//   • Render NOTHING when there's no positive token activity (null usage / all-null /
+//     all-zero) — no misleading "0 tok" (per the elaboration decision).
 //   • The visible number is input + output ONLY — cache is never folded into it (cache-read
-//     can be 100× input). Cache lives in the tooltip breakdown.
-//   • Tooltip rows omit any null field (a backend that can't report cache-write shows no
-//     cache-write row).
+//     can be 100× input). Cache appears only in the per-turn tooltip breakdown.
+//   • Tooltip rows omit any null field.
 //
-// Theme: the badge uses semantic tokens (bg-secondary / text-muted-foreground) and the
-// shared TooltipContent is `bg-foreground text-background`, so it reads correctly in BOTH
-// light and dark with no fixed-light-only color. Each consumer wraps its own
-// TooltipProvider (there is no app-global one) — mirrors reference-notes.tsx.
+// Mobile: Radix Tooltip is hover/focus-only by default, so it never opens on touch. We make
+// it a CONTROLLED tooltip that also toggles open on TAP (pointerup) — desktop hover + keyboard
+// focus still open it via `onOpenChange`. This is why each badge instance owns its own
+// TooltipProvider + open state (there is no app-global provider — mirrors reference-notes.tsx).
+//
+// Theme: semantic tokens (bg-secondary / text-muted-foreground) + the shared TooltipContent
+// (bg-foreground / text-background), correct in both light and dark with no fixed-light hex.
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Coins } from "lucide-react";
 import {
@@ -30,50 +34,45 @@ import {
 import { formatCompactTokens, headlineTokenTotal } from "@/lib/token-usage-format";
 import type { TokenUsage } from "@/services/daemon-session.service";
 
-export function TokenUsageBadge({ usage }: { usage: TokenUsage | null }) {
-  const t = useTranslations("daemonChat");
+export interface UsageBadgeRow {
+  label: string;
+  value: string;
+}
 
-  // No-data → no badge (contract: no misleading zeros). We hide the badge unless the turn
-  // has POSITIVE token activity in at least one field. This covers three no-data shapes:
-  //   • usage is null (pre-feature / silent turn),
-  //   • a usage object whose token fields are all null (e.g. only a model reported),
-  //   • an all-ZERO usage object — e.g. a superseded/duplicate instruction whose result
-  //     frame reported 0/0/0/0 (seen live on turn 8). "0 tok" is exactly the misleading
-  //     zero the elaboration decision forbids, so it renders nothing too.
-  const anyTokens =
-    (usage?.inputTokens ?? 0) +
-    (usage?.outputTokens ?? 0) +
-    (usage?.cacheCreationTokens ?? 0) +
-    (usage?.cacheReadTokens ?? 0);
-  if (!usage || anyTokens <= 0) return null;
-
-  const total = headlineTokenTotal(usage.inputTokens, usage.outputTokens);
-  const compact = formatCompactTokens(total);
-
-  // Breakdown rows — each omitted when its field is null. Values are shown in full (not
-  // compacted) in the tooltip, where there's room and precision is useful.
-  const rows: Array<{ label: string; value: string }> = [];
-  if (usage.inputTokens != null)
-    rows.push({ label: t("usageInput"), value: usage.inputTokens.toLocaleString() });
-  if (usage.outputTokens != null)
-    rows.push({ label: t("usageOutput"), value: usage.outputTokens.toLocaleString() });
-  if (usage.cacheReadTokens != null)
-    rows.push({ label: t("usageCacheRead"), value: usage.cacheReadTokens.toLocaleString() });
-  if (usage.cacheCreationTokens != null)
-    rows.push({ label: t("usageCacheWrite"), value: usage.cacheCreationTokens.toLocaleString() });
-  if (usage.model) rows.push({ label: t("usageModel"), value: usage.model });
+/**
+ * The shared presentational badge: a compact label (already humanized) + a breakdown
+ * tooltip. Hover/focus opens it on desktop; a tap toggles it on touch (controlled `open`).
+ * `ariaLabel` is the accessible name of the badge face.
+ */
+export function UsageBadge({
+  label,
+  ariaLabel,
+  rows,
+}: {
+  label: string;
+  ariaLabel: string;
+  rows: UsageBadgeRow[];
+}) {
+  // Controlled so a TAP can open it on touch devices (Radix hover/focus won't fire there).
+  // `onOpenChange` keeps desktop hover + keyboard focus working; the tap handler toggles.
+  const [open, setOpen] = useState(false);
 
   return (
     <TooltipProvider delayDuration={150}>
-      <Tooltip>
+      <Tooltip open={open} onOpenChange={setOpen}>
         <TooltipTrigger asChild>
-          <span
-            className="inline-flex cursor-default items-center gap-1 rounded-md bg-secondary px-1.5 py-0 text-[10px] font-medium tabular-nums text-muted-foreground"
-            aria-label={t("usageBadgeAria", { total })}
+          <button
+            type="button"
+            // Toggle on tap/click (covers touch, where hover never fires). `onPointerUp`
+            // fires for both mouse and touch; we flip the controlled state so a second tap
+            // closes it. Desktop hover still opens via onOpenChange before any click.
+            onPointerUp={() => setOpen((v) => !v)}
+            className="inline-flex cursor-default items-center gap-1 rounded-md bg-secondary px-1.5 py-0 text-[10px] font-medium tabular-nums text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label={ariaLabel}
           >
             <Coins className="h-2.5 w-2.5" aria-hidden />
-            {t("usageBadgeLabel", { total: compact })}
-          </span>
+            {label}
+          </button>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
           <div className="flex flex-col gap-0.5 text-[11px]">
@@ -87,5 +86,78 @@ export function TokenUsageBadge({ usage }: { usage: TokenUsage | null }) {
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  );
+}
+
+/** True iff a usage object carries positive token activity in any field. */
+function hasTokenActivity(usage: TokenUsage | null): usage is TokenUsage {
+  if (!usage) return false;
+  return (
+    (usage.inputTokens ?? 0) +
+      (usage.outputTokens ?? 0) +
+      (usage.cacheCreationTokens ?? 0) +
+      (usage.cacheReadTokens ?? 0) >
+    0
+  );
+}
+
+/**
+ * Per-turn badge: summed input+output on the face; tooltip breaks down
+ * input / output / cache-read / cache-write / model (null fields omitted). Renders nothing
+ * for a turn with no positive token activity (no misleading "0 tok").
+ */
+export function TokenUsageBadge({ usage }: { usage: TokenUsage | null }) {
+  const t = useTranslations("daemonChat");
+  if (!hasTokenActivity(usage)) return null;
+
+  const total = headlineTokenTotal(usage.inputTokens, usage.outputTokens);
+  const rows: UsageBadgeRow[] = [];
+  if (usage.inputTokens != null)
+    rows.push({ label: t("usageInput"), value: usage.inputTokens.toLocaleString() });
+  if (usage.outputTokens != null)
+    rows.push({ label: t("usageOutput"), value: usage.outputTokens.toLocaleString() });
+  if (usage.cacheReadTokens != null)
+    rows.push({ label: t("usageCacheRead"), value: usage.cacheReadTokens.toLocaleString() });
+  if (usage.cacheCreationTokens != null)
+    rows.push({ label: t("usageCacheWrite"), value: usage.cacheCreationTokens.toLocaleString() });
+  if (usage.model) rows.push({ label: t("usageModel"), value: usage.model });
+
+  return (
+    <UsageBadge
+      label={t("usageBadgeLabel", { total: formatCompactTokens(total) })}
+      ariaLabel={t("usageBadgeAria", { total })}
+      rows={rows}
+    />
+  );
+}
+
+/**
+ * Conversation-header badge: identical badge shape, driven by the SESSION rollup. The face
+ * shows the summed input+output for the whole conversation; the tooltip breaks down Input /
+ * Output (the rollup carries no cache, so cache is per-turn only). Renders nothing when the
+ * conversation has no reported in/out (all-silent stays clean — no "0 tok").
+ */
+export function SessionUsageBadge({
+  totalInputTokens,
+  totalOutputTokens,
+}: {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}) {
+  const t = useTranslations("daemonChat");
+  const total = totalInputTokens + totalOutputTokens;
+  if (total <= 0) return null;
+
+  const rows: UsageBadgeRow[] = [
+    { label: t("usageInput"), value: totalInputTokens.toLocaleString() },
+    { label: t("usageOutput"), value: totalOutputTokens.toLocaleString() },
+  ];
+
+  return (
+    <UsageBadge
+      label={t("usageBadgeLabel", { total: formatCompactTokens(total) })}
+      ariaLabel={t("conversationUsageAria", { total })}
+      rows={rows}
+    />
   );
 }

@@ -1572,7 +1572,7 @@
     "usageCacheRead": "缓存读取",
     "usageCacheWrite": "缓存写入",
     "usageModel": "模型",
-    "conversationTokensInOut": "输入 {input} / 输出 {output}",
+    "conversationUsageAria": "对话 Token 消耗：{total} tokens（输入 + 输出）",
     "openTask": "打开任务",
     "openIdea": "打开想法",
     "roleYou": "你",

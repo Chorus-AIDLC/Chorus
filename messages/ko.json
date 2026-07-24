@@ -1572,7 +1572,7 @@
     "usageCacheRead": "캐시 읽기",
     "usageCacheWrite": "캐시 쓰기",
     "usageModel": "모델",
-    "conversationTokensInOut": "입력 {input} / 출력 {output}",
+    "conversationUsageAria": "대화 토큰 사용량: {total} 토큰 (입력 + 출력)",
     "openTask": "작업 열기",
     "openIdea": "아이디어 열기",
     "roleYou": "회원님",

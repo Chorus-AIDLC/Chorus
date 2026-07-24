@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/collapsible";
 import { clientLogger } from "@/lib/logger-client";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
-import { formatCompactTokens } from "@/lib/token-usage-format";
+import { SessionUsageBadge } from "./token-usage-badge";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -410,18 +410,14 @@ export function TranscriptView({
                 )}
               </span>
             )}
-            {/* Conversation token usage (daemon-token-usage): input and output shown
-                SEPARATELY (never summed) from the session rollup. Cache is intentionally NOT
-                here — it's in each turn's hover tooltip. Shown once the conversation has any
-                reported in/out so an all-silent conversation stays clean (no "0 in / 0 out"). */}
-            {(totalInputTokens > 0 || totalOutputTokens > 0) && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground tabular-nums">
-                {t("conversationTokensInOut", {
-                  input: formatCompactTokens(totalInputTokens),
-                  output: formatCompactTokens(totalOutputTokens),
-                })}
-              </span>
-            )}
+            {/* Conversation token usage (daemon-token-usage): the SAME badge a turn shows —
+                a compact SUMMED total (input+output) with the breakdown on hover/tap — driven
+                by the session rollup. `SessionUsageBadge` renders nothing when the rollup is
+                all-zero, so an all-silent conversation stays clean. Cache is per-turn only. */}
+            <SessionUsageBadge
+              totalInputTokens={totalInputTokens}
+              totalOutputTokens={totalOutputTokens}
+            />
             {/* Right-aligned action group — the "Copy session ID" button and the
                 "Connection details" disclosure trigger sit ADJACENT at the end of the
                 status line. `ml-auto` lives on this wrapper (not on the trigger) so the

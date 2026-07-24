@@ -1572,7 +1572,7 @@
     "usageCacheRead": "キャッシュ読み取り",
     "usageCacheWrite": "キャッシュ書き込み",
     "usageModel": "モデル",
-    "conversationTokensInOut": "入力 {input} / 出力 {output}",
+    "conversationUsageAria": "会話のトークン使用量: {total} トークン (入力 + 出力)",
     "openTask": "課題を開く",
     "openIdea": "着想を開く",
     "roleYou": "あなた",
