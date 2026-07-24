@@ -12,7 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractTranscriptText,
   extractTurnUsage,
+  extractCodexTurnUsage,
   CLAUDE_CODE_USAGE_SOURCE,
+  CODEX_USAGE_SOURCE,
   createTranscriptUploadHooks,
   mergeUploadHooks,
   createExecutionUploadHooks,
@@ -883,6 +885,107 @@ describe("extractTurnUsage — normalize the Claude Code result envelope", () =>
     };
     expect(extractTurnUsage(assistantWithUsage)).toBeNull();
   });
+
+  it("does NOT capture a Codex turn.completed frame (Claude extractor stays Claude-only)", () => {
+    expect(extractTurnUsage(CODEX_TURN_COMPLETED_FULL)).toBeNull();
+  });
+});
+
+// ── Real captured Codex `turn.completed` usage shape (codex-cli 0.145.0) ──
+// Verified against a live `codex exec --json` run and ../codex/codex-rs/exec/src/exec_events.rs
+// `Usage { input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
+// reasoning_output_tokens }`. No model id appears on ANY Codex event. The older-CLI subset
+// (0.142.3: only input_tokens + output_tokens) is covered by the pre-existing CODEX_TURN_COMPLETED.
+const CODEX_TURN_COMPLETED_FULL = {
+  type: "turn.completed",
+  usage: {
+    input_tokens: 13497,
+    cached_input_tokens: 4096,
+    cache_write_input_tokens: 512,
+    output_tokens: 5,
+    reasoning_output_tokens: 2000,
+  },
+};
+
+describe("extractCodexTurnUsage — normalize the Codex turn.completed event", () => {
+  it("maps a full codex-cli 0.145.0 turn.completed to the TokenUsage shape (output_tokens alone, model null)", () => {
+    expect(extractCodexTurnUsage(CODEX_TURN_COMPLETED_FULL)).toEqual({
+      inputTokens: 13497,
+      outputTokens: 5, // output_tokens ALONE — reasoning_output_tokens is a subdivision inside it, not added
+      cacheCreationTokens: 512, // ← cache_write_input_tokens
+      cacheReadTokens: 4096, // ← cached_input_tokens
+      model: null, // no model on the Codex stream
+      source: CODEX_USAGE_SOURCE,
+    });
+    // Tokens-only contract: no cost / total_tokens leaks through.
+    expect(extractCodexTurnUsage(CODEX_TURN_COMPLETED_FULL)).not.toHaveProperty("costUsd");
+    expect(extractCodexTurnUsage(CODEX_TURN_COMPLETED_FULL)).not.toHaveProperty("totalTokens");
+  });
+
+  it("does NOT add reasoning_output_tokens to output_tokens (reasoning is a subdivision inside output — adding it double-counts)", () => {
+    // Verified against ../codex/codex-rs: reasoning_output_tokens comes from
+    // output_tokens_details.reasoning_tokens (a detail of output_tokens); the codex test
+    // asserts input:100 + output:10 = total:110 with reasoning:5 already inside output.
+    const r = { type: "turn.completed", usage: { input_tokens: 100, output_tokens: 5, reasoning_output_tokens: 2000 } };
+    expect(extractCodexTurnUsage(r).outputTokens).toBe(5);
+  });
+
+  it("degrades gracefully on an older-CLI subset (no cache-write / no reasoning field)", () => {
+    // CODEX_TURN_COMPLETED is the real 0.142.3 shape: only input_tokens + output_tokens.
+    expect(extractCodexTurnUsage(CODEX_TURN_COMPLETED)).toEqual({
+      inputTokens: 13714,
+      outputTokens: 6, // output_tokens
+      cacheCreationTokens: null, // cache_write_input_tokens absent
+      cacheReadTokens: null, // cached_input_tokens absent
+      model: null,
+      source: CODEX_USAGE_SOURCE,
+    });
+  });
+
+  it("nulls output when output_tokens is absent (no fabricated zero); reasoning alone does NOT stand in for output", () => {
+    const r = { type: "turn.completed", usage: { input_tokens: 42 } };
+    const u = extractCodexTurnUsage(r);
+    expect(u.inputTokens).toBe(42);
+    expect(u.outputTokens).toBeNull();
+    // reasoning_output_tokens is NOT a source for outputTokens — only output_tokens is.
+    expect(extractCodexTurnUsage({ type: "turn.completed", usage: { reasoning_output_tokens: 7 } }).outputTokens).toBeNull();
+    expect(extractCodexTurnUsage({ type: "turn.completed", usage: { output_tokens: 9 } }).outputTokens).toBe(9);
+  });
+
+  it("coerces garbled counts to null (string/negative/float), never a bogus number", () => {
+    const r = {
+      type: "turn.completed",
+      usage: {
+        input_tokens: "12", // string → null
+        output_tokens: -3, // negative → null
+        cached_input_tokens: 1.4, // rounds to 1
+        cache_write_input_tokens: -8, // negative → null
+      },
+    };
+    const u = extractCodexTurnUsage(r);
+    expect(u.inputTokens).toBeNull();
+    expect(u.outputTokens).toBeNull(); // negative → null
+    expect(u.cacheReadTokens).toBe(1);
+    expect(u.cacheCreationTokens).toBeNull();
+  });
+
+  it("returns null for every non-turn.completed frame (transcript + Claude paths untouched)", () => {
+    expect(extractCodexTurnUsage(CODEX_AGENT_MESSAGE)).toBeNull();
+    expect(extractCodexTurnUsage(CODEX_THREAD_STARTED)).toBeNull();
+    expect(extractCodexTurnUsage(CODEX_TURN_STARTED)).toBeNull();
+    expect(extractCodexTurnUsage(CODEX_REASONING)).toBeNull();
+    // A Claude result envelope is NOT a Codex frame — no cross-dialect capture.
+    expect(extractCodexTurnUsage(RESULT_WITH_USAGE)).toBeNull();
+    // A turn.completed with no usage object is not usage-bearing.
+    expect(extractCodexTurnUsage({ type: "turn.completed" })).toBeNull();
+  });
+
+  it("never throws on a malformed / non-object input", () => {
+    expect(extractCodexTurnUsage(null)).toBeNull();
+    expect(extractCodexTurnUsage(undefined)).toBeNull();
+    expect(extractCodexTurnUsage("turn.completed")).toBeNull();
+    expect(extractCodexTurnUsage({ type: "turn.completed", usage: 42 })).toBeNull();
+  });
 });
 
 describe("createTranscriptUploadHooks — onSessionEnd returns captured token usage", () => {
@@ -926,6 +1029,33 @@ describe("createTranscriptUploadHooks — onSessionEnd returns captured token us
     // Second wake (same hook instance) reports NO result frame → usage must be null, not stale.
     await hooks.onSessionStart({ sessionId: SID, isNew: false });
     await hooks.onTranscriptMessage({ sessionId: SID, message: ASSISTANT_TEXT });
+    expect((await hooks.onSessionEnd({ sessionId: SID })).usage).toBeNull();
+  });
+
+  it("captures a Codex turn.completed frame through the SAME capture site (source=codex)", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    // A codex agent_message (assistant text) then the turn.completed usage frame.
+    await hooks.onTranscriptMessage({ sessionId: SID, message: CODEX_AGENT_MESSAGE });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: CODEX_TURN_COMPLETED_FULL });
+    const outcome = await hooks.onSessionEnd({ sessionId: SID });
+    expect(outcome.usage).toEqual({
+      inputTokens: 13497,
+      outputTokens: 5,
+      cacheCreationTokens: 512,
+      cacheReadTokens: 4096,
+      model: null,
+      source: CODEX_USAGE_SOURCE,
+    });
+    expect(outcome.relayError).toBeNull();
+  });
+
+  it("returns usage:null for a Codex stream that emitted no turn.completed (no fabricated zeros)", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    await hooks.onTranscriptMessage({ sessionId: SID, message: CODEX_AGENT_MESSAGE });
     expect((await hooks.onSessionEnd({ sessionId: SID })).usage).toBeNull();
   });
 });
