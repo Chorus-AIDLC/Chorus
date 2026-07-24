@@ -608,6 +608,14 @@ model DaemonSession {
   status               String              @default("active") // active | ended
   title                String?
   lastTurnAt           DateTime            @default(now())
+  // Running conversation token rollup (daemon-token-usage): headline input+output totals
+  // across all turns that reported usage. SCALAR Int (not JSON) on purpose — maintained
+  // with Prisma's atomic `increment` on the terminal edge, which cannot operate inside a
+  // Json column. Cache totals are NOT rolled up here (the header derives its conditional
+  // cache line from the per-turn `usage` of loaded turns). Default 0 so an existing session
+  // reads a valid zero total with no backfill.
+  totalInputTokens     Int                 @default(0)
+  totalOutputTokens    Int                 @default(0)
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
   turns                DaemonSessionTurn[]
@@ -644,6 +652,13 @@ model DaemonSessionTurn {
   // WHY its transcript is missing so the UI can say "reply couldn't be uploaded (reason)"
   // instead of the misleading "no reply received". Null on a successful/skipped upload.
   relayError    String?
+  // Per-turn token usage (daemon-token-usage) — the whole normalized TokenUsage object
+  // ({ inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, model, source },
+  // all nullable except source) stored as ONE JSON blob (human instruction: one JSON, not a
+  // field per number). Null when the backend reported none (pre-feature turns, silent turns,
+  // or backends that can't report). Written on the terminal edge only, verbatim from the
+  // authoritative Claude Code `result` envelope. Cost is intentionally NOT included this slice.
+  usage         Json?
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
   executionUuid String?

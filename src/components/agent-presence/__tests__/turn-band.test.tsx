@@ -57,6 +57,7 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
     status: "ended",
     interruptedReason: null,
     relayError: null,
+    usage: null,
     executionUuid: null,
     startedAt: "2026-07-04T03:00:00.000Z",
     endedAt: "2026-07-04T03:05:00.000Z",

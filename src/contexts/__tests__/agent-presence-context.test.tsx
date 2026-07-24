@@ -121,6 +121,7 @@ function transcriptEvent(over: Partial<TranscriptEvent> = {}): TranscriptEvent {
       trigger: "task_assigned",
       promptText: null,
       status: "running",
+      usage: null,
       interruptedReason: null,
       relayError: null,
       executionUuid: null,

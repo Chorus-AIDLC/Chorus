@@ -25,6 +25,7 @@
 // visible); it is NEVER re-routed to another connection of the same agent, because
 // a resume against a different working directory would `No conversation found`.
 
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { resolveRootIdea, type LineageEntityType } from "@/services/lineage.service";
@@ -138,6 +139,11 @@ export interface SessionView {
   status: string; // active | ended
   title: string | null;
   lastTurnAt: string; // ISO-8601
+  // Running conversation token rollup (daemon-token-usage): the authoritative headline
+  // input+output totals across all reporting turns. The header renders these directly (no
+  // need to load every turn); the per-turn cache line is derived UI-side from loaded turns.
+  totalInputTokens: number;
+  totalOutputTokens: number;
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601
 }
@@ -159,6 +165,10 @@ export interface TurnView {
   // though the wake exited — the reply was produced but never reached Chorus. Orthogonal to
   // `status`; lets the UI say "reply couldn't be uploaded (reason)" vs "no reply received".
   relayError: string | null;
+  // Per-turn token usage (daemon-token-usage): the whole normalized TokenUsage object, or
+  // null when the turn reported none (pre-feature, silent, or unsupported backend). The UI
+  // reads it whole (badge + tooltip); a malformed/legacy stored blob projects to null.
+  usage: TokenUsage | null;
   executionUuid: string | null;
   startedAt: string | null; // ISO-8601
   endedAt: string | null; // ISO-8601
@@ -206,6 +216,8 @@ interface DaemonSessionRow {
   status: string;
   title: string | null;
   lastTurnAt: Date;
+  totalInputTokens: number;
+  totalOutputTokens: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -219,10 +231,35 @@ interface DaemonSessionTurnRow {
   status: string;
   interruptedReason: string | null;
   relayError: string | null;
+  // Raw JSON column (daemon-token-usage) — coerced to a validated TokenUsage (or null) by
+  // toTurnView. Typed `unknown` because the DB hands back an untrusted JSON value.
+  usage: unknown;
   executionUuid: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
   createdAt: Date;
+}
+
+/**
+ * Defensive projection of the raw `usage` JSON column into a validated {@link TokenUsage},
+ * or null. A malformed / legacy / non-conforming blob (or a JSON null) maps to null rather
+ * than throwing — the daemon-token-usage module contract: the UI simply shows no badge. A
+ * value counts as usage only when it is an object carrying a string `source` and every
+ * present token field is a number (missing → null). Never throws.
+ */
+function toTokenUsageView(raw: unknown): TokenUsage | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.source !== "string" || !r.source) return null;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    inputTokens: num(r.inputTokens),
+    outputTokens: num(r.outputTokens),
+    cacheCreationTokens: num(r.cacheCreationTokens),
+    cacheReadTokens: num(r.cacheReadTokens),
+    model: typeof r.model === "string" ? r.model : null,
+    source: r.source,
+  };
 }
 
 // ===== Helpers =====
@@ -237,6 +274,8 @@ function toSessionView(row: DaemonSessionRow): SessionView {
     status: row.status,
     title: row.title,
     lastTurnAt: row.lastTurnAt.toISOString(),
+    totalInputTokens: row.totalInputTokens,
+    totalOutputTokens: row.totalOutputTokens,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -252,6 +291,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     status: row.status,
     interruptedReason: row.interruptedReason,
     relayError: row.relayError,
+    usage: toTokenUsageView(row.usage),
     executionUuid: row.executionUuid,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
@@ -604,6 +644,7 @@ export async function advanceTurn(
     executionUuid?: string | null;
     interruptedReason?: string | null;
     relayError?: string | null;
+    usage?: Prisma.InputJsonValue;
   } = { status };
   if (opts.startedAt !== undefined) data.startedAt = opts.startedAt;
   if (opts.endedAt !== undefined) data.endedAt = opts.endedAt;
@@ -616,17 +657,47 @@ export async function advanceTurn(
   // The relay-error annotation is meaningful only on a TERMINAL edge (the daemon reports it
   // at subprocess exit). Persist it on → ended/interrupted; ignore on → running so a resume
   // can't carry a stale drop forward. Only write when the caller passed a value.
-  if (
-    (status === "ended" || status === "interrupted") &&
-    opts.relayError !== undefined
-  ) {
+  const isTerminal = status === "ended" || status === "interrupted";
+  if (isTerminal && opts.relayError !== undefined) {
     data.relayError = opts.relayError;
   }
+  // Per-turn token usage (daemon-token-usage): also a TERMINAL-edge-only annotation (the
+  // daemon knows it at subprocess exit, same as relayError). Persist the whole normalized
+  // object verbatim as the single `usage` JSON column; ignore on → running so a resume can't
+  // carry stale usage forward. Only write when the caller passed a (non-null) object — a null
+  // leaves the column untouched (never overwriting a real usage with null on a later edge).
+  const usageToWrite =
+    isTerminal && opts.usage != null ? opts.usage : null;
+  if (usageToWrite) {
+    // Cast through the Prisma JSON input type — TokenUsage is a flat JSON-serializable record.
+    data.usage = usageToWrite as unknown as Prisma.InputJsonValue;
+  }
 
-  const updated = await prisma.daemonSessionTurn.update({
-    where: { uuid: turnUuid },
-    data,
-  });
+  // Write the turn. When usage was captured, ALSO increment the session's scalar token
+  // rollup — atomically, in ONE transaction, so the turn's usage column and the session
+  // total can never tear (a reader never sees a turn's usage without its contribution to the
+  // total, or vice versa). Prisma's `{ increment }` is a DB-side atomic add, so concurrent
+  // terminal advances on the same session accumulate correctly without a read-modify-write.
+  // No usage → a plain single-row update (unchanged from before this feature).
+  let updated;
+  if (usageToWrite) {
+    const [turnRow] = await prisma.$transaction([
+      prisma.daemonSessionTurn.update({ where: { uuid: turnUuid }, data }),
+      prisma.daemonSession.update({
+        where: { uuid: turn.sessionUuid },
+        data: {
+          totalInputTokens: { increment: opts.usage?.inputTokens ?? 0 },
+          totalOutputTokens: { increment: opts.usage?.outputTokens ?? 0 },
+        },
+      }),
+    ]);
+    updated = turnRow;
+  } else {
+    updated = await prisma.daemonSessionTurn.update({
+      where: { uuid: turnUuid },
+      data,
+    });
+  }
 
   // The session carries the companyUuid the SSE event needs. The turn was just updated
   // via its session FK, so the session always resolves; a missing one means a torn

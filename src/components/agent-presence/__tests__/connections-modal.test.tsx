@@ -738,6 +738,8 @@ describe("Daemon chat modal — one-shot session focus (openChatForSession)", ()
     status: "active",
     title: "Fresh conversation",
     lastTurnAt: "2026-06-16T12:04:00.000Z",
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     createdAt: "2026-06-16T12:04:00.000Z",
     updatedAt: "2026-06-16T12:04:00.000Z",
   };

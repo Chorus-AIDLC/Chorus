@@ -88,6 +88,8 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     status: "active",
     title: "Refactor auth",
     lastTurnAt: NOW,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

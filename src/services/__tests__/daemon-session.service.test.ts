@@ -29,6 +29,10 @@ const mockPrisma = vi.hoisted(() => ({
   daemonExecution: {
     findFirst: vi.fn(),
   },
+  // The usage-write path (daemon-token-usage) batches the turn update + the session rollup
+  // increment in one $transaction. The mock resolves the array of operations in order — the
+  // service reads the first element (the turn row).
+  $transaction: vi.fn(async (ops: Array<Promise<unknown>>) => Promise.all(ops)),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -104,6 +108,8 @@ function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
     status: "active",
     title: null,
     lastTurnAt: new Date("2026-06-15T03:00:00.000Z"),
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     createdAt: new Date("2026-06-15T03:00:00.000Z"),
     updatedAt: new Date("2026-06-15T03:00:00.000Z"),
     ...overrides,
@@ -120,6 +126,7 @@ function turnRow(overrides: Partial<Record<string, unknown>> = {}) {
     status: "pending",
     interruptedReason: null,
     relayError: null,
+    usage: null,
     executionUuid: null,
     startedAt: null,
     endedAt: null,
@@ -652,6 +659,111 @@ describe("advanceTurn", () => {
     await advanceTurn(turnUuid, "running", { relayError: "should be ignored" });
     const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("relayError");
+  });
+
+  // ===== Per-turn token usage (daemon-token-usage) =====
+  const sampleUsage = {
+    inputTokens: 10,
+    outputTokens: 214,
+    cacheCreationTokens: 24701,
+    cacheReadTokens: 0,
+    model: "claude-haiku-4-5",
+    source: "claude_code",
+  };
+
+  it("PERSISTS usage JSON + increments the session rollup ATOMICALLY in one $transaction on → ended", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "ended", usage: sampleUsage }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurn(turnUuid, "ended", { usage: sampleUsage });
+    expect(res).toMatchObject({ ok: true });
+
+    // ONE $transaction batching the turn update + the session rollup increment (atomic).
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // Turn update wrote the whole usage object verbatim into the single JSON column.
+    const turnData = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(turnData.usage).toEqual(sampleUsage);
+    // Session rollup used Prisma's atomic increment (NOT a read-modify-write) with in/out.
+    const sessionData = mockPrisma.daemonSession.update.mock.calls[0][0];
+    expect(sessionData.where).toEqual({ uuid: sessionUuid });
+    expect(sessionData.data.totalInputTokens).toEqual({ increment: 10 });
+    expect(sessionData.data.totalOutputTokens).toEqual({ increment: 214 });
+    // The view surfaces the usage object.
+    const [, payload] = mockEventBus.emit.mock.calls[0];
+    expect(payload.turn.usage).toEqual(sampleUsage);
+  });
+
+  it("increments the rollup by 0 for a null token field (partial usage never NaNs the total)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    const partial = { ...sampleUsage, outputTokens: null };
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "ended", usage: partial }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurn(turnUuid, "ended", { usage: partial });
+    const sessionData = mockPrisma.daemonSession.update.mock.calls[0][0];
+    expect(sessionData.data.totalInputTokens).toEqual({ increment: 10 });
+    expect(sessionData.data.totalOutputTokens).toEqual({ increment: 0 });
+  });
+
+  it("IGNORES usage on a → running edge (annotation is terminal-only; no rollup, no $transaction)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "pending",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "running" }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurn(turnUuid, "running", { usage: sampleUsage });
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("usage");
+    // No rollup increment and no $transaction on a non-terminal edge (plain single update).
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+  });
+
+  it("a terminal edge WITHOUT usage does a plain update (no rollup, no $transaction) — unchanged behavior", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "ended" }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurn(turnUuid, "ended", {});
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("usage");
+  });
+
+  it("toTurnView projects a malformed stored usage blob to null (never throws)", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "running",
+    });
+    // A legacy/garbled blob (no `source`, junk shape) must project to null, not crash.
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(
+      turnRow({ status: "ended", usage: { garbage: true, inputTokens: "nope" } }),
+    );
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const res = await advanceTurn(turnUuid, "ended", {});
+    expect(res).toMatchObject({ ok: true });
+    if (res.ok) expect(res.turn.usage).toBeNull();
   });
 
   it("pending → running: updates status, records startedAt + executionUuid, emits turn_status_changed", async () => {
