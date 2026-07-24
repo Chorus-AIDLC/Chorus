@@ -311,3 +311,52 @@ describe("TurnBand transcript-relay failure (fix #444 follow-up)", () => {
     expect(screen.queryByText(RELAY_MSG)).toBeNull();
   });
 });
+
+describe("TurnBand — per-turn token usage badge (daemon-token-usage)", () => {
+  const usage = {
+    inputTokens: 1200,
+    outputTokens: 340,
+    cacheCreationTokens: 24701,
+    cacheReadTokens: 0,
+    model: "claude-opus-4-8",
+    source: "claude_code",
+  };
+
+  it("shows a compact input+output total (cache NOT folded in)", () => {
+    renderBand(turn({ status: "ended", usage }));
+    // 1200 + 340 = 1540 → "1.5k tok" (cache 24701 is excluded from the headline).
+    expect(screen.getByText("1.5k tok")).toBeTruthy();
+    // The alarming cache number must NOT appear as the badge's visible headline.
+    expect(screen.queryByText(/24,?701 tok/)).toBeNull();
+  });
+
+  it("exposes the full breakdown via an aria-label on the badge", () => {
+    renderBand(turn({ status: "ended", usage }));
+    // Headline aria (input + output = 1540). Radix tooltip content is not in the DOM until
+    // hover, so we assert the always-present accessible label instead.
+    expect(screen.getByLabelText(/1540 tokens/)).toBeTruthy();
+  });
+
+  it("renders NO badge for a turn with null usage (no misleading zero)", () => {
+    renderBand(turn({ status: "ended", usage: null }));
+    expect(screen.queryByText(/tok$/)).toBeNull();
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+
+  it("renders NO badge when usage exists but both token counts are null", () => {
+    renderBand(
+      turn({
+        status: "ended",
+        usage: {
+          inputTokens: null,
+          outputTokens: null,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          model: "claude-opus-4-8",
+          source: "claude_code",
+        },
+      }),
+    );
+    expect(screen.queryByLabelText(/Token usage/)).toBeNull();
+  });
+});

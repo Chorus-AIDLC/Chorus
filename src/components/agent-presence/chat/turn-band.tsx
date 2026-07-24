@@ -38,6 +38,7 @@ import { execHref } from "../hooks";
 import type { ExecutionView } from "../types";
 import type { TurnWithMessagesView } from "@/services/daemon-session.service";
 import { Message } from "./message";
+import { TokenUsageBadge } from "./token-usage-badge";
 
 // Trigger → glyph + i18n label-key, the eyebrow vocabulary. A trigger outside the
 // known set falls back to a neutral glyph + "Turn" so an unrecognized value never
@@ -180,6 +181,9 @@ export function TurnBand({
             )}
             {statusLabel}
           </Badge>
+          {/* Per-turn token usage (daemon-token-usage) — compact total + breakdown tooltip.
+              Renders nothing for a turn that reported no usage (no misleading zeros). */}
+          <TokenUsageBadge usage={turn.usage} />
           {href && (
             <Link
               href={href}

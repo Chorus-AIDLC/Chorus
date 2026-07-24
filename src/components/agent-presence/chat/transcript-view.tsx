@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/collapsible";
 import { clientLogger } from "@/lib/logger-client";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
+import { formatCompactTokens, headlineTokenTotal } from "@/lib/token-usage-format";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
 import {
@@ -291,6 +292,34 @@ export function TranscriptView({
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
 
+  // Conversation token usage (daemon-token-usage). The HEADLINE total is input + output,
+  // sourced from the session's authoritative scalar rollup (totalInputTokens/Output) — it
+  // covers ALL reporting turns, even those paginated out of the loaded window. Cache is
+  // NEVER in the headline (cache-read can be 100× input). The secondary CACHE line is
+  // derived from the LOADED turns' usage (there's no session-level cache rollup) and shown
+  // only when at least one loaded turn actually reported cache tokens.
+  const headlineTokens = session
+    ? headlineTokenTotal(session.totalInputTokens, session.totalOutputTokens)
+    : 0;
+  const cacheTotals = useMemo(() => {
+    let read = 0;
+    let write = 0;
+    let has = false;
+    for (const tn of turns) {
+      const u = tn.usage;
+      if (!u) continue;
+      if (u.cacheReadTokens != null) {
+        read += u.cacheReadTokens;
+        has = true;
+      }
+      if (u.cacheCreationTokens != null) {
+        write += u.cacheCreationTokens;
+        has = true;
+      }
+    }
+    return { read, write, has };
+  }, [turns]);
+
   // The conversation's single composer-hosted execution — its origin connection's
   // CURRENT in-flight work that the reply box's action row reflects. Priority:
   // running (→ Interrupt) > user-interrupted (→ Resume) > crash-interrupted (→ the
@@ -394,6 +423,25 @@ export function TranscriptView({
                     title={t("runningElapsedLabel")}
                   >
                     {formatElapsed(runningExecution.startedAt, nowMs)}
+                  </span>
+                )}
+              </span>
+            )}
+            {/* Conversation token total (daemon-token-usage): headline = input+output from
+                the session rollup; a secondary cache line only when loaded turns reported
+                cache. Shown once the conversation has any reported usage (headline > 0 or
+                cache present) so an all-silent conversation stays clean (no "0 tokens"). */}
+            {(headlineTokens > 0 || cacheTotals.has) && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <span className="tabular-nums">
+                  {t("conversationTokens", { total: formatCompactTokens(headlineTokens) })}
+                </span>
+                {cacheTotals.has && (
+                  <span className="text-[10px] opacity-70" title={t("conversationCacheTitle")}>
+                    {t("conversationCache", {
+                      read: formatCompactTokens(cacheTotals.read),
+                      write: formatCompactTokens(cacheTotals.write),
+                    })}
                   </span>
                 )}
               </span>

@@ -293,3 +293,61 @@ describe("CopySessionIdButton — inside the TranscriptView header", () => {
     expect(screen.queryByRole("button", { name: "Copy session ID" })).toBeNull();
   });
 });
+
+describe("TranscriptView header — conversation token total (daemon-token-usage)", () => {
+  function turnWithUsage(usage: unknown) {
+    return {
+      uuid: "t-usage",
+      sessionUuid: "sess-1",
+      seq: 1,
+      trigger: "task_assigned",
+      promptText: null,
+      status: "ended",
+      interruptedReason: null,
+      relayError: null,
+      usage,
+      executionUuid: null,
+      startedAt: NOW,
+      endedAt: NOW,
+      createdAt: NOW,
+      messages: [],
+    };
+  }
+
+  it("shows the headline in+out total from the session rollup (cache excluded)", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 1200, totalOutputTokens: 340 });
+    // 1200 + 340 = 1540 → "1.5k tokens" in the header.
+    render(<TranscriptView {...transcriptProps(session)} />);
+    expect(screen.getByText("1.5k tokens")).toBeTruthy();
+  });
+
+  it("shows no total for an all-silent conversation (zero rollup, no cache) — no '0 tokens'", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 0, totalOutputTokens: 0 });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    expect(screen.queryByText(/tokens$/)).toBeNull();
+  });
+
+  it("shows a cache line ONLY when a loaded turn reported cache tokens", () => {
+    installClipboard();
+    const session = sessionView({ totalInputTokens: 1200, totalOutputTokens: 340 });
+    const props = {
+      ...transcriptProps(session),
+      turns: [
+        turnWithUsage({
+          inputTokens: 1200,
+          outputTokens: 340,
+          cacheCreationTokens: 500,
+          cacheReadTokens: 24701,
+          model: "claude-opus-4-8",
+          source: "claude_code",
+        }),
+      ],
+    } as Parameters<typeof TranscriptView>[0];
+    render(<TranscriptView {...props} />);
+    // Headline stays in+out; the cache line surfaces cache read/write separately.
+    expect(screen.getByText("1.5k tokens")).toBeTruthy();
+    expect(screen.getByText(/cache 24\.7k↓ \/ 500↑/)).toBeTruthy();
+  });
+});
