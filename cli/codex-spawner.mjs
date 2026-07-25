@@ -93,9 +93,11 @@ export function buildCodexArgs({ isNew, threadId, permissionMode }) {
  */
 export function extractThreadId(obj) {
   if (!obj || typeof obj !== "object") return null;
-  if (obj.type === "thread.started" && typeof obj.thread_id === "string") return obj.thread_id;
+  if (obj.type === "thread.started" && typeof obj.thread_id === "string") {
+    return obj.thread_id.trim() || null;
+  }
   if (obj.type === "session_meta" && obj.payload && typeof obj.payload.id === "string") {
-    return obj.payload.id;
+    return obj.payload.id.trim() || null;
   }
   return null;
 }
@@ -175,6 +177,7 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
 export class CodexSpawner {
   /** @param {CodexSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    this.sessionDecision = { probeIsAuthoritative: false };
     this.codexPath = opts.codexPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
@@ -265,6 +268,7 @@ export class CodexSpawner {
 
       let stdoutBuf = "";
       let observedThreadId = knownThreadId || null;
+      let threadIdPersisted = false;
 
       child.stdout?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -273,7 +277,13 @@ export class CodexSpawner {
           String(chunk),
           (obj) => {
             const tid = extractThreadId(obj);
-            if (tid) observedThreadId = tid;
+            if (tid) {
+              observedThreadId = tid;
+              if (isNew && anchor && !threadIdPersisted) {
+                threadIdPersisted = true;
+                this.setThreadIdFn(anchor, tid);
+              }
+            }
             let delivered = obj;
             if (obj?.type === "turn.completed" && obj.usage) {
               delivered = needsUsageSeed
@@ -311,12 +321,6 @@ export class CodexSpawner {
       child.on("close", (code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] codex exited with code ${code}`);
-        }
-        // Persist anchor→thread_id only on a fresh, successful run that produced a
-        // new id — so a later wake for this anchor resumes it. Best-effort; the
-        // session map swallows its own IO errors.
-        if (code === 0 && isNew && anchor && observedThreadId) {
-          this.setThreadIdFn(anchor, observedThreadId);
         }
         resolve({ sessionId: observedThreadId || anchor, exitCode: code, isNew });
       });

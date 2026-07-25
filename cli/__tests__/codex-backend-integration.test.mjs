@@ -13,9 +13,13 @@
 //      prompt on stdin, daemon key in the child env (never argv).
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildDaemon } from "../daemon.mjs";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
+import { getThreadId, setThreadId } from "../codex-session-map.mjs";
 import { Waker } from "../waker.mjs";
 import { createTranscriptUploadHooks } from "../upload-hooks.mjs";
 import { killProcessTree } from "../process-killer.mjs";
@@ -164,6 +168,86 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
     child.emit("close", 0);
     await p;
     expect(calls.argv.slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
+  });
+
+  it("resumes an interrupted first turn from persisted state in a fresh spawner", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chorus-codex-interrupt-"));
+    const path = join(dir, "codex-sessions.json");
+    const children = [];
+    const calls = [];
+    const makeSpawner = () =>
+      new CodexSpawner({
+        codexPath: "/usr/bin/codex",
+        platform: "linux",
+        permissionMode: "yolo",
+        creds: CREDS,
+        logger: silent,
+        getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
+        setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
+        spawnImpl: (_command, argv) => {
+          calls.push(argv);
+          const child = makeFakeChild();
+          children.push(child);
+          return child;
+        },
+      });
+
+    try {
+      const first = makeSpawner().wake({ prompt: "first", sessionId: ANCHOR });
+      children[0].stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+      children[0].emit("close", 130);
+      await first;
+
+      const resumed = makeSpawner().wake({ prompt: "resume after restart", sessionId: ANCHOR });
+      children[1].emit("close", 0);
+      await resumed;
+
+      expect(calls[0].slice(0, 2)).toEqual(["exec", "--json"]);
+      expect(calls[1].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps resuming the same known thread after an interrupted resumed wake", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chorus-codex-reinterrupt-"));
+    const path = join(dir, "codex-sessions.json");
+    setThreadId(ANCHOR, TID, { path, logger: silent });
+    const calls = [];
+    const children = [];
+    const makeSpawner = () =>
+      new CodexSpawner({
+        codexPath: "/usr/bin/codex",
+        platform: "linux",
+        permissionMode: "yolo",
+        creds: CREDS,
+        logger: silent,
+        getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
+        setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
+        spawnImpl: (_command, argv) => {
+          calls.push(argv);
+          const child = makeFakeChild();
+          children.push(child);
+          return child;
+        },
+      });
+
+    try {
+      const interruptedResume = makeSpawner().wake({ prompt: "continue", sessionId: ANCHOR });
+      children[0].emit("close", 130);
+      await interruptedResume;
+
+      const resumedAgain = makeSpawner().wake({ prompt: "continue again", sessionId: ANCHOR });
+      children[1].emit("close", 0);
+      await resumedAgain;
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
+      expect(calls[1].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
+      expect(getThreadId(ANCHOR, { path, logger: silent })).toBe(TID);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

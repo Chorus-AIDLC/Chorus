@@ -117,6 +117,8 @@ describe("extractThreadId — capture from the thread.started event", () => {
   it("returns null for unrelated events", () => {
     expect(extractThreadId({ type: "turn.completed" })).toBeNull();
     expect(extractThreadId({ type: "item.completed", item: {} })).toBeNull();
+    expect(extractThreadId({ type: "thread.started", thread_id: "  " })).toBeNull();
+    expect(extractThreadId({ type: "session_meta", payload: { id: "" } })).toBeNull();
     expect(extractThreadId(null)).toBeNull();
   });
 });
@@ -209,23 +211,62 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     expect(result.sessionId).toBe(TID);
   });
 
-  it("captures thread_id and persists anchor→thread_id on a successful new run", async () => {
+  it("persists anchor→thread_id immediately when a new run emits thread.started", async () => {
     const child = makeFakeChild();
     const setThreadId = vi.fn();
     const { spawner } = makeSpawner({ child, setThreadId });
     const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
     child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
     child.emit("close", 0);
     await p;
+    expect(setThreadId).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the mapping when a new run establishes a thread then exits non-zero", async () => {
+    const child = makeFakeChild();
+    const setThreadId = vi.fn();
+    const { spawner } = makeSpawner({ child, setThreadId });
+    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
+    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+    child.emit("close", 1);
+    await p;
+    expect(setThreadId).toHaveBeenCalledTimes(1);
     expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
   });
 
-  it("does NOT persist on a non-zero exit (failed run)", async () => {
+  it("persists exactly once when duplicate compatible identifier events arrive", async () => {
     const child = makeFakeChild();
     const setThreadId = vi.fn();
     const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
+    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
     child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+    child.stdout.emit("data", JSON.stringify({ type: "session_meta", payload: { id: TID } }) + "\n");
+    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+    child.emit("close", 0);
+    await p;
+    expect(setThreadId).toHaveBeenCalledTimes(1);
+    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
+  });
+
+  it("persists a compatible session_meta identifier before child close", async () => {
+    const child = makeFakeChild();
+    const setThreadId = vi.fn();
+    const { spawner } = makeSpawner({ child, setThreadId });
+    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
+    child.stdout.emit("data", JSON.stringify({ type: "session_meta", payload: { id: TID } }) + "\n");
+    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
+    child.emit("close", 0);
+    await p;
+  });
+
+  it("does not persist when a new process fails before emitting a valid thread id", async () => {
+    const child = makeFakeChild();
+    const setThreadId = vi.fn();
+    const { spawner } = makeSpawner({ child, setThreadId });
+    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
+    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: " " }) + "\n");
+    child.stdout.emit("data", JSON.stringify({ type: "turn.failed", thread_id: ANCHOR }) + "\n");
     child.emit("close", 1);
     await p;
     expect(setThreadId).not.toHaveBeenCalled();

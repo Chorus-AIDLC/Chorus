@@ -247,6 +247,10 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
 export class ClaudeSpawner {
   /** @param {ClaudeSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    this.sessionDecision = {
+      probeIsAuthoritative: true,
+      takeoverCommand: "claude --resume",
+    };
     this.claudePath = opts.claudePath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;

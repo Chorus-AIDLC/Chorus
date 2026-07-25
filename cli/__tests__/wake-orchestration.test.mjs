@@ -398,6 +398,23 @@ describe("Waker.wake full loop", () => {
     expect(spawner.wake.mock.calls[0][0].sessionId).toBe(DIRECT_IDEA);
   });
 
+  it("logs the backend's actual session decision instead of the transcript probe hint", async () => {
+    const messages = [];
+    const spawner = {
+      sessionDecision: { probeIsAuthoritative: false },
+      wake: vi.fn(async () => ({ sessionId: "codex-thread-1", exitCode: 0, isNew: false })),
+    };
+    const { waker } = makeWaker({ spawner, isNewSessionFn: vi.fn(() => true) });
+    waker.logger = { ...silent, info: (message) => messages.push(message) };
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(spawner.wake.mock.calls[0][0].isNew).toBe(true);
+    expect(messages).toContain(`[Chorus] dispatching session ${DIRECT_IDEA}`);
+    expect(messages).toContain("[Chorus] backend resumed session codex-thread-1");
+    expect(messages.join("\n")).not.toMatch(/spawning new|resuming session/);
+  });
+
   it("falls back to a per-entity key when there's no direct idea", async () => {
     const { waker } = makeWaker({
       lineage: { resolve: async () => ({ rootIdeaUuid: null, directIdeaUuid: null }) },

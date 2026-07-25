@@ -1,7 +1,7 @@
 // cli/waker.mjs
 // Executes a single wake: resolve the event to its idea attribution, derive the
 // deterministic session id (= the DIRECT idea uuid), build the --mcp-config, spawn
-// headless Claude (new vs resume decided by probing the on-disk transcript), and
+// the configured headless agent, and
 // fire the (no-op) upload hooks. The WakeQueue schedules these per DIRECT idea so
 // two wakes for the same idea never run concurrently against the same session.
 //
@@ -56,7 +56,7 @@ export class Waker {
     this.lineage = opts.lineage;
     this.spawner = opts.spawner;
     // Verbose per-wake logging (daemon-startup-output). Default: one compact
-    // line per lifecycle event (arrival / spawn new-vs-resume / completion).
+    // line per lifecycle event (arrival / session decision / completion).
     // When true, additional detail is emitted alongside those lines.
     this.verbose = opts.verbose ?? false;
     // The connection/session-bound working directory this Waker serves (T3 — 单
@@ -385,13 +385,20 @@ export class Waker {
       const cwd = this.resolveCwd();
       const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
-      // Lifecycle line 2 — spawn: new vs resume, plus the (otherwise hidden)
-      // `claude --resume <id>` takeover hint so an operator can attach to the
-      // session from this daemon's working directory.
-      this.logger.info(
-        `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
-          (sessionId ? ` — take over with: claude --resume ${sessionId}` : "")
-      );
+      // Spawners declare whether the shared transcript probe is authoritative
+      // for their session decision. Missing metadata preserves the established
+      // Claude-compatible logging contract for injected/third-party spawners.
+      const sessionDecision = this.spawner.sessionDecision;
+      const probeIsAuthoritative = sessionDecision?.probeIsAuthoritative !== false;
+      if (probeIsAuthoritative) {
+        const takeoverCommand = sessionDecision?.takeoverCommand ?? "claude --resume";
+        this.logger.info(
+          `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
+            (sessionId && takeoverCommand ? ` — take over with: ${takeoverCommand} ${sessionId}` : "")
+        );
+      } else {
+        this.logger.info(`[Chorus] dispatching session ${sessionId ?? "(none)"}`);
+      }
       if (this.verbose) {
         this.logger.info(`[Chorus]   cwd=${cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
       }
@@ -447,6 +454,12 @@ export class Waker {
             .catch(() => {});
         },
       });
+
+      if (result && !probeIsAuthoritative) {
+        this.logger.info(
+          `[Chorus] backend ${result.isNew ? "started new" : "resumed"} session ${result.sessionId ?? sessionId ?? "(none)"}`
+        );
+      }
 
       // No session map to persist anymore — the id is deterministic (= direct idea
       // uuid) and the next wake re-derives new-vs-resume from disk. Just log a
