@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus task reviewer — independently verifi
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.2"
+  version: "0.14.3"
   category: project-management
   mcp_server: chorus
 ---

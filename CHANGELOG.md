@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.3] - 2026-07-25
+
+### Added
+- **Per-turn token usage in daemon conversations**: Daemon-driven turns now capture, upload, persist, and display token usage per turn for both backends. Claude Code usage is read from the authoritative `result` envelope of the `stream-json` stream (snake_case `result.usage`; model sourced from `modelUsage[<id>].canonicalModel`, never the usage object; on-disk JSONL is never read, avoiding the upstream placeholder bug); Codex usage is normalized from the CLI's cumulative snapshots into persisted per-turn deltas. Threaded end-to-end through the wire chain (`upload-hooks` → `waker` → `turn-reporter` → REST client → `turn-advance` route → `daemon-session` service) with a shared `TokenUsage` contract mirrored byte-for-byte into the OpenClaw REST client. (#446, #447)
+
+### Fixed
+- **Daemon went silently deaf after a long idle (SSE partition)**: A long-idle daemon on Linux could lose its SSE stream without noticing — the listener relied on undici's unconfigured body timeout and the server's split-brain kept the origin "online", so wakes silently no-op'd. Added an explicit client-side heartbeat watchdog (~75s) that detects the dead stream and reconnects, plus a `connection-heartbeat` route and server-side recovery so partitions surface instead of hanging. (#449)
+- **Codex session lost across an interrupt**: Interrupting a Codex-backed daemon turn no longer discards the session — the `thread_id` is preserved so the conversation resumes on the next turn instead of forking a fresh thread. (#448)
+- **Idle-session transcript relay dropped replies (#444)**: After a daemon session sat idle, continuing the conversation repeated the same instruction across turns, each showing "no reply retained". The turns actually ran but the transcript relay lost the reply (no flush-on-exit, no retry). Now flushes the debounced transcript before advancing to a terminal status, retries the upload with backoff, drains on stop, collapses duplicate pending instructions onto the existing turn, and surfaces a genuine upload failure inline (distinct from an honestly empty turn). (#445)
+- **OpenSpec round-trip verification is now exact**: The document round-trip verifier that guards OpenSpec-mirrored drafts now compares content exactly rather than approximately, catching mirror drift that the looser check let through. (#450)
+
+### Plugin
+- **Plugin & skill versions → 0.14.3**: Claude Code, Codex, OpenClaw, and Kiro plugins plus the standalone skill bumped to 0.14.3.
+
+---
+
 ## [0.14.2] - 2026-07-19
 
 ### Added
