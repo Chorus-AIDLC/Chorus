@@ -35,6 +35,7 @@ function fakeService(over = {}) {
     installConfig: {
       resolveInstallCredentials: vi.fn(async () => ({ ok: true, creds: { url: "u", apiKey: "cho_k" }, identity: { uuid: "a", name: "Bot" } })),
       resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
+      resolveInstallAgent: vi.fn(async () => ({ ok: true, agent: "claude-code", cliPath: "/bin/claude", cliFound: true })),
     },
     ...over,
   };
@@ -239,21 +240,40 @@ describe("runDaemon — supervisor (systemd) delegation", () => {
 });
 
 describe("runDaemon — install / uninstall", () => {
-  it("install runs the credential + cwd config phase, then passes --agent/--chorus-only into the spec and reports success", async () => {
+  it("install runs the credential + cwd + agent config phase, passes --chorus-only into the spec (NOT --agent), and reports success", async () => {
     const service = fakeService();
     const logs = [];
     const code = await runDaemon(
-      { action: "install", cwd: ["/a", "/b"], agent: "claude-code", chorusOnly: true },
+      { action: "install", cwd: ["/a", "/b"], agent: "codex", chorusOnly: true },
       { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
     // Config phase ran before the unit was written.
     expect(service.installConfig.resolveInstallCredentials).toHaveBeenCalledOnce();
     expect(service.installConfig.resolveInstallCwds).toHaveBeenCalledOnce();
+    expect(service.installConfig.resolveInstallAgent).toHaveBeenCalledOnce();
+    // The agent phase receives the flag; the value is persisted to daemon.json by
+    // that helper, NOT baked into the unit spec.
+    expect(service.installConfig.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "codex" });
     const spec = service.installService.mock.calls[0][0];
-    expect(spec.agent).toBe("claude-code");
+    expect(spec.agent).toBeUndefined();
     expect(spec.chorusOnly).toBe(true);
     expect(logs.join("")).toMatch(/installed and started/);
+  });
+
+  it("install ABORTS (exit 1, no unit written, no config phase) when --agent is an unknown value", async () => {
+    // resolveAgentType gates EVERY action up front, so an unknown --agent is
+    // rejected before the install config phase even begins.
+    const service = fakeService();
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install", agent: "gemini" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    expect(service.installService).not.toHaveBeenCalled();
+    expect(service.installConfig.resolveInstallAgent).not.toHaveBeenCalled();
+    expect(errs.join("")).toMatch(/Unknown --agent "gemini"/);
   });
 
   it("install ABORTS (exit 1, no unit written) when the credential preflight fails", async () => {
