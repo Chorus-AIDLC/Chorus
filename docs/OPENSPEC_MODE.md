@@ -130,7 +130,7 @@ When `CHORUS_OPENSPEC_ACTIVE=1`, **every** call to `chorus_pm_add_document_draft
 Calling these tools directly from the agent's MCP harness with a hand-typed `content` field is a **protocol violation** in OpenSpec mode and will fail review. Three reasons (full version in skill §2 Rule 1):
 
 1. **Token cost.** Re-typing thousands of lines of markdown body through the LLM burns 20k+ content tokens per proposal. The wrapper streams bytes through `jq -Rs '.'`; content never enters LLM context.
-2. **Byte-equality.** `jq -Rs '.'` is a byte-faithful encoder. LLM re-emission of long markdown drifts (table alignment, fence escapes, long-URL wraps). The byte-equality guarantee (modulo trailing `\n`) holds **only** on the wrapper path.
+2. **Byte-equality.** `jq -Rs '.'` is a byte-faithful encoder. LLM re-emission of long markdown drifts (table alignment, fence escapes, long-URL wraps). The exact byte-equality guarantee holds **only** on the wrapper path.
 3. **Single source of truth.** With the wrapper, the local `openspec/changes/<slug>/*.md` is authoritative; Chorus is a mirror. With agent re-typing, authority splits and a future diff cannot tell which side is correct.
 
 Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`) is unaffected — there's no local file to mirror, so direct MCP calls with inline `content` are still the right pattern.
@@ -145,7 +145,7 @@ The local file under `openspec/changes/<slug>/` is the working copy. The Chorus 
 
 To resync, re-run the relevant mirror snippet from `openspec-aware` §3.7. Same wrapper, same `json_encode_file`, same `chorus_check_response` halt-on-error.
 
-The Chorus backend appends a single trailing `\n` on write, so a round-trip is byte-equal **modulo a trailing newline**. Don't read that 1-byte diff as content drift.
+Round-trip verification is exact. A trailing newline difference is content drift and must not be normalized or ignored.
 
 After approval the draft becomes a Document with a fresh `documentUuid`. Use `chorus_pm_update_document` (skill §3.8) instead of `chorus_pm_update_document_draft`.
 
