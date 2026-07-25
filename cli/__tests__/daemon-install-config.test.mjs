@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   resolveInstallCredentials,
   resolveInstallCwds,
+  resolveInstallAgent,
 } from "../daemon-install-config.mjs";
 
 // ---- resolveInstallCredentials ------------------------------------------
@@ -148,5 +149,128 @@ describe("resolveInstallCwds", () => {
     const r = await resolveInstallCwds({}, { isTTY: false, skip: false, ...d });
     expect(d.prompt).not.toHaveBeenCalled();
     expect(r.cwds).toEqual(["/home/u/proj"]);
+  });
+});
+
+// ---- resolveInstallAgent ------------------------------------------------
+
+describe("resolveInstallAgent", () => {
+  // A base opts bundle: all three CLI probes report "found" so tests that don't
+  // care about the not-found path never trip the warning. Individual tests
+  // override probes / readJson as needed.
+  function baseOpts(over = {}) {
+    return {
+      writeConfig: vi.fn(),
+      readJson: () => null,
+      loginPath: "/tmp/none.json",
+      probes: {
+        resolveClaudePath: () => "/bin/claude",
+        resolveCodexPath: () => "/bin/codex",
+        resolveKiroPath: () => "/bin/kiro-cli",
+      },
+      log: vi.fn(),
+      errLog: vi.fn(),
+      ...over,
+    };
+  }
+
+  it("persists the --agent flag to daemon.json and returns it", async () => {
+    const o = baseOpts();
+    const r = await resolveInstallAgent({ agent: "codex" }, {}, o);
+    expect(r.agent).toBe("codex");
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "codex" });
+  });
+
+  it("uses CHORUS_AGENT env when no flag is given", async () => {
+    const o = baseOpts();
+    const r = await resolveInstallAgent({}, { CHORUS_AGENT: "kiro" }, o);
+    expect(r.agent).toBe("kiro");
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "kiro" });
+  });
+
+  it("flag wins over env", async () => {
+    const o = baseOpts();
+    const r = await resolveInstallAgent({ agent: "claude-code" }, { CHORUS_AGENT: "codex" }, o);
+    expect(r.agent).toBe("claude-code");
+  });
+
+  it("keeps an existing valid daemon.json `agent` WITHOUT re-writing (idempotent re-install)", async () => {
+    const o = baseOpts({ readJson: () => ({ agent: "codex" }) });
+    const r = await resolveInstallAgent({}, {}, o);
+    expect(r.agent).toBe("codex");
+    expect(o.writeConfig).not.toHaveBeenCalled();
+  });
+
+  it("ignores an invalid stored `agent` and falls back to the default (non-TTY)", async () => {
+    const o = baseOpts({ readJson: () => ({ agent: "gpt" }) });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: false, skip: true });
+    expect(r.agent).toBe("claude-code");
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "claude-code" });
+  });
+
+  it("non-TTY / skip with nothing configured persists the claude-code default", async () => {
+    const o = baseOpts();
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: false, skip: true });
+    expect(r.agent).toBe("claude-code");
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "claude-code" });
+  });
+
+  it("interactive menu: a numeric selection picks the matching backend", async () => {
+    const prompt = vi.fn(async () => "2"); // 2) Codex CLI
+    const o = baseOpts({ prompt });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
+    expect(r.agent).toBe("codex");
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "codex" });
+    // The menu was actually shown.
+    expect(o.log.mock.calls.flat().join("\n")).toMatch(/Codex CLI/);
+  });
+
+  it("interactive menu: a blank answer accepts the claude-code default (Enter)", async () => {
+    const prompt = vi.fn(async () => "");
+    const o = baseOpts({ prompt });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
+    expect(r.agent).toBe("claude-code");
+  });
+
+  it("interactive menu: accepts a backend typed by name", async () => {
+    const prompt = vi.fn(async () => "kiro");
+    const o = baseOpts({ prompt });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
+    expect(r.agent).toBe("kiro");
+  });
+
+  it("interactive menu: an out-of-range / garbage answer falls back to the default", async () => {
+    const prompt = vi.fn(async () => "9");
+    const o = baseOpts({ prompt });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
+    expect(r.agent).toBe("claude-code");
+  });
+
+  it("does NOT prompt on a TTY when --yes/skip is set (uses default)", async () => {
+    const prompt = vi.fn(async () => "2");
+    const o = baseOpts({ prompt });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: true });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(r.agent).toBe("claude-code");
+  });
+
+  it("probes the SELECTED backend's CLI and reports found", async () => {
+    const findCodex = vi.fn(() => "/opt/codex");
+    const o = baseOpts({ probes: { resolveClaudePath: () => "/bin/claude", resolveCodexPath: findCodex, resolveKiroPath: () => "/bin/kiro-cli" } });
+    const r = await resolveInstallAgent({ agent: "codex" }, {}, o);
+    expect(findCodex).toHaveBeenCalled();
+    expect(r.cliFound).toBe(true);
+    expect(r.cliPath).toBe("/opt/codex");
+    expect(o.log.mock.calls.flat().join("\n")).toMatch(/found CLI at \/opt\/codex/);
+  });
+
+  it("warns (non-fatal) when the selected backend's CLI is missing", async () => {
+    const o = baseOpts({ probes: { resolveClaudePath: () => "/bin/claude", resolveCodexPath: () => null, resolveKiroPath: () => "/bin/kiro-cli" } });
+    const r = await resolveInstallAgent({ agent: "codex" }, {}, o);
+    expect(r.cliFound).toBe(false);
+    expect(r.cliPath).toBeNull();
+    expect(o.errLog.mock.calls.flat().join("\n")).toMatch(/codex CLI NOT FOUND/);
+    // Still resolved + persisted — a missing binary never blocks the install.
+    expect(o.writeConfig).toHaveBeenCalledWith({ agent: "codex" });
   });
 });

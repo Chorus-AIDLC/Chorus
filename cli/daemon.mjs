@@ -17,6 +17,7 @@ import { prompt, writeLoginFile, updateDaemonConfig } from "./login.mjs";
 import {
   resolveInstallCredentials,
   resolveInstallCwds,
+  resolveInstallAgent,
 } from "./daemon-install-config.mjs";
 import {
   resolvePermissionMode,
@@ -777,6 +778,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     const installCfg = svc.installConfig ?? {
       resolveInstallCredentials,
       resolveInstallCwds,
+      resolveInstallAgent,
     };
 
     const credResult = await installCfg.resolveInstallCredentials(flags, env, {
@@ -810,10 +812,30 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       log,
     });
 
+    // Configure + persist the agent backend to daemon.json `agent` (single source
+    // of truth; the unit carries no --agent, exactly like --cwd). Prompts an
+    // interactive menu on a TTY (Enter = claude-code); reuses a --agent flag /
+    // CHORUS_AGENT env / a prior stored choice; probes the selected CLI and warns
+    // (non-fatal) when it is missing. An unknown --agent was already rejected by
+    // resolveAgentType above, so this phase never fails.
+    await installCfg.resolveInstallAgent(flags, env, {
+      isTTY,
+      skip,
+      writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
+      readJson: pfDeps?.readJson,
+      loginPath: pfDeps?.loginPath,
+      prompt: pfDeps?.askPrompt,
+      log,
+      errLog,
+    });
+
     const spec = {
       ...svc.resolveServicePaths(),
       cwds: flags.cwd ?? [],
-      agent: flags.agent,
+      // NOTE: agent is deliberately NOT passed into the unit. The selected backend
+      // is persisted to daemon.json `agent` (single source of truth) and read back
+      // by the daemon via resolveAgentType — mirroring how --cwd is handled. Baking
+      // --agent into ExecStart too would let the two sources drift.
       chorusOnly: flags.chorusOnly === true,
       workingDir: process.cwd(),
     };
