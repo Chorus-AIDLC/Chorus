@@ -120,6 +120,8 @@ OPTIONS
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
   --agent <type>           Local agent backend to wake         (env: CHORUS_AGENT)
                            (claude-code | codex | kiro; default: claude-code)
+                           (Also configurable as "agent":"…" in ~/.chorus/daemon.json;
+                           'chorus daemon install' prompts for it interactively.)
   --yolo                   Full autonomy for the woken agent   (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes, any
                            command). This is the DEFAULT permission mode.
@@ -133,9 +135,12 @@ OPTIONS
                            from. (Also configurable as "cwds":[…] in ~/.chorus/daemon.json.)
   -d, --detach             Run detached in the background (pidfile + logfile)
   -y, --yes                Non-interactive install: skip all 'chorus daemon
-                           install' prompts (credentials still resolved, persisted,
-                           and validated; install aborts if none resolve). A non-TTY
-                           install behaves as if --yes were passed.
+                           install' prompts (credentials, served cwds, and agent
+                           backend). Credentials are still resolved, persisted, and
+                           validated; install aborts if none resolve. The agent
+                           backend defaults to claude-code unless --agent/CHORUS_AGENT
+                           is set or one is already stored. A non-TTY install behaves
+                           as if --yes were passed.
   --verbose                More detailed per-wake logging
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill
                            (env: CHORUS_DAEMON_SIGINT_TIMEOUT; default 10000)
@@ -155,11 +160,13 @@ SERVICE (install)
   -d' — the daemon self-daemonizes, which systemd cannot track and which loops
   on restart. Before writing the unit, install resolves + persists + validates
   your credentials into ~/.chorus/daemon.json (so the clean boot environment can
-  authenticate) and configures the served working directories there too (prompting
-  interactively for one or more when none are set — pass -y/--yes or run non-TTY to
-  skip prompts). The unit captures --agent / --chorus-only but NOT --cwd (cwds live
-  in daemon.json). On macOS/Windows install prints a correct template you install
-  manually.
+  authenticate), configures the served working directories there too, and prompts
+  for the agent backend to wake (claude-code | codex | kiro — Enter accepts the
+  claude-code default), then checks that backend's CLI is on PATH. Pass -y/--yes or
+  run non-TTY to skip all prompts (credentials are still validated). The served
+  cwds AND the chosen agent live in daemon.json — the unit captures only
+  --chorus-only, NOT --cwd or --agent. On macOS/Windows install prints a correct
+  template you install manually.
 
 EXAMPLES
   chorus daemon                        # Foreground, default yolo (TTY confirms once)

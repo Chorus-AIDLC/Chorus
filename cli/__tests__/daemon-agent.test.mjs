@@ -6,9 +6,13 @@
 import { describe, it, expect } from "vitest";
 import { resolveAgentType, KNOWN_AGENTS, DEFAULT_AGENT, backendClientType, backendCli } from "../daemon-agent.mjs";
 
+// A deps bundle whose config file is empty — pins the file layer to a no-op so
+// the flag/env/default cases below never touch the operator's real daemon.json.
+const NO_FILE = { readJson: () => null, loginPath: "/tmp/none.json" };
+
 describe("resolveAgentType — known backends", () => {
   it("defaults to claude-code with no flag and no env", () => {
-    expect(resolveAgentType({}, {})).toEqual({ ok: true, agent: "claude-code" });
+    expect(resolveAgentType({}, {}, NO_FILE)).toEqual({ ok: true, agent: "claude-code" });
   });
 
   it("accepts explicit claude-code (flag and env)", () => {
@@ -61,6 +65,72 @@ describe("resolveAgentType — unknown rejected (no silent fallback)", () => {
     const r = resolveAgentType({}, { CHORUS_AGENT: "nope" });
     expect(r.ok).toBe(false);
     expect(r.value).toBe("nope");
+  });
+
+  it("rejects an unknown `agent` in daemon.json", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => ({ agent: "gpt" }), loginPath: "/x" });
+    expect(r.ok).toBe(false);
+    expect(r.value).toBe("gpt");
+    expect(r.error).toContain("codex");
+  });
+});
+
+describe("resolveAgentType — daemon.json config-file layer", () => {
+  it("reads `agent` from daemon.json when no flag and no env", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => ({ agent: "codex" }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "codex" });
+  });
+
+  it("accepts kiro from daemon.json", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => ({ agent: "kiro" }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "kiro" });
+  });
+
+  it("flag wins over daemon.json", () => {
+    const r = resolveAgentType({ agent: "claude-code" }, {}, { readJson: () => ({ agent: "codex" }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "claude-code" });
+  });
+
+  it("env wins over daemon.json", () => {
+    const r = resolveAgentType({}, { CHORUS_AGENT: "kiro" }, { readJson: () => ({ agent: "codex" }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "kiro" });
+  });
+
+  it("falls back to the default when daemon.json has no `agent` field", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => ({ cwds: ["/a"] }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "claude-code" });
+  });
+
+  it("falls back to the default when daemon.json is missing / unreadable", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => null, loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "claude-code" });
+  });
+
+  it("treats a blank `agent` string in daemon.json as absent (falls through to default)", () => {
+    const r = resolveAgentType({}, {}, { readJson: () => ({ agent: "   " }), loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "claude-code" });
+  });
+
+  it("does NOT read the config file when a flag is present (short-circuit)", () => {
+    let reads = 0;
+    const readJson = () => {
+      reads += 1;
+      return { agent: "codex" };
+    };
+    const r = resolveAgentType({ agent: "kiro" }, {}, { readJson, loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "kiro" });
+    expect(reads).toBe(0);
+  });
+
+  it("does NOT read the config file when the env var is present (short-circuit)", () => {
+    let reads = 0;
+    const readJson = () => {
+      reads += 1;
+      return { agent: "codex" };
+    };
+    const r = resolveAgentType({}, { CHORUS_AGENT: "kiro" }, { readJson, loginPath: "/x" });
+    expect(r).toEqual({ ok: true, agent: "kiro" });
+    expect(reads).toBe(0);
   });
 });
 

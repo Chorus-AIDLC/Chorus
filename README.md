@@ -159,6 +159,7 @@ With no `--cwd`, the daemon serves the single directory it was launched from.
   "agentUuid": "00000000-0000-0000-0000-000000000000",
   "agentName": "My Daemon Agent",
   "cwds": ["~/work/repo-a", "~/work/repo-b"],
+  "agent": "codex",
   "sigintTimeoutMs": 10000
 }
 ```
@@ -169,6 +170,7 @@ With no `--cwd`, the daemon serves the single directory it was launched from.
 | `apiKey` | string | Agent API key (`cho_…`) | `--api-key` flag → `CHORUS_API_KEY` → file |
 | `agentUuid` / `agentName` | string | Authenticated identity (recorded at login) | written by `chorus login` |
 | `cwds` | string[] | Working directories the daemon serves (multi-path) | `--cwd` flag(s) → `CHORUS_DAEMON_CWDS` → file → launch dir |
+| `agent` | string | Local agent backend to wake (`claude-code` / `codex` / `kiro`) | `--agent` flag → `CHORUS_AGENT` → file → `claude-code` |
 | `sigintTimeoutMs` | number | Grace window (ms) after SIGINT before a forceful kill (default `10000`) | `--sigint-timeout` flag → `CHORUS_DAEMON_SIGINT_TIMEOUT` → file → `10000` |
 | `yoloAckAt` | string | Internal — timestamp of a TTY yolo confirmation (managed automatically) | — |
 

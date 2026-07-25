@@ -102,17 +102,34 @@ per-wake detail.
 
 ## Agent backend (`--agent`)
 
-`--agent <type>` (env `CHORUS_AGENT`) selects which local agent backend the
-daemon wakes. The default — and currently the only implemented backend — is
-`claude-code`. An unknown value is a hard error (no silent fallback):
+`--agent <type>` selects which local agent backend the daemon wakes. Three
+backends are implemented: `claude-code` (the default), `codex`, and `kiro`. An
+unknown value is a hard error (no silent fallback).
+
+The backend is resolved in this precedence (first defined source wins):
+
+1. `--agent <type>` flag
+2. `CHORUS_AGENT` environment variable
+3. `~/.chorus/daemon.json` `agent` field
+4. default `claude-code`
 
 ```bash
 chorus daemon --agent claude-code   # explicit (same as default)
-chorus daemon --agent codex         # error: only claude-code is implemented
+chorus daemon --agent codex         # wake a local Codex CLI
+chorus daemon --agent kiro          # wake a local Kiro CLI
 ```
 
-The flag reserves the extension point for future backends; it does not change
-how `claude-code` is spawned.
+To make a backend the persistent default without re-passing the flag or
+exporting the env var on every start, set it once in `~/.chorus/daemon.json`:
+
+```json
+{ "agent": "codex" }
+```
+
+The daemon `install` command writes the chosen backend to this same file (it
+prompts interactively, or takes `--agent` / `CHORUS_AGENT` non-interactively), so
+an installed boot service picks it up from `daemon.json` — the unit itself carries
+no `--agent`.
 
 ---
 
@@ -166,12 +183,21 @@ chorus daemon uninstall                      # disable + remove the unit
 ```
 
 `install` generates a correct `systemd --user` unit and starts it — you never
-hand-write the file. It captures the `--cwd` / `--agent` / `--chorus-only` flags
-you pass, plus absolute `node` / `chorus.mjs` paths and your current `PATH`, and
-runs `systemctl --user daemon-reload` then `enable --now`. After install, the
-lifecycle subcommands **delegate to systemd** automatically — `chorus daemon
-status` / `stop` / `restart` / `logs` drive `systemctl` / `journalctl`, so a
-supervised daemon is never misreported as "not running".
+hand-write the file. It captures the `--chorus-only` flag you pass, plus absolute
+`node` / `chorus.mjs` paths and your current `PATH`, and runs `systemctl --user
+daemon-reload` then `enable --now`. The served working directories (`cwds`) and
+the chosen agent backend (`agent`) are **persisted to `~/.chorus/daemon.json`**
+rather than baked into the unit — the daemon reads them back at start, so a single
+source of truth stays in one place. After install, the lifecycle subcommands
+**delegate to systemd** automatically — `chorus daemon status` / `stop` /
+`restart` / `logs` drive `systemctl` / `journalctl`, so a supervised daemon is
+never misreported as "not running".
+
+On a terminal, `install` prompts interactively for the agent backend (Claude Code
+/ Codex / Kiro — Enter accepts the Claude Code default) unless you pass `--agent`
+(or export `CHORUS_AGENT`, or already have one stored), then checks the selected
+CLI is on `PATH` and warns if it is missing. Pass `-y` / `--yes` — or run on a
+non-TTY — to skip the prompt and take the default.
 
 > **Why a command instead of a hand-written unit?** The generated unit runs the
 > daemon in the **foreground** (`Type=simple`, no `-d`) so systemd owns the

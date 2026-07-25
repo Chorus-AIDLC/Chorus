@@ -26,6 +26,11 @@ import { resolveCredentials, loginFilePath } from "./credentials.mjs";
 import { updateDaemonConfig, prompt as defaultPrompt } from "./login.mjs";
 import { validateAndFetchIdentity } from "./chorus-client.mjs";
 import { normalizeCwd, cleanCwdList } from "./daemon-config.mjs";
+import { KNOWN_AGENTS, DEFAULT_AGENT } from "./daemon-agent.mjs";
+import { agentNotFoundWarningLine } from "./daemon-banner.mjs";
+import { resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveCodexPath } from "./codex-spawner.mjs";
+import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { readFileSync } from "node:fs";
 
 /** A non-empty trimmed string, or undefined. */
@@ -210,4 +215,128 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const finalCwds = cwds.length > 0 ? cwds : defaultCwd ? [defaultCwd] : [];
   if (finalCwds.length > 0) writeConfig({ cwds: finalCwds });
   return { cwds: finalCwds };
+}
+
+/**
+ * The interactive agent-backend menu. Order mirrors KNOWN_AGENTS with claude-code
+ * first (it is the default). Kept beside the resolver so the numbered prompt and
+ * the accepted values never drift.
+ */
+const AGENT_MENU = [
+  { value: "claude-code", label: "Claude Code (default)" },
+  { value: "codex", label: "Codex CLI" },
+  { value: "kiro", label: "Kiro CLI" },
+];
+
+/** Probe the selected backend's CLI on PATH. Returns the resolved path or null.
+ * Injectable per backend so the check is testable without a real PATH. */
+function probeAgentCli(agent, probes = {}) {
+  const findClaude = probes.resolveClaudePath ?? resolveClaudePath;
+  const findCodex = probes.resolveCodexPath ?? resolveCodexPath;
+  const findKiro = probes.resolveKiroPath ?? resolveKiroPath;
+  if (agent === "codex") return findCodex();
+  if (agent === "kiro") return findKiro();
+  return findClaude();
+}
+
+/**
+ * Determine which local agent backend the installed daemon wakes and persist it
+ * to ~/.chorus/daemon.json `agent` (the single source of truth — the unit carries
+ * no --agent, exactly like `cwds`). AFTER resolving, probe the selected backend's
+ * CLI on PATH and warn (non-fatal) when it is missing, so the operator learns at
+ * install time rather than when the first wake fails.
+ *
+ * Resolution (first defined source wins):
+ *   1. --agent flag        — the operator's explicit choice.
+ *   2. CHORUS_AGENT env     — matches the daemon's own resolution precedence.
+ *   3. existing daemon.json `agent` — a prior valid choice is kept (re-install is
+ *      idempotent and does not re-prompt); an invalid stored value is ignored.
+ *   4. TTY + !skip         — interactive numbered menu (Enter = claude-code default).
+ *   5. non-TTY / skip      — DEFAULT_AGENT (claude-code), persisted so the config
+ *      is explicit about the backend the boot service runs.
+ *
+ * Never fails: --agent / CHORUS_AGENT are already validated upstream by
+ * resolveAgentType (runDaemon rejects an unknown value before dispatch), the menu
+ * is constrained to KNOWN_AGENTS, and default/stored-invalid fall back to
+ * claude-code. Returns the resolved `{ agent, cliPath, cliFound }`. Never throws.
+ *
+ * @param {{ agent?: string }} flags
+ * @param {Record<string, string|undefined>} [env]
+ * @param {{
+ *   isTTY?: boolean, skip?: boolean,
+ *   readJson?: (path: string) => (Record<string, unknown>|null),
+ *   loginPath?: string,
+ *   writeConfig?: (partial: Record<string, unknown>) => string,
+ *   prompt?: typeof defaultPrompt,
+ *   probes?: { resolveClaudePath?: Function, resolveCodexPath?: Function, resolveKiroPath?: Function },
+ *   log?: (m: string) => void,
+ *   errLog?: (m: string) => void,
+ * }} [opts]
+ * @returns {Promise<{ agent: string, cliPath: string|null, cliFound: boolean }>}
+ */
+export async function resolveInstallAgent(flags = {}, env = {}, opts = {}) {
+  const isTTY = opts.isTTY ?? false;
+  const skip = opts.skip ?? false;
+  const readJson = opts.readJson ?? readJsonSafe;
+  const loginPath = opts.loginPath ?? loginFilePath();
+  const writeConfig = opts.writeConfig ?? updateDaemonConfig;
+  const ask = opts.prompt ?? defaultPrompt;
+  const log = opts.log ?? (() => {});
+  const errLog = opts.errLog ?? (() => {});
+
+  // Only a KNOWN backend is ever accepted; anything else is treated as absent.
+  const known = (v) => (v && KNOWN_AGENTS.includes(v) ? v : undefined);
+
+  let agent;
+  let persist = true; // write unless we reuse an already-stored value (no-op)
+
+  // 1/2. Explicit --agent flag or CHORUS_AGENT env (both pre-validated upstream).
+  agent = known(nonEmpty(flags.agent)) ?? known(nonEmpty(env.CHORUS_AGENT));
+
+  // 3. Existing daemon.json `agent` — a prior valid choice is authoritative; keep
+  //    it and do not re-prompt (re-install stays idempotent). Skip the re-write.
+  if (!agent) {
+    const file = readJson(loginPath);
+    const stored = known(file ? nonEmpty(file.agent) : undefined);
+    if (stored) {
+      agent = stored;
+      persist = false; // already on disk — no-op write avoided
+    }
+  }
+
+  // 4. Interactive numbered menu on a TTY (Enter accepts the claude-code default).
+  if (!agent && isTTY && !skip) {
+    log("[Chorus] Which local agent backend should this daemon wake?");
+    for (let i = 0; i < AGENT_MENU.length; i += 1) {
+      log(`[Chorus]   ${i + 1}) ${AGENT_MENU[i].label}`);
+    }
+    const answer = nonEmpty(await ask(`Select [1-${AGENT_MENU.length}] (Enter for 1): `));
+    if (!answer) {
+      agent = DEFAULT_AGENT;
+    } else {
+      const n = Number(answer);
+      const byNumber = Number.isInteger(n) && n >= 1 && n <= AGENT_MENU.length ? AGENT_MENU[n - 1].value : undefined;
+      // Also accept the value typed by name (e.g. "codex") for muscle memory.
+      agent = byNumber ?? known(answer) ?? DEFAULT_AGENT;
+    }
+  }
+
+  // 5. Non-TTY / skip with nothing configured → the default, persisted so the boot
+  //    service config is explicit about the backend it runs.
+  if (!agent) agent = DEFAULT_AGENT;
+
+  if (persist) writeConfig({ agent });
+
+  // Probe the selected backend's CLI (non-fatal). A missing binary warns loudly so
+  // the operator fixes PATH before the first wake, but never blocks the install.
+  const cliPath = probeAgentCli(agent, opts.probes);
+  const cliFound = cliPath !== null;
+  if (cliFound) {
+    log(`[Chorus] agent backend: ${agent} (found CLI at ${cliPath}).`);
+  } else {
+    log(`[Chorus] agent backend: ${agent}.`);
+    errLog(`[Chorus] ${agentNotFoundWarningLine(agent)}`);
+  }
+
+  return { agent, cliPath, cliFound };
 }

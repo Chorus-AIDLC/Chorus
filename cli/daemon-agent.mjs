@@ -3,7 +3,18 @@
 // `claude-code` (the default), `codex`, and `kiro` are all implemented backends
 // (add-daemon-codex-backend cashed in the reserved `codex` slot;
 // add-daemon-kiro-backend adds `kiro`). Resolving an unknown value is a hard
-// error (no silent fallback). Zero dependencies.
+// error (no silent fallback).
+//
+// Resolution is layered like resolveSigintTimeoutMs / resolveDaemonCwds in
+// daemon-config.mjs — first defined source wins:
+//   --agent flag > CHORUS_AGENT env > ~/.chorus/daemon.json `agent` > claude-code.
+// The config-file layer lets an operator persist a default backend (e.g.
+// `"agent": "codex"`) once instead of re-passing --agent / re-exporting the env
+// on every start. IO (file read) is injectable so this stays unit-testable
+// without real disk.
+
+import { readFileSync } from "node:fs";
+import { loginFilePath } from "./credentials.mjs";
 
 /** The agent backends the daemon recognizes. All are implemented (claude-code
  * via ClaudeSpawner, codex via CodexSpawner, kiro via KiroSpawner — see
@@ -42,19 +53,58 @@ export function backendClientType(agentType) {
 }
 
 /**
- * Resolve the agent type from flag → env → default, and validate it.
- * Precedence: explicit `--agent` flag > CHORUS_AGENT env > DEFAULT_AGENT.
+ * Read a JSON file, returning `null` on any error (missing / unreadable /
+ * malformed). Never throws — mirrors daemon-config.mjs readJsonSafe.
+ * @param {string} path
+ * @returns {Record<string, unknown> | null}
+ */
+function readJsonSafe(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A non-empty trimmed string, or undefined. */
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Resolve the agent type from flag → env → config file → default, and validate it.
+ * Precedence (first defined source wins, mirroring resolveSigintTimeoutMs /
+ * resolveDaemonCwds): explicit `--agent` flag > CHORUS_AGENT env >
+ * ~/.chorus/daemon.json `agent` > DEFAULT_AGENT.
+ *
+ * An unknown value from ANY source (flag, env, or file) is a hard error — no
+ * silent fallback. The config file lets an operator persist a default backend
+ * without re-passing --agent on every start.
  *
  * @param {{ agent?: string }} flags
  * @param {Record<string, string|undefined>} env
+ * @param {{
+ *   readJson?: (path: string) => (Record<string, unknown>|null),
+ *   loginPath?: string,
+ * }} [deps]
  * @returns {{ ok: true, agent: string } | { ok: false, value: string, error: string }}
  *   `ok:false` carries the offending value and a human-actionable error naming
  *   the accepted types — the caller exits non-zero and prints `error`.
  */
-export function resolveAgentType(flags, env) {
+export function resolveAgentType(flags, env, deps = {}) {
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+
+  const fromFile = () => {
+    const file = readJson(loginPath);
+    return file ? nonEmpty(file.agent) : undefined;
+  };
+
   const raw =
-    (typeof flags.agent === "string" && flags.agent.trim()) ||
-    (typeof env.CHORUS_AGENT === "string" && env.CHORUS_AGENT.trim()) ||
+    nonEmpty(flags.agent) ||
+    nonEmpty(env.CHORUS_AGENT) ||
+    fromFile() ||
     DEFAULT_AGENT;
   if (!KNOWN_AGENTS.includes(raw)) {
     return {
