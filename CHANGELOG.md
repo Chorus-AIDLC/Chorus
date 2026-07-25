@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.4] - 2026-07-25
+
+### Added
+- **Configure the daemon's agent backend from `daemon.json` + an install prompt**: The daemon's agent backend can now be persisted instead of re-passed on every start. `resolveAgentType` reads an `agent` field from `~/.chorus/daemon.json`, closing the gap with its siblings (`cwds`, `sigintTimeoutMs`) — precedence is `--agent` flag → `CHORUS_AGENT` env → `daemon.json` `agent` → `claude-code` default, with unknown values still a hard error from any source. `chorus daemon install` now prompts interactively for the backend (Claude Code / Codex / Kiro; Enter accepts the default), persists the choice to `daemon.json`, and probes the selected CLI on PATH with a loud but non-fatal warning when it is missing. The generated service unit no longer bakes `--agent` into `ExecStart` — the backend lives in `daemon.json` as the single source of truth, mirroring how `--cwd`/`cwds` is already handled. `-y`/`--yes` and non-TTY installs skip the prompt and take the default. (#452)
+
+---
+
 ## [0.14.3] - 2026-07-25
 
 ### Added
