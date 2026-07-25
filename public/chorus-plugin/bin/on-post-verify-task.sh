@@ -195,7 +195,7 @@ ACTION REQUIRED: archive the OpenSpec change locally and mirror updated specs ba
 
 3. On any error from \`openspec archive\` or \`chorus_pm_update_document\`: print stderr verbatim, post a comment on the proposal recording the failure (\`chorus_add_comment({targetType: "proposal", targetUuid: "${PROPOSAL_UUID}", content: "..."})\`), and HALT. No retry, no silent skip.
 
-4. Confirm success by listing \`openspec/specs/<capability>/spec.md\` files and verifying they round-trip byte-equal (modulo trailing newline) with their Chorus Document counterparts.
+4. Confirm each updated spec with \`verify-document-roundtrip.sh <local-spec-path> <document-uuid>\`; do not use recursive \`jq\`, \`head\`, command substitution, or newline normalization.
 
 References: canonical openspec-aware §3.8 (mirror-back contract), §3.9 (this archive trigger), §6 (no silent errors).
 CTX
