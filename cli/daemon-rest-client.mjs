@@ -16,6 +16,8 @@
 //                                                       startedAt|null }] }
 //   reportInterrupt  → POST /api/daemon/report-interrupt
 //                      { connectionUuid, entityType, entityUuid, reason }
+//   heartbeat        → POST /api/daemon/connection-heartbeat
+//                      { connectionUuid, connectedAt }
 //   readPendingTurns → GET  /api/daemon/pending-turns?connectionUuid=…
 //                      → { turns: [{ turnUuid, sessionId, directIdeaUuid, trigger,
 //                                    promptText }] }
@@ -72,6 +74,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
+ *   heartbeat: (p: { connectionUuid: string, connectedAt: string }) => Promise<DaemonRestResult>,
  *   readPendingTurns: () => Promise<DaemonRestResult>,
  * }}
  */
@@ -234,6 +237,20 @@ export function createDaemonRestClient(opts) {
         // standalone interrupt reporter used to emit) without altering the asserted
         // `report-interrupt request failed` / `report-interrupt returned <status>` prefix.
         ` for ${entityType}:${entityUuid}`,
+      );
+    },
+
+    /**
+     * POST /api/daemon/connection-heartbeat — acknowledge receipt of one SSE heartbeat.
+     * The values come directly from the active stream's registration handshake; unlike
+     * other connection-scoped operations this must not resolve the uuid lazily, because
+     * a delayed acknowledgment must retain its original generation fence.
+     */
+    async heartbeat({ connectionUuid, connectedAt }) {
+      return post(
+        "connection-heartbeat",
+        "/api/daemon/connection-heartbeat",
+        { connectionUuid, connectedAt },
       );
     },
 

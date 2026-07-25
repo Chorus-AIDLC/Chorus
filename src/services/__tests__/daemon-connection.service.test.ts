@@ -127,6 +127,7 @@ describe("parseSelfReport", () => {
   it("parses all params including cwd and a valid ISO-8601 startedAt", () => {
     const params = new URLSearchParams({
       clientType: "claude_code",
+      livenessAck: "v1",
       clientVersion: "0.11.0",
       host: "mac.local",
       cwd: "/Users/me/projects/alpha",
@@ -134,6 +135,7 @@ describe("parseSelfReport", () => {
     });
     const report = parseSelfReport(params);
     expect(report.clientType).toBe("claude_code");
+    expect(report.livenessAck).toBe("v1");
     expect(report.clientVersion).toBe("0.11.0");
     expect(report.host).toBe("mac.local");
     expect(report.cwd).toBe("/Users/me/projects/alpha");
@@ -144,6 +146,7 @@ describe("parseSelfReport", () => {
   it("defaults missing string params: clientType='' and nullable fields null (cwd→null for an old daemon)", () => {
     const report = parseSelfReport(new URLSearchParams());
     expect(report.clientType).toBe("");
+    expect(report.livenessAck).toBeNull();
     expect(report.clientVersion).toBeNull();
     expect(report.host).toBeNull();
     // HARD-1: a daemon that does not report cwd → cwd:null (NOT ""). This is the
@@ -969,14 +972,30 @@ describe("touchConnection", () => {
 
   it("matches 0 rows (no-op) when a newer generation has refreshed connectedAt", async () => {
     mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 0 });
-    await expect(touchConnection(companyUuid, handle)).resolves.toBeUndefined();
+    await expect(touchConnection(companyUuid, handle)).resolves.toBe(false);
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
   it("swallows + logs a persistence error (never throws)", async () => {
     mockPrisma.daemonConnection.updateMany.mockRejectedValue(new Error("db down"));
-    await expect(touchConnection(companyUuid, handle)).resolves.toBeUndefined();
+    await expect(touchConnection(companyUuid, handle)).resolves.toBe(false);
     expect(mockLogger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("atomically scopes an authenticated acknowledgment to the owning agent", async () => {
+    mockPrisma.daemonConnection.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(touchConnection(companyUuid, handle, agentUuid)).resolves.toBe(true);
+
+    expect(mockPrisma.daemonConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        uuid: connectionUuid,
+        companyUuid,
+        connectedAt,
+        agentUuid,
+      },
+      data: { status: "online", lastSeenAt: expect.any(Date) },
+    });
   });
 });
 

@@ -64,6 +64,65 @@ describe("SseListener parsing", () => {
       /^https:\/\/chorus\.example\/api\/events\/notifications\?/
     );
     expect(calledInit.headers).toMatchObject({ Authorization: "Bearer cho_x" });
+    expect(new URL(calledUrl).searchParams.get("livenessAck")).toBe("v1");
+  });
+
+  it("acknowledges heartbeat comments only after a generation-bearing registration", async () => {
+    const events = [];
+    const acknowledgeHeartbeat = vi.fn(async () => ({ ok: true, status: 200 }));
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        ": heartbeat\n\n",
+        'data: {"type":"connection_registered","connectionUuid":"conn-42","connectedAt":"2026-07-25T08:00:00.000Z"}\n\n',
+        ": heartbeat\n\n",
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (event) => events.push(event),
+      acknowledgeHeartbeat,
+      logger: silentLogger,
+      fetchImpl,
+    });
+
+    await listener.connect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(acknowledgeHeartbeat).toHaveBeenCalledTimes(1);
+    expect(acknowledgeHeartbeat).toHaveBeenCalledWith({
+      connectionUuid: "conn-42",
+      connectedAt: "2026-07-25T08:00:00.000Z",
+    });
+    expect(events).toEqual([]);
+    listener.disconnect();
+  });
+
+  it("logs a thrown heartbeat acknowledgment failure without stopping parsing", async () => {
+    const warns = [];
+    const events = [];
+    const fetchImpl = vi.fn(async () =>
+      streamingResponse([
+        'data: {"type":"connection_registered","connectionUuid":"c","connectedAt":"g"}\n\n',
+        ": heartbeat\n\n",
+        'data: {"type":"new_notification","notificationUuid":"after"}\n\n',
+      ])
+    );
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: (event) => events.push(event),
+      acknowledgeHeartbeat: async () => { throw new Error("offline"); },
+      logger: { ...silentLogger, warn: (message) => warns.push(message) },
+      fetchImpl,
+    });
+
+    await listener.connect();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(events).toEqual([{ type: "new_notification", notificationUuid: "after" }]);
+    expect(warns.join(" ")).toMatch(/heartbeat acknowledgment failed.*offline/);
+    listener.disconnect();
   });
 
   it("strips trailing CR so CRLF transports parse", async () => {
@@ -369,6 +428,149 @@ describe("SseListener self-report URL", () => {
 });
 
 describe("SseListener reconnect", () => {
+  function controlledResponse() {
+    let controller;
+    const body = new ReadableStream({
+      start(value) {
+        controller = value;
+      },
+    });
+    return {
+      response: { ok: true, status: 200, body },
+      push(text) {
+        controller.enqueue(new TextEncoder().encode(text));
+      },
+      close() {
+        controller.close();
+      },
+    };
+  }
+
+  it("aborts a byte-silent stream and reconnects through the existing backfill path", async () => {
+    vi.useFakeTimers();
+    const first = controlledResponse();
+    const second = controlledResponse();
+    const signals = [];
+    const onReconnect = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async (_url, init) => {
+      signals.push(init.signal);
+      return signals.length === 1 ? first.response : second.response;
+    });
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: () => {},
+      onReconnect,
+      logger: silentLogger,
+      fetchImpl,
+      watchdogTimeoutMs: 75_000,
+      initialDelayMs: 1_000,
+    });
+
+    await listener.connect();
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(signals[0].aborted).toBe(true);
+    expect(listener.status).toBe("reconnecting");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    listener.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("refreshes the watchdog on partial bytes before an SSE frame can be parsed", async () => {
+    vi.useFakeTimers();
+    const stream = controlledResponse();
+    const fetchImpl = vi.fn(async () => stream.response);
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: () => {},
+      logger: silentLogger,
+      fetchImpl,
+      watchdogTimeoutMs: 75_000,
+    });
+
+    await listener.connect();
+    await vi.advanceTimersByTimeAsync(74_000);
+    stream.push("data: {");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(74_000);
+    expect(fetchImpl.mock.calls[0][1].signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchImpl.mock.calls[0][1].signal.aborted).toBe(true);
+
+    listener.disconnect();
+    vi.useRealTimers();
+  });
+
+  it("disconnect clears the watchdog so it cannot schedule a later reconnect", async () => {
+    vi.useFakeTimers();
+    const stream = controlledResponse();
+    const fetchImpl = vi.fn(async () => stream.response);
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: () => {},
+      logger: silentLogger,
+      fetchImpl,
+      watchdogTimeoutMs: 100,
+      initialDelayMs: 10,
+    });
+
+    await listener.connect();
+    listener.disconnect();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(listener.status).toBe("disconnected");
+    vi.useRealTimers();
+  });
+
+  it("an obsolete watchdog cannot abort its replacement stream or schedule a duplicate reconnect", async () => {
+    vi.useFakeTimers();
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const first = controlledResponse();
+    const replacement = controlledResponse();
+    const signals = [];
+    const fetchImpl = vi.fn(async (_url, init) => {
+      signals.push(init.signal);
+      return signals.length === 1 ? first.response : replacement.response;
+    });
+    const listener = new SseListener({
+      url: "https://c",
+      apiKey: "k",
+      onEvent: () => {},
+      logger: silentLogger,
+      fetchImpl,
+      watchdogTimeoutMs: 100,
+      initialDelayMs: 10,
+    });
+
+    await listener.connect();
+    const obsoleteWatchdog = timeoutSpy.mock.calls.find(([, delay]) => delay === 100)?.[0];
+    expect(obsoleteWatchdog).toBeTypeOf("function");
+
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(signals[1].aborted).toBe(false);
+    expect(listener.status).toBe("connected");
+
+    obsoleteWatchdog();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(signals[1].aborted).toBe(false);
+    expect(listener.status).toBe("connected");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    listener.disconnect();
+    timeoutSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("schedules a backoff reconnect on non-ok response without crashing", async () => {
     vi.useFakeTimers();
     let call = 0;

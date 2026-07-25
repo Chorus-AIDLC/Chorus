@@ -43,6 +43,7 @@ import {
 import { WAKE_ACTIONS } from "./prompts.mjs";
 import { createInterruptReporter } from "./interrupt-reporter.mjs";
 import { createTurnReporter } from "./turn-reporter.mjs";
+import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 import { createControlHandler } from "./control-handler.mjs";
 import { resolveSigintTimeoutMs, resolveDaemonCwds } from "./daemon-config.mjs";
 import {
@@ -205,6 +206,13 @@ export function buildDaemon(creds, deps = {}) {
     // doesn't matter. Per-connection so each path's wakes report against the right row.
     /** @type {{ connectionUuid: string|null }} */
     const connectionState = { connectionUuid: null };
+    const daemonRestClient = createDaemonRestClient({
+      url: creds.url,
+      apiKey: creds.apiKey,
+      getConnectionUuid: () => connectionState.connectionUuid,
+      logger,
+      fetchImpl: deps.fetchImpl,
+    });
 
     // Per-connection terminal-outcome bookkeeping (add-daemon-connection-conflict-skip).
     // `resolved` guards recordConnectionOutcome against double-counting a reconnect's
@@ -389,6 +397,7 @@ export function buildDaemon(creds, deps = {}) {
           recordConnectionOutcome(outcome, false);
         },
         onControl,
+        acknowledgeHeartbeat: (registration) => daemonRestClient.heartbeat(registration),
         onReconnect: backfill,
         logger,
       });

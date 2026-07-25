@@ -133,6 +133,21 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     // (needed to attribute POST /api/daemon/execution-state snapshots).
     expect(joined).toContain('"type":"connection_registered"');
     expect(joined).toContain(`"connectionUuid":"${connectionUuid}"`);
+    expect(joined).not.toContain('"connectedAt"');
+  });
+
+  it("negotiates exactly livenessAck=v1 and exposes the active generation fence", async () => {
+    mockParseSelfReport.mockReturnValue({
+      clientType: "openclaw",
+      host: "h",
+      livenessAck: "v1",
+    });
+    const res = await GET(makeRequest("clientType=openclaw&livenessAck=v1"));
+    const { chunks } = await startStream(res);
+
+    const joined = chunks.join("");
+    expect(joined).toContain(`"connectionUuid":"${connectionUuid}"`);
+    expect(joined).toContain(`"connectedAt":"${connHandle.connectedAt.toISOString()}"`);
   });
 
   it("subscribes to the per-user notification channel and delivers events", async () => {
@@ -206,6 +221,43 @@ describe("GET /api/events/notifications (notification SSE)", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockTouchConnection).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([undefined, "v2", "V1", ""])(
+    "retains legacy timer touches for absent or unknown livenessAck=%s",
+    async (livenessAck) => {
+      vi.useFakeTimers();
+      mockParseSelfReport.mockReturnValue({
+        clientType: "openclaw",
+        host: "h",
+        livenessAck,
+      });
+      const query =
+        livenessAck === undefined
+          ? "clientType=openclaw"
+          : `clientType=openclaw&livenessAck=${encodeURIComponent(livenessAck)}`;
+      const res = await GET(makeRequest(query));
+      const { chunks } = await startStream(res);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(chunks.join("")).toContain(": heartbeat");
+      expect(mockTouchConnection).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it("keeps emitting heartbeat comments but does not timer-touch an opted-in stream", async () => {
+    vi.useFakeTimers();
+    mockParseSelfReport.mockReturnValue({
+      clientType: "openclaw",
+      host: "h",
+      livenessAck: "v1",
+    });
+    const res = await GET(makeRequest("clientType=openclaw&livenessAck=v1"));
+    const { chunks } = await startStream(res);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(chunks.join("")).toContain(": heartbeat");
+    expect(mockTouchConnection).not.toHaveBeenCalled();
   });
 
   it("marks disconnected on abort and unsubscribes the handler", async () => {

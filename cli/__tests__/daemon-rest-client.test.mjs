@@ -195,6 +195,25 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     });
   });
 
+  it("heartbeat POSTs the explicit connection generation with Bearer auth", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    const result = await client.heartbeat({
+      connectionUuid: "conn-old",
+      connectedAt: "2026-07-25T08:00:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+    const [endpoint, init] = fetchImpl.mock.calls[0];
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/connection-heartbeat");
+    expect(init.headers.Authorization).toBe("Bearer cho_secret");
+    expect(JSON.parse(init.body)).toEqual({
+      connectionUuid: "conn-old",
+      connectedAt: "2026-07-25T08:00:00.000Z",
+    });
+  });
+
   it("readPendingTurns GETs ?connectionUuid=… (encoded) and returns the parsed turns", async () => {
     const turns = [
       { turnUuid: "t-1", sessionId: "idea-1", directIdeaUuid: "idea-1", trigger: "human_instruction", promptText: "do it" },
@@ -369,6 +388,7 @@ describe("createDaemonRestClient — error surfacing (no silent errors)", () => 
     await expect(client.transcript({ sessionId: "s", messages: [{ role: "user", text: "x" }] })).resolves.toBeTruthy();
     await expect(client.executionState({ executions: [] })).resolves.toBeTruthy();
     await expect(client.reportInterrupt({ entityType: "task", entityUuid: "t", reason: "crash" })).resolves.toBeTruthy();
+    await expect(client.heartbeat({ connectionUuid: "c", connectedAt: "g" })).resolves.toBeTruthy();
     await expect(client.readPendingTurns()).resolves.toBeTruthy();
   });
 });
