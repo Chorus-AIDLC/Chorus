@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
   // null, the lifecycle below is skipped and the route behaves exactly as before
   // (no DaemonConnection row is written).
   const report = parseSelfReport(request.nextUrl.searchParams);
+  const acknowledgmentAware = report.livenessAck === "v1";
   const registration = await registerConnection(auth.companyUuid, auth.actorUuid, report);
   // Split the tri-state result into two narrow bindings:
   //  - `conflict`: a live different-process daemon already holds this (agent, host, cwd).
@@ -76,7 +77,11 @@ export async function GET(request: NextRequest) {
         );
       } else if (conn) {
         send(
-          `data: ${JSON.stringify({ type: "connection_registered", connectionUuid: conn.uuid })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "connection_registered",
+            connectionUuid: conn.uuid,
+            ...(acknowledgmentAware ? { connectedAt: conn.connectedAt.toISOString() } : {}),
+          })}\n\n`,
         );
       }
 
@@ -108,7 +113,7 @@ export async function GET(request: NextRequest) {
         send(": heartbeat\n\n");
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
         // swallows + logs its own errors and never throws.
-        if (conn) void touchConnection(auth.companyUuid, conn);
+        if (conn && !acknowledgmentAware) void touchConnection(auth.companyUuid, conn);
       }, 30_000);
 
       // Cleanup on abort (client disconnect)

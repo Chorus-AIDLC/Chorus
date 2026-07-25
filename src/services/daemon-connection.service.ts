@@ -39,6 +39,7 @@ export const STALE_THRESHOLD_MS = 90_000;
 
 export interface SelfReport {
   clientType: string; // raw query value; gated against DAEMON_CLIENT_TYPES
+  livenessAck?: string | null;
   clientVersion?: string | null;
   host?: string | null;
   // Working directory this connection serves. The self-reporting representation
@@ -305,6 +306,7 @@ export function sortConnectionViews(views: ConnectionView[]): ConnectionView[] {
  */
 export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
   const clientType = searchParams.get("clientType") ?? "";
+  const livenessAck = searchParams.get("livenessAck");
   const clientVersion = searchParams.get("clientVersion");
   const host = searchParams.get("host");
   // `cwd` is the working directory the connection serves. An absent param
@@ -325,6 +327,7 @@ export function parseSelfReport(searchParams: URLSearchParams): SelfReport {
 
   return {
     clientType,
+    livenessAck: livenessAck ?? null,
     clientVersion: clientVersion ?? null,
     host: host ?? null,
     cwd: cwd ?? null,
@@ -775,17 +778,25 @@ export async function markDisconnected(
 export async function touchConnection(
   companyUuid: string,
   handle: ConnectionHandle,
-): Promise<void> {
+  agentUuid?: string,
+): Promise<boolean> {
   try {
-    await prisma.daemonConnection.updateMany({
-      where: { uuid: handle.uuid, companyUuid, connectedAt: handle.connectedAt },
+    const result = await prisma.daemonConnection.updateMany({
+      where: {
+        uuid: handle.uuid,
+        companyUuid,
+        connectedAt: handle.connectedAt,
+        ...(agentUuid ? { agentUuid } : {}),
+      },
       data: { status: "online", lastSeenAt: new Date() },
     });
+    return result.count > 0;
   } catch (err) {
     logger.error(
       { err, companyUuid, connectionUuid: handle.uuid },
       "Failed to touch daemon connection",
     );
+    return false;
   }
 }
 
