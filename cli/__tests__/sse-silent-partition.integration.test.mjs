@@ -4,9 +4,9 @@ import { createServer as createTcpServer, connect as connectTcp } from "node:net
 import { once } from "node:events";
 import { SseListener } from "../sse-listener.mjs";
 
-const WATCHDOG_MS = 140;
+const WATCHDOG_MS = 300;
 const RECONNECT_MS = 20;
-const STALE_MS = 70;
+const STALE_MS = 80;
 const HEARTBEAT_MS = 15;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -198,7 +198,6 @@ describe("SSE silent-partition recovery", () => {
     blackholeFirstStream = true;
     firstResponseBytesAtBlackhole = firstResponseBytes;
     const blackholedAt = performance.now();
-    const lastSeenAtBlackhole = state.lastSeenAt;
     state.pending.push({ type: "new_notification", notificationUuid: "during-gap" });
     for (const stream of streams) {
       stream.write(
@@ -209,6 +208,11 @@ describe("SSE silent-partition recovery", () => {
       );
     }
 
+    // An ACK triggered by bytes delivered immediately before the blackhole may
+    // still be in flight on its separate REST connection. Let it drain before
+    // measuring whether server-side freshness remains frozen.
+    await delay(HEARTBEAT_MS * 2);
+    const lastSeenAtBlackhole = state.lastSeenAt;
     await delay(STALE_MS + 25);
     expect(firstResponseBytes).toBeGreaterThan(firstResponseBytesAtBlackhole);
     expect(state.firstStreamClosedAt).toBeNull();
