@@ -16,6 +16,8 @@
 //                                                       startedAt|null }] }
 //   reportInterrupt  → POST /api/daemon/report-interrupt
 //                      { connectionUuid, entityType, entityUuid, reason }
+//   heartbeat        → POST /api/daemon/connection-heartbeat
+//                      { connectionUuid, connectedAt }
 //   readPendingTurns → GET  /api/daemon/pending-turns?connectionUuid=…
 //                      → { turns: [{ turnUuid, sessionId, directIdeaUuid, trigger,
 //                                    promptText }] }
@@ -72,6 +74,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
+ *   heartbeat: (p: { connectionUuid: string, connectedAt: string }) => Promise<DaemonRestResult>,
  *   readPendingTurns: () => Promise<DaemonRestResult>,
  * }}
  */
@@ -136,16 +139,25 @@ export function createDaemonRestClient(opts) {
      * server resolves the turn by the session BUSINESS KEY (`sessionId`); the optional
      * `entityType`/`entityUuid` stamp the weak executionUuid link. An `interrupted`
      * status may carry `interruptedReason` (`user`/`crash`/`shutdown` — the server
-     * rejects `offline`, which is its own reconcile verdict). Requires the
-     * connectionUuid (the server addresses the turn against a connection the agent owns).
+     * rejects `offline`, which is its own reconcile verdict). A terminal edge may also
+     * carry `transcriptRelayError` — the daemon-known reason its transcript upload
+     * finally failed (fix #444 follow-up), persisted as a turn annotation — and `usage`,
+     * the whole normalized per-turn TokenUsage object (daemon-token-usage), persisted as
+     * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
+     * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
         logger.warn(`[Chorus] ${error}`);
         return { ok: false, status: null, error, skipped: true };
       }
+      // Per-turn token usage (daemon-token-usage) is meaningful only on a TERMINAL edge —
+      // the daemon knows it at subprocess exit, exactly like transcriptRelayError. Guard on
+      // the terminal status here so a stray usage on → running is never sent (the server
+      // ignores it there anyway; this keeps the wire honest).
+      const isTerminal = status === "ended" || status === "interrupted";
       const body = {
         connectionUuid,
         sessionId,
@@ -154,6 +166,11 @@ export function createDaemonRestClient(opts) {
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        // Transcript-relay failure annotation (fix #444 follow-up): only sent when the
+        // daemon actually knows the upload failed (a truthy reason on a terminal edge).
+        ...(transcriptRelayError ? { transcriptRelayError } : {}),
+        // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
+        ...(usage && isTerminal ? { usage } : {}),
       };
       return post(
         "turn-advance",
@@ -220,6 +237,20 @@ export function createDaemonRestClient(opts) {
         // standalone interrupt reporter used to emit) without altering the asserted
         // `report-interrupt request failed` / `report-interrupt returned <status>` prefix.
         ` for ${entityType}:${entityUuid}`,
+      );
+    },
+
+    /**
+     * POST /api/daemon/connection-heartbeat — acknowledge receipt of one SSE heartbeat.
+     * The values come directly from the active stream's registration handshake; unlike
+     * other connection-scoped operations this must not resolve the uuid lazily, because
+     * a delayed acknowledgment must retain its original generation fence.
+     */
+    async heartbeat({ connectionUuid, connectedAt }) {
+      return post(
+        "connection-heartbeat",
+        "/api/daemon/connection-heartbeat",
+        { connectionUuid, connectedAt },
       );
     },
 

@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const INITIAL_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
+const WATCHDOG_TIMEOUT_MS = 75_000;
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -78,6 +79,8 @@ const PROCESS_STARTED_AT = new Date();
  *   The event carries `{ host, cwd }` of the conflicting identity.
  * @property {() => Promise<void>} [onReconnect]  Called after a reconnect so the
  *   caller can back-fill notifications missed during the gap.
+ * @property {(registration: {connectionUuid:string,connectedAt:string}) => Promise<unknown>} [acknowledgeHeartbeat]
+ *   Best-effort REST acknowledgment for a parsed heartbeat comment.
  * @property {string} [cwd]  The working directory THIS connection serves (T3 — 单
  *   daemon 多路径). A multi-path daemon runs one SseListener per declared path, each
  *   self-reporting its own cwd so the server registers them as distinct connections
@@ -88,6 +91,7 @@ const PROCESS_STARTED_AT = new Date();
  * @property {typeof fetch} [fetchImpl]  Injectable for tests.
  * @property {number} [initialDelayMs]
  * @property {number} [maxDelayMs]
+ * @property {number} [watchdogTimeoutMs] Injectable for deterministic tests only.
  */
 
 export class SseListener {
@@ -100,12 +104,14 @@ export class SseListener {
     this.onControl = opts.onControl ?? (() => {});
     this.onConflict = opts.onConflict ?? (() => {});
     this.onReconnect = opts.onReconnect ?? (async () => {});
+    this.acknowledgeHeartbeat = opts.acknowledgeHeartbeat ?? (async () => {});
     /** @type {string|null} The connection this stream registered as (once reported). */
     this.connectionUuid = null;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.initialDelayMs = opts.initialDelayMs ?? INITIAL_DELAY_MS;
     this.maxDelayMs = opts.maxDelayMs ?? MAX_DELAY_MS;
+    this.watchdogTimeoutMs = opts.watchdogTimeoutMs ?? WATCHDOG_TIMEOUT_MS;
 
     // Build the self-reporting endpoint URL once and reuse it across every
     // (re)connect, so the reconnect path always re-sends the same params.
@@ -128,6 +134,7 @@ export class SseListener {
       host: hostname(),
       cwd: this.cwd,
       startedAt: PROCESS_STARTED_AT.toISOString(),
+      livenessAck: "v1",
     });
     this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;
 
@@ -136,14 +143,20 @@ export class SseListener {
     this.abortController = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this.reconnectTimer = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this.watchdogTimer = null;
+    /** @type {{connectionUuid:string,connectedAt:string}|null} */
+    this.activeRegistration = null;
     this.reconnectDelay = this.initialDelayMs;
   }
 
   /** Open the SSE connection. On failure, schedules a backoff reconnect. */
   async connect() {
     this.#clearReconnectTimer();
+    this.#clearWatchdog();
     const abortController = new AbortController();
     this.abortController = abortController;
+    this.activeRegistration = null;
 
     let response;
     try {
@@ -173,6 +186,7 @@ export class SseListener {
     this.status = "connected";
     this.reconnectDelay = this.initialDelayMs;
     this.logger.info("[Chorus] SSE connection established");
+    this.#refreshWatchdog(abortController);
 
     if (wasReconnect) {
       try {
@@ -182,22 +196,25 @@ export class SseListener {
       }
     }
 
-    this.#consumeStream(response.body, abortController.signal);
+    this.#consumeStream(response.body, abortController);
   }
 
   /** Gracefully close the connection (no reconnect). */
   disconnect() {
     this.#clearReconnectTimer();
+    this.#clearWatchdog();
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
     }
     this.status = "disconnected";
+    this.activeRegistration = null;
     this.logger.info("[Chorus] SSE connection closed");
   }
 
-  /** @param {ReadableStream<Uint8Array>} body @param {AbortSignal} signal */
-  async #consumeStream(body, signal) {
+  /** @param {ReadableStream<Uint8Array>} body @param {AbortController} abortController */
+  async #consumeStream(body, abortController) {
+    const signal = abortController.signal;
     const decoder = new TextDecoder();
     const reader = body.getReader();
     let buffer = "";
@@ -205,6 +222,12 @@ export class SseListener {
       while (true) {
         const { done, value } = await reader.read();
         if (done || signal.aborted) break;
+        // Transport activity is byte arrival, not successful SSE parsing. Refresh before
+        // decode so comments, partial frames, and malformed payloads all prove the stream
+        // is still delivering bytes.
+        if (value && value.byteLength > 0) {
+          this.#refreshWatchdog(abortController);
+        }
         // Strip CR on ingest so CRLF transports (`\r\n\r\n` boundaries) parse the
         // same as LF — the `\n\n` boundary scan below would otherwise never match.
         buffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
@@ -219,6 +242,7 @@ export class SseListener {
       if (signal.aborted) return;
       this.logger.warn(`[Chorus] SSE stream error: ${err}`);
     } finally {
+      if (this.abortController === abortController) this.#clearWatchdog();
       try {
         reader.releaseLock();
       } catch {
@@ -235,7 +259,24 @@ export class SseListener {
   #processMessage(raw) {
     for (const line of raw.split("\n")) {
       // CR already stripped on ingest. Heartbeat / comment lines start with ":".
-      if (line.startsWith(":")) continue;
+      if (line.startsWith(":")) {
+        if (line.slice(1).trim() === "heartbeat" && this.activeRegistration) {
+          const registration = this.activeRegistration;
+          Promise.resolve()
+            .then(() => this.acknowledgeHeartbeat(registration))
+            .then((result) => {
+              if (result && typeof result === "object" && result.ok === false) {
+                // The REST client already logged the transport cause. Keep listener
+                // behavior best-effort and avoid adding a retry loop here.
+                return;
+              }
+            })
+            .catch((err) => {
+              this.logger.warn(`[Chorus] heartbeat acknowledgment failed: ${err}`);
+            });
+        }
+        continue;
+      }
       if (line.startsWith("data: ")) {
         const jsonStr = line.slice(6);
         let event;
@@ -248,8 +289,16 @@ export class SseListener {
         // The server's first data event tells us which DaemonConnection this
         // stream registered as. Capture it (for execution-state attribution) and
         // do NOT forward it as a notification — it isn't one.
-        if (event && event.type === "connection_registered" && typeof event.connectionUuid === "string") {
+        if (
+          event &&
+          event.type === "connection_registered" &&
+          typeof event.connectionUuid === "string"
+        ) {
           this.connectionUuid = event.connectionUuid;
+          this.activeRegistration =
+            typeof event.connectedAt === "string"
+              ? { connectionUuid: event.connectionUuid, connectedAt: event.connectedAt }
+              : null;
           try {
             this.onConnectionId(event.connectionUuid);
           } catch (err) {
@@ -303,6 +352,34 @@ export class SseListener {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+  }
+
+  /** @param {AbortController|null} abortController */
+  #refreshWatchdog(abortController) {
+    this.#clearWatchdog();
+    if (!abortController || abortController.signal.aborted || this.abortController !== abortController) return;
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = null;
+      if (
+        this.abortController !== abortController ||
+        abortController.signal.aborted ||
+        this.status !== "connected"
+      ) {
+        return;
+      }
+      this.logger.warn(
+        `[Chorus] SSE stream received no bytes for ${this.watchdogTimeoutMs}ms; reconnecting`
+      );
+      abortController.abort();
+      this.#scheduleReconnect();
+    }, this.watchdogTimeoutMs);
+  }
+
+  #clearWatchdog() {
+    if (this.watchdogTimer !== null) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = null;
     }
   }
 }

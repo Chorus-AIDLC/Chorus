@@ -142,6 +142,126 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(arg.interruptedReason).toBe("shutdown");
   });
 
+  it("passes transcriptRelayError through as relayError on a terminal edge (fix #444 follow-up)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        transcriptRelayError: "transcript upload returned 502",
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.status).toBe("ended");
+    expect(arg.relayError).toBe("transcript upload returned 502");
+  });
+
+  it("omits relayError (undefined) when the body carries no transcriptRelayError", async () => {
+    await POST(postRequest({ connectionUuid, sessionId, status: "ended" }), emptyCtx);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.relayError).toBeUndefined();
+  });
+
+  it("rejects a transcriptRelayError over the length bound (422)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        transcriptRelayError: "x".repeat(501),
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("passes a valid usage object through to the service, normalized to number|null (daemon-token-usage)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 214,
+          cacheCreationTokens: 24701,
+          cacheReadTokens: 0,
+          model: "claude-haiku-4-5",
+          source: "claude_code",
+        },
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    });
+  });
+
+  it("normalizes omitted usage fields to null (partial usage still passes)", async () => {
+    await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        usage: { inputTokens: 5, outputTokens: 7, source: "claude_code" },
+      }),
+      emptyCtx,
+    );
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.usage).toEqual({
+      inputTokens: 5,
+      outputTokens: 7,
+      cacheCreationTokens: null,
+      cacheReadTokens: null,
+      model: null,
+      source: "claude_code",
+    });
+  });
+
+  it("omits usage (undefined) when the body carries none — behaves exactly as before", async () => {
+    await POST(postRequest({ connectionUuid, sessionId, status: "ended" }), emptyCtx);
+    const arg = mockAdvanceTurnForWake.mock.calls[0][0];
+    expect(arg.usage).toBeUndefined();
+  });
+
+  it("rejects a usage with a negative token count (422)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        usage: { inputTokens: -1, source: "claude_code" },
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("rejects a usage missing the required source (422)", async () => {
+    const res = await POST(
+      postRequest({
+        connectionUuid,
+        sessionId,
+        status: "ended",
+        usage: { inputTokens: 10, outputTokens: 20 },
+      }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
   it("rejects interruptedReason=offline (server-reconcile verdict, not daemon-reportable) at the zod boundary", async () => {
     const res = await POST(
       postRequest({ connectionUuid, sessionId, status: "interrupted", interruptedReason: "offline" }),

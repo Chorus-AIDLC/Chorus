@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Kiro CLI.
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.2"
+  version: "0.14.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -88,7 +88,7 @@ chorus-api.sh mcp-tool <tool_name> "$PAYLOAD"
 with `$PAYLOAD` built using `json_encode_file` (defined in §3.4). Calling these tools directly from the agent's MCP harness with a hand-typed `content` field is a **protocol violation** for OpenSpec mode and will fail review. Reasons:
 
 1. **Token cost.** Re-typing a multi-thousand-line markdown body through the LLM burns input + output tokens for every draft. The wrapper streams bytes through `jq -Rs '.'` — content never enters LLM context. A typical 3-doc proposal mirror via the script costs roughly zero content-tokens; via direct MCP it routinely costs 20k+.
-2. **Byte-equality.** `jq -Rs '.'` is a byte-faithful encoder: backslashes, quotes, newlines, code-fence content, zero-width chars all survive. LLM re-emission has a non-zero failure rate on long markdown — table alignment drifts, fence escapes get "fixed", long URLs wrap. The byte-equality guarantee (modulo trailing `\n`) holds **only** on the wrapper path.
+2. **Byte-equality.** `jq -Rs '.'` is a byte-faithful encoder: backslashes, quotes, newlines, code-fence content, zero-width chars all survive. LLM re-emission has a non-zero failure rate on long markdown — table alignment drifts, fence escapes get "fixed", long URLs wrap. The exact byte-equality guarantee holds **only** on the wrapper path.
 3. **Single source of truth.** With the wrapper, the local `openspec/changes/<slug>/*.md` is authoritative and Chorus is a mirror. With agent re-typing, authority splits between local file and whatever the LLM happened to output — a future diff cannot tell which one is correct.
 
 ### Rule 2 — Halt on error via `chorus_check_response`
@@ -224,7 +224,7 @@ json_encode_file() {
 }
 ```
 
-Round-trip: the Chorus backend appends a single `\n` to draft content on write, so server `content` is **byte-equal modulo a trailing newline**. Reviewers diffing local file vs server should ignore that one byte.
+Round-trip verification is exact: a trailing newline difference is real drift and MUST NOT be normalized or ignored.
 
 ### 3.5 Create the proposal container with the slug provenance line
 
@@ -327,7 +327,11 @@ The hook is read-only; you (the agent) perform the archive:
 
 3. **Halt on any error** from `openspec archive` or `chorus_pm_update_document`. Print stderr verbatim, post a comment on the proposal recording the failure (`chorus_add_comment` with `targetType: "proposal"`, `targetUuid: <proposalUuid>`), then stop. No retry. Matches §6 "no silent errors." (Comment on the proposal, not the idea: the failure is in archiving proposal-derived specs, and proposals can be `inputType: "document"` with no idea attached.)
 
-4. **Confirm success.** List `openspec/specs/<capability>/spec.md` files and verify they round-trip byte-equal (modulo trailing newline) with their Chorus Document counterparts.
+4. **Confirm success.** Resolve each matching Document UUID and run
+   `verify-document-roundtrip.sh <local-spec-path> <document-uuid>`. This
+   performs exact-byte comparison and metadata-only mismatch diagnostics. Do
+   not replace it with recursive `jq`, `head`, command substitution, or newline
+   normalization.
 
 **Strict opt-in:** if the verified task is not the last of its idea, OR the proposal description carries no `OpenSpec change slug: <slug>` line, OR the local shell has no `openspec` CLI, the hook exits 0 silently and no archive reminder is injected. Existing free-form behavior is preserved.
 

@@ -26,6 +26,11 @@ import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
+import {
+  getCodexUsageSnapshot as defaultGetUsageSnapshot,
+  normalizeCodexUsageEvent,
+  setCodexUsageSnapshot as defaultSetUsageSnapshot,
+} from "./codex-usage-map.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -88,9 +93,11 @@ export function buildCodexArgs({ isNew, threadId, permissionMode }) {
  */
 export function extractThreadId(obj) {
   if (!obj || typeof obj !== "object") return null;
-  if (obj.type === "thread.started" && typeof obj.thread_id === "string") return obj.thread_id;
+  if (obj.type === "thread.started" && typeof obj.thread_id === "string") {
+    return obj.thread_id.trim() || null;
+  }
   if (obj.type === "session_meta" && obj.payload && typeof obj.payload.id === "string") {
-    return obj.payload.id;
+    return obj.payload.id.trim() || null;
   }
   return null;
 }
@@ -163,11 +170,14 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getThreadIdFn]  Injectable session-map read.
  * @property {(anchor: string, threadId: string) => void} [setThreadIdFn]  Injectable session-map write.
+ * @property {(anchor: string, threadId: string) => object|null} [getUsageSnapshotFn]
+ * @property {(anchor: string, threadId: string, usage: object) => void} [setUsageSnapshotFn]
  */
 
 export class CodexSpawner {
   /** @param {CodexSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    this.sessionDecision = { probeIsAuthoritative: false };
     this.codexPath = opts.codexPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
@@ -176,6 +186,8 @@ export class CodexSpawner {
     this.platform = opts.platform ?? process.platform;
     this.getThreadIdFn = opts.getThreadIdFn ?? defaultGetThreadId;
     this.setThreadIdFn = opts.setThreadIdFn ?? defaultSetThreadId;
+    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? defaultGetUsageSnapshot;
+    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? defaultSetUsageSnapshot;
     this.resolveCodexPathFn = opts.resolveCodexPathFn ?? resolveCodexPath;
   }
 
@@ -198,6 +210,13 @@ export class CodexSpawner {
     // waker's Claude transcript probe: a recorded thread id means resume.
     const knownThreadId = anchor ? this.getThreadIdFn(anchor) : null;
     const isNew = !knownThreadId;
+    let previousUsage = knownThreadId
+      ? this.getUsageSnapshotFn(anchor, knownThreadId)
+      : null;
+    // Existing threads created before this baseline store was introduced cannot
+    // yield a trustworthy first delta. Seed once and omit that turn's usage
+    // instead of publishing the entire historical cumulative total.
+    let needsUsageSeed = Boolean(knownThreadId && !previousUsage);
 
     const codexPath = this.codexPath ?? this.resolveCodexPathFn();
     if (!codexPath) {
@@ -249,6 +268,7 @@ export class CodexSpawner {
 
       let stdoutBuf = "";
       let observedThreadId = knownThreadId || null;
+      let threadIdPersisted = false;
 
       child.stdout?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -257,10 +277,27 @@ export class CodexSpawner {
           String(chunk),
           (obj) => {
             const tid = extractThreadId(obj);
-            if (tid) observedThreadId = tid;
+            if (tid) {
+              observedThreadId = tid;
+              if (isNew && anchor && !threadIdPersisted) {
+                threadIdPersisted = true;
+                this.setThreadIdFn(anchor, tid);
+              }
+            }
+            let delivered = obj;
+            if (obj?.type === "turn.completed" && obj.usage) {
+              delivered = needsUsageSeed
+                ? { ...obj, usage: null }
+                : normalizeCodexUsageEvent(obj, previousUsage);
+              if (anchor && observedThreadId) {
+                this.setUsageSnapshotFn(anchor, observedThreadId, obj.usage);
+              }
+              previousUsage = obj.usage;
+              needsUsageSeed = false;
+            }
             if (onMessage) {
               try {
-                onMessage(obj);
+                onMessage(delivered);
               } catch (err) {
                 this.logger.warn(`[Chorus] onMessage handler threw: ${err}`);
               }
@@ -284,12 +321,6 @@ export class CodexSpawner {
       child.on("close", (code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] codex exited with code ${code}`);
-        }
-        // Persist anchor→thread_id only on a fresh, successful run that produced a
-        // new id — so a later wake for this anchor resumes it. Best-effort; the
-        // session map swallows its own IO errors.
-        if (code === 0 && isNew && anchor && observedThreadId) {
-          this.setThreadIdFn(anchor, observedThreadId);
         }
         resolve({ sessionId: observedThreadId || anchor, exitCode: code, isNew });
       });

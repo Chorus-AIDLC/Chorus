@@ -46,7 +46,7 @@ export const TURN_INTERRUPT_REASONS = new Set(["user", "crash", "shutdown"]);
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null }) => Promise<void>}
+ * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -67,6 +67,8 @@ export function createTurnReporter(opts) {
     entityType,
     entityUuid,
     interruptedReason,
+    transcriptRelayError,
+    usage,
   }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
@@ -88,9 +90,19 @@ export function createTurnReporter(opts) {
     }
     // The client resolves the connectionUuid lazily, validates it (logging
     // "no connection uuid yet" when absent), POSTs the exact server payload — sending
-    // entityType/entityUuid only when both are present — and logs the failure cause on a
-    // network error / non-2xx. We swallow the structured result so a failed report can
-    // never crash the wake path.
-    await client.turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason });
+    // entityType/entityUuid only when both are present, and transcriptRelayError only when
+    // truthy (fix #444 follow-up) — and logs the failure cause on a network error / non-2xx.
+    // We swallow the structured result so a failed report can never crash the wake path.
+    await client.turnAdvance({
+      sessionId,
+      status,
+      entityType,
+      entityUuid,
+      interruptedReason,
+      transcriptRelayError,
+      // Per-turn token usage (daemon-token-usage): the client spreads it into the body
+      // only on a terminal edge. No validation here — usage is an opaque nested object.
+      usage,
+    });
   };
 }

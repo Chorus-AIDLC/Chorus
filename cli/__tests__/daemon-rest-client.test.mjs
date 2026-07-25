@@ -71,6 +71,65 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(body).not.toHaveProperty("entityType");
   });
 
+  it("turnAdvance sends transcriptRelayError on the wire when set (fix #444 follow-up)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({
+      sessionId: "idea-1",
+      status: "ended",
+      transcriptRelayError: "transcript upload returned 502",
+    });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.transcriptRelayError).toBe("transcript upload returned 502");
+  });
+
+  it("turnAdvance omits transcriptRelayError when falsy (clean relay)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", transcriptRelayError: null });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("transcriptRelayError");
+  });
+
+  it("turnAdvance sends the nested usage object on a terminal edge (daemon-token-usage)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    };
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", usage });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    // Carried as ONE nested object matching the TokenUsage contract 1:1.
+    expect(body.usage).toEqual(usage);
+  });
+
+  it("turnAdvance omits usage on the → running edge (usage is terminal-only)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({
+      sessionId: "idea-1",
+      status: "running",
+      usage: { inputTokens: 1, outputTokens: 2, cacheCreationTokens: null, cacheReadTokens: null, model: null, source: "claude_code" },
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
+  });
+
+  it("turnAdvance omits usage when null (clean, no usage captured)", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", usage: null });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId
@@ -133,6 +192,25 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
       entityType: "daemon_session",
       entityUuid: "sess-1",
       reason: "user",
+    });
+  });
+
+  it("heartbeat POSTs the explicit connection generation with Bearer auth", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    const result = await client.heartbeat({
+      connectionUuid: "conn-old",
+      connectedAt: "2026-07-25T08:00:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+    const [endpoint, init] = fetchImpl.mock.calls[0];
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/connection-heartbeat");
+    expect(init.headers.Authorization).toBe("Bearer cho_secret");
+    expect(JSON.parse(init.body)).toEqual({
+      connectionUuid: "conn-old",
+      connectedAt: "2026-07-25T08:00:00.000Z",
     });
   });
 
@@ -310,6 +388,7 @@ describe("createDaemonRestClient — error surfacing (no silent errors)", () => 
     await expect(client.transcript({ sessionId: "s", messages: [{ role: "user", text: "x" }] })).resolves.toBeTruthy();
     await expect(client.executionState({ executions: [] })).resolves.toBeTruthy();
     await expect(client.reportInterrupt({ entityType: "task", entityUuid: "t", reason: "crash" })).resolves.toBeTruthy();
+    await expect(client.heartbeat({ connectionUuid: "c", connectedAt: "g" })).resolves.toBeTruthy();
     await expect(client.readPendingTurns()).resolves.toBeTruthy();
   });
 });

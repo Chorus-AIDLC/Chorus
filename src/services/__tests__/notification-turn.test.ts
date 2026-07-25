@@ -12,10 +12,15 @@ vi.mock("@/services/daemon-connection.service", () => ({
 const mockResolveOrCreateSession = vi.hoisted(() => vi.fn());
 const mockCreatePendingTurn = vi.hoisted(() => vi.fn());
 const mockResolveDirectIdeaUuid = vi.hoisted(() => vi.fn());
+// fix #444 — idempotent human_instruction: the bridge now checks for a reusable pending
+// instruction turn before creating one. Default null ⇒ no reuse ⇒ createPendingTurn runs
+// (byte-identical to pre-change behavior for these tests); a specific test may override.
+const mockFindReusablePendingInstructionTurn = vi.hoisted(() => vi.fn());
 vi.mock("@/services/daemon-session.service", () => ({
   resolveOrCreateSession: mockResolveOrCreateSession,
   createPendingTurn: mockCreatePendingTurn,
   resolveDirectIdeaUuid: mockResolveDirectIdeaUuid,
+  findReusablePendingInstructionTurn: mockFindReusablePendingInstructionTurn,
 }));
 
 // The assignment pin is now INSTANCE-based (T11): the bridge reads the wake's Task row
@@ -216,6 +221,9 @@ beforeEach(() => {
   mockCreatePendingTurn.mockImplementation(async (p: { trigger: string; promptText?: string | null }) =>
     turnView({ trigger: p.trigger, promptText: p.promptText ?? null }),
   );
+  // Default: no reusable pending instruction turn (fix #444 idempotency) → createPendingTurn
+  // runs as before. A dedicated idempotency test overrides this to return an existing turn.
+  mockFindReusablePendingInstructionTurn.mockResolvedValue(null);
   // Default: the assigned Task is a plain `agent` (un-pinned) — the unchanged online-first
   // path, no instance pin. Pin-honoring tests override per-case.
   mockTaskFindFirst.mockResolvedValue({ assigneeType: "agent", assigneeUuid: agentUuid });
@@ -1226,6 +1234,37 @@ describe("maybeCreateTurnForWakeNotification — human_instruction promptText", 
 
     expect(mockCreatePendingTurn).toHaveBeenCalledWith(
       expect.objectContaining({ trigger: "human_instruction", promptText: null }),
+    );
+  });
+
+  // fix #444 — idempotency: a re-sent identical instruction with an unconsumed pending turn
+  // reuses it instead of creating a duplicate (the empty turns 2/3/4 bug).
+  it("REUSES an existing unconsumed pending instruction turn instead of creating a duplicate", async () => {
+    const existing = turnView({ trigger: "human_instruction", promptText: "does app/samples exist?" });
+    mockFindReusablePendingInstructionTurn.mockResolvedValue(existing);
+
+    const result = await maybeCreateTurnForWakeNotification(
+      ctx({ action: "human_instruction", instructionText: "does app/samples exist?" }),
+    );
+
+    // The reusable-turn lookup ran with the session + instruction text; NO new turn was made.
+    expect(mockFindReusablePendingInstructionTurn).toHaveBeenCalledWith(
+      expect.any(String),
+      "does app/samples exist?",
+    );
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(result?.uuid).toBe(existing.uuid);
+  });
+
+  it("creates a NEW turn when no reusable pending instruction turn exists (default)", async () => {
+    mockFindReusablePendingInstructionTurn.mockResolvedValue(null);
+
+    await maybeCreateTurnForWakeNotification(
+      ctx({ action: "human_instruction", instructionText: "a fresh instruction" }),
+    );
+
+    expect(mockCreatePendingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: "human_instruction", promptText: "a fresh instruction" }),
     );
   });
 });

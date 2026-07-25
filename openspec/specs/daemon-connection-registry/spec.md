@@ -125,18 +125,7 @@ SHALL be distinct rows.
 
 ### Requirement: Connection liveness SHALL use abort as the primary signal with a heartbeat-driven staleness safety net
 
-The SSE route SHALL treat the stream's `abort` event as the primary
-disconnect signal: on `abort` (graceful client disconnect, process exit, or
-network close) the server SHALL mark the connection `offline` and set
-`disconnectedAt`. As a safety net for the case where the server instance itself
-dies (and therefore cannot run its `abort` handler), the SSE route's existing
-periodic heartbeat interval SHALL also update the connection's `lastSeenAt` on
-each tick. No client-to-server heartbeat SHALL be added — the daemon sends
-nothing after connecting, and the server-side interval is the sole liveness
-updater. The model SHALL define a documented staleness threshold (approximately
-three heartbeat intervals) such that a consumer treats a connection as
-effectively offline when `status = "online"` but `lastSeenAt` is older than that
-threshold.
+The SSE route SHALL treat the stream's `abort` event as the primary disconnect signal: on `abort` (graceful client disconnect, process exit, or network close) the server SHALL mark the connection `offline` and set `disconnectedAt`. A daemon advertising `livenessAck=v1` SHALL acknowledge receipt of periodic SSE heartbeat comments through an authenticated endpoint. For such an opted-in stream, only a valid acknowledgment fenced to the active registration generation SHALL update `lastSeenAt`, and the server's outbound heartbeat timer SHALL NOT update connection liveness. A legacy stream with an absent or unknown capability value SHALL retain timer-side `lastSeenAt` updates for rolling compatibility. The model SHALL retain the documented 90-second staleness threshold so a consumer treats a connection as effectively offline when `status = "online"` but `lastSeenAt` is older than that threshold.
 
 #### Scenario: Graceful disconnect marks the row offline immediately
 
@@ -144,24 +133,43 @@ threshold.
 - **WHEN** the client disconnects gracefully and the stream's `abort` event fires
 - **THEN** the row MUST be updated to `status = "offline"` with `disconnectedAt` set to the current time
 
-#### Scenario: Heartbeat tick advances lastSeenAt
+#### Scenario: Valid client acknowledgment advances lastSeenAt
 
-- **GIVEN** a registered `online` `DaemonConnection`
-- **WHEN** the SSE route's periodic heartbeat interval fires for that connection
+- **GIVEN** a registered `online` connection and its active registration generation
+- **WHEN** the authenticated daemon acknowledges receiving an SSE heartbeat for that generation
 - **THEN** the row's `lastSeenAt` MUST be advanced to the current time
 
-#### Scenario: An instance crash leaves a row that reads as stale
+#### Scenario: Outbound server heartbeat does not prove client liveness
 
-- **GIVEN** a registered `online` `DaemonConnection` whose holding instance hard-crashes so its `abort` never fires
-- **WHEN** more than the staleness threshold elapses with no heartbeat tick
-- **THEN** the row MUST remain `status = "online"` with a `lastSeenAt` no longer being advanced
-- **AND** a consumer applying the liveness rule (`status = "online"` AND `lastSeenAt` fresh) MUST treat it as effectively offline
+- **GIVEN** an opted-in `livenessAck=v1` SSE route whose remote daemon is silently unreachable
+- **WHEN** the server's periodic heartbeat timer emits a comment
+- **THEN** the timer MUST NOT advance the connection's `lastSeenAt`
 
-#### Scenario: No client-to-server heartbeat is introduced
+#### Scenario: Legacy daemon retains timer-side liveness during rolling deployment
 
-- **WHEN** the change is implemented
-- **THEN** the daemon clients MUST NOT send any periodic request to the server after the initial SSE connection
-- **AND** `lastSeenAt` MUST be advanced solely by the server-side heartbeat interval
+- **GIVEN** a daemon stream whose self-report omits `livenessAck` or supplies an unknown value
+- **WHEN** the server's periodic heartbeat timer emits a comment
+- **THEN** the server MUST retain the legacy `lastSeenAt` update for that stream
+- **AND** deploying the new server MUST NOT make the legacy daemon stale after 90 seconds
+
+#### Scenario: Obsolete generation cannot refresh a newer registration
+
+- **GIVEN** a connection row has been refreshed by a newer registration generation
+- **WHEN** a delayed acknowledgment arrives from an older generation
+- **THEN** the update MUST match zero rows and MUST NOT advance `lastSeenAt`
+
+#### Scenario: Silent partition becomes read-only
+
+- **GIVEN** a registered connection whose socket is blackholed without an observable abort
+- **WHEN** no valid client acknowledgment arrives for more than 90 seconds
+- **THEN** consumers applying the liveness rule MUST treat the connection as effectively offline
+- **AND** continuation of a session pinned to that origin MUST return the existing structured read-only 409 before creating a turn
+
+#### Scenario: Authentication and ownership fence the acknowledgment
+
+- **WHEN** an unauthenticated caller or a caller outside the connection's company and agent ownership attempts to acknowledge a heartbeat
+- **THEN** the server MUST reject the request
+- **AND** it MUST NOT update the connection row
 
 ### Requirement: A registry write SHALL never block or break SSE event delivery
 

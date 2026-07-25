@@ -1,7 +1,7 @@
 // cli/waker.mjs
 // Executes a single wake: resolve the event to its idea attribution, derive the
 // deterministic session id (= the DIRECT idea uuid), build the --mcp-config, spawn
-// headless Claude (new vs resume decided by probing the on-disk transcript), and
+// the configured headless agent, and
 // fire the (no-op) upload hooks. The WakeQueue schedules these per DIRECT idea so
 // two wakes for the same idea never run concurrently against the same session.
 //
@@ -38,7 +38,7 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown" }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
    *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
    *     → interrupted with the classified reason otherwise) to advance the server-side
@@ -56,7 +56,7 @@ export class Waker {
     this.lineage = opts.lineage;
     this.spawner = opts.spawner;
     // Verbose per-wake logging (daemon-startup-output). Default: one compact
-    // line per lifecycle event (arrival / spawn new-vs-resume / completion).
+    // line per lifecycle event (arrival / session decision / completion).
     // When true, additional detail is emitted alongside those lines.
     this.verbose = opts.verbose ?? false;
     // The connection/session-bound working directory this Waker serves (T3 — 单
@@ -385,13 +385,20 @@ export class Waker {
       const cwd = this.resolveCwd();
       const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
-      // Lifecycle line 2 — spawn: new vs resume, plus the (otherwise hidden)
-      // `claude --resume <id>` takeover hint so an operator can attach to the
-      // session from this daemon's working directory.
-      this.logger.info(
-        `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
-          (sessionId ? ` — take over with: claude --resume ${sessionId}` : "")
-      );
+      // Spawners declare whether the shared transcript probe is authoritative
+      // for their session decision. Missing metadata preserves the established
+      // Claude-compatible logging contract for injected/third-party spawners.
+      const sessionDecision = this.spawner.sessionDecision;
+      const probeIsAuthoritative = sessionDecision?.probeIsAuthoritative !== false;
+      if (probeIsAuthoritative) {
+        const takeoverCommand = sessionDecision?.takeoverCommand ?? "claude --resume";
+        this.logger.info(
+          `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
+            (sessionId && takeoverCommand ? ` — take over with: ${takeoverCommand} ${sessionId}` : "")
+        );
+      } else {
+        this.logger.info(`[Chorus] dispatching session ${sessionId ?? "(none)"}`);
+      }
       if (this.verbose) {
         this.logger.info(`[Chorus]   cwd=${cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
       }
@@ -448,6 +455,12 @@ export class Waker {
         },
       });
 
+      if (result && !probeIsAuthoritative) {
+        this.logger.info(
+          `[Chorus] backend ${result.isNew ? "started new" : "resumed"} session ${result.sessionId ?? sessionId ?? "(none)"}`
+        );
+      }
+
       // No session map to persist anymore — the id is deterministic (= direct idea
       // uuid) and the next wake re-derives new-vs-resume from disk. Just log a
       // non-zero exit visibly (no-silent-errors).
@@ -469,6 +482,36 @@ export class Waker {
       const wasInterrupting = entity && execKey ? this.interrupting.has(execKey) : false;
       const cleanExit = result && result.exitCode === 0;
 
+      // Transcript flush-on-exit (fix #444): the subprocess has exited, but the transcript
+      // hook batches user/assistant text on a short debounce — the LAST batch may still be
+      // buffered right now. Flush it and AWAIT it BEFORE advancing the turn to a terminal
+      // status, so the trailing reply is persisted while the turn is still `running` (the
+      // server attaches transcript to the running turn). Without this, a clean-exiting wake
+      // advanced straight to `ended` and the buffered reply was dropped → the "该回合没有
+      // 保留对话记录" empty turn in #444. Guarded + non-throwing (onSessionEnd swallows its
+      // own failures; this try is belt-and-braces) so a flush error never crashes the wake.
+      // `onSessionEnd` returns `{ relayError }` — the final transcript-upload failure
+      // reason (retry exhausted / non-2xx / network) when the reply was produced but never
+      // reached Chorus, else null. Forwarded onto the terminal turn-advance below so the UI
+      // can say "reply couldn't be uploaded (reason)" rather than the misleading "no reply
+      // received" (fix #444 follow-up). Guarded — a hook failure never crashes the exit path
+      // and simply leaves the annotation absent.
+      let transcriptRelayError = null;
+      // The turn's authoritative per-turn token usage (daemon-token-usage), captured from
+      // the Claude Code `result` frame by the transcript hook and returned alongside
+      // relayError from the SAME onSessionEnd call. Forwarded onto the terminal turn-advance
+      // below so the server persists it. Null when the run emitted no result frame.
+      let turnUsage = null;
+      if (sessionId) {
+        try {
+          const outcome = await this.hooks?.onSessionEnd?.({ sessionId });
+          transcriptRelayError = outcome?.relayError ?? null;
+          turnUsage = outcome?.usage ?? null;
+        } catch (err) {
+          this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
+        }
+      }
+
       // Turn lifecycle: the subprocess has exited — advance the server turn from
       // `running` to its OUTCOME-AWARE terminal state (fix-daemon-exit-orphan-running-
       // turn): `ended` on a clean exit, `interrupted` with the classified reason
@@ -478,10 +521,13 @@ export class Waker {
       // rejected server-side as invalid_transition). Swallow-safe; never throws.
       if (sessionId && turnAdvancedToRunning) {
         if (cleanExit) {
-          await this.#advanceTurn(sessionId, "ended", entity);
+          // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
+          // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
+          // `turnUsage` rides the same terminal advance (daemon-token-usage).
+          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage);
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason);
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage);
         }
       }
 
@@ -565,11 +611,18 @@ export class Waker {
    * its classified `interruptedReason` (user/crash/shutdown). Never throws into the
    * wake path — a reporter failure is logged and swallowed (the REST reporter
    * already swallows; this is belt-and-braces, matching #report).
+   *
+   * `transcriptRelayError` (fix #444 follow-up) annotates a terminal turn whose transcript
+   * upload finally failed — the reply was produced but never reached Chorus. Forwarded only
+   * when set (a clean relay leaves it null so the field stays absent from the payload).
    * @param {string} sessionId @param {"running"|"ended"|"interrupted"} status
    * @param {{ entityType: string, entityUuid: string }|null} entity
    * @param {"user"|"crash"|"shutdown"|null} [interruptedReason]
+   * @param {string|null} [transcriptRelayError]
+   * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
+   *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -577,6 +630,8 @@ export class Waker {
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        ...(transcriptRelayError ? { transcriptRelayError } : {}),
+        ...(usage ? { usage } : {}),
       });
     } catch (err) {
       this.logger.warn(

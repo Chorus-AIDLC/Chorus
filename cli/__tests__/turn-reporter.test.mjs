@@ -57,6 +57,67 @@ describe("createTurnReporter", () => {
     expect(body).not.toHaveProperty("entityType");
   });
 
+  it("forwards transcriptRelayError into the POST body on a terminal edge (fix #444 follow-up)", async () => {
+    // Guards the daemon→server hop end-to-end: the reporter MUST NOT drop the relay-error
+    // field (an earlier version destructured only 5 fields, so it never reached the wire).
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: silent,
+      fetchImpl,
+    });
+
+    await advance({
+      sessionId: "idea-1",
+      status: "ended",
+      transcriptRelayError: "transcript upload returned 502",
+    });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.transcriptRelayError).toBe("transcript upload returned 502");
+  });
+
+  it("omits transcriptRelayError from the body when null/absent (clean relay)", async () => {
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: silent,
+      fetchImpl,
+    });
+
+    await advance({ sessionId: "idea-1", status: "ended", transcriptRelayError: null });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("transcriptRelayError");
+  });
+
+  it("forwards usage into the POST body on a terminal edge (daemon-token-usage)", async () => {
+    // Same B1 guard as transcriptRelayError above: the reporter's closure MUST destructure
+    // and forward `usage`, or the captured token usage is silently dropped at this hop.
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({
+      url: "https://c",
+      apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1",
+      logger: silent,
+      fetchImpl,
+    });
+
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 214,
+      cacheCreationTokens: 24701,
+      cacheReadTokens: 0,
+      model: "claude-haiku-4-5",
+      source: "claude_code",
+    };
+    await advance({ sessionId: "idea-1", status: "ended", usage });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.usage).toEqual(usage);
+  });
+
   it("skips (logged, no fetch) when the connection uuid is not known yet", async () => {
     const fetchImpl = okFetch();
     const warns = [];
