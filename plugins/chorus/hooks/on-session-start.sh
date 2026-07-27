@@ -109,10 +109,7 @@ CTX="${CTX}
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
 - **Reviewer sub-agents**: mount the reviewer skill into a default sub-agent — \`spawn_agent(agent_type=\"default\", items=[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <uuid>.\"}])\` after \`chorus_pm_submit_proposal\`; same pattern with \`chorus:chorus-task-reviewer\` after \`chorus_submit_for_verify\`. Codex 0.125 only ships three built-in roles (default / explorer / worker) — custom agent_types like \`chorus-proposal-reviewer\` will be rejected. Remember \`close_agent\` after \`wait_agent\`; completed ≠ closed, 6 concurrent max."
 
-# User-visible parens (mirrors the Claude Code hook; Codex skill prefix is $chorus):
-#   active            -> (OpenSpec Enabled)
-#   not set up        -> (OpenSpec off — run `$chorus enable openspec` to set it up)
-#   explicit opt-out  -> (OpenSpec off)  [neutral, no nag]
+# User-visible status (mirrors the Claude Code hook; Codex skill prefix is $chorus).
 USER_MSG="Chorus connected at ${CHORUS_URL}"
 if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
   USER_MSG="${USER_MSG} (OpenSpec Enabled)"

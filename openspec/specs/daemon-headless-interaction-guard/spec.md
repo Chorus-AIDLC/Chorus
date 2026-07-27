@@ -54,12 +54,13 @@ Prepending the headless preamble SHALL NOT turn a non-wake notification into a w
 
 ### Requirement: The spawner SHALL mark headless daemon sessions with an environment signal
 
-`ClaudeSpawner.wake()` SHALL spawn the headless Claude subprocess with `CHORUS_DAEMON_HEADLESS` set to `"1"` in the child process environment. The variable SHALL be added on top of the inherited environment so all other inherited variables (PATH, credential/Bedrock vars, `CLAUDE_CONFIG_DIR`, etc.) are preserved. This change in this proposal SHALL NOT add any code that reads the variable back — it is a forward-looking, machine-checkable signal.
+`ClaudeSpawner.wake()` SHALL spawn the headless Claude subprocess with `CHORUS_DAEMON_HEADLESS` set to `"1"` in the child process environment. It SHALL also export the daemon's resolved Chorus URL and API key as `CHORUS_URL` and `CHORUS_API_KEY` so plugin hooks and shell-based Chorus tooling use the same connection context as the daemon. These values SHALL be added on top of the inherited environment, with the resolved daemon values overriding stale inherited Chorus values, so all other inherited variables (PATH, credential/Bedrock vars, `CLAUDE_CONFIG_DIR`, etc.) are preserved. The API key SHALL NOT appear in process arguments or logs.
 
 #### Scenario: Spawned child environment carries the signal
 
 - **WHEN** the daemon spawns a headless wake via `ClaudeSpawner.wake()`
 - **THEN** the child process environment contains `CHORUS_DAEMON_HEADLESS=1`
+- **AND** it contains the daemon's resolved `CHORUS_URL` and `CHORUS_API_KEY`
 - **AND** environment variables inherited from the daemon process are still present in the child environment
 
 #### Scenario: The signal is independent of permission mode
@@ -82,4 +83,3 @@ The headless interaction guard SHALL be implemented entirely on the daemon path 
 - **WHEN** a human runs Claude Code interactively (not via the daemon)
 - **THEN** the headless preamble and `CHORUS_DAEMON_HEADLESS` env var are absent
 - **AND** `AskUserQuestion` continues to work as before
-

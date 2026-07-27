@@ -15,6 +15,7 @@ import {
   sandboxFlags,
   resolveCodexPath,
   extractThreadId,
+  hasChorusMcpServer,
 } from "../codex-spawner.mjs";
 
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
@@ -147,6 +148,19 @@ describe("resolveCodexPath", () => {
   });
 });
 
+describe("hasChorusMcpServer", () => {
+  it("detects the configured Chorus MCP section", () => {
+    const readFile = vi.fn(() => '[mcp_servers.chorus]\nurl = "https://chorus.test/api/mcp"\n');
+    expect(hasChorusMcpServer({ env: { CODEX_HOME: "/codex" }, readFile })).toBe(true);
+    expect(readFile).toHaveBeenCalledWith("/codex/config.toml", "utf8");
+  });
+
+  it("returns false for missing, unreadable, or unrelated config", () => {
+    expect(hasChorusMcpServer({ readFile: () => '[mcp_servers.other]\nurl = "x"\n' })).toBe(false);
+    expect(hasChorusMcpServer({ readFile: () => { throw new Error("missing"); } })).toBe(false);
+  });
+});
+
 describe("CodexSpawner.wake — spawn orchestration", () => {
   const creds = { url: "https://chorus.test", apiKey: "cho_secret" };
 
@@ -178,11 +192,12 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
       setThreadIdFn: setThreadId ?? (() => {}),
       getUsageSnapshotFn: getUsageSnapshot ?? (() => null),
       setUsageSnapshotFn: setUsageSnapshot ?? (() => {}),
+      hasChorusMcpServerFn: () => true,
     });
     return { spawner, spawnImpl, calls };
   }
 
-  it("new wake: spawns `codex exec --json …`, prompt over stdin, key in env (not argv)", async () => {
+  it("new wake: spawns codex with the resolved Chorus pair in env, never argv", async () => {
     const child = makeFakeChild();
     const { spawner, calls } = makeSpawner({ child });
     const onChild = vi.fn();
@@ -197,7 +212,8 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     // prompt only on stdin, never argv
     expect(child.stdin.writes.join("")).toBe("do the thing");
     expect(calls.argv.join(" ")).not.toContain("do the thing");
-    // daemon key exported via env, headless flag set, key absent from argv
+    // daemon connection pair exported via env, headless flag set, key absent from argv
+    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
     expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
     expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
     expect(calls.argv.join(" ")).not.toContain("cho_secret");
@@ -209,6 +225,56 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     // returns the captured thread id as the session id
     expect(result.exitCode).toBe(0);
     expect(result.sessionId).toBe(TID);
+  });
+
+  it("overwrites stale inherited Chorus connection values", async () => {
+    const child = makeFakeChild();
+    const { spawner, calls } = makeSpawner({ child });
+    const previousUrl = process.env.CHORUS_URL;
+    const previousKey = process.env.CHORUS_API_KEY;
+    process.env.CHORUS_URL = "https://stale.test";
+    process.env.CHORUS_API_KEY = "cho_stale";
+    try {
+      const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
+      child.emit("close", 0);
+      await p;
+      expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
+      expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
+    } finally {
+      if (previousUrl === undefined) delete process.env.CHORUS_URL;
+      else process.env.CHORUS_URL = previousUrl;
+      if (previousKey === undefined) delete process.env.CHORUS_API_KEY;
+      else process.env.CHORUS_API_KEY = previousKey;
+    }
+  });
+
+  it("logs a missing Chorus MCP entry once and still completes later wakes", async () => {
+    const first = makeFakeChild();
+    const second = makeFakeChild();
+    const children = [first, second];
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const spawner = new CodexSpawner({
+      codexPath: "/usr/bin/codex",
+      platform: "linux",
+      creds: { url: "https://chorus.test", apiKey: "cho_secret" },
+      logger,
+      hasChorusMcpServerFn: () => false,
+      getThreadIdFn: () => null,
+      setThreadIdFn: () => {},
+      getUsageSnapshotFn: () => null,
+      setUsageSnapshotFn: () => {},
+      spawnImpl: () => children.shift(),
+    });
+
+    const wake1 = spawner.wake({ prompt: "first", sessionId: "first" });
+    first.emit("close", 0);
+    await wake1;
+    const wake2 = spawner.wake({ prompt: "second", sessionId: "second" });
+    second.emit("close", 0);
+    await wake2;
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toContain("no [mcp_servers.chorus] entry");
   });
 
   it("persists anchor→thread_id immediately when a new run emits thread.started", async () => {

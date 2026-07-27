@@ -285,6 +285,8 @@ describe("ClaudeSpawner.wake", () => {
 // CHORUS_DAEMON_HEADLESS=1 (merged over inherited env) as a machine-checkable headless
 // signal. buildArgs stays free of --append-system-prompt (the rule rides the wake prompt).
 describe("ClaudeSpawner.wake — CHORUS_DAEMON_HEADLESS env signal", () => {
+  const creds = { url: "https://chorus.test", apiKey: "cho_secret" };
+
   async function spawnAndGetOpts(permissionMode) {
     const child = makeFakeChild();
     const spawnImpl = vi.fn(() => child);
@@ -293,6 +295,7 @@ describe("ClaudeSpawner.wake — CHORUS_DAEMON_HEADLESS env signal", () => {
       spawnImpl,
       logger: silent,
       platform: "linux",
+      creds,
       ...(permissionMode ? { permissionMode } : {}),
     });
     const p = spawner.wake({ prompt: "go", sessionId: SID, isNew: true, mcpConfigPath: "/m.json" });
@@ -305,6 +308,8 @@ describe("ClaudeSpawner.wake — CHORUS_DAEMON_HEADLESS env signal", () => {
     const opts = await spawnAndGetOpts();
     expect(opts.env).toBeDefined();
     expect(opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
+    expect(opts.env.CHORUS_URL).toBe("https://chorus.test");
+    expect(opts.env.CHORUS_API_KEY).toBe("cho_secret");
   });
 
   it("sets CHORUS_DAEMON_HEADLESS=1 in yolo mode too (unconditional)", async () => {
@@ -323,6 +328,23 @@ describe("ClaudeSpawner.wake — CHORUS_DAEMON_HEADLESS env signal", () => {
       expect(opts.env.PATH).toBe(process.env.PATH);
     } finally {
       delete process.env[sentinel];
+    }
+  });
+
+  it("overwrites stale inherited Chorus credentials with the daemon pair", async () => {
+    const previousUrl = process.env.CHORUS_URL;
+    const previousKey = process.env.CHORUS_API_KEY;
+    process.env.CHORUS_URL = "https://stale.test";
+    process.env.CHORUS_API_KEY = "cho_stale";
+    try {
+      const opts = await spawnAndGetOpts();
+      expect(opts.env.CHORUS_URL).toBe("https://chorus.test");
+      expect(opts.env.CHORUS_API_KEY).toBe("cho_secret");
+    } finally {
+      if (previousUrl === undefined) delete process.env.CHORUS_URL;
+      else process.env.CHORUS_URL = previousUrl;
+      if (previousKey === undefined) delete process.env.CHORUS_API_KEY;
+      else process.env.CHORUS_API_KEY = previousKey;
     }
   });
 

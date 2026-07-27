@@ -10,7 +10,7 @@
 //   3. Codex backend end-to-end — buildDaemon with agentType:"codex" injects a
 //      CodexSpawner; driving its wake() through a fake spawn yields the expected
 //      `codex exec --json` (new) and `codex exec resume <id>` (known anchor) argv,
-//      prompt on stdin, daemon key in the child env (never argv).
+//      prompt on stdin, daemon URL/key in the child env (never argv).
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -131,7 +131,7 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
     return { spawner, calls };
   }
 
-  it("NEW anchor → `codex exec --json …`, prompt on stdin, daemon key in env not argv", async () => {
+  it("NEW anchor → prompt on stdin, daemon connection pair in env not argv", async () => {
     const { spawner, calls } = codexSpawnerWithFakeSpawn({ getThreadId: () => null });
     const child = makeFakeChild();
     spawner.spawnImpl = (command, argv, opts) => {
@@ -151,6 +151,7 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
     expect(calls.argv).not.toContain("resume");
     expect(child.stdin.writes.join("")).toBe("wake up codex");
     expect(calls.argv.join(" ")).not.toContain("wake up codex");
+    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
     expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_daemonkey");
     expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
     expect(calls.argv.join(" ")).not.toContain("cho_daemonkey");
