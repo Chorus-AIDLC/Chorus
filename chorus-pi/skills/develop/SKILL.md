@@ -1,0 +1,444 @@
+---
+name: develop
+description: Chorus Development workflow — claim tasks, report work, manage sessions, and integrate with Pi subagents.
+license: AGPL-3.0
+metadata:
+  author: chorus
+  version: "0.14.4"
+  category: project-management
+  mcp_server: chorus
+---
+
+# Develop Skill
+
+This skill covers the **Development** stage of the AI-DLC workflow: claiming Tasks, writing code, reporting progress, submitting for verification, and managing sessions for sub-agent observability.
+
+---
+
+## Overview
+
+Developer Agents take Tasks created by PM Agents (via `/proposal`) and turn them into working code. Each task follows:
+
+```
+claim --> in_progress --> report work --> self-check AC --> submit for verify --> Admin /review
+```
+
+For multi-agent parallel execution, Chorus integrates with Pi subagents (parallel workers) with full session-based observability.
+
+---
+
+## Tools
+
+**Task Lifecycle:**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_claim_task` | Claim an open task (open -> assigned) |
+| `chorus_release_task` | Release a claimed task (assigned -> open) |
+| `chorus_update_task` | Update task status (in_progress / to_verify) |
+| `chorus_submit_for_verify` | Submit task for admin verification with summary |
+
+**Work Reporting:**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_report_work` | Report progress or completion (writes comment + records activity, with optional status update) |
+
+**Acceptance Criteria:**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_report_criteria_self_check` | Report self-check results (passed/failed + optional evidence) on structured acceptance criteria |
+
+**Session (sub-agents only — main agent skips these):**
+
+| Tool | Purpose |
+|------|---------|
+| `chorus_session_checkin_task` | Checkin to a task before starting work |
+| `chorus_session_checkout_task` | Checkout from a task when work is done |
+
+Sub-agents: always pass `sessionUuid` to `chorus_update_task` and `chorus_report_work` for attribution.
+Main agent / Team Lead: call these tools without `sessionUuid` — no session needed.
+
+**Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
+
+---
+
+## Workflow
+
+### Step 1: Check In
+
+```
+chorus_checkin()
+```
+
+Review your persona, current assignments, and pending work counts.
+
+### Step 1.5: Get Your Session (Sub-Agents Only)
+
+**Skip if you are the main agent or Team Lead.**
+
+If you are a **sub-agent** (spawned via `subagent_spawn`), the Chorus extension automatically creates your session and injects it into your task prompt — look for a `--- Chorus session (auto-injected) ---` section containing your `Session UUID`. Keep it for all task operations.
+
+### Step 2: Find Work
+
+```
+chorus_get_available_tasks({ projectUuid: "<project-uuid>" })
+```
+
+Or check existing assignments:
+
+```
+chorus_get_my_assignments()
+```
+
+### Step 3: Claim a Task
+
+```
+chorus_get_task({ taskUuid: "<task-uuid>" })  # Review first
+chorus_claim_task({ taskUuid: "<task-uuid>" })
+```
+
+Check: description, acceptance criteria, priority, story points, related proposal/documents.
+
+### Step 4: Gather Context
+
+Each task and proposal includes a `commentCount` field — use it to decide which entities have discussions worth reading.
+
+1. **Read the task** and identify dependencies:
+   ```
+   chorus_get_task({ taskUuid: "<task-uuid>" })
+   ```
+   Pay attention to `dependsOn` (upstream tasks) and `commentCount`.
+
+2. **Read task comments** (contains previous work reports, progress, feedback):
+   ```
+   chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
+   ```
+
+3. **Review upstream dependency tasks** — your work likely builds on theirs:
+   ```
+   chorus_get_task({ taskUuid: "<dependency-task-uuid>" })
+   chorus_get_comments({ targetType: "task", targetUuid: "<dependency-task-uuid>" })
+   ```
+   Look for: files created, API contracts, interfaces, trade-offs.
+
+4. **Read the originating proposal** for design intent:
+   ```
+   chorus_get_proposal({ proposalUuid: "<proposal-uuid>", section: "documents" })
+   ```
+   (`chorus_get_proposal` defaults to `section: "basic"` — just metadata + a draft index. Pass `section: "documents"` for the design docs, or `section: "full"` for docs + task drafts.)
+
+5. **Read project documents** (PRD, tech design, ADR):
+   ```
+   chorus_get_documents({ projectUuid: "<project-uuid>" })
+   ```
+
+> **Document update flow (OpenSpec mode):** if the originating proposal `description` contains a line `OpenSpec change slug: <slug>`, the project's PRD / tech_design / spec Documents are **mirrors** of files under `openspec/changes/<slug>/`. To update such a Document (e.g. clarify an AC, fix a spec scenario before resubmitting), load the `openspec-aware` skill at `skills/openspec-aware/SKILL.md` and follow §3.8: edit the local `.md` file first, then mirror through the `chorus-mcp-call.sh` wrapper with `json_encode_file` and `chorus_check_response`.
+>
+> **⛔ Do not** call `chorus_pm_update_document` directly from the MCP harness with a hand-typed `content` field in OpenSpec mode. The local file is the source of truth; agent-typed content drifts and burns tokens (`openspec-aware` §2 Rule 1).
+>
+> When the LAST task of an OpenSpec idea is verified, the extension injects an archive reminder (`openspec-aware` §3.9) — run `openspec archive <slug> --yes`, then mirror each emitted `openspec/specs/<capability>/spec.md` back via §3.8.
+>
+> In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
+
+### Step 5: Start Working
+
+**Sub-agent**: checkin to the task first:
+```
+chorus_session_checkin_task({ sessionUuid: "<session-uuid>", taskUuid: "<task-uuid>" })
+```
+
+Then mark as in-progress:
+```
+# Sub-agent:
+chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress", sessionUuid: "<session-uuid>" })
+
+# Main agent:
+chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })
+```
+
+> **Dependency enforcement**: If this task has unresolved dependencies (dependsOn tasks not in `done` or `closed`), the call will be rejected with detailed blocker info. Use `chorus_get_unblocked_tasks` to find tasks you can start now.
+
+### Step 6: Report Progress
+
+Report periodically with `chorus_report_work`. Include:
+- What was completed
+- Files created or modified
+- Git commits and PRs
+- Current status / remaining work
+- Blockers or questions
+
+```
+chorus_report_work({
+  taskUuid: "<task-uuid>",
+  report: "Progress:\n- Created src/services/auth.service.ts\n- Commit: abc1234\n- Remaining: unit tests",
+  sessionUuid: "<session-uuid>"
+})
+```
+
+Report with status update when complete:
+```
+chorus_report_work({
+  taskUuid: "<task-uuid>",
+  report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing",
+  status: "to_verify",
+  sessionUuid: "<session-uuid>"
+})
+```
+
+### Step 7: Self-Check Acceptance Criteria
+
+Before submitting, check structured acceptance criteria:
+
+```
+task = chorus_get_task({ taskUuid: "<task-uuid>" })
+
+# If task.acceptanceCriteriaItems is non-empty:
+chorus_report_criteria_self_check({
+  taskUuid: "<task-uuid>",
+  criteria: [
+    { uuid: "<criterion-uuid>", devStatus: "passed", devEvidence: "Unit tests cover this" },
+    { uuid: "<criterion-uuid>", devStatus: "passed", devEvidence: "Verified manually" }
+  ]
+})
+```
+
+> For **required** criteria, keep working until you can self-check as `passed`. Only use `failed` for **optional** criteria that are out of scope.
+
+### Step 8: Submit for Verification
+
+**Sub-agents** — checkout first:
+```
+chorus_session_checkout_task({ sessionUuid: "<session-uuid>", taskUuid: "<task-uuid>" })
+```
+
+Then submit:
+```
+chorus_submit_for_verify({
+  taskUuid: "<task-uuid>",
+  summary: "Implemented auth feature:\n- Added login/logout endpoints\n- JWT middleware\n- 95% test coverage\n- All AC self-checked (3/3 passed)"
+})
+```
+
+> `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
+
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus extension nudges you to spawn `chorus-task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Use the blocking `subagent` tool** (it waits for the VERDICT and returns it) — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
+
+After the reviewer completes, read its VERDICT:
+```
+chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
+```
+Find the most recent comment containing `VERDICT:` and act on it:
+
+- **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
+- **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
+- **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
+
+If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its turn budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the extension nudges you to spawn `chorus-code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it yourself via the blocking `subagent` tool, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/skill:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks), then re-run the gateway, bounded by `maxCodeReviewRounds`. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
+
+### Step 9: Handle Review Feedback
+
+If the reviewer returns **FAIL**, or the task is reopened after verification:
+
+**All acceptance criteria are reset to pending** when a task is reopened.
+
+1. Check feedback:
+   ```
+   chorus_get_task({ taskUuid: "<task-uuid>" })
+   chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
+   ```
+2. Fix every BLOCKER listed in the reviewer's FAIL comment.
+3. Checkin again, fix issues, report fixes, resubmit.
+
+### Step 10: Task Complete
+
+Once Admin verifies (status: `done`), move to the next available task (back to Step 2).
+
+### Step 11: Idea Completion Report (advisory)
+
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The `content` parameter's description carries the section template. Skip on decline — the extension will remind on the next run.
+
+---
+
+## Session (Sub-Agents Only)
+
+The Chorus extension **fully automates** session lifecycle — creation (on `subagent_spawn`, via `tool_call` task injection) and cleanup (on `subagent_manage close`) are handled by the extension. Sub-agents only do 3 things manually:
+
+1. `chorus_session_checkin_task({ sessionUuid, taskUuid })` — before starting work
+2. `chorus_session_checkout_task({ sessionUuid, taskUuid })` — when done (recommended; plugin also auto-checkouts on exit)
+3. Pass `sessionUuid` to `chorus_update_task` and `chorus_report_work` for attribution
+
+**Main agent / Team Lead**: no session needed — call tools without `sessionUuid`.
+
+---
+
+## Parallel Sub-Agent Integration
+
+When using Pi's subagents (`pi-subagents`) to run multiple sub-agents in parallel, Chorus provides full work observability. The `chorus-pi` extension automates the session lifecycle: when you `subagent_spawn` a worker, it creates a Chorus session and injects the session UUID + workflow into the worker's task; when you `subagent_manage close` the agent, it closes the session.
+
+### Two-Layer Architecture
+
+| Layer | System | Purpose |
+|-------|--------|---------|
+| **Orchestration** | Pi subagents (`subagent_spawn` / `subagent_send` / `subagent_mailbox`) | Spawning sub-agents, follow-up tasks, inter-agent messaging |
+| **Work Tracking** | Chorus | Task lifecycle, session observability, activity stream |
+
+### Team Lead Workflow
+
+```
+# 1. Check in and plan
+chorus_checkin()
+chorus_list_tasks({ projectUuid: "<project-uuid>" })
+
+# 2. Spawn sub-agents (async — returns immediately with an agentId)
+# Pass only task UUIDs — the chorus-pi extension auto-injects the session
+# UUID + workflow into the worker's task.
+subagent_spawn({
+  agent: "worker",
+  task: "Your Chorus task UUID: <task-uuid>\nProject UUID: <project-uuid>\n\nImplement..."
+})
+# → returns agentId (sa_<uuid>); keep it to close the agent later.
+```
+
+**What the Team Lead prompt needs:**
+- Task UUID(s)
+- NO session UUID, NO workflow boilerplate — the extension auto-injects everything
+- The `agentId` returned by `subagent_spawn` (needed to `subagent_manage close` later)
+
+### Sub-Agent Workflow
+
+The extension injects the session UUID + workflow into the sub-agent's task automatically (at `tool_call` time, before the subprocess starts). The sub-agent reads the `Session UUID:` from its task prompt and follows the injected steps:
+
+```
+# 1. Checkin to task (sessionUuid comes from the auto-injected task)
+chorus_session_checkin_task({ sessionUuid: "<my-session-uuid>", taskUuid: "<my-task-uuid>" })
+
+# 2. Move to in_progress
+chorus_update_task({ taskUuid: "<my-task-uuid>", status: "in_progress", sessionUuid: "<my-session-uuid>" })
+
+# 3. Do work... code, test, commit...
+
+# 4. Report progress
+chorus_report_work({ taskUuid: "<my-task-uuid>", report: "...", sessionUuid: "<my-session-uuid>" })
+
+# 5. Checkout and submit
+chorus_session_checkout_task({ sessionUuid: "<my-session-uuid>", taskUuid: "<my-task-uuid>" })
+chorus_submit_for_verify({ taskUuid: "<my-task-uuid>", summary: "..." })
+
+# 6. (Optional) notify the team lead via mailbox — you need its agentId
+subagent_mailbox({ action: "send", agentId: "<team-lead-agentId>", message: "Task complete" })
+
+# DO NOT call chorus_close_session — the extension closes it when the
+# team lead runs subagent_manage({ action: "close", agentId: "<my-agentId>" })
+```
+
+### Handling Task Dependencies (DAG)
+
+> **Server-side enforcement**: `chorus_update_task(status: "in_progress")` rejects if any `dependsOn` task is not `done` or `closed`.
+
+**Wave-based execution (recommended):**
+1. `chorus_get_unblocked_tasks` — find ready tasks
+2. `subagent_spawn` workers for Wave 1 (async; keep the agentIds)
+3. Wait for `to_verify` (poll `chorus_list_tasks` or read the async completion messages), then **verify each task** (`chorus_admin_verify_task` → `done`)
+4. `subagent_manage close` each finished worker (releases its slot + closes its Chorus session)
+5. `chorus_get_unblocked_tasks` — find newly unblocked tasks (Wave 2)
+6. Repeat until all tasks done
+
+> **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. The Team Lead must verify tasks between waves. Also remember to `subagent_manage close` finished workers — Pi limits concurrent sub-agents and `completed` does not release the slot.
+
+### Multiple Tasks Per Sub-Agent
+
+A single sub-agent can work on multiple tasks sequentially:
+
+```
+subagent_spawn({
+  agent: "worker",
+  task: "Your Chorus tasks (work in order):\n1. task-schema-uuid\n2. task-api-uuid (depends on #1)\n\nFor EACH task: checkin -> in_progress -> work -> report -> checkout -> submit_for_verify"
+})
+```
+
+### MCP Access for Sub-Agents
+
+Sub-agents need MCP configured at **project level** (`.mcp.json`) or **user level** (`~/.pi/agent/mcp.json`). The chorus-pi extension's session injection works regardless, because it calls chorus over its own MCP-over-HTTP fetch (not the sub-agent's gateway).
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Sub-agent can't access Chorus MCP tools | Verify MCP is configured at project level, API key has developer role |
+| UI doesn't show active workers | Sub-agent forgot `chorus_session_checkin_task`. Check: `chorus_get_session` |
+| Session disappears from Settings | No activity for 1h (default lists hide stale sessions). The session row still exists — it's reachable via MCP `chorus_list_sessions` / `chorus_get_session`. Send a heartbeat (or any session-touching tool) to make it visible again, or check whether the agent crashed |
+| Task stuck in wrong status | Spawn new sub-agent with same name (plugin auto-reopens session), or use `chorus_update_task` to reset |
+| Duplicate sessions | Never call `chorus_create_session` — plugin handles all session creation. Close extras via Settings page |
+| Sub-agent didn't receive session | Check plugin is loaded (`/plugin list`) and `CHORUS_URL` is set. Ensure `name` parameter is set |
+
+---
+
+## Work Report Best Practices
+
+**Good report (enables session continuity):**
+```
+Implemented password reset flow:
+
+Files created/modified:
+- src/services/auth.service.ts (new)
+- src/app/api/auth/reset/route.ts (new)
+- tests/auth/reset.test.ts (new)
+
+Git:
+- Commit: a1b2c3d "feat: password reset flow"
+- PR: https://github.com/org/repo/pull/15
+
+Implementation details:
+- POST /api/auth/reset-request: sends email with token
+- Token expires after 1 hour, single-use
+- Rate limiting: 3 requests/hour/email
+- 12 new tests, all passing
+
+Acceptance criteria:
+- [x] User can request reset via email
+- [x] Reset link expires after 1 hour
+- [x] Rate limiting prevents abuse
+```
+
+**Bad report:** `Done.`
+
+---
+
+## Tips
+
+- **Read task comments first** — they contain previous work reports for session continuity
+- **Check upstream dependencies** — read `dependsOn` tasks and their comments for interfaces/APIs
+- **Read the originating proposal** — understand design rationale and task DAG
+- **Use `commentCount`** — skip fetching comments on entities with count 0
+- Report progress frequently — include file paths, commits, and PRs
+- Write detailed submit summaries — Admin needs them to verify
+- If blocked, add a comment and consider releasing the task
+- One task at a time: finish or release before claiming another
+- Use meaningful sub-agent names — they become Chorus session names
+
+---
+
+## When to Release a Task
+
+Release if:
+- You can't complete it (missing knowledge, blocked)
+- A higher-priority task needs attention
+- You won't finish in a reasonable timeframe
+
+```
+chorus_release_task({ taskUuid: "<task-uuid>" })
+chorus_add_comment({ targetType: "task", targetUuid: "<task-uuid>", content: "Releasing: reason..." })
+```
+
+---
+
+## Next
+
+- After submitting for verification, an Admin reviews using `/review`
+- **Human "Start Development" wake:** a `start_development` wake (the human clicked **Start Development** on the idea-detail panel) means: claim and execute ALL remaining tasks of the idea's approved proposal in dependency order — loop this workflow until no claimable task remains, leaving `to_verify` and other-session tasks untouched.
+- **Human "Yolo" wake:** a `yolo_requested` wake (the human clicked **Yolo** on the idea-detail panel) means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline), not just the execute stage — read the idea's current state and resume from whatever phase it is in. Unlike `start_development` it is stage-adaptive, and it must never merge or push a PR without explicit human approval.
+- For platform overview and shared tools, see `/chorus`

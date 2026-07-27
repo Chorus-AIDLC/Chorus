@@ -1,0 +1,202 @@
+/**
+ * Pure helpers extracted from the chorus-pi extension for unit testing.
+ *
+ * These functions hold no mutable state and (except for detectOpenSpec, which
+ * takes injectable fs/execSync) have no I/O — so they can be tested without a
+ * running Pi session or a live Chorus instance. The extension imports them
+ * from here; tests import the same functions.
+ */
+
+export interface OpenSpecState {
+  active: boolean;
+  reason: string;
+  optout: boolean;
+  hint: string;
+}
+
+// Minimal fs surface detectOpenSpec needs (injectable for tests).
+export interface FsLike {
+  existsSync(p: string): boolean;
+}
+export type ExecSync = (cmd: string, opts: { stdio: "ignore" }) => void;
+
+/**
+ * Matches the three Chorus reviewer agent names. These do NOT get a Chorus
+ * session — they are read-only and post a single VERDICT comment.
+ */
+export function isReviewerAgent(name: string): boolean {
+  return /^(chorus-proposal|chorus-task|chorus-code)-reviewer$/.test(name);
+}
+
+/**
+ * Extract the agentId (sa_<uuid>) from a subagent_spawn tool result.
+ *
+ * Tries every plausible shape Pi may deliver, in order:
+ *   1. result.details.agent.id  — the pi-subagents summarizeAgent() structured path
+ *   2. result.agentId          — forward-compat top-level field
+ *   3. result.content[].text    — parse sa_<uuid> from the spawn result text
+ *      ("Spawned <agent> as sa_<uuid>. Do useful non-overlapping work immediately. …")
+ *   4. typeof result === 'string' — if Pi delivers the result as a plain string,
+ *      parse sa_<uuid> directly from it
+ *
+ * Returns null if none match. Callers should log the actual result when this
+ * returns null so the runtime shape can be confirmed.
+ */
+export function extractAgentId(result: unknown): string | null {
+  if (result == null) return null;
+  // 4. plain string — parse sa_<uuid> directly
+  if (typeof result === "string") {
+    return parseAgentIdFromText(result);
+  }
+  const r = result as
+    | { details?: { agent?: { id?: string } }; agentId?: string; content?: { text?: string }[] }
+    | undefined;
+  if (!r) return null;
+  // 1. the documented structured path
+  if (r.details?.agent?.id) return r.details.agent.id;
+  // 2. forward-compat top-level field
+  if (r.agentId) return r.agentId;
+  // 3. parse sa_<uuid> out of the result content text
+  const text = r.content?.map((c) => c?.text ?? "").join(" ");
+  if (text) return parseAgentIdFromText(text);
+  return null;
+}
+
+/** Parse sa_<uuid> out of any text. Returns null if not found. */
+export function parseAgentIdFromText(text: string): string | null {
+  const m = text.match(/\bsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+  return m ? m[0] : null;
+}
+
+/**
+ * Extract the agentId from a tool_result EVENT (which exposes `details` and
+ * `content` as first-class fields, not nested under `result`). This is the
+ * most reliable extraction point per pi's source: agent-session.js afterToolCall
+ * passes `content: result.content, details: result.details` directly to
+ * emitToolResult.
+ */
+export function extractAgentIdFromToolResultEvent(event: {
+  details?: { agent?: { id?: string } };
+  content?: { text?: string }[];
+}): string | null {
+  if (event.details?.agent?.id) return event.details.agent.id;
+  const text = event.content?.map((c) => c?.text ?? "").join(" ");
+  if (text) return parseAgentIdFromText(text);
+  return null;
+}
+
+/**
+ * Build the session-workflow suffix injected into a spawned worker's task
+ * (via the tool_call event's mutable input). The subprocess receives this
+ * appended to its task prompt and reads the `Session UUID` from it.
+ */
+export function sessionWorkflow(sessionUuid: string): string {
+  const s = sessionUuid;
+  return [
+    "",
+    "--- Chorus session (auto-injected by the chorus-pi extension) ---",
+    `Session UUID: ${s}`,
+    "For each Chorus task you work on:",
+    `  1. chorus_session_checkin_task({ sessionUuid: "${s}", taskUuid: <task-uuid> })`,
+    `  2. chorus_update_task({ taskUuid: <task-uuid>, status: "in_progress", sessionUuid: "${s}" })`,
+    "  3. ...do the work, commit...",
+    `  4. chorus_report_work({ taskUuid: <task-uuid>, report: \"...\", sessionUuid: "${s}" })`,
+    `  5. chorus_session_checkout_task({ sessionUuid: "${s}", taskUuid: <task-uuid> })`,
+    "Do NOT call chorus_create_session or chorus_close_session — the extension owns the lifecycle.",
+  ].join("\n");
+}
+
+/**
+ * Detect OpenSpec mode for a repo. Active only when all three hold:
+ *   (1) not explicitly opted out (CHORUS_OPENSPEC_MODE != "off")
+ *   (2) an openspec/ directory exists at the project root
+ *   (3) the `openspec` CLI is on PATH
+ *
+ * fs and execSync are injected so tests can stub the filesystem and the CLI
+ * presence check without touching the real environment.
+ */
+export function detectOpenSpec(
+  cwd: string,
+  optout: boolean,
+  fs: FsLike,
+  execSync: ExecSync,
+): OpenSpecState {
+  if (optout) {
+    return { active: false, reason: "CHORUS_OPENSPEC_MODE=off (explicit opt-out)", optout: true, hint: "" };
+  }
+  const openspecDir = `${cwd}/openspec`;
+  if (!fs.existsSync(openspecDir)) {
+    return { active: false, reason: `no openspec/ directory at ${openspecDir}`, optout: false, hint: "" };
+  }
+  let cliPresent = false;
+  try {
+    execSync("command -v openspec", { stdio: "ignore" });
+    cliPresent = true;
+  } catch {
+    cliPresent = false;
+  }
+  if (!cliPresent) {
+    return {
+      active: false,
+      reason: "openspec/ directory present but `openspec` CLI not on PATH",
+      optout: false,
+      hint: "install with: npm i -g @fission-ai/openspec",
+    };
+  }
+  return { active: true, reason: "openspec/ directory + openspec CLI both present", optout: false, hint: "" };
+}
+
+/**
+ * The 3 Chorus tool names that should trigger a reviewer nudge after they run.
+ * These are the BACKEND native names (no server prefix).
+ */
+export const NUDGE_TOOL_NAMES = [
+  "chorus_pm_submit_proposal",
+  "chorus_submit_for_verify",
+  "chorus_admin_verify_task",
+] as const;
+export type NudgeToolName = (typeof NUDGE_TOOL_NAMES)[number];
+
+/**
+ * Normalize a tool name seen in a pi event to the Chorus backend native name,
+ * so it can be matched against NUDGE_TOOL_NAMES regardless of how pi-mcp-adapter
+ * exposed it.
+ *
+ * Handles all three exposure modes:
+ *   - gateway mode:  event.toolName === "mcp", real name in event.input.tool
+ *                  (e.g. "chorus_chorus_submit_for_verify" — server-prefixed)
+ *   - direct, toolPrefix "server": "chorus_chorus_submit_for_verify"
+ *   - direct, toolPrefix "none":   "chorus_submit_for_verify" (native)
+ *
+ * Strips at most one leading "chorus_" server prefix. Returns null if the input
+ * is empty or not a chorus tool.
+ */
+export function normalizeChorusToolName(name: string | undefined | null): string | null {
+  if (!name) return null;
+  let n = name;
+  // The chorus server name is "chorus"; the adapter prefixes it once. Strip one.
+  if (n.startsWith("chorus_chorus_")) n = n.slice("chorus_".length);
+  // Must still be a chorus tool after stripping.
+  if (!n.startsWith("chorus_")) return null;
+  return n;
+}
+
+/**
+ * Resolve the Chorus native tool name from a tool_result / tool_execution_end event,
+ * accounting for MCP gateway mode (where the real name lives in event.input.tool).
+ *
+ * Returns the native name (e.g. "chorus_submit_for_verify") or null.
+ */
+export function resolveChorusToolName(event: {
+  toolName: string;
+  input?: { tool?: string } | Record<string, unknown>;
+}): string | null {
+  // Gateway mode: the agent called the `mcp` proxy tool; the real chorus tool
+  // name is in event.input.tool.
+  if (event.toolName === "mcp") {
+    const input = event.input as { tool?: string } | undefined;
+    return normalizeChorusToolName(input?.tool);
+  }
+  // Direct mode: the tool name itself is the (possibly server-prefixed) chorus name.
+  return normalizeChorusToolName(event.toolName);
+}
