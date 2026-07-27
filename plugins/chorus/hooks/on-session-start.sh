@@ -14,17 +14,20 @@ source "${DIR}/hook-output.sh"
 if [ ! -t 0 ]; then cat > /dev/null; fi
 
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
+  # Failure diagnostics use one output channel. Repeating the same text in
+  # additionalContext makes Codex surface one hook result as duplicate startup
+  # messages; successful check-in still injects its detailed context below.
   hook_output \
-    "Chorus plugin: not configured (set CHORUS_URL and CHORUS_API_KEY)" \
     "Chorus environment not configured. Set CHORUS_URL and CHORUS_API_KEY to enable Chorus integration." \
+    "" \
     "SessionStart"
   exit 0
 fi
 
 CHECKIN=$("${DIR}/chorus-mcp-call.sh" chorus_checkin '{}' 2>/dev/null) || {
   hook_output \
-    "Chorus: connection failed (${CHORUS_URL})" \
     "WARNING: Unable to reach Chorus at ${CHORUS_URL}. MCP tools may still work if reachable during the session." \
+    "" \
     "SessionStart"
   exit 0
 }
@@ -109,17 +112,7 @@ CTX="${CTX}
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
 - **Reviewer sub-agents**: mount the reviewer skill into a default sub-agent — \`spawn_agent(agent_type=\"default\", items=[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <uuid>.\"}])\` after \`chorus_pm_submit_proposal\`; same pattern with \`chorus:chorus-task-reviewer\` after \`chorus_submit_for_verify\`. Codex 0.125 only ships three built-in roles (default / explorer / worker) — custom agent_types like \`chorus-proposal-reviewer\` will be rejected. Remember \`close_agent\` after \`wait_agent\`; completed ≠ closed, 6 concurrent max."
 
-# User-visible parens (mirrors the Claude Code hook; Codex skill prefix is $chorus):
-#   active            -> (OpenSpec Enabled)
-#   not set up        -> (OpenSpec off — run `$chorus enable openspec` to set it up)
-#   explicit opt-out  -> (OpenSpec off)  [neutral, no nag]
-USER_MSG="Chorus connected at ${CHORUS_URL}"
-if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec Enabled)"
-elif [ "$OPENSPEC_OPTOUT" = "1" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec off)"
-else
-  USER_MSG="${USER_MSG} (OpenSpec off — run \`\$chorus enable openspec\` to set it up)"
-fi
-
-hook_output "$USER_MSG" "$CTX" "SessionStart"
+# The connected state already appears in additionalContext, which the model needs
+# for checkin and OpenSpec routing. A second systemMessage makes Codex display the
+# same startup state twice, so successful starts use only the context channel.
+hook_output "" "$CTX" "SessionStart"

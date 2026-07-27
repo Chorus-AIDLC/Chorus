@@ -13,17 +13,18 @@
 //     it and persist anchor→thread_id (codex-session-map.mjs) so a later wake can
 //     `resume <thread_id>`. (serde: ThreadEvent tag="type", rename="thread.started";
 //     ThreadStartedEvent.thread_id: String — codex-rs/exec/src/exec_events.rs.)
-//   • No `--mcp-config`: MCP comes from the user's ~/.codex/config.toml; the daemon
-//     key reaches it via the configured bearer_token_env_var (default
-//     CHORUS_API_KEY) exported into the child ENV — never argv.
+//   • No `--mcp-config`: MCP comes from the user's ~/.codex/config.toml. The daemon
+//     exports its resolved URL for SessionStart hooks and its key for the configured
+//     bearer_token_env_var (default CHORUS_API_KEY) — never argv.
 //   • Permission is a SANDBOX mode, not a tool allowlist.
 //
 // Reuses claude-spawner's platform-neutral helpers: parseNdjsonChunk (NDJSON
 // stream parse) and the PATH-walk shape of resolveClaudePath.
 
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
-import { win32 as pathWin32, posix as pathPosix } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
 import {
@@ -33,6 +34,25 @@ import {
 } from "./codex-usage-map.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+
+/**
+ * Check whether the user's Codex config declares the Chorus MCP server.
+ * This is diagnostic only: a missing or unreadable config must never block a wake.
+ * @param {{ env?: NodeJS.ProcessEnv, readFile?: typeof readFileSync, home?: string }} [deps]
+ * @returns {boolean}
+ */
+export function hasChorusMcpServer(deps = {}) {
+  const env = deps.env ?? process.env;
+  const readFile = deps.readFile ?? readFileSync;
+  const home = deps.home ?? homedir();
+  const configPath = join(env.CODEX_HOME || join(home, ".codex"), "config.toml");
+  try {
+    const config = readFile(configPath, "utf8");
+    return /^\s*\[mcp_servers\.chorus\]\s*(?:#.*)?$/m.test(config);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * @typedef {Object} Spawner
@@ -165,13 +185,14 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
  * @property {(o: object) => any} [spawnImpl]   Injectable spawn (tests).
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
  * @property {"chorus"|"yolo"} [permissionMode]  Maps to a Codex sandbox posture.
- * @property {{ url: string, apiKey: string }} [creds]  Daemon creds — apiKey is exported
- *   into the child env under the user config's bearer_token_env_var (default CHORUS_API_KEY).
+ * @property {{ url: string, apiKey: string }} [creds] Daemon creds exported into
+ *   the child env for SessionStart hooks and the user-configured MCP bearer token.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getThreadIdFn]  Injectable session-map read.
  * @property {(anchor: string, threadId: string) => void} [setThreadIdFn]  Injectable session-map write.
  * @property {(anchor: string, threadId: string) => object|null} [getUsageSnapshotFn]
  * @property {(anchor: string, threadId: string, usage: object) => void} [setUsageSnapshotFn]
+ * @property {() => boolean} [hasChorusMcpServerFn] Injectable config probe.
  */
 
 export class CodexSpawner {
@@ -189,6 +210,8 @@ export class CodexSpawner {
     this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? defaultGetUsageSnapshot;
     this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? defaultSetUsageSnapshot;
     this.resolveCodexPathFn = opts.resolveCodexPathFn ?? resolveCodexPath;
+    this.hasChorusMcpServerFn = opts.hasChorusMcpServerFn ?? hasChorusMcpServer;
+    this.mcpConfigChecked = false;
   }
 
   /**
@@ -225,6 +248,15 @@ export class CodexSpawner {
       return { sessionId: anchor, exitCode: null, isNew };
     }
 
+    if (!this.mcpConfigChecked) {
+      this.mcpConfigChecked = true;
+      if (!this.hasChorusMcpServerFn()) {
+        this.logger.warn(
+          "[Chorus] Codex config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools",
+        );
+      }
+    }
+
     const args = buildCodexArgs({ isNew, threadId: knownThreadId, permissionMode: this.permissionMode });
     const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform);
 
@@ -233,11 +265,14 @@ export class CodexSpawner {
     // stays piped — prompt over stdin + NDJSON stdout parse are unaffected.
     const detached = this.platform !== "win32";
 
-    // Daemon key via ENV under the var the user's [mcp_servers.chorus] references
-    // (bearer_token_env_var, default CHORUS_API_KEY) — NEVER argv. Merged over the
-    // inherited env so PATH / model auth (Bedrock profile) / CODEX_HOME survive.
+    // Export the daemon's resolved connection pair for both Codex MCP auth and
+    // SessionStart hooks. Explicitly overwrite inherited values so the hook and
+    // daemon cannot disagree about which Chorus instance this wake belongs to.
     const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
-    if (this.creds && this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    if (this.creds) {
+      if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
+      if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    }
 
     return new Promise((resolve) => {
       let child;
