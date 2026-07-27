@@ -36,26 +36,26 @@ afterEach(() => {
 });
 
 describe("Codex SessionStart Chorus diagnostics", () => {
-  it("injects connected context through one output channel", () => {
+  it("returns connected user status and model context through separate channels", () => {
     const output = runHook(makeHooks(), {
       CHORUS_URL: "https://chorus.test",
       CHORUS_API_KEY: "cho_test",
     });
-    expect(output.systemMessage).toBe("");
+    expect(output.systemMessage).toContain("Chorus connected at https://chorus.test");
     expect(output.hookSpecificOutput.additionalContext).toContain("Chorus Plugin");
     expect(output.hookSpecificOutput.additionalContext.match(/Chorus is connected/g)).toHaveLength(1);
     expect(JSON.stringify(output)).not.toContain("environment not configured");
   });
 
-  it("emits a missing-config warning through one output channel", () => {
+  it("returns missing-config user status and model context through separate channels", () => {
     const output = runHook(makeHooks(), {});
-    const serialized = JSON.stringify(output);
-    expect(output.systemMessage).toContain("Chorus environment not configured");
-    expect(output.hookSpecificOutput).toBeUndefined();
-    expect(serialized.match(/Chorus environment not configured/g)).toHaveLength(1);
+    expect(output.systemMessage).toContain("Chorus plugin: not configured");
+    expect(output.hookSpecificOutput.additionalContext).toContain(
+      "Chorus environment not configured",
+    );
   });
 
-  it("emits a connection-failure warning through one output channel", () => {
+  it("returns connection-failure user status and model context through separate channels", () => {
     const script = makeHooks();
     writeFileSync(join(resolve(script, ".."), "chorus-mcp-call.sh"), "#!/usr/bin/env bash\nexit 1\n");
     chmodSync(join(resolve(script, ".."), "chorus-mcp-call.sh"), 0o755);
@@ -63,14 +63,18 @@ describe("Codex SessionStart Chorus diagnostics", () => {
       CHORUS_URL: "https://chorus.test",
       CHORUS_API_KEY: "cho_test",
     });
-    expect(output.systemMessage).toContain("Unable to reach Chorus");
-    expect(output.hookSpecificOutput).toBeUndefined();
-    expect(JSON.stringify(output).match(/Unable to reach Chorus/g)).toHaveLength(1);
+    expect(output.systemMessage).toContain("Chorus: connection failed");
+    expect(output.hookSpecificOutput.additionalContext).toContain("Unable to reach Chorus");
   });
 
   it("allows an independent startup to emit its own warning", () => {
     const script = makeHooks();
-    expect(runHook(script, {}).systemMessage).toContain("environment not configured");
-    expect(runHook(script, {}).systemMessage).toContain("environment not configured");
+    for (let index = 0; index < 2; index += 1) {
+      const output = runHook(script, {});
+      expect(output.systemMessage).toContain("Chorus plugin: not configured");
+      expect(output.hookSpecificOutput.additionalContext).toContain(
+        "Chorus environment not configured",
+      );
+    }
   });
 });
