@@ -4,7 +4,7 @@ description: Final ship-time review of an Idea's aggregate code change — the w
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.3"
+  version: "0.14.5"
   category: project-management
   mcp_server: chorus
 ---

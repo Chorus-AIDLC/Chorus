@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.5] - 2026-07-27
+
+### Fixed
+- **Daemon didn't pass its Chorus URL to woken sessions**: The daemon now exports both `CHORUS_URL` and `CHORUS_API_KEY` into every spawner's child environment (Claude Code, Codex, and Kiro) instead of just the API key, so a woken session's SessionStart hook and shell-based Chorus tooling know which Chorus instance the wake belongs to. Both values are set in the child env (never argv) and explicitly overwrite inherited values so the hook and daemon can't disagree. Codex additionally logs a diagnostic warning when the user's `~/.codex/config.toml` has no `[mcp_servers.chorus]` entry, so a wake that will run without Chorus MCP tools says so instead of failing silently. (#454)
+
+### Plugin
+- **Plugin & skill versions → 0.14.5**: Claude Code, Codex, OpenClaw, and Kiro plugins plus the standalone skill bumped to 0.14.5.
+
+---
+
 ## [0.14.4] - 2026-07-25
 
 ### Added
