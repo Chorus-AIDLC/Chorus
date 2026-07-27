@@ -25,12 +25,7 @@ export function selectSpawner(agentType, opts = {}) {
     return new CodexSpawner({ logger, permissionMode, creds });
   }
   if (agentType === "kiro") {
-    // Kiro follows the Codex model — MCP from the user's plugin config, daemon key
-    // via env — so it takes the same { logger, permissionMode, creds } shape.
     return new KiroSpawner({ logger, permissionMode, creds });
   }
-  // Default / "claude-code": construction byte-identical to the prior daemon
-  // (ClaudeSpawner takes only { logger, permissionMode } — creds are not used by
-  // the Claude backend, which gets its key via the --mcp-config file).
-  return new ClaudeSpawner({ logger, permissionMode });
+  return new ClaudeSpawner({ logger, permissionMode, creds });
 }

@@ -16,6 +16,7 @@ describe("selectSpawner", () => {
   it("returns a ClaudeSpawner for claude-code", () => {
     const s = selectSpawner("claude-code", { logger, permissionMode: "yolo", creds });
     expect(s).toBeInstanceOf(ClaudeSpawner);
+    expect(s.creds).toEqual(creds);
   });
 
   it("returns a CodexSpawner for codex", () => {
@@ -34,9 +35,10 @@ describe("selectSpawner", () => {
     expect(selectSpawner("kiro", { logger, permissionMode: "chorus", creds }).permissionMode).toBe("chorus");
   });
 
-  it("threads creds into the KiroSpawner (Codex-style: MCP from plugin config + daemon key via env)", () => {
-    const s = selectSpawner("kiro", { logger, permissionMode: "yolo", creds });
-    expect(s.creds).toEqual(creds);
+  it("threads creds into every backend spawner", () => {
+    expect(selectSpawner("claude-code", { logger, creds }).creds).toEqual(creds);
+    expect(selectSpawner("codex", { logger, creds }).creds).toEqual(creds);
+    expect(selectSpawner("kiro", { logger, creds }).creds).toEqual(creds);
   });
 
   it("defaults to claude-code when the agent type is unrecognized (no throw — selection is post-validation)", () => {

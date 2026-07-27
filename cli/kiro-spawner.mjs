@@ -209,8 +209,8 @@ export function pickNewSessionId(before, after) {
  * @property {(o: object) => any} [spawnImpl]   Injectable spawn (tests).
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
  * @property {"chorus"|"yolo"} [permissionMode]  Maps to a Kiro tool-trust posture.
- * @property {{ url: string, apiKey: string }} [creds]  Daemon creds — apiKey is exported
- *   into the child env as CHORUS_API_KEY (the var the plugin's .kiro/settings/mcp.json references).
+ * @property {{ url: string, apiKey: string }} [creds] Daemon credentials exported
+ *   into the child env for plugin hooks, shell tooling, and MCP authentication.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getSessionIdFn]  Injectable session-map read.
  * @property {(anchor: string, id: string) => void} [setSessionIdFn]  Injectable session-map write.
@@ -274,11 +274,13 @@ export class KiroSpawner {
     // stays piped — prompt over stdin + stdout capture are unaffected.
     const detached = this.platform !== "win32";
 
-    // Daemon key via ENV as CHORUS_API_KEY — the var the plugin's
-    // [mcpServers.chorus] header references (${env:CHORUS_API_KEY}). NEVER argv.
-    // Merged over the inherited env so PATH / model auth / KIRO_* survive.
+    // Export the daemon's authoritative connection pair. CHORUS_API_KEY is also
+    // referenced by the plugin's MCP config; neither value is placed in argv.
     const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
-    if (this.creds && this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    if (this.creds) {
+      if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
+      if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    }
 
     // Snapshot the session store BEFORE the run so we can identify the sessionId
     // this run creates (Kiro has no id-bearing stream event). On resume we already

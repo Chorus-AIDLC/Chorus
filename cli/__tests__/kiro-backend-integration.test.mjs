@@ -121,7 +121,7 @@ describe("kiro backend end-to-end argv (via the daemon-selected spawner)", () =>
     return { spawner, calls, child };
   }
 
-  it("NEW anchor → `kiro-cli chat --no-interactive --agent chorus …`, prompt on stdin, daemon key in env not argv", async () => {
+  it("NEW anchor → prompt on stdin, daemon connection pair in env not argv", async () => {
     const { spawner, calls, child } = kiroSpawnerWithFakeSpawn({ getSessionId: () => null });
     const p = spawner.wake({ prompt: "wake up kiro", sessionId: ANCHOR, isNew: true });
     child.stdout.emit("data", "plain text turn output\n");
@@ -135,6 +135,7 @@ describe("kiro backend end-to-end argv (via the daemon-selected spawner)", () =>
     expect(calls.argv).not.toContain("--v3");
     expect(child.stdin.writes.join("")).toBe("wake up kiro");
     expect(calls.argv.join(" ")).not.toContain("wake up kiro");
+    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
     expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_daemonkey");
     expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
     expect(calls.argv.join(" ")).not.toContain("cho_daemonkey");

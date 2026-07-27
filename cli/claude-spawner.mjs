@@ -241,6 +241,8 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
  * @property {(o: object) => { stdin: any, stdout: any, stderr: any, on: Function, kill?: Function }} [spawnImpl]
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
  * @property {PermissionMode} [permissionMode]  How much the woken Claude may do (default "chorus").
+ * @property {{ url: string, apiKey: string }} [creds] Daemon credentials exported
+ *   to the child for plugin hooks and shell-based Chorus tooling.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates `detached` (POSIX-only).
  */
 
@@ -255,6 +257,7 @@ export class ClaudeSpawner {
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
+    this.creds = opts.creds ?? null;
     // POSIX spawns `detached: true` (process-group leader) so the interrupt path
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
     // can exercise the Windows branch and vice versa.
@@ -318,6 +321,11 @@ export class ClaudeSpawner {
     // stream and observe the exit. On Windows `detached` is NOT used: taskkill /T
     // walks the tree by pid, and detached there only spawns a new console window.
     const detached = (this.platform ?? process.platform) !== "win32";
+    const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
+    if (this.creds) {
+      if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
+      if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    }
 
     return new Promise((resolve) => {
       let child;
@@ -325,14 +333,9 @@ export class ClaudeSpawner {
         child = this.spawnImpl(command, argv, {
           cwd: cwd ?? process.cwd(),
           stdio: ["pipe", "pipe", "pipe"],
-          // Mark the child as a headless daemon-woken session (add-daemon-headless-
-          // interaction-guard). Merged OVER the inherited env so PATH, the Bedrock /
-          // credential vars, CLAUDE_CONFIG_DIR, etc. all survive — only this one var is
-          // added. It is a machine-checkable signal (the wake prompt also states it in
-          // text); this change only LAYS IT DOWN — no code here reads it back. Set
-          // unconditionally: the spawner only ever runs headless daemon wakes, so both
-          // "chorus" and "yolo" permission modes get it.
-          env: { ...process.env, CHORUS_DAEMON_HEADLESS: "1" },
+          // Preserve the inherited runtime environment while giving hooks and
+          // shell-based Chorus tooling the daemon's authoritative connection pair.
+          env: childEnv,
           // No shell:true — command is either the real executable or cmd.exe
           // with the script as an argv element. Avoids shell word-splitting /
           // injection; .cmd is handled explicitly via cmd.exe above.
