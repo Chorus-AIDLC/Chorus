@@ -186,7 +186,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     return { spawner, spawnImpl, calls };
   }
 
-  it("new wake: spawns `kiro-cli chat --no-interactive --agent chorus`, prompt over stdin, key in env (not argv)", async () => {
+  it("new wake: spawns Kiro with the resolved Chorus pair in env, never argv", async () => {
     const child = makeFakeChild();
     const { spawner, calls } = makeSpawner({
       child,
@@ -204,7 +204,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     // prompt only on stdin, never argv
     expect(child.stdin.writes.join("")).toBe("do the thing");
     expect(calls.argv.join(" ")).not.toContain("do the thing");
-    // daemon key exported via env, headless flag set, key absent from argv
+    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
     expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
     expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
     expect(calls.argv.join(" ")).not.toContain("cho_secret");

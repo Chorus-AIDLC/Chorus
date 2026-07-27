@@ -47,12 +47,12 @@ The daemon's backend-agnostic permission mode SHALL map to a Kiro tool-trust pos
 
 ### Requirement: Kiro MCP comes from the plugin config with the daemon key via env
 
-The daemon SHALL NOT synthesize a Kiro MCP configuration. It SHALL rely on the Kiro plugin's `.kiro/settings/mcp.json` (loaded via `--agent chorus`) to declare the Chorus MCP server. To make the woken Kiro authenticate as the daemon's own agent, the spawner SHALL export the daemon's resolved API key into the child process environment as `CHORUS_API_KEY` (the variable the plugin's MCP config references via `${env:CHORUS_API_KEY}`); the key SHALL be passed through the environment and SHALL NOT appear in the process arguments. When no Chorus MCP server is configured, the woken Kiro SHALL still run (without Chorus tools), and the daemon SHALL log this rather than fail. Because headless MCP loading requires a Node.js runtime present in the workspace, the daemon SHALL document node ≥ 22 as a prerequisite for the kiro backend.
+The daemon SHALL NOT synthesize a Kiro MCP configuration. It SHALL rely on the Kiro plugin's `.kiro/settings/mcp.json` (loaded via `--agent chorus`) to declare the Chorus MCP server. The spawner SHALL export the daemon's resolved Chorus URL and API key into the child process environment as `CHORUS_URL` and `CHORUS_API_KEY`, allowing plugin hooks and shell tooling to use the same connection context while the MCP config references `${env:CHORUS_API_KEY}` for authentication. The resolved pair SHALL override stale inherited Chorus values, and the key SHALL NOT appear in process arguments or logs. When no Chorus MCP server is configured, the woken Kiro SHALL still run (without Chorus tools), and the daemon SHALL log this rather than fail. Because headless MCP loading requires a Node.js runtime present in the workspace, the daemon SHALL document node ≥ 22 as a prerequisite for the kiro backend.
 
 #### Scenario: Daemon key reaches the plugin-configured Chorus MCP server via env
 
 - **WHEN** the Kiro plugin's `.kiro/settings/mcp.json` declares the `chorus` server with an `Authorization: Bearer ${env:CHORUS_API_KEY}` header and the daemon wakes the kiro backend
-- **THEN** the spawned Kiro receives the daemon's resolved API key in its `CHORUS_API_KEY` environment variable (never in argv), so its Chorus MCP calls authenticate as the daemon's agent
+- **THEN** the spawned Kiro receives the daemon's resolved URL and API key in `CHORUS_URL` and `CHORUS_API_KEY` (never in argv or logs), so hooks and Chorus MCP calls use the daemon's connection context
 
 #### Scenario: No Chorus MCP configured still runs
 
@@ -86,4 +86,3 @@ The Kiro backend SHALL spawn its subprocess in a detached POSIX process group (s
 
 - **WHEN** a Kiro wake was interrupted after its `sessionId` had been captured and persisted, and a new wake fires for the same anchor
 - **THEN** the daemon resumes that `sessionId` via `kiro-cli chat --no-interactive --resume-id` rather than starting a fresh session
-
