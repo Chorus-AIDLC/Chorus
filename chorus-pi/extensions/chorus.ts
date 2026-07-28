@@ -38,6 +38,7 @@ import {
   sessionWorkflow,
   detectOpenSpec,
   buildSessionBanner,
+  parseMaxCodeReviewRounds,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
@@ -52,6 +53,11 @@ const OPENSPEC_OPTOUT = process.env.CHORUS_OPENSPEC_MODE === "off";
 const ENABLE_PROPOSAL_REVIEWER = process.env.CHORUS_ENABLE_PROPOSAL_REVIEWER !== "false";
 const ENABLE_TASK_REVIEWER = process.env.CHORUS_ENABLE_TASK_REVIEWER !== "false";
 const ENABLE_CODE_REVIEWER = process.env.CHORUS_ENABLE_CODE_REVIEWER !== "false";
+
+// Max code-review rounds before escalating to a human. 0 = unlimited.
+// Mirrors the Claude plugin's `maxCodeReviewRounds` userConfig (default 3).
+// Parsed from CHORUS_MAX_CODE_REVIEW_ROUNDS; invalid/empty falls back to 3.
+const MAX_CODE_REVIEW_ROUNDS = parseMaxCodeReviewRounds(process.env.CHORUS_MAX_CODE_REVIEW_ROUNDS);
 
 const CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
 
@@ -195,6 +201,7 @@ export default function (pi: ExtensionAPI) {
         "- **Sessions**: auto-managed. When you `subagent_spawn` a worker, the extension creates a Chorus session and injects its UUID + the session workflow into the worker's task automatically. When you `subagent_manage close` the agent, the extension closes the session. Do NOT call chorus_create_session/close_session yourself.",
         "- **Notifications**: chorus_get_notifications() fetches and auto-marks read.",
         "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
+        "- **Code-review gateway**: bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (current: " + (MAX_CODE_REVIEW_ROUNDS === 0 ? "unlimited" : String(MAX_CODE_REVIEW_ROUNDS)) + "; on FAIL, fix via /skill:quick-dev and re-run — after the limit, escalate the Idea's feature-level BLOCKERs to a human instead of shipping.",
         "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo",
       ].join("\n");
       const banner = buildSessionBanner({

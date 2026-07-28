@@ -6,6 +6,8 @@ import {
   sessionWorkflow,
   detectOpenSpec,
   buildSessionBanner,
+  parseMaxCodeReviewRounds,
+  DEFAULT_MAX_CODE_REVIEW_ROUNDS,
   type FsLike,
   type ExecSync,
 } from "../lib/lib.js";
@@ -342,4 +344,37 @@ test("buildSessionBanner: not-configured wins over connection-failed (configured
   });
   expect(r.level).toBe("warning");
   expect(r.message).toContain("not configured");
+});
+
+// ─── parseMaxCodeReviewRounds ─────────────────────────────────────────────
+// Mirrors the Claude plugin's `maxCodeReviewRounds` userConfig (default 3,
+// 0 = unlimited). Env: CHORUS_MAX_CODE_REVIEW_ROUNDS.
+test("parseMaxCodeReviewRounds: undefined / empty → default (3)", () => {
+  expect(parseMaxCodeReviewRounds(undefined)).toBe(DEFAULT_MAX_CODE_REVIEW_ROUNDS);
+  expect(parseMaxCodeReviewRounds("")).toBe(3);
+  expect(DEFAULT_MAX_CODE_REVIEW_ROUNDS).toBe(3);
+});
+
+test("parseMaxCodeReviewRounds: valid integers pass through", () => {
+  expect(parseMaxCodeReviewRounds("0")).toBe(0);   // unlimited
+  expect(parseMaxCodeReviewRounds("1")).toBe(1);
+  expect(parseMaxCodeReviewRounds("3")).toBe(3);   // default
+  expect(parseMaxCodeReviewRounds("5")).toBe(5);
+  expect(parseMaxCodeReviewRounds("12")).toBe(12);
+});
+
+test("parseMaxCodeReviewRounds: 0 means unlimited", () => {
+  expect(parseMaxCodeReviewRounds("0")).toBe(0);
+});
+
+test("parseMaxCodeReviewRounds: negative → default", () => {
+  expect(parseMaxCodeReviewRounds("-1")).toBe(3);
+  expect(parseMaxCodeReviewRounds("-5")).toBe(3);
+});
+
+test("parseMaxCodeReviewRounds: non-integer → default (no silent floor)", () => {
+  expect(parseMaxCodeReviewRounds("3.5")).toBe(3);
+  expect(parseMaxCodeReviewRounds("3abc")).toBe(3);
+  expect(parseMaxCodeReviewRounds("abc")).toBe(3);
+  expect(parseMaxCodeReviewRounds(" ")).toBe(3);
 });

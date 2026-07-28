@@ -330,12 +330,14 @@ The extension includes three independent review agents. After proposal submissio
 | `CHORUS_ENABLE_PROPOSAL_REVIEWER` | Nudge `chorus-proposal-reviewer` after `chorus_pm_submit_proposal` | `true` (enabled) |
 | `CHORUS_ENABLE_TASK_REVIEWER` | Nudge `chorus-task-reviewer` after `chorus_submit_for_verify` | `true` (enabled) |
 | `CHORUS_ENABLE_CODE_REVIEWER` | Nudge `chorus-code-reviewer` over the Idea's aggregate change after its last task is verified (final ship gateway) | `true` (enabled) |
+| `CHORUS_MAX_CODE_REVIEW_ROUNDS` | Max code-review rounds before escalating the Idea's feature-level BLOCKERs to a human instead of shipping. `0` = unlimited. | `3` |
 
-To disable, export the env var as `false`:
+To disable, export the env var as `false`; to tune the code-review gateway loop cap, set `CHORUS_MAX_CODE_REVIEW_ROUNDS`:
 ```bash
 export CHORUS_ENABLE_PROPOSAL_REVIEWER=false
 export CHORUS_ENABLE_TASK_REVIEWER=false
 export CHORUS_ENABLE_CODE_REVIEWER=false
+export CHORUS_MAX_CODE_REVIEW_ROUNDS=5   # 0 = unlimited
 ```
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/skill:quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Disabling reduces token usage but removes the independent quality gate.

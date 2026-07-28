@@ -204,6 +204,24 @@ export function buildSessionBanner(args: {
   };
 }
 
+/**
+ * Parse CHORUS_MAX_CODE_REVIEW_ROUNDS into a non-negative integer.
+ * Mirrors the Claude plugin's `maxCodeReviewRounds` userConfig (default 3,
+ * 0 = unlimited). Empty/absent → default. Invalid (NaN, negative, non-integer)
+ * → default. Pure so it is unit-testable.
+ */
+export const DEFAULT_MAX_CODE_REVIEW_ROUNDS = 3;
+export function parseMaxCodeReviewRounds(raw: string | undefined): number {
+  if (raw == null) return DEFAULT_MAX_CODE_REVIEW_ROUNDS;
+  const trimmed = raw.trim();
+  if (trimmed === "") return DEFAULT_MAX_CODE_REVIEW_ROUNDS;
+  // Use Number (not parseInt) so "3.5" or "3abc" both fall through to default
+  // instead of silently parsing the leading digits.
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 0) return DEFAULT_MAX_CODE_REVIEW_ROUNDS;
+  return n;
+}
+
 
 /**
  * The 3 Chorus tool names that should trigger a reviewer nudge after they run.

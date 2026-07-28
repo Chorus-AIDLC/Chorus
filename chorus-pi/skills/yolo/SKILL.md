@@ -45,7 +45,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
   Admin Verify each wave --> unblock next
        |
        v
-  Code-Review Gateway (auto, up to maxCodeReviewRounds)
+  Code-Review Gateway (auto, up to CHORUS_MAX_CODE_REVIEW_ROUNDS; default 3, 0 = unlimited)
        |  PASS --> ship   |   FAIL --> add fix tasks --> re-run
        v
   Done. Report summary.
@@ -467,11 +467,11 @@ comments = chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" }
 Act on the VERDICT:
 
 - **PASS** / **PASS WITH NOTES** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
-- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`/quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Drive the fix tasks through Phase 3 (execute) → Phase 4 (verify), then **re-spawn the code-reviewer** for the next round. Loop bounded by `maxCodeReviewRounds` (plugin config, default 3; 0 = unlimited).
+- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`/quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Drive the fix tasks through Phase 3 (execute) → Phase 4 (verify), then **re-spawn the code-reviewer** for the next round. Loop bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited); the injected Quick Reference states the current value.
 
 ```
 # Max rounds escalation
-ESCALATE: "Idea '<title>' failed code review after {maxCodeReviewRounds} rounds.
+ESCALATE: "Idea '<title>' failed code review after {CHORUS_MAX_CODE_REVIEW_ROUNDS} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
@@ -524,7 +524,7 @@ A successful `/yolo` run always finishes the Idea — call `chorus_create_report
 | Project creation fails | Report error, suggest user create project manually and retry with `--project` |
 | Proposal reviewer FAIL after maxRounds | Stop pipeline, report persisting BLOCKERs, suggest manual review |
 | Task reviewer FAIL after maxRounds | Flag task as escalation-needed, continue with other tasks |
-| Code-review gateway FAIL after maxCodeReviewRounds | Stop before ship, escalate the persisting feature-level BLOCKERs to a human (Idea UUID), do not write the completion report |
+| Code-review gateway FAIL after CHORUS_MAX_CODE_REVIEW_ROUNDS rounds | Stop before ship, escalate the persisting feature-level BLOCKERs to a human (Idea UUID), do not write the completion report |
 | Sub-agent crash / no submit | Log error, skip task, pick it up in next wave if possible |
 | Ctrl+C | All entities persist in Chorus. User can resume via `/develop` or `/review` |
 
