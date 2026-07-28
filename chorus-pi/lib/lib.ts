@@ -7,6 +7,8 @@
  * from here; tests import the same functions.
  */
 
+import { dirname, join } from "node:path";
+
 export interface OpenSpecState {
   active: boolean;
   reason: string;
@@ -222,6 +224,49 @@ export function parseMaxCodeReviewRounds(raw: string | undefined): number {
   return n;
 }
 
+/**
+ * Resolve the bundled `bin/chorus-mcp-call.sh` wrapper path.
+ *
+ * The wrapper ships inside the chorus-pi package (`bin/chorus-mcp-call.sh`,
+ * declared as a `bin` in package.json). When installed via `pi install ./chorus-pi`
+ * (a local path), the script is neither linked onto PATH nor placed under
+ * `~/.pi/agent/npm/...` (those only happen for npm/git installs), so the skill's
+ * `find ~/.pi/agent/npm` fallback misses it. Instead, the extension knows its own
+ * install location and can resolve the wrapper relative to the package root.
+ *
+ * Strategy:
+ *   1. start from the extension module's own URL (import.meta.url) → its dir
+ *   2. walk up at most a few levels looking for `bin/chorus-mcp-call.sh`
+ *      (handles `extensions/chorus.ts` → `..`/bin, and `dist/extensions/...` →
+ *      `../../bin` if the package is ever bundled)
+ *   3. return the first existing match, or "" if none found (the skill then falls
+ *      back to PATH / find)
+ *
+ * Pure given an injectable fs so it is unit-testable without a real layout.
+ */
+export function resolveChorusBin(extensionFileUrl: string, fs: FsLike): string {
+  if (!extensionFileUrl) return "";
+  // file: URL → filesystem path. Works for import.meta.url of a real .ts/.js file.
+  let extPath: string;
+  try {
+    extPath = extensionFileUrl.startsWith("file:")
+      ? new URL(extensionFileUrl).pathname
+      : extensionFileUrl;
+  } catch {
+    return "";
+  }
+  if (!extPath) return "";
+  let dir = dirname(extPath);
+  // Walk up at most 6 levels to find <pkgRoot>/bin/chorus-mcp-call.sh.
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, "bin", "chorus-mcp-call.sh");
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+  return "";
+}
 
 /**
  * The 3 Chorus tool names that should trigger a reviewer nudge after they run.

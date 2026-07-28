@@ -39,6 +39,7 @@ import {
   detectOpenSpec,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
+  resolveChorusBin,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
@@ -59,6 +60,15 @@ const ENABLE_CODE_REVIEWER = process.env.CHORUS_ENABLE_CODE_REVIEWER !== "false"
 // Parsed from CHORUS_MAX_CODE_REVIEW_ROUNDS; invalid/empty falls back to 3.
 const MAX_CODE_REVIEW_ROUNDS = parseMaxCodeReviewRounds(process.env.CHORUS_MAX_CODE_REVIEW_ROUNDS);
 
+// Resolve the bundled `bin/chorus-mcp-call.sh` wrapper relative to this extension's
+// install location. Local-path installs (`pi install ./chorus-pi`) don't link the bin
+// onto PATH and don't live under ~/.pi/agent/npm, so the skill's `find` fallback
+// misses it — the extension knows its own dir and can resolve it for the agent.
+// Computed once at load; empty string if not found (skill falls back to PATH/find).
+const CHORUS_BIN = resolveChorusBin(import.meta.url, {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  existsSync: require("node:fs").existsSync,
+});
 const CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
 
 // ─── MCP-over-HTTP helper (TS replacement for chorus-mcp-call.sh) ───────────
@@ -202,6 +212,9 @@ export default function (pi: ExtensionAPI) {
         "- **Notifications**: chorus_get_notifications() fetches and auto-marks read.",
         "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
         "- **Code-review gateway**: bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (current: " + (MAX_CODE_REVIEW_ROUNDS === 0 ? "unlimited" : String(MAX_CODE_REVIEW_ROUNDS)) + "; on FAIL, fix via /skill:quick-dev and re-run — after the limit, escalate the Idea's feature-level BLOCKERs to a human instead of shipping.",
+        (CHORUS_BIN
+          ? "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` is at `" + CHORUS_BIN + "`. OpenSpec-mode document mirror calls MUST use this path (see /skill:openspec-aware §2). A bare `chorus-mcp-call.sh` will NOT be on PATH for local-path installs."
+          : "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` was not resolved relative to the extension — fall back to `find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh'` (see /skill:openspec-aware §2)."),
         "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo",
       ].join("\n");
       const banner = buildSessionBanner({

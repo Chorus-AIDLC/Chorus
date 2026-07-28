@@ -8,6 +8,7 @@ import {
   buildSessionBanner,
   parseMaxCodeReviewRounds,
   DEFAULT_MAX_CODE_REVIEW_ROUNDS,
+  resolveChorusBin,
   type FsLike,
   type ExecSync,
 } from "../lib/lib.js";
@@ -377,4 +378,45 @@ test("parseMaxCodeReviewRounds: non-integer → default (no silent floor)", () =
   expect(parseMaxCodeReviewRounds("3abc")).toBe(3);
   expect(parseMaxCodeReviewRounds("abc")).toBe(3);
   expect(parseMaxCodeReviewRounds(" ")).toBe(3);
+});
+
+// ─── resolveChorusBin (bundled wrapper resolution) ────────────────────────
+// For local-path installs (pi install ./chorus-pi) the bin is not on PATH and
+// not under ~/.pi/agent/npm; the extension resolves it relative to its own dir.
+function fsWithFiles(files: string[]): FsLike {
+  return { existsSync: (p: string) => files.includes(p) };
+}
+
+test("resolveChorusBin: finds the wrapper one level up from extensions/", () => {
+  const url = "file:///pkg/extensions/chorus.ts";
+  const fs = fsWithFiles(["/pkg/bin/chorus-mcp-call.sh"]);
+  expect(resolveChorusBin(url, fs)).toBe("/pkg/bin/chorus-mcp-call.sh");
+});
+
+test("resolveChorusBin: finds the wrapper two levels up (dist/extensions)", () => {
+  const url = "file:///pkg/dist/extensions/chorus.js";
+  const fs = fsWithFiles(["/pkg/bin/chorus-mcp-call.sh"]);
+  expect(resolveChorusBin(url, fs)).toBe("/pkg/bin/chorus-mcp-call.sh");
+});
+
+test("resolveChorusBin: accepts a plain path (not a file: URL)", () => {
+  const url = "/pkg/extensions/chorus.ts";
+  const fs = fsWithFiles(["/pkg/bin/chorus-mcp-call.sh"]);
+  expect(resolveChorusBin(url, fs)).toBe("/pkg/bin/chorus-mcp-call.sh");
+});
+
+test("resolveChorusBin: returns empty string when the wrapper is not found", () => {
+  const url = "file:///pkg/extensions/chorus.ts";
+  expect(resolveChorusBin(url, fsWithFiles([]))).toBe("");
+});
+
+test("resolveChorusBin: empty / invalid URL → empty string (no throw)", () => {
+  expect(resolveChorusBin("", fsWithFiles([]))).toBe("");
+  expect(resolveChorusBin("not-a-url", fsWithFiles([]))).toBe("");
+});
+
+test("resolveChorusBin: stops walking up at the filesystem root", () => {
+  // Even with 6 levels of walk-up, never loops forever; returns "" if absent.
+  const url = "file:///a/b/c/d/extensions/chorus.ts";
+  expect(resolveChorusBin(url, fsWithFiles([]))).toBe("");
 });

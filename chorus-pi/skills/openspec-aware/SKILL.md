@@ -85,7 +85,18 @@ Document/draft mirror calls (`chorus_pm_add_document_draft`, `chorus_pm_update_d
 chorus-mcp-call.sh <tool_name> "$PAYLOAD"
 ```
 
-`chorus-mcp-call.sh` ships with the `chorus-pi` package (declared as a `bin`). Invoke it via the `bash` tool. If it is not on `PATH`, resolve it once: `CHORUS_BIN=$(find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh' -type f 2>/dev/null | head -1)` then call `"$CHORUS_BIN" <tool> '<json>'`.
+`chorus-mcp-call.sh` ships with the `chorus-pi` package (declared as a `bin`). Invoke it via the `bash` tool. The extension resolves the wrapper path at startup and states it in the injected Quick Reference (line `- **OpenSpec wrapper**: … is at <PATH>`). Prefer that injected path:
+
+```bash
+CHORUS_BIN="<injected path from the Quick Reference>"   # copy from the `- **OpenSpec wrapper**` line
+# …or if it wasn't injected, resolve it once:
+CHORUS_BIN=$(find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh' -type f 2>/dev/null | head -1)
+# for local-path installs (pi install ./chorus-pi) the script lives next to the package:
+CHORUS_BIN="$(dirname "$(realpath chorus-pi/bin/chorus-mcp-call.sh 2>/dev/null)")/chorus-mcp-call.sh"
+"$CHORUS_BIN" <tool> '<json>'
+```
+
+then call `"$CHORUS_BIN" <tool> '<json>'`. The bare command `chorus-mcp-call.sh` is **only** on `PATH` for npm/git installs — for a local-path install (`pi install ./chorus-pi`) it is NOT linked, so always use the resolved `$CHORUS_BIN`.
 
 with `$PAYLOAD` built using `json_encode_file` (defined in §3.4). Calling these tools directly from the agent's MCP harness with a hand-typed `content` field is a **protocol violation** for OpenSpec mode and will fail review. Reasons:
 
