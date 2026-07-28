@@ -9,6 +9,8 @@ import {
   parseMaxCodeReviewRounds,
   DEFAULT_MAX_CODE_REVIEW_ROUNDS,
   resolveChorusBin,
+  resolveChorusConfigFromMcpJson,
+  parseChorusServerFromMcpJson,
   type FsLike,
   type ExecSync,
 } from "../lib/lib.js";
@@ -419,4 +421,64 @@ test("resolveChorusBin: stops walking up at the filesystem root", () => {
   // Even with 6 levels of walk-up, never loops forever; returns "" if absent.
   const url = "file:///a/b/c/d/extensions/chorus.ts";
   expect(resolveChorusBin(url, fsWithFiles([]))).toBe("");
+});
+
+// ─── parseChorusServerFromMcpJson + resolveChorusConfigFromMcpJson ─────────
+// .mcp.json fallback: when CHORUS_URL / CHORUS_API_KEY env are unset, both the
+// extension and chorus-mcp-call.sh read the chorus server entry out of the
+// .mcp.json that pi-mcp-adapter auto-discovers — one config source, both paths.
+test("parseChorusServerFromMcpJson: reads url + Bearer from the standard shape", () => {
+  const raw = JSON.stringify({
+    mcpServers: {
+      chorus: {
+        type: "http",
+        url: "http://localhost:8637/api/mcp",
+        headers: { Authorization: "Bearer cho_abc123" },
+      },
+    },
+  });
+  const r = parseChorusServerFromMcpJson(raw);
+  expect(r).toEqual({ url: "http://localhost:8637/api/mcp", apiKey: "cho_abc123" });
+});
+
+test("parseChorusServerFromMcpJson: accepts a bare cho_ token (no Bearer prefix)", () => {
+  const r = parseChorusServerFromMcpJson(JSON.stringify({
+    mcpServers: { chorus: { url: "https://x/api/mcp", headers: { Authorization: "cho_abc" } } },
+  }));
+  expect(r).toEqual({ url: "https://x/api/mcp", apiKey: "cho_abc" });
+});
+
+test("parseChorusServerFromMcpJson: returns empty when no chorus server", () => {
+  expect(parseChorusServerFromMcpJson('{"mcpServers":{"other":{}}}')).toEqual({ url: "", apiKey: "" });
+});
+
+test("parseChorusServerFromMcpJson: returns empty on invalid JSON", () => {
+  expect(parseChorusServerFromMcpJson("not json")).toEqual({ url: "", apiKey: "" });
+  expect(parseChorusServerFromMcpJson("")).toEqual({ url: "", apiKey: "" });
+});
+
+test("resolveChorusConfigFromMcpJson: searches candidate paths in order", () => {
+  const files = {
+    "/proj/.mcp.json": JSON.stringify({
+      mcpServers: { chorus: { url: "http://proj/api/mcp", headers: { Authorization: "Bearer cho_proj" } } },
+    }),
+    "/home/.pi/agent/mcp.json": JSON.stringify({
+      mcpServers: { chorus: { url: "http://home/api/mcp", headers: { Authorization: "Bearer cho_home" } } },
+    }),
+  };
+  const fs = { existsSync: (p: string) => p in files };
+  const readFile = (p: string) => files[p as keyof typeof files];
+  // project-root wins
+  expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
+    .toEqual({ url: "http://proj/api/mcp", apiKey: "cho_proj" });
+  // falls through to global when project file absent
+  expect(resolveChorusConfigFromMcpJson(["/missing/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
+    .toEqual({ url: "http://home/api/mcp", apiKey: "cho_home" });
+});
+
+test("resolveChorusConfigFromMcpJson: empty when no candidate has a chorus entry", () => {
+  const files = { "/x/.mcp.json": '{"mcpServers":{"other":{}}}' };
+  const fs = { existsSync: (p: string) => p in files };
+  const readFile = (p: string) => files[p as keyof typeof files];
+  expect(resolveChorusConfigFromMcpJson(["/x/.mcp.json"], fs, readFile)).toEqual({ url: "", apiKey: "" });
 });

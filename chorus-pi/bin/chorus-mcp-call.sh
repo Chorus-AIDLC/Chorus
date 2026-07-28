@@ -16,9 +16,43 @@
 
 set -euo pipefail
 
+# Connection resolution: CHORUS_URL / CHORUS_API_KEY env vars take
+# precedence. When either is unset, fall back to the .mcp.json that
+# pi-mcp-adapter auto-discovers (project-root .mcp.json, then
+# ~/.pi/agent/mcp.json) so a single config source covers both the
+# MCP gateway (literal URL+Bearer) and this wrapper. The .mcp.json
+# chorus server entry uses the standard shape:
+#   { "url": "…/api/mcp", "headers": { "Authorization": "Bearer cho_…" } }
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
-  echo "chorus-mcp-call: CHORUS_URL or CHORUS_API_KEY not set" >&2
-  exit 1
+  _found=""
+  # Search candidate .mcp.json paths. PWD covers plain bash invocations
+  # (the project root is the working directory); the global path covers
+  # ~/.pi/agent/mcp.json (user-level, shared across projects).
+  for _cfg in "${PWD}/.mcp.json" "${HOME}/.pi/agent/mcp.json"; do
+    [ -f "$_cfg" ] || continue
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "chorus-mcp-call: jq required to parse $_cfg but not on PATH" >&2
+      break
+    fi
+    _srv=$(jq -r '.mcpServers.chorus // empty' "$_cfg" 2>/dev/null) || _srv=""
+    [ -n "$_srv" ] || continue
+    [ -z "${CHORUS_URL:-}" ] && CHORUS_URL=$(printf '%s' "$_srv" | jq -r '.url // empty' 2>/dev/null) || true
+    if [ -z "${CHORUS_API_KEY:-}" ]; then
+      # Authorization: "Bearer cho_…" → extract just the token
+      _auth=$(printf '%s' "$_srv" | jq -r '.headers.Authorization // empty' 2>/dev/null) || _auth=""
+      case "$_auth" in
+        Bearer\ *) CHORUS_API_KEY="${_auth#Bearer }" ;;
+        cho_*) CHORUS_API_KEY="$_auth" ;;
+      esac
+    fi
+    _found=1
+    break
+  done
+  if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
+    echo "chorus-mcp-call: CHORUS_URL or CHORUS_API_KEY not set, and no usable chorus server in .mcp.json" >&2
+    echo "  Set CHORUS_URL + CHORUS_API_KEY, or add a 'chorus' server to .mcp.json" >&2
+    exit 1
+  fi
 fi
 
 TOOL_NAME="${1:?tool name required}"

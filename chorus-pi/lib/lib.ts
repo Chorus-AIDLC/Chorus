@@ -9,17 +9,76 @@
 
 import { dirname, join } from "node:path";
 
-export interface OpenSpecState {
-  active: boolean;
-  reason: string;
-  optout: boolean;
-  hint: string;
-}
-
-// Minimal fs surface detectOpenSpec needs (injectable for tests).
+/**
+ * Minimal fs surface needed by the config readers below.
+ * (detectOpenSpec already uses FsLike; keep this as the shared type.)
+ */
 export interface FsLike {
   existsSync(p: string): boolean;
 }
+
+/**
+ * Read raw file contents (utf-8). Injected so tests can stub the disk.
+ */
+export type ReadFileLike = (p: string) => string;
+
+export interface ChorusConnection {
+  url: string;
+  apiKey: string;
+}
+
+/**
+ * Parse the chorus server entry out of a standard .mcp.json shape:
+ *   { "mcpServers": { "chorus": { "url": "…/api/mcp",
+ *       "headers": { "Authorization": "Bearer cho_…" } } } }
+ *
+ * Returns { url, apiKey } with apiKey extracted from the Authorization header
+ * (accepts both "Bearer cho_…" and a bare "cho_…"). Empty strings if absent.
+ * Pure given the raw file text — no fs dependency — so it is unit-testable.
+ */
+export function parseChorusServerFromMcpJson(rawJson: string): ChorusConnection {
+  if (!rawJson) return { url: "", apiKey: "" };
+  let obj: any;
+  try {
+    obj = JSON.parse(rawJson);
+  } catch {
+    return { url: "", apiKey: "" };
+  }
+  const srv = obj?.mcpServers?.chorus;
+  if (!srv || typeof srv !== "object") return { url: "", apiKey: "" };
+  const url = typeof srv.url === "string" ? srv.url : "";
+  let apiKey = "";
+  const auth = srv?.headers?.Authorization;
+  if (typeof auth === "string") {
+    if (auth.startsWith("Bearer ")) apiKey = auth.slice("Bearer ".length);
+    else if (auth.startsWith("cho_")) apiKey = auth;
+  }
+  return { url, apiKey };
+}
+
+/**
+ * Resolve the Chorus connection (url + apiKey) from the standard .mcp.json
+ * auto-discovered by pi-mcp-adapter. Searches candidate paths in order
+ * (project-root .mcp.json, then ~/.pi/agent/mcp.json), returns the first
+ * chorus server entry found, or { "", "" } if none.
+ *
+ * Used as a fallback when CHORUS_URL / CHORUS_API_KEY env vars are unset,
+ * so a single .mcp.json config source covers both the MCP gateway (literal
+ * URL+Bearer) and the extension's own checkin + the OpenSpec wrapper.
+ */
+export function resolveChorusConfigFromMcpJson(
+  candidatePaths: string[],
+  fs: FsLike,
+  readFile: ReadFileLike,
+): ChorusConnection {
+  for (const p of candidatePaths) {
+    if (!fs.existsSync(p)) continue;
+    const { url, apiKey } = parseChorusServerFromMcpJson(readFile(p));
+    if (url || apiKey) return { url, apiKey };
+  }
+  return { url: "", apiKey: "" };
+}
+
 export type ExecSync = (cmd: string, opts: { stdio: "ignore" }) => void;
 
 /**

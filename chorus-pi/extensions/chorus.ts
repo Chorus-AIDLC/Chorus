@@ -40,13 +40,33 @@ import {
   buildSessionBanner,
   parseMaxCodeReviewRounds,
   resolveChorusBin,
+  resolveChorusConfigFromMcpJson,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
 
-// ─── Config ────────────────────────────────────────────────────────────────
-const CHORUS_URL = process.env.CHORUS_URL ?? "";
-const CHORUS_API_KEY = process.env.CHORUS_API_KEY ?? "";
+// ─── Config ────────────────────────────────────────────────────────────
+// Connection: CHORUS_URL + CHORUS_API_KEY env vars take precedence. When
+// either is unset, fall back to the .mcp.json that pi-mcp-adapter auto-
+// discovers (project-root .mcp.json, then ~/.pi/agent/mcp.json) so a single
+// config source covers both the MCP gateway (literal URL+Bearer) and this
+// extension's own checkin / the OpenSpec wrapper script.
+const _envUrl = process.env.CHORUS_URL ?? "";
+const _envKey = process.env.CHORUS_API_KEY ?? "";
+const _mcp = _envUrl && _envKey
+  ? { url: "", apiKey: "" }
+  : (() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const _fs = require("node:fs");
+      const _home = process.env.HOME || "";
+      return resolveChorusConfigFromMcpJson(
+        [`${process.cwd()}/.mcp.json`, `${_home}/.pi/agent/mcp.json`],
+        { existsSync: _fs.existsSync },
+        (p: string) => _fs.readFileSync(p, "utf-8"),
+      );
+    })();
+const CHORUS_URL = _envUrl || _mcp.url;
+const CHORUS_API_KEY = _envKey || _mcp.apiKey;
 const OPENSPEC_OPTOUT = process.env.CHORUS_OPENSPEC_MODE === "off";
 
 // Reviewer toggle envs (mirror Claude Code plugin userConfig; Pi has no plugin
