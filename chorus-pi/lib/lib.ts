@@ -147,6 +147,65 @@ export function detectOpenSpec(
 }
 
 /**
+ * Build the user-visible one-line startup banner (the Pi equivalent of the
+ * Claude plugin's SessionStart `systemMessage` / Codex `$chorus` toast).
+ *
+ * Mirrors the three OpenSpec states from upstream (#442):
+ *   - active            -> "(OpenSpec Enabled)"
+ *   - explicit opt-out  -> "(OpenSpec off)"            [neutral, no nag]
+ *   - not set up        -> "(OpenSpec off — run /skill:chorus enable openspec to set it up)"
+ *
+ * Plus two non-OpenSpec states:
+ *   - not configured    -> warning that CHORUS_URL / CHORUS_API_KEY are missing
+ *   - connection failed -> error that the checkin couldn't reach Chorus
+ *
+ * Pure (no I/O) so it can be unit-tested without a running Pi session.
+ */
+export interface SessionBanner {
+  message: string;
+  level: "info" | "warning" | "error";
+}
+
+export function buildSessionBanner(args: {
+  configured: boolean;
+  connected: boolean;
+  chorusUrl: string;
+  openspec: OpenSpecState;
+}): SessionBanner {
+  // Not configured at all — env vars missing. Warn once so the user knows
+  // the plugin loaded but is inert (Claude's hook emits the same warning).
+  if (!args.configured) {
+    return {
+      message: "Chorus plugin: not configured (set CHORUS_URL and CHORUS_API_KEY)",
+      level: "warning",
+    };
+  }
+
+  // Configured but checkin failed — the session runs but hooks are dead.
+  if (!args.connected) {
+    return {
+      message: `Chorus: connection failed (${args.chorusUrl})`,
+      level: "error",
+    };
+  }
+
+  // Connected. Append the OpenSpec status suffix.
+  let suffix: string;
+  if (args.openspec.active) {
+    suffix = "(OpenSpec Enabled)";
+  } else if (args.openspec.optout) {
+    suffix = "(OpenSpec off)";
+  } else {
+    suffix = "(OpenSpec off — run /skill:chorus enable openspec to set it up)";
+  }
+  return {
+    message: `Chorus connected at ${args.chorusUrl} ${suffix}`,
+    level: "info",
+  };
+}
+
+
+/**
  * The 3 Chorus tool names that should trigger a reviewer nudge after they run.
  * These are the BACKEND native names (no server prefix).
  */

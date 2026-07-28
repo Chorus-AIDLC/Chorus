@@ -37,6 +37,7 @@ import {
   extractAgentIdFromToolResultEvent,
   sessionWorkflow,
   detectOpenSpec,
+  buildSessionBanner,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
@@ -82,7 +83,7 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
       params: {
         protocolVersion: "2025-03-26",
         capabilities: {},
-        clientInfo: { name: "chorus-pi", version: "0.14.4" },
+        clientInfo: { name: "chorus-pi", version: "0.14.5" },
       },
     }),
   });
@@ -138,10 +139,29 @@ let injectedOnce = false;
 // ─── Extension ────────────────────────────────────────────────────────────
 export default function (pi: ExtensionAPI) {
   // SessionStart → checkin + build context (replaces Claude's on-session-start.sh)
+  // Emits a user-visible one-line banner (ctx.ui.notify) mirroring the Claude
+  // plugin's SessionStart `systemMessage` / the Codex `$chorus` toast (#442):
+  //   connected + active   -> "Chorus connected at <url> (OpenSpec Enabled)"
+  //   connected + opt-out   -> "Chorus connected at <url> (OpenSpec off)"
+  //   connected + unset     -> "Chorus connected at <url> (OpenSpec off — run /skill:chorus enable openspec to set it up)"
+  //   not configured        -> warning (env vars missing)
+  //   connection failed     -> error (checkin couldn't reach Chorus)
   pi.on("session_start", async (event, ctx) => {
-    if (!CONFIGURED) return;
+    // Not configured — emit the warning banner and bail (no checkin to attempt).
+    if (!CONFIGURED) {
+      const banner = buildSessionBanner({
+        configured: false,
+        connected: false,
+        chorusUrl: CHORUS_URL,
+        openspec: { active: false, reason: "not configured", optout: false, hint: "" },
+      });
+      ctx.ui.notify(banner.message, banner.level);
+      return;
+    }
+    let connected = false;
     try {
       const checkin = await mcpCall("chorus_checkin");
+      connected = true;
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const os = detectOpenSpec(
         ctx.cwd,
@@ -168,8 +188,8 @@ export default function (pi: ExtensionAPI) {
           : os.optout
             ? "OpenSpec was **explicitly turned off** — do not nag."
             : os.hint
-              ? `Note: ${os.hint}`
-              : "",
+              ? `Note: this repo has an \`openspec/\` directory but the \`openspec\` CLI is not installed — ${os.hint}. Run \`/skill:chorus enable openspec\` to set it up.`
+              : "OpenSpec is not set up in this repo. Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode, run `/skill:chorus enable openspec` (§6 walks the install + re-launch).",
         "",
         "## Quick Reference",
         "- **Sessions**: auto-managed. When you `subagent_spawn` a worker, the extension creates a Chorus session and injects its UUID + the session workflow into the worker's task automatically. When you `subagent_manage close` the agent, the extension closes the session. Do NOT call chorus_create_session/close_session yourself.",
@@ -177,8 +197,22 @@ export default function (pi: ExtensionAPI) {
         "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
         "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo",
       ].join("\n");
+      const banner = buildSessionBanner({
+        configured: true,
+        connected: true,
+        chorusUrl: CHORUS_URL,
+        openspec: os,
+      });
+      ctx.ui.notify(banner.message, banner.level);
     } catch (e) {
       checkinContext = `# Chorus: connection failed (${CHORUS_URL})\n\n${(e as Error).message}`;
+      const banner = buildSessionBanner({
+        configured: true,
+        connected: false,
+        chorusUrl: CHORUS_URL,
+        openspec: { active: false, reason: "connection failed", optout: false, hint: "" },
+      });
+      ctx.ui.notify(banner.message, banner.level);
     }
   });
 

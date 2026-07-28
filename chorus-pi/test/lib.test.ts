@@ -5,6 +5,7 @@ import {
   extractAgentIdFromToolResultEvent,
   sessionWorkflow,
   detectOpenSpec,
+  buildSessionBanner,
   type FsLike,
   type ExecSync,
 } from "../lib/lib.js";
@@ -242,4 +243,103 @@ test("NUDGE_TOOL_NAMES: the three reviewer-trigger tools", () => {
     "chorus_submit_for_verify",
     "chorus_admin_verify_task",
   ]);
+});
+
+// ─── buildSessionBanner (user-visible startup banner) ───────────────────────
+// Mirrors the Claude plugin's SessionStart `systemMessage` (#442): a one-line
+// toast with the connection + OpenSpec status.
+const URL = "http://localhost:8637";
+
+test("buildSessionBanner: not configured → warning, no URL surfaced", () => {
+  const r = buildSessionBanner({
+    configured: false,
+    connected: false,
+    chorusUrl: "",
+    openspec: { active: false, reason: "not configured", optout: false, hint: "" },
+  });
+  expect(r.level).toBe("warning");
+  expect(r.message).toContain("not configured");
+  expect(r.message).toContain("CHORUS_URL");
+  expect(r.message).toContain("CHORUS_API_KEY");
+});
+
+test("buildSessionBanner: connection failed → error with the URL", () => {
+  const r = buildSessionBanner({
+    configured: true,
+    connected: false,
+    chorusUrl: URL,
+    openspec: { active: false, reason: "connection failed", optout: false, hint: "" },
+  });
+  expect(r.level).toBe("error");
+  expect(r.message).toContain("connection failed");
+  expect(r.message).toContain(URL);
+});
+
+test("buildSessionBanner: connected + OpenSpec active → info, (OpenSpec Enabled)", () => {
+  const r = buildSessionBanner({
+    configured: true,
+    connected: true,
+    chorusUrl: URL,
+    openspec: { active: true, reason: "both present", optout: false, hint: "" },
+  });
+  expect(r.level).toBe("info");
+  expect(r.message).toContain("connected at " + URL);
+  expect(r.message).toContain("(OpenSpec Enabled)");
+});
+
+test("buildSessionBanner: connected + explicit opt-out → info, neutral (OpenSpec off), no nag", () => {
+  const r = buildSessionBanner({
+    configured: true,
+    connected: true,
+    chorusUrl: URL,
+    openspec: { active: false, reason: "CHORUS_OPENSPEC_MODE=off", optout: true, hint: "" },
+  });
+  expect(r.level).toBe("info");
+  expect(r.message).toContain("(OpenSpec off)");
+  // the opt-out case must NOT carry the enable-openspec nudge
+  expect(r.message).not.toContain("enable openspec");
+});
+
+test("buildSessionBanner: connected + not set up (no dir) → info, nudge to enable openspec", () => {
+  const r = buildSessionBanner({
+    configured: true,
+    connected: true,
+    chorusUrl: URL,
+    openspec: { active: false, reason: "no openspec/ directory", optout: false, hint: "" },
+  });
+  expect(r.level).toBe("info");
+  expect(r.message).toContain("(OpenSpec off");
+  expect(r.message).toContain("/skill:chorus enable openspec");
+  expect(r.message).toContain("to set it up");
+});
+
+test("buildSessionBanner: connected + dir present but CLI missing → info, still nudges (not-set-up kind)", () => {
+  // The hint case is still a "not set up" state (optout=false), so the banner
+  // nudges the same way — the richer hint lives in the injected agent context, not the toast.
+  const r = buildSessionBanner({
+    configured: true,
+    connected: true,
+    chorusUrl: URL,
+    openspec: {
+      active: false,
+      reason: "openspec/ directory present but `openspec` CLI not on PATH",
+      optout: false,
+      hint: "install with: npm i -g @fission-ai/openspec",
+    },
+  });
+  expect(r.level).toBe("info");
+  expect(r.message).toContain("/skill:chorus enable openspec");
+});
+
+test("buildSessionBanner: not-configured wins over connection-failed (configured checked first)", () => {
+  // When env vars are missing we never attempt a checkin, so the banner must be
+  // the "not configured" warning, not a connection-failed error.
+  const r = buildSessionBanner({
+    configured: false,
+    connected: true, // hypothetical: even if we pretend connected
+    chorusUrl: "",
+    openspec: { active: false, reason: "x", optout: false, hint: "" },
+  });
+  expect(r.level).toBe("warning");
+  expect(r.message).toContain("not configured");
 });
