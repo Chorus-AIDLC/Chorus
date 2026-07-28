@@ -23,12 +23,20 @@ set -euo pipefail
 # MCP gateway (literal URL+Bearer) and this wrapper. The .mcp.json
 # chorus server entry uses the standard shape:
 #   { "url": "…/api/mcp", "headers": { "Authorization": "Bearer cho_…" } }
+#
+# A PARTIAL entry (e.g. only url, no Authorization) does NOT count — the
+# search keeps going so a partial project .mcp.json cannot shadow a complete
+# ~/.pi/agent/mcp.json. Only a COMPLETE candidate (both url AND Authorization
+# from the SAME source) is accepted; fields are never merged across candidates,
+# matching the TS resolver in lib/lib.ts exactly (no credential mismatch when
+# project and global point at different Chorus servers).
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
-  _found=""
   # Search candidate .mcp.json paths. PWD covers plain bash invocations
   # (the project root is the working directory); the global path covers
   # ~/.pi/agent/mcp.json (user-level, shared across projects).
   for _cfg in "${PWD}/.mcp.json" "${HOME}/.pi/agent/mcp.json"; do
+    # Both fields already filled (env or an earlier candidate) — stop.
+    [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ] || break
     [ -f "$_cfg" ] || continue
     if ! command -v jq >/dev/null 2>&1; then
       echo "chorus-mcp-call: jq required to parse $_cfg but not on PATH" >&2
@@ -36,17 +44,19 @@ if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
     fi
     _srv=$(jq -r '.mcpServers.chorus // empty' "$_cfg" 2>/dev/null) || _srv=""
     [ -n "$_srv" ] || continue
-    [ -z "${CHORUS_URL:-}" ] && CHORUS_URL=$(printf '%s' "$_srv" | jq -r '.url // empty' 2>/dev/null) || true
-    if [ -z "${CHORUS_API_KEY:-}" ]; then
-      # Authorization: "Bearer cho_…" → extract just the token
-      _auth=$(printf '%s' "$_srv" | jq -r '.headers.Authorization // empty' 2>/dev/null) || _auth=""
-      case "$_auth" in
-        Bearer\ *) CHORUS_API_KEY="${_auth#Bearer }" ;;
-        cho_*) CHORUS_API_KEY="$_auth" ;;
-      esac
+    # Read BOTH fields from THIS candidate only (no cross-candidate merge).
+    _c_url=$(printf '%s' "$_srv" | jq -r '.url // empty' 2>/dev/null) || _c_url=""
+    _c_auth=$(printf '%s' "$_srv" | jq -r '.headers.Authorization // empty' 2>/dev/null) || _c_auth=""
+    _c_key=""
+    case "$_c_auth" in
+      Bearer\ *) _c_key="${_c_auth#Bearer }" ;;
+      cho_*) _c_key="$_c_auth" ;;
+    esac
+    # Accept this candidate only if BOTH url and key are present (complete).
+    if [ -n "$_c_url" ] && [ -n "$_c_key" ]; then
+      [ -z "${CHORUS_URL:-}" ] && CHORUS_URL="$_c_url"
+      [ -z "${CHORUS_API_KEY:-}" ] && CHORUS_API_KEY="$_c_key"
     fi
-    _found=1
-    break
   done
   if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
     echo "chorus-mcp-call: CHORUS_URL or CHORUS_API_KEY not set, and no usable chorus server in .mcp.json" >&2

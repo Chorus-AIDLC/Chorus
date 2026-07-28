@@ -13,15 +13,19 @@ bash test/static.sh
 # Layer B — unit tests for the extracted pure helpers
 bun test test/lib.test.ts
 
+# Layer B′ — extension-event tests (drive the real chorus.ts factory
+#         with a fake pi + mocked fetch; covers the session-lifecycle fixes)
+bun test test/ext-events.test.ts
+
+# one-command offline suite = Layer A + Layer B + Layer B′
+bash test/all.sh
+
 # Layer C/D setup — shell precheck BEFORE launching a fresh Pi session
 bash test/precheck.sh
 # then: launch a fresh `pi` session and paste test/verify-pi-session.md to it
 ```
-# Layer B — unit tests for the extracted pure helpers
-bun test test/lib.test.ts
-```
 
-Both must be green before any integration work. They run in <1s and need no runtime.
+Layers A + B + B′ must all be green before any integration work. They run in <1s and need no runtime.
 
 ## Layer A — Static validation (`test/static.sh`)
 
@@ -42,14 +46,30 @@ A8 is the key end-to-end-consistency check: it proves the skills don't reference
 
 ## Layer B — Unit tests (`test/lib.test.ts`)
 
-Tests the four pure helpers extracted to `extensions/lib.ts` (no Pi runtime, no live MCP):
+Tests the pure helpers extracted to `lib/lib.ts` (no Pi runtime, no live MCP):
 
 - `isReviewerAgent` — the three reviewer names match; workers/built-ins/partials reject
-- `extractAgentId` — reads `result.details.agent.id` (the real `pi-subagents` `summarizeAgent()` path, confirmed by inspecting `stateful.ts`); falls back to `agentId`; null on absence; prefers `details.agent.id`
+- `isWorkerAgent` — positive worker allowlist (`["worker"]`); built-in read-only agents (scout/planner/reviewer) and arbitrary custom agents reject
+- `extractAgentId` / `extractAgentIdFromToolResultEvent` — reads `result.details.agent.id` (the real `pi-subagents` `summarizeAgent()` path); falls back to `agentId` and `sa_<uuid>` text parsing; null on absence
 - `sessionWorkflow` — UUID appears in every chorus_* step; contains the "do not manage lifecycle" line; starts with a blank separator line
-- `detectOpenSpec` — all four branches (optout / no dir / dir-but-no-CLI / both present); and CLI is probed only when the dir exists (optout + missing-dir short-circuit)
+- `detectOpenSpec` — all four branches (optout / no dir / dir-but-no-CLI / both present); CLI probed only when the dir exists
+- `buildSessionBanner` — the five banner states (not-configured / connection-failed / connected+active / connected+opt-out / connected+not-set-up)
+- `parseMaxCodeReviewRounds` — default 3, 0 = unlimited, negatives/non-integers fall back to default
+- `resolveChorusBin` — resolves `bin/chorus-mcp-call.sh` relative to the extension for local-path installs
+- `parseChorusServerFromMcpJson` / `resolveChorusConfigFromMcpJson` — read the chorus server entry out of `.mcp.json` (the env-fallback path); the resolver only accepts a COMPLETE candidate (both url + apiKey) so a partial project config cannot shadow a complete global one
+- `normalizeChorusToolName` / `resolveChorusToolName` — strip the chorus server prefix in MCP gateway mode
 
 These catch logic regressions in the ported behavior without needing a session.
+
+## Layer B′ — Extension-event tests (`test/ext-events.test.ts`)
+
+Drives the **real** `extensions/chorus.ts` default factory against a fake `pi` (handlers captured off `pi.on`) and a mocked global `fetch` (so `mcpCall` never hits the network). Covers the session-lifecycle fixes that needed an event-level check:
+
+- **P1-2** — an unknown `subagent_spawn` result shape (neither extractor recognizes) closes the orphan Chorus session instead of leaking it
+- **P1-3** — a failing `chorus_close_session` retains the `agentId→sessionUuid` mapping so `session_shutdown` can retry it; a *successful* close (the control test) deletes the mapping and is NOT retried
+- **P2-1** — non-worker agents (scout/planner/reviewer/`chorus-*-reviewer`) do NOT create a session; `worker` does
+
+Module-scope state (`sessionMap`/`pendingSessions`/`spawnMapped`) is reset between tests by invoking the `session_shutdown` handler. Runs in its own `bun test` invocation (set in `test/all.sh`) so its `globalThis.fetch` override cannot leak into `test/lib.test.ts`.
 
 ## Layer C — Load + connection (needs a fresh Pi session + Chorus running)
 
@@ -158,5 +178,5 @@ This exercises every extension event and every skill. If it completes with all V
 
 ## What is NOT yet covered
 
-- **mcpCall()** (the 3-step MCP-over-HTTP fetch in `chorus.ts`): not unit-tested because it touches `fetch` + a module-level `mcpSessionId`. Layer C1 implicitly tests it (a successful checkin means mcpCall works end to end). A fetch-mock unit test is a future improvement.
-- **The actual `pi.on` wiring** (that handlers fire on the right events): Layer D covers this empirically. A test harness that simulates a `tool_call`/`tool_execution_end` event and asserts the handler mutated input / sent a message would be valuable but requires importing the extension's default export against a mock `ExtensionAPI`.
+- **`session_start` checkin + OpenSpec detection** (the `mcpCall("chorus_checkin")` + `detectOpenSpec` path): Layer C1 covers it empirically (a successful checkin banner means it works end to end). A fetch-mock test for this specific path is a future improvement; the session-lifecycle event tests in Layer B′ already prove the `mcpCall`/`pi.on` plumbing works against a mocked fetch.
+- **Reviewer nudge `pi.sendUserMessage` calls**: Layer D2/D3 covers these empirically.

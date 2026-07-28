@@ -21,6 +21,17 @@ pi install ./chorus-pi
 pi install npm:@chorus-aidlc/chorus-pi
 ```
 
+### Install the reviewer agents
+
+Pi's `pi-subagents` loads custom agents from `~/.pi/agent/agents/*.md` (user-level) or `.pi/agents/*.md` (project-level) — **not** from the package manifest. Copy the bundled reviewer agent definitions so `subagent_spawn` can find them:
+
+```bash
+mkdir -p ~/.pi/agent/agents
+cp chorus-pi/agents/*.md ~/.pi/agent/agents/
+```
+
+> The package ships all three reviewer agents (`chorus-proposal-reviewer`, `chorus-task-reviewer`, `chorus-code-reviewer`). Without this copy step the reviewer skills cannot spawn and the YOLO / review pipelines fail at their first review gate.
+
 Then configure `.mcp.json` and env vars — see `docs/CONNECT_PI.md`.
 
 ## Why Pi is the lowest-friction target

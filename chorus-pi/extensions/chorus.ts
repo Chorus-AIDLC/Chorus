@@ -32,7 +32,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  isReviewerAgent,
+  isWorkerAgent,
   extractAgentId,
   extractAgentIdFromToolResultEvent,
   sessionWorkflow,
@@ -272,8 +272,12 @@ export default function (pi: ExtensionAPI) {
     if (!CONFIGURED || event.toolName !== "subagent_spawn") return;
     const input = event.input as { agent?: string; task?: string };
     const agentName = input?.agent ?? "";
-    // Reviewers and non-worker agents don't get a Chorus session.
-    if (isReviewerAgent(agentName) || !input.task) return;
+    // Positive worker classification: only canonical worker agents get a Chorus
+    // session + task-lifecycle injection. The three Chorus reviewers are not
+    // workers (read-only), and the built-in scout/planner/reviewer are read-only
+    // too — injecting the session workflow into them adds irrelevant instructions
+    // and unnecessary chorus_create_session traffic. See isWorkerAgent().
+    if (!isWorkerAgent(agentName) || !input.task) return;
     try {
       const session = await mcpCall<{ uuid?: string }>("chorus_create_session", { name: agentName });
       if (!session?.uuid) return;
@@ -320,9 +324,22 @@ export default function (pi: ExtensionAPI) {
       if (input?.action !== "close" || !input.agentId) return;
       const sid = sessionMap.get(input.agentId);
       if (sid) {
-        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
-        sessionMap.delete(input.agentId);
-        ctx.ui.notify(`Chorus: closed session ${sid.slice(0, 8)}…`, "info");
+        // Close the backend session. Only drop the mapping and report success on
+        // a successful close — a transient network/server failure must NOT delete the
+        // mapping, otherwise session_shutdown (which iterates sessionMap.values())
+        // cannot retry and the backend session leaks permanently. (Reviewer P1.)
+        let closed = false;
+        try {
+          await mcpCall("chorus_close_session", { sessionUuid: sid });
+          closed = true;
+        } catch (e) {
+          // Retain the mapping so session_shutdown retries the close.
+          ctx.ui.notify(`Chorus: close failed for session ${sid.slice(0, 8)}… (will retry on shutdown) — ${(e as Error).message}`, "warning");
+        }
+        if (closed) {
+          sessionMap.delete(input.agentId);
+          ctx.ui.notify(`Chorus: closed session ${sid.slice(0, 8)}…`, "info");
+        }
       } else {
         // No mapping for this agentId — either it was a reviewer (no session),
         // the spawn mapping failed, or the agent predated this session.
@@ -384,11 +401,17 @@ export default function (pi: ExtensionAPI) {
         sessionMap.set(agentId, sid);
         ctx.ui.notify(`Chorus session: ${sid.slice(0, 8)}… (worker ${agentId.slice(0, 11)}…)`, "info");
       } else {
+        // Extraction failed on BOTH events (tool_result + tool_execution_end).
+        // Close the session now — it is no longer in pendingSessions, was never
+        // added to sessionMap, and so neither subagent_manage close nor
+        // session_shutdown can recover it. Closing here prevents a permanent
+        // leaked backend session. (Reviewer P1: don't drop the sid on the floor.)
+        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
         // Diagnostic: log the actual result shape so the runtime contract can be confirmed.
-        console.error("[chorus-pi] FALLBACK also failed. result type:", typeof event.result,
+        console.error("[chorus-pi] FALLBACK also failed — closing orphan session.", "result type:", typeof event.result,
           "keys:", event.result && typeof event.result === "object" ? Object.keys(event.result) : "n/a",
           "result:", JSON.stringify(event.result)?.slice(0, 300));
-        ctx.ui.notify(`Chorus: created session ${sid.slice(0, 8)}… but could not extract agentId (neither tool_result nor tool_execution_end) — close-on-manage will not fire`, "warning");
+        ctx.ui.notify(`Chorus: created session ${sid.slice(0, 8)}… but could not extract agentId — closed the orphan session (worker task ran without observability)`, "warning");
       }
       return;
     }

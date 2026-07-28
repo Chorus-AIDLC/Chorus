@@ -1,6 +1,8 @@
 import { test, expect } from "bun:test";
 import {
   isReviewerAgent,
+  isWorkerAgent,
+  WORKER_AGENT_NAMES,
   extractAgentId,
   extractAgentIdFromToolResultEvent,
   sessionWorkflow,
@@ -30,6 +32,34 @@ test("isReviewerAgent: rejects non-reviewers (workers, built-ins, partials)", ()
   expect(isReviewerAgent("")).toBe(false);
 });
 
+// ─── isWorkerAgent (positive worker classification for session injection) ──
+test("isWorkerAgent: canonical 'worker' is a worker", () => {
+  expect(isWorkerAgent("worker")).toBe(true);
+});
+
+test("isWorkerAgent: built-in read-only agents are NOT workers", () => {
+  expect(isWorkerAgent("scout")).toBe(false);   // explore
+  expect(isWorkerAgent("planner")).toBe(false); // plan
+  expect(isWorkerAgent("reviewer")).toBe(false); // generic read-only reviewer
+});
+
+test("isWorkerAgent: the three Chorus reviewers are NOT workers", () => {
+  expect(isWorkerAgent("chorus-proposal-reviewer")).toBe(false);
+  expect(isWorkerAgent("chorus-task-reviewer")).toBe(false);
+  expect(isWorkerAgent("chorus-code-reviewer")).toBe(false);
+});
+
+test("isWorkerAgent: arbitrary custom agent names are NOT workers (no false positives)", () => {
+  expect(isWorkerAgent("frontend-dev")).toBe(false);
+  expect(isWorkerAgent("researcher")).toBe(false);
+  expect(isWorkerAgent("worker-2")).toBe(false);   // variant name, not canonical
+  expect(isWorkerAgent("Worker")).toBe(false);      // case-sensitive
+  expect(isWorkerAgent("")).toBe(false);
+});
+
+test("WORKER_AGENT_NAMES: the canonical allowlist", () => {
+  expect([...WORKER_AGENT_NAMES]).toEqual(["worker"]);
+});
 // ─── extractAgentId ──────────────────────────────────────────────────────────
 test("extractAgentId: reads details.agent.id (the pi-subagents summarizeAgent() path)", () => {
   const result = {
@@ -481,4 +511,54 @@ test("resolveChorusConfigFromMcpJson: empty when no candidate has a chorus entry
   const fs = { existsSync: (p: string) => p in files };
   const readFile = (p: string) => files[p as keyof typeof files];
   expect(resolveChorusConfigFromMcpJson(["/x/.mcp.json"], fs, readFile)).toEqual({ url: "", apiKey: "" });
+});
+
+// ─── resolveChorusConfigFromMcpJson: partial-candidate regression (#457 review P1) ─
+// A PARTIAL project .mcp.json (only url, no Authorization) must NOT shadow a
+// COMPLETE global ~/.pi/agent/mcp.json. The search must skip the partial
+// candidate and fall through to the complete one.
+test("resolveChorusConfigFromMcpJson: partial project (url only) skipped → complete global wins", () => {
+  const files = {
+    "/proj/.mcp.json": JSON.stringify({
+      // partial: url present, no headers → apiKey ""
+      mcpServers: { chorus: { url: "http://proj/api/mcp" } },
+    }),
+    "/home/.pi/agent/mcp.json": JSON.stringify({
+      mcpServers: { chorus: { url: "http://home/api/mcp", headers: { Authorization: "Bearer cho_home" } } },
+    }),
+  };
+  const fs = { existsSync: (p: string) => p in files };
+  const readFile = (p: string) => files[p as keyof typeof files];
+  // The partial project candidate must be skipped; the complete global wins.
+  expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
+    .toEqual({ url: "http://home/api/mcp", apiKey: "cho_home" });
+});
+
+test("resolveChorusConfigFromMcpJson: partial global (apiKey only) skipped → earlier complete wins", () => {
+  // Symmetric: a candidate with only an Authorization but no url is also partial.
+  const files = {
+    "/proj/.mcp.json": JSON.stringify({
+      mcpServers: { chorus: { headers: { Authorization: "cho_onlykey" } } },
+    }),
+    "/home/.pi/agent/mcp.json": JSON.stringify({
+      mcpServers: { chorus: { url: "http://home/api/mcp", headers: { Authorization: "Bearer cho_home" } } },
+    }),
+  };
+  const fs = { existsSync: (p: string) => p in files };
+  const readFile = (p: string) => files[p as keyof typeof files];
+  expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
+    .toEqual({ url: "http://home/api/mcp", apiKey: "cho_home" });
+});
+
+test("resolveChorusConfigFromMcpJson: all candidates partial → empty (no complete config)", () => {
+  // If NO candidate is complete, return empty so the extension reports
+  // "not configured" rather than half-configuring with a partial result.
+  const files = {
+    "/proj/.mcp.json": JSON.stringify({ mcpServers: { chorus: { url: "http://proj/api/mcp" } } }),
+    "/home/.pi/agent/mcp.json": JSON.stringify({ mcpServers: { chorus: { headers: { Authorization: "Bearer cho_home" } } } }),
+  };
+  const fs = { existsSync: (p: string) => p in files };
+  const readFile = (p: string) => files[p as keyof typeof files];
+  expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
+    .toEqual({ url: "", apiKey: "" });
 });

@@ -309,7 +309,7 @@ After `chorus_pm_submit_proposal`, the extension nudges you to spawn `chorus-pro
 
 3. **Max rounds:** Loop up to `maxProposalReviewRounds` (from plugin config, default 3). If exhausted:
    ```
-   STOP: "Proposal review failed after {maxRounds} rounds. 
+   STOP: "Proposal review failed after {maxRounds} rounds.
           Remaining BLOCKERs: <list>. Human review needed.
           Proposal UUID: <uuid>"
    ```
@@ -438,7 +438,7 @@ After verifying all tasks in the wave, return to Phase 3 to check for newly unbl
 **Max rounds per task:** Tracked by `maxTaskReviewRounds` from plugin config (default 3). If a task has been reopened `maxRounds` times, skip it and flag for human escalation:
 
 ```
-ESCALATE: "Task '{title}' failed review after {maxRounds} rounds. 
+ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed.
            Task UUID: <uuid>"
 ```

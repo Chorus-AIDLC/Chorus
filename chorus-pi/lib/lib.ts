@@ -59,8 +59,11 @@ export function parseChorusServerFromMcpJson(rawJson: string): ChorusConnection 
 /**
  * Resolve the Chorus connection (url + apiKey) from the standard .mcp.json
  * auto-discovered by pi-mcp-adapter. Searches candidate paths in order
- * (project-root .mcp.json, then ~/.pi/agent/mcp.json), returns the first
- * chorus server entry found, or { "", "" } if none.
+ * (project-root .mcp.json, then ~/.pi/agent/mcp.json), and returns the first
+ * COMPLETE chorus server entry (both url AND apiKey present). A partial entry
+ * (e.g. only url, no Authorization) is skipped so a complete global candidate
+ * is still reached — a partial project config must NOT shadow a complete
+ * ~/.pi/agent/mcp.json. Returns { "", "" } if no candidate is complete.
  *
  * Used as a fallback when CHORUS_URL / CHORUS_API_KEY env vars are unset,
  * so a single .mcp.json config source covers both the MCP gateway (literal
@@ -74,7 +77,7 @@ export function resolveChorusConfigFromMcpJson(
   for (const p of candidatePaths) {
     if (!fs.existsSync(p)) continue;
     const { url, apiKey } = parseChorusServerFromMcpJson(readFile(p));
-    if (url || apiKey) return { url, apiKey };
+    if (url && apiKey) return { url, apiKey };
   }
   return { url: "", apiKey: "" };
 }
@@ -89,6 +92,24 @@ export function isReviewerAgent(name: string): boolean {
   return /^(chorus-proposal|chorus-task|chorus-code)-reviewer$/.test(name);
 }
 
+/**
+ * Positive classification of an agent that should get an auto-managed Chorus
+ * session + task-lifecycle (checkin/update/report/checkout) injection.
+ *
+ * Only canonical worker agent names get a session. The three Chorus reviewers
+ * are read-only (handled by isReviewerAgent) and the built-in read-only agents
+ * `scout` / `planner` / `reviewer` are NOT workers — injecting the session workflow
+ * into them adds irrelevant task-lifecycle instructions and unnecessary
+ * chorus_create_session API traffic for agents that never touch a task.
+ *
+ * This is a positive allowlist (not a reviewer exclusion) so arbitrary custom
+ * read-only agents also do NOT get a session. Add more worker names here if the
+ * project introduces them.
+ */
+export const WORKER_AGENT_NAMES = ["worker"] as const;
+export function isWorkerAgent(name: string): boolean {
+  return (WORKER_AGENT_NAMES as readonly string[]).includes(name);
+}
 /**
  * Extract the agentId (sa_<uuid>) from a subagent_spawn tool result.
  *
