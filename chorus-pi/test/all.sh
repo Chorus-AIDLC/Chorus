@@ -17,7 +17,7 @@ echo ""
 echo "──────── Layer B: extension events ────────"
 # Drive the real chorus.ts factory with a fake pi + mocked fetch (no network).
 # Runs in its own bun invocation for isolation — it overrides global fetch at
-# module load. Covers the P1-2/P1-3/P2-1 session-lifecycle fixes.
+# module load. Covers the P1-1/P1-2/P1-3/P2-1 session-lifecycle fixes.
 bun test test/ext-events.test.ts 2>&1 | tail -8
 be=$?
 echo ""

@@ -171,6 +171,28 @@ const spawnMapped = new Set<string>();
 let checkinContext: string | null = null;
 let injectedOnce = false;
 
+// Close a Chorus session, retaining the caller's bookkeeping entry on failure so
+// session_shutdown can retry the close (Reviewer P1: a transient network/server
+// error must NOT permanently leak the backend session). Only on success does
+// this run onSuccess (which drops the sessionMap/pendingSessions entry) and
+// report success. Returns whether the close succeeded.
+async function closeSessionOrRetain(
+  sid: string,
+  ctx: { ui: { notify(msg: string, level: string): void } },
+  msgs: { fail: string; success: string; successLevel?: "info" | "warning" },
+  onSuccess: () => void,
+): Promise<boolean> {
+  try {
+    await mcpCall("chorus_close_session", { sessionUuid: sid });
+  } catch (e) {
+    ctx.ui.notify(`${msgs.fail} — ${(e as Error).message}`, "warning");
+    return false;
+  }
+  onSuccess();
+  ctx.ui.notify(msgs.success, msgs.successLevel ?? "info");
+  return true;
+}
+
 
 // ─── Extension ────────────────────────────────────────────────────────────
 export default function (pi: ExtensionAPI) {
@@ -328,18 +350,10 @@ export default function (pi: ExtensionAPI) {
         // a successful close — a transient network/server failure must NOT delete the
         // mapping, otherwise session_shutdown (which iterates sessionMap.values())
         // cannot retry and the backend session leaks permanently. (Reviewer P1.)
-        let closed = false;
-        try {
-          await mcpCall("chorus_close_session", { sessionUuid: sid });
-          closed = true;
-        } catch (e) {
-          // Retain the mapping so session_shutdown retries the close.
-          ctx.ui.notify(`Chorus: close failed for session ${sid.slice(0, 8)}… (will retry on shutdown) — ${(e as Error).message}`, "warning");
-        }
-        if (closed) {
-          sessionMap.delete(input.agentId);
-          ctx.ui.notify(`Chorus: closed session ${sid.slice(0, 8)}…`, "info");
-        }
+        await closeSessionOrRetain(sid, ctx, {
+          fail: `Chorus: close failed for session ${sid.slice(0, 8)}… (will retry on shutdown)`,
+          success: `Chorus: closed session ${sid.slice(0, 8)}…`,
+        }, () => sessionMap.delete(input.agentId));
       } else {
         // No mapping for this agentId — either it was a reviewer (no session),
         // the spawn mapping failed, or the agent predated this session.
@@ -384,34 +398,43 @@ export default function (pi: ExtensionAPI) {
     // ── subagent_spawn result: map agentId → sessionUuid (or close orphan on error)
     if (event.toolName === "subagent_spawn") {
       const sid = pendingSessions.get(event.toolCallId);
-      pendingSessions.delete(event.toolCallId);
       if (!sid) return;
       if (event.isError) {
-        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
+        // Spawn failed — close the orphan session. Retain the sid in pendingSessions
+        // if the close fails so session_shutdown can retry it (no permanent leak).
+        await closeSessionOrRetain(sid, ctx, {
+          fail: `Chorus: close failed for orphan session ${sid.slice(0, 8)}… (will retry on shutdown)`,
+          success: `Chorus: closed orphan session ${sid.slice(0, 8)}… (spawn error)`,
+        }, () => pendingSessions.delete(event.toolCallId));
         return;
       }
       // tool_result already mapped this one — nothing to do.
       if (spawnMapped.has(event.toolCallId)) {
         spawnMapped.delete(event.toolCallId);
+        pendingSessions.delete(event.toolCallId);
         return;
       }
       // Fallback: tool_result didn't fire or couldn't extract. Try event.result.
       const agentId = extractAgentId(event.result);
       if (agentId) {
         sessionMap.set(agentId, sid);
+        pendingSessions.delete(event.toolCallId);
         ctx.ui.notify(`Chorus session: ${sid.slice(0, 8)}… (worker ${agentId.slice(0, 11)}…)`, "info");
       } else {
         // Extraction failed on BOTH events (tool_result + tool_execution_end).
-        // Close the session now — it is no longer in pendingSessions, was never
-        // added to sessionMap, and so neither subagent_manage close nor
-        // session_shutdown can recover it. Closing here prevents a permanent
-        // leaked backend session. (Reviewer P1: don't drop the sid on the floor.)
-        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
-        // Diagnostic: log the actual result shape so the runtime contract can be confirmed.
-        console.error("[chorus-pi] FALLBACK also failed — closing orphan session.", "result type:", typeof event.result,
+        // Try to close the orphan session. Retain the sid in pendingSessions if
+        // the close fails so session_shutdown can retry it (no permanent leak).
+        const closed = await closeSessionOrRetain(sid, ctx, {
+          fail: `Chorus: close failed for orphan session ${sid.slice(0, 8)}… (will retry on shutdown)`,
+          success: `Chorus: closed orphan session ${sid.slice(0, 8)}… (could not extract agentId, worker task ran without observability)`,
+          successLevel: "warning",
+        }, () => pendingSessions.delete(event.toolCallId));
+        // Diagnostic: log the actual result shape so the runtime contract can be
+        // confirmed — and state accurately whether the orphan was closed or
+        // retained in pendingSessions for a shutdown retry.
+        console.error(`[chorus-pi] FALLBACK also failed — orphan session ${closed ? "closed" : "close failed; retained for shutdown retry"}.`, "result type:", typeof event.result,
           "keys:", event.result && typeof event.result === "object" ? Object.keys(event.result) : "n/a",
           "result:", JSON.stringify(event.result)?.slice(0, 300));
-        ctx.ui.notify(`Chorus: created session ${sid.slice(0, 8)}… but could not extract agentId — closed the orphan session (worker task ran without observability)`, "warning");
       }
       return;
     }
