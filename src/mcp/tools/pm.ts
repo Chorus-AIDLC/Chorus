@@ -24,8 +24,10 @@ import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { hasPermission } from "@/lib/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
+import { enforceToolClassification } from "./collection-contract";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
+  server = enforceToolClassification(server);
   // Zod enums derived from the service's allowed sets so the tool schema and the
   // service validation never drift. z.enum needs a non-empty tuple. Declared at
   // the top of the function (not beside the reference write tools) so the create

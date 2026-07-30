@@ -15,8 +15,10 @@ import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
+import { enforceToolClassification } from "./collection-contract";
 
 export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
+  server = enforceToolClassification(server);
   // chorus_admin_create_project - Create a new project
   registerPermissionedTool(
     server,

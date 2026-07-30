@@ -4,28 +4,62 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  collectionPageSchema,
+  collectionPageSizeSchema,
+  collectionToolConfig,
+  compactCollectionRow,
+  enforceToolClassification,
+  serializeBoundedCollection,
+} from "./collection-contract";
 import type { AgentAuthContext } from "@/types/auth";
 import * as sessionService from "@/services/session.service";
 
 export function registerSessionTools(server: McpServer, auth: AgentAuthContext) {
+  server = enforceToolClassification(server);
   // chorus_list_sessions - List current agent's sessions
   server.registerTool(
     "chorus_list_sessions",
-    {
-      description: "List all Sessions for the current Agent",
+    collectionToolConfig({
+      description: "List compact Session summaries for the current Agent. Use chorus_get_session for details.",
       inputSchema: z.object({
         status: z.enum(["active", "closed"]).optional().describe("Filter by status"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
-    async ({ status }) => {
+    }),
+    async ({ status, page, pageSize }) => {
       const sessions = await sessionService.listAgentSessions(
         auth.companyUuid,
         auth.actorUuid,
         status
       );
+      const start = (page - 1) * pageSize;
+      const rows = sessions
+        .slice(start, start + pageSize)
+        .map((session) =>
+          compactCollectionRow(session, [
+            "uuid",
+            "name",
+            "status",
+            "agentUuid",
+            "createdAt",
+            "lastActiveAt",
+            "closedAt",
+          ]),
+        );
 
       return {
-        content: [{ type: "text", text: JSON.stringify(sessions, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializeBoundedCollection({
+            collectionKey: "sessions",
+            rows,
+            total: sessions.length,
+            page,
+            pageSize,
+          }),
+        }],
       };
     }
   );
