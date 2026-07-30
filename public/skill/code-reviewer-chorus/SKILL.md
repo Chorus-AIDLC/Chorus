@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus code-review gateway — independently 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -214,7 +214,7 @@ chorus_add_comment({
 })
 ```
 
-On a FAIL verdict, the orchestrator creates new fix tasks on the existing approved proposal (it does NOT reopen old tasks); once those are done, you are re-run for the next round, bounded by the configured max review rounds.
+On FAIL, remain read-only. The orchestrator, not the reviewer, invokes Quick Dev to create new fix tasks on the original approved proposal; it never reopens completed tasks or applies untracked fixes. It groups related small BLOCKERs by default and splits only materially large or independently testable work. Every fix task must pass AC self-check, independent task review, and admin verification. You are re-run only after all fix tasks are successfully `done`; a failed or cancelled fix stops the loop and escalates. The configured maximum review rounds remains authoritative.
 
 ---
 

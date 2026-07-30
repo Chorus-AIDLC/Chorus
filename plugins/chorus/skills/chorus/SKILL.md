@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -315,7 +315,7 @@ The plugin includes three independent review agents. After proposal submission, 
 
 To disable in the Codex port, open `/hooks` and disable the matching Chorus plugin `PostToolUse` hook, or disable the whole `chorus@chorus-plugins` plugin in `~/.codex/config.toml`. Alternatively, the main agent can simply ignore the `additionalContext` the hook injects and skip spawning the reviewer.
 
-When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Disabling reduces token usage but removes the independent quality gate.
+When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Disabling reduces token usage but removes the independent quality gate.
 
 ### 6. Enable OpenSpec Mode (Optional)
 

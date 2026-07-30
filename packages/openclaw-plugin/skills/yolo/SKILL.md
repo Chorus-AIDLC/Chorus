@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -443,7 +443,7 @@ Once **every** task of the idea's proposal is verified (`done`) — Phase 3 find
 Act on the VERDICT:
 
 - **PASS** / **PASS WITH NOTES** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
-- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`/quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Drive them through Phase 3 → Phase 4, then re-run the gateway for the next round. Loop bounded by `maxCodeReviewRounds` (default 3; 0 = unlimited).
+- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`/quick-dev`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks or apply untracked fixes. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Drive every fix task through Phase 3 → Phase 4, including AC self-check, independent task review, and admin verification. Re-run the gateway only after every fix task is successfully `done`; a failed or cancelled fix task, stop the automatic loop and escalate. Loop bounded by `maxCodeReviewRounds` (default 3; 0 = unlimited).
 
 ```
 ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.

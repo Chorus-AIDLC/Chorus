@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -317,7 +317,7 @@ The plugin bundles three independent **review skills**: `/proposal-reviewer`, `/
 
 **How review runs on OpenClaw.** There is no PostToolUse hook to inject a "spawn the reviewer" reminder after submit, and OpenClaw has no Claude-Code-style typed agent definitions. Instead, the proposal/develop/yolo skills put the reviewer step **inline**: the orchestrating agent uses the OpenClaw `sessions_spawn` tool to spawn a sub-agent and instructs it (in the spawn `task`) to **run the `/proposal-reviewer`, `/task-reviewer`, or `/code-reviewer` skill** against the entity (passing the `ideaUuid` for code review), then waits for the VERDICT (poll `subagents` / `sessions_yield`). Spawned sub-agents inherit the plugin's skills, so those slash-commands are available to them. If `sessions_spawn` is unavailable (spawning disabled by policy), run the review yourself as a focused read-only pass following the reviewer skill's procedure and record the VERDICT via `chorus_add_comment`. See the relevant stage skill for the exact procedure.
 
-Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, fix it via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it (do not reopen old tasks), then execute → verify and re-run.
+Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, the orchestrator invokes **quick-dev** (`/quick-dev`) to create new tasks on the original approved proposal; it does not reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes. Every fix task must pass AC self-check, independent task review, and admin verification. Re-run aggregate review only after all fixes are successfully `done`; a failed or cancelled fix stops the loop and escalates. Keep `maxCodeReviewRounds` authoritative.
 
 ### 6. Enable OpenSpec Mode (Optional)
 

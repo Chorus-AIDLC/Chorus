@@ -4,7 +4,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -22,7 +22,7 @@ Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) a
 The standard AI-DLC flow ensures quality through structured planning, but adds overhead that slows down small tasks. Quick Dev provides a lightweight alternative:
 
 ```
-[check admin role] → chorus_create_tasks → chorus_claim_task → in_progress → report → self-check AC → submit for verify → [self-verify if admin] → done
+check explicit task:admin permission → create/claim → implement → self-check AC → submit → independent task review → verify or hand off
 ```
 
 **Use Quick Dev when:**
@@ -42,13 +42,11 @@ For complex work, use `/idea` + `/proposal` instead.
 
 ---
 
-## Pre-Flight: Admin Self-Verify Check
+## Pre-Flight: Permission Check
 
-**Before creating tasks**, if `chorus_checkin().agent.permissions.task` includes `"admin"`, ask the user (as a **plain-text prompt** — OpenClaw has no `AskUserQuestion`):
+Call `chorus_checkin` and inspect the active agent's effective permissions. Set `canVerifyTask` to true **only** when `chorus_checkin().agent.permissions.task` explicitly contains `"admin"` (the `task:admin` permission).
 
-> "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify? Reply 'self' or 'other'."
-
-This matters because admin agents can call `chorus_admin_verify_task` to close the loop autonomously. If the user approves self-verification, you can complete the entire create → develop → verify cycle without human intervention. Record the decision and apply it in Step 7.
+Never infer verification authority from the agent's name, persona, preset/role label, task ownership, or tool availability. Do not prompt the user to choose: the explicit permission determines the terminal path.
 
 ---
 
@@ -147,7 +145,7 @@ chorus_report_criteria_self_check({
 })
 ```
 
-### Step 7: Submit for Verification (or Self-Verify)
+### Step 7: Submit and Run Independent Review
 
 ```
 chorus_submit_for_verify({
@@ -156,15 +154,19 @@ chorus_submit_for_verify({
 })
 ```
 
-**Admin self-verification:** If you have `task: ["admin"]` in `permissions` and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
+Submitting is not final verification. Spawn the required task-reviewer skill through `sessions_spawn` as described in `/develop`, wait for it, and read the newest `VERDICT:` Task comment. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+
+### Step 8: Permission-Aware Verification
+
+With explicit `task:admin`, after every required AC self-check passes and independent review has no unresolved BLOCKER, verify and continue autonomously:
 
 ```
 chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
 ```
 
-This completes the full autonomous cycle: create → develop → verify → done.
+Without explicit `task:admin`, do not call the admin tool. Post an evidence-rich comment on the Task containing AC results, test evidence, the latest independent-review verdict, and the exact requested action. @mention the responsible human (prefer `chorus_checkin().agent.owner`) to perform admin verification, then end the current turn.
 
-> **Optional independent review:** for non-trivial quick tasks you may still run the `/task-reviewer` skill in a spawned sub-agent (`sessions_spawn` with a task telling it to run `/task-reviewer` against the taskUuid, then wait for the VERDICT) or do a focused read-only self-review before verifying — same pattern as `/develop` Step 8.5. There is no PostToolUse hook on OpenClaw, so do this inline if you want it.
+This handoff applies in interactive and headless daemon sessions. Do not send a plain-text interactive prompt, poll for the human response, or rely only on generic notifications.
 
 ---
 
@@ -186,7 +188,7 @@ Quick Tasks support sub-agent execution just like proposal-based tasks. **Sessio
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
 - Quick Tasks show up in the same project task list and DAG as proposal-based tasks
-- Admin agents can run the full lifecycle autonomously (create → develop → self-verify) — but always confirm with the user first (plain-text prompt)
+- Agents with explicit `task:admin` continue autonomously after AC and independent review pass; all others use the evidence-rich asynchronous human handoff
 
 ---
 
