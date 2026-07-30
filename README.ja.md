@@ -394,6 +394,7 @@ PGlite はポート 5433 で組み込み PostgreSQL を実行します。デー�
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| Pi coding agent | [CONNECT_PI.md](docs/CONNECT_PI.md) |
 | Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | その他の MCP エージェント（Cursor、Continue、自作など） | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
@@ -412,6 +413,7 @@ API キーは Web UI の **Settings → Agents → Create API Key** から作成
 |--------|----------|----------|
 | **プラグイン同梱（Claude Code）** | `public/chorus-plugin/skills/` | Claude Code + Chorus プラグイン、自動化されたセッションとライフサイクルフック |
 | **プラグイン同梱（Codex CLI）** | `plugins/chorus/skills/` | Codex CLI + Chorus プラグイン、`$` プレフィックスのスラッシュコマンドを持つ移植版スキル |
+| **パッケージ同梱（Pi）** | `packages/chorus-pi/skills/` | Pi + Chorus パッケージ、自動化されたセッションとライフサイクルフック |
 | **スタンドアロン** | `public/skill/`（`/skill/` で配信） | その他の MCP 対応エージェント（Cursor、Continue、自作）、手動のセッション管理 |
 
 ### OpenSpec モード（オプトイン、プラグイン 0.8.1+）

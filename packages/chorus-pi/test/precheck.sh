@@ -3,7 +3,7 @@
 # Verifies install, env, MCP config, agent files, and tool-name prefix are all
 # in place so the in-session verification (verify-pi-session.md) can succeed.
 #
-# Usage:  bash chorus-pi/test/precheck.sh
+# Usage:  bash packages/chorus-pi/test/precheck.sh
 set -u
 cd "$(dirname "$0")/.."
 pass=0; fail=0
@@ -26,12 +26,12 @@ echo "═══ P3. runtime deps installed ═══"
 
 echo "═══ P4. chorus-pi installed (or at least present) ═══"
 # It may be installed as a local path; just check the package dir is valid and pi can load it.
-if [ -f package.json ] && grep -q '"pi"' package.json; then ok "chorus-pi package present (./chorus-pi)"; else no "run from chorus-pi/ or check package.json"; fi
+if [ -f package.json ] && grep -q '"pi"' package.json; then ok "chorus-pi package present (./packages/chorus-pi)"; else no "run from packages/chorus-pi/ or check package.json"; fi
 
 echo "═══ P5. MCP config (.mcp.json) ═══"
 found_mcp=""
-# .mcp.json lives at the repo root (parent of chorus-pi/), or globally under ~/.pi/agent/
-for c in ../.mcp.json ~/.pi/agent/mcp.json; do
+# .mcp.json lives at the repo root (two levels above packages/chorus-pi/), or globally under ~/.pi/agent/
+for c in ../../.mcp.json ~/.pi/agent/mcp.json; do
   if [ -f "$c" ] && grep -q '"chorus"' "$c"; then found_mcp="$c"; fi
 done
 [ -n "$found_mcp" ] && ok "chorus MCP server declared in $found_mcp" || no "no .mcp.json / ~/.pi/agent/mcp.json with a 'chorus' server — pi-mcp-adapter won't expose chorus_* tools"

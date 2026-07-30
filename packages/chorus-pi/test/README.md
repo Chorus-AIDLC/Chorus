@@ -5,7 +5,7 @@ Two layers run anywhere (no Pi session, no live Chorus); a shell precheck + two 
 ## Quick start
 
 ```bash
-cd chorus-pi
+cd packages/chorus-pi
 
 # Layer A — static validation (TS, JSON, frontmatter, cross-refs, no residual)
 bash test/static.sh
@@ -83,11 +83,11 @@ pi install npm:pi-mcp-adapter
 pi install npm:@narumitw/pi-subagents
 
 # the package
-pi install ./chorus-pi
+pi install ./packages/chorus-pi
 
 # reviewer agents go to the discovery path (NOT the package manifest)
 mkdir -p ~/.pi/agent/agents
-cp chorus-pi/agents/*.md ~/.pi/agent/agents/
+cp packages/chorus-pi/agents/*.md ~/.pi/agent/agents/
 
 # env + mcp (adjust URL/key)
 export CHORUS_URL=http://localhost:8637
