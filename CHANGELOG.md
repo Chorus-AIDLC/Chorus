@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.6] - 2026-07-30
+
+### Added
+- **Pi coding agent integration**: Added a complete Chorus AI-DLC extension for Pi, including eight workflow skills, three reviewer agents, automatic session lifecycle management, OpenSpec support, configuration fallback, tests, and installation documentation. (#457)
+
+### Changed
+- **Bounded MCP collection responses**: Collection tools now return bounded, consistently paginated results with authoritative payloads and aligned paging metadata, reducing context growth from large list responses. (#463)
+- **Global Claude Code plugin state**: Hook coordination state now lives under `~/.chorus/plugin/<cwd>/<session>/` instead of creating `.chorus/` state in each project. (#461)
+- **Pi package layout**: Moved the Pi extension into `packages/chorus-pi` and registered it in the workspace. (#460)
+
+### Fixed
+- **Pi excluded from dashboard type checking**: Prevented the standalone Pi extension from being incorrectly included in the dashboard TypeScript build. (#458)
+
+### Plugin
+- **Plugin & skill versions → 0.14.6**: Chorus plugin and skill distributions bumped to 0.14.6.
+
+---
+
 ## [0.14.5] - 2026-07-27
 
 ### Fixed
