@@ -63,6 +63,23 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       extra,
     });
 
+  const serializeAuthoritativePage = (
+    collectionKey: string,
+    rows: unknown[],
+    total: number,
+    page: number,
+    pageSize: number,
+    extra?: Record<string, unknown>,
+  ) =>
+    serializeBoundedCollection({
+      collectionKey,
+      rows,
+      total,
+      page,
+      pageSize,
+      extra,
+    });
+
   const compactTracker = (
     tracker: Record<string, { name: string; ideas?: unknown[]; tasks?: unknown[] }>,
     itemKey: "ideas" | "tasks",
@@ -382,7 +399,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_activity",
     collectionToolConfig({
-      description: "Get compact activity summaries for a project.",
+      description: "Get the paginated activity stream for a project. Activities have no separate single-resource get tool, so rows include their full workflow data.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         page: collectionPageSchema,
@@ -407,13 +424,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       return {
         content: [{
           type: "text",
-          text: serializePage(
+          text: serializeAuthoritativePage(
             "activities",
             activities,
             total,
             page,
             pageSize,
-            ["uuid", "action", "targetType", "targetUuid", "actorType", "actorUuid", "projectUuid", "createdAt"],
           ),
         }],
       };
@@ -701,7 +717,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_comments",
     collectionToolConfig({
-      description: "Get compact comment summaries. Full comment content remains available on detailed entity views.",
+      description: "Get paginated comments, newest first. Comments have no separate single-resource get tool, so rows include content and author details.",
       inputSchema: z.object({
         targetType: z.enum(["idea", "proposal", "task", "document"]).describe("Target type"),
         targetUuid: z.string().describe("Target UUID"),
@@ -722,13 +738,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       return {
         content: [{
           type: "text",
-          text: serializePage(
+          text: serializeAuthoritativePage(
             "comments",
             comments,
             total,
             page,
             pageSize,
-            ["uuid", "targetType", "targetUuid", "authorType", "authorUuid", "createdAt", "updatedAt"],
           ),
         }],
       };
@@ -777,14 +792,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       return {
         content: [{
           type: "text" as const,
-          text: serializePage(
+          text: serializeAuthoritativePage(
             "notifications",
             result.notifications,
             result.total,
             Math.floor(offset / limit) + 1,
             limit,
-            ["uuid", "action", "entityType", "entityUuid", "entityTitle", "projectUuid", "readAt", "createdAt"],
-            undefined,
             { unreadCount: result.unreadCount },
           ),
         }],

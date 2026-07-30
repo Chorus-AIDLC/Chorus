@@ -17,8 +17,8 @@ export interface CommentListParams {
   companyUuid: string;
   targetType: TargetType;
   targetUuid: string;
-  // Offset mode (existing — used by the MCP `chorus_get_comments` tool and the
-  // offset REST path): both present, oldest-first.
+  // Offset mode (used by the MCP `chorus_get_comments` tool and the offset REST
+  // path): both present, newest-first.
   skip?: number;
   take?: number;
   // Cursor mode (additive): selected by the presence of `limit`. `cursor` is a
@@ -110,9 +110,9 @@ export interface CommentResponse {
 // List comments.
 //
 // Two retrieval modes, selected by the presence of `limit`:
-//   - Offset mode (skip/take): oldest-first (`createdAt asc`), returns
+//   - Offset mode (skip/take): newest-first (`createdAt desc, id desc`), returns
 //     `{ comments, total }`. Used by the MCP `chorus_get_comments` tool and the
-//     offset REST path — its behavior and ordering MUST stay unchanged.
+//     offset REST path.
 //   - Cursor mode (limit, optional cursor): newest-first (`createdAt desc, id desc`),
 //     returns `{ comments, total, nextCursor, hasMore }`. The page is strictly older
 //     than the `cursor` comment (a comment uuid); an unresolvable cursor degrades to
@@ -142,7 +142,7 @@ export async function listComments(
       where,
       skip,
       take,
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: COMMENT_SELECT,
     }),
     prisma.comment.count({ where }),

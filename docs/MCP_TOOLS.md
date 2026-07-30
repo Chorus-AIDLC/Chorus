@@ -380,14 +380,14 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 ### chorus_get_activity
 
-**Description**: Get the activity stream for a project
+**Description**: Get the paginated activity stream for a project. There is no single-activity get tool, so each row retains the full activity payload, including `value` and session context.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page (default 50) |
+| pageSize | number | No | Items per page (default 20, maximum 100) |
 
 **Output**: Activity list JSON
 
@@ -713,7 +713,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_get_comments
 
-**Description**: Get the list of comments for an Idea/Proposal/Task/Document
+**Description**: Get paginated comments for an Idea/Proposal/Task/Document, newest first. There is no single-comment get tool, so each row includes the full `content` and resolved `author`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -721,7 +721,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 | targetType | enum | Yes | Target type: idea, proposal, task, document |
 | targetUuid | string | Yes | Target UUID |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page |
+| pageSize | number | No | Items per page (default 20, maximum 100) |
 
 **Output**: Comment list JSON
 

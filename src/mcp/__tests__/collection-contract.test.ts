@@ -163,4 +163,17 @@ describe("MCP collection contract", () => {
       expect(entry.reason.trim().length).toBeGreaterThan(10);
     }
   });
+
+  it("marks every authoritative list that has no single-resource get", () => {
+    const authoritativeTools = Object.entries(COLLECTION_TOOL_INVENTORY)
+      .filter(([, entry]) => entry.detailSource === "list-authoritative")
+      .map(([name]) => name)
+      .sort();
+
+    expect(authoritativeTools).toEqual([
+      "chorus_get_activity",
+      "chorus_get_comments",
+      "chorus_get_notifications",
+    ]);
+  });
 });

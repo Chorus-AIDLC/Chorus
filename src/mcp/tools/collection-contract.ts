@@ -247,18 +247,21 @@ export type CollectionContractEntry =
   | {
       mode: "page";
       collectionKey: string;
+      detailSource: "single-get" | "list-authoritative";
     }
   | {
       mode: "bounded";
       collectionKey: string;
       maximumRows: number;
       reason: string;
+      detailSource: "single-get" | "discovery";
     }
   | {
       mode: "aggregate";
       collectionKey: string;
       maximumRows: number;
       reason: string;
+      detailSource: "aggregate";
     };
 
 /**
@@ -266,68 +269,77 @@ export type CollectionContractEntry =
  * contain a resource collection. Migration tests consume this registry.
  */
 export const COLLECTION_TOOL_INVENTORY = {
-  chorus_list_projects: { mode: "page", collectionKey: "projects" },
-  chorus_get_ideas: { mode: "page", collectionKey: "ideas" },
-  chorus_get_documents: { mode: "page", collectionKey: "documents" },
-  chorus_get_proposals: { mode: "page", collectionKey: "proposals" },
-  chorus_list_tasks: { mode: "page", collectionKey: "tasks" },
-  chorus_get_activity: { mode: "page", collectionKey: "activities" },
-  chorus_get_comments: { mode: "page", collectionKey: "comments" },
-  chorus_get_notifications: { mode: "page", collectionKey: "notifications" },
-  chorus_list_sessions: { mode: "page", collectionKey: "sessions" },
+  chorus_list_projects: { mode: "page", collectionKey: "projects", detailSource: "single-get" },
+  chorus_get_ideas: { mode: "page", collectionKey: "ideas", detailSource: "single-get" },
+  chorus_get_documents: { mode: "page", collectionKey: "documents", detailSource: "single-get" },
+  chorus_get_proposals: { mode: "page", collectionKey: "proposals", detailSource: "single-get" },
+  chorus_list_tasks: { mode: "page", collectionKey: "tasks", detailSource: "single-get" },
+  chorus_get_activity: { mode: "page", collectionKey: "activities", detailSource: "list-authoritative" },
+  chorus_get_comments: { mode: "page", collectionKey: "comments", detailSource: "list-authoritative" },
+  chorus_get_notifications: { mode: "page", collectionKey: "notifications", detailSource: "list-authoritative" },
+  chorus_list_sessions: { mode: "page", collectionKey: "sessions", detailSource: "single-get" },
   chorus_search: {
     mode: "bounded",
     collectionKey: "results",
     maximumRows: 50,
     reason: "Search service enforces a cross-entity result limit.",
+    detailSource: "discovery",
   },
   chorus_search_mentionables: {
     mode: "bounded",
     collectionKey: "results",
     maximumRows: 100,
     reason: "Typeahead results use a validated hard limit.",
+    detailSource: "discovery",
   },
   chorus_get_available_ideas: {
     mode: "bounded",
     collectionKey: "ideas",
     maximumRows: 100,
     reason: "Assignment discovery is capped before serialization.",
+    detailSource: "single-get",
   },
   chorus_get_available_tasks: {
     mode: "bounded",
     collectionKey: "tasks",
     maximumRows: 100,
     reason: "Assignment discovery is capped before serialization.",
+    detailSource: "single-get",
   },
   chorus_get_unblocked_tasks: {
     mode: "bounded",
     collectionKey: "tasks",
     maximumRows: 100,
     reason: "Dependency-ready task discovery is capped before serialization.",
+    detailSource: "single-get",
   },
   chorus_get_project_groups: {
     mode: "bounded",
     collectionKey: "groups",
     maximumRows: 100,
     reason: "Project-group navigation is tenant-scoped and hard-capped.",
+    detailSource: "single-get",
   },
   chorus_checkin: {
     mode: "aggregate",
     collectionKey: "notifications",
     maximumRows: 5,
     reason: "Check-in is a bounded status aggregate with at most five notifications.",
+    detailSource: "aggregate",
   },
   chorus_get_my_assignments: {
     mode: "aggregate",
     collectionKey: "taskTracker",
     maximumRows: 100,
     reason: "The tracker is a bounded workflow aggregate, not a browsable collection.",
+    detailSource: "aggregate",
   },
   chorus_get_group_dashboard: {
     mode: "aggregate",
     collectionKey: "recentActivities",
     maximumRows: 20,
     reason: "Dashboard activity is a fixed-size supporting aggregate.",
+    detailSource: "aggregate",
   },
 } as const satisfies Record<string, CollectionContractEntry>;
 

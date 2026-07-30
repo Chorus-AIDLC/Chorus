@@ -213,6 +213,111 @@ describe("MCP collection migration", () => {
     expect(payload.tasks[0]).not.toHaveProperty("comments");
   });
 
+  it("preserves authoritative fields for list-only resources", async () => {
+    services.activity.listActivities.mockResolvedValue({
+      activities: [{
+        uuid: "activity-1",
+        action: "updated",
+        targetType: "task",
+        targetUuid: "task-1",
+        actorType: "agent",
+        actorUuid: "agent-1",
+        value: { status: "done" },
+        sessionUuid: "session-1",
+        sessionName: "Worker",
+        createdAt: "2026-07-30T12:00:00.000Z",
+      }],
+      total: 1,
+    });
+    services.comment.listComments.mockResolvedValue({
+      comments: [{
+        uuid: "comment-1",
+        targetType: "task",
+        targetUuid: "task-1",
+        content: "full comment body",
+        author: { type: "user", uuid: "user-1", name: "Owner" },
+        createdAt: "2026-07-30T12:00:00.000Z",
+        updatedAt: "2026-07-30T12:00:00.000Z",
+      }],
+      total: 1,
+    });
+    services.notification.list.mockResolvedValue({
+      notifications: [{
+        uuid: "notification-1",
+        projectUuid: "project-1",
+        projectName: "Project",
+        recipientType: "agent",
+        recipientUuid: "agent-1",
+        entityType: "idea",
+        entityUuid: "idea-1",
+        entityTitle: "Idea",
+        action: "human_instruction",
+        message: "Resume work",
+        actorType: "user",
+        actorUuid: "user-1",
+        actorName: "Owner",
+        readAt: null,
+        archivedAt: null,
+        createdAt: "2026-07-30T12:00:00.000Z",
+        instructionText: "Deploy after completion",
+      }],
+      total: 1,
+      unreadCount: 1,
+    });
+
+    const activity = JSON.parse((await handlers.chorus_get_activity({
+      projectUuid: "project-1",
+      page: 1,
+      pageSize: 20,
+    })).content[0].text);
+    const comments = JSON.parse((await handlers.chorus_get_comments({
+      targetType: "task",
+      targetUuid: "task-1",
+      page: 1,
+      pageSize: 20,
+    })).content[0].text);
+    const notifications = JSON.parse((await handlers.chorus_get_notifications({
+      status: "all",
+      limit: 20,
+      offset: 0,
+      autoMarkRead: false,
+    })).content[0].text);
+
+    expect(activity.activities[0]).toMatchObject({
+      value: { status: "done" },
+      sessionUuid: "session-1",
+      sessionName: "Worker",
+    });
+    expect(comments.comments[0]).toMatchObject({
+      content: "full comment body",
+      author: { type: "user", uuid: "user-1", name: "Owner" },
+    });
+    expect(notifications.notifications[0]).toMatchObject({
+      message: "Resume work",
+      actorName: "Owner",
+      instructionText: "Deploy after completion",
+    });
+  });
+
+  it("requests comment pages in newest-first offset order", async () => {
+    services.comment.listComments.mockResolvedValue({ comments: [], total: 0 });
+
+    await handlers.chorus_get_comments({
+      targetType: "idea",
+      targetUuid: "idea-1",
+      page: 3,
+      pageSize: 10,
+    });
+
+    expect(services.comment.listComments).toHaveBeenCalledWith({
+      companyUuid: "company-1",
+      targetType: "idea",
+      targetUuid: "idea-1",
+      skip: 20,
+      take: 10,
+    });
+  });
+
   it("traverses every task page exactly once without mutating service rows", async () => {
     const serviceRows = Array.from({ length: 37 }, (_, index) => ({
       uuid: `task-${index}`,
