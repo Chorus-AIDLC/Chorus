@@ -129,6 +129,24 @@ describe("MCP collection contract", () => {
     expect(result.notifications.length).toBeLessThanOrEqual(5);
   });
 
+  it("bounds long checkin instruction scalars before trimming collections", () => {
+    const text = serializeBoundedAggregate({
+      agent: {
+        uuid: "agent-1",
+        persona: "p".repeat(100_000),
+        systemPrompt: "s".repeat(100_000),
+      },
+      notifications: [],
+    });
+    const result = JSON.parse(text);
+
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(
+      MAX_COLLECTION_JSON_BYTES,
+    );
+    expect(result.agent.persona).toHaveLength(4_096);
+    expect(result.agent.systemPrompt).toHaveLength(4_096);
+  });
+
   it("truncates by Unicode code point and keeps the ellipsis inside the limit", () => {
     const summarySource = "😀".repeat(SUMMARY_TEXT_CODE_POINTS + 10);
     const previewSource = "界".repeat(PREVIEW_TEXT_CODE_POINTS + 10);

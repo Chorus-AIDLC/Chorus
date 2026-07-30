@@ -147,11 +147,15 @@ describe("MCP collection migration", () => {
       "chorus_list_tasks",
       "chorus_get_activity",
       "chorus_get_comments",
+      "chorus_get_unblocked_tasks",
+      "chorus_get_project_groups",
       "chorus_list_sessions",
     ];
 
     for (const tool of tools) {
-      const base = tool === "chorus_list_projects" || tool === "chorus_list_sessions"
+      const base = tool === "chorus_list_projects" ||
+          tool === "chorus_list_sessions" ||
+          tool === "chorus_get_project_groups"
         ? {}
         : tool === "chorus_get_comments"
           ? { targetType: "task", targetUuid: "task-1" }
@@ -403,6 +407,7 @@ describe("MCP collection migration", () => {
       scope: "project",
       scopeUuid: "project-1",
       entityTypes: ["task"],
+      limit: 50,
     });
     expect(payload.results).toEqual([{
       entityType: "task",

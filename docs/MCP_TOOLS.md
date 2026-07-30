@@ -389,7 +389,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 | page | number | No | Page number |
 | pageSize | number | No | Items per page (default 20, maximum 100) |
 
-**Output**: Activity list JSON
+**Output**: Activity list JSON. All page-mode collection responses include `returned`, `page`, `pageSize`, and the full matching `total`. Bounded discovery tools may instead report `total` as the returned candidate-set size when the backing query does not expose a full count.
 
 ### chorus_get_my_assignments
 

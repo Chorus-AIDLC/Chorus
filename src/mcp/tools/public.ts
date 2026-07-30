@@ -89,7 +89,6 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     let remaining = maximumRows;
     const compact: Record<string, { name: string; [key: string]: unknown }> = {};
     for (const [projectUuid, project] of Object.entries(tracker)) {
-      if (remaining === 0) break;
       const items = project[itemKey] ?? [];
       const rows = items
         .slice(0, remaining)
@@ -534,7 +533,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_available_ideas",
     collectionToolConfig({
-      description: "Get compact Idea summaries available to claim in a project (status=open).",
+      description: "Get up to 50 compact Idea summaries available to claim in a project (status=open). This is a bounded discovery result, so total equals the returned candidate count.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
       }),
@@ -573,7 +572,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_available_tasks",
     collectionToolConfig({
-      description: "Get compact Task summaries available to claim in a project (status=open).",
+      description: "Get up to 50 compact Task summaries available to claim in a project (status=open). This is a bounded discovery result, so total equals the returned candidate count.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
@@ -682,9 +681,11 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
     }),
-    async ({ projectUuid, proposalUuids }) => {
+    async ({ projectUuid, proposalUuids, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -695,6 +696,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         companyUuid: auth.companyUuid,
         projectUuid,
         proposalUuids,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       });
 
       return {
@@ -702,10 +705,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           type: "text",
           text: serializePage(
             "tasks",
-            tasks.slice(0, 100),
+            tasks,
             total,
-            1,
-            100,
+            page,
+            pageSize,
             ["uuid", "title", "status", "priority", "projectUuid", "proposalUuid", "storyPoints", "createdAt", "updatedAt"],
           ),
         }],
@@ -903,19 +906,23 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_get_project_groups",
     collectionToolConfig({
       description: "List compact project-group summaries.",
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
+      }),
     }),
-    async () => {
+    async ({ page = 1, pageSize = 20 }) => {
       const result = await projectGroupService.listProjectGroups(auth.companyUuid);
+      const skip = (page - 1) * pageSize;
       return {
         content: [{
           type: "text",
           text: serializePage(
             "groups",
-            result.groups.slice(0, 100),
+            result.groups.slice(skip, skip + pageSize),
             result.total,
-            1,
-            100,
+            page,
+            pageSize,
             ["uuid", "name", "projectCount", "createdAt", "updatedAt"],
             undefined,
             { ungroupedCount: result.ungroupedCount },
@@ -1019,6 +1026,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         scope,
         scopeUuid,
         entityTypes,
+        limit: 50,
       });
       const rows = result.results.map((row) => ({
         ...compactCollectionRow(
@@ -1034,7 +1042,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           text: serializeBoundedCollection({
             collectionKey: "results",
             rows,
-            total: rows.length,
+            total: Object.values(result.counts).reduce((sum, count) => sum + count, 0),
             page: 1,
             pageSize: 50,
             extra: { counts: result.counts },

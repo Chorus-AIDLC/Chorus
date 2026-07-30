@@ -1248,10 +1248,14 @@ export async function getUnblockedTasks({
   companyUuid,
   projectUuid,
   proposalUuids,
+  skip,
+  take,
 }: {
   companyUuid: string;
   projectUuid: string;
   proposalUuids?: string[];
+  skip?: number;
+  take?: number;
 }): Promise<{ tasks: TaskResponse[]; total: number }> {
   const where = {
     projectUuid,
@@ -1273,6 +1277,8 @@ export async function getUnblockedTasks({
   const [rawTasks, total] = await Promise.all([
     prisma.task.findMany({
       where,
+      skip,
+      take,
       orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
       select: {
         uuid: true,

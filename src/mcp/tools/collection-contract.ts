@@ -6,6 +6,7 @@ export const MAX_PAGE_SIZE = 100;
 export const MAX_COLLECTION_JSON_BYTES = 65_536;
 export const SUMMARY_TEXT_CODE_POINTS = 256;
 export const PREVIEW_TEXT_CODE_POINTS = 512;
+const AGGREGATE_LONG_TEXT_CODE_POINTS = 4_096;
 const JSON_INDENT = 2;
 
 export const collectionPageSchema = z
@@ -226,6 +227,20 @@ export function serializeBoundedAggregate(
   maxBytes: number = MAX_COLLECTION_JSON_BYTES,
 ): string {
   const copy = structuredClone(value);
+  if (typeof copy === "object" && copy !== null && "agent" in copy) {
+    const agent = (copy as { agent?: unknown }).agent;
+    if (typeof agent === "object" && agent !== null) {
+      for (const key of ["persona", "systemPrompt"] as const) {
+        const field = (agent as Record<string, unknown>)[key];
+        if (typeof field === "string") {
+          (agent as Record<string, unknown>)[key] = truncateCodePoints(
+            field,
+            AGGREGATE_LONG_TEXT_CODE_POINTS,
+          );
+        }
+      }
+    }
+  }
   const arrays: AggregateArray[] = [];
   collectAggregateArrays(copy, arrays);
 
@@ -295,31 +310,19 @@ export const COLLECTION_TOOL_INVENTORY = {
   chorus_get_available_ideas: {
     mode: "bounded",
     collectionKey: "ideas",
-    maximumRows: 100,
-    reason: "Assignment discovery is capped before serialization.",
+    maximumRows: 50,
+    reason: "Assignment discovery deliberately returns at most 50 claim candidates.",
     detailSource: "single-get",
   },
   chorus_get_available_tasks: {
     mode: "bounded",
     collectionKey: "tasks",
-    maximumRows: 100,
-    reason: "Assignment discovery is capped before serialization.",
+    maximumRows: 50,
+    reason: "Assignment discovery deliberately returns at most 50 claim candidates.",
     detailSource: "single-get",
   },
-  chorus_get_unblocked_tasks: {
-    mode: "bounded",
-    collectionKey: "tasks",
-    maximumRows: 100,
-    reason: "Dependency-ready task discovery is capped before serialization.",
-    detailSource: "single-get",
-  },
-  chorus_get_project_groups: {
-    mode: "bounded",
-    collectionKey: "groups",
-    maximumRows: 100,
-    reason: "Project-group navigation is tenant-scoped and hard-capped.",
-    detailSource: "single-get",
-  },
+  chorus_get_unblocked_tasks: { mode: "page", collectionKey: "tasks", detailSource: "single-get" },
+  chorus_get_project_groups: { mode: "page", collectionKey: "groups", detailSource: "single-get" },
   chorus_checkin: {
     mode: "aggregate",
     collectionKey: "notifications",
