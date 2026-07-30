@@ -135,12 +135,12 @@ Claude Code 这边钩子事件很全:
 |---|---|
 | `SessionStart` | 调 `chorus_checkin`，把身份和待办注入上下文 |
 | `UserPromptSubmit` | 轻量状态提醒（不发网络请求） |
-| `PreToolUse:Task` | 捕获子代理名字，写到 `.chorus/pending/<name>` |
+| `PreToolUse:Task` | 捕获子代理名字，写到会话的 `pending/<name>`（在全局 `~/.chorus/plugin/<cwd-slug>/<sessionId>/` 下） |
 | `SubagentStart` | **核心**: 创建或复用 session、把 session UUID 和工作流指令注入子代理 |
 | `TeammateIdle` | 发 session heartbeat 保活 |
 | `TaskCompleted` | 按 task 标签自动 checkout |
 | `SubagentStop` | 关 session、查询下游解锁的任务反馈给 Team Lead |
-| `SessionEnd` | 清理 `.chorus/` 目录 |
+| `SessionEnd` | 清理本会话的状态目录 |
 
 里面最关键的是 `SubagentStart`: 在子代理真正开始工作之前，插件可以先建好 session、把 UUID 直接写进它的上下文。可观测性由 harness 保证，不用让 agent 自己记得去调 MCP 汇报。
 

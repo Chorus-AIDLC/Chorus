@@ -3,18 +3,32 @@
 # Used by hook scripts to communicate with Chorus backend.
 #
 # Environment variables:
-#   CHORUS_URL      — Chorus base URL (e.g., http://localhost:8637)
-#   CHORUS_API_KEY  — Agent API key (cho_xxx)
+#   CHORUS_URL         — Chorus base URL (e.g., http://localhost:8637)
+#   CHORUS_API_KEY     — Agent API key (cho_xxx)
+#   CHORUS_SESSION_ID  — Claude Code session id (exported by the calling hook);
+#                        selects the per-session state partition.
 #
-# State file: $CLAUDE_PROJECT_DIR/.chorus/state.json (gitignored)
+# State dir: ~/.chorus/plugin/<cwd-slug>/<sessionId>/  (global, gitignore-free)
+#   resolved by chorus-paths.sh. Falls back to $CLAUDE_PROJECT_DIR/.chorus only
+#   if that module can't be sourced (fail-soft — never abort).
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ===== Configuration =====
 
 CHORUS_URL="${CHORUS_URL:-}"
 CHORUS_API_KEY="${CHORUS_API_KEY:-}"
-STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus"
+
+# Resolve the global per-session state dir via the shared path module.
+# Fail-soft: if the module is missing/unreadable, degrade to the old
+# per-project layout rather than crashing.
+# shellcheck source=chorus-paths.sh
+if [ -f "${SCRIPT_DIR}/chorus-paths.sh" ]; then
+  . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true
+fi
+STATE_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}"
 STATE_FILE="${STATE_DIR}/state.json"
 
 # ===== Helpers =====

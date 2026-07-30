@@ -62,6 +62,11 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
+# Export the CC session id so chorus-api.sh's mcp-tool calls write their handshake
+# temp files under this session's global state partition (not a no-session bucket).
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
 # Extract taskUuid from .tool_input
 TASK_UUID=$(printf '%s' "$EVENT" | jq -r '.tool_input.taskUuid // empty' 2>/dev/null) || true
 
