@@ -112,7 +112,8 @@ ACTION REQUESTED: spawn the read-only \`chorus-code-reviewer\` subagent for this
 1. Spawn the code-reviewer synchronously, passing ideaUuid=\"${IDEA_UUID}\" and the review round number (read prior code-review VERDICT comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall soundness, then posts ONE VERDICT comment on the idea.
 2. Read its VERDICT on the idea (chorus_get_comments targetType=\"idea\").
 3. VERDICT: PASS / PASS WITH NOTES — the feature may ship.
-4. VERDICT: FAIL — create new fix tasks on this approved proposal (chorus_create_tasks) targeting the BLOCKERs; do NOT reopen old tasks. When the fix tasks are done, re-run the code-reviewer (next round).
+4. VERDICT: FAIL — the orchestrator invokes Quick Dev to create new tasks on the original approved proposal; never reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes.
+5. Re-run only after every fix task passes AC self-check, independent task review, and admin verification to done. A failed or cancelled fix stops the loop and escalates. Keep maxCodeReviewRounds authoritative.
 
 Run this code-review gateway BEFORE writing any idea-completion report — the report must not be written while a FAIL verdict is outstanding."
 

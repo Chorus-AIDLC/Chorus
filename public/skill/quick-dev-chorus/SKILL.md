@@ -20,7 +20,7 @@ Skip the full AI-DLC pipeline (Idea → Elaboration → Proposal → Approval) a
 The standard AI-DLC flow ensures quality through structured planning, but adds overhead that slows down small tasks. Quick Dev provides a lightweight alternative:
 
 ```
-[check admin role] → chorus_create_tasks → chorus_claim_task → in_progress → report → self-check AC → submit for verify → [self-verify if admin] → done
+check explicit task:admin permission → create/claim → implement → self-check AC → submit → independent task review → verify or hand off
 ```
 
 **Use Quick Dev when:**
@@ -40,13 +40,11 @@ For complex work, consider using the idea and proposal skills instead.
 
 ---
 
-## Pre-Flight: Admin Self-Verify Check
+## Pre-Flight: Permission Check
 
-**Before creating tasks**, if `chorus_checkin().agent.permissions.task` includes `"admin"`, ask the user:
+Call `chorus_checkin` and inspect the active agent's effective permissions. Set `canVerifyTask` to true **only** when `chorus_checkin().agent.permissions.task` explicitly contains `"admin"` (the `task:admin` permission).
 
-> "I have admin privileges. After development, should I verify the task myself, or leave it for another admin to verify?"
-
-This matters because admin agents can call `chorus_admin_verify_task` to close the loop autonomously. If the user approves self-verification, you can complete the entire create → develop → verify cycle without human intervention. Record the decision and apply it in Step 7.
+Never infer verification authority from the agent's name, persona, preset/role label, task ownership, or tool availability. Do not ask whether to self-verify: the explicit permission determines the terminal path.
 
 ---
 
@@ -139,7 +137,7 @@ chorus_report_criteria_self_check({
 })
 ```
 
-### Step 7: Submit for Verification (or Self-Verify)
+### Step 7: Submit and Run Independent Review
 
 ```
 chorus_submit_for_verify({
@@ -148,13 +146,19 @@ chorus_submit_for_verify({
 })
 ```
 
-**Admin self-verification:** If you have `task: ["admin"]` in `permissions` and the user approved self-verification in the Pre-Flight check, you can verify the task yourself immediately after submitting:
+Submitting is not final verification. Invoke the required independent task reviewer with the host agent's sub-agent mechanism, wait for it, and read the newest `VERDICT:` Task comment. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+
+### Step 8: Permission-Aware Verification
+
+With explicit `task:admin`, after every required AC self-check passes and independent review has no unresolved BLOCKER, verify and continue autonomously:
 
 ```
 chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
 ```
 
-This completes the full autonomous cycle: create → develop → verify → done.
+Without explicit `task:admin`, do not call the admin tool. Post an evidence-rich comment on the Task containing AC results, test evidence, the latest independent-review verdict, and the exact requested action. @mention the responsible human (prefer `chorus_checkin().agent.owner`) to perform admin verification, then end the current turn.
+
+This handoff applies in interactive and headless daemon sessions. Do not use an interactive prompt, poll for the human response, or rely only on generic notifications.
 
 ---
 
@@ -165,7 +169,7 @@ This completes the full autonomous cycle: create → develop → verify → done
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
 - Quick Tasks appear in the same project task list and DAG as proposal-based tasks
-- Admin agents can run the full lifecycle autonomously (create → develop → self-verify) — but always confirm with the user first
+- Agents with explicit `task:admin` continue autonomously after AC and independent review pass; all others use the evidence-rich asynchronous human handoff
 
 ---
 
