@@ -4,6 +4,7 @@
 
 ### Added
 - **Pi coding agent integration**: Added a complete Chorus AI-DLC extension for Pi, including eight workflow skills, three reviewer agents, automatic session lifecycle management, OpenSpec support, configuration fallback, tests, and installation documentation. (#457)
+- **Automated code-review blocker remediation**: Aggregate code-review BLOCKERs now create Quick Dev fix tasks on the approved Proposal, require independent review, and either self-verify with explicit `task:admin` permission or hand off asynchronously with evidence. The workflow is aligned across Claude Code, Codex, OpenClaw, Kiro, Pi, and standalone skills. (#462)
 
 ### Changed
 - **Bounded MCP collection responses**: Collection tools now return bounded, consistently paginated results with authoritative payloads and aligned paging metadata, reducing context growth from large list responses. (#463)
