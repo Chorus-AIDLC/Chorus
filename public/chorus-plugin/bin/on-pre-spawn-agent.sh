@@ -23,6 +23,11 @@ if [ ! -t 0 ]; then
   EVENT=$(cat)
 fi
 
+# Export the CC session id so the pending dir lands in this session's partition —
+# the SubagentStart hook resolves the same <sessionId> and claims from there.
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
 # Try to extract subagent_type and name from the tool input
 AGENT_TYPE=""
 AGENT_NAME=""
@@ -48,8 +53,11 @@ esac
 #
 # CC may internally spawn cleanup agents that bypass PreToolUse:Task —
 # SubagentStart skips those if no pending file matches.
-PENDING_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/pending"
-mkdir -p "$PENDING_DIR"
+# Resolve the global per-session state dir (fail-soft to old layout).
+# shellcheck source=chorus-paths.sh
+[ -f "${SCRIPT_DIR}/chorus-paths.sh" ] && { . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true; }
+PENDING_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}/pending"
+mkdir -p "$PENDING_DIR" 2>/dev/null || true
 
 # Use agent name as filename; fall back to timestamp-based unique name
 PENDING_NAME="${AGENT_NAME:-unknown-$(date +%s%N)}"

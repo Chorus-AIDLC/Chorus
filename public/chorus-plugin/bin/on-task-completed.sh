@@ -26,6 +26,12 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
+# Export the CC session id so chorus-api.sh's state-get resolves to the SAME
+# <sessionId> partition on-subagent-start wrote the session_<agentId> mapping to.
+# Without this the lookup would miss and TaskCompleted auto-checkout would stop.
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
 # Extract task info
 TASK_DESCRIPTION=$(echo "$EVENT" | jq -r '.task_description // .taskDescription // .description // empty' 2>/dev/null) || true
 TASK_SUBJECT=$(echo "$EVENT" | jq -r '.task_subject // .taskSubject // .subject // empty' 2>/dev/null) || true

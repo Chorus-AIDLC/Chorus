@@ -35,6 +35,16 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
+# Export the CC session id (same for every hook in this session) so state and
+# the pending/claimed/sessions dirs resolve to this session's global partition.
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
+# Resolve the global per-session state dir once (fail-soft to the old layout).
+# shellcheck source=chorus-paths.sh
+[ -f "${SCRIPT_DIR}/chorus-paths.sh" ] && { . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true; }
+CHORUS_STATE_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}"
+
 # Extract agent info from event
 # Note: SubagentStart only provides agent_id and agent_type — NOT the name
 # from the Task tool call. The name is captured by on-pre-spawn-agent.sh
@@ -63,9 +73,9 @@ fi
 #
 # If no pending file exists, this is an internal/cleanup agent → skip.
 AGENT_NAME=""
-PENDING_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/pending"
-CLAIMED_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/claimed"
-mkdir -p "$CLAIMED_DIR"
+PENDING_DIR="${CHORUS_STATE_DIR}/pending"
+CLAIMED_DIR="${CHORUS_STATE_DIR}/claimed"
+mkdir -p "$CLAIMED_DIR" 2>/dev/null || true
 
 CLAIMED_FILE=""
 
@@ -178,8 +188,8 @@ fi
 "$API" state-set "name_for_agent_${AGENT_ID}" "$SESSION_NAME"
 
 # === Session file: minimal metadata for other hooks (TeammateIdle, SubagentStop) ===
-SESSIONS_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/sessions"
-mkdir -p "$SESSIONS_DIR"
+SESSIONS_DIR="${CHORUS_STATE_DIR}/sessions"
+mkdir -p "$SESSIONS_DIR" 2>/dev/null || true
 
 cat > "${SESSIONS_DIR}/${SESSION_NAME}.json" <<SESSIONEOF
 {

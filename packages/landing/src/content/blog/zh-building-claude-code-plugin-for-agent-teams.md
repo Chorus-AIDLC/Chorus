@@ -415,7 +415,7 @@ Chorus 在这里做三件事：
 
 1. 调用 `chorus_checkin()` MCP 工具，获取当前 Agent 的身份（角色、名称、人格）、已分配的 Idea 和 Task、未读通知
 2. 将完整的 checkin 结果通过 `additionalContext` 注入到 Claude 的上下文中——Agent 一启动就知道自己是谁、该做什么
-3. 扫描 `.chorus/sessions/` 目录，列出已有的 Sub-Agent session 元数据——这是为了处理 Claude Code 会话中断后恢复的情况：上次的 session 文件可能还在，Team Lead 恢复后需要知道哪些 session 仍然存在
+3. 扫描本会话的 `sessions/` 目录（位于 `~/.chorus/plugin/<cwd-slug>/<sessionId>/` 下），列出已有的 Sub-Agent session 元数据——这是为了处理 Claude Code 会话中断后恢复的情况：上次的 session 文件可能还在，Team Lead 恢复后需要知道哪些 session 仍然存在
 
 ```bash
 # on-session-start.sh 核心逻辑
@@ -440,7 +440,7 @@ Do NOT call chorus_create_session for sub-agents."
 
 ```bash
 # on-user-prompt.sh — 纯本地操作，不调 MCP
-# 统计 .chorus/sessions/ 下的 json 文件数量
+# 统计本会话 sessions/ 目录下的 json 文件数量（~/.chorus/plugin/<cwd-slug>/<sessionId>/sessions/）
 CONTEXT="[Chorus Plugin Active]
 - Active sub-agent sessions (3): frontend-worker, backend-worker, test-runner"
 ```
@@ -475,9 +475,9 @@ Chorus 注册了 3 个 `PreToolUse` Hook，分别匹配不同的工具：
 
 当 Claude Code 内部的 Task 标记完成时，Chorus 检查 task 描述中是否包含 `chorus:task:<uuid>` 标签。如果有，自动执行 `chorus_session_checkout_task`。这是一个优雅的**元数据桥接**模式——通过在 CC Task 描述中嵌入 Chorus task UUID，让两个系统的 Task 生命周期联动。
 
-**`SessionEnd` — 清理 .chorus/ 目录**
+**`SessionEnd` — 清理本会话的状态目录**
 
-会话结束时，检查是否所有 session 文件都已清理、state.json 是否为空。如果是，删除整个 `.chorus/` 目录，不留垃圾文件。
+会话结束时，删除本会话自己的状态目录（`~/.chorus/plugin/<cwd-slug>/<sessionId>/`），不留垃圾文件。由于每个 Claude Code 会话各有独立目录，这个删除是无条件的，也永远不会和同项目的并发会话相互干扰。
 
 ---
 
@@ -491,7 +491,7 @@ Chorus 注册了 3 个 `PreToolUse` Hook，分别匹配不同的工具：
 Team Lead 调用 Task 工具 spawn Sub-Agent
   │
   ├─ [PreToolUse:Task] on-pre-spawn-agent.sh
-  │    写入 .chorus/pending/<name> 文件（捕获 agent name）
+  │    写入 <sessionId>/pending/<name> 文件（捕获 agent name）
   │
   ├─ [SubagentStart] on-subagent-start.sh    ← 核心
   │    认领 pending 文件（原子 mv，处理并发）
@@ -517,12 +517,12 @@ Team Lead 调用 Task 工具 spawn Sub-Agent
        查询并展示新解除阻塞的 task
 ```
 
-### 5.2 `.chorus/` 目录：连接一切的桥梁
+### 5.2 状态目录：连接一切的桥梁
 
-前面多次提到"共享文件系统"，现在展开说。Chorus 插件在项目根目录下维护一个 `.chorus/` 目录（gitignored），它是 Team Lead、Sub-Agent、和所有 Hook 之间的信息枢纽：
+前面多次提到"共享文件系统"，现在展开说。Chorus 插件维护一个按会话隔离的状态目录，它是 Team Lead、Sub-Agent、和所有 Hook 之间的信息枢纽。它放在单一的**全局**根下——`~/.chorus/plugin/`（与 Chorus daemon 的 `~/.chorus/` 约定对齐）——再按可读的项目 slug 和 Claude Code 会话 id 分区，因此不需要在每个项目里创建或 gitignore 一个 `.chorus/` 目录：
 
 ```
-.chorus/                              # 插件运行时状态（gitignored）
+~/.chorus/plugin/<cwd-slug>/<sessionId>/   # <cwd-slug> = 项目目录，'/'→'-'（仿 ~/.claude/projects）
 ├── state.json                        # 全局状态 KV 存储
 ├── state.json.lock                   # flock 排他锁文件
 ├── sessions/                         # Sub-Agent session 元数据（供 Hook 状态查询）
@@ -534,6 +534,8 @@ Team Lead 调用 Task 工具 spawn Sub-Agent
 └── claimed/                          # SubagentStart 认领后的文件
     └── <agent-id>
 ```
+
+一个共享的 `bin/chorus-paths.sh` 模块为 `chorus-api.sh` 和所有 Hook 解析这个路径，布局只在一处定义。每个 Hook 从 stdin 事件里取出 Claude Code 的 `session_id`（整个会话内一致——子代理只靠 `agent_id` 区分）并 export，于是同一会话的所有 Hook 都解析到同一个 `<sessionId>` 目录。
 
 #### 核心：`state.json` — 跨 Hook 的状态共享
 
@@ -588,8 +590,8 @@ state_set() {
 
 ```
 时间线：
-  T1  PreToolUse:Task 触发 → 写 .chorus/pending/frontend-worker
-  T2  PreToolUse:Task 触发 → 写 .chorus/pending/backend-worker
+  T1  PreToolUse:Task 触发 → 写 <sessionId>/pending/frontend-worker
+  T2  PreToolUse:Task 触发 → 写 <sessionId>/pending/backend-worker
   T3  SubagentStart(agent_id=a0e) 触发 → mv pending/frontend-worker → claimed/a0e ✓
   T4  SubagentStart(agent_id=b1f) 触发 → mv pending/backend-worker → claimed/b1f ✓
   T4' SubagentStart(agent_id=c2g) 触发 → mv pending/frontend-worker → 失败（已被 a0e 认领）
@@ -606,17 +608,17 @@ Session 文件现在只包含最小元数据（sessionUuid、agentId、agentName
 #### 生命周期：创建到清理
 
 ```
-SessionStart  → mkdir -p .chorus/（如果不存在）
-PreToolUse    → 写 .chorus/pending/<name>
+SessionStart  → 解析 ~/.chorus/plugin/<cwd-slug>/<sessionId>/（惰性创建）
+PreToolUse    → 写 <sessionId>/pending/<name>
 SubagentStart → mv pending → claimed，写 sessions/<name>.json（仅元数据），
                 通过 additionalContext 注入工作流 → Sub-Agent，更新 state.json
 TeammateIdle  → 读 state.json（查 session_uuid），无写入
 TaskCompleted → 读 state.json（查 session_uuid），无写入
 SubagentStop  → 删 sessions/<name>.json，删 claimed/<agent_id>，清 state.json 条目
-SessionEnd    → 如果 sessions/ 为空且 state.json 为空 → rm -rf .chorus/
+SessionEnd    → rm -rf 本会话目录（~/.chorus/plugin/<cwd-slug>/<sessionId>/）
 ```
 
-整个目录的生命周期和 Claude Code session 一致——开始时创建，结束时清理，不留痕迹。
+因为目录以 Claude Code 会话 id 为 key，它的生命周期和会话完全一致——开始时解析、结束时删除——而同项目的并发会话各有独立目录，所以 `SessionEnd` 删自己那份时永远不会和兄弟会话相互干扰，项目目录里也不留痕迹。
 
 ### 5.3 核心难题：Sub-Agent 的上下文注入
 
@@ -731,7 +733,7 @@ SubagentStart Hook  →  additionalContext  →  Sub-Agent 的上下文
 
 ### 模式 2：文件系统用于 Hook 间状态传递（而非 Sub-Agent 通信）
 
-共享文件系统（`.chorus/` 目录）的价值在于 **Hook 到 Hook** 的状态传递（如 `pending/` 文件从 `PreToolUse` 传递 agent 名称到 `SubagentStart`），但不应该作为 Sub-Agent 上下文注入的主要机制。上下文注入应使用 `SubagentStart` 的 `additionalContext`。
+共享文件系统（插件在 `~/.chorus/plugin/` 下按会话隔离的状态目录）的价值在于 **Hook 到 Hook** 的状态传递（如 `pending/` 文件从 `PreToolUse` 传递 agent 名称到 `SubagentStart`），但不应该作为 Sub-Agent 上下文注入的主要机制。上下文注入应使用 `SubagentStart` 的 `additionalContext`。
 
 ### 模式 3：PreToolUse 捕获 + SubagentStart 执行
 

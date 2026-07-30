@@ -29,6 +29,14 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
+# Export the CC session id so state-get / sessions / claimed resolve to the same
+# global partition that on-subagent-start wrote to (cross-hook lookup must match).
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+# shellcheck source=chorus-paths.sh
+[ -f "${SCRIPT_DIR}/chorus-paths.sh" ] && { . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true; }
+CHORUS_STATE_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}"
+
 # Extract agent ID from event
 # Note: SubagentStop only provides agent_id and agent_type — NOT the name.
 # We look up the name from state (stored by SubagentStart).
@@ -84,13 +92,13 @@ if [ -n "$AGENT_NAME" ]; then
 fi
 
 # Clean up session file
-SESSIONS_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/sessions"
+SESSIONS_DIR="${CHORUS_STATE_DIR}/sessions"
 if [ -n "$AGENT_NAME" ] && [ -f "${SESSIONS_DIR}/${AGENT_NAME}.json" ]; then
   rm -f "${SESSIONS_DIR}/${AGENT_NAME}.json"
 fi
 
 # Clean up claimed file (written by SubagentStart)
-CLAIMED_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus/claimed"
+CLAIMED_DIR="${CHORUS_STATE_DIR}/claimed"
 if [ -n "$AGENT_ID" ] && [ -f "${CLAIMED_DIR}/${AGENT_ID}" ]; then
   rm -f "${CLAIMED_DIR}/${AGENT_ID}"
 fi

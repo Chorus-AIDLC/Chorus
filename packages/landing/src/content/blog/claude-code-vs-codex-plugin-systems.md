@@ -135,12 +135,12 @@ Claude Code's hook event list is thorough:
 |---|---|
 | `SessionStart` | Call `chorus_checkin`, inject identity and pending work into context |
 | `UserPromptSubmit` | Lightweight status reminders (no network calls) |
-| `PreToolUse:Task` | Capture the subagent's name, write to `.chorus/pending/<name>` |
+| `PreToolUse:Task` | Capture the subagent's name, write to the session's `pending/<name>` (under global `~/.chorus/plugin/<cwd-slug>/<sessionId>/`) |
 | `SubagentStart` | **Core**: create or reuse a session, inject the UUID and workflow into the subagent |
 | `TeammateIdle` | Send a session heartbeat to keep it alive |
 | `TaskCompleted` | Auto-checkout by task tag |
 | `SubagentStop` | Close the session, fetch newly-unblocked downstream tasks and surface them to the Team Lead |
-| `SessionEnd` | Clean up `.chorus/` |
+| `SessionEnd` | Clean up this session's state directory |
 
 The most important one is `SubagentStart`: before the subagent actually starts working, the plugin can create the session and inject the UUID directly into its context. Observability becomes something the harness guarantees, rather than something the agent has to remember to report via MCP.
 
