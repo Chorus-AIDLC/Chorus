@@ -4,26 +4,32 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const mockPrisma = vi.hoisted(() => ({
   task: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
   idea: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
   proposal: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
   document: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
   project: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
   projectGroup: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
@@ -40,6 +46,117 @@ import { search } from "@/services/search.service";
 describe("search.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const model of Object.values(mockPrisma)) {
+      model.findFirst.mockResolvedValue(null);
+    }
+  });
+
+  describe("canonical UUID search", () => {
+    const uuid = "123e4567-e89b-42d3-a456-426614174000";
+
+    it("returns an exact compact result with tenant isolation", async () => {
+      const now = new Date();
+      mockPrisma.task.findFirst.mockResolvedValue({
+        uuid,
+        title: "Exact task",
+        status: "open",
+        projectUuid: "project-1",
+        updatedAt: now,
+        project: { name: "Project A" },
+      });
+
+      const result = await search({
+        query: uuid.toUpperCase(),
+        companyUuid: "company-1",
+        entityTypes: ["task"],
+      });
+
+      expect(mockPrisma.task.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { uuid, companyUuid: "company-1" },
+      }));
+      expect(result).toEqual({
+        results: [{
+          entityType: "task",
+          uuid,
+          title: "Exact task",
+          snippet: "",
+          status: "open",
+          projectUuid: "project-1",
+          projectName: "Project A",
+          updatedAt: now.toISOString(),
+        }],
+        counts: {
+          tasks: 1,
+          ideas: 0,
+          proposals: 0,
+          documents: 0,
+          projects: 0,
+          projectGroups: 0,
+        },
+      });
+      expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    });
+
+    it("honors entity and project filters", async () => {
+      mockPrisma.idea.findMany.mockResolvedValue([]);
+      mockPrisma.idea.count.mockResolvedValue(0);
+      mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+      mockPrisma.projectGroup.count.mockResolvedValue(0);
+
+      await search({
+        query: uuid,
+        companyUuid: "company-1",
+        scope: "project",
+        scopeUuid: "project-1",
+        entityTypes: ["idea", "project_group"],
+      });
+
+      expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          uuid,
+          companyUuid: "company-1",
+          projectUuid: { in: ["project-1"] },
+        },
+      }));
+      expect(mockPrisma.task.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.projectGroup.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("falls back to text search when no exact UUID match survives filters", async () => {
+      mockPrisma.task.findMany.mockResolvedValue([]);
+      mockPrisma.task.count.mockResolvedValue(0);
+
+      const result = await search({
+        query: uuid,
+        companyUuid: "company-1",
+        scope: "project",
+        scopeUuid: "project-1",
+        entityTypes: ["task"],
+      });
+
+      expect(mockPrisma.task.findFirst).toHaveBeenCalled();
+      expect(mockPrisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          companyUuid: "company-1",
+          projectUuid: { in: ["project-1"] },
+        }),
+      }));
+      expect(result.results).toEqual([]);
+    });
+
+    it("does not attempt exact lookup for non-canonical UUID text", async () => {
+      mockPrisma.task.findMany.mockResolvedValue([]);
+      mockPrisma.task.count.mockResolvedValue(0);
+
+      await search({
+        query: "123e4567-e89b-42d3-a456",
+        companyUuid: "company-1",
+        entityTypes: ["task"],
+      });
+
+      expect(mockPrisma.task.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.task.findMany).toHaveBeenCalled();
+    });
   });
 
   describe("global search", () => {

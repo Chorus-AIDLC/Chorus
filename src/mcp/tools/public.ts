@@ -4,6 +4,16 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  collectionPageSchema,
+  collectionPageSizeSchema,
+  collectionToolConfig,
+  compactCollectionRow,
+  enforceToolClassification,
+  serializeBoundedAggregate,
+  serializeBoundedCollection,
+  truncatePreviewText,
+} from "./collection-contract";
 import type { AgentAuthContext } from "@/types/auth";
 import * as projectService from "@/services/project.service";
 import { projectExists } from "@/services/project.service";
@@ -33,6 +43,65 @@ import {
 } from "@/lib/acceptance-criteria";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
+  server = enforceToolClassification(server);
+  const serializePage = (
+    collectionKey: string,
+    rows: unknown[],
+    total: number,
+    page: number,
+    pageSize: number,
+    keys: readonly string[],
+    textKeys?: readonly string[],
+    extra?: Record<string, unknown>,
+  ) =>
+    serializeBoundedCollection({
+      collectionKey,
+      rows: rows.map((row) => compactCollectionRow(row, keys, textKeys)),
+      total,
+      page,
+      pageSize,
+      extra,
+    });
+
+  const serializeAuthoritativePage = (
+    collectionKey: string,
+    rows: unknown[],
+    total: number,
+    page: number,
+    pageSize: number,
+    extra?: Record<string, unknown>,
+  ) =>
+    serializeBoundedCollection({
+      collectionKey,
+      rows,
+      total,
+      page,
+      pageSize,
+      extra,
+    });
+
+  const compactTracker = (
+    tracker: Record<string, { name: string; ideas?: unknown[]; tasks?: unknown[] }>,
+    itemKey: "ideas" | "tasks",
+    keys: readonly string[],
+    maximumRows = 100,
+  ) => {
+    let remaining = maximumRows;
+    const compact: Record<string, { name: string; [key: string]: unknown }> = {};
+    for (const [projectUuid, project] of Object.entries(tracker)) {
+      const items = project[itemKey] ?? [];
+      const rows = items
+        .slice(0, remaining)
+        .map((row) => compactCollectionRow(row, keys));
+      remaining -= rows.length;
+      compact[projectUuid] = {
+        name: project.name,
+        [itemKey]: rows,
+      };
+    }
+    return compact;
+  };
+
   // Inline reference item shape (Thread C) for the per-task references[] on
   // chorus_create_tasks. Enum derived from the service's allowed set so the
   // schema and service validation never drift; matches the createReferences
@@ -67,22 +136,32 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_list_projects - List all projects
   server.registerTool(
     "chorus_list_projects",
-    {
-      description: "List all projects for the current company. Returns projects with counts of ideas, documents, tasks, and proposals.",
+    collectionToolConfig({
+      description: "List compact project summaries. Use chorus_get_project for full details.",
       inputSchema: z.object({
-        page: z.number().default(1).describe("Page number"),
-        pageSize: z.number().default(20).describe("Items per page"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ page, pageSize }) => {
       const skip = (page - 1) * pageSize;
-      const result = await projectService.listProjects({
+      const { projects, total } = await projectService.listProjects({
         companyUuid: auth.companyUuid,
         skip,
         take: pageSize,
       });
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "projects",
+            projects,
+            total,
+            page,
+            pageSize,
+            ["uuid", "name", "status", "groupUuid", "_count", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -90,15 +169,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_ideas - Get Ideas list
   server.registerTool(
     "chorus_get_ideas",
-    {
-      description: "Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.",
+    collectionToolConfig({
+      description: "Get compact Idea summaries for a project. Use chorus_get_idea for full details.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         status: z.enum(["open", "elaborating", "elaborated"]).optional().describe("Filter by status"),
-        page: z.number().optional().default(1).describe("Page number"),
-        pageSize: z.number().optional().default(20).describe("Items per page"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ projectUuid, status, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -116,7 +195,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ ideas, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "ideas",
+            ideas,
+            total,
+            page,
+            pageSize,
+            ["uuid", "title", "status", "derivedStatus", "projectUuid", "parentUuid", "reportCount", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -124,15 +213,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_documents - Get Documents list
   server.registerTool(
     "chorus_get_documents",
-    {
-      description: "Get the list of Documents for a project",
+    collectionToolConfig({
+      description: "Get compact Document summaries for a project. Use chorus_get_document for full content.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         type: z.enum(["prd", "tech_design", "adr", "spec", "guide", "report"]).optional().describe("Filter by type"),
-        page: z.number().optional().default(1),
-        pageSize: z.number().optional().default(20),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ projectUuid, type, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -150,7 +239,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ documents, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "documents",
+            documents,
+            total,
+            page,
+            pageSize,
+            ["uuid", "title", "type", "projectUuid", "proposalUuid", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -178,15 +277,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_proposals - Get Proposals list
   server.registerTool(
     "chorus_get_proposals",
-    {
-      description: "Get the list of Proposals and their statuses for a project",
+    collectionToolConfig({
+      description: "Get compact Proposal summaries and statuses. Use chorus_get_proposal for details.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         status: z.enum(["draft", "pending", "approved", "closed"]).optional().describe("Filter by status"),
-        page: z.number().optional().default(1),
-        pageSize: z.number().optional().default(20),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ projectUuid, status, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -204,7 +303,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ proposals, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "proposals",
+            proposals,
+            total,
+            page,
+            pageSize,
+            ["uuid", "title", "status", "projectUuid", "ideaUuid", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -240,17 +349,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_list_tasks - List Tasks
   server.registerTool(
     "chorus_list_tasks",
-    {
-      description: "List Tasks for a project",
+    collectionToolConfig({
+      description: "List compact Task summaries for a project. Use chorus_get_task for full details.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         status: z.enum(["open", "assigned", "in_progress", "to_verify", "done", "closed"]).optional().describe("Filter by status"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("Filter by priority"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
-        page: z.number().optional().default(1),
-        pageSize: z.number().optional().default(20),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ projectUuid, status, priority, proposalUuids, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -270,7 +379,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ tasks, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "tasks",
+            tasks,
+            total,
+            page,
+            pageSize,
+            ["uuid", "title", "status", "priority", "projectUuid", "proposalUuid", "assigneeUuid", "storyPoints", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -278,15 +397,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_activity - Get project activity stream
   server.registerTool(
     "chorus_get_activity",
-    {
-      description: "Get the activity stream for a project",
+    collectionToolConfig({
+      description: "Get the paginated activity stream for a project. Activities have no separate single-resource get tool, so rows include their full workflow data.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
-        page: z.number().optional().default(1),
-        pageSize: z.number().optional().default(50),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
-    async ({ projectUuid, page = 1, pageSize = 50 }) => {
+    }),
+    async ({ projectUuid, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -302,7 +421,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ activities, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializeAuthoritativePage(
+            "activities",
+            activities,
+            total,
+            page,
+            pageSize,
+          ),
+        }],
       };
     }
   );
@@ -358,15 +486,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_checkin - Agent heartbeat check-in
   server.registerTool(
     "chorus_checkin",
-    {
+    collectionToolConfig({
       description:
         "Agent check-in. Returns agent identity (owner, roles, persona), a project-grouped idea tracker with derived statuses and proposal/task counts, and up to 5 recent unread notifications (auto-marked read). Recommended at session start.",
       inputSchema: z.object({}),
-    },
+    }),
     async () => {
       const result = await checkinService.buildCheckinResponse(auth);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text: serializeBoundedAggregate(result) }],
       };
     }
   );
@@ -374,16 +502,29 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_my_assignments - Get own claimed Ideas + Tasks
   server.registerTool(
     "chorus_get_my_assignments",
-    {
+    collectionToolConfig({
       description:
         "Get the agent's idea/task tracker, grouped by project — same shape as checkin.ideaTracker. Returns { ideaTracker, taskTracker } where ideaTracker carries derivedStatus + proposal/task counts and taskTracker carries acceptance criteria progress.",
       inputSchema: z.object({}),
-    },
+    }),
     async () => {
       const result = await assignmentService.getMyAssignments(auth, auth.projectUuids);
+      const ideaTracker = compactTracker(
+        result.ideaTracker,
+        "ideas",
+        ["uuid", "title", "status", "parentUuid", "proposals", "tasks"],
+      );
+      const taskTracker = compactTracker(
+        result.taskTracker,
+        "tasks",
+        ["uuid", "title", "status", "priority", "proposalUuid", "acceptanceSummary"],
+      );
 
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializeBoundedAggregate({ ideaTracker, taskTracker }),
+        }],
       };
     }
   );
@@ -391,12 +532,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_available_ideas - Get claimable Ideas
   server.registerTool(
     "chorus_get_available_ideas",
-    {
-      description: "Get Ideas available to claim in a project (status=open)",
+    collectionToolConfig({
+      description: "Get up to 50 compact Idea summaries available to claim in a project (status=open). This is a bounded discovery result, so total equals the returned candidate count.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
       }),
-    },
+    }),
     async ({ projectUuid }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -412,7 +553,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       );
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ ideas }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "ideas",
+            ideas.slice(0, 100),
+            ideas.length,
+            1,
+            100,
+            ["uuid", "title", "status", "projectUuid", "parentUuid", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -420,13 +571,13 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_available_tasks - Get claimable Tasks
   server.registerTool(
     "chorus_get_available_tasks",
-    {
-      description: "Get Tasks available to claim in a project (status=open)",
+    collectionToolConfig({
+      description: "Get up to 50 compact Task summaries available to claim in a project (status=open). This is a bounded discovery result, so total equals the returned candidate count.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
       }),
-    },
+    }),
     async ({ projectUuid, proposalUuids }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
@@ -443,7 +594,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       );
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ tasks }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "tasks",
+            tasks.slice(0, 100),
+            tasks.length,
+            1,
+            100,
+            ["uuid", "title", "status", "priority", "projectUuid", "proposalUuid", "storyPoints", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -515,14 +676,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_unblocked_tasks - Get unblocked tasks (all dependencies resolved)
   server.registerTool(
     "chorus_get_unblocked_tasks",
-    {
-      description: "Get tasks that are ready to start — status is open/assigned and all dependencies are resolved (done/to_verify). Useful for discovering what work can begin next after a task completes.",
+    collectionToolConfig({
+      description: "Get compact Task summaries that are ready to start. Use chorus_get_task for full details.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
-    async ({ projectUuid, proposalUuids }) => {
+    }),
+    async ({ projectUuid, proposalUuids, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -533,10 +696,22 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         companyUuid: auth.companyUuid,
         projectUuid,
         proposalUuids,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ tasks, total }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "tasks",
+            tasks,
+            total,
+            page,
+            pageSize,
+            ["uuid", "title", "status", "priority", "projectUuid", "proposalUuid", "storyPoints", "createdAt", "updatedAt"],
+          ),
+        }],
       };
     }
   );
@@ -544,15 +719,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_comments - Get comments list
   server.registerTool(
     "chorus_get_comments",
-    {
-      description: "Get the list of comments for an Idea/Proposal/Task/Document",
+    collectionToolConfig({
+      description: "Get paginated comments, newest first. Comments have no separate single-resource get tool, so rows include content and author details.",
       inputSchema: z.object({
         targetType: z.enum(["idea", "proposal", "task", "document"]).describe("Target type"),
         targetUuid: z.string().describe("Target UUID"),
-        page: z.number().optional().default(1).describe("Page number"),
-        pageSize: z.number().optional().default(20).describe("Items per page"),
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
       }),
-    },
+    }),
     async ({ targetType, targetUuid, page = 1, pageSize = 20 }) => {
       const skip = (page - 1) * pageSize;
       const { comments, total } = await commentService.listComments({
@@ -564,7 +739,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       });
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ comments, total, page, pageSize }, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializeAuthoritativePage(
+            "comments",
+            comments,
+            total,
+            page,
+            pageSize,
+          ),
+        }],
       };
     }
   );
@@ -572,15 +756,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_notifications - Get notifications for the current Agent
   server.registerTool(
     "chorus_get_notifications",
-    {
+    collectionToolConfig({
       description: "Get the list of notifications for the current Agent. By default, fetching unread notifications automatically marks them as read. Set autoMarkRead=false to keep them unread.",
       inputSchema: z.object({
         status: z.enum(["unread", "read", "all"]).default("unread").optional().describe("Filter by status"),
-        limit: z.number().default(20).optional().describe("Items per page"),
-        offset: z.number().default(0).optional().describe("Offset"),
+        limit: collectionPageSizeSchema.optional().describe("Items per page"),
+        offset: z.number().int().nonnegative().default(0).optional().describe("Offset"),
         autoMarkRead: z.boolean().default(true).optional().describe("Automatically mark fetched unread notifications as read (default: true)"),
       }),
-    },
+    }),
     async (params) => {
       const statusValue = params.status ?? "unread";
       const result = await notificationService.list({
@@ -606,7 +790,21 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
+      return {
+        content: [{
+          type: "text" as const,
+          text: serializeAuthoritativePage(
+            "notifications",
+            result.notifications,
+            result.total,
+            Math.floor(offset / limit) + 1,
+            limit,
+            { unreadCount: result.unreadCount },
+          ),
+        }],
+      };
     }
   );
 
@@ -706,14 +904,30 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_project_groups - List all project groups
   server.registerTool(
     "chorus_get_project_groups",
-    {
-      description: "List all project groups for the current company. Returns groups with project counts.",
-      inputSchema: z.object({}),
-    },
-    async () => {
+    collectionToolConfig({
+      description: "List compact project-group summaries.",
+      inputSchema: z.object({
+        page: collectionPageSchema,
+        pageSize: collectionPageSizeSchema,
+      }),
+    }),
+    async ({ page = 1, pageSize = 20 }) => {
       const result = await projectGroupService.listProjectGroups(auth.companyUuid);
+      const skip = (page - 1) * pageSize;
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "groups",
+            result.groups.slice(skip, skip + pageSize),
+            result.total,
+            page,
+            pageSize,
+            ["uuid", "name", "projectCount", "createdAt", "updatedAt"],
+            undefined,
+            { ungroupedCount: result.ungroupedCount },
+          ),
+        }],
       };
     }
   );
@@ -741,19 +955,19 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_get_group_dashboard - Get aggregated dashboard stats for a project group
   server.registerTool(
     "chorus_get_group_dashboard",
-    {
+    collectionToolConfig({
       description: "Get aggregated dashboard stats for a project group (project count, tasks, completion rate, ideas, proposals, activity stream).",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
       }),
-    },
+    }),
     async ({ groupUuid }) => {
       const dashboard = await projectGroupService.getGroupDashboard(auth.companyUuid, groupUuid);
       if (!dashboard) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
       return {
-        content: [{ type: "text", text: JSON.stringify(dashboard, null, 2) }],
+        content: [{ type: "text", text: serializeBoundedAggregate(dashboard) }],
       };
     }
   );
@@ -761,13 +975,13 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_search_mentionables - Search for @mentionable users and agents
   server.registerTool(
     "chorus_search_mentionables",
-    {
+    collectionToolConfig({
       description: "Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment/description text. For results of type \"agent\" the entry also carries `online` (boolean: true iff the agent currently has a live daemon connection) and `activeCount` (number of tasks/resources its daemon is running or has queued; 0 when offline). User results do not carry these fields.",
       inputSchema: z.object({
         query: z.string().describe("Name or keyword to search"),
-        limit: z.number().optional().default(10).describe("Max results to return (default 10)"),
+        limit: z.number().int().positive().max(100).optional().default(10).describe("Max results to return (default 10, maximum 100)"),
       }),
-    },
+    }),
     async ({ query, limit }) => {
       const results = await mentionService.searchMentionables({
         companyUuid: auth.companyUuid,
@@ -778,7 +992,17 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         limit,
       });
       return {
-        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializePage(
+            "results",
+            results.slice(0, limit),
+            results.length,
+            1,
+            limit,
+            ["uuid", "name", "type", "online", "activeCount"],
+          ),
+        }],
       };
     }
   );
@@ -786,15 +1010,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_search - Search across all entity types
   server.registerTool(
     "chorus_search",
-    {
-      description: "Search across tasks, ideas, proposals, documents, projects, and project groups. Supports scoping to project groups or specific projects.",
+    collectionToolConfig({
+      description: "Search compact summaries across tasks, ideas, proposals, documents, projects, and project groups. A canonical UUID query performs tenant-scoped exact lookup first; text search is the fallback. Prefer this tool for discovery, use paginated list tools only for browsing, and call the entity's single-resource get tool for full details.",
       inputSchema: z.object({
-        query: z.string().describe("Search query (matches title, description, content)"),
+        query: z.string().describe("Canonical entity UUID for exact lookup, or text matching title, description, and content"),
         scope: z.enum(["global", "group", "project"]).optional().default("global").describe("Search scope"),
         scopeUuid: z.string().optional().describe("Project group UUID (scope=group) or project UUID (scope=project)"),
         entityTypes: zArray(z.enum(["task", "idea", "proposal", "document", "project", "project_group"])).optional().describe("Entity types to search (default: all). Example: [\"task\", \"idea\"]"),
       }),
-    },
+    }),
     async ({ query, scope, scopeUuid, entityTypes }) => {
       const result = await searchService.search({
         companyUuid: auth.companyUuid,
@@ -802,9 +1026,28 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         scope,
         scopeUuid,
         entityTypes,
+        limit: 50,
       });
+      const rows = result.results.map((row) => ({
+        ...compactCollectionRow(
+          row,
+          ["entityType", "uuid", "title", "status", "projectUuid", "projectName", "updatedAt"],
+          ["title", "projectName"],
+        ),
+        snippet: truncatePreviewText(row.snippet),
+      }));
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{
+          type: "text",
+          text: serializeBoundedCollection({
+            collectionKey: "results",
+            rows,
+            total: Object.values(result.counts).reduce((sum, count) => sum + count, 0),
+            page: 1,
+            pageSize: 50,
+            extra: { counts: result.counts },
+          }),
+        }],
       };
     }
   );

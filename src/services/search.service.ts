@@ -45,6 +45,20 @@ export interface SearchResponse {
 
 // ===== Helper Functions =====
 
+const CANONICAL_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function emptyCounts(): SearchCounts {
+  return {
+    tasks: 0,
+    ideas: 0,
+    proposals: 0,
+    documents: 0,
+    projects: 0,
+    projectGroups: 0,
+  };
+}
+
 // Generate snippet: extract ~100 chars around the first match position
 function generateSnippet(text: string, query: string, maxLength = 100): string {
   if (!text) return "";
@@ -86,6 +100,167 @@ async function resolveGroupProjects(companyUuid: string, groupUuid: string): Pro
     select: { uuid: true },
   });
   return projects.map(p => p.uuid);
+}
+
+async function searchExactUuid(
+  companyUuid: string,
+  uuid: string,
+  typesToSearch: EntityType[],
+  scope: SearchScope,
+  projectUuids: string[] | null,
+  groupUuid: string | null,
+): Promise<SearchResponse | null> {
+  const lookups = typesToSearch.map(async (type): Promise<SearchResult | null> => {
+    const projectFilter = projectUuids ? { in: projectUuids } : undefined;
+
+    switch (type) {
+      case "task": {
+        const task = await prisma.task.findFirst({
+          where: { uuid, companyUuid, ...(projectFilter && { projectUuid: projectFilter }) },
+          select: {
+            uuid: true,
+            title: true,
+            status: true,
+            projectUuid: true,
+            updatedAt: true,
+            project: { select: { name: true } },
+          },
+        });
+        return task && {
+          entityType: "task",
+          uuid: task.uuid,
+          title: task.title,
+          snippet: "",
+          status: task.status,
+          projectUuid: task.projectUuid,
+          projectName: task.project.name,
+          updatedAt: task.updatedAt.toISOString(),
+        };
+      }
+      case "idea": {
+        const idea = await prisma.idea.findFirst({
+          where: { uuid, companyUuid, ...(projectFilter && { projectUuid: projectFilter }) },
+          select: {
+            uuid: true,
+            title: true,
+            status: true,
+            projectUuid: true,
+            updatedAt: true,
+            project: { select: { name: true } },
+          },
+        });
+        return idea && {
+          entityType: "idea",
+          uuid: idea.uuid,
+          title: idea.title,
+          snippet: "",
+          status: idea.status,
+          projectUuid: idea.projectUuid,
+          projectName: idea.project.name,
+          updatedAt: idea.updatedAt.toISOString(),
+        };
+      }
+      case "proposal": {
+        const proposal = await prisma.proposal.findFirst({
+          where: { uuid, companyUuid, ...(projectFilter && { projectUuid: projectFilter }) },
+          select: {
+            uuid: true,
+            title: true,
+            status: true,
+            projectUuid: true,
+            updatedAt: true,
+            project: { select: { name: true } },
+          },
+        });
+        return proposal && {
+          entityType: "proposal",
+          uuid: proposal.uuid,
+          title: proposal.title,
+          snippet: "",
+          status: proposal.status,
+          projectUuid: proposal.projectUuid,
+          projectName: proposal.project.name,
+          updatedAt: proposal.updatedAt.toISOString(),
+        };
+      }
+      case "document": {
+        const document = await prisma.document.findFirst({
+          where: { uuid, companyUuid, ...(projectFilter && { projectUuid: projectFilter }) },
+          select: {
+            uuid: true,
+            title: true,
+            type: true,
+            projectUuid: true,
+            updatedAt: true,
+            project: { select: { name: true } },
+          },
+        });
+        return document && {
+          entityType: "document",
+          uuid: document.uuid,
+          title: document.title,
+          snippet: "",
+          status: document.type,
+          projectUuid: document.projectUuid,
+          projectName: document.project.name,
+          updatedAt: document.updatedAt.toISOString(),
+        };
+      }
+      case "project": {
+        if (projectUuids && !projectUuids.includes(uuid)) return null;
+        const project = await prisma.project.findFirst({
+          where: { uuid, companyUuid },
+          select: { uuid: true, name: true, updatedAt: true },
+        });
+        return project && {
+          entityType: "project",
+          uuid: project.uuid,
+          title: project.name,
+          snippet: "",
+          status: "active",
+          projectUuid: null,
+          projectName: null,
+          updatedAt: project.updatedAt.toISOString(),
+        };
+      }
+      case "project_group": {
+        if (scope === "project") return null;
+        if (groupUuid && uuid !== groupUuid) return null;
+        const projectGroup = await prisma.projectGroup.findFirst({
+          where: { uuid, companyUuid },
+          select: { uuid: true, name: true, updatedAt: true },
+        });
+        return projectGroup && {
+          entityType: "project_group",
+          uuid: projectGroup.uuid,
+          title: projectGroup.name,
+          snippet: "",
+          status: "active",
+          projectUuid: null,
+          projectName: null,
+          updatedAt: projectGroup.updatedAt.toISOString(),
+        };
+      }
+    }
+  });
+
+  const results = (await Promise.all(lookups)).filter(
+    (result): result is SearchResult => result !== null,
+  );
+  if (results.length === 0) return null;
+
+  const counts = emptyCounts();
+  for (const result of results) {
+    switch (result.entityType) {
+      case "task": counts.tasks += 1; break;
+      case "idea": counts.ideas += 1; break;
+      case "proposal": counts.proposals += 1; break;
+      case "document": counts.documents += 1; break;
+      case "project": counts.projects += 1; break;
+      case "project_group": counts.projectGroups += 1; break;
+    }
+  }
+  return { results, counts };
 }
 
 // ===== Entity Search Functions =====
@@ -447,6 +622,18 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
     groupUuid = scopeUuid;
   }
 
+  if (CANONICAL_UUID_PATTERN.test(query)) {
+    const exactResult = await searchExactUuid(
+      companyUuid,
+      query.toLowerCase(),
+      typesToSearch,
+      scope,
+      projectUuids,
+      groupUuid,
+    );
+    if (exactResult) return exactResult;
+  }
+
   // Execute searches in parallel
   const searchPromises: Promise<{ results: SearchResult[]; count: number }>[] = [];
   const typeOrder: EntityType[] = [];
@@ -480,14 +667,7 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
 
   // Combine results and build counts
   const allResults: SearchResult[] = [];
-  const counts: SearchCounts = {
-    tasks: 0,
-    ideas: 0,
-    proposals: 0,
-    documents: 0,
-    projects: 0,
-    projectGroups: 0,
-  };
+  const counts = emptyCounts();
 
   searchResults.forEach((result, index) => {
     allResults.push(...result.results);

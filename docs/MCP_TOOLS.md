@@ -380,16 +380,16 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 ### chorus_get_activity
 
-**Description**: Get the activity stream for a project
+**Description**: Get the paginated activity stream for a project. There is no single-activity get tool, so each row retains the full activity payload, including `value` and session context.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page (default 50) |
+| pageSize | number | No | Items per page (default 20, maximum 100) |
 
-**Output**: Activity list JSON
+**Output**: Activity list JSON. All page-mode collection responses include `returned`, `page`, `pageSize`, and the full matching `total`. Bounded discovery tools may instead report `total` as the returned candidate-set size when the backing query does not expose a full count.
 
 ### chorus_get_my_assignments
 
@@ -571,12 +571,12 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_search
 
-**Description**: Search across tasks, ideas, proposals, documents, projects, and project groups. Supports scoping to project groups or specific projects.
+**Description**: Search compact summaries across tasks, ideas, proposals, documents, projects, and project groups. A canonical UUID query performs tenant-scoped exact lookup first; text search is the fallback. Prefer search for discovery, use paginated list tools only for browsing, and call the entity's single-resource `get` tool for full details.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| query | string | Yes | Search query (matches title, description, content) |
+| query | string | Yes | Canonical entity UUID for exact lookup, or text matching title, description, and content |
 | scope | enum | No | Search scope: global, group, project (default: global) |
 | scopeUuid | string | No | Project group UUID (scope=group) or project UUID (scope=project) |
 | entityTypes | string[] | No | Entity types to search: task, idea, proposal, document, project, project_group (default: all) |
@@ -608,10 +608,16 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 ```
 
 **Usage examples**:
+- Exact UUID lookup: `{ query: "123e4567-e89b-42d3-a456-426614174000" }`
 - Global search: `{ query: "authentication" }`
 - Search in a project group: `{ query: "authentication", scope: "group", scopeUuid: "group-uuid" }`
 - Search in a specific project: `{ query: "authentication", scope: "project", scopeUuid: "project-uuid" }`
 - Search only tasks and ideas: `{ query: "authentication", entityTypes: ["task", "idea"] }`
+
+**Discovery workflow**:
+1. Use `chorus_search` with a known UUID or a filtered text query.
+2. Use paginated `chorus_list_*` / plural `chorus_get_*` tools only when browsing a collection.
+3. Pass the selected UUID to the matching single-resource `get` tool for full detail.
 
 ---
 
@@ -707,7 +713,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_get_comments
 
-**Description**: Get the list of comments for an Idea/Proposal/Task/Document
+**Description**: Get paginated comments for an Idea/Proposal/Task/Document, newest first. There is no single-comment get tool, so each row includes the full `content` and resolved `author`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -715,7 +721,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 | targetType | enum | Yes | Target type: idea, proposal, task, document |
 | targetUuid | string | Yes | Target UUID |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page |
+| pageSize | number | No | Items per page (default 20, maximum 100) |
 
 **Output**: Comment list JSON
 

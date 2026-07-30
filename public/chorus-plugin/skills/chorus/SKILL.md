@@ -223,13 +223,15 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_search` | Search across tasks, ideas, proposals, documents, projects, and project groups |
+| `chorus_search` | Search compact summaries across tasks, ideas, proposals, documents, projects, and project groups; canonical UUIDs use exact lookup |
 
 **Parameters:**
 - `query`: Search query string
 - `scope`: `"global"` (default) / `"group"` / `"project"`
 - `scopeUuid`: Project group UUID (when scope=group) or project UUID (when scope=project)
 - `entityTypes`: Array of entity types to search (default: all types)
+
+Prefer `chorus_search` for discovery, including exact UUID lookup. Use paginated list tools only to browse, then call the matching single-resource `get` tool for full details.
 
 ### Notifications
 

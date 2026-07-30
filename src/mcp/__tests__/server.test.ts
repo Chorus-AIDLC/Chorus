@@ -33,7 +33,14 @@ import { registerPmTools } from "@/mcp/tools/pm";
 import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
 import { registerPublicTools } from "@/mcp/tools/public";
+import { registerSessionTools } from "@/mcp/tools/session";
 import { TOOL_PERMISSIONS } from "@/mcp/tools/permission-map";
+import {
+  assertCollectionToolsInventoried,
+  enforceToolClassification,
+  isCollectionToolConfig,
+  TOOL_COLLECTION_CLASSIFICATION,
+} from "@/mcp/tools/collection-contract";
 
 // Minimal McpServer stand-in: records every tool name that gets registered.
 function makeCapturingServer() {
@@ -44,6 +51,30 @@ function makeCapturingServer() {
     },
   };
   return { server, names };
+}
+
+function registeredTools(): Array<{ name: string; collection: boolean }> {
+  const tools: Array<{ name: string; collection: boolean }> = [];
+  const server = {
+    registerTool: (name: string, config: unknown) => {
+      tools.push({ name, collection: isCollectionToolConfig(config) });
+    },
+  };
+  const auth = makeAuth([...ROLE_PRESETS.admin_agent]);
+
+  // Exercise the same production registration modules as createMcpServer.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerPublicTools(server as any, auth);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerSessionTools(server as any, auth);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerPmTools(server as any, auth);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerDeveloperTools(server as any, auth);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerAdminTools(server as any, auth);
+
+  return tools;
 }
 
 function makeAuth(permissions: Permission[]): AgentAuthContext {
@@ -77,6 +108,51 @@ function registeredFor(permissions: Permission[]): Set<string> {
   const gated = new Set(Object.keys(TOOL_PERMISSIONS));
   return new Set(names.filter((n) => gated.has(n)));
 }
+
+describe("collection tool inventory", () => {
+  it("covers every collection-returning tool discovered from production registration", () => {
+    const registered = registeredTools()
+      .filter(({ collection }) => collection)
+      .map(({ name }) => name);
+
+    expect(registered.length).toBeGreaterThan(0);
+    expect(() => assertCollectionToolsInventoried(registered)).not.toThrow();
+  });
+
+  it("requires review of every real production registration without trusting metadata", () => {
+    const names = registeredTools().map(({ name }) => name).sort();
+
+    expect(names).toEqual(Object.keys(TOOL_COLLECTION_CLASSIFICATION).sort());
+  });
+
+  it("rejects adding a production registration without a classification entry", () => {
+    const registerTool = vi.fn();
+    const server = enforceToolClassification({ registerTool });
+
+    expect(() =>
+      server.registerTool("chorus_synthetic_collection", {}, vi.fn())
+    ).toThrow(
+      "MCP tool missing explicit collection classification: chorus_synthetic_collection",
+    );
+    expect(registerTool).not.toHaveBeenCalled();
+  });
+
+  it("rejects explicitly classifying a registration as collection without inventory", () => {
+    const registerTool = vi.fn();
+    expect(() =>
+      enforceToolClassification(
+        { registerTool },
+        {
+          ...TOOL_COLLECTION_CLASSIFICATION,
+          chorus_synthetic_collection: "collection",
+        },
+      )
+    ).toThrow(
+      "MCP collection tools missing from COLLECTION_TOOL_INVENTORY: chorus_synthetic_collection",
+    );
+    expect(registerTool).not.toHaveBeenCalled();
+  });
+});
 
 // 0.6.x tool lists captured from pm.ts / developer.ts / admin.ts before this
 // refactor. Used for strict-equality / superset assertions.
