@@ -407,7 +407,7 @@ Chorus does three things here:
 
 1. Calls the `chorus_checkin()` MCP tool to get the current Agent's identity (role, name, persona), assigned Ideas and Tasks, and unread notifications
 2. Injects the complete checkin result into Claude's context via `additionalContext` — the Agent knows who it is and what to do from the very first turn
-3. Scans the `.chorus/sessions/` directory to list existing Sub-Agent session metadata — this handles the case where a Claude Code session is interrupted and resumed: previous session files may still exist, and the Team Lead needs to know which sessions are still present after recovery
+3. Scans this session's `sessions/` directory (under `~/.chorus/plugin/<cwd-slug>/<sessionId>/`) to list existing Sub-Agent session metadata — this handles the case where a Claude Code session is interrupted and resumed: previous session files may still exist, and the Team Lead needs to know which sessions are still present after recovery
 
 ```bash
 # on-session-start.sh core logic
@@ -432,7 +432,7 @@ Triggered on every user input, so it must be extremely fast (<100ms). Chorus mak
 
 ```bash
 # on-user-prompt.sh — pure local operation, no MCP calls
-# Count json files in .chorus/sessions/
+# Count json files in this session's sessions/ dir (~/.chorus/plugin/<cwd-slug>/<sessionId>/sessions/)
 CONTEXT="[Chorus Plugin Active]
 - Active sub-agent sessions (3): frontend-worker, backend-worker, test-runner"
 ```
@@ -467,9 +467,9 @@ Async + `suppressOutput: true`. Does just one thing: calls `chorus_session_heart
 
 When a Claude Code internal Task is marked complete, Chorus checks whether the task description contains a `chorus:task:<uuid>` tag. If so, it automatically executes `chorus_session_checkout_task`. This is an elegant **metadata bridging** pattern — by embedding a Chorus task UUID in the CC Task description, the two systems' Task lifecycles are linked.
 
-**`SessionEnd` — Clean Up .chorus/ Directory**
+**`SessionEnd` — Clean Up This Session's State Directory**
 
-When the session ends, checks whether all session files have been cleaned up and state.json is empty. If so, deletes the entire `.chorus/` directory, leaving no leftover files.
+When the session ends, it removes this session's own state directory (`~/.chorus/plugin/<cwd-slug>/<sessionId>/`), leaving no leftover files. Because each Claude Code session has its own directory, this delete is unconditional and never races a concurrent session on the same project.
 
 ---
 
@@ -483,7 +483,7 @@ Now for the main topic — how the Chorus plugin uses the above mechanisms to so
 Team Lead calls Task tool to spawn Sub-Agent
   │
   ├─ [PreToolUse:Task] on-pre-spawn-agent.sh
-  │    Write .chorus/pending/<name> file (capture agent name)
+  │    Write <sessionId>/pending/<name> file (capture agent name)
   │
   ├─ [SubagentStart] on-subagent-start.sh    ← Core
   │    Claim pending file (atomic mv, handles concurrency)
@@ -509,12 +509,12 @@ Team Lead calls Task tool to spawn Sub-Agent
        Query and display newly unblocked tasks
 ```
 
-### 5.2 The `.chorus/` Directory: The Bridge Connecting Everything
+### 5.2 The State Directory: The Bridge Connecting Everything
 
-We've mentioned "shared filesystem" multiple times — let's expand on this. The Chorus plugin maintains a `.chorus/` directory (gitignored) at the project root, serving as the information hub between the Team Lead, Sub-Agents, and all hooks:
+We've mentioned "shared filesystem" multiple times — let's expand on this. The Chorus plugin maintains a per-session state directory, serving as the information hub between the Team Lead, Sub-Agents, and all hooks. It lives under a single **global** root — `~/.chorus/plugin/` (aligned with the Chorus daemon's `~/.chorus/` convention) — partitioned by a readable project slug and the Claude Code session id, so there's no per-project `.chorus/` folder to create or gitignore:
 
 ```
-.chorus/                              # Plugin runtime state (gitignored)
+~/.chorus/plugin/<cwd-slug>/<sessionId>/   # <cwd-slug> = project dir, '/'→'-' (like ~/.claude/projects)
 ├── state.json                        # Global state KV store
 ├── state.json.lock                   # flock exclusive lock file
 ├── sessions/                         # Sub-Agent session metadata (for hook state lookup)
@@ -526,6 +526,8 @@ We've mentioned "shared filesystem" multiple times — let's expand on this. The
 └── claimed/                          # Files claimed by SubagentStart
     └── <agent-id>
 ```
+
+A single shared `bin/chorus-paths.sh` module resolves this path for `chorus-api.sh` and every hook, so the layout is defined in exactly one place. Each hook lifts the Claude Code `session_id` (identical across the whole session — sub-agents differ only by `agent_id`) from its stdin event and exports it, so every hook in a session resolves to the same `<sessionId>` directory.
 
 #### Core: `state.json` — Cross-Hook State Sharing
 
@@ -580,8 +582,8 @@ The solution is a relay between two hooks:
 
 ```
 Timeline:
-  T1  PreToolUse:Task fires → write .chorus/pending/frontend-worker
-  T2  PreToolUse:Task fires → write .chorus/pending/backend-worker
+  T1  PreToolUse:Task fires → write <sessionId>/pending/frontend-worker
+  T2  PreToolUse:Task fires → write <sessionId>/pending/backend-worker
   T3  SubagentStart(agent_id=a0e) fires → mv pending/frontend-worker → claimed/a0e ✓
   T4  SubagentStart(agent_id=b1f) fires → mv pending/backend-worker → claimed/b1f ✓
   T4' SubagentStart(agent_id=c2g) fires → mv pending/frontend-worker → fails (already claimed by a0e)
@@ -598,17 +600,17 @@ Session files now contain only minimal metadata (sessionUuid, agentId, agentName
 #### Lifecycle: Creation to Cleanup
 
 ```
-SessionStart  → mkdir -p .chorus/ (if not exists)
-PreToolUse    → write .chorus/pending/<name>
+SessionStart  → resolve ~/.chorus/plugin/<cwd-slug>/<sessionId>/ (created lazily)
+PreToolUse    → write <sessionId>/pending/<name>
 SubagentStart → mv pending → claimed, write sessions/<name>.json (metadata only),
                 inject workflow via additionalContext → Sub-Agent, update state.json
 TeammateIdle  → read state.json (lookup session_uuid), no writes
 TaskCompleted → read state.json (lookup session_uuid), no writes
 SubagentStop  → delete sessions/<name>.json, delete claimed/<agent_id>, clean state.json entries
-SessionEnd    → if sessions/ is empty and state.json is empty → rm -rf .chorus/
+SessionEnd    → rm -rf this session's dir (~/.chorus/plugin/<cwd-slug>/<sessionId>/)
 ```
 
-The entire directory's lifecycle matches the Claude Code session — created at start, cleaned up at end, leaving no trace.
+Because the directory is keyed by the Claude Code session id, its lifecycle matches the session exactly — resolved at start, removed at end — and concurrent sessions on the same project each get their own directory, so `SessionEnd` can delete its own without racing siblings. Nothing is left in the project tree.
 
 ### 5.3 The Core Challenge: Sub-Agent Context Injection
 
@@ -723,7 +725,7 @@ SubagentStart hook  →  additionalContext  →  Sub-Agent's context
 
 ### Pattern 2: Filesystem for Cross-Hook State (Not Sub-Agent Communication)
 
-The shared filesystem (`.chorus/` directory) is valuable for **hook-to-hook** state passing (e.g., `pending/` files relay agent names from `PreToolUse` to `SubagentStart`), but should not be the primary mechanism for Sub-Agent context injection. Use `SubagentStart`'s `additionalContext` for that instead.
+The shared filesystem (the plugin's per-session state directory under `~/.chorus/plugin/`) is valuable for **hook-to-hook** state passing (e.g., `pending/` files relay agent names from `PreToolUse` to `SubagentStart`), but should not be the primary mechanism for Sub-Agent context injection. Use `SubagentStart`'s `additionalContext` for that instead.
 
 ### Pattern 3: PreToolUse Captures + SubagentStart Executes
 

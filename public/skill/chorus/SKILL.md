@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -270,13 +270,15 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_search` | Search across tasks, ideas, proposals, documents, projects, and project groups |
+| `chorus_search` | Search compact summaries across tasks, ideas, proposals, documents, projects, and project groups; canonical UUIDs use exact lookup |
 
 **Parameters:**
 - `query`: Search query string
 - `scope`: `"global"` (default) / `"group"` / `"project"`
 - `scopeUuid`: Project group UUID (when scope=group) or project UUID (when scope=project)
 - `entityTypes`: Array of entity types to search (default: all types)
+
+Prefer `chorus_search` for discovery, including exact UUID lookup. Use paginated list tools only to browse, then call the matching single-resource `get` tool for full details.
 
 ### Notifications
 
@@ -425,7 +427,7 @@ This is the **single canonical description** of the reviewer pattern. The `devel
 2. **The reviewer audits independently** and posts exactly **one** structured `VERDICT` comment on the proposal/task/idea via `chorus_add_comment`. The comment ends with one literal verdict string: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`.
 3. **Read the verdict and act.** Fetch the comment with `chorus_get_comments({ targetType, targetUuid })`, read the BLOCKER / NOTE findings, then make the call:
    - `PASS` / `PASS WITH NOTES` → proceed (approve the proposal / verify the task / ship the feature), addressing NOTEs at your discretion.
-   - `FAIL` → do **not** proceed; route the BLOCKERs back for a fix (reject/revise the proposal, reopen/rework the task, or — for the code-review gateway — **add new fix tasks to the approved proposal** and re-run once they are done), then re-review. The cleanest way to run those code-review fix tasks is the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (not standalone), then execute → verify them like any quick task. Do **not** reopen the already-verified tasks.
+   - `FAIL` → do **not** proceed; route the BLOCKERs back for a fix (reject/revise the proposal, reopen/rework the task, or — for the code-review gateway — **add new fix tasks to the approved proposal** and re-run once they are done), then re-review. The cleanest way to run those code-review fix tasks is the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (not standalone), then group related small BLOCKERs by default and split only materially large or independently testable fixes. Never reopen completed tasks or apply untracked fixes. Require AC self-check, independent task review, and admin verification for every fix; re-run aggregate review only after all are successfully `done`. A failed or cancelled fix stops the loop and escalates, while `maxCodeReviewRounds` remains authoritative.
 
 > The verdict is advisory: even a `FAIL` does not hard-block, and a `PASS` does not auto-approve. A human/admin (or, under `/yolo`, the automated orchestrator) makes the final decision. The code-review gateway in particular is a **behavioral** gate — it does not change the Idea's stored status; the orchestrator honors its verdict.
 

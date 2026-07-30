@@ -17,6 +17,12 @@ if [ ! -t 0 ]; then
   EVENT=$(cat)
 fi
 
+# Extract the Claude Code session id from the event and export it so chorus-api.sh
+# (and any sub-path we build) resolves to this session's global state partition.
+# Fail-soft: an absent id just falls back to the shared "no-session" bucket.
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
 # Check if Chorus environment is configured
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
   "$API" hook-output \

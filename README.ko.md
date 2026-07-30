@@ -394,6 +394,7 @@ PGlite는 포트 5433에서 내장 PostgreSQL을 실행합니다. 데이터는 `
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| Pi coding agent | [CONNECT_PI.md](docs/CONNECT_PI.md) |
 | Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | 그 밖의 MCP 에이전트(Cursor, Continue, 커스텀 등) | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
@@ -412,6 +413,7 @@ API 키는 Web UI의 **Settings → Agents → Create API Key**에서 만듭니�
 |--------|----------|----------|
 | **플러그인 내장(Claude Code)** | `public/chorus-plugin/skills/` | Claude Code + Chorus 플러그인, 자동화된 세션과 라이프사이클 훅 |
 | **플러그인 내장(Codex CLI)** | `plugins/chorus/skills/` | Codex CLI + Chorus 플러그인, `$` 접두사 슬래시 명령을 갖춘 이식판 스킬 |
+| **패키지 내장(Pi)** | `packages/chorus-pi/skills/` | Pi + Chorus 패키지, 자동화된 세션과 라이프사이클 훅 |
 | **스탠드얼론** | `public/skill/`(`/skill/`에서 제공) | 그 밖의 MCP 지원 에이전트(Cursor, Continue, 커스텀), 수동 세션 관리 |
 
 ### OpenSpec 모드 (옵트인, 플러그인 0.8.1+)

@@ -9,13 +9,25 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.chorus"
-SESSIONS_DIR="${STATE_DIR}/sessions"
 
 # Skip entirely if Chorus is not configured
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
   exit 0
 fi
+
+# Read stdin only to lift the session id (no MCP, no network — stays fast).
+EVENT=""
+if [ ! -t 0 ]; then
+  EVENT=$(cat)
+fi
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
+# Resolve this session's global state dir (fail-soft to the old layout).
+# shellcheck source=chorus-paths.sh
+[ -f "${SCRIPT_DIR}/chorus-paths.sh" ] && { . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true; }
+STATE_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}"
+SESSIONS_DIR="${STATE_DIR}/sessions"
 
 # Count active session files (fast local check)
 SESSION_COUNT=0

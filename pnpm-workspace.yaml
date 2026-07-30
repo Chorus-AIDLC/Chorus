@@ -1,3 +1,4 @@
 packages:
   - "packages/*"
   - "!packages/openclaw-plugin"
+  - "!packages/chorus-pi"

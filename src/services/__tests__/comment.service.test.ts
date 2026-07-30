@@ -606,7 +606,7 @@ describe("listComments", () => {
     expect(result.comments[0].author.name).toBe("Unknown");
   });
 
-  it("offset mode is unchanged: oldest-first orderBy, {comments,total} shape, no cursor fields", async () => {
+  it("offset mode defaults to newest-first and keeps the {comments,total} shape", async () => {
     mockPrisma.comment.findMany.mockResolvedValue([makeCommentRecord()]);
     mockPrisma.comment.count.mockResolvedValue(1);
 
@@ -625,7 +625,11 @@ describe("listComments", () => {
     expect(result).not.toHaveProperty("nextCursor");
     expect(result).not.toHaveProperty("hasMore");
     expect(mockPrisma.comment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: "asc" }, skip: 0, take: 20 })
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: 0,
+        take: 20,
+      })
     );
     // Offset mode must not issue a cursor-resolution lookup.
     expect(mockPrisma.comment.findFirst).not.toHaveBeenCalled();

@@ -396,6 +396,7 @@ If you'd rather read the full docs:
 |--------|-------|
 | Claude Code | [CONNECT_CLAUDE_CODE.md](docs/CONNECT_CLAUDE_CODE.md) |
 | Codex CLI | [CONNECT_CODEX.md](docs/CONNECT_CODEX.md) |
+| Pi coding agent | [CONNECT_PI.md](docs/CONNECT_PI.md) |
 | Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.md](docs/CONNECT_OPENCODE.md) |
 | Other MCP agents (Cursor, Continue, custom, …) | [CONNECT_OTHER_AGENTS.md](docs/CONNECT_OTHER_AGENTS.md) |
@@ -414,6 +415,7 @@ Create API Keys in the Web UI under **Settings → Agents → Create API Key**. 
 |--------|----------|----------|
 | **Plugin-embedded (Claude Code)** | `public/chorus-plugin/skills/` | Claude Code + Chorus plugin, automated Sessions and lifecycle hooks |
 | **Plugin-embedded (Codex CLI)** | `plugins/chorus/skills/` | Codex CLI + Chorus plugin, ported skills with `$`-prefixed slash commands |
+| **Package-embedded (Pi)** | `packages/chorus-pi/skills/` | Pi + Chorus package, automated Sessions and lifecycle hooks |
 | **Standalone** | `public/skill/` (served at `/skill/`) | Any other MCP-capable Agent (Cursor, Continue, custom), manual Session management |
 
 ### OpenSpec mode (opt-in, plugin 0.8.1+)

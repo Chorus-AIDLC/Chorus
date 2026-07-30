@@ -25,7 +25,11 @@ export CHORUS_API_KEY="cho_test"
 export CLAUDE_PROJECT_DIR="/tmp/chorus-test-$$"
 mkdir -p "$CLAUDE_PROJECT_DIR"
 
-cleanup() { rm -rf "$CLAUDE_PROJECT_DIR"; }
+# Point the plugin's GLOBAL state root at a throwaway dir so this test never
+# writes into the real ~/.chorus. chorus-paths.sh honors this override.
+export CHORUS_PLUGIN_STATE_ROOT="/tmp/chorus-test-$$/global"
+
+cleanup() { rm -rf "$CLAUDE_PROJECT_DIR" "/tmp/chorus-test-$$"; }
 trap cleanup EXIT
 
 # Mock event payloads for each hook type
@@ -80,6 +84,66 @@ run_test "on-session-end.sh"     '{}'
 
 # --- User prompt hook ---
 run_test "on-user-prompt.sh"     '{}'
+
+# ============================================================================
+# Global-state-layout assertions (chorus-paths.sh)
+# ============================================================================
+echo ""
+echo "Global state layout:"
+
+assert_eq() {
+  # assert_eq <label> <expected> <actual>
+  if [ "$2" = "$3" ]; then
+    printf "  PASS  %s\n" "$1"
+    PASS=$((PASS + 1))
+  else
+    printf "  FAIL  %s (expected '%s', got '%s')\n" "$1" "$2" "$3"
+    FAIL=$((FAIL + 1))
+    FAILED="$FAILED assert:$1"
+  fi
+}
+
+assert_true() {
+  # assert_true <label> <condition-cmd...>
+  local _label="$1"; shift
+  if "$@"; then
+    printf "  PASS  %s\n" "$_label"
+    PASS=$((PASS + 1))
+  else
+    printf "  FAIL  %s\n" "$_label"
+    FAIL=$((FAIL + 1))
+    FAILED="$FAILED assert:$_label"
+  fi
+}
+
+# 1. chorus_slug_for_dir encodes an absolute path to a readable slug (not a hash).
+SLUG_OUT="$( . "$DIR/chorus-paths.sh" 2>/dev/null; chorus_slug_for_dir "/home/ubuntu/dev/ai-pm" )"
+assert_eq "slug encoding /home/ubuntu/dev/ai-pm" "-home-ubuntu-dev-ai-pm" "$SLUG_OUT"
+
+# 2. With a session id, CHORUS_STATE_DIR resolves under the (overridden) global
+#    root at <root>/<slug>/<sessionId> — NOT under $CLAUDE_PROJECT_DIR/.chorus.
+STATE_WITH_SID="$( export CHORUS_SESSION_ID="sess-xyz"; . "$DIR/chorus-paths.sh" 2>/dev/null; printf '%s' "$CHORUS_STATE_DIR" )"
+EXPECT_SLUG="$( . "$DIR/chorus-paths.sh" 2>/dev/null; chorus_slug_for_dir "$CLAUDE_PROJECT_DIR" )"
+assert_eq "state dir under global root/<slug>/<sessionId>" \
+  "${CHORUS_PLUGIN_STATE_ROOT}/${EXPECT_SLUG}/sess-xyz" "$STATE_WITH_SID"
+case "$STATE_WITH_SID" in
+  *"/.chorus"*) assert_true "state dir is NOT the per-project .chorus" false ;;
+  *)            assert_true "state dir is NOT the per-project .chorus" true ;;
+esac
+
+# 3. Missing session id falls back to <slug>/no-session (never empty).
+STATE_NO_SID="$( unset CHORUS_SESSION_ID; . "$DIR/chorus-paths.sh" 2>/dev/null; printf '%s' "$CHORUS_STATE_DIR" )"
+assert_eq "no session id -> <slug>/no-session" \
+  "${CHORUS_PLUGIN_STATE_ROOT}/${EXPECT_SLUG}/no-session" "$STATE_NO_SID"
+
+# 4. A hook that writes state (on-pre-spawn-agent) lands its pending file under
+#    the global root, and does NOT create a .chorus/ in the project dir.
+printf '%s' '{"session_id":"sess-place","tool_input":{"subagent_type":"general-purpose","name":"placer"}}' \
+  | "$BASH" "$DIR/on-pre-spawn-agent.sh" >/dev/null 2>&1 || true
+assert_true "pending file written under global root" \
+  test -f "${CHORUS_PLUGIN_STATE_ROOT}/${EXPECT_SLUG}/sess-place/pending/placer"
+assert_true "no .chorus/ created in project dir" \
+  test ! -d "${CLAUDE_PROJECT_DIR}/.chorus"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

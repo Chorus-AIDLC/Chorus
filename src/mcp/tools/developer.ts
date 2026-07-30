@@ -13,8 +13,10 @@ import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
+import { enforceToolClassification } from "./collection-contract";
 
 export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext) {
+  server = enforceToolClassification(server);
   // chorus_claim_task - Claim a Task
   registerPermissionedTool(
     server,

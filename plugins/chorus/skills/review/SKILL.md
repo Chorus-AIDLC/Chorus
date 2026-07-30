@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.5"
+  version: "0.14.6"
   category: project-management
   mcp_server: chorus
 ---
@@ -68,7 +68,7 @@ When reviewing proposals, tasks, or an Idea's final aggregate code change, prefe
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
-   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway. Fix the specific BLOCKERs listed in the comment before resubmitting.
+   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
 3. **No new VERDICT comment?** The reviewer exhausted its `maxTurns` budget before posting. Respawn it ONCE with an explicit prompt like: *"Stay within your turn budget. Skip deep source verification — batch all MCP fetches up front, skim for obvious BLOCKERs only, and reserve your last few turns to post the VERDICT comment."* If the second attempt also fails to post, review manually using the checklists below.
 4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
 5. **Fallback.** If the reviewer is unavailable (e.g., agent type not registered, sub-agent spawn fails), review the item yourself using the quality checklists in the workflows below.

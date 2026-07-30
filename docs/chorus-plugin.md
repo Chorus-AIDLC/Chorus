@@ -27,20 +27,20 @@ Team Lead spawns sub-agent "frontend-worker"
   │
   ├─ [Hook: SubagentStart] fires SYNCHRONOUSLY before sub-agent runs
   │   ├─ Creates Chorus session via MCP
-  │   ├─ Writes .chorus/sessions/frontend-worker.json
+  │   ├─ Writes <sessionId>/sessions/frontend-worker.json (under ~/.chorus/plugin/<cwd-slug>/)
   │   └─ Output to Team Lead: "Session UUID: xxx"
   │
   └─ Sub-agent starts
       ├─ [Hook: SessionStart] fires (if applicable)
-      │   └─ Scans .chorus/sessions/ → outputs "Your session: xxx"
+      │   └─ Scans this session's sessions/ dir → outputs "Your session: xxx"
       │
-      └─ OR: Sub-agent reads .chorus/sessions/frontend-worker.json
+      └─ OR: Sub-agent reads <sessionId>/sessions/frontend-worker.json
           (instructed by skill docs or Team Lead prompt)
 ```
 
 The sub-agent gets its session UUID via **two redundant paths**:
 1. **SessionStart hook** scans session files and outputs them as context
-2. **File read** — the sub-agent reads `.chorus/sessions/<my-name>.json` directly
+2. **File read** — the sub-agent reads its session's `sessions/<my-name>.json` directly
 
 ### Auto-cleanup on Sub-agent Exit (Plan D)
 
@@ -118,13 +118,24 @@ public/chorus-plugin/                # Plugin root
 .claude/skills/
 └── chorus → ../../public/chorus-plugin/skills/chorus  (symlink, local dev)
 
-Runtime state (gitignored):
-.chorus/
+Runtime state (global, not per-project):
+~/.chorus/plugin/<cwd-slug>/<sessionId>/   # <cwd-slug> = project dir with '/'→'-'
 ├── state.json                       # Hook state: agent→session mappings
-└── sessions/                        # Per-agent session files (Plan A)
-    ├── frontend-worker.json
-    └── backend-worker.json
+├── sessions/                        # Per-agent session files (Plan A)
+│   ├── frontend-worker.json
+│   └── backend-worker.json
+├── pending/                         # PreToolUse:Task → SubagentStart handoff
+└── claimed/                         # claimed pending files, keyed by agent_id
 ```
+
+Local hook state lives under the **global** `~/.chorus/plugin/` root (aligned with
+the daemon's `~/.chorus/` convention), partitioned by a readable project slug and
+the Claude Code session id — so there is no per-project `.chorus/` folder to create
+or gitignore. Path resolution is centralized in `bin/chorus-paths.sh`. This holds
+only hook-to-hook scratchpad state (session mappings, cached owner/permissions,
+sub-agent handoff files) — never credentials, and never a project↔directory binding
+(project scoping is server-side via the `X-Chorus-Project` header / explicit
+`projectUuid` args).
 
 ## Hooks
 
@@ -137,7 +148,7 @@ Runtime state (gitignored):
 2. Calls `chorus_checkin` via MCP to verify connectivity and inject agent context
 3. Outputs hook status and usage hints
 4. If resuming with existing state, sends a heartbeat
-5. **Session discovery (Plan A):** Scans `.chorus/sessions/` for pre-created session files and outputs them. If the current agent is a sub-agent, it can identify its own session by name.
+5. **Session discovery (Plan A):** Scans this session's `sessions/` dir (under `~/.chorus/plugin/<cwd-slug>/<sessionId>/`) for pre-created session files and outputs them. If the current agent is a sub-agent, it can identify its own session by name.
 
 ### SubagentStart
 
@@ -150,7 +161,7 @@ Runtime state (gitignored):
 2. Skips non-worker types (Explore, Plan, haiku, etc.)
 3. Creates a Chorus session via MCP (`chorus_create_session`)
 4. Stores mappings in `state.json` (by agent_id and agent_name)
-5. **Writes session file** to `.chorus/sessions/<agent_name>.json` with full session info
+5. **Writes session file** to `<sessionId>/sessions/<agent_name>.json` (under `~/.chorus/plugin/<cwd-slug>/`) with full session info
 6. Outputs session UUID and file path to Team Lead's context
 
 ### SubagentStop
@@ -186,7 +197,7 @@ This prevents Chorus sessions from being marked inactive during long-running age
 
 ## State File
 
-The plugin stores session mapping state in `$CLAUDE_PROJECT_DIR/.chorus/state.json`. This file is automatically created and should be gitignored.
+The plugin stores session mapping state in `~/.chorus/plugin/<cwd-slug>/<sessionId>/state.json` (global, per Claude Code session — not per-project). `<cwd-slug>` is the project directory with non-alphanumeric characters replaced by `-` (mirroring Claude Code's own `~/.claude/projects/` encoding). The file is created automatically; being outside the repo, it never needs gitignoring.
 
 **Format:**
 ```json
@@ -200,7 +211,7 @@ The plugin stores session mapping state in `$CLAUDE_PROJECT_DIR/.chorus/state.js
 
 ## Session Files (Plan A)
 
-Per-agent session files live in `$CLAUDE_PROJECT_DIR/.chorus/sessions/<agent_name>.json`:
+Per-agent session files live in `~/.chorus/plugin/<cwd-slug>/<sessionId>/sessions/<agent_name>.json`:
 
 ```json
 {
@@ -286,13 +297,13 @@ The hook skips read-only agent types (Explore, Plan, haiku). Only worker agents 
 
 ### Sub-agent can't find its session
 
-1. Check that `.chorus/sessions/<agent-name>.json` exists
+1. Check that `~/.chorus/plugin/<cwd-slug>/<sessionId>/sessions/<agent-name>.json` exists
 2. Verify SubagentStart hook ran (check Team Lead's context for "Chorus session auto-created" message)
 3. Ensure the sub-agent name matches the filename
 
 ### State file not updating
 
-Check that `$CLAUDE_PROJECT_DIR` is set and writable. The state file is at `$CLAUDE_PROJECT_DIR/.chorus/state.json`.
+Check that `$HOME` is set and writable. The state file is at `~/.chorus/plugin/<cwd-slug>/<sessionId>/state.json` (if `$HOME` is unset it falls back to `/tmp`; if the Claude Code session id is unavailable it uses a shared `<cwd-slug>/no-session/` bucket).
 
 ### Heartbeat failures
 

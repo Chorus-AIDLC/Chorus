@@ -25,6 +25,12 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
+# Export the CC session id so chorus-api.sh's state-get resolves to the SAME
+# <sessionId> partition on-subagent-start wrote the session_<name> mapping to.
+# Without this the lookup would miss and teammate heartbeats would silently stop.
+CHORUS_SESSION_ID=$(printf '%s' "$EVENT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null) || true
+export CHORUS_SESSION_ID
+
 # Extract teammate info from event
 # TeammateIdle provides teammate_name (unlike SubagentStart/Stop which don't)
 TEAMMATE_NAME=$(echo "$EVENT" | jq -r '.teammate_name // .teammateName // empty' 2>/dev/null) || true
