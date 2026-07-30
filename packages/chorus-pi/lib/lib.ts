@@ -308,7 +308,7 @@ export function parseMaxCodeReviewRounds(raw: string | undefined): number {
  * Resolve the bundled `bin/chorus-mcp-call.sh` wrapper path.
  *
  * The wrapper ships inside the chorus-pi package (`bin/chorus-mcp-call.sh`,
- * declared as a `bin` in package.json). When installed via `pi install ./chorus-pi`
+ * declared as a `bin` in package.json). When installed via `pi install ./packages/chorus-pi`
  * (a local path), the script is neither linked onto PATH nor placed under
  * `~/.pi/agent/npm/...` (those only happen for npm/git installs), so the skill's
  * `find ~/.pi/agent/npm` fallback misses it. Instead, the extension knows its own

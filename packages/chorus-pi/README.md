@@ -16,10 +16,19 @@ pi install npm:pi-mcp-adapter
 pi install npm:@narumitw/pi-subagents
 
 # this package (from repo)
-pi install ./chorus-pi
-# or once published
-pi install npm:@chorus-aidlc/chorus-pi
+pi install ./packages/chorus-pi
 ```
+
+For a fresh GitHub install, clone Chorus first, then install the package by local path:
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/Chorus-AIDLC/Chorus.git
+cd Chorus
+git sparse-checkout set packages/chorus-pi
+pi install "$PWD/packages/chorus-pi"
+```
+
+Pi supports Git package sources, but not a package subdirectory within a monorepo. `pi install git:github.com/Chorus-AIDLC/Chorus` therefore does not load this package.
 
 ### Install the reviewer agents
 
@@ -27,12 +36,12 @@ Pi's `pi-subagents` loads custom agents from `~/.pi/agent/agents/*.md` (user-lev
 
 ```bash
 mkdir -p ~/.pi/agent/agents
-cp chorus-pi/agents/*.md ~/.pi/agent/agents/
+cp packages/chorus-pi/agents/*.md ~/.pi/agent/agents/
 ```
 
 > The package ships all three reviewer agents (`chorus-proposal-reviewer`, `chorus-task-reviewer`, `chorus-code-reviewer`). Without this copy step the reviewer skills cannot spawn and the YOLO / review pipelines fail at their first review gate.
 
-Then configure `.mcp.json` and env vars — see `docs/CONNECT_PI.md`.
+Then configure `.mcp.json` and env vars — see [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
 
 ## Why Pi is the lowest-friction target
 
@@ -44,7 +53,7 @@ Then configure `.mcp.json` and env vars — see `docs/CONNECT_PI.md`.
 ## Structure
 
 ```
-chorus-pi/
+packages/chorus-pi/
 ├── package.json              # pi.extension entry + peerDeps
 ├── extensions/
 │   └── chorus.ts             # session_start / before_agent_start / tool_execution_end / session_shutdown

@@ -1,6 +1,6 @@
 # Connect Pi to Chorus
 
-This guide connects the [Pi coding agent](https://pi.dev) to a running Chorus instance via the `chorus-pi` package (in this repo at `chorus-pi/`). The package ships Chorus skills, read-only reviewer sub-agents, and session-aware extension hooks into Pi through Pi's native extension + skill + agent mechanisms — no marketplace, no installer, no bash hook scripts.
+This guide connects the [Pi coding agent](https://pi.dev) to a running Chorus instance via the `chorus-pi` package (in this repo at `packages/chorus-pi/`). The package ships Chorus skills, read-only reviewer sub-agents, and session-aware extension hooks into Pi through Pi's native extension + skill + agent mechanisms — no marketplace, no installer, no bash hook scripts.
 
 > For Claude Code, see [CONNECT_CLAUDE_CODE.md](CONNECT_CLAUDE_CODE.md). For Codex, see [CONNECT_CODEX.md](CONNECT_CODEX.md).
 
@@ -51,14 +51,19 @@ Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. Place a `.mcp.js
 ### From this repo (development)
 
 ```bash
-pi install ./chorus-pi
+pi install ./packages/chorus-pi
 ```
 
-### From npm (once published)
+### From GitHub
 
 ```bash
-pi install npm:@chorus-aidlc/chorus-pi
+git clone --filter=blob:none --sparse https://github.com/Chorus-AIDLC/Chorus.git
+cd Chorus
+git sparse-checkout set packages/chorus-pi
+pi install "$PWD/packages/chorus-pi"
 ```
+
+Pi accepts Git package sources such as `pi install git:github.com/user/repo@ref`, but currently has no syntax for selecting a package subdirectory. Because Chorus is a monorepo, installing its repository root directly does not load `packages/chorus-pi`.
 
 Restart Pi after installation (`/reload` or a fresh session) so the extension and skills are loaded.
 
@@ -68,7 +73,7 @@ Pi's `pi-subagents` loads custom agents from `~/.pi/agent/agents/*.md` (user-lev
 
 ```bash
 mkdir -p ~/.pi/agent/agents
-cp chorus-pi/agents/*.md ~/.pi/agent/agents/
+cp packages/chorus-pi/agents/*.md ~/.pi/agent/agents/
 ```
 
 > The package ships all three reviewer agent definitions (`chorus-proposal-reviewer.md`, `chorus-task-reviewer.md`, `chorus-code-reviewer.md`). Copy all of them. Project-level agents (`.pi/agents/`) prompt for trust on first use; user-level agents are always available.
@@ -91,7 +96,7 @@ If the checkin fails, the injected context will read `# Chorus: connection faile
 
 - **8 skills** — `/skill:chorus`, `/skill:idea`, `/skill:proposal`, `/skill:develop`, `/skill:review`, `/skill:quick-dev`, `/skill:yolo`, plus `openspec-aware` (a shared sub-procedure invoked by proposal/develop/yolo in OpenSpec mode) — driving every stage of the AI-DLC lifecycle. These are Agent Skills standard `SKILL.md` files, ported from the Claude Code plugin with Claude-specific references replaced (e.g. `Task` tool → `subagent`/`subagent_spawn`, `/chorus:develop` → `/skill:develop`, `disallowedTools` → `tools` whitelist).
 - **3 read-only reviewer sub-agents** — `chorus-proposal-reviewer`, `chorus-task-reviewer`, `chorus-code-reviewer` — defined as `.pi/agents/*.md` (frontmatter: `name`/`description`/`tools`/`model`; body = the system prompt). Spawned by the main agent via the blocking `subagent` tool (so it waits for the VERDICT) after proposal/task submission; they post a `VERDICT` comment and stop.
-- **Session-aware extension** (`chorus-pi/extensions/chorus.ts`) — a single TypeScript extension that subscribes to Pi's native events:
+- **Session-aware extension** (`packages/chorus-pi/extensions/chorus.ts`) — a single TypeScript extension that subscribes to Pi's native events:
   - `session_start` → `chorus_checkin` + OpenSpec detection + context injection (replaces Claude's `SessionStart` hook)
   - `before_agent_start` → inject the checkin result once (replaces Claude's `UserPromptSubmit` noise)
   - `tool_call` on `subagent_spawn` (pre-execution, **mutable input**) → create a Chorus session and **inject its UUID + the session workflow into the spawned worker's task**. The subprocess receives the UUID directly. This is the Pi-native equivalent of Claude's `SubagentStart` context injection — a capability the Codex port lacks (Codex has no pre-spawn mutation channel, so its workers manage sessions manually).
@@ -107,7 +112,7 @@ If the checkin fails, the injected context will read `# Chorus: connection faile
 | MCP delivery | `.mcp.json` with `${VAR}` expansion | installer writes `config.toml` (no `${VAR}`) | `pi-mcp-adapter` auto-discovers `.mcp.json` (literal values) |
 | Sub-agent sessions | auto (SubagentStart/Stop events) | **manual** (no sub-agent events) | **auto** (`tool_call` mutation injects session UUID into the spawned task) |
 | Reviewer agents | `agents/*.md` (model/tools/disallowedTools) | `agents/openai.yaml` (UI metadata) | `.pi/agents/*.md` (name/description/tools/model) |
-| Distribution | marketplace + `/plugins` | installer + TUI `/plugins` | `pi install npm:chorus-pi` (one line) |
+| Distribution | marketplace + `/plugins` | installer + TUI `/plugins` | GitHub checkout + local-path `pi install` |
 | Shell compat | n/a | must be Bash 3.2 compatible | n/a (TypeScript) |
 
 ## Configuration options (env vars)
@@ -136,8 +141,8 @@ Pi limits concurrent sub-agents (the `pi-subagents` package enforces a recursion
 | Injected context says "connection failed" | `CHORUS_URL` / `CHORUS_API_KEY` not exported in the shell that launches Pi, or Chorus not running. |
 | Skills don't show in `/skill:` autocomplete | Restart the session (`/reload` or fresh). Skills load at session start. |
 | Reviewer agents not in `/subagents` | `pi-subagents` not installed, or not restarted after install. Run `pi install npm:@narumitw/pi-subagents` and restart. |
-| `subagent_spawn` of a reviewer fails with "Unknown subagent" | The `chorus-pi/agents/*.md` files aren't on the agent discovery path. Confirm the package is installed and restart. |
-| Hooks don't fire | Extensions only load for trusted projects (or as a global package). Install `chorus-pi` globally (`pi install npm:chorus-pi`) so it loads regardless of project trust. |
+| `subagent_spawn` of a reviewer fails with "Unknown subagent" | The `packages/chorus-pi/agents/*.md` files aren't on the agent discovery path. Confirm the package is installed and restart. |
+| Hooks don't fire | Extensions only load for trusted projects (or as a global package). Install the package path without `-l` so Pi records it in user settings, then restart Pi. |
 
 ## Tool-name prefix (important porting note)
 
@@ -150,10 +155,10 @@ Pi's `pi-mcp-adapter` exposes MCP tools to the LLM and **prefixes them with the 
 
 The extension itself always uses the native names (`chorus_checkin`, `chorus_create_session`, …) because it calls Chorus directly over MCP-over-HTTP, bypassing the gateway prefixing. Only the **main agent's** tool calls are affected.
 
-If you want the skill docs' `chorus_*` names to work verbatim for the main agent, configure the chorus server with `"toolPrefix": "none"` in your mcp config, or add the specific tools via `includeTools`. Otherwise, translate `chorus_X` → `chorus_chorus_X` when calling from the main agent in gateway mode. The in-session verification (`chorus-pi/test/verify-pi-session.md`) auto-detects which mode is active.
+If you want the skill docs' `chorus_*` names to work verbatim for the main agent, configure the chorus server with `"toolPrefix": "none"` in your mcp config, or add the specific tools via `includeTools`. Otherwise, translate `chorus_X` → `chorus_chorus_X` when calling from the main agent in gateway mode. The in-session verification (`packages/chorus-pi/test/verify-pi-session.md`) auto-detects which mode is active.
 
 ## Next
 
-- Read the `chorus-pi/skills/chorus/SKILL.md` for the platform overview and tool reference.
+- Read the `packages/chorus-pi/skills/chorus/SKILL.md` for the platform overview and tool reference.
 - Use `/skill:yolo` for the full-auto AI-DLC pipeline, or the individual stage skills (`/skill:idea`, `/skill:proposal`, `/skill:develop`, `/skill:review`).
 - For the full design rationale and the Claude→Codex→Pi migration notes, see `docs/codex-plugin-plan.md` (the Codex plan; the Pi port follows the same methodology).

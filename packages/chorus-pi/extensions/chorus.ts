@@ -81,7 +81,7 @@ const ENABLE_CODE_REVIEWER = process.env.CHORUS_ENABLE_CODE_REVIEWER !== "false"
 const MAX_CODE_REVIEW_ROUNDS = parseMaxCodeReviewRounds(process.env.CHORUS_MAX_CODE_REVIEW_ROUNDS);
 
 // Resolve the bundled `bin/chorus-mcp-call.sh` wrapper relative to this extension's
-// install location. Local-path installs (`pi install ./chorus-pi`) don't link the bin
+// install location. Local-path installs (`pi install ./packages/chorus-pi`) don't link the bin
 // onto PATH and don't live under ~/.pi/agent/npm, so the skill's `find` fallback
 // misses it — the extension knows its own dir and can resolve it for the agent.
 // Computed once at load; empty string if not found (skill falls back to PATH/find).

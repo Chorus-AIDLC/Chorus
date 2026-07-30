@@ -413,7 +413,7 @@ test("parseMaxCodeReviewRounds: non-integer → default (no silent floor)", () =
 });
 
 // ─── resolveChorusBin (bundled wrapper resolution) ────────────────────────
-// For local-path installs (pi install ./chorus-pi) the bin is not on PATH and
+// For local-path installs (pi install ./packages/chorus-pi) the bin is not on PATH and
 // not under ~/.pi/agent/npm; the extension resolves it relative to its own dir.
 function fsWithFiles(files: string[]): FsLike {
   return { existsSync: (p: string) => files.includes(p) };

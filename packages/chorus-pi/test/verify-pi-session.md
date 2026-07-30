@@ -1,6 +1,6 @@
 # In-session verification (paste to a fresh Pi agent)
 
-> Run `bash chorus-pi/test/precheck.sh` in a shell **first**, then launch a
+> Run `bash packages/chorus-pi/test/precheck.sh` in a shell **first**, then launch a
 > **fresh** Pi session (do not `--resume` — the extension loads at session start)
 > and paste the block below to the agent. It self-checks each step and reports
 > PASS/FAIL per phase. Stop if any phase fails and report which.
@@ -13,7 +13,7 @@ assertion actually held.
 ## Phase C — discovery + connection
 
 C1. Skill discovery: load the core skill and confirm it rendered.
-    - Run: `/skill:chorus` (or read `chorus-pi/skills/chorus/SKILL.md`)
+    - Run: `/skill:chorus` (or read `packages/chorus-pi/skills/chorus/SKILL.md`)
     - Assert: the skill content loads (you can see "AI-DLC Workflow" and "Skill Routing").
 
 C2. Agent discovery: list available sub-agents.

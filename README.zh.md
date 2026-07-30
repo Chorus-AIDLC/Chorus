@@ -385,6 +385,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 |--------|---------|
 | Claude Code | [CONNECT_CLAUDE_CODE.zh.md](docs/CONNECT_CLAUDE_CODE.zh.md) |
 | Codex CLI | [CONNECT_CODEX.zh.md](docs/CONNECT_CODEX.zh.md) |
+| Pi coding agent | [CONNECT_PI.md](docs/CONNECT_PI.md) |
 | Kiro CLI | [CONNECT_KIRO.md](docs/CONNECT_KIRO.md) |
 | OpenCode † | [CONNECT_OPENCODE.zh.md](docs/CONNECT_OPENCODE.zh.md) |
 | 其他 MCP agent（Cursor / Continue / 自研等） | [CONNECT_OTHER_AGENTS.zh.md](docs/CONNECT_OTHER_AGENTS.zh.md) |
@@ -403,6 +404,7 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 |------|------|---------|
 | **Plugin 内嵌（Claude Code）** | `public/chorus-plugin/skills/` | Claude Code + Chorus 插件，Session 自动化与生命周期 hook |
 | **Plugin 内嵌（Codex CLI）** | `plugins/chorus/skills/` | Codex CLI + Chorus 插件，移植版技能（`$` 前缀斜杠命令）|
+| **Package 内嵌（Pi）** | `packages/chorus-pi/skills/` | Pi + Chorus package，Session 自动化与生命周期 hook |
 | **独立分发** | `public/skill/`（`/skill/` 路径静态托管）| 其他 MCP 客户端（Cursor / Continue / 自研），手动 Session 管理 |
 
 ---
