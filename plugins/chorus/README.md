@@ -85,16 +85,20 @@ codex   # plugin auto-installs on first launch; use /plugins to confirm
 
 ## What's different from the Claude Code version
 
-The Codex port is currently **stateless** — no `.chorus/` directory is used anywhere. Codex now supports `SubagentStart` and `SubagentStop` plugin hooks, but the Chorus Codex plugin has not yet wired them into automatic session lifecycle management. Codex still does not provide direct equivalents for Claude Code's `TeammateIdle`, `SessionEnd`, and `TaskCompleted` events.
+The Codex port uses its native plugin hooks and built-in sub-agent roles rather
+than mirroring Claude Code's Agent Teams implementation.
 
 Consequences:
 
-- ❌ Sub-agent sessions are **not yet** auto-created by the plugin. The main agent creates/closes Chorus sessions manually when per-worker observability is desired.
-- ❌ No auto-checkout on sub-agent exit yet — workers must explicitly call `chorus_session_checkout_task` in their skill-driven workflow, and the main agent calls `chorus_close_session` after `spawn_agent` returns.
-- ❌ No idle-heartbeat hook — rely on Chorus backend session TTL, or have the main agent call `chorus_session_heartbeat` periodically.
-- ✅ Everything else works: all 40+ MCP tools over the HTTP transport, all skills, both reviewer subagents, and 4 of the most valuable hooks.
+- Workers track progress through task status, work reports, acceptance-criteria
+  self-checks, and verification.
+- Reviewer skills are mounted into Codex's built-in `default` sub-agent role.
+- There are no direct Codex equivalents for Claude Code's `TeammateIdle` and
+  `TaskCompleted` events.
 
-For single-agent use the UX is identical to the Claude version. For heavy parallel-worker use, the main agent carries more session-management responsibility (documented in `$develop` skill).
+For single-agent use the UX is identical to the Claude version. Parallel work
+is coordinated through `spawn_agent` and the task dependency DAG documented in
+the `$develop` skill.
 
 Full design rationale and binary-level schema research: `docs/codex-plugin-plan.md` at the repo root.
 

@@ -351,14 +351,10 @@ loop:
 
   # 2. For each unblocked task, spawn a worker
   for each task in unblocked:
-    # Optional: create a Chorus session for observability
-    session = chorus_create_session({ name: f"worker-{task.title[:20]}" })
-
     spawn_agent(
       agent_type="worker",
       message=f"""You are a Chorus developer worker. Follow the $develop skill.
 
-      Your sessionUuid: {session.uuid}   # omit this line if no session
       Your task UUID: {task.uuid}
       Project UUID: {project_uuid}
 
@@ -369,17 +365,12 @@ loop:
   #    Each worker follows $develop skill:
   #    claim -> in_progress -> develop -> report -> self-check AC -> submit_for_verify
 
-  # 4. Close worker sessions (main agent responsibility until the Codex plugin wires SubagentStop cleanup)
-  for each session:
-    chorus_close_session({ sessionUuid: session.uuid })
-
-  # 5. Proceed to Phase 4 (verification) for this wave
+  # 4. Proceed to Phase 4 (verification) for this wave
   wave += 1
 ```
 
 **What the worker prompt needs:**
 - `taskUuid` (required)
-- `sessionUuid` (optional — only if main agent created one for observability)
 - `projectUuid` (required for context lookups)
 - Explicit instruction to follow `$develop` skill — the skill itself has all the workflow detail
 
