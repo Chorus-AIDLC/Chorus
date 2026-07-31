@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # on-session-start.sh — Codex SessionStart hook.
 #
-# Calls chorus_checkin via MCP and injects the result as additionalContext
-# (developer message) into the session. Stateless — no local files written.
+# Calls chorus_checkin via MCP and injects bounded developer context.
 
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=./hook-output.sh
 source "${DIR}/hook-output.sh"
+MCP_CALL="${CHORUS_MCP_CALL:-${DIR}/chorus-mcp-call.sh}"
 
-# Consume stdin event JSON (we don't need its fields for SessionStart).
+# Consume stdin event JSON; the matcher handles the SessionStart source.
 if [ ! -t 0 ]; then cat > /dev/null; fi
 
 if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
@@ -21,7 +21,7 @@ if [ -z "${CHORUS_URL:-}" ] || [ -z "${CHORUS_API_KEY:-}" ]; then
   exit 0
 fi
 
-CHECKIN=$("${DIR}/chorus-mcp-call.sh" chorus_checkin '{}' 2>/dev/null) || {
+CHECKIN=$("$MCP_CALL" chorus_checkin '{}' 2>/dev/null) || {
   hook_output \
     "Chorus: connection failed (${CHORUS_URL})" \
     "WARNING: Unable to reach Chorus at ${CHORUS_URL}. MCP tools may still work if reachable during the session." \

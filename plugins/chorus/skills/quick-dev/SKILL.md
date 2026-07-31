@@ -116,18 +116,12 @@ chorus_update_task({
 chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })
 ```
 
-**Sub-agents:** pass `sessionUuid` for attribution:
-```
-chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress", sessionUuid: "<session-uuid>" })
-```
-
 ### Step 5: Report Progress
 
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
-  report: "Fixed Safari cookie issue:\n- Root cause: SameSite=Strict incompatible with redirect\n- Changed to SameSite=Lax\n- Commit: abc1234",
-  sessionUuid: "<session-uuid>"
+  report: "Fixed Safari cookie issue:\n- Root cause: SameSite=Strict incompatible with redirect\n- Changed to SameSite=Lax\n- Commit: abc1234"
 })
 ```
 
@@ -165,16 +159,6 @@ chorus_admin_verify_task({ taskUuid: "<task-uuid>" })
 Without explicit `task:admin`, do not call the admin tool. Post an evidence-rich comment on the Task containing AC results, test evidence, the latest independent-review verdict, and the exact requested action. @mention the responsible human (prefer `chorus_checkin().agent.owner`) to perform admin verification, then end the current turn.
 
 This handoff applies in interactive and headless daemon sessions. Do not use an interactive prompt, poll for the human response, or rely only on generic notifications.
-
----
-
-## Session Integration (Codex port)
-
-Quick Tasks support the same optional session pattern as proposal-based tasks:
-
-- **Single agent**: skip session entirely — `chorus_update_task` / `chorus_report_work` work fine without `sessionUuid`
-- **Multi-agent via `spawn_agent`**: main agent calls `chorus_create_session` before spawning workers, passes `sessionUuid` in the worker's initial message, and calls `chorus_close_session` after the worker returns
-- **No auto-lifecycle yet** — Codex supports SubagentStart/Stop hooks, but this plugin has not wired them into session automation; session management is the main agent's responsibility (see `$develop` skill for the full pattern)
 
 ---
 

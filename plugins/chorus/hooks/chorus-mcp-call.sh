@@ -87,6 +87,14 @@ if printf '%s' "$RAW" | head -1 | grep -q '^event:\|^data:'; then
 fi
 
 if command -v jq >/dev/null 2>&1; then
+  if ! printf '%s' "$RAW" | jq -e . >/dev/null 2>&1; then
+    echo "MCP returned invalid JSON" >&2
+    exit 4
+  fi
+  if printf '%s' "$RAW" | jq -e '.error != null or .result.isError == true' >/dev/null 2>&1; then
+    printf '%s' "$RAW" | jq -r '.error.message // .result.content[0].text // "MCP structured error"' >&2
+    exit 5
+  fi
   printf '%s' "$RAW" | jq -r '.result.content[0].text // .result // .'
 else
   printf '%s\n' "$RAW"

@@ -190,7 +190,7 @@ chorus_pm_revoke_proposal({
 })
 ```
 
-Cascade effects: all materialized Tasks are closed, all materialized Documents are deleted, and related AcceptanceCriteria/TaskDependencies/SessionCheckins are cleaned up. The Proposal returns to `draft` status so the PM can revise and resubmit.
+Cascade effects: all materialized Tasks are closed, all materialized Documents are deleted, and related acceptance criteria and task dependencies are cleaned up. The Proposal returns to `draft` status so the PM can revise and resubmit.
 
 ### Workflow B: Task Verification
 

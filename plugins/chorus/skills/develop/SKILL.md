@@ -11,7 +11,7 @@ metadata:
 
 # Develop Skill
 
-This skill covers the **Development** stage of the AI-DLC workflow: claiming Tasks, writing code, reporting progress, submitting for verification, and managing sessions for sub-agent observability.
+This skill covers the **Development** stage of the AI-DLC workflow: claiming Tasks, writing code, reporting progress, and submitting for verification.
 
 ---
 
@@ -23,7 +23,7 @@ Developer Agents take Tasks created by PM Agents (via `/proposal`) and turn them
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> Admin /review
 ```
 
-For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` tool to launch worker sub-agents. Sessions are optional in the Codex port — multi-agent observability requires the main agent to create sessions manually and pass `sessionUuid` to workers.
+For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` tool to launch worker sub-agents.
 
 ---
 
@@ -50,17 +50,6 @@ For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` to
 |------|---------|
 | `chorus_report_criteria_self_check` | Report self-check results (passed/failed + optional evidence) on structured acceptance criteria |
 
-**Session (optional, main agent manages):**
-
-| Tool | Purpose |
-|------|---------|
-| `chorus_session_checkin_task` | Checkin to a task before starting work |
-| `chorus_session_checkout_task` | Checkout from a task when work is done |
-
-Main agent (when coordinating workers for observability): call `chorus_create_session` before spawning workers, pass the returned `sessionUuid` to the worker via `spawn_agent` message, and call `chorus_session_checkout_task` + `chorus_close_session` after the worker finishes.
-Workers: receive `sessionUuid` in their initial prompt and pass it to `chorus_update_task` and `chorus_report_work` for attribution.
-No session needed: everything still works — task status, reports, comments — you just lose per-worker attribution in the UI.
-
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
 
 ---
@@ -74,13 +63,6 @@ chorus_checkin()
 ```
 
 Review your persona, current assignments, and pending work counts.
-
-### Step 1.5: Get Your Session (Codex port: main agent explicit)
-
-**Codex port does not auto-create sessions.** Two scenarios:
-
-- **Single-agent work (main agent)**: skip session entirely. Call task tools without `sessionUuid`.
-- **Multi-agent work (worker spawned via `spawn_agent`)**: the main agent should have created a session and passed `sessionUuid` in your initial prompt. Use it for every `chorus_update_task`, `chorus_report_work`, `chorus_session_checkin_task`, `chorus_session_checkout_task` call. If the main agent forgot to pass one and you still need observability, you MAY call `chorus_create_session` yourself — but coordinate with the main agent to avoid duplicates.
 
 ### Step 2: Find Work
 
@@ -146,13 +128,6 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 
 ### Step 5: Start Working
 
-**With session (optional)**: checkin to the task first, then mark in-progress:
-```
-chorus_session_checkin_task({ sessionUuid: "<session-uuid>", taskUuid: "<task-uuid>" })
-chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress", sessionUuid: "<session-uuid>" })
-```
-
-**Without session (single-agent / main agent)**:
 ```
 chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })
 ```
@@ -171,8 +146,7 @@ Report periodically with `chorus_report_work`. Include:
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
-  report: "Progress:\n- Created src/services/auth.service.ts\n- Commit: abc1234\n- Remaining: unit tests",
-  sessionUuid: "<session-uuid>"
+  report: "Progress:\n- Created src/services/auth.service.ts\n- Commit: abc1234\n- Remaining: unit tests"
 })
 ```
 
@@ -181,8 +155,7 @@ Report with status update when complete:
 chorus_report_work({
   taskUuid: "<task-uuid>",
   report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing",
-  status: "to_verify",
-  sessionUuid: "<session-uuid>"
+  status: "to_verify"
 })
 ```
 
@@ -207,12 +180,7 @@ chorus_report_criteria_self_check({
 
 ### Step 8: Submit for Verification
 
-**Sub-agents** — checkout first:
-```
-chorus_session_checkout_task({ sessionUuid: "<session-uuid>", taskUuid: "<task-uuid>" })
-```
-
-Then submit:
+Submit:
 ```
 chorus_submit_for_verify({
   taskUuid: "<task-uuid>",
@@ -275,27 +243,18 @@ If the task you just self-verified was the LAST one of its Idea (every Task acro
 
 ---
 
-## Session (Optional, Codex Port)
-
-The Codex port is currently **stateless** — no hook auto-creates, heartbeats, or closes Chorus sessions yet. Codex supports `SubagentStart`/`SubagentStop` plugin hooks, but this plugin has not wired them into automatic session lifecycle management. Treat `sessionUuid` as optional per-worker observability, not a requirement:
-
-- **Single-agent developer work**: skip session tools entirely. `chorus_update_task` / `chorus_report_work` / `chorus_submit_for_verify` all work without a `sessionUuid`.
-- **Team Lead orchestrating workers via `spawn_agent`**: manually call `chorus_create_session` before spawning, pass `sessionUuid` into each worker's initial message, and `chorus_close_session` after `wait_agent` returns. See the Multi-Agent Workers section below.
-
----
-
 ## Multi-Agent Workers (Codex `spawn_agent`)
 
-When running multiple sub-agents in parallel on a proposal's tasks, the main agent plays Team Lead. The Codex port does **not** auto-manage sessions — the Team Lead is responsible for session lifecycle if per-worker observability is needed.
+When running multiple sub-agents in parallel on a proposal's tasks, the main agent plays Team Lead.
 
 ### Two-Layer Architecture
 
 | Layer | System | Purpose |
 |-------|--------|---------|
 | **Orchestration** | Codex `spawn_agent` | Spawning sub-agents, passing task assignments |
-| **Work Tracking** | Chorus MCP | Task lifecycle, work reports, (optional) session observability |
+| **Work Tracking** | Chorus MCP | Task lifecycle and work reports |
 
-### Team Lead Workflow (with sessions)
+### Team Lead Workflow
 
 ```
 # 1. Check in and plan
@@ -303,47 +262,16 @@ chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 chorus_get_unblocked_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. For each worker you intend to spawn, create a Chorus session
-session_a = chorus_create_session({ name: "frontend-worker" })
-session_b = chorus_create_session({ name: "backend-worker" })
-
-# 3. Spawn workers, pass sessionUuid + taskUuid(s) in the message
+# 2. Spawn workers and pass task UUIDs in the message
 spawn_agent(
   agent_type="worker",
-  message=f'''You are a Chorus developer worker. Follow the $develop skill.
-
-Your sessionUuid: {session_a.uuid}
+  message='''You are a Chorus developer worker. Follow the $develop skill.
 Your task(s): <task-uuid-1>, <task-uuid-2>
 Project UUID: <project-uuid>
 
-Procedure: for each task — chorus_session_checkin_task → chorus_update_task in_progress → implement → chorus_report_work → self-check AC → chorus_session_checkout_task → chorus_submit_for_verify. Report completion in your final message so the main agent can close your session.''',
+Procedure: for each task — claim → mark in_progress → implement → report work → self-check AC → submit for verification.''',
 )
 ```
-
-### Team Lead Workflow (without sessions — simpler)
-
-If per-worker observability is not required, skip sessions entirely:
-
-```
-spawn_agent(
-  agent_type="worker",
-  message='''Follow $develop skill. Your task: <task-uuid>. Do NOT call chorus_create_session or chorus_session_*. Just claim/update/report/submit.''',
-)
-```
-
-Task status, work reports, comments, AC self-checks all still function — you only lose "which worker did what" attribution in the UI.
-
-### Session Cleanup (Team Lead responsibility)
-
-Until the Codex plugin wires `SubagentStop` into Chorus session cleanup, the Team Lead must close sessions after workers finish:
-
-```
-# After worker_a's spawn_agent returns:
-chorus_session_checkout_task({ sessionUuid: session_a.uuid, taskUuid: "..." })   # if worker forgot
-chorus_close_session({ sessionUuid: session_a.uuid })
-```
-
-Alternatively, rely on Chorus backend session TTL to auto-expire idle sessions. This is acceptable for most cases.
 
 ### Wave-Based Execution
 
@@ -370,17 +298,13 @@ Sub-agents spawned via `spawn_agent` inherit the parent's MCP configuration. Ens
 | Problem | Solution |
 |---------|----------|
 | Worker can't access Chorus MCP tools | Verify MCP is configured and `CHORUS_API_KEY` has `task: ["write"]` permission |
-| UI doesn't show active worker | Worker forgot `chorus_session_checkin_task`, or main agent didn't create a session. Sessions are optional — it's fine to not have one |
-| Session shows "inactive" (yellow) | No heartbeat — backend session TTL will clean it up, or call `chorus_close_session` explicitly |
 | Task stuck in wrong status | Use `chorus_update_task` to reset status manually |
-| Duplicate sessions | Main agent created session AND worker also called `chorus_create_session`. Pick one owner (prefer main agent) |
-| Worker didn't close its session | Main agent calls `chorus_close_session({sessionUuid})` after `spawn_agent` returns |
 
 ---
 
 ## Work Report Best Practices
 
-**Good report (enables session continuity):**
+**Good report:**
 ```
 Implemented password reset flow:
 
@@ -411,7 +335,7 @@ Acceptance criteria:
 
 ## Tips
 
-- **Read task comments first** — they contain previous work reports for session continuity
+- **Read task comments first** — they contain previous work reports and decisions
 - **Check upstream dependencies** — read `dependsOn` tasks and their comments for interfaces/APIs
 - **Read the originating proposal** — understand design rationale and task DAG
 - **Use `commentCount`** — skip fetching comments on entities with count 0
@@ -419,7 +343,7 @@ Acceptance criteria:
 - Write detailed submit summaries — Admin needs them to verify
 - If blocked, add a comment and consider releasing the task
 - One task at a time: finish or release before claiming another
-- Use meaningful sub-agent names — they become Chorus session names
+- Use meaningful sub-agent names so parallel work is easy to follow
 
 ---
 
