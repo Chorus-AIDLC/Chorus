@@ -330,6 +330,24 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(endedCall.usage).toEqual(usage);
   });
 
+  it("threads the spawner backendSessionId onto the terminal turn-advance only", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const spawner = spawnerThatSpawns(0);
+    spawner.wake = vi.fn(async ({ sessionId, onChild }) => {
+      onChild?.({ pid: 42 });
+      return { sessionId, backendSessionId: "thread-1", exitCode: 0, isNew: true };
+    });
+    const { waker } = makeWaker({ advanceTurn, spawner });
+
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    const runningCall = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    const endedCall = advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0];
+    expect(runningCall).not.toHaveProperty("backendSessionId");
+    expect(endedCall.backendSessionId).toBe("thread-1");
+  });
+
   it("threads usage onto the interrupted edge too (an interrupted turn still consumed tokens)", async () => {
     const usage = {
       inputTokens: 5,

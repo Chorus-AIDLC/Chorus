@@ -3,13 +3,12 @@
 // "Copy session ID" button (daemon chat transcript header). Two layers:
 //
 //   1. CopySessionIdButton in isolation — the copy interaction itself: a click
-//      writes the BARE session id to the clipboard (no `claude --resume`, no cwd),
+//      writes the BARE backend session id to the clipboard,
 //      flips to the "Copied!" state, and resets after 2s (fake timers). A clipboard
 //      that rejects is swallowed (no throw, no false "Copied!" state).
 //   2. The button mounted inside the real TranscriptView header — placement next to
-//      the "Connection details" trigger, render-gating on `session != null`, and that
-//      BOTH session kinds (idea-anchored where sessionId === directIdeaUuid, and
-//      ad-hoc where it doesn't) surface the button copying their own sessionId.
+//      the unchanged copy control, render-gating on backendSessionId, and identical
+//      behavior for idea-anchored and ad-hoc sessions.
 //
 // next-intl resolves real en.json strings so a missing key would surface as its
 // dotted path and fail the text assertions (same harness as send-instruction-box).
@@ -83,6 +82,7 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     uuid: "sess-1",
     agentUuid: "agent-1",
     sessionId: "8974ee58-1111-2222-3333-444455556666",
+    backendSessionId: null,
     directIdeaUuid: "8974ee58-1111-2222-3333-444455556666", // idea-anchored: equals sessionId
     originConnectionUuid: "conn-1",
     status: "active",
@@ -151,25 +151,22 @@ afterEach(() => {
 });
 
 describe("CopySessionIdButton — copy interaction", () => {
-  it("copies the bare session id (no `claude --resume`, no cwd) on click", async () => {
+  it("copies the bare backend session id on click", async () => {
     const writeText = installClipboard();
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Copy session ID" }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(writeText).toHaveBeenCalledWith("sid-abc-123");
-    // Exactly the id — never a command form.
+    expect(writeText).toHaveBeenCalledWith("codex-thread-123");
     const copied = writeText.mock.calls[0][0] as string;
-    expect(copied).toBe("sid-abc-123");
-    expect(copied).not.toContain("claude --resume");
-    expect(copied).not.toContain("cd ");
+    expect(copied).toBe("codex-thread-123");
   });
 
   it("flips to the Copied! state then resets after 2s", async () => {
     vi.useFakeTimers();
     installClipboard();
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
 
     // Drive the async click + the timer under fake timers.
     await act(async () => {
@@ -190,7 +187,7 @@ describe("CopySessionIdButton — copy interaction", () => {
     const writeText = installClipboard(() =>
       Promise.reject(new Error("denied")),
     );
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Copy session ID" }));
 
@@ -207,7 +204,7 @@ describe("CopySessionIdButton — copy interaction", () => {
       configurable: true,
       writable: true,
     });
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
     // The optional-chained writeText is a no-op (awaiting `undefined`); clicking
     // must not throw. The state flip that follows is flushed inside act().
     await act(async () => {
@@ -220,41 +217,35 @@ describe("CopySessionIdButton — copy interaction", () => {
 });
 
 describe("CopySessionIdButton — responsive label (mobile icon-only)", () => {
-  // The visible label <span> is space-saving on mobile: hidden at rest
-  // (`hidden lg:inline` → icon-only), shown on copy (`inline` → the transient
-  // "Copied!" confirmation) and always shown on desktop. The accessible name
-  // (aria-label) is present at every breakpoint regardless.
   function labelSpan(button: HTMLElement, text: string) {
     return Array.from(button.querySelectorAll("span")).find(
-      (s) => s.textContent === text,
+      (span) => span.textContent === text,
     ) as HTMLElement | undefined;
   }
 
-  it("hides the label on mobile at rest but keeps the accessible name (icon-only)", () => {
+  it("preserves the mobile-hidden label and accessible name at rest", () => {
     installClipboard();
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
-    const btn = screen.getByRole("button", { name: "Copy session ID" });
-    // Icon-only on mobile: the label span is `hidden` until the `lg` breakpoint.
-    const span = labelSpan(btn, "Copy session ID");
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
+    const button = screen.getByRole("button", { name: "Copy session ID" });
+    const span = labelSpan(button, "Copy session ID");
     expect(span).toBeTruthy();
     expect(span!.className).toContain("hidden");
     expect(span!.className).toContain("lg:inline");
-    // a11y name still resolves (button is queryable by it) even while visually hidden.
   });
 
-  it("reveals the confirmation label on copy (visible on mobile too), then collapses", async () => {
+  it("preserves the visible mobile confirmation and then collapses", async () => {
     vi.useFakeTimers();
     installClipboard();
-    render(<CopySessionIdButton sessionId="sid-abc-123" />);
+    render(<CopySessionIdButton backendSessionId="codex-thread-123" />);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy session ID" }));
       await vi.advanceTimersByTimeAsync(0);
     });
-    // After copy: the "Copied!" label is unconditionally `inline` (shown on mobile
-    // as the requested post-copy hint, not hidden behind the lg breakpoint).
-    const copiedBtn = screen.getByRole("button", { name: "Copied!" });
-    const copiedSpan = labelSpan(copiedBtn, "Copied!");
+    const copiedSpan = labelSpan(
+      screen.getByRole("button", { name: "Copied!" }),
+      "Copied!",
+    );
     expect(copiedSpan).toBeTruthy();
     expect(copiedSpan!.className).toContain("inline");
     expect(copiedSpan!.className).not.toContain("hidden");
@@ -262,7 +253,6 @@ describe("CopySessionIdButton — responsive label (mobile icon-only)", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    // Back to rest → icon-only again on mobile.
     const restSpan = labelSpan(
       screen.getByRole("button", { name: "Copy session ID" }),
       "Copy session ID",
@@ -273,33 +263,42 @@ describe("CopySessionIdButton — responsive label (mobile icon-only)", () => {
 });
 
 describe("CopySessionIdButton — inside the TranscriptView header", () => {
-  it("renders the button for an idea-anchored session and copies its sessionId", async () => {
+  it("keeps the existing control and copies backendSessionId for an idea-anchored session", async () => {
     const writeText = installClipboard();
-    const session = sessionView(); // sessionId === directIdeaUuid
+    const session = sessionView({ backendSessionId: "codex-idea-thread" });
     render(<TranscriptView {...transcriptProps(session)} />);
 
+    expect(screen.queryByText(/Codex Session ID/i)).toBeNull();
+    expect(screen.queryByText("codex-idea-thread")).toBeNull();
     const btn = screen.getByRole("button", { name: "Copy session ID" });
     fireEvent.click(btn);
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(session.sessionId));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("codex-idea-thread"),
+    );
   });
 
-  it("renders the button for an ad-hoc session (sessionId !== directIdeaUuid)", async () => {
+  it("uses the same backendSessionId rule for an ad-hoc session", async () => {
     const writeText = installClipboard();
     const session = sessionView({
       sessionId: "adhoc-server-generated-uuid",
+      backendSessionId: "codex-adhoc-thread",
       directIdeaUuid: null,
     });
     render(<TranscriptView {...transcriptProps(session)} />);
 
+    expect(screen.queryByText(/Codex Session ID/i)).toBeNull();
+    expect(screen.queryByText("codex-adhoc-thread")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy session ID" }));
     await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith("adhoc-server-generated-uuid"),
+      expect(writeText).toHaveBeenCalledWith("codex-adhoc-thread"),
     );
   });
 
-  it("does NOT render the button when there is no session", () => {
+  it("hides the copy action and does not fall back to sessionId when backendSessionId is null", () => {
     installClipboard();
-    render(<TranscriptView {...transcriptProps(null)} />);
+    const session = sessionView({ backendSessionId: null });
+    render(<TranscriptView {...transcriptProps(session)} />);
+    expect(screen.queryByText(/Codex Session ID/i)).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy session ID" })).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   daemonSessionTurn: {
     findFirst: vi.fn(),
@@ -103,6 +104,7 @@ function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
     uuid: sessionUuid,
     agentUuid,
     sessionId,
+    backendSessionId: null,
     directIdeaUuid: sessionId,
     originConnectionUuid: connectionUuid,
     status: "active",
@@ -924,6 +926,7 @@ describe("getVisibleSessions", () => {
     });
     expect(result).toHaveLength(1);
     expect(result[0].uuid).toBe(sessionUuid);
+    expect(result[0].backendSessionId).toBeNull();
   });
 
   it("super_admin caller is owner-scoped too (the agent relation, not the company at large)", async () => {
@@ -1119,6 +1122,7 @@ describe("getSessionDetail", () => {
       agent: { ownerUuid },
     });
     expect(result?.session.uuid).toBe(sessionUuid);
+    expect(result?.session.backendSessionId).toBeNull();
     // Returned ascending for top-to-bottom rendering, regardless of the DESC fetch.
     expect(result?.turns.map((t) => t.uuid)).toEqual(["t1", "t2"]);
     // Only 3 real messages total (< page size) → no earlier page.
@@ -2092,6 +2096,67 @@ describe("advanceTurnForWake", () => {
     expect(updateArg.data.endedAt).toBeInstanceOf(Date);
     // executionUuid is left untouched (undefined) when no entity is supplied.
     expect(updateArg.data).not.toHaveProperty("executionUuid");
+  });
+
+  it("atomically persists a backend session ID under the authenticated agent session fence", async () => {
+    ownedSessionWithLatestTurn("running");
+    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      backendSessionId: "thread-1",
+      status: "ended",
+    });
+
+    expect(res).toMatchObject({ ok: true });
+    expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
+      where: { agentUuid, companyUuid, sessionId },
+      select: { uuid: true },
+    });
+    expect(mockPrisma.daemonSession.updateMany).toHaveBeenCalledWith({
+      where: {
+        uuid: sessionUuid,
+        OR: [{ backendSessionId: null }, { backendSessionId: "thread-1" }],
+      },
+      data: { backendSessionId: "thread-1" },
+    });
+  });
+
+  it("accepts an idempotent backend ID report through the same atomic guard", async () => {
+    ownedSessionWithLatestTurn("running");
+    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      backendSessionId: "thread-1",
+      status: "ended",
+    });
+
+    expect(res).toMatchObject({ ok: true });
+  });
+
+  it("rejects a conflicting backend ID without advancing the turn or overwriting it", async () => {
+    ownedSessionWithLatestTurn("running");
+    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      backendSessionId: "thread-2",
+      status: "ended",
+    });
+
+    expect(res).toEqual({ ok: false, reason: "backend_session_conflict" });
+    expect(mockPrisma.daemonSessionTurn.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
   });
 
   it("running→interrupted resolves the RUNNING turn, defaults endedAt, and persists the reason", async () => {
