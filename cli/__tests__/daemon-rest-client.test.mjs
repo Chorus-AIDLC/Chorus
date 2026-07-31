@@ -130,6 +130,17 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
   });
 
+  it("turnAdvance sends backendSessionId only on a terminal edge", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "running", backendSessionId: "thread-1" });
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", backendSessionId: "thread-1" });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("backendSessionId");
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).backendSessionId).toBe("thread-1");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId

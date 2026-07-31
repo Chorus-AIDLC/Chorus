@@ -70,7 +70,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
- *   turnAdvance: (p: { sessionId: string, status: string, entityType?: string|null, entityUuid?: string|null }) => Promise<DaemonRestResult>,
+ *   turnAdvance: (p: { sessionId: string, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
@@ -146,7 +146,7 @@ export function createDaemonRestClient(opts) {
      * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -171,6 +171,7 @@ export function createDaemonRestClient(opts) {
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
         ...(usage && isTerminal ? { usage } : {}),
+        ...(backendSessionId && isTerminal ? { backendSessionId } : {}),
       };
       return post(
         "turn-advance",

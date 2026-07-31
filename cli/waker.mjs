@@ -38,7 +38,7 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, backendSessionId?: string|null, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
    *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
    *     → interrupted with the classified reason otherwise) to advance the server-side
@@ -524,10 +524,10 @@ export class Waker {
           // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
           // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
           // `turnUsage` rides the same terminal advance (daemon-token-usage).
-          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage);
+          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage, result?.backendSessionId);
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage);
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage, result?.backendSessionId);
         }
       }
 
@@ -622,7 +622,7 @@ export class Waker {
    * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
    *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -632,6 +632,7 @@ export class Waker {
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         ...(usage ? { usage } : {}),
+        ...(backendSessionId ? { backendSessionId } : {}),
       });
     } catch (err) {
       this.logger.warn(

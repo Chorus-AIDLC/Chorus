@@ -69,6 +69,7 @@ export function createTurnReporter(opts) {
     interruptedReason,
     transcriptRelayError,
     usage,
+    backendSessionId,
   }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
@@ -103,6 +104,7 @@ export function createTurnReporter(opts) {
       // Per-turn token usage (daemon-token-usage): the client spreads it into the body
       // only on a terminal edge. No validation here — usage is an opaque nested object.
       usage,
+      backendSessionId,
     });
   };
 }

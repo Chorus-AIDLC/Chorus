@@ -600,6 +600,8 @@ model DaemonSession {
   // Stable business key: the directIdeaUuid for an idea-anchored session, or a
   // server-generated uuid for an ad-hoc session. Unique per agent.
   sessionId            String
+  // Backend-owned resume identity, distinct from Chorus's routing key above.
+  backendSessionId     String?
   directIdeaUuid       String? // null ⇒ ad-hoc (no idea lineage)
   // → DaemonConnection.uuid (weak ref, no DB FK). The connection/cwd that owns
   //   the on-disk Claude transcript. Fixed at creation; continuation is only ever

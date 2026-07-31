@@ -134,6 +134,7 @@ export interface SessionView {
   uuid: string;
   agentUuid: string;
   sessionId: string;
+  backendSessionId: string | null;
   directIdeaUuid: string | null;
   originConnectionUuid: string;
   status: string; // active | ended
@@ -215,6 +216,7 @@ interface DaemonSessionRow {
   uuid: string;
   agentUuid: string;
   sessionId: string;
+  backendSessionId: string | null;
   directIdeaUuid: string | null;
   originConnectionUuid: string;
   status: string;
@@ -275,6 +277,7 @@ function toSessionView(row: DaemonSessionRow): SessionView {
     uuid: row.uuid,
     agentUuid: row.agentUuid,
     sessionId: row.sessionId,
+    backendSessionId: row.backendSessionId,
     directIdeaUuid: row.directIdeaUuid,
     originConnectionUuid: row.originConnectionUuid,
     status: row.status,
@@ -1639,6 +1642,7 @@ async function trimSessionTranscript(sessionUuid: string): Promise<void> {
 export type AdvanceTurnForWakeResult =
   | { ok: true; turn: TurnView }
   | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "backend_session_conflict" }
   | { ok: false; reason: "invalid_transition"; from: string; to: string };
 
 /**
@@ -1665,6 +1669,7 @@ export async function advanceTurnForWake(params: {
   agentUuid: string;
   connectionUuid: string;
   sessionId: string;
+  backendSessionId?: string | null;
   status: TurnStatus;
   entityType?: string | null;
   entityUuid?: string | null;
@@ -1688,6 +1693,24 @@ export async function advanceTurnForWake(params: {
     select: { uuid: true },
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
+
+  if (params.backendSessionId) {
+    // Atomically allow only first assignment or an idempotent repeat. A different
+    // existing value cannot be overwritten, even by concurrent lifecycle reports.
+    const bound = await prisma.daemonSession.updateMany({
+      where: {
+        uuid: session.uuid,
+        OR: [
+          { backendSessionId: null },
+          { backendSessionId: params.backendSessionId },
+        ],
+      },
+      data: { backendSessionId: params.backendSessionId },
+    });
+    if (bound.count === 0) {
+      return { ok: false, reason: "backend_session_conflict" };
+    }
+  }
 
   // Resolve the turn being executed by STATUS, not by most-recent seq. The daemon only
   // ever drives `running` (on spawn) and `ended` (on subprocess exit), and same-session

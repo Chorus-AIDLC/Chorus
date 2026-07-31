@@ -100,6 +100,24 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(arg.status).toBe("ended");
   });
 
+  it("passes a bounded backendSessionId to the agent-scoped service", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "ended", backendSessionId: " thread-1 " }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    expect(mockAdvanceTurnForWake.mock.calls[0][0].backendSessionId).toBe("thread-1");
+  });
+
+  it("rejects an empty backendSessionId", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "ended", backendSessionId: "   " }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
   it("a connection the agent does not own → 404 (non-disclosure), service not called", async () => {
     mockConnectionBelongsToAgent.mockResolvedValue(false);
     const res = await POST(postRequest(runningBody), emptyCtx);
@@ -129,6 +147,16 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(res.status).toBe(409);
     expect(body.error.code).toBe("CONFLICT");
     expect(body.error.message).toMatch(/ended → running/);
+  });
+
+  it("a conflicting backend session ID → 409 conflict", async () => {
+    mockAdvanceTurnForWake.mockResolvedValue({ ok: false, reason: "backend_session_conflict" });
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "ended", backendSessionId: "thread-2" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe("CONFLICT");
   });
 
   it("accepts status=interrupted with a daemon-reportable reason and passes it through", async () => {

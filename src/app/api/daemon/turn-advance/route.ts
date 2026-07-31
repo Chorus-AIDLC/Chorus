@@ -43,6 +43,7 @@ const bodySchema = z
   .object({
     connectionUuid: z.string().min(1),
     sessionId: z.string().min(1),
+    backendSessionId: z.string().trim().min(1).max(200).nullish(),
     status: z.enum([...TURN_STATUSES]),
     entityType: z.enum([...EXECUTION_ENTITY_TYPES]).optional(),
     entityUuid: z.string().min(1).optional(),
@@ -103,6 +104,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const {
     connectionUuid,
     sessionId,
+    backendSessionId,
     status,
     entityType,
     entityUuid,
@@ -127,6 +129,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     agentUuid: auth.actorUuid,
     connectionUuid,
     sessionId,
+    backendSessionId: backendSessionId ?? undefined,
     status,
     entityType: entityType ?? null,
     entityUuid: entityUuid ?? null,
@@ -150,6 +153,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!result.ok) {
+    if (result.reason === "backend_session_conflict") {
+      return errors.conflict("Backend session ID conflicts with the persisted value");
+    }
     if (result.reason === "invalid_transition") {
       // The daemon reported a transition that is not the single legal forward edge
       // (e.g. a duplicate report). 409 conflict — surfaced, not silently swallowed.
