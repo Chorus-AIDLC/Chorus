@@ -104,7 +104,6 @@ CTX="${CTX}
 
 ## Quick Reference
 
-- **Sessions are optional**: the Codex port does NOT auto-create Chorus sessions for sub-agents. If you spawn workers via \`spawn_agent\` and want per-worker observability, create a session manually with \`chorus_create_session\` before spawning and \`chorus_close_session\` after the worker returns. Otherwise skip session tools entirely.
 - **Notifications**: \`chorus_get_notifications()\` fetches and auto-marks read.
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
 - **Reviewer sub-agents**: mount the reviewer skill into a default sub-agent — \`spawn_agent(agent_type=\"default\", items=[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <uuid>.\"}])\` after \`chorus_pm_submit_proposal\`; same pattern with \`chorus:chorus-task-reviewer\` after \`chorus_submit_for_verify\`. Codex 0.125 only ships three built-in roles (default / explorer / worker) — custom agent_types like \`chorus-proposal-reviewer\` will be rejected. Remember \`close_agent\` after \`wait_agent\`; completed ≠ closed, 6 concurrent max."

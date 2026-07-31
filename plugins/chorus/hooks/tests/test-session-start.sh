@@ -22,8 +22,14 @@ for source in startup resume clear compact; do
   printf '%s' "$output" | jq -e \
     '.hookSpecificOutput.hookEventName == "SessionStart"
      and (.hookSpecificOutput.additionalContext | contains("# Chorus Plugin"))
-     and (.hookSpecificOutput.additionalContext | length < 12000)' >/dev/null
-  count=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext' | grep -c '^# Chorus Plugin')
+     and (.hookSpecificOutput.additionalContext | length <= 5000)' >/dev/null
+  context=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')
+  if printf '%s' "$context" | grep -Eq \
+    'chorus_create_session|chorus_close_session|chorus_session_|sessionUuid|session management|session observability'; then
+    echo "SessionStart context contains session-management guidance" >&2
+    exit 1
+  fi
+  count=$(printf '%s' "$context" | grep -c '^# Chorus Plugin')
   [ "$count" = "1" ]
 done
 
