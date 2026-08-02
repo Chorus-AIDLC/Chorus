@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { emit, prismaMock } = vi.hoisted(() => ({
   emit: vi.fn(),
   prismaMock: {
+    $transaction: vi.fn(),
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
-    project: { findFirst: vi.fn() },
+    project: { findFirst: vi.fn(), create: vi.fn() },
     daemonConnection: { findFirst: vi.fn(), findMany: vi.fn() },
     daemonDirectoryRequest: {
       create: vi.fn(),
@@ -15,6 +16,7 @@ const { emit, prismaMock } = vi.hoisted(() => ({
     projectAgentCwdPreference: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
+      create: vi.fn(),
       upsert: vi.fn(),
       update: vi.fn(),
       deleteMany: vi.fn(),
@@ -34,6 +36,7 @@ import {
   clearProjectAgentCwdPreference,
   cleanupDirectoryRequests,
   completeDirectoryRequest,
+  createProjectWithAgentCwds,
   createDirectoryRequest,
   getDirectoryRequest,
   listProjectAgentCwdPreferences,
@@ -53,9 +56,49 @@ beforeEach(() => {
   prismaMock.agent.findFirst.mockResolvedValue({ uuid: "agent-1" });
   prismaMock.project.findFirst.mockResolvedValue({ uuid: "project-1" });
   prismaMock.agentInstance.upsert.mockResolvedValue({ uuid: "instance-1" });
+  prismaMock.$transaction.mockImplementation(
+    (callback: (tx: typeof prismaMock) => unknown) => callback(prismaMock),
+  );
 });
 
 describe("project-agent cwd request service", () => {
+  it("creates a project and its fixed cwd in one transaction", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
+      targetConnectionUuid: "conn-1",
+      result: { normalizedPath: "/workspace" },
+    });
+    prismaMock.daemonConnection.findFirst.mockResolvedValue({ host: "host-1" });
+    prismaMock.project.create.mockResolvedValue({
+      uuid: "project-new",
+      name: "New",
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await createProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      name: "New",
+      description: null,
+      groupUuid: null,
+      agentCwds: [{
+        agentUuid: "agent-1",
+        validationRequestUuid: "validation-1",
+      }],
+    });
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaMock.projectAgentCwdPreference.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        projectUuid: "project-new",
+        agentUuid: "agent-1",
+        host: "host-1",
+        cwd: "/workspace",
+      }),
+    });
+  });
+
   it("lists online Agents plus configured offline preferences only", async () => {
     prismaMock.agent.findMany.mockResolvedValue([
       { uuid: "online", name: "Online" },

@@ -61,33 +61,15 @@ export function CreateProjectDialog({
             name: title.trim(),
             description: description.trim() || undefined,
             groupUuid: groupUuid || undefined,
+            agentCwds: cwdDrafts.map(({ agentUuid, validationRequestUuid }) => ({
+              agentUuid,
+              validationRequestUuid,
+            })),
           }),
         });
         const data = await res.json();
 
         if (data.success) {
-          try {
-            for (const draft of cwdDrafts) {
-              const cwdResponse = await fetch(
-                `/api/projects/${encodeURIComponent(data.data.uuid)}/agent-cwds`,
-                {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    agentUuid: draft.agentUuid,
-                    validationRequestUuid: draft.validationRequestUuid,
-                  }),
-                },
-              );
-              if (!cwdResponse.ok) throw new Error("cwd save failed");
-            }
-          } catch {
-            await fetch(`/api/projects/${encodeURIComponent(data.data.uuid)}`, {
-              method: "DELETE",
-            });
-            setError(t("projectSettings.agentCwds.createFailed"));
-            return;
-          }
           setSuccess(true);
           setTimeout(() => {
             setTitle("");

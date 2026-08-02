@@ -59,6 +59,11 @@ const VALIDATION_FRESH_MS = 60_000;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 
+export interface ProjectAgentCwdDraftInput {
+  agentUuid: string;
+  validationRequestUuid: string;
+}
+
 async function requireOwnedAgent(companyUuid: string, userUuid: string, agentUuid: string) {
   const agent = await prisma.agent.findFirst({
     where: { uuid: agentUuid, companyUuid, ownerUuid: userUuid },
@@ -102,6 +107,112 @@ async function materializeAgentInstance(
     select: { uuid: true },
   });
   return row.uuid;
+}
+
+async function resolveValidatedPreference(params: {
+  companyUuid: string;
+  userUuid: string;
+  agentUuid: string;
+  validationRequestUuid: string;
+}) {
+  await requireOwnedAgent(params.companyUuid, params.userUuid, params.agentUuid);
+  const validation = await prisma.daemonDirectoryRequest.findFirst({
+    where: {
+      uuid: params.validationRequestUuid,
+      companyUuid: params.companyUuid,
+      callerUserUuid: params.userUuid,
+      agentUuid: params.agentUuid,
+      operation: "validate",
+      status: "success",
+      completedAt: { gte: new Date(Date.now() - VALIDATION_FRESH_MS) },
+    },
+  });
+  const cwd =
+    validation?.result &&
+    typeof validation.result === "object" &&
+    !Array.isArray(validation.result) &&
+    typeof (validation.result as { normalizedPath?: unknown }).normalizedPath === "string"
+      ? (validation.result as { normalizedPath: string }).normalizedPath
+      : null;
+  if (!validation || !cwd) {
+    throw new CwdServiceError("STALE_TARGET", "Fresh successful validation required");
+  }
+  const connection = await prisma.daemonConnection.findFirst({
+    where: {
+      uuid: validation.targetConnectionUuid,
+      companyUuid: params.companyUuid,
+      agentUuid: params.agentUuid,
+    },
+    select: { host: true },
+  });
+  if (!connection) throw new CwdServiceError("STALE_TARGET", "Validation target is stale");
+  return { agentUuid: params.agentUuid, host: connection.host, cwd };
+}
+
+export async function createProjectWithAgentCwds(params: {
+  companyUuid: string;
+  userUuid: string;
+  name: string;
+  description: string | null;
+  groupUuid: string | null;
+  agentCwds: ProjectAgentCwdDraftInput[];
+}) {
+  const targets = await Promise.all(
+    params.agentCwds.map((draft) => resolveValidatedPreference({
+      companyUuid: params.companyUuid,
+      userUuid: params.userUuid,
+      ...draft,
+    })),
+  );
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.project.create({
+      data: {
+        companyUuid: params.companyUuid,
+        name: params.name,
+        description: params.description,
+        groupUuid: params.groupUuid,
+      },
+      select: {
+        uuid: true,
+        name: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    for (const target of targets) {
+      const instance = await tx.agentInstance.upsert({
+        where: {
+          companyUuid_agentUuid_host_cwd: {
+            companyUuid: params.companyUuid,
+            agentUuid: target.agentUuid,
+            host: target.host,
+            cwd: target.cwd,
+          },
+        },
+        create: {
+          companyUuid: params.companyUuid,
+          agentUuid: target.agentUuid,
+          host: target.host,
+          cwd: target.cwd,
+        },
+        update: { updatedAt: new Date() },
+        select: { uuid: true },
+      });
+      await tx.projectAgentCwdPreference.create({
+        data: {
+          companyUuid: params.companyUuid,
+          userUuid: params.userUuid,
+          projectUuid: project.uuid,
+          agentUuid: target.agentUuid,
+          host: target.host,
+          cwd: target.cwd,
+          anchorAgentInstanceUuid: instance.uuid,
+        },
+      });
+    }
+    return project;
+  });
 }
 
 /**

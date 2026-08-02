@@ -7,6 +7,10 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
+import {
+  CwdServiceError,
+  createProjectWithAgentCwds,
+} from "@/services/project-agent-cwd.service";
 
 // GET /api/projects - List Projects
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -91,6 +95,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     name: string;
     description?: string;
     groupUuid?: string;
+    agentCwds?: Array<{ agentUuid: string; validationRequestUuid: string }>;
   }>(request);
 
   // Validate required fields
@@ -108,21 +113,37 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  const project = await prisma.project.create({
-    data: {
+  const agentCwds = body.agentCwds ?? [];
+  if (
+    !Array.isArray(agentCwds) ||
+    agentCwds.some((draft) =>
+      !draft ||
+      typeof draft.agentUuid !== "string" ||
+      !draft.agentUuid ||
+      typeof draft.validationRequestUuid !== "string" ||
+      !draft.validationRequestUuid
+    ) ||
+    new Set(agentCwds.map((draft) => draft.agentUuid)).size !== agentCwds.length
+  ) {
+    return errors.validationError({ agentCwds: "Invalid or duplicate Agent cwd selection" });
+  }
+
+  let project;
+  try {
+    project = await createProjectWithAgentCwds({
       companyUuid: auth.companyUuid,
+      userUuid: auth.actorUuid,
       name: body.name.trim(),
       description: body.description?.trim() || null,
       groupUuid: body.groupUuid || null,
-    },
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+      agentCwds,
+    });
+  } catch (error) {
+    if (error instanceof CwdServiceError) {
+      return errors.conflict(error.message);
+    }
+    throw error;
+  }
 
   return success({
     uuid: project.uuid,
