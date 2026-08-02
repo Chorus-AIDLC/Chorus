@@ -29,12 +29,18 @@ MUST be able to switch roots.
 
 #### Scenario: Host exposes one browse root
 - **WHEN** the selected daemon returns exactly one effective browse root
-- **THEN** project settings MUST prefill that root without requiring the user to guess or type it
+- **THEN** project settings MUST prefill that root with its trailing platform separator without requiring the user to guess or type it
 
 #### Scenario: Host exposes multiple browse roots
 - **WHEN** the selected daemon returns multiple effective browse roots
 - **THEN** project settings MUST select the first returned root by default
 - **AND** it MUST provide an explicit control for switching to another returned root
+- **AND** the path input MUST include the selected root's trailing platform separator
+
+#### Scenario: Browse roots are unavailable
+- **WHEN** the roots request fails, returns no usable roots, or targets an older daemon without roots support
+- **THEN** the directory picker MUST fall back to an editable manual path
+- **AND** the user MUST still be able to validate and confirm that path without autocomplete
 
 #### Scenario: Fixed cwd becomes unavailable
 - **WHEN** the stored host is offline or the directory no longer validates
@@ -101,6 +107,7 @@ limit, and internal states MUST remain distinguishable.
 - **WHEN** a bounded candidate page is returned for the current prefix
 - **THEN** the first candidate MUST be highlighted by default
 - **AND** arrow keys MUST move the highlight, `Tab` MUST accept the highlighted candidate, `Enter` MUST select it, and `Escape` MUST close the list
+- **AND** keyboard navigation MUST scroll the highlighted candidate into the listbox viewport
 
 #### Scenario: No candidate is highlighted
 - **WHEN** the candidate list is closed or empty

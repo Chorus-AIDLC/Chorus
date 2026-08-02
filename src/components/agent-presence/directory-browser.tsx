@@ -137,6 +137,7 @@ export function DirectoryBrowser({
   );
   const [roots, setRoots] = useState<string[]>([]);
   const [selectedRoot, setSelectedRoot] = useState("");
+  const [manualMode, setManualMode] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [items, setItems] = useState<DirectoryItem[]>([]);
@@ -151,6 +152,13 @@ export function DirectoryBrowser({
   const rootsController = useRef<AbortController | null>(null);
   const browseController = useRef<AbortController | null>(null);
   const validationController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!listOpen || highlightedIndex < 0) return;
+    document
+      .getElementById(`directory-candidate-${highlightedIndex}`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [highlightedIndex, listOpen]);
 
   const clearCandidates = () => {
     browseGeneration.current += 1;
@@ -174,6 +182,7 @@ export function DirectoryBrowser({
     clearCandidates();
     setRoots([]);
     setSelectedRoot("");
+    setManualMode(false);
     setPrefix("");
     setSelectedPath("");
     setErrorCode(null);
@@ -202,11 +211,13 @@ export function DirectoryBrowser({
       }
       setRoots(nextRoots);
       setSelectedRoot(nextRoots[0]);
-      setPrefix(nextRoots[0]);
+      setManualMode(false);
+      setPrefix(withTrailingSeparator(nextRoots[0]));
     }).catch((error) => {
       const code = normalizeDirectoryError(error);
       if (code !== "ABORTED" && generation === rootsGeneration.current) {
-        setErrorCode(code);
+        setManualMode(true);
+        setErrorCode(null);
       }
     }).finally(() => {
       if (generation === rootsGeneration.current) setPending(null);
@@ -369,7 +380,7 @@ export function DirectoryBrowser({
                   cancelValidation();
                   clearCandidates();
                   setSelectedRoot(event.target.value);
-                  setPrefix(event.target.value);
+                  setPrefix(withTrailingSeparator(event.target.value));
                   setSelectedPath("");
                   setErrorCode(null);
                 }}
@@ -379,15 +390,15 @@ export function DirectoryBrowser({
             </label>
           )}
 
-          {selectedRoot && (
+          {(selectedRoot || manualMode) && (
             <div className="flex min-w-0 gap-2">
               <div className="relative min-w-0 flex-1">
                 <Input
                   role="combobox"
                   aria-label={t("pathPrefix")}
-                  aria-autocomplete="list"
+                  aria-autocomplete={manualMode ? "none" : "list"}
                   aria-expanded={listOpen}
-                  aria-controls="directory-candidates"
+                  aria-controls={manualMode ? undefined : "directory-candidates"}
                   aria-activedescendant={
                     listOpen && highlightedIndex >= 0
                       ? `directory-candidate-${highlightedIndex}`
@@ -397,7 +408,7 @@ export function DirectoryBrowser({
                   onChange={(event) => {
                     cancelValidation();
                     setPrefix(event.target.value);
-                    setSelectedPath("");
+                    setSelectedPath(manualMode ? event.target.value.trim() : "");
                     setErrorCode(null);
                   }}
                   onKeyDown={(event) => {
@@ -433,25 +444,27 @@ export function DirectoryBrowser({
                   />
                 )}
               </div>
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                className="size-11 sm:size-9"
-                disabled={prefix === selectedRoot}
-                onClick={() => {
-                  cancelValidation();
-                  const parent = parentWithinRoot(prefix, selectedRoot);
-                  clearCandidates();
-                  setPrefix(withTrailingSeparator(parent));
-                  setSelectedPath(parent);
-                  setErrorCode(null);
-                }}
-                aria-label={t("parent")}
-                title={t("parent")}
-              >
-                <ChevronUp className="size-4" />
-              </Button>
+              {!manualMode && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="size-11 sm:size-9"
+                  disabled={prefix === selectedRoot}
+                  onClick={() => {
+                    cancelValidation();
+                    const parent = parentWithinRoot(prefix, selectedRoot);
+                    clearCandidates();
+                    setPrefix(withTrailingSeparator(parent));
+                    setSelectedPath(parent);
+                    setErrorCode(null);
+                  }}
+                  aria-label={t("parent")}
+                  title={t("parent")}
+                >
+                  <ChevronUp className="size-4" />
+                </Button>
+              )}
             </div>
           )}
 

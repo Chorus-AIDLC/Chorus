@@ -52,7 +52,7 @@ async function loadRoot(fetchMock: ReturnType<typeof vi.fn>, roots = ["/work"]) 
   renderBrowser();
   await waitFor(() => {
     expect((screen.getByRole("combobox", { name: "pathPrefix" }) as HTMLInputElement).value)
-      .toBe(roots[0]);
+      .toBe(`${roots[0]}/`);
   });
 }
 
@@ -62,6 +62,7 @@ describe("DirectoryBrowser", () => {
   });
 
   afterEach(() => {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -96,12 +97,56 @@ describe("DirectoryBrowser", () => {
     const root = await screen.findByRole("combobox", { name: "browseRoot" });
     expect((root as HTMLSelectElement).value).toBe("/work");
     expect((screen.getByRole("combobox", { name: "pathPrefix" }) as HTMLInputElement).value)
-      .toBe("/work");
+      .toBe("/work/");
 
     fireEvent.change(root, { target: { value: "/opt" } });
     expect((screen.getByRole("combobox", { name: "pathPrefix" }) as HTMLInputElement).value)
-      .toBe("/opt");
+      .toBe("/opt/");
     expect(document.getElementById("directory-candidates")).toBeNull();
+  });
+
+  it("uses the root platform separator when prefilling the path", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementationOnce(() => success({ roots: ["C:\\work"] }));
+    renderBrowser();
+
+    await waitFor(() => {
+      expect((screen.getByRole("combobox", { name: "pathPrefix" }) as HTMLInputElement).value)
+        .toBe("C:\\work\\");
+    });
+  });
+
+  it("falls back to manual path validation when roots are unavailable", async () => {
+    const fetchMock = vi.fn();
+    const onValidated = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false,
+      json: async () => ({ success: false, error: { code: "INTERNAL_ERROR" } }),
+    }));
+    renderBrowser([instance], onValidated);
+
+    const input = await screen.findByRole("combobox", { name: "pathPrefix" });
+    expect(input.getAttribute("aria-autocomplete")).toBe("none");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.change(input, { target: { value: "/legacy/project" } });
+    fetchMock.mockImplementationOnce(() =>
+      success({ normalizedPath: "/legacy/project" }, "validation-legacy"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(onValidated).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: "/legacy/project",
+        validationRequestUuid: "validation-legacy",
+      }));
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      operation: "validate",
+      cwd: "/legacy/project",
+    });
   });
 
   it("discards stale success and stale error responses", async () => {
@@ -170,6 +215,40 @@ describe("DirectoryBrowser", () => {
     fireEvent.keyDown(input, { key: "Tab" });
     expect((input as HTMLInputElement).value).toBe("/work/repo/");
     expect(screen.getByText("/work/repo")).not.toBeNull();
+  });
+
+  it("scrolls the keyboard-highlighted candidate into view", async () => {
+    const fetchMock = vi.fn();
+    const scrollIntoView = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    await loadRoot(fetchMock);
+    fetchMock.mockImplementationOnce(() =>
+      success({
+        items: Array.from({ length: 12 }, (_, index) => ({
+          name: `repo-${index}`,
+          path: `/work/repo-${index}`,
+        })),
+      }),
+    );
+    const input = screen.getByRole("combobox", { name: "pathPrefix" });
+    fireEvent.change(input, { target: { value: "/work/r" } });
+    await act(() => vi.advanceTimersByTimeAsync(250));
+    await screen.findAllByRole("option");
+    scrollIntoView.mockClear();
+
+    for (let index = 0; index < 6; index += 1) {
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+    }
+
+    await waitFor(() => {
+      expect(document.getElementById("directory-candidate-6")?.getAttribute("aria-selected"))
+        .toBe("true");
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    });
   });
 
   it("preserves Tab and ignores completion keys during IME composition", async () => {

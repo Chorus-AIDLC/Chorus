@@ -229,7 +229,7 @@ describe("WakeCwdPickerDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Browse another directory" }));
     await waitFor(() => {
       expect((screen.getByRole("combobox", { name: "Directory path prefix" }) as HTMLInputElement).value)
-        .toBe("/workspace");
+        .toBe("/workspace/");
     });
     const input = screen.getByRole("combobox", { name: "Directory path prefix" });
     fireEvent.change(input, { target: { value: "/workspace/r" } });
