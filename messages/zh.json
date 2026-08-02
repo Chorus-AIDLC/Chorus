@@ -1695,6 +1695,7 @@
   },
   "directoryBrowser": {
     "chooseHost": "选择主机", "unknownHost": "未知主机", "pathPrefix": "目录路径前缀", "pathPlaceholder": "/home/user/project",
+    "browseRoot": "浏览根目录", "loadingRoots": "正在加载允许的根目录…", "loadingCandidates": "正在加载目录建议", "parent": "返回上一级目录",
     "browse": "浏览目录", "noHosts": "此 Agent 暂无在线主机。", "empty": "没有匹配的目录。", "selection": "已选目录",
     "errors": {
       "HOST_OFFLINE": "所选主机已离线，请选择其他主机。", "TIMEOUT": "主机未响应，请重试。", "INVALID_PATH": "请输入有效的绝对路径。",

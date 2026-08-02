@@ -359,6 +359,26 @@ describe("control-handler browse_directory", () => {
     });
   });
 
+  it("reports effective roots from the targeted connection", async () => {
+    const handleDirectoryRequest = vi.fn(async () => ({ roots: ["/work", "/opt"] }));
+    const reportDirectoryRequest = vi.fn(async () => {});
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      handleDirectoryRequest,
+      reportDirectoryRequest,
+      logger: silent,
+    });
+    onControl({
+      type: "control", command: "browse_directory", targetConnectionUuid: CONN,
+      requestUuid: "roots-1", operation: "roots",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportDirectoryRequest).toHaveBeenCalledWith({
+      requestUuid: "roots-1", status: "succeeded", roots: ["/work", "/opt"],
+    });
+  });
+
   it("reports stable failures and ignores stale targets", async () => {
     const error = Object.assign(new Error("outside"), { code: "OUTSIDE_ROOT" });
     const handleDirectoryRequest = vi.fn(async () => { throw error; });

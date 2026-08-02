@@ -1695,6 +1695,7 @@
   },
   "directoryBrowser": {
     "chooseHost": "Choose a host", "unknownHost": "Unknown host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
+    "browseRoot": "Browse root", "loadingRoots": "Loading allowed roots…", "loadingCandidates": "Loading directory suggestions", "parent": "Go to parent directory",
     "browse": "Browse directories", "noHosts": "No online host is available for this Agent.", "empty": "No matching directories.", "selection": "Selected directory",
     "errors": {
       "HOST_OFFLINE": "The selected host is offline. Choose another host.", "TIMEOUT": "The host did not respond. Try again.", "INVALID_PATH": "Enter a valid absolute path.",

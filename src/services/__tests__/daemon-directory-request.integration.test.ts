@@ -198,4 +198,44 @@ describe("directory request server-daemon boundary", () => {
       },
     });
   });
+
+  it("terminalizes a malformed roots report instead of leaving it pending", async () => {
+    const deadlineAt = new Date(Date.now() + 15_000);
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
+      uuid: "roots-1",
+      operation: "roots",
+      status: "pending",
+      deadlineAt,
+    });
+    prismaMock.daemonDirectoryRequest.update.mockResolvedValue({
+      uuid: "roots-1",
+      status: "error",
+      errorCode: "INTERNAL_ERROR",
+    });
+
+    const response = await reportResult(
+      new NextRequest("https://chorus.test/api/daemon/directory-request/report", {
+        method: "POST",
+        body: JSON.stringify({
+          requestUuid: "roots-1",
+          connectionUuid: "conn-1",
+          status: "succeeded",
+          roots: [],
+        }),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({}) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.daemonDirectoryRequest.update).toHaveBeenCalledWith({
+      where: { uuid: "roots-1" },
+      data: {
+        status: "error",
+        result: undefined,
+        errorCode: "INTERNAL_ERROR",
+        completedAt: expect.any(Date),
+      },
+    });
+  });
 });

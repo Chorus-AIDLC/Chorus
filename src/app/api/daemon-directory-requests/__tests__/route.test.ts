@@ -68,6 +68,24 @@ describe("POST /api/daemon-directory-requests", () => {
     });
   });
 
+  it("accepts roots without forwarding a client-provided path", async () => {
+    createDirectoryRequest.mockResolvedValue({ uuid: "roots-1", status: "pending" });
+    const roots = {
+      operation: "roots",
+      agentUuid: "agent-1",
+      targetConnectionUuid: "conn-1",
+    };
+    const response = await POST(request({ ...roots, prefix: "/client-root" }), {
+      params: Promise.resolve({}),
+    });
+    expect(response.status).toBe(200);
+    expect(createDirectoryRequest).toHaveBeenCalledWith({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      ...roots,
+    });
+  });
+
   it("returns stable typed failures and rejects malformed operations", async () => {
     createDirectoryRequest.mockRejectedValue(
       new CwdServiceError("HOST_OFFLINE", "Target host is offline"),

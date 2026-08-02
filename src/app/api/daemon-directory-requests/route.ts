@@ -10,6 +10,11 @@ import {
 
 const schema = z.discriminatedUnion("operation", [
   z.object({
+    operation: z.literal("roots"),
+    agentUuid: z.string().min(1),
+    targetConnectionUuid: z.string().min(1),
+  }),
+  z.object({
     operation: z.literal("list"),
     agentUuid: z.string().min(1),
     targetConnectionUuid: z.string().min(1),

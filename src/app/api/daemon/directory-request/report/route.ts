@@ -14,6 +14,7 @@ const schema = z.discriminatedUnion("status", [
     requestUuid: z.string().min(1),
     connectionUuid: z.string().min(1),
     status: z.literal("succeeded"),
+    roots: z.unknown().optional(),
     items: z.array(z.object({ name: z.string(), path: z.string() })).optional(),
     nextCursor: z.string().nullable().optional(),
     normalizedPath: z.string().optional(),
@@ -44,6 +45,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         ? {
             status: "success" as const,
             result: {
+              ...(body.roots !== undefined ? { roots: body.roots } : {}),
               items: body.items ?? [],
               nextCursor: body.nextCursor ?? null,
               normalizedPath: body.normalizedPath,
