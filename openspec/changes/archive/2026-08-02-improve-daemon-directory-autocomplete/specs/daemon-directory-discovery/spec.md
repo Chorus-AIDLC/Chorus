@@ -1,18 +1,4 @@
-# daemon-directory-discovery Specification
-
-## Purpose
-TBD - created by archiving change add-project-agent-cwd-discovery. Update Purpose after archive.
-## Requirements
-### Requirement: Daemon browse-root configuration
-The daemon SHALL resolve a host-local directory-discovery allowlist independently from startup `cwds`, using `--browse-root` over `CHORUS_DAEMON_BROWSE_ROOTS` over `~/.chorus/daemon.json` `browseRoots` over the daemon OS user's home directory. `chorus daemon install --browse-root` SHALL persist normalized roots through the existing owner-only field-merge configuration writer, and changes SHALL take effect after daemon restart.
-
-#### Scenario: No browse roots are configured
-- **WHEN** a daemon starts without a browse-root flag, environment value, or stored value
-- **THEN** its effective browse root MUST be the daemon OS user's home directory
-
-#### Scenario: Browse roots do not become startup connections
-- **WHEN** a path is configured only as a browse root
-- **THEN** the daemon MUST NOT register that path as a startup cwd or create an online Agent instance for it
+## MODIFIED Requirements
 
 ### Requirement: Correlated remote directory requests
 The server SHALL authorize and persist each roots, list, or validate request,
@@ -60,11 +46,3 @@ basename character before automatically issuing a list request.
 - **WHEN** a user types the first basename character under a selected browse root
 - **THEN** the client MUST request only the bounded first result page
 - **AND** further characters MUST refine the prefix instead of causing unbounded enumeration
-
-### Requirement: Stable discovery failures
-Directory discovery SHALL expose stable error codes for offline host, timeout, invalid path, outside root, non-directory, access denied, stale target, limit exceeded, and internal failure. An error MUST NOT be represented as an empty successful result.
-
-#### Scenario: Empty directory versus failed request
-- **WHEN** an accessible directory has no matching children
-- **THEN** the request MUST succeed with an empty items array
-- **AND** when the scan fails it MUST instead return the corresponding typed error

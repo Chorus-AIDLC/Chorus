@@ -375,6 +375,9 @@ export function buildDaemon(creds, deps = {}) {
       redispatchResume,
       deliverTurn,
       handleDirectoryRequest: async (event) => {
+        if (event.operation === "roots") {
+          return { roots: [...browseRoots] };
+        }
         if (event.operation === "validate") {
           return validateDirectory({ cwd: event.cwd, browseRoots });
         }

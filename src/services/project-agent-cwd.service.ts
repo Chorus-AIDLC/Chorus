@@ -14,7 +14,7 @@ export const DIRECTORY_ERROR_CODES = [
 ] as const;
 
 export type DirectoryErrorCode = (typeof DIRECTORY_ERROR_CODES)[number];
-export type DirectoryOperation = "list" | "validate";
+export type DirectoryOperation = "roots" | "list" | "validate";
 
 export class CwdServiceError extends Error {
   constructor(
@@ -245,6 +245,30 @@ export async function completeDirectoryRequest(params: {
   }
   if (params.status === "error" && !params.errorCode) {
     throw new CwdServiceError("VALIDATION_ERROR", "errorCode is required");
+  }
+  if (params.status === "success") {
+    const result = params.result;
+    if (
+      request.operation === "roots" &&
+      (!result ||
+        typeof result !== "object" ||
+        Array.isArray(result) ||
+        !Array.isArray((result as { roots?: unknown }).roots) ||
+        (result as { roots: unknown[] }).roots.length === 0 ||
+        !(result as { roots: unknown[] }).roots.every(
+          (root) => typeof root === "string" && root.length > 0,
+        ))
+    ) {
+      return prisma.daemonDirectoryRequest.update({
+        where: { uuid: request.uuid },
+        data: {
+          status: "error",
+          result: undefined,
+          errorCode: "INTERNAL_ERROR",
+          completedAt: new Date(),
+        },
+      });
+    }
   }
   return prisma.daemonDirectoryRequest.update({
     where: { uuid: request.uuid },

@@ -129,6 +129,42 @@ describe("project-agent cwd request service", () => {
     );
   });
 
+  it("dispatches a roots request without accepting a client path", async () => {
+    prismaMock.daemonDirectoryRequest.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.daemonConnection.findFirst.mockResolvedValue({
+      uuid: "conn-1",
+      host: "host-1",
+      agentInstanceUuid: "instance-1",
+    });
+    prismaMock.daemonDirectoryRequest.create.mockResolvedValue({
+      uuid: "roots-1",
+      limit: 50,
+      deadlineAt: new Date(Date.now() + 15_000),
+    });
+
+    await createDirectoryRequest({
+      ...base,
+      targetConnectionUuid: "conn-1",
+      operation: "roots",
+    });
+
+    expect(prismaMock.daemonDirectoryRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        operation: "roots",
+        prefix: null,
+        cwd: null,
+      }),
+    });
+    expect(emit).toHaveBeenCalledWith(
+      "control:conn-1",
+      expect.objectContaining({
+        operation: "roots",
+        prefix: undefined,
+        cwd: undefined,
+      }),
+    );
+  });
+
   it("turns an overdue pending request into a terminal TIMEOUT", async () => {
     prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
       uuid: "request-1",
@@ -167,6 +203,41 @@ describe("project-agent cwd request service", () => {
         agentUuid: "agent-1",
         targetConnectionUuid: "wrong-conn",
         status: "pending",
+      },
+    });
+  });
+
+  it("terminalizes a malformed successful roots report as INTERNAL_ERROR", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
+      uuid: "roots-1",
+      operation: "roots",
+      status: "pending",
+      deadlineAt: new Date(Date.now() + 15_000),
+    });
+
+    prismaMock.daemonDirectoryRequest.update.mockResolvedValue({
+      uuid: "roots-1",
+      status: "error",
+      errorCode: "INTERNAL_ERROR",
+    });
+
+    const result = await completeDirectoryRequest({
+      companyUuid: "company-1",
+      agentUuid: "agent-1",
+      connectionUuid: "conn-1",
+      requestUuid: "roots-1",
+      status: "success",
+      result: { roots: [] },
+    });
+
+    expect(result).toMatchObject({ status: "error", errorCode: "INTERNAL_ERROR" });
+    expect(prismaMock.daemonDirectoryRequest.update).toHaveBeenCalledWith({
+      where: { uuid: "roots-1" },
+      data: {
+        status: "error",
+        result: undefined,
+        errorCode: "INTERNAL_ERROR",
+        completedAt: expect.any(Date),
       },
     });
   });

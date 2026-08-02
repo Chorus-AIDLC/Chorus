@@ -9,7 +9,7 @@
 // behavior specific to the wake-cwd copy.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
@@ -186,5 +186,64 @@ describe("WakeCwdPickerDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ connectionUuid: instances[0].connectionUuid }),
     );
+  });
+
+  it("uses a freshly validated temporary cwd without confirming a registered instance", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onConfirm = vi.fn();
+    const onTemporaryConfirm = vi.fn();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { operation: string; cwd?: string };
+      const result = body.operation === "roots"
+        ? { roots: ["/workspace"] }
+        : body.operation === "list"
+          ? { items: [{ name: "repo", path: "/workspace/repo" }] }
+          : { normalizedPath: body.cwd };
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            request: {
+              uuid: `request-${body.operation}`,
+              status: "success",
+              result,
+            },
+          },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <WakeCwdPickerDialog
+        open
+        agentName="Test Agent"
+        instances={makeInstances(2)}
+        agentUuid="agent-1"
+        onConfirm={onConfirm}
+        onTemporaryConfirm={onTemporaryConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Browse another directory" }));
+    await waitFor(() => {
+      expect((screen.getByRole("combobox", { name: "Directory path prefix" }) as HTMLInputElement).value)
+        .toBe("/workspace");
+    });
+    const input = screen.getByRole("combobox", { name: "Directory path prefix" });
+    fireEvent.change(input, { target: { value: "/workspace/r" } });
+    await act(() => vi.advanceTimersByTimeAsync(250));
+    fireEvent.click(await screen.findByRole("option"));
+    fireEvent.click(screen.getByRole("button", { name: "Use for this operation" }));
+
+    await waitFor(() => {
+      expect(onTemporaryConfirm).toHaveBeenCalledWith({
+        agentUuid: "agent-1",
+        validationRequestUuid: "request-validate",
+      });
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

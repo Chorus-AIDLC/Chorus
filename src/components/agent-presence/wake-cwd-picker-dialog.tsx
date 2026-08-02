@@ -93,7 +93,7 @@ export function WakeCwdPickerDialog({
   // CJK/JP/KR user pressing Enter to CONFIRM an IME candidate must not
   // accidentally pin+wake.
   const handleListKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key !== "Enter" || isImeComposing(e)) return;
+    if (browsing || e.key !== "Enter" || isImeComposing(e)) return;
     if (!selected) return;
     e.preventDefault();
     onConfirm(selected);
