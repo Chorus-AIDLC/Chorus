@@ -230,6 +230,7 @@ export interface WakeNotificationContext {
   resolvedCwdSource?: string | null;
   resolvedCwdHost?: string | null;
   resolvedRuntimeCwd?: string | null;
+  resolvedCwdAvailability?: "ready" | "offline" | "invalid" | null;
 }
 
 /**
@@ -340,14 +341,14 @@ async function resolvePinnedTarget(
   // Stage-entry operations carry their actor-bearing target snapshot in the
   // activity. Consume it verbatim so preference/actor/registry changes cannot
   // alter the target between the stage action and notification delivery.
-  if (
-    ctx.resolvedCwdSource &&
-    ctx.resolvedCwdSource !== "unconfigured" &&
-    ctx.resolvedCwdHost &&
-    ctx.resolvedRuntimeCwd
-  ) {
+  if (ctx.resolvedCwdSource && ctx.resolvedCwdSource !== "unconfigured") {
     return {
-      host: ctx.resolvedCwdHost,
+      // An invalid fixed target is still a hard pin. The sentinel cannot match a
+      // daemon host, producing the same notify-only behavior as an offline target.
+      host:
+        ctx.resolvedCwdAvailability === "invalid"
+          ? "\u0000invalid-project-cwd"
+          : (ctx.resolvedCwdHost ?? ""),
       cwd: null,
       runtimeCwd: ctx.resolvedRuntimeCwd,
       soft: false,

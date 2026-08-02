@@ -27,6 +27,8 @@ const {
     user: { findFirst: vi.fn(), findMany: vi.fn() },
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     project: { findUnique: vi.fn() },
+    task: { findFirst: vi.fn() },
+    projectAgentCwdPreference: { findMany: vi.fn() },
     comment: { findUnique: vi.fn() },
     idea: { findFirst: vi.fn() },
     daemonConnection: { findMany: vi.fn() },
@@ -84,6 +86,8 @@ beforeEach(() => {
   // path (which returns agents) never hits an undefined mock.
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
   mockPrisma.daemonExecution.groupBy.mockResolvedValue([]);
+  mockPrisma.task.findFirst.mockResolvedValue({ projectUuid: "project-1" });
+  mockPrisma.projectAgentCwdPreference.findMany.mockResolvedValue([]);
 });
 
 describe("enrichIdeaContext (pin-cwd-before-wake, Part 2a)", () => {

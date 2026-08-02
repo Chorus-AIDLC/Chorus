@@ -46,6 +46,7 @@ export interface NotificationCreateParams {
   resolvedCwdSource?: string | null;
   resolvedCwdHost?: string | null;
   resolvedRuntimeCwd?: string | null;
+  resolvedCwdAvailability?: "ready" | "offline" | "invalid" | null;
 }
 
 export interface NotificationListParams {

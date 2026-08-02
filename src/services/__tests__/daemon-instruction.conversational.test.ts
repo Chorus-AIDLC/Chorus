@@ -58,6 +58,12 @@ vi.mock("@/services/daemon-control.service", () => ({
   dispatchControl: (...a: unknown[]) => mockDispatchControl(...a),
 }));
 
+const mockResolveProjectAgentCwdTarget = vi.fn();
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: (...args: unknown[]) =>
+    mockResolveProjectAgentCwdTarget(...args),
+}));
+
 // Deterministic server-generated ideaUuid.
 const STUB_IDEA_UUID = "idea-0000-0000-0000-00000000gen1";
 vi.mock("crypto", () => ({ randomUUID: () => STUB_IDEA_UUID }));
@@ -104,6 +110,17 @@ beforeEach(() => {
   });
   mockConnectionBelongsToAgent.mockResolvedValue(true);
   mockIsConnectionLive.mockResolvedValue(true);
+  mockResolveProjectAgentCwdTarget.mockResolvedValue({
+    actorUserUuid: ownerUuid,
+    source: "unconfigured",
+    agentUuid,
+    host: null,
+    cwd: null,
+    availability: "ready",
+    promptPolicy: "select",
+    connectionUuid,
+    agentInstanceUuid: null,
+  });
 
   // $transaction runs its callback against the tx client and returns its result.
   mockPrisma.$transaction.mockImplementation(
@@ -280,6 +297,69 @@ describe("composeConversationalIdeaInstruction", () => {
 
 // ===== createConversationalIdeaSession — happy path =====
 describe("createConversationalIdeaSession", () => {
+  it("uses the project-fixed target and snapshots it on the Idea and root session", async () => {
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      actorUserUuid: ownerUuid,
+      source: "project_fixed",
+      agentUuid,
+      host: "builder-host",
+      cwd: "/srv/project",
+      availability: "ready",
+      promptPolicy: "suppress",
+      connectionUuid: "fixed-connection",
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await createConversationalIdeaSession(userAuth, validParams);
+
+    expect(mockTx.idea.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          assigneeUuid: "fixed-instance",
+          cwdSource: "project_fixed",
+          cwdHost: "builder-host",
+          runtimeCwd: "/srv/project",
+        }),
+      }),
+    );
+    expect(mockTx.daemonSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          originConnectionUuid: "fixed-connection",
+          runtimeCwd: "/srv/project",
+        }),
+      }),
+    );
+    expect(mockDispatchControl).toHaveBeenCalledWith(
+      expect.objectContaining({ targetConnectionUuid: "fixed-connection" }),
+    );
+  });
+
+  it("rejects an offline project-fixed target without falling back or writing", async () => {
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      actorUserUuid: ownerUuid,
+      source: "project_fixed",
+      agentUuid,
+      host: "builder-host",
+      cwd: "/srv/project",
+      availability: "offline",
+      promptPolicy: "suppress",
+      connectionUuid: null,
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await expect(
+      createConversationalIdeaSession(userAuth, validParams),
+    ).rejects.toMatchObject({
+      name: "Error",
+      code: "project_cwd_target_unavailable",
+      availability: "offline",
+    });
+    expect(mockConnectionBelongsToAgent).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
   it("creates idea + idea-anchored session + first turn in one transaction", async () => {
     const { idea, session, turn } = await createConversationalIdeaSession(
       userAuth,

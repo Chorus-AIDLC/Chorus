@@ -117,6 +117,10 @@ function renderDialog(over: Partial<Parameters<typeof NewIdeaDialog>[0]> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAuthFetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({ success: true, data: { agents: [] } }),
+  });
 });
 
 describe("NewIdeaDialog — mode gating", () => {
@@ -156,8 +160,11 @@ describe("NewIdeaDialog — mode gating", () => {
       userText: "my idea",
     });
     expect(returned).toEqual(session);
-    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
-    const [url, init] = mockAuthFetch.mock.calls[0];
+    const ideaCalls = mockAuthFetch.mock.calls.filter(
+      ([url]) => url === "/api/ideas/conversational",
+    );
+    expect(ideaCalls).toHaveLength(1);
+    const [url, init] = ideaCalls[0];
     expect(url).toBe("/api/ideas/conversational");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       projectUuid: "proj-1",
@@ -190,7 +197,9 @@ describe("NewIdeaDialog — mode gating", () => {
       connectionUuid: "c1",
       userText: "big feature to split",
     });
-    const [url, init] = mockAuthFetch.mock.calls[0];
+    const [url, init] = mockAuthFetch.mock.calls.find(
+      ([calledUrl]) => calledUrl === "/api/ideas/conversational",
+    )!;
     expect(url).toBe("/api/ideas/conversational");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       projectUuid: "proj-1",
@@ -256,6 +265,25 @@ describe("NewIdeaDialog — mode gating", () => {
     expect(screen.getByText("daemon-connect-cta")).toBeTruthy();
     // Form still fully usable.
     expect(screen.getByLabelText("Title")).toBeTruthy();
+  });
+
+  it("offline fixed target keeps the conversational tab enabled", async () => {
+    setPresence(false);
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [{ agent: { uuid: "agent-1" }, preference: { status: "offline" } }],
+        },
+      }),
+    });
+    renderDialog();
+
+    const tab = (await screen.findByRole("tab", {
+      name: "Describe to an agent",
+    })) as HTMLButtonElement;
+    expect(tab.disabled).toBe(false);
   });
 
   it("derive-child mode renders no tabs at all (form only)", () => {

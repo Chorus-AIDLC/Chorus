@@ -115,6 +115,11 @@ interface Mentionable {
     cwd: string | null;
     agentInstanceUuid: string;
   };
+  projectFixedCwd?: {
+    host: string;
+    cwd: string;
+    availability: "ready" | "offline" | "invalid";
+  };
 }
 
 // The durable (host, cwd) "place" a mention pins to. A structural subset of both
@@ -158,6 +163,19 @@ export function resolveMentionSelection(item: Mentionable): MentionSelection {
     return {
       kind: "insert",
       pin: { host: item.ideaPin.host, cwd: item.ideaPin.cwd },
+    };
+  }
+
+  // Project-fixed cwd is authoritative for new mention work. It is encoded even
+  // while offline/invalid so the server keeps the wake notify-only instead of
+  // silently falling back to another live instance.
+  if (item.type === "agent" && item.projectFixedCwd) {
+    return {
+      kind: "insert",
+      pin: {
+        host: item.projectFixedCwd.host,
+        cwd: item.projectFixedCwd.cwd,
+      },
     };
   }
 

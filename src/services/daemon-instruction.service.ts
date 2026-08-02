@@ -56,6 +56,7 @@ import {
   connectionBelongsToAgent,
   isConnectionLive,
 } from "@/services/daemon-execution.service";
+import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 
 // ===== Constants =====
 
@@ -535,6 +536,13 @@ export class ConnectionInstanceMissingError extends Error {
   }
 }
 
+export class ProjectCwdTargetUnavailableError extends Error {
+  readonly code = "project_cwd_target_unavailable";
+  constructor(readonly availability: "offline" | "invalid") {
+    super(`Project fixed working directory is ${availability}`);
+  }
+}
+
 /** Max length of the server-derived placeholder title for a pre-created idea. */
 export const PLACEHOLDER_TITLE_MAX = 60;
 
@@ -714,18 +722,7 @@ export async function createConversationalIdeaSession(
   // (1) Visibility + ownership fence, identical posture to the ad-hoc path: either miss
   // collapses to ONE 404 non-disclosure verdict.
   const ownsAgent = await callerOwnsAgent(auth, params.agentUuid);
-  const connectionOfAgent = await connectionBelongsToAgent(
-    auth.companyUuid,
-    params.agentUuid,
-    params.connectionUuid,
-  );
-  if (!ownsAgent || !connectionOfAgent) {
-    throw new ConnectionNotVisibleError();
-  }
-  const online = await isConnectionLive(auth.companyUuid, params.connectionUuid);
-  if (!online) {
-    throw new ConnectionOfflineError(params.connectionUuid);
-  }
+  if (!ownsAgent) throw new ConnectionNotVisibleError();
 
   // (2) Project visibility (company-scoped) + the template's display name.
   const project = await prisma.project.findFirst({
@@ -736,16 +733,62 @@ export async function createConversationalIdeaSession(
     throw new ProjectNotVisibleError();
   }
 
-  // (3) The durable instance behind the chosen connection — the idea's pin target. A
-  // live connection normally always has one (linked at handshake); never bind to null.
-  const connection = await prisma.daemonConnection.findFirst({
-    where: { uuid: params.connectionUuid, companyUuid: auth.companyUuid },
-    select: { agentInstanceUuid: true },
+  // (3) A project-fixed cwd is authoritative for new work. Resolve it server-side so a
+  // stale or crafted client connection cannot bypass the saved target. Without a fixed
+  // preference, preserve the explicitly selected online instance.
+  const actorUserUuid =
+    auth.type === "user"
+      ? auth.actorUuid
+      : (
+          await prisma.agent.findFirst({
+            where: { uuid: auth.actorUuid, companyUuid: auth.companyUuid },
+            select: { ownerUuid: true },
+          })
+        )?.ownerUuid;
+  if (!actorUserUuid) throw new ConnectionNotVisibleError();
+
+  const projectTarget = await resolveProjectAgentCwdTarget({
+    companyUuid: auth.companyUuid,
+    actorUserUuid,
+    projectUuid: project.uuid,
+    agentUuid: params.agentUuid,
   });
-  if (!connection?.agentInstanceUuid) {
-    throw new ConnectionInstanceMissingError(params.connectionUuid);
+
+  let originConnectionUuid = params.connectionUuid;
+  let instanceUuid: string | null = null;
+  let cwdSource: string | null = null;
+  let cwdHost: string | null = null;
+  let runtimeCwd: string | null = null;
+
+  if (projectTarget.source === "project_fixed") {
+    if (projectTarget.availability !== "ready" || !projectTarget.connectionUuid || !projectTarget.agentInstanceUuid) {
+      throw new ProjectCwdTargetUnavailableError(
+        projectTarget.availability === "offline" ? "offline" : "invalid",
+      );
+    }
+    originConnectionUuid = projectTarget.connectionUuid;
+    instanceUuid = projectTarget.agentInstanceUuid;
+    cwdSource = "project_fixed";
+    cwdHost = projectTarget.host;
+    runtimeCwd = projectTarget.cwd;
+  } else {
+    const connectionOfAgent = await connectionBelongsToAgent(
+      auth.companyUuid,
+      params.agentUuid,
+      params.connectionUuid,
+    );
+    if (!connectionOfAgent) throw new ConnectionNotVisibleError();
+    const online = await isConnectionLive(auth.companyUuid, params.connectionUuid);
+    if (!online) throw new ConnectionOfflineError(params.connectionUuid);
+    const connection = await prisma.daemonConnection.findFirst({
+      where: { uuid: params.connectionUuid, companyUuid: auth.companyUuid },
+      select: { agentInstanceUuid: true },
+    });
+    if (!connection?.agentInstanceUuid) {
+      throw new ConnectionInstanceMissingError(params.connectionUuid);
+    }
+    instanceUuid = connection.agentInstanceUuid;
   }
-  const instanceUuid = connection.agentInstanceUuid;
 
   // (4) Server-generated ideaUuid FIRST, so the composed instruction can embed it while
   // the idea write stays inside the transaction. Reject empty descriptions before
@@ -785,6 +828,9 @@ export async function createConversationalIdeaSession(
         status: "elaborating",
         assigneeType: "agent_instance",
         assigneeUuid: instanceUuid,
+        cwdSource,
+        cwdHost,
+        runtimeCwd,
         assignedAt: new Date(),
         assignedByUuid: auth.actorUuid,
         createdByUuid: auth.actorUuid,
@@ -808,7 +854,8 @@ export async function createConversationalIdeaSession(
         agentUuid: params.agentUuid,
         sessionId: ideaUuid,
         directIdeaUuid: ideaUuid,
-        originConnectionUuid: params.connectionUuid,
+        originConnectionUuid,
+        runtimeCwd,
         status: "active",
       },
     });
@@ -892,7 +939,7 @@ export async function createConversationalIdeaSession(
   });
   deliverTurnPing({
     companyUuid: auth.companyUuid,
-    originConnectionUuid: params.connectionUuid,
+    originConnectionUuid,
     turnUuid: turn.uuid,
   });
 

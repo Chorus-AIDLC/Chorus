@@ -20,7 +20,7 @@
 //   - Derive-child mode (parentUuid set) is form-only: the template contract
 //     does not cover lineage, so the tabs are not rendered at all.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -88,6 +88,29 @@ export function NewIdeaDialog({
   // agent to propose child ideas as an elaboration round. Rides the existing
   // conversational wake — no new action type.
   const [decompose, setDecompose] = useState(false);
+  const [hasProjectFixedTarget, setHasProjectFixedTarget] = useState(false);
+  useEffect(() => {
+    if (!open || isDerive) return;
+    let cancelled = false;
+    authFetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`)
+      .then(async (response) => {
+        if (!response.ok) return;
+        const json = await response.json();
+        if (!cancelled) {
+          setHasProjectFixedTarget(
+            (json?.data?.agents ?? []).some(
+              (item: { preference?: unknown }) => item.preference,
+            ),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHasProjectFixedTarget(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDerive, open, projectUuid]);
 
   // Conversational mode plumbing. The presence spine is optional so the dialog
   // stays mountable outside the dashboard shell (treated as "no daemon online").
@@ -298,6 +321,7 @@ export function NewIdeaDialog({
         </div>
       </div>
       <ConversationalEntry
+        projectUuid={projectUuid}
         dispatch={conversationalDispatch}
         onStarted={(session) => {
           onOpenChange(false);
@@ -330,7 +354,10 @@ export function NewIdeaDialog({
                 {/* Visible-but-disabled when no daemon is online (q6=b) — the
                     affordance advertises the conversational path; the hint
                     below explains why and how to enable it. */}
-                <TabsTrigger value="conversation" disabled={!daemonOnline}>
+                <TabsTrigger
+                  value="conversation"
+                  disabled={!daemonOnline && !hasProjectFixedTarget}
+                >
                   {t("newIdea.modeConversation")}
                 </TabsTrigger>
               </TabsList>
