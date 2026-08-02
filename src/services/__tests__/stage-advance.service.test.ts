@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Mocks (hoisted so vi.mock factories can reference them) =====
 
-const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
+const { mockPrisma, mockEventBus, mockCreateActivity, mockResolveTarget } = vi.hoisted(() => ({
   mockPrisma: {
     idea: {
       findFirst: vi.fn(),
@@ -19,12 +19,16 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
   },
   mockEventBus: { emitChange: vi.fn() },
   mockCreateActivity: vi.fn().mockResolvedValue(undefined),
+  mockResolveTarget: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/services", () => ({
   activityService: { createActivity: mockCreateActivity },
+}));
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: mockResolveTarget,
 }));
 
 import {
@@ -79,6 +83,17 @@ beforeEach(() => {
   mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-1" });
   mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: AGENT_UUID });
   mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
+  mockResolveTarget.mockResolvedValue({
+    actorUserUuid: USER_UUID,
+    source: "unconfigured",
+    agentUuid: AGENT_UUID,
+    host: null,
+    cwd: null,
+    availability: "ready",
+    promptPolicy: "select",
+    connectionUuid: "conn-1",
+    agentInstanceUuid: null,
+  });
 });
 
 describe("executeStageAdvance — actor gate", () => {
@@ -161,7 +176,12 @@ describe("executeStageAdvance — precondition", () => {
         targetType: "idea",
         targetUuid: IDEA_UUID,
         projectUuid: PROJECT_UUID,
-        value: { proposalUuid: "p-1", remainingTasks: 3 },
+        value: expect.objectContaining({
+          proposalUuid: "p-1",
+          remainingTasks: 3,
+          resolvedCwdActorUserUuid: USER_UUID,
+          resolvedCwdSource: "unconfigured",
+        }),
       })
     );
     expect(mockEventBus.emitChange).toHaveBeenCalledWith(
@@ -176,7 +196,7 @@ describe("executeStageAdvance — offline policy", () => {
 
     await executeStageAdvance(makeDefinition({ offlinePolicy: "queue" }), HUMAN_PARAMS);
 
-    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    expect(mockResolveTarget).toHaveBeenCalledOnce();
     expect(mockCreateActivity).toHaveBeenCalled();
   });
 
@@ -188,16 +208,12 @@ describe("executeStageAdvance — offline policy", () => {
       HUMAN_PARAMS
     );
 
-    // The liveness query filters on status="online" AND a lastSeenAt floor
-    // derived from STALE_THRESHOLD_MS.
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+    expect(mockResolveTarget).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          agentUuid: AGENT_UUID,
-          status: "online",
-          lastSeenAt: expect.objectContaining({ gte: expect.any(Date) }),
-        }),
-      })
+        actorUserUuid: USER_UUID,
+        projectUuid: PROJECT_UUID,
+        agentUuid: AGENT_UUID,
+      }),
     );
     expect(mockCreateActivity).toHaveBeenCalled();
   });
@@ -205,6 +221,17 @@ describe("executeStageAdvance — offline policy", () => {
   it("require_online throws coded AGENT_OFFLINE when no live connection exists and emits nothing", async () => {
     const transition = vi.fn();
     mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "unconfigured",
+      agentUuid: AGENT_UUID,
+      host: null,
+      cwd: null,
+      availability: "offline",
+      promptPolicy: "select",
+      connectionUuid: null,
+      agentInstanceUuid: null,
+    });
 
     await expect(
       executeStageAdvance(
@@ -222,6 +249,17 @@ describe("executeStageAdvance — offline policy", () => {
     mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
       host: "fixed-host",
     });
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "project_fixed",
+      agentUuid: AGENT_UUID,
+      host: "fixed-host",
+      cwd: "/work/fixed",
+      availability: "offline",
+      promptPolicy: "suppress",
+      connectionUuid: null,
+      agentInstanceUuid: INSTANCE_UUID,
+    });
     mockPrisma.daemonConnection.findFirst.mockImplementation(
       async ({ where }: { where: { host?: string } }) =>
         where.host === "fixed-host" ? null : { uuid: "conn-other-host" },
@@ -234,35 +272,35 @@ describe("executeStageAdvance — offline policy", () => {
       ),
     ).rejects.toMatchObject({ code: "FIXED_CWD_HOST_OFFLINE" });
 
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          agentUuid: AGENT_UUID,
-          host: "fixed-host",
-          status: "online",
-        }),
-      }),
-    );
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledTimes(1);
+    expect(mockResolveTarget).toHaveBeenCalledOnce();
     expect(transition).not.toHaveBeenCalled();
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
-  it("checks a fixed cwd before an online AgentInstance assignment", async () => {
+  it("keeps an established AgentInstance assignment ahead of a replaced fixed cwd", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID }),
     );
     mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
       host: "fixed-host",
     });
-    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-pinned" });
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "registered_instance",
+      agentUuid: AGENT_UUID,
+      host: "root-host",
+      cwd: "/work/root",
+      availability: "ready",
+      promptPolicy: "none",
+      connectionUuid: "conn-pinned",
+      agentInstanceUuid: INSTANCE_UUID,
+    });
 
-    await expect(
-      executeStageAdvance(
-        makeDefinition({ offlinePolicy: "require_online" }),
-        HUMAN_PARAMS,
-      ),
-    ).rejects.toMatchObject({ code: "FIXED_CWD_HOST_OFFLINE" });
+    await executeStageAdvance(
+      makeDefinition({ offlinePolicy: "require_online" }),
+      HUMAN_PARAMS,
+    );
 
     expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -270,12 +308,18 @@ describe("executeStageAdvance — offline policy", () => {
         select: { agentUuid: true },
       }),
     );
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+    expect(mockResolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ registeredInstanceUuid: INSTANCE_UUID }),
+    );
+    expect(mockCreateActivity).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ host: "fixed-host" }),
+        value: expect.objectContaining({
+          resolvedCwdSource: "registered_instance",
+          resolvedCwdHost: "root-host",
+          resolvedRuntimeCwd: "/work/root",
+        }),
       }),
     );
-    expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
   it("require_online on an agent_instance assignee checks the PINNED INSTANCE's own connection (host+cwd), not just the agent", async () => {
@@ -291,6 +335,17 @@ describe("executeStageAdvance — offline policy", () => {
       cwd: "/home/u/dev/payments",
     });
     mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-pinned" });
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "registered_instance",
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+      availability: "ready",
+      promptPolicy: "none",
+      connectionUuid: "conn-pinned",
+      agentInstanceUuid: INSTANCE_UUID,
+    });
 
     await executeStageAdvance(
       makeDefinition({ offlinePolicy: "require_online" }),
@@ -303,16 +358,8 @@ describe("executeStageAdvance — offline policy", () => {
       })
     );
     // The liveness query is scoped to the pinned instance's exact (agent, host, cwd) place.
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          agentUuid: AGENT_UUID,
-          host: "Laptop-Q3",
-          cwd: "/home/u/dev/payments",
-          status: "online",
-          lastSeenAt: expect.objectContaining({ gte: expect.any(Date) }),
-        }),
-      })
+    expect(mockResolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ registeredInstanceUuid: INSTANCE_UUID }),
     );
     expect(mockCreateActivity).toHaveBeenCalled();
   });
@@ -331,6 +378,17 @@ describe("executeStageAdvance — offline policy", () => {
       cwd: "/home/u/dev/payments",
     });
     mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "registered_instance",
+      agentUuid: AGENT_UUID,
+      host: "Laptop-Q3",
+      cwd: "/home/u/dev/payments",
+      availability: "offline",
+      promptPolicy: "none",
+      connectionUuid: null,
+      agentInstanceUuid: INSTANCE_UUID,
+    });
 
     await expect(
       executeStageAdvance(
@@ -348,6 +406,17 @@ describe("executeStageAdvance — offline policy", () => {
       makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID })
     );
     mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+    mockResolveTarget.mockResolvedValue({
+      actorUserUuid: USER_UUID,
+      source: "registered_instance",
+      agentUuid: AGENT_UUID,
+      host: null,
+      cwd: null,
+      availability: "invalid",
+      promptPolicy: "none",
+      connectionUuid: null,
+      agentInstanceUuid: INSTANCE_UUID,
+    });
 
     await expect(
       executeStageAdvance(

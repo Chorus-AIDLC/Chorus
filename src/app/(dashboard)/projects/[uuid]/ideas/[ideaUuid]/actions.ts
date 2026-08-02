@@ -5,6 +5,10 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { assignIdea, releaseIdea, getIdeaByUuid } from "@/services/idea.service";
 import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { listConnectionsForAgent } from "@/services/daemon-connection.service";
+import {
+  resolveProjectAgentCwdTarget,
+  type ResolvedProjectAgentCwdTarget,
+} from "@/services/project-agent-cwd.service";
 import { createActivity } from "@/services/activity.service";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
@@ -85,13 +89,27 @@ export async function claimIdeaToAgentAction(
       return { success: false, error: "Idea is not available for assignment" };
     }
 
+    const target = await resolveProjectAgentCwdTarget({
+      companyUuid: auth.companyUuid,
+      actorUserUuid: auth.actorUuid,
+      projectUuid: idea.projectUuid,
+      agentUuid,
+    });
+    const resolvedInstanceUuid =
+      target.source === "project_fixed"
+        ? target.agentInstanceUuid
+        : instanceUuid;
+
     await assignIdea({
       ideaUuid,
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
       assignedByUuid: auth.actorUuid,
-      instanceUuid: instanceUuid ?? undefined,
+      instanceUuid: resolvedInstanceUuid ?? undefined,
+      cwdSource: target.source === "project_fixed" ? target.source : null,
+      cwdHost: target.source === "project_fixed" ? target.host : null,
+      runtimeCwd: target.source === "project_fixed" ? target.cwd : null,
     });
 
     await createActivity({
@@ -105,7 +123,14 @@ export async function claimIdeaToAgentAction(
       value: {
         assigneeType: "agent",
         assigneeUuid: agentUuid,
-        ...(instanceUuid ? { instanceUuid } : {}),
+        ...(resolvedInstanceUuid ? { instanceUuid: resolvedInstanceUuid } : {}),
+        ...(target.source === "project_fixed"
+          ? {
+              resolvedCwdSource: target.source,
+              resolvedCwdHost: target.host,
+              resolvedRuntimeCwd: target.cwd,
+            }
+          : {}),
       },
     });
 
@@ -276,14 +301,28 @@ export async function getPmAgentsAction() {
 // shows its own "no instances" empty state — never a silent throw).
 export async function getAgentInstancesAction(
   agentUuid: string,
-): Promise<{ instances: InstanceCandidate[] }> {
+  projectUuid?: string,
+): Promise<{
+  instances: InstanceCandidate[];
+  resolvedTarget: ResolvedProjectAgentCwdTarget | null;
+}> {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
-    return { instances: [] };
+    return { instances: [], resolvedTarget: null };
   }
 
   try {
-    const connections = await listConnectionsForAgent(auth.companyUuid, agentUuid);
+    const [connections, resolvedTarget] = await Promise.all([
+      listConnectionsForAgent(auth.companyUuid, agentUuid),
+      projectUuid
+        ? resolveProjectAgentCwdTarget({
+            companyUuid: auth.companyUuid,
+            actorUserUuid: auth.actorUuid,
+            projectUuid,
+            agentUuid,
+          })
+        : null,
+    ]);
     return {
       instances: connections.map((c) => ({
         connectionUuid: c.uuid,
@@ -292,9 +331,10 @@ export async function getAgentInstancesAction(
         cwd: c.cwd,
         effectiveStatus: c.effectiveStatus,
       })),
+      resolvedTarget,
     };
   } catch (error) {
     logger.error({ err: error }, "Failed to get agent instances");
-    return { instances: [] };
+    return { instances: [], resolvedTarget: null };
   }
 }

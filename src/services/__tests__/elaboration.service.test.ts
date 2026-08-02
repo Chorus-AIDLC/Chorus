@@ -11,6 +11,12 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
     agentInstance: {
       findFirst: vi.fn(),
     },
+    daemonConnection: {
+      findMany: vi.fn(),
+    },
+    projectAgentCwdPreference: {
+      findFirst: vi.fn(),
+    },
     elaborationRound: {
       count: vi.fn(),
       create: vi.fn(),
@@ -145,6 +151,8 @@ function makeRound(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
+  mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
 });
 
 describe("startElaboration", () => {

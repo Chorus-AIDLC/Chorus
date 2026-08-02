@@ -47,6 +47,7 @@ import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
+import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
 import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
@@ -211,7 +212,11 @@ export function IdeaDetailPanel({
     confirmPick: confirmVerifyPick,
     cancelPick: cancelVerifyPick,
     isResolving: isResolvingVerify,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+    fixedTarget,
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: idea?.uuid,
+  });
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -1055,66 +1060,67 @@ export function IdeaDetailPanel({
                       / Yolo are suppressed. "Derive child idea" (header GitFork
                       button) is the primary progression path instead. */}
                   {!isContainer && (
-                  <>
-                  {/* Verify Elaborate — human "elaboration confirmed, agent
-                      writes the proposal" action, gated by the shared
-                      predicate. No manual create-proposal fallback here. */}
-                  {canVerify && !verified && (
-                    <Button
-                      className="bg-primary hover:bg-[#B56A42] text-white"
-                      onClick={handleVerify}
-                      disabled={isVerifying || isResolvingVerify}
-                    >
-                      {isVerifying ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {t("elaboration.verifying")}
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="mr-2 h-4 w-4" />
-                          {t("elaboration.verifyButton")}
-                        </>
+                    <>
+                      {fixedTarget && <FixedCwdAnchor target={fixedTarget} />}
+                      {/* Verify Elaborate — human "elaboration confirmed, agent
+                          writes the proposal" action, gated by the shared
+                          predicate. No manual create-proposal fallback here. */}
+                      {canVerify && !verified && (
+                        <Button
+                          className="bg-primary hover:bg-[#B56A42] text-white"
+                          onClick={handleVerify}
+                          disabled={isVerifying || isResolvingVerify}
+                        >
+                          {isVerifying ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              {t("elaboration.verifying")}
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="mr-2 h-4 w-4" />
+                              {t("elaboration.verifyButton")}
+                            </>
+                          )}
+                        </Button>
                       )}
-                    </Button>
-                  )}
-                  {verified && (
-                    <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">
-                      {t("elaboration.verifiedQueuedHint")}
-                    </span>
-                  )}
-                  {verifyError && (
-                    <span className="text-[11px] text-destructive">{verifyError}</span>
-                  )}
-                  {/* Start Development — human "the plan is approved, go build
-                      it" action (add-stage-advance-start-development). Same
-                      shared-predicate contract as Verify Elaborate; presence
-                      gating + per-error-code toasts live in the component. */}
-                  <StartDevelopmentButton
-                    ideaUuid={idea.uuid}
-                    assignee={idea.assignee}
-                    assigneeName={idea.assignee?.name}
-                    proposals={proposals}
-                    tasks={tasks}
-                    onStarted={() => {
-                      fetchIdea();
-                    }}
-                  />
-                  {/* Yolo — human "drive this whole idea to done via the yolo
-                      skill" action (add-stage-advance-yolo). Shows at any
-                      incomplete stage (relaxed predicate), so it can coexist
-                      with Start Development on a building-stage idea. */}
-                  <YoloButton
-                    ideaUuid={idea.uuid}
-                    assignee={idea.assignee}
-                    assigneeName={idea.assignee?.name}
-                    proposals={proposals}
-                    tasks={tasks}
-                    onStarted={() => {
-                      fetchIdea();
-                    }}
-                  />
-                  </>
+                      {verified && (
+                        <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">
+                          {t("elaboration.verifiedQueuedHint")}
+                        </span>
+                      )}
+                      {verifyError && (
+                        <span className="text-[11px] text-destructive">{verifyError}</span>
+                      )}
+                      {/* Start Development — human "the plan is approved, go build
+                          it" action (add-stage-advance-start-development). Same
+                          shared-predicate contract as Verify Elaborate; presence
+                          gating + per-error-code toasts live in the component. */}
+                      <StartDevelopmentButton
+                        ideaUuid={idea.uuid}
+                        assignee={idea.assignee}
+                        assigneeName={idea.assignee?.name}
+                        proposals={proposals}
+                        tasks={tasks}
+                        onStarted={() => {
+                          fetchIdea();
+                        }}
+                      />
+                      {/* Yolo — human "drive this whole idea to done via the yolo
+                          skill" action (add-stage-advance-yolo). Shows at any
+                          incomplete stage (relaxed predicate), so it can coexist
+                          with Start Development on a building-stage idea. */}
+                      <YoloButton
+                        ideaUuid={idea.uuid}
+                        assignee={idea.assignee}
+                        assigneeName={idea.assignee?.name}
+                        proposals={proposals}
+                        tasks={tasks}
+                        onStarted={() => {
+                          fetchIdea();
+                        }}
+                      />
+                    </>
                   )}
                   {/* Container hint — replaces the proposal CTAs so the footer
                       is never empty and the "derive instead" affordance reads. */}

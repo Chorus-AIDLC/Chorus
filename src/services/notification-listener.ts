@@ -665,6 +665,18 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
           typeof value.temporaryRuntimeCwd === "string"
             ? value.temporaryRuntimeCwd
             : undefined,
+        resolvedCwdSource:
+          typeof value.resolvedCwdSource === "string"
+            ? value.resolvedCwdSource
+            : undefined,
+        resolvedCwdHost:
+          typeof value.resolvedCwdHost === "string"
+            ? value.resolvedCwdHost
+            : undefined,
+        resolvedRuntimeCwd:
+          typeof value.resolvedRuntimeCwd === "string"
+            ? value.resolvedRuntimeCwd
+            : undefined,
       };
       }
     );

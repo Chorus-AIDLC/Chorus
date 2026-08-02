@@ -88,7 +88,10 @@ export function StartDevelopmentButton({
     confirmTemporary,
     cancelPick,
     isResolving,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: ideaUuid,
+  });
 
   // The started hint is transient: it clears when the panel moves to another
   // idea, and — because a wake normally flips a task to in_progress quickly —

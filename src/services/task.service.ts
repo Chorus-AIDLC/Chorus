@@ -55,6 +55,9 @@ export interface TaskClaimParams {
   // task has no override (assigneeType="agent") and its wake-time instance is
   // inherited from the root idea by the wake path (T6) — not resolved here.
   instanceUuid?: string | null;
+  cwdSource?: string | null;
+  cwdHost?: string | null;
+  runtimeCwd?: string | null;
 }
 
 export interface TaskUpdateParams {
@@ -654,6 +657,9 @@ export async function claimTask({
   assigneeUuid,
   assignedByUuid,
   instanceUuid,
+  cwdSource,
+  cwdHost,
+  runtimeCwd,
 }: TaskClaimParams): Promise<TaskResponse> {
   try {
     // Apply an optional durable instance override pin (validates company
@@ -668,6 +674,9 @@ export async function claimTask({
         status: "assigned",
         assigneeType: resolved.assigneeType,
         assigneeUuid: resolved.assigneeUuid,
+        cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
+        cwdHost: runtimeCwd ? cwdHost : null,
+        runtimeCwd: runtimeCwd ?? null,
         assignedAt: new Date(),
         assignedByUuid,
       },
@@ -696,6 +705,9 @@ export async function releaseTask(uuid: string): Promise<TaskResponse> {
         status: "open",
         assigneeType: null,
         assigneeUuid: null,
+        cwdSource: null,
+        cwdHost: null,
+        runtimeCwd: null,
         assignedAt: null,
         assignedByUuid: null,
       },

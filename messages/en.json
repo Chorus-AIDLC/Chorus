@@ -315,6 +315,19 @@
       "status": { "valid": "Available", "offline": "Host offline", "invalid": "Directory unavailable" }
     }
   },
+  "fixedCwdAnchor": {
+    "title": "Fixed working directory",
+    "host": "Host",
+    "cwd": "Directory",
+    "status": "Status",
+    "unknown": "Unknown",
+    "manage": "Manage in project settings",
+    "availability": {
+      "ready": "Available",
+      "offline": "Host offline",
+      "invalid": "Directory unavailable"
+    }
+  },
   "projects": {
     "title": "Projects",
     "subtitle": "Manage your projects and track progress",

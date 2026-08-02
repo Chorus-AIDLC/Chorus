@@ -315,6 +315,19 @@
       "status": { "valid": "可用", "offline": "主机离线", "invalid": "目录不可用" }
     }
   },
+  "fixedCwdAnchor": {
+    "title": "固定工作目录",
+    "host": "主机",
+    "cwd": "目录",
+    "status": "状态",
+    "unknown": "未知",
+    "manage": "在项目设置中管理",
+    "availability": {
+      "ready": "可用",
+      "offline": "主机离线",
+      "invalid": "目录不可用"
+    }
+  },
   "projects": {
     "title": "项目",
     "subtitle": "管理您的项目并跟踪进度",

@@ -227,6 +227,9 @@ export interface WakeNotificationContext {
   pinnedCwd?: string | null;
   temporaryHost?: string | null;
   temporaryRuntimeCwd?: string | null;
+  resolvedCwdSource?: string | null;
+  resolvedCwdHost?: string | null;
+  resolvedRuntimeCwd?: string | null;
 }
 
 /**
@@ -334,27 +337,21 @@ async function resolvePinnedTarget(
   ctx: WakeNotificationContext,
   trigger: TurnTrigger,
 ): Promise<PinnedTarget | null> {
-  // A project preference is authoritative across every instance and inline selection
-  // for this user. Its cwd need not be a registered connection; any online connection
-  // for the same Agent + host is an anchor for directed runtime execution.
-  if (ctx.projectUuid && ctx.actorType === "user" && ctx.actorUuid) {
-    const preference = await prisma.projectAgentCwdPreference?.findFirst({
-      where: {
-        companyUuid: ctx.companyUuid,
-        userUuid: ctx.actorUuid,
-        projectUuid: ctx.projectUuid,
-        agentUuid: ctx.recipientUuid,
-      },
-      select: { host: true, cwd: true },
-    });
-    if (preference) {
-      return {
-        host: preference.host,
-        cwd: null,
-        runtimeCwd: preference.cwd,
-        soft: false,
-      };
-    }
+  // Stage-entry operations carry their actor-bearing target snapshot in the
+  // activity. Consume it verbatim so preference/actor/registry changes cannot
+  // alter the target between the stage action and notification delivery.
+  if (
+    ctx.resolvedCwdSource &&
+    ctx.resolvedCwdSource !== "unconfigured" &&
+    ctx.resolvedCwdHost &&
+    ctx.resolvedRuntimeCwd
+  ) {
+    return {
+      host: ctx.resolvedCwdHost,
+      cwd: null,
+      runtimeCwd: ctx.resolvedRuntimeCwd,
+      soft: false,
+    };
   }
 
   if (ctx.temporaryHost && ctx.temporaryRuntimeCwd) {
@@ -383,14 +380,26 @@ async function resolvePinnedTarget(
   if (ctx.entityType === "task") {
     const task = await prisma.task.findFirst({
       where: { uuid: ctx.entityUuid, companyUuid: ctx.companyUuid },
-      select: { assigneeType: true, assigneeUuid: true },
+      select: {
+        assigneeType: true,
+        assigneeUuid: true,
+        cwdHost: true,
+        runtimeCwd: true,
+      },
     });
     if (task?.assigneeType === "agent_instance" && task.assigneeUuid) {
       const place = await resolveInstancePlace(ctx.companyUuid, task.assigneeUuid);
       if (place) {
         // HARD (owner choice B): an assignment pin is never re-routed. An offline
         // task-override pin is notify-only, identical to a mention pin.
-        const pin = makePinnedTarget(place.host, place.cwd, false);
+        const pin = task.runtimeCwd
+          ? {
+              host: task.cwdHost?.trim() ? task.cwdHost : place.host,
+              cwd: null,
+              runtimeCwd: task.runtimeCwd,
+              soft: false,
+            }
+          : makePinnedTarget(place.host, place.cwd, false);
         if (pin) return pin;
       }
     }
@@ -434,7 +443,12 @@ async function resolveIdeaInstancePin(
   if (!ideaUuid) return null;
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid: ctx.companyUuid },
-    select: { assigneeType: true, assigneeUuid: true },
+    select: {
+      assigneeType: true,
+      assigneeUuid: true,
+      cwdHost: true,
+      runtimeCwd: true,
+    },
   });
   if (idea?.assigneeType === "agent_instance" && idea.assigneeUuid) {
     const place = await resolveInstancePlace(ctx.companyUuid, idea.assigneeUuid);
@@ -442,7 +456,14 @@ async function resolveIdeaInstancePin(
     if (place && place.agentUuid === ctx.recipientUuid) {
       // HARD (owner choice B): an inherited idea-instance pin is never re-routed. An
       // offline pin is notify-only, identical to a mention pin.
-      return makePinnedTarget(place.host, place.cwd, false);
+      return idea.runtimeCwd
+        ? {
+            host: idea.cwdHost?.trim() ? idea.cwdHost : place.host,
+            cwd: null,
+            runtimeCwd: idea.runtimeCwd,
+            soft: false,
+          }
+        : makePinnedTarget(place.host, place.cwd, false);
     }
   }
   return null;

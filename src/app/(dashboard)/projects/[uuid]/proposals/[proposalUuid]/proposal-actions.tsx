@@ -25,6 +25,7 @@ import { approveProposalAction, rejectProposalAction, closeProposalAction, revok
 import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
+import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
 
 interface MaterializedEntities {
   tasks: { uuid: string; title: string; status: string }[];
@@ -59,7 +60,11 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
     confirmPick,
     cancelPick,
     isResolving,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+    fixedTarget,
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: inputIdeaUuid,
+  });
   const [isPending, startTransition] = useTransition();
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [approveNote, setApproveNote] = useState("");
@@ -162,6 +167,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
 
   return (
     <>
+      {fixedTarget && <FixedCwdAnchor target={fixedTarget} />}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button

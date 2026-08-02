@@ -13,10 +13,13 @@ const { emit, prismaMock } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
     },
     projectAgentCwdPreference: {
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       upsert: vi.fn(),
+      update: vi.fn(),
       deleteMany: vi.fn(),
     },
+    agentInstance: { findFirst: vi.fn(), upsert: vi.fn() },
   },
 }));
 
@@ -33,6 +36,7 @@ import {
   completeDirectoryRequest,
   createDirectoryRequest,
   getDirectoryRequest,
+  resolveProjectAgentCwdTarget,
   resolveTemporaryRuntimeCwd,
   saveProjectAgentCwdPreference,
 } from "@/services/project-agent-cwd.service";
@@ -47,6 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.agent.findFirst.mockResolvedValue({ uuid: "agent-1" });
   prismaMock.project.findFirst.mockResolvedValue({ uuid: "project-1" });
+  prismaMock.agentInstance.upsert.mockResolvedValue({ uuid: "instance-1" });
 });
 
 describe("project-agent cwd request service", () => {
@@ -244,6 +249,224 @@ describe("project-agent cwd request service", () => {
 });
 
 describe("project-agent cwd preference service", () => {
+  it.each([
+    {
+      label: "replacement",
+      preference: {
+        uuid: "pref-2",
+        host: "replacement-host",
+        cwd: "/work/replacement",
+        anchorAgentInstanceUuid: "replacement-instance",
+      },
+    },
+    { label: "clear", preference: null },
+  ])(
+    "keeps the persisted root instance after preference $label",
+    async ({ preference }) => {
+      prismaMock.projectAgentCwdPreference.findFirst.mockResolvedValue(preference);
+      prismaMock.agentInstance.findFirst.mockResolvedValue({
+        uuid: "root-instance",
+        host: "root-host",
+        cwd: "/work/root",
+      });
+      prismaMock.daemonConnection.findMany.mockResolvedValue([
+        {
+          uuid: "root-connection",
+          agentUuid: "agent-1",
+          agent: { name: "Agent", ownerUuid: "user-1" },
+          clientType: "claude_code",
+          clientVersion: null,
+          host: "root-host",
+          cwd: "/work/root",
+          startedAt: null,
+          status: "online",
+          connectedAt: new Date(),
+          lastSeenAt: new Date(),
+          disconnectedAt: null,
+          agentInstanceUuid: "root-instance",
+        },
+      ]);
+
+      await expect(
+        resolveProjectAgentCwdTarget({
+          companyUuid: "company-1",
+          actorUserUuid: "user-1",
+          projectUuid: "project-1",
+          agentUuid: "agent-1",
+          temporaryTarget: { host: "temporary-host", cwd: "/work/temporary" },
+          registeredInstanceUuid: "root-instance",
+        }),
+      ).resolves.toEqual({
+        actorUserUuid: "user-1",
+        source: "registered_instance",
+        agentUuid: "agent-1",
+        host: "root-host",
+        cwd: "/work/root",
+        availability: "ready",
+        promptPolicy: "none",
+        connectionUuid: "root-connection",
+        agentInstanceUuid: "root-instance",
+      });
+      expect(prismaMock.agentInstance.upsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resolves a registered discovered path through an online connection on the same host", async () => {
+    prismaMock.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
+    prismaMock.agentInstance.findFirst.mockResolvedValue({
+      uuid: "root-instance",
+      host: "root-host",
+      cwd: "/discovered/not-a-startup-cwd",
+    });
+    prismaMock.daemonConnection.findMany.mockResolvedValue([
+      {
+        uuid: "root-connection",
+        agentUuid: "agent-1",
+        agent: { name: "Agent", ownerUuid: "user-1" },
+        clientType: "claude_code",
+        clientVersion: null,
+        host: "root-host",
+        cwd: "/daemon/startup",
+        startedAt: null,
+        status: "online",
+        connectedAt: new Date(),
+        lastSeenAt: new Date(),
+        disconnectedAt: null,
+        agentInstanceUuid: "startup-instance",
+      },
+    ]);
+
+    await expect(
+      resolveProjectAgentCwdTarget({
+        companyUuid: "company-1",
+        actorUserUuid: "user-1",
+        projectUuid: "project-1",
+        agentUuid: "agent-1",
+        registeredInstanceUuid: "root-instance",
+        registeredHost: "root-host",
+        registeredRuntimeCwd: "/discovered/not-a-startup-cwd",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        source: "registered_instance",
+        host: "root-host",
+        cwd: "/discovered/not-a-startup-cwd",
+        availability: "ready",
+        connectionUuid: "root-connection",
+      }),
+    );
+  });
+
+  it.each([
+    { label: "replacement", preference: { uuid: "new-pref" } },
+    { label: "clear", preference: null },
+  ])(
+    "preserves fixed origin and runtime cwd after preference $label",
+    async ({ preference }) => {
+      prismaMock.projectAgentCwdPreference.findFirst.mockResolvedValue(preference);
+      prismaMock.agentInstance.findFirst.mockResolvedValue({
+        uuid: "fixed-instance",
+        host: "fixed-host",
+        cwd: "/discovered/fixed",
+      });
+      prismaMock.daemonConnection.findMany.mockResolvedValue([]);
+
+      await expect(
+        resolveProjectAgentCwdTarget({
+          companyUuid: "company-1",
+          actorUserUuid: "user-1",
+          projectUuid: "project-1",
+          agentUuid: "agent-1",
+          registeredInstanceUuid: "fixed-instance",
+          registeredSource: "project_fixed",
+          registeredHost: "fixed-host",
+          registeredRuntimeCwd: "/discovered/fixed",
+        }),
+      ).resolves.toEqual({
+        actorUserUuid: "user-1",
+        source: "project_fixed",
+        agentUuid: "agent-1",
+        host: "fixed-host",
+        cwd: "/discovered/fixed",
+        availability: "offline",
+        promptPolicy: "suppress",
+        connectionUuid: null,
+        agentInstanceUuid: "fixed-instance",
+      });
+      expect(prismaMock.agentInstance.upsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns an actor-bearing fixed snapshot, materializes its instance, and never degrades offline", async () => {
+    prismaMock.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      uuid: "pref-1",
+      host: "fixed-host",
+      cwd: "/work/fixed",
+      anchorAgentInstanceUuid: null,
+    });
+    prismaMock.daemonConnection.findMany.mockResolvedValue([]);
+    prismaMock.agentInstance.upsert.mockResolvedValue({ uuid: "fixed-instance" });
+
+    await expect(
+      resolveProjectAgentCwdTarget({
+        companyUuid: "company-1",
+        actorUserUuid: "user-1",
+        projectUuid: "project-1",
+        agentUuid: "agent-1",
+        temporaryTarget: { host: "other-host", cwd: "/other" },
+      }),
+    ).resolves.toEqual({
+      actorUserUuid: "user-1",
+      source: "project_fixed",
+      agentUuid: "agent-1",
+      host: "fixed-host",
+      cwd: "/work/fixed",
+      availability: "offline",
+      promptPolicy: "suppress",
+      connectionUuid: null,
+      agentInstanceUuid: "fixed-instance",
+    });
+    expect(prismaMock.agentInstance.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyUuid_agentUuid_host_cwd: {
+            companyUuid: "company-1",
+            agentUuid: "agent-1",
+            host: "fixed-host",
+            cwd: "/work/fixed",
+          },
+        },
+      }),
+    );
+    expect(prismaMock.projectAgentCwdPreference.update).toHaveBeenCalledWith({
+      where: { uuid: "pref-1" },
+      data: { anchorAgentInstanceUuid: "fixed-instance" },
+    });
+  });
+
+  it("keeps Agent and actor preference lookup isolated", async () => {
+    prismaMock.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
+    prismaMock.daemonConnection.findMany.mockResolvedValue([]);
+
+    await resolveProjectAgentCwdTarget({
+      companyUuid: "company-1",
+      actorUserUuid: "user-2",
+      projectUuid: "project-1",
+      agentUuid: "agent-b",
+    });
+
+    expect(prismaMock.projectAgentCwdPreference.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyUuid: "company-1",
+          userUuid: "user-2",
+          projectUuid: "project-1",
+          agentUuid: "agent-b",
+        },
+      }),
+    );
+  });
+
   it("isolates multiple users and Agents across fixed save, clear, and temporary fallback", async () => {
     const validations = new Map([
       ["validation-user-1-agent-a", { cwd: "/raw/a", normalizedPath: "/work/a", connection: "conn-a" }],

@@ -338,6 +338,33 @@ describe("claimIdea", () => {
     );
   });
 
+  it.each([undefined, "", "   "])(
+    "stores a null cwd source when runtime cwd exists but source is %j",
+    async (cwdSource) => {
+      mockPrisma.idea.findFirst.mockResolvedValue(
+        makeIdeaRecord({ status: "open", assigneeUuid: null }),
+      );
+      mockPrisma.idea.update.mockResolvedValue(
+        makeIdeaRecord({ status: "elaborating", assigneeUuid: ACTOR_UUID }),
+      );
+
+      await claimIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: ACTOR_UUID,
+        runtimeCwd: "/workspace/project",
+        cwdSource,
+      });
+
+      expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ cwdSource: null }),
+        }),
+      );
+    },
+  );
+
   it("rejects pinning to a foreign / missing company instance", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
     mockPrisma.agentInstance.findFirst.mockResolvedValue(null); // company-scoped miss
@@ -428,6 +455,29 @@ describe("assignIdea", () => {
     );
 
     expect(result.status).toBe("elaborating");
+  });
+
+  it("clears a stale cwd source when reassigning with runtime cwd but no source", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", cwdSource: "project_fixed" }),
+    );
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeUuid: ACTOR_UUID }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+      runtimeCwd: "/workspace/project",
+    });
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ cwdSource: null }),
+      }),
+    );
   });
 
   it("should throw if idea not found", async () => {

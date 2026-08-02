@@ -105,7 +105,10 @@ export function YoloButton({
     confirmTemporary,
     cancelPick,
     isResolving,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: ideaUuid,
+  });
 
   // The started hint is transient: it clears when the panel moves to another
   // idea, and — because a wake normally flips the idea into motion quickly —

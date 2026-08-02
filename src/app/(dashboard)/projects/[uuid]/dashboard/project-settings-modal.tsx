@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Settings, Loader2, FolderCog, RotateCcw, Trash2 } from "lucide-react";
@@ -56,8 +57,9 @@ export function ProjectSettingsModal({
   projectDescription,
 }: ProjectSettingsModalProps) {
   const t = useTranslations();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(searchParams.get("settings") === "agent-cwds");
   const [name, setName] = useState(projectName);
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);

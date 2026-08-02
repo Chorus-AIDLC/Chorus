@@ -315,6 +315,19 @@
       "status": { "valid": "利用可能", "offline": "ホストはオフライン", "invalid": "ディレクトリを利用できません" }
     }
   },
+  "fixedCwdAnchor": {
+    "title": "固定作業ディレクトリ",
+    "host": "ホスト",
+    "cwd": "ディレクトリ",
+    "status": "状態",
+    "unknown": "不明",
+    "manage": "プロジェクト設定で管理",
+    "availability": {
+      "ready": "利用可能",
+      "offline": "ホストはオフライン",
+      "invalid": "ディレクトリを利用できません"
+    }
+  },
   "projects": {
     "title": "プロジェクト",
     "subtitle": "プロジェクトを管理し、進捗を追跡します",

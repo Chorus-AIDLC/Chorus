@@ -1,0 +1,7 @@
+ALTER TABLE "Idea" ADD COLUMN "cwdSource" TEXT;
+ALTER TABLE "Idea" ADD COLUMN "cwdHost" TEXT;
+ALTER TABLE "Idea" ADD COLUMN "runtimeCwd" TEXT;
+
+ALTER TABLE "Task" ADD COLUMN "cwdSource" TEXT;
+ALTER TABLE "Task" ADD COLUMN "cwdHost" TEXT;
+ALTER TABLE "Task" ADD COLUMN "runtimeCwd" TEXT;
