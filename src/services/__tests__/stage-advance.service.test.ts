@@ -248,6 +248,36 @@ describe("executeStageAdvance — offline policy", () => {
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
+  it("checks a fixed cwd before an online AgentInstance assignment", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID }),
+    );
+    mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      host: "fixed-host",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(
+      executeStageAdvance(
+        makeDefinition({ offlinePolicy: "require_online" }),
+        HUMAN_PARAMS,
+      ),
+    ).rejects.toMatchObject({ code: "FIXED_CWD_HOST_OFFLINE" });
+
+    expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID },
+        select: { agentUuid: true },
+      }),
+    );
+    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ host: "fixed-host" }),
+      }),
+    );
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
   it("require_online on an agent_instance assignee checks the PINNED INSTANCE's own connection (host+cwd), not just the agent", async () => {
     // HARD-pin split: an instance-pinned idea's require_online check must target the exact
     // (host, cwd) place of the pinned instance — a wake there is notify-only when offline, so

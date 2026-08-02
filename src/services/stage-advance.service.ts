@@ -253,7 +253,45 @@ export async function executeStageAdvance(
   //   - bare `agent`: the wake goes online-first, so ANY online connection of the agent
   //     suffices → AGENT_OFFLINE when none.
   if (definition.offlinePolicy === "require_online") {
-    if (ctx.idea.assigneeType === "agent_instance" && ctx.idea.assigneeUuid) {
+    const agentUuid = await resolveAssigneeAgentUuid(
+      companyUuid,
+      ctx.idea.assigneeType,
+      ctx.idea.assigneeUuid
+    );
+    if (!agentUuid) {
+      if (ctx.idea.assigneeType === "agent_instance") {
+        throw new StageAdvanceError(
+          "INSTANCE_OFFLINE",
+          "The Idea is pinned to a daemon instance that no longer exists"
+        );
+      }
+      throw new StageAdvanceError(
+        "ASSIGNEE_NOT_AGENT",
+        "The Idea's assignee is not an agent — there is no daemon to wake"
+      );
+    }
+
+    // Project fixed cwd is the highest-priority wake pin, including when the Idea
+    // itself is assigned to an AgentInstance. Match notification-turn's routing
+    // order so this gate checks the place the wake will actually target.
+    const fixedHostOnline = await hasEffectivelyOnlineFixedCwdHost(
+      companyUuid,
+      actorUuid,
+      ctx.idea.projectUuid,
+      agentUuid,
+    );
+    if (fixedHostOnline === false) {
+      throw new StageAdvanceError(
+        "FIXED_CWD_HOST_OFFLINE",
+        "The project's fixed cwd host has no online daemon connection"
+      );
+    }
+
+    if (
+      fixedHostOnline === null &&
+      ctx.idea.assigneeType === "agent_instance" &&
+      ctx.idea.assigneeUuid
+    ) {
       if (
         !(await hasEffectivelyOnlineInstance(companyUuid, ctx.idea.assigneeUuid))
       ) {
@@ -262,36 +300,14 @@ export async function executeStageAdvance(
           "The Idea is pinned to a daemon instance that has no online connection"
         );
       }
-    } else {
-      const agentUuid = await resolveAssigneeAgentUuid(
-        companyUuid,
-        ctx.idea.assigneeType,
-        ctx.idea.assigneeUuid
+    } else if (
+      fixedHostOnline === null &&
+      !(await hasEffectivelyOnlineConnection(agentUuid))
+    ) {
+      throw new StageAdvanceError(
+        "AGENT_OFFLINE",
+        "The assigned agent has no online daemon connection"
       );
-      if (!agentUuid) {
-        throw new StageAdvanceError(
-          "ASSIGNEE_NOT_AGENT",
-          "The Idea's assignee is not an agent — there is no daemon to wake"
-        );
-      }
-      const fixedHostOnline = await hasEffectivelyOnlineFixedCwdHost(
-        companyUuid,
-        actorUuid,
-        ctx.idea.projectUuid,
-        agentUuid,
-      );
-      if (fixedHostOnline === false) {
-        throw new StageAdvanceError(
-          "FIXED_CWD_HOST_OFFLINE",
-          "The project's fixed cwd host has no online daemon connection"
-        );
-      }
-      if (fixedHostOnline === null && !(await hasEffectivelyOnlineConnection(agentUuid))) {
-        throw new StageAdvanceError(
-          "AGENT_OFFLINE",
-          "The assigned agent has no online daemon connection"
-        );
-      }
     }
   }
 
