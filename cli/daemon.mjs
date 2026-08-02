@@ -17,6 +17,7 @@ import { prompt, writeLoginFile, updateDaemonConfig } from "./login.mjs";
 import {
   resolveInstallCredentials,
   resolveInstallCwds,
+  resolveInstallBrowseRoots,
   resolveInstallAgent,
 } from "./daemon-install-config.mjs";
 import {
@@ -46,7 +47,8 @@ import { createInterruptReporter } from "./interrupt-reporter.mjs";
 import { createTurnReporter } from "./turn-reporter.mjs";
 import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 import { createControlHandler } from "./control-handler.mjs";
-import { resolveSigintTimeoutMs, resolveDaemonCwds } from "./daemon-config.mjs";
+import { resolveSigintTimeoutMs, resolveDaemonCwds, resolveBrowseRoots } from "./daemon-config.mjs";
+import { discoverDirectories, validateDirectory } from "./directory-discovery.mjs";
 import {
   startBackground,
   stopDaemon,
@@ -124,6 +126,7 @@ export function buildDaemon(creds, deps = {}) {
   // the layered resolver; falls back to the resolver's default here when not given,
   // so a daemon built directly (integration tests) still gets a sane value.
   const sigintTimeoutMs = deps.sigintTimeoutMs ?? resolveSigintTimeoutMs();
+  const browseRoots = deps.browseRoots ?? resolveBrowseRoots();
   // ===== Shared deps (one set per daemon process) =====
   // These are process-wide — independent of how many paths (cwds) the daemon serves.
   const mcpClient =
@@ -245,7 +248,8 @@ export function buildDaemon(creds, deps = {}) {
         fetchImpl: deps.fetchImpl,
       });
 
-    /** @type {Waker|undefined} */
+    /** @type {Map<string, Waker>} */
+    const runtimeWakers = new Map();
     let waker;
 
     // Execution + transcript upload hooks (子1), merged. Bound to THIS connection's
@@ -257,7 +261,8 @@ export function buildDaemon(creds, deps = {}) {
           url: creds.url,
           apiKey: creds.apiKey,
           getConnectionUuid: () => connectionState.connectionUuid,
-          getSnapshot: () => waker?.buildExecutionSnapshot() ?? [],
+          getSnapshot: () =>
+            [...runtimeWakers.values()].flatMap((candidate) => candidate.buildExecutionSnapshot()),
           logger,
           fetchImpl: deps.fetchImpl,
         }),
@@ -277,20 +282,69 @@ export function buildDaemon(creds, deps = {}) {
     // transcript (new-vs-resume) and to spawn, so they never diverge (Module Contract
     // 1 — resolveCwd is the single source). `cwd` is `undefined` for the single-path /
     // old-daemon default, which the Waker degrades to process.cwd() (HARD-1).
-    waker = new Waker({
-      creds,
-      lineage,
-      spawner,
-      cwd,
-      hooks,
-      logger,
-      reportInterrupt,
-      advanceTurn,
-      verbose,
-      // Graceful-shutdown kill escalation (fix-daemon-exit-orphan-running-turn):
-      // interruptAll() reuses the SAME window the interrupt control handler uses.
-      sigintTimeoutMs,
-    });
+    const makeWaker = (boundCwd) =>
+      new Waker({
+        creds,
+        lineage,
+        spawner,
+        cwd: boundCwd,
+        hooks,
+        logger,
+        reportInterrupt,
+        advanceTurn,
+        verbose,
+        validateRuntimeCwd: (runtimeCwd) => validateDirectory({ cwd: runtimeCwd, browseRoots }),
+        killer: deps.killer,
+        sigintTimeoutMs,
+      });
+    const startupKey = cwd ?? process.cwd();
+    runtimeWakers.set(startupKey, makeWaker(cwd));
+    const selectWaker = (notification) => {
+      const runtimeCwd =
+        typeof notification?.runtimeCwd === "string" && notification.runtimeCwd
+          ? notification.runtimeCwd
+          : startupKey;
+      let selected = runtimeWakers.get(runtimeCwd);
+      if (!selected) {
+        selected = makeWaker(runtimeCwd);
+        runtimeWakers.set(runtimeCwd, selected);
+      }
+      return selected;
+    };
+    const startupWaker = runtimeWakers.get(startupKey);
+    waker = {
+      get executions() {
+        const merged = new Map();
+        for (const candidate of runtimeWakers.values()) {
+          for (const [key, value] of candidate.executions) merged.set(key, value);
+        }
+        return merged;
+      },
+      get interrupting() {
+        return {
+          has: (key) =>
+            [...runtimeWakers.values()].some((candidate) => candidate.interrupting.has(key)),
+        };
+      },
+      keyFor: (notification) => startupWaker.keyFor(notification),
+      resolveCwd: () => startupWaker.resolveCwd(),
+      markQueued: (notification, key, attribution) =>
+        selectWaker(notification).markQueued(notification, key, attribution),
+      wake: (notification, key, attribution) =>
+        selectWaker(notification).wake(notification, key, attribution),
+      markInterrupting(entityType, entityUuid) {
+        for (const candidate of runtimeWakers.values()) {
+          if (candidate.executions.has(`${entityType}:${entityUuid}`)) {
+            candidate.markInterrupting(entityType, entityUuid);
+          }
+        }
+      },
+      interruptAll() {
+        for (const candidate of runtimeWakers.values()) candidate.interruptAll();
+      },
+      buildExecutionSnapshot: () =>
+        [...runtimeWakers.values()].flatMap((candidate) => candidate.buildExecutionSnapshot()),
+    };
     // The router reads THIS connection's own uuid lazily (same source the control handler
     // uses) to suppress a DIRECTED (pinned) wake stamped for a different connection
     // (fix-pinned-wake-directed-delivery, T2). Null until the SSE handshake assigns it — a
@@ -310,8 +364,8 @@ export function buildDaemon(creds, deps = {}) {
     // all scoped to THIS connection's uuid/router/backfill (see the original wiring
     // comments retained on the shared helpers). The control handler verifies a control
     // event against this connection's own connectionUuid before acting.
-    const redispatchResume = (entityType, entityUuid, resumeReason) => {
-      router.dispatchResume?.({ entityType, entityUuid, resumeReason });
+    const redispatchResume = (entityType, entityUuid, resumeReason, runtimeCwd) => {
+      router.dispatchResume?.({ entityType, entityUuid, resumeReason, runtimeCwd });
     };
     const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
     const onControl = createControlHandler({
@@ -320,6 +374,18 @@ export function buildDaemon(creds, deps = {}) {
       sigintTimeoutMs,
       redispatchResume,
       deliverTurn,
+      handleDirectoryRequest: async (event) => {
+        if (event.operation === "validate") {
+          return validateDirectory({ cwd: event.cwd, browseRoots });
+        }
+        return discoverDirectories({
+          prefix: event.prefix,
+          cursor: event.cursor,
+          limit: event.limit,
+          browseRoots,
+        });
+      },
+      reportDirectoryRequest: (result) => daemonRestClient.reportDirectoryRequest(result),
       logger,
     });
 
@@ -403,7 +469,17 @@ export function buildDaemon(creds, deps = {}) {
         logger,
       });
 
-    return { cwd, connectionState, waker, router, backfill, sseListener, hooks, outcome };
+    return {
+      cwd,
+      connectionState,
+      waker,
+      runtimeWakers,
+      router,
+      backfill,
+      sseListener,
+      hooks,
+      outcome,
+    };
   }
 
   // Build one connection per declared cwd. The order is the declaration order; the
@@ -569,6 +645,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // is exactly today's single-path behavior. JUST a list of paths — no project
   // binding (DEC-5: cwd ⟂ project). The daemon process's own cwd never changes.
   const cwds = resolveDaemonCwds({ cwd: flags.cwd }, { env });
+  const browseRoots = resolveBrowseRoots({ browseRoot: flags.browseRoot }, { env });
 
   // Foreground preflight: resolve/complete credentials + resolve the permission
   // posture (confirming yolo on a TTY). Reuses the same pfDeps bundle the detach
@@ -634,6 +711,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   } else {
     log(`[Chorus] serving path: ${servedPaths[0]}`);
   }
+  log(`[Chorus] browse roots: ${browseRoots.join(", ")} (discovery only; no connections created)`);
 
   const daemon = build(creds, {
     logger: { info: log, warn: errLog, error: errLog },
@@ -642,6 +720,7 @@ export async function runDaemon(flags = {}, deps = {}) {
     verbose,
     sigintTimeoutMs,
     cwds,
+    browseRoots,
   });
 
   // Graceful shutdown on signals.
@@ -778,6 +857,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     const installCfg = svc.installConfig ?? {
       resolveInstallCredentials,
       resolveInstallCwds,
+      resolveInstallBrowseRoots,
       resolveInstallAgent,
     };
 
@@ -811,6 +891,13 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       prompt: pfDeps?.askPrompt,
       log,
     });
+    if (installCfg.resolveInstallBrowseRoots) {
+      await installCfg.resolveInstallBrowseRoots(flags, {
+        writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
+        readJson: pfDeps?.readJson,
+        loginPath: pfDeps?.loginPath,
+      });
+    }
 
     // Configure + persist the agent backend to daemon.json `agent` (single source
     // of truth; the unit carries no --agent, exactly like --cwd). Prompts an

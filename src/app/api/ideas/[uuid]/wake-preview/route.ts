@@ -36,7 +36,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid } = await context.params;
 
-    const preview = await previewIdeaWakeTarget(auth.companyUuid, uuid);
+    const preview = await previewIdeaWakeTarget(auth.companyUuid, uuid, auth.actorUuid);
     // null → the idea does not exist in this company (or a foreign-company idea) → 404.
     if (!preview) {
       return errors.notFound("Idea");

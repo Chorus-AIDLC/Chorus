@@ -200,3 +200,38 @@ export function resolveDaemonCwds(flags = {}, deps = {}) {
   //    for (HARD-1 / single-path — exactly today's behavior).
   return [undefined];
 }
+
+/**
+ * Resolve the host-local directory discovery allowlist. Unlike `cwds`, these
+ * roots never create connections. The whole list comes from the first
+ * non-empty source: flag > env > daemon.json > OS home.
+ */
+export function resolveBrowseRoots(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const home = deps.home ?? homedir();
+  const flagList = Array.isArray(flags.browseRoot)
+    ? flags.browseRoot
+    : typeof flags.browseRoot === "string"
+      ? [flags.browseRoot]
+      : [];
+  const fromFlags = cleanCwdList(flagList, home);
+  if (fromFlags.length) return fromFlags;
+
+  const envRaw = env.CHORUS_DAEMON_BROWSE_ROOTS;
+  if (typeof envRaw === "string" && envRaw.trim()) {
+    const separator = deps.delimiter ?? (process.platform === "win32" ? ";" : ":");
+    const fromEnv = cleanCwdList(
+      envRaw.split(envRaw.includes(",") ? "," : separator),
+      home,
+    );
+    if (fromEnv.length) return fromEnv;
+  }
+
+  const file = readJson(loginPath);
+  const fromFile = file && Array.isArray(file.browseRoots)
+    ? cleanCwdList(file.browseRoots, home)
+    : [];
+  return fromFile.length ? fromFile : [normalizeCwd(home, home)];
+}

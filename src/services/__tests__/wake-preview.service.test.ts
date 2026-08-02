@@ -13,9 +13,11 @@ const mockIdeaFindFirst = vi.hoisted(() => vi.fn());
 const mockIdeaUpdate = vi.hoisted(() => vi.fn());
 const mockActivityCreate = vi.hoisted(() => vi.fn());
 const mockNotificationCreate = vi.hoisted(() => vi.fn());
+const mockPreferenceFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     idea: { findFirst: mockIdeaFindFirst, update: mockIdeaUpdate },
+    projectAgentCwdPreference: { findFirst: mockPreferenceFindFirst },
     activity: { create: mockActivityCreate },
     notification: { create: mockNotificationCreate },
   },
@@ -101,6 +103,7 @@ beforeEach(() => {
   });
   mockResolveAssigneeAgentUuid.mockResolvedValue(agentUuid);
   mockListConnectionsForAgent.mockResolvedValue([]);
+  mockPreferenceFindFirst.mockResolvedValue(null);
 });
 
 describe("previewIdeaWakeTarget — outcome classification", () => {
@@ -141,6 +144,29 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
     expect(preview!.outcome).toBe("auto_pin");
     expect(preview!.onlineInstances).toHaveLength(1);
     expectNoSideEffects();
+  });
+
+  it("direct: a fixed project-Agent cwd suppresses picker and auto-pin semantics", async () => {
+    mockIdeaFindFirst.mockImplementation(async ({ select }) =>
+      "projectUuid" in select
+        ? { projectUuid: "project-1" }
+        : { assigneeType: "agent", assigneeUuid: agentUuid },
+    );
+    mockPreferenceFindFirst.mockResolvedValue({ uuid: "preference-1" });
+    mockListConnectionsForAgent.mockResolvedValue([makeConnection(), makeConnection()]);
+
+    const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid, "user-1");
+
+    expect(preview!.outcome).toBe("direct");
+    expect(mockPreferenceFindFirst).toHaveBeenCalledWith({
+      where: {
+        companyUuid,
+        userUuid: "user-1",
+        projectUuid: "project-1",
+        agentUuid,
+      },
+      select: { uuid: true },
+    });
   });
 
   it("direct (sub-case: already agent_instance): assignee is instance-pinned", async () => {

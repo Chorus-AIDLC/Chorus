@@ -217,6 +217,32 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   return { cwds: finalCwds };
 }
 
+/** Persist explicit install-time browse roots without coupling them to `cwds`. */
+export async function resolveInstallBrowseRoots(flags = {}, opts = {}) {
+  const readJson = opts.readJson ?? readJsonSafe;
+  const loginPath = opts.loginPath ?? loginFilePath();
+  const writeConfig = opts.writeConfig ?? updateDaemonConfig;
+  const home = opts.home ?? homedir();
+  const flagList = Array.isArray(flags.browseRoot)
+    ? flags.browseRoot
+    : typeof flags.browseRoot === "string"
+      ? [flags.browseRoot]
+      : [];
+  const explicit = cleanCwdList(flagList, home);
+  if (explicit.length) {
+    writeConfig({ browseRoots: explicit });
+    return { browseRoots: explicit };
+  }
+  const file = readJson(loginPath);
+  const stored = file && Array.isArray(file.browseRoots)
+    ? cleanCwdList(file.browseRoots, home)
+    : [];
+  if (stored.length) return { browseRoots: stored };
+  const browseRoots = [normalizeCwd(home, home)];
+  writeConfig({ browseRoots });
+  return { browseRoots };
+}
+
 /**
  * The interactive agent-backend menu. Order mirrors KNOWN_AGENTS with claude-code
  * first (it is the default). Kept beside the resolver so the numbered prompt and

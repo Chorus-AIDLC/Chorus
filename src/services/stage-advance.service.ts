@@ -41,6 +41,7 @@ export type StageAdvanceErrorCode =
   | "PRECONDITION_FAILED"
   | "AGENT_OFFLINE"
   | "INSTANCE_OFFLINE"
+  | "FIXED_CWD_HOST_OFFLINE"
   | "ASSIGNEE_NOT_AGENT";
 
 export class StageAdvanceError extends Error {
@@ -114,6 +115,31 @@ async function hasEffectivelyOnlineConnection(agentUuid: string): Promise<boolea
   return online !== null;
 }
 
+async function hasEffectivelyOnlineFixedCwdHost(
+  companyUuid: string,
+  userUuid: string,
+  projectUuid: string,
+  agentUuid: string,
+): Promise<boolean | null> {
+  const preference = await prisma.projectAgentCwdPreference.findFirst({
+    where: { companyUuid, userUuid, projectUuid, agentUuid },
+    select: { host: true },
+  });
+  if (!preference) return null;
+
+  const staleFloor = new Date(Date.now() - STALE_THRESHOLD_MS);
+  const online = await prisma.daemonConnection.findFirst({
+    where: {
+      agentUuid,
+      host: preference.host,
+      status: "online",
+      lastSeenAt: { gte: staleFloor },
+    },
+    select: { uuid: true },
+  });
+  return online !== null;
+}
+
 /**
  * Effectively-online check for the `require_online` policy on an `agent_instance`-pinned
  * assignee — the HARD-pin case (pin-cwd-before-wake, owner choice B). The wake targets the
@@ -166,11 +192,13 @@ export async function executeStageAdvance(
     ideaUuid,
     actorUuid,
     actorType,
+    temporaryCwd,
   }: {
     companyUuid: string;
     ideaUuid: string;
     actorUuid: string;
     actorType: string;
+    temporaryCwd?: { host: string; cwd: string } | null;
   }
 ): Promise<void> {
   // 1. Stage-advance is a human affordance. Agents keep their own paths (e.g.
@@ -206,7 +234,15 @@ export async function executeStageAdvance(
   };
 
   // 3. Per-stage precondition. Its return value becomes the activity payload.
-  const activityValue = await definition.precondition(ctx);
+  const activityValue = {
+    ...(await definition.precondition(ctx)),
+    ...(temporaryCwd
+      ? {
+          temporaryHost: temporaryCwd.host,
+          temporaryRuntimeCwd: temporaryCwd.cwd,
+        }
+      : {}),
+  };
 
   // 4. Offline policy. "queue" never blocks on liveness; "require_online"
   // resolves the assignee and demands a live connection. The check SPLITS on the
@@ -217,7 +253,45 @@ export async function executeStageAdvance(
   //   - bare `agent`: the wake goes online-first, so ANY online connection of the agent
   //     suffices → AGENT_OFFLINE when none.
   if (definition.offlinePolicy === "require_online") {
-    if (ctx.idea.assigneeType === "agent_instance" && ctx.idea.assigneeUuid) {
+    const agentUuid = await resolveAssigneeAgentUuid(
+      companyUuid,
+      ctx.idea.assigneeType,
+      ctx.idea.assigneeUuid
+    );
+    if (!agentUuid) {
+      if (ctx.idea.assigneeType === "agent_instance") {
+        throw new StageAdvanceError(
+          "INSTANCE_OFFLINE",
+          "The Idea is pinned to a daemon instance that no longer exists"
+        );
+      }
+      throw new StageAdvanceError(
+        "ASSIGNEE_NOT_AGENT",
+        "The Idea's assignee is not an agent — there is no daemon to wake"
+      );
+    }
+
+    // Project fixed cwd is the highest-priority wake pin, including when the Idea
+    // itself is assigned to an AgentInstance. Match notification-turn's routing
+    // order so this gate checks the place the wake will actually target.
+    const fixedHostOnline = await hasEffectivelyOnlineFixedCwdHost(
+      companyUuid,
+      actorUuid,
+      ctx.idea.projectUuid,
+      agentUuid,
+    );
+    if (fixedHostOnline === false) {
+      throw new StageAdvanceError(
+        "FIXED_CWD_HOST_OFFLINE",
+        "The project's fixed cwd host has no online daemon connection"
+      );
+    }
+
+    if (
+      fixedHostOnline === null &&
+      ctx.idea.assigneeType === "agent_instance" &&
+      ctx.idea.assigneeUuid
+    ) {
       if (
         !(await hasEffectivelyOnlineInstance(companyUuid, ctx.idea.assigneeUuid))
       ) {
@@ -226,24 +300,14 @@ export async function executeStageAdvance(
           "The Idea is pinned to a daemon instance that has no online connection"
         );
       }
-    } else {
-      const agentUuid = await resolveAssigneeAgentUuid(
-        companyUuid,
-        ctx.idea.assigneeType,
-        ctx.idea.assigneeUuid
+    } else if (
+      fixedHostOnline === null &&
+      !(await hasEffectivelyOnlineConnection(agentUuid))
+    ) {
+      throw new StageAdvanceError(
+        "AGENT_OFFLINE",
+        "The assigned agent has no online daemon connection"
       );
-      if (!agentUuid) {
-        throw new StageAdvanceError(
-          "ASSIGNEE_NOT_AGENT",
-          "The Idea's assignee is not an agent — there is no daemon to wake"
-        );
-      }
-      if (!(await hasEffectivelyOnlineConnection(agentUuid))) {
-        throw new StageAdvanceError(
-          "AGENT_OFFLINE",
-          "The assigned agent has no online daemon connection"
-        );
-      }
     }
   }
 

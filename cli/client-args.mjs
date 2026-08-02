@@ -60,6 +60,10 @@ export function parseClientFlags(argv) {
       const value = a === "--cwd" ? argv[i + 1] : a.slice("--cwd=".length);
       if (typeof value === "string") (out.cwd ??= []).push(value);
     }
+    else if (a === "--browse-root" || a.startsWith("--browse-root=")) {
+      const value = a === "--browse-root" ? argv[i + 1] : a.slice("--browse-root=".length);
+      if (typeof value === "string") (out.browseRoot ??= []).push(value);
+    }
     else if (a === "--chorus-only") out.chorusOnly = true;
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
@@ -133,6 +137,10 @@ OPTIONS
                            connection for that path, so one daemon can serve several
                            local paths at once. Default: the directory it was launched
                            from. (Also configurable as "cwds":[…] in ~/.chorus/daemon.json.)
+  --browse-root <path>     A directory root exposed to remote cwd discovery.
+                           Repeatable; independent from --cwd and does not create
+                           Agent connections. (env: CHORUS_DAEMON_BROWSE_ROOTS;
+                           config: "browseRoots":[…]; default: OS user home.)
   -d, --detach             Run detached in the background (pidfile + logfile)
   -y, --yes                Non-interactive install: skip all 'chorus daemon
                            install' prompts (credentials, served cwds, and agent

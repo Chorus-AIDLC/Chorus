@@ -10,6 +10,9 @@ import { requestYolo } from "@/services/yolo-request.service";
 import { StageAdvanceError } from "@/services/stage-advance.service";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { resolveTemporaryRuntimeCwd } from "@/services/project-agent-cwd.service";
+
+type TemporaryCwdInput = { agentUuid: string; validationRequestUuid: string };
 
 // Machine-readable failure codes surfaced to the client so each maps to a
 // distinct i18n message (the raw error prose is never shown to users).
@@ -22,6 +25,7 @@ export type StartDevelopmentErrorCode =
   | "no_unfinished_tasks"
   | "agent_offline"
   | "instance_offline"
+  | "fixed_cwd_host_offline"
   | "unknown";
 
 function toErrorCode(error: unknown): StartDevelopmentErrorCode {
@@ -37,6 +41,8 @@ function toErrorCode(error: unknown): StartDevelopmentErrorCode {
         return "agent_offline";
       case "INSTANCE_OFFLINE":
         return "instance_offline";
+      case "FIXED_CWD_HOST_OFFLINE":
+        return "fixed_cwd_host_offline";
       case "PRECONDITION_FAILED":
         if (error.reason === START_DEVELOPMENT_REASONS.NO_APPROVED_PROPOSAL)
           return "no_approved_proposal";
@@ -49,7 +55,8 @@ function toErrorCode(error: unknown): StartDevelopmentErrorCode {
 }
 
 export async function startDevelopmentAction(
-  ideaUuid: string
+  ideaUuid: string,
+  temporary?: TemporaryCwdInput,
 ): Promise<{ success: boolean; errorCode?: StartDevelopmentErrorCode }> {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -63,11 +70,19 @@ export async function startDevelopmentAction(
   }
 
   try {
+    const temporaryCwd = temporary
+      ? await resolveTemporaryRuntimeCwd({
+          companyUuid: auth.companyUuid,
+          userUuid: auth.actorUuid,
+          ...temporary,
+        })
+      : null;
     await startDevelopment({
       companyUuid: auth.companyUuid,
       ideaUuid,
       actorUuid: auth.actorUuid,
       actorType: auth.type,
+      temporaryCwd,
     });
 
     // Revalidate the ideas page so the panel refreshes
@@ -108,6 +123,7 @@ export type YoloRequestedErrorCode =
   | "assignee_not_agent"
   | "agent_offline"
   | "instance_offline"
+  | "fixed_cwd_host_offline"
   | "unknown";
 
 function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
@@ -123,6 +139,8 @@ function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
         return "agent_offline";
       case "INSTANCE_OFFLINE":
         return "instance_offline";
+      case "FIXED_CWD_HOST_OFFLINE":
+        return "fixed_cwd_host_offline";
       // PRECONDITION_FAILED cannot occur for yolo_requested (the precondition
       // only throws ASSIGNEE_NOT_AGENT), but keep the exhaustive fallthrough.
       case "PRECONDITION_FAILED":
@@ -133,7 +151,8 @@ function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
 }
 
 export async function yoloRequestedAction(
-  ideaUuid: string
+  ideaUuid: string,
+  temporary?: TemporaryCwdInput,
 ): Promise<{ success: boolean; errorCode?: YoloRequestedErrorCode }> {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -147,11 +166,19 @@ export async function yoloRequestedAction(
   }
 
   try {
+    const temporaryCwd = temporary
+      ? await resolveTemporaryRuntimeCwd({
+          companyUuid: auth.companyUuid,
+          userUuid: auth.actorUuid,
+          ...temporary,
+        })
+      : null;
     await requestYolo({
       companyUuid: auth.companyUuid,
       ideaUuid,
       actorUuid: auth.actorUuid,
       actorType: auth.type,
+      temporaryCwd,
     });
 
     // Revalidate the ideas page so the panel refreshes

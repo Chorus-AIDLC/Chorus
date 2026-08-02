@@ -194,12 +194,14 @@ export type DispatchControlParams =
       entityType: ControlEntityType;
       entityUuid: string;
       resumeReason?: "user" | "crash";
+      runtimeCwd?: string | null;
     }
   | {
       companyUuid: string;
       targetConnectionUuid: string;
       command: "deliver_turn";
       turnUuid: string;
+      runtimeCwd?: string | null;
     };
 
 export function dispatchControl(params: DispatchControlParams): void {
@@ -213,6 +215,7 @@ export function dispatchControl(params: DispatchControlParams): void {
           command: "deliver_turn",
           targetConnectionUuid: params.targetConnectionUuid,
           turnUuid: params.turnUuid,
+          ...(params.runtimeCwd ? { runtimeCwd: params.runtimeCwd } : {}),
         }
       : {
           type: "control",
@@ -220,6 +223,7 @@ export function dispatchControl(params: DispatchControlParams): void {
           targetConnectionUuid: params.targetConnectionUuid,
           entityType: params.entityType,
           entityUuid: params.entityUuid,
+          ...(params.runtimeCwd ? { runtimeCwd: params.runtimeCwd } : {}),
           // Only a resume carries a reason; spread-if-present keeps the interrupt
           // wire shape byte-identical to before.
           ...(params.resumeReason ? { resumeReason: params.resumeReason } : {}),

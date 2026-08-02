@@ -13,6 +13,9 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
     daemonConnection: {
       findFirst: vi.fn(),
     },
+    projectAgentCwdPreference: {
+      findFirst: vi.fn(),
+    },
   },
   mockEventBus: { emitChange: vi.fn() },
   mockCreateActivity: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +78,7 @@ beforeEach(() => {
   mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
   mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-1" });
   mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: AGENT_UUID });
+  mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
 });
 
 describe("executeStageAdvance — actor gate", () => {
@@ -210,6 +214,67 @@ describe("executeStageAdvance — offline policy", () => {
     ).rejects.toMatchObject({ code: "AGENT_OFFLINE" });
 
     expect(transition).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects an offline fixed cwd host without rerouting to another online host", async () => {
+    const transition = vi.fn();
+    mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      host: "fixed-host",
+    });
+    mockPrisma.daemonConnection.findFirst.mockImplementation(
+      async ({ where }: { where: { host?: string } }) =>
+        where.host === "fixed-host" ? null : { uuid: "conn-other-host" },
+    );
+
+    await expect(
+      executeStageAdvance(
+        makeDefinition({ offlinePolicy: "require_online", transition }),
+        HUMAN_PARAMS,
+      ),
+    ).rejects.toMatchObject({ code: "FIXED_CWD_HOST_OFFLINE" });
+
+    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          agentUuid: AGENT_UUID,
+          host: "fixed-host",
+          status: "online",
+        }),
+      }),
+    );
+    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledTimes(1);
+    expect(transition).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("checks a fixed cwd before an online AgentInstance assignment", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_UUID }),
+    );
+    mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      host: "fixed-host",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(
+      executeStageAdvance(
+        makeDefinition({ offlinePolicy: "require_online" }),
+        HUMAN_PARAMS,
+      ),
+    ).rejects.toMatchObject({ code: "FIXED_CWD_HOST_OFFLINE" });
+
+    expect(mockPrisma.agentInstance.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: INSTANCE_UUID, companyUuid: COMPANY_UUID },
+        select: { agentUuid: true },
+      }),
+    );
+    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ host: "fixed-host" }),
+      }),
+    );
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 

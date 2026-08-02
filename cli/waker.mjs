@@ -30,6 +30,7 @@ export class Waker {
    *   lineage: { resolve: (event: any) => Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }> },
    *   spawner: { wake: (params: any) => Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }> },
    *   cwd?: string,  The connection/session-bound working directory this Waker serves; resolveCwd() is the single source the probe + spawn + resume use. `undefined` ⇒ the process default cwd (HARD-1 / single-path).
+   *   validateRuntimeCwd?: (cwd: string) => Promise<{normalizedPath?: string}>,
    *   hooks?: import("./upload-hooks.mjs").UploadHooks,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
    *   writeMcpConfigFn?: typeof writeMcpConfig,
@@ -67,6 +68,7 @@ export class Waker {
     // so resolveCwd() is the SINGLE place the process-default fallback is applied
     // (Module Contract 1 — one cwd source of truth, no scattered process.cwd()).
     this.cwd = opts.cwd;
+    this.validateRuntimeCwd = opts.validateRuntimeCwd;
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
@@ -145,8 +147,8 @@ export class Waker {
    * wake path reads `process.cwd()`.
    * @returns {string}
    */
-  resolveCwd() {
-    return this.cwd ?? process.cwd();
+  resolveCwd(runtimeCwd) {
+    return runtimeCwd ?? this.cwd ?? process.cwd();
   }
 
   /**
@@ -340,6 +342,11 @@ export class Waker {
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
+    const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
+    const requestedRuntimeCwd =
+      typeof notification?.runtimeCwd === "string" && notification.runtimeCwd
+        ? notification.runtimeCwd
+        : null;
     try {
       const prompt = buildPrompt(notification);
       if (!prompt) {
@@ -377,12 +384,21 @@ export class Waker {
       // Decide new-vs-resume by probing the on-disk transcript in the SAME cwd we
       // spawn in. The spawner re-validates the id is a lowercase UUID before
       // spawning, so a garbage id surfaces visibly rather than misanchoring.
-      const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
       // Resolve the connection/session-bound cwd ONCE for this wake (Module Contract
       // 1). The transcript probe and the spawn below BOTH use this same value, so a
       // session's repeated wakes/probes always land the same cwd (NFR-3) — and a
       // multi-path daemon's other Wakers (other cwds) never bleed in.
-      const cwd = this.resolveCwd();
+      let cwd = this.resolveCwd(requestedRuntimeCwd);
+      if (requestedRuntimeCwd) {
+        if (!this.validateRuntimeCwd) {
+          throw new Error("Directed runtime cwd cannot be validated by this daemon");
+        }
+        const validation = await this.validateRuntimeCwd(requestedRuntimeCwd);
+        if (!validation?.normalizedPath) {
+          throw new Error("Directed runtime cwd validation returned no normalized path");
+        }
+        cwd = validation.normalizedPath;
+      }
       const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
       // Spawners declare whether the shared transcript probe is authoritative
@@ -566,6 +582,16 @@ export class Waker {
       }
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
+      if (sessionId && requestedRuntimeCwd && typeof err?.code === "string") {
+        await this.#advanceTurn(sessionId, "running", entity);
+        await this.#advanceTurn(
+          sessionId,
+          "interrupted",
+          entity,
+          "invalid_path",
+          `${err.code}: ${err.message ?? "Runtime cwd validation failed"}`,
+        );
+      }
     } finally {
       // Wake finished (cleanly or not): the resource leaves the active set. Drop
       // it and emit a fresh snapshot so the server ends its running/queued row.

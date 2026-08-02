@@ -336,6 +336,7 @@ export function deliverTurnPing(params: {
   companyUuid: string;
   originConnectionUuid: string;
   turnUuid: string;
+  runtimeCwd?: string | null;
 }): void {
   try {
     dispatchControl({
@@ -343,6 +344,7 @@ export function deliverTurnPing(params: {
       targetConnectionUuid: params.originConnectionUuid,
       command: "deliver_turn",
       turnUuid: params.turnUuid,
+      ...(params.runtimeCwd ? { runtimeCwd: params.runtimeCwd } : {}),
     });
   } catch (err) {
     // Non-fatal: the persisted turn + reconnect-backfill guarantee durability. Log loudly.
@@ -833,6 +835,7 @@ export async function createConversationalIdeaSession(
     backendSessionId: sessionRow.backendSessionId,
     directIdeaUuid: sessionRow.directIdeaUuid,
     originConnectionUuid: sessionRow.originConnectionUuid,
+    runtimeCwd: sessionRow.runtimeCwd,
     status: sessionRow.status,
     title: sessionRow.title,
     lastTurnAt: sessionRow.lastTurnAt.toISOString(),
@@ -1028,6 +1031,7 @@ export async function repointSessionOriginAndSend(
     backendSessionId: updated.backendSessionId,
     directIdeaUuid: updated.directIdeaUuid,
     originConnectionUuid: updated.originConnectionUuid,
+    runtimeCwd: updated.runtimeCwd,
     status: updated.status,
     title: updated.title,
     lastTurnAt: updated.lastTurnAt.toISOString(),

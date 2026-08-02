@@ -105,7 +105,8 @@ export class EventRouter {
     const targetConnectionUuid =
       typeof event.targetConnectionUuid === "string" ? event.targetConnectionUuid : null;
     const suppressWake = event.suppressWake === true;
-    this.#fetchAndRoute(event.notificationUuid, { targetConnectionUuid, suppressWake }).catch(
+    const runtimeCwd = typeof event.runtimeCwd === "string" ? event.runtimeCwd : null;
+    this.#fetchAndRoute(event.notificationUuid, { targetConnectionUuid, suppressWake, runtimeCwd }).catch(
       (err) => {
         this.logger.error(`[Chorus] failed to route notification ${event.notificationUuid}: ${err}`);
       }
@@ -209,7 +210,8 @@ export class EventRouter {
       );
     }
 
-    await this.#resolveAndEnqueue(n, notificationUuid);
+    const routed = transport.runtimeCwd ? { ...n, runtimeCwd: transport.runtimeCwd } : n;
+    await this.#resolveAndEnqueue(routed, notificationUuid);
   }
 
   /**
@@ -244,6 +246,7 @@ export class EventRouter {
       entityType,
       entityUuid,
       ...(resumedFrom ? { resumedFrom } : {}),
+      ...(typeof target?.runtimeCwd === "string" ? { runtimeCwd: target.runtimeCwd } : {}),
     };
     this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
       this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);
@@ -319,6 +322,7 @@ export class EventRouter {
         sessionId,
         directIdeaUuid,
         trigger: pending.trigger,
+        runtimeCwd: typeof pending.runtimeCwd === "string" ? pending.runtimeCwd : null,
       }).catch((err) => {
         this.logger.error(
           `[Chorus] failed to re-dispatch autonomous pending turn ${turnUuid}: ${err}`
@@ -367,6 +371,7 @@ export class EventRouter {
       entityType: directIdeaUuid ? "idea" : "daemon_session",
       entityUuid: directIdeaUuid ? directIdeaUuid : sessionId,
       instructionText: instruction,
+      ...(typeof pending.runtimeCwd === "string" ? { runtimeCwd: pending.runtimeCwd } : {}),
     };
     const key = directIdeaUuid ? `idea:${directIdeaUuid}` : `entity:daemon_session:${sessionId}`;
     const attribution = { key, rootIdeaUuid: directIdeaUuid, directIdeaUuid };
@@ -407,7 +412,7 @@ export class EventRouter {
    * @param {{ turnUuid: string, sessionId: string, directIdeaUuid: string|null, trigger: string }} pending
    */
   async #redispatchAutonomousTurn(pending) {
-    const { turnUuid, sessionId, directIdeaUuid, trigger } = pending;
+    const { turnUuid, sessionId, directIdeaUuid, trigger, runtimeCwd } = pending;
     let result;
     try {
       result = await this.mcp.callTool("chorus_get_notifications", {
@@ -488,7 +493,10 @@ export class EventRouter {
     this.logger.info(
       `[Chorus] autonomous pending turn ${turnUuid} (${trigger}): waking from re-read notification ${match.uuid}`
     );
-    await this.#resolveAndEnqueue(match, match.uuid);
+    await this.#resolveAndEnqueue(
+      runtimeCwd ? { ...match, runtimeCwd } : match,
+      match.uuid,
+    );
   }
 
   /**

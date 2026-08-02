@@ -71,10 +71,21 @@ export type TurnStatus = (typeof TURN_STATUSES)[number];
 // daemon-reported outcomes; `offline` is reserved to SERVER-side reconcile of a turn
 // whose origin connection went stale — the turn-advance route rejects a daemon
 // claiming it (the daemon being alive to report contradicts the verdict).
-export const TURN_INTERRUPT_REASONS = ["user", "crash", "shutdown", "offline"] as const;
+export const TURN_INTERRUPT_REASONS = [
+  "user",
+  "crash",
+  "shutdown",
+  "offline",
+  "invalid_path",
+] as const;
 export type TurnInterruptReason = (typeof TURN_INTERRUPT_REASONS)[number];
 // The subset a daemon may self-report over `/api/daemon/turn-advance`.
-export const DAEMON_REPORTABLE_INTERRUPT_REASONS = ["user", "crash", "shutdown"] as const;
+export const DAEMON_REPORTABLE_INTERRUPT_REASONS = [
+  "user",
+  "crash",
+  "shutdown",
+  "invalid_path",
+] as const;
 
 // The two session lifecycle states. A session is `active` until explicitly ended;
 // it stays readable (its turns/transcript) regardless of state — `ended` is history,
@@ -137,6 +148,7 @@ export interface SessionView {
   backendSessionId: string | null;
   directIdeaUuid: string | null;
   originConnectionUuid: string;
+  runtimeCwd?: string | null;
   status: string; // active | ended
   title: string | null;
   lastTurnAt: string; // ISO-8601
@@ -219,6 +231,7 @@ interface DaemonSessionRow {
   backendSessionId: string | null;
   directIdeaUuid: string | null;
   originConnectionUuid: string;
+  runtimeCwd: string | null;
   status: string;
   title: string | null;
   lastTurnAt: Date;
@@ -280,6 +293,7 @@ function toSessionView(row: DaemonSessionRow): SessionView {
     backendSessionId: row.backendSessionId,
     directIdeaUuid: row.directIdeaUuid,
     originConnectionUuid: row.originConnectionUuid,
+    runtimeCwd: row.runtimeCwd ?? null,
     status: row.status,
     title: row.title,
     lastTurnAt: row.lastTurnAt.toISOString(),
@@ -391,6 +405,7 @@ export async function resolveOrCreateSession(params: {
   sessionId: string;
   directIdeaUuid?: string | null;
   originConnectionUuid: string;
+  runtimeCwd?: string | null;
 }): Promise<SessionView> {
   const row = await prisma.daemonSession.upsert({
     where: {
@@ -405,12 +420,14 @@ export async function resolveOrCreateSession(params: {
       sessionId: params.sessionId,
       directIdeaUuid: params.directIdeaUuid ?? null,
       originConnectionUuid: params.originConnectionUuid,
+      runtimeCwd: params.runtimeCwd ?? null,
       status: "active",
     },
     update: {
       // Re-affirm companyUuid from the authenticated context. originConnectionUuid
       // and directIdeaUuid are write-once — intentionally NOT updated here.
       companyUuid: params.companyUuid,
+      ...(params.runtimeCwd !== undefined ? { runtimeCwd: params.runtimeCwd } : {}),
     },
   });
   return toSessionView(row);
@@ -1807,6 +1824,7 @@ export interface PendingTurnView {
   sessionUuid: string;
   sessionId: string;
   directIdeaUuid: string | null;
+  runtimeCwd: string | null;
   seq: number;
   trigger: string;
   promptText: string | null;
@@ -1847,7 +1865,7 @@ export async function getPendingTurnsForConnection(params: {
       seq: true,
       trigger: true,
       promptText: true,
-      session: { select: { sessionId: true, directIdeaUuid: true } },
+      session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
     },
   });
 
@@ -1856,6 +1874,7 @@ export async function getPendingTurnsForConnection(params: {
     sessionUuid: r.sessionUuid,
     sessionId: r.session.sessionId,
     directIdeaUuid: r.session.directIdeaUuid,
+    runtimeCwd: r.session.runtimeCwd,
     seq: r.seq,
     trigger: r.trigger,
     promptText: r.promptText,

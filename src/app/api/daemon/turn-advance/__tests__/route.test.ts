@@ -21,7 +21,7 @@ vi.mock("@/services/daemon-execution.service", () => ({
 // subset, re-exported for the route's zod enums.
 vi.mock("@/services/daemon-session.service", () => ({
   TURN_STATUSES: ["pending", "running", "ended", "interrupted"],
-  DAEMON_REPORTABLE_INTERRUPT_REASONS: ["user", "crash", "shutdown"],
+  DAEMON_REPORTABLE_INTERRUPT_REASONS: ["user", "crash", "shutdown", "invalid_path"],
   advanceTurnForWake: (...args: unknown[]) => mockAdvanceTurnForWake(...args),
 }));
 

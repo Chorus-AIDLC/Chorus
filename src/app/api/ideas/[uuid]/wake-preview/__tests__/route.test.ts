@@ -78,7 +78,7 @@ describe("GET /api/ideas/[uuid]/wake-preview", () => {
 
     expect(res.status).toBe(200);
     expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledTimes(1);
-    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid);
+    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid, actorUuid);
     expect(body).toEqual({ success: true, data: samplePreview, meta: undefined });
   });
 
@@ -89,7 +89,7 @@ describe("GET /api/ideas/[uuid]/wake-preview", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid);
+    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid, actorUuid);
     expect(body.data.outcome).toBe("pick");
   });
 
@@ -101,6 +101,6 @@ describe("GET /api/ideas/[uuid]/wake-preview", () => {
 
     expect(res.status).toBe(404);
     // The scoped lookup ran; the null result is what maps to 404.
-    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid);
+    expect(mockPreviewIdeaWakeTarget).toHaveBeenCalledWith(companyUuid, ideaUuid, actorUuid);
   });
 });

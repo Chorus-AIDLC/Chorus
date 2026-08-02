@@ -57,6 +57,7 @@ const ERROR_CODE_I18N_KEY: Record<StartDevelopmentErrorCode, string> = {
   no_unfinished_tasks: "errorNoUnfinishedTasks",
   agent_offline: "errorAgentOffline",
   instance_offline: "errorInstanceOffline",
+  fixed_cwd_host_offline: "errorFixedCwdHostOffline",
   unknown: "errorGeneric",
 };
 
@@ -84,6 +85,7 @@ export function StartDevelopmentButton({
     start: startPinThenWake,
     pickerState,
     confirmPick,
+    confirmTemporary,
     cancelPick,
     isResolving,
   } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
@@ -129,9 +131,14 @@ export function StartDevelopmentButton({
   // The actual wake — fired directly on `direct`/`auto_pin`, or after the human
   // picks a cwd on `pick`. The server re-validates every precondition (incl. the
   // HARD instance-offline check → instance_offline error code).
-  const runWake = async () => {
+  const runWake = async (temporary?: {
+    agentUuid: string;
+    validationRequestUuid: string;
+  }) => {
     setIsStarting(true);
-    const result = await startDevelopmentAction(ideaUuid);
+    const result = temporary
+      ? await startDevelopmentAction(ideaUuid, temporary)
+      : await startDevelopmentAction(ideaUuid);
     setIsStarting(false);
 
     if (result.success) {
@@ -199,7 +206,9 @@ export function StartDevelopmentButton({
         open={pickerState !== null}
         agentName={assigneeName ?? ""}
         instances={pickerState?.instances ?? []}
+        agentUuid={pickerState?.agentUuid}
         onConfirm={confirmPick}
+        onTemporaryConfirm={confirmTemporary}
         onCancel={cancelPick}
       />
     </>

@@ -40,12 +40,14 @@ const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
 // idea's canonical session (prisma.daemonSession.update) instead of forking a per-instance
 // `${idea}::${conn}` thread. Mock update so we can assert the re-point without a DB.
 const mockDaemonSessionUpdate = vi.hoisted(() => vi.fn());
+const mockPreferenceFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { findFirst: mockTaskFindFirst },
     idea: { findFirst: mockIdeaFindFirst },
     agentInstance: { findFirst: mockAgentInstanceFindFirst },
     daemonSession: { findFirst: mockDaemonSessionFindFirst, update: mockDaemonSessionUpdate },
+    projectAgentCwdPreference: { findFirst: mockPreferenceFindFirst },
   },
 }));
 
@@ -240,6 +242,91 @@ beforeEach(() => {
   // Default: the canonical-session re-point update resolves (no-op body) unless a case
   // asserts on its args.
   mockDaemonSessionUpdate.mockResolvedValue({});
+  mockPreferenceFindFirst.mockResolvedValue(null);
+});
+
+describe("project-Agent fixed cwd resolution", () => {
+  it("routes a temporary runtime cwd through its selected host without persisting an instance", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "temporary-anchor", host: "host-a", cwd: "/startup" }),
+      onlineConn({ uuid: "other-anchor", host: "host-b", cwd: "/other" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        actorType: "user",
+        actorUuid: "user-1",
+        temporaryHost: "host-a",
+        temporaryRuntimeCwd: "/work/temporary",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe("temporary-anchor");
+    expect(result.runtimeCwd).toBe("/work/temporary");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originConnectionUuid: "temporary-anchor",
+        runtimeCwd: "/work/temporary",
+      }),
+    );
+  });
+
+  it("uses the fixed host/runtime cwd ahead of an inline mention pin", async () => {
+    mockPreferenceFindFirst.mockResolvedValue({
+      host: "fixed-host",
+      cwd: "/work/fixed",
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "fixed-anchor", host: "fixed-host", cwd: "/startup" }),
+      onlineConn({ uuid: "inline-target", host: "inline-host", cwd: "/inline" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        projectUuid: "project-1",
+        actorType: "user",
+        actorUuid: "user-1",
+        pinnedHost: "inline-host",
+        pinnedCwd: "/inline",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe("fixed-anchor");
+    expect(result.runtimeCwd).toBe("/work/fixed");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originConnectionUuid: "fixed-anchor",
+        runtimeCwd: "/work/fixed",
+      }),
+    );
+  });
+
+  it("blocks on an offline fixed host without rerouting to another online host", async () => {
+    mockPreferenceFindFirst.mockResolvedValue({
+      host: "offline-fixed-host",
+      cwd: "/work/fixed",
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "other-host", host: "online-elsewhere", cwd: "/repo" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        projectUuid: "project-1",
+        actorType: "user",
+        actorUuid: "user-1",
+      }),
+    );
+
+    expect(result).toEqual({
+      turn: null,
+      targetConnectionUuid: null,
+      runtimeCwd: "/work/fixed",
+      suppressWake: true,
+    });
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+  });
 });
 
 // ===== Action → trigger mapping =====

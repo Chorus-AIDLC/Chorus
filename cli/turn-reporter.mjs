@@ -4,7 +4,8 @@
 // persistent conversation; the server creates that turn (status `pending`) at the
 // notification chokepoint, and the daemon advances it:
 //   • on spawn      → pending → running
-//   • on subprocess exit → running → ended (clean) | interrupted (user/crash/shutdown)
+//   • on subprocess exit/validation → running → ended (clean) |
+//     interrupted (user/crash/shutdown/invalid_path)
 //
 // The daemon does NOT know the server-side turn uuid. It identifies the turn the SAME
 // way the transcript ingest does — by the session BUSINESS KEY (`sessionId` = the
@@ -30,7 +31,12 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 export const TURN_STATUSES = new Set(["pending", "running", "ended", "interrupted"]);
 
 /** Interrupt reasons a DAEMON may report (`offline` is server-reconcile-only). */
-export const TURN_INTERRUPT_REASONS = new Set(["user", "crash", "shutdown"]);
+export const TURN_INTERRUPT_REASONS = new Set([
+  "user",
+  "crash",
+  "shutdown",
+  "invalid_path",
+]);
 
 /**
  * Build an `advanceTurn(params)` function the waker invokes on a wake's spawn (→
@@ -46,7 +52,7 @@ export const TURN_INTERRUPT_REASONS = new Set(["user", "crash", "shutdown"]);
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>}
+ * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;

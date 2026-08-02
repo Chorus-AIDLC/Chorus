@@ -108,6 +108,7 @@ function toInstanceCandidate(c: ConnectionView): InstanceCandidate {
 export async function previewIdeaWakeTarget(
   companyUuid: string,
   ideaUuid: string,
+  userUuid?: string,
 ): Promise<WakeTargetPreview | null> {
   // (1) The idea's assignee — company-scoped. A miss is a not-found (route → 404), NOT a
   // cross-company read: an idea in another tenant simply is not returned.
@@ -134,6 +135,25 @@ export async function previewIdeaWakeTarget(
   // Resolved BEFORE the connection read matters, but we still surface the agent's online
   // instances for completeness (the client ignores them on `direct`).
   const alreadyPinned = idea.assigneeType === "agent_instance";
+  const project =
+    userUuid && prisma.projectAgentCwdPreference
+      ? await prisma.idea.findFirst({
+          where: { uuid: ideaUuid, companyUuid },
+          select: { projectUuid: true },
+        })
+      : null;
+  const fixedPreference =
+    userUuid && project && prisma.projectAgentCwdPreference
+      ? await prisma.projectAgentCwdPreference.findFirst({
+          where: {
+            companyUuid,
+            userUuid,
+            projectUuid: project.projectUuid,
+            agentUuid: assigneeAgentUuid,
+          },
+          select: { uuid: true },
+        })
+      : null;
 
   // (2) The agent's live registry (online-first sorted; carries effectiveStatus + the
   // durable agentInstanceUuid). Take the ONLINE subset as the picker candidates —
@@ -145,7 +165,7 @@ export async function previewIdeaWakeTarget(
   const onlineInstances = onlineConnections.map(toInstanceCandidate);
 
   // (3) The three-way decision tree (Tech Design D1), in exact priority order.
-  if (alreadyPinned) {
+  if (fixedPreference || alreadyPinned) {
     // Already pinned to a specific instance → wake as-is.
     return { outcome: "direct", assigneeAgentUuid, onlineInstances };
   }

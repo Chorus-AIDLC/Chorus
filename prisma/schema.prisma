@@ -24,20 +24,22 @@ model Company {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  users             User[]
-  agents            Agent[]
-  apiKeys           ApiKey[]
-  projects          Project[]
-  ideas             Idea[]
-  documents         Document[]
-  tasks             Task[]
-  proposals         Proposal[]
-  activities        Activity[]
-  comments          Comment[]
-  sessions          AgentSession[]
-  daemonConnections DaemonConnection[]
-  agentInstances    AgentInstance[]
-  referenceArtifacts ReferenceArtifact[]
+  users                      User[]
+  agents                     Agent[]
+  apiKeys                    ApiKey[]
+  projects                   Project[]
+  ideas                      Idea[]
+  documents                  Document[]
+  tasks                      Task[]
+  proposals                  Proposal[]
+  activities                 Activity[]
+  comments                   Comment[]
+  sessions                   AgentSession[]
+  daemonConnections          DaemonConnection[]
+  agentInstances             AgentInstance[]
+  referenceArtifacts         ReferenceArtifact[]
+  projectAgentCwdPreferences ProjectAgentCwdPreference[]
+  daemonDirectoryRequests    DaemonDirectoryRequest[]
 }
 
 // User (human, OIDC login)
@@ -52,7 +54,9 @@ model User {
   avatarUrl   String?
   createdAt   DateTime @default(now())
 
-  ownedAgents Agent[]
+  ownedAgents                Agent[]
+  projectAgentCwdPreferences ProjectAgentCwdPreference[]
+  daemonDirectoryRequests    DaemonDirectoryRequest[]
 
   @@unique([companyUuid, oidcSub])
   @@index([companyUuid])
@@ -75,12 +79,14 @@ model Agent {
   lastActiveAt DateTime?
   createdAt    DateTime  @default(now())
 
-  apiKeys           ApiKey[]
-  sessions          AgentSession[]
-  daemonConnections DaemonConnection[]
-  daemonExecutions  DaemonExecution[]
-  daemonSessions    DaemonSession[]
-  agentInstances    AgentInstance[]
+  apiKeys                    ApiKey[]
+  sessions                   AgentSession[]
+  daemonConnections          DaemonConnection[]
+  daemonExecutions           DaemonExecution[]
+  daemonSessions             DaemonSession[]
+  agentInstances             AgentInstance[]
+  projectAgentCwdPreferences ProjectAgentCwdPreference[]
+  daemonDirectoryRequests    DaemonDirectoryRequest[]
 
   @@index([companyUuid])
   @@index([ownerUuid])
@@ -110,7 +116,8 @@ model AgentInstance {
 
   // Connections that have served this instance (current + historical). Liveness is
   // derived from these, never duplicated onto the instance row.
-  connections DaemonConnection[]
+  connections    DaemonConnection[]
+  cwdPreferences ProjectAgentCwdPreference[]
 
   @@unique([companyUuid, agentUuid, host, cwd])
   @@index([companyUuid])
@@ -162,11 +169,12 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  ideas      Idea[]
-  documents  Document[]
-  tasks      Task[]
-  proposals  Proposal[]
-  activities Activity[]
+  ideas               Idea[]
+  documents           Document[]
+  tasks               Task[]
+  proposals           Proposal[]
+  activities          Activity[]
+  agentCwdPreferences ProjectAgentCwdPreference[]
 
   @@index([companyUuid])
   @@index([groupUuid])
@@ -517,6 +525,61 @@ model DaemonConnection {
   @@index([agentInstanceUuid])
 }
 
+model ProjectAgentCwdPreference {
+  id                      Int            @id @default(autoincrement())
+  uuid                    String         @unique @default(uuid())
+  companyUuid             String
+  company                 Company        @relation(fields: [companyUuid], references: [uuid], onDelete: Cascade)
+  userUuid                String
+  user                    User           @relation(fields: [userUuid], references: [uuid], onDelete: Cascade)
+  projectUuid             String
+  project                 Project        @relation(fields: [projectUuid], references: [uuid], onDelete: Cascade)
+  agentUuid               String
+  agent                   Agent          @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  host                    String
+  cwd                     String
+  anchorAgentInstanceUuid String?
+  anchorAgentInstance     AgentInstance? @relation(fields: [anchorAgentInstanceUuid], references: [uuid], onDelete: SetNull)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  @@unique([userUuid, projectUuid, agentUuid])
+  @@index([companyUuid, projectUuid])
+  @@index([projectUuid])
+  @@index([agentUuid])
+  @@index([anchorAgentInstanceUuid])
+}
+
+model DaemonDirectoryRequest {
+  id                   Int       @id @default(autoincrement())
+  uuid                 String    @unique @default(uuid())
+  companyUuid          String
+  company              Company   @relation(fields: [companyUuid], references: [uuid], onDelete: Cascade)
+  callerUserUuid       String
+  callerUser           User      @relation(fields: [callerUserUuid], references: [uuid], onDelete: Cascade)
+  agentUuid            String
+  agent                Agent     @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  targetConnectionUuid String
+  operation            String
+  prefix               String?
+  cwd                  String?
+  cursor               String?
+  limit                Int
+  status               String    @default("pending")
+  result               Json?
+  errorCode            String?
+  deadlineAt           DateTime
+  completedAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([companyUuid, callerUserUuid, createdAt])
+  @@index([callerUserUuid])
+  @@index([agentUuid])
+  @@index([targetConnectionUuid, status])
+  @@index([deadlineAt])
+}
+
 // Daemon execution state — one row per (connection, resource) the daemon is
 // running or has queued. The "resource" is whatever entity the wake-triggering
 // notification pointed at: a task, an idea (e.g. an @-mention or elaboration
@@ -592,40 +655,43 @@ model DaemonExecution {
 // Only the `agent` relation is modeled with a DB-level back-relation so the
 // cascade convention matches DaemonConnection/DaemonExecution/ApiKey.
 model DaemonSession {
-  id                   Int                 @id @default(autoincrement())
-  uuid                 String              @unique @default(uuid())
-  companyUuid          String
-  agentUuid            String
-  agent                Agent               @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  id                       Int                 @id @default(autoincrement())
+  uuid                     String              @unique @default(uuid())
+  companyUuid              String
+  agentUuid                String
+  agent                    Agent               @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
   // Stable business key: the directIdeaUuid for an idea-anchored session, or a
   // server-generated uuid for an ad-hoc session. Unique per agent.
-  sessionId            String
+  sessionId                String
   // Backend-owned resume identity, distinct from Chorus's routing key above.
-  backendSessionId     String?
-  directIdeaUuid       String? // null ⇒ ad-hoc (no idea lineage)
+  backendSessionId         String?
+  directIdeaUuid           String? // null ⇒ ad-hoc (no idea lineage)
   // → DaemonConnection.uuid (weak ref, no DB FK). The connection/cwd that owns
   //   the on-disk Claude transcript. Fixed at creation; continuation is only ever
   //   routed here, because `claude --resume <sessionId>` is cwd/machine-bound.
-  originConnectionUuid String
-  status               String              @default("active") // active | ended
-  title                String?
-  lastTurnAt           DateTime            @default(now())
+  originConnectionUuid     String
+  // Directed discovered cwd. Null keeps the legacy connection-bound cwd behavior.
+  // Once set, every continuation uses this value rather than the anchor connection cwd.
+  runtimeCwd               String?
+  status                   String              @default("active") // active | ended
+  title                    String?
+  lastTurnAt               DateTime            @default(now())
   // Running conversation token rollup (daemon-token-usage): headline input+output totals
   // across all turns that reported usage. SCALAR Int (not JSON) on purpose — maintained
   // with Prisma's atomic `increment` on the terminal edge, which cannot operate inside a
   // Json column. Cache totals are NOT rolled up here (the header derives its conditional
   // cache line from the per-turn `usage` of loaded turns). Default 0 so an existing session
   // reads a valid zero total with no backfill.
-  totalInputTokens     Int                 @default(0)
-  totalOutputTokens    Int                 @default(0)
+  totalInputTokens         Int                 @default(0)
+  totalOutputTokens        Int                 @default(0)
   // Whole-session cache rollup (daemon-token-usage): so the header badge's tooltip can show
   // cache read/write at the SAME whole-session scope as its in+out face (not loaded-turns
   // scope). Scalar Int for the same atomic-increment reason as the in/out rollup.
-  totalCacheReadTokens     Int             @default(0)
-  totalCacheCreationTokens Int             @default(0)
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  turns                DaemonSessionTurn[]
+  totalCacheReadTokens     Int                 @default(0)
+  totalCacheCreationTokens Int                 @default(0)
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  turns                    DaemonSessionTurn[]
 
   @@unique([agentUuid, sessionId])
   @@index([companyUuid, agentUuid])
@@ -637,14 +703,14 @@ model DaemonSession {
 // turn, distinguished only by `trigger`. Turn creation + status transitions are
 // the SSE chokepoint for the conversation's live updates.
 model DaemonSessionTurn {
-  id            Int                       @id @default(autoincrement())
-  uuid          String                    @unique @default(uuid())
-  sessionUuid   String
-  session       DaemonSession             @relation(fields: [sessionUuid], references: [uuid], onDelete: Cascade)
-  seq           Int // monotonic per session
-  trigger       String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction
-  promptText    String? // free-text body for human_instruction; null otherwise (canonical source)
-  status        String                    @default("pending") // pending | running | ended | interrupted
+  id                Int                       @id @default(autoincrement())
+  uuid              String                    @unique @default(uuid())
+  sessionUuid       String
+  session           DaemonSession             @relation(fields: [sessionUuid], references: [uuid], onDelete: Cascade)
+  seq               Int // monotonic per session
+  trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction
+  promptText        String? // free-text body for human_instruction; null otherwise (canonical source)
+  status            String                    @default("pending") // pending | running | ended | interrupted
   // Discriminator for the `interrupted` status: `user` = user-requested interrupt,
   // `crash` = subprocess exited dirty, `shutdown` = daemon graceful shutdown killed
   // the wake, `offline` = server-side reconcile of a turn whose origin connection
@@ -658,21 +724,21 @@ model DaemonSessionTurn {
   // Chorus. Orthogonal to `status`: the turn is still a clean `ended`; this only records
   // WHY its transcript is missing so the UI can say "reply couldn't be uploaded (reason)"
   // instead of the misleading "no reply received". Null on a successful/skipped upload.
-  relayError    String?
+  relayError        String?
   // Per-turn token usage (daemon-token-usage) — the whole normalized TokenUsage object
   // ({ inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, model, source },
   // all nullable except source) stored as ONE JSON blob (human instruction: one JSON, not a
   // field per number). Null when the backend reported none (pre-feature turns, silent turns,
   // or backends that can't report). Written on the terminal edge only, verbatim from the
   // authoritative Claude Code `result` envelope. Cost is intentionally NOT included this slice.
-  usage         Json?
+  usage             Json?
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
-  executionUuid String?
-  startedAt     DateTime?
-  endedAt       DateTime?
-  createdAt     DateTime                  @default(now())
-  messages      DaemonTranscriptMessage[]
+  executionUuid     String?
+  startedAt         DateTime?
+  endedAt           DateTime?
+  createdAt         DateTime                  @default(now())
+  messages          DaemonTranscriptMessage[]
 
   @@unique([sessionUuid, seq])
   @@index([sessionUuid, status])

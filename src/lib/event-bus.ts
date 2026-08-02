@@ -73,6 +73,7 @@ export interface ControlEvent {
   entityType?: "task" | "idea" | "proposal" | "document" | "daemon_session";
   entityUuid?: string;
   turnUuid?: string;
+  runtimeCwd?: string;
   // Present ONLY on a `resume`: the row's PRIOR interruptedReason, so the daemon can
   // inject a crash-specific continue instruction into the resumed wake
   // (add-crash-execution-resume). Older daemons ignore it.
