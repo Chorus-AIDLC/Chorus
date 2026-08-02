@@ -32,6 +32,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
+import {
+  DirectoryBrowser,
+  type ValidatedDirectory,
+} from "./directory-browser";
 
 export interface WakeCwdPickerDialogProps {
   /** Controlled open state — the caller mounts once and toggles this. */
@@ -46,6 +50,11 @@ export interface WakeCwdPickerDialogProps {
    * connectionUuid) via the non-waking reassign, then fire the wake.
    */
   onConfirm: (instance: InstanceCandidate) => void;
+  agentUuid?: string;
+  onTemporaryConfirm?: (selection: {
+    agentUuid: string;
+    validationRequestUuid: string;
+  }) => void;
   /** Fires when the human dismisses the dialog (Cancel / overlay / Esc). */
   onCancel: () => void;
 }
@@ -60,17 +69,23 @@ export function WakeCwdPickerDialog({
   agentName,
   instances,
   onConfirm,
+  agentUuid,
+  onTemporaryConfirm,
   onCancel,
 }: WakeCwdPickerDialogProps) {
   const t = useTranslations("wakeCwdPicker");
   const [selected, setSelected] = useState<InstanceCandidate | null>(null);
+  const [browsing, setBrowsing] = useState(false);
 
   // Default-select the FIRST instance whenever a new pick opens the dialog so
   // Confirm is reachable immediately (no click) and Radix RadioGroup's roving
   // focus lands on a concrete row. The dialog only opens for >=2 instances (the
   // `pick` outcome), so there is always something to default to.
   useEffect(() => {
-    if (open) setSelected(instances[0] ?? null);
+    if (open) {
+      setSelected(instances[0] ?? null);
+      setBrowsing(false);
+    }
   }, [open, instances]);
 
   // Enter confirms the current selection — the keyboard counterpart to clicking
@@ -115,25 +130,46 @@ export function WakeCwdPickerDialog({
           className="min-h-0 flex-1 overflow-y-auto py-3"
           onKeyDown={handleListKeyDown}
         >
-          <InstancePicker
-            instances={instances}
-            selectedConnectionUuid={selected?.connectionUuid ?? null}
-            onSelect={setSelected}
-            ariaLabel={t("title")}
-          />
+          {browsing && agentUuid && onTemporaryConfirm ? (
+            <DirectoryBrowser
+              agentUuid={agentUuid}
+              instances={instances}
+              confirmLabel={t("useOnce")}
+              onValidated={(selection: ValidatedDirectory) =>
+                onTemporaryConfirm({
+                  agentUuid: selection.agentUuid,
+                  validationRequestUuid: selection.validationRequestUuid,
+                })
+              }
+            />
+          ) : (
+            <InstancePicker
+              instances={instances}
+              selectedConnectionUuid={selected?.connectionUuid ?? null}
+              onSelect={setSelected}
+              ariaLabel={t("title")}
+            />
+          )}
         </div>
         <DialogFooter className="shrink-0">
           <Button variant="ghost" onClick={onCancel}>
             {t("cancel")}
           </Button>
-          <Button
-            disabled={!selected}
-            onClick={() => {
-              if (selected) onConfirm(selected);
-            }}
-          >
-            {t("confirm")}
-          </Button>
+          {agentUuid && onTemporaryConfirm && (
+            <Button variant="outline" onClick={() => setBrowsing((value) => !value)}>
+              {browsing ? t("registeredDirectories") : t("browseAnother")}
+            </Button>
+          )}
+          {!browsing && (
+            <Button
+              disabled={!selected}
+              onClick={() => {
+                if (selected) onConfirm(selected);
+              }}
+            >
+              {t("confirm")}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

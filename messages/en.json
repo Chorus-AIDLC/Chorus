@@ -306,7 +306,14 @@
     "saveFailed": "Failed to update project",
     "dangerZone": "Danger zone",
     "deleteTitle": "Delete this project",
-    "deleteDescription": "Permanently remove this project and all its data. This action cannot be undone."
+    "deleteDescription": "Permanently remove this project and all its data. This action cannot be undone.",
+    "agentCwds": {
+      "title": "Agent working directories", "description": "Fix a host and directory for each Agent in this project.",
+      "loading": "Loading working directories...", "loadFailed": "Working directories could not be loaded.", "empty": "No Agents are available.",
+      "notConfigured": "Uses a temporary directory for each operation", "configure": "Configure working directory", "replace": "Replace working directory",
+      "clear": "Clear fixed working directory", "save": "Save fixed directory",
+      "status": { "valid": "Available", "offline": "Host offline", "invalid": "Directory unavailable" }
+    }
   },
   "projects": {
     "title": "Projects",
@@ -1682,7 +1689,16 @@
     "title": "Pick a working directory to run in",
     "subtitle": "{name} is online in {count, plural, one {# instance} other {# instances}} across {hosts, plural, one {# host} other {# hosts}}. Choose which one to pin and wake.",
     "confirm": "Pin & continue",
-    "cancel": "Cancel"
+    "cancel": "Cancel", "browseAnother": "Browse another directory", "registeredDirectories": "Registered directories", "useOnce": "Use for this operation"
+  },
+  "directoryBrowser": {
+    "chooseHost": "Choose a host", "unknownHost": "Unknown host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
+    "browse": "Browse directories", "noHosts": "No online host is available for this Agent.", "empty": "No matching directories.", "selection": "Selected directory",
+    "errors": {
+      "HOST_OFFLINE": "The selected host is offline. Choose another host.", "TIMEOUT": "The host did not respond. Try again.", "INVALID_PATH": "Enter a valid absolute path.",
+      "OUTSIDE_ROOT": "That path is outside the host's allowed browse roots.", "NOT_DIRECTORY": "The selected path is not a directory.", "ACCESS_DENIED": "The daemon cannot access that directory.",
+      "STALE_TARGET": "The selection is stale. Browse and select it again.", "LIMIT_EXCEEDED": "Too many entries matched. Enter a more specific prefix.", "INTERNAL_ERROR": "The directory could not be loaded. Try again."
+    }
   },
   "graph": {
     "title": "Graph",

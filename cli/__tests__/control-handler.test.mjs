@@ -337,3 +337,51 @@ describe("control-handler deliver_turn (子2 — origin-only live delivery)", ()
     expect(() => onControl(deliverEvent())).not.toThrow();
   });
 });
+
+describe("control-handler browse_directory", () => {
+  it("correlates a successful request after checking the target connection", async () => {
+    const handleDirectoryRequest = vi.fn(async () => ({ items: [{ name: "repo", path: "/repo" }] }));
+    const reportDirectoryRequest = vi.fn(async () => {});
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      handleDirectoryRequest,
+      reportDirectoryRequest,
+      logger: silent,
+    });
+    onControl({
+      type: "control", command: "browse_directory", targetConnectionUuid: CONN,
+      requestUuid: "req-1", operation: "list", prefix: "/r",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportDirectoryRequest).toHaveBeenCalledWith({
+      requestUuid: "req-1", status: "succeeded", items: [{ name: "repo", path: "/repo" }],
+    });
+  });
+
+  it("reports stable failures and ignores stale targets", async () => {
+    const error = Object.assign(new Error("outside"), { code: "OUTSIDE_ROOT" });
+    const handleDirectoryRequest = vi.fn(async () => { throw error; });
+    const reportDirectoryRequest = vi.fn(async () => {});
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      handleDirectoryRequest,
+      reportDirectoryRequest,
+      logger: silent,
+    });
+    onControl({
+      type: "control", command: "browse_directory", targetConnectionUuid: CONN,
+      requestUuid: "req-2", operation: "list", prefix: "/outside",
+    });
+    onControl({
+      type: "control", command: "browse_directory", targetConnectionUuid: "stale",
+      requestUuid: "req-3", operation: "list", prefix: "/r",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reportDirectoryRequest).toHaveBeenCalledTimes(1);
+    expect(reportDirectoryRequest).toHaveBeenCalledWith({
+      requestUuid: "req-2", status: "failed", errorCode: "OUTSIDE_ROOT",
+    });
+  });
+});

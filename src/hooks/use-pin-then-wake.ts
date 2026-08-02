@@ -88,7 +88,12 @@ export interface StartPinThenWakeArgs {
    * action (e.g. startDevelopmentAction). The hook does not interpret its
    * result — the caller handles success/error toasts as it does today.
    */
-  wake: () => void | Promise<void>;
+  wake: (temporary?: TemporaryCwdSelection) => void | Promise<void>;
+}
+
+export interface TemporaryCwdSelection {
+  agentUuid: string;
+  validationRequestUuid: string;
 }
 
 /** Default preview fetch against the real REST endpoint. */
@@ -131,7 +136,9 @@ export function usePinThenWake({
   const [isResolving, setIsResolving] = useState(false);
   // The wake bound to the currently-open picker, captured at `start` time so
   // `confirmPick` fires the exact wake the user initiated.
-  const [pendingWake, setPendingWake] = useState<{ run: () => void | Promise<void> } | null>(
+  const [pendingWake, setPendingWake] = useState<{
+    run: (temporary?: TemporaryCwdSelection) => void | Promise<void>;
+  } | null>(
     null,
   );
 
@@ -229,5 +236,22 @@ export function usePinThenWake({
     setPendingWake(null);
   }, []);
 
-  return { start, pickerState, confirmPick, cancelPick, isResolving };
+  const confirmTemporary = useCallback(
+    async (selection: TemporaryCwdSelection) => {
+      const wake = pendingWake;
+      setPickerState(null);
+      setPendingWake(null);
+      if (wake) await wake.run(selection);
+    },
+    [pendingWake],
+  );
+
+  return {
+    start,
+    pickerState,
+    confirmPick,
+    confirmTemporary,
+    cancelPick,
+    isResolving,
+  };
 }

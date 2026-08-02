@@ -188,7 +188,12 @@ describe("createTurnReporter", () => {
   });
 
   it("TURN_INTERRUPT_REASONS is the daemon-reportable subset (no offline)", () => {
-    expect([...TURN_INTERRUPT_REASONS].sort()).toEqual(["crash", "shutdown", "user"]);
+    expect([...TURN_INTERRUPT_REASONS].sort()).toEqual([
+      "crash",
+      "invalid_path",
+      "shutdown",
+      "user",
+    ]);
   });
 
   it("sends interruptedReason alongside status=interrupted", async () => {

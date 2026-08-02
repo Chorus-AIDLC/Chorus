@@ -53,9 +53,12 @@ function Harness({
     agentUuid: string,
     instanceUuid: string,
   ) => Promise<{ success: boolean; error?: string }>;
-  wake: () => void | Promise<void>;
+  wake: (temporary?: {
+    agentUuid: string;
+    validationRequestUuid: string;
+  }) => void | Promise<void>;
 }) {
-  const { start, pickerState, confirmPick, cancelPick } = usePinThenWake({
+  const { start, pickerState, confirmPick, confirmTemporary, cancelPick } = usePinThenWake({
     fetchPreview: async () => preview,
     reassignNoWake,
   });
@@ -76,6 +79,17 @@ function Harness({
           ))}
           <button data-testid="cancel" onClick={cancelPick}>
             cancel
+          </button>
+          <button
+            data-testid="temporary"
+            onClick={() =>
+              confirmTemporary({
+                agentUuid: AGENT,
+                validationRequestUuid: "request-1",
+              })
+            }
+          >
+            temporary
           </button>
         </div>
       )}
@@ -188,6 +202,33 @@ describe("usePinThenWake", () => {
     expect(reassign).not.toHaveBeenCalled();
     expect(wake).not.toHaveBeenCalled();
     expect(screen.queryByTestId("picker")).toBeNull();
+  });
+
+  it("pick → temporary directory wakes with validation metadata without reassigning", async () => {
+    const reassign = vi.fn().mockResolvedValue({ success: true });
+    const wake = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Harness
+        preview={{
+          outcome: "pick",
+          assigneeAgentUuid: AGENT,
+          onlineInstances: [candidate(), candidate({ connectionUuid: "conn-2" })],
+        }}
+        reassignNoWake={reassign}
+        wake={wake}
+      />,
+    );
+
+    await userEvent.click(screen.getByText("go"));
+    await userEvent.click(await screen.findByTestId("temporary"));
+
+    await waitFor(() =>
+      expect(wake).toHaveBeenCalledWith({
+        agentUuid: AGENT,
+        validationRequestUuid: "request-1",
+      }),
+    );
+    expect(reassign).not.toHaveBeenCalled();
   });
 
   it("preview miss (null) → wakes directly", async () => {

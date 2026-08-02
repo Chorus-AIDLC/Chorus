@@ -10,6 +10,9 @@ import { requestYolo } from "@/services/yolo-request.service";
 import { StageAdvanceError } from "@/services/stage-advance.service";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { resolveTemporaryRuntimeCwd } from "@/services/project-agent-cwd.service";
+
+type TemporaryCwdInput = { agentUuid: string; validationRequestUuid: string };
 
 // Machine-readable failure codes surfaced to the client so each maps to a
 // distinct i18n message (the raw error prose is never shown to users).
@@ -49,7 +52,8 @@ function toErrorCode(error: unknown): StartDevelopmentErrorCode {
 }
 
 export async function startDevelopmentAction(
-  ideaUuid: string
+  ideaUuid: string,
+  temporary?: TemporaryCwdInput,
 ): Promise<{ success: boolean; errorCode?: StartDevelopmentErrorCode }> {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -63,11 +67,19 @@ export async function startDevelopmentAction(
   }
 
   try {
+    const temporaryCwd = temporary
+      ? await resolveTemporaryRuntimeCwd({
+          companyUuid: auth.companyUuid,
+          userUuid: auth.actorUuid,
+          ...temporary,
+        })
+      : null;
     await startDevelopment({
       companyUuid: auth.companyUuid,
       ideaUuid,
       actorUuid: auth.actorUuid,
       actorType: auth.type,
+      temporaryCwd,
     });
 
     // Revalidate the ideas page so the panel refreshes
@@ -133,7 +145,8 @@ function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
 }
 
 export async function yoloRequestedAction(
-  ideaUuid: string
+  ideaUuid: string,
+  temporary?: TemporaryCwdInput,
 ): Promise<{ success: boolean; errorCode?: YoloRequestedErrorCode }> {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -147,11 +160,19 @@ export async function yoloRequestedAction(
   }
 
   try {
+    const temporaryCwd = temporary
+      ? await resolveTemporaryRuntimeCwd({
+          companyUuid: auth.companyUuid,
+          userUuid: auth.actorUuid,
+          ...temporary,
+        })
+      : null;
     await requestYolo({
       companyUuid: auth.companyUuid,
       ideaUuid,
       actorUuid: auth.actorUuid,
       actorType: auth.type,
+      temporaryCwd,
     });
 
     // Revalidate the ideas page so the panel refreshes

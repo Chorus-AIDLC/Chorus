@@ -306,7 +306,14 @@
     "saveFailed": "更新项目失败",
     "dangerZone": "危险区域",
     "deleteTitle": "删除此项目",
-    "deleteDescription": "永久删除此项目及其所有数据，此操作无法撤销。"
+    "deleteDescription": "永久删除此项目及其所有数据，此操作无法撤销。",
+    "agentCwds": {
+      "title": "Agent 工作目录", "description": "为此项目中的每个 Agent 固定主机和目录。",
+      "loading": "正在加载工作目录...", "loadFailed": "无法加载工作目录。", "empty": "暂无可用 Agent。",
+      "notConfigured": "每次操作临时选择目录", "configure": "配置工作目录", "replace": "替换工作目录",
+      "clear": "清除固定工作目录", "save": "保存固定目录",
+      "status": { "valid": "可用", "offline": "主机离线", "invalid": "目录不可用" }
+    }
   },
   "projects": {
     "title": "项目",
@@ -1682,7 +1689,16 @@
     "title": "选择要运行的工作目录",
     "subtitle": "{name} 在 {hosts, plural, other {# 台主机}}上有 {count, plural, other {# 个在线实例}}。请选择要固定并唤醒的实例。",
     "confirm": "固定并继续",
-    "cancel": "取消"
+    "cancel": "取消", "browseAnother": "浏览其他目录", "registeredDirectories": "已注册目录", "useOnce": "仅用于本次操作"
+  },
+  "directoryBrowser": {
+    "chooseHost": "选择主机", "unknownHost": "未知主机", "pathPrefix": "目录路径前缀", "pathPlaceholder": "/home/user/project",
+    "browse": "浏览目录", "noHosts": "此 Agent 暂无在线主机。", "empty": "没有匹配的目录。", "selection": "已选目录",
+    "errors": {
+      "HOST_OFFLINE": "所选主机已离线，请选择其他主机。", "TIMEOUT": "主机未响应，请重试。", "INVALID_PATH": "请输入有效的绝对路径。",
+      "OUTSIDE_ROOT": "该路径不在主机允许浏览的根目录内。", "NOT_DIRECTORY": "所选路径不是目录。", "ACCESS_DENIED": "Daemon 无法访问该目录。",
+      "STALE_TARGET": "选择已失效，请重新浏览并选择。", "LIMIT_EXCEEDED": "匹配项过多，请输入更具体的前缀。", "INTERNAL_ERROR": "无法加载目录，请重试。"
+    }
   },
   "graph": {
     "title": "图谱",

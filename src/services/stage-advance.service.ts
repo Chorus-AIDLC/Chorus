@@ -166,11 +166,13 @@ export async function executeStageAdvance(
     ideaUuid,
     actorUuid,
     actorType,
+    temporaryCwd,
   }: {
     companyUuid: string;
     ideaUuid: string;
     actorUuid: string;
     actorType: string;
+    temporaryCwd?: { host: string; cwd: string } | null;
   }
 ): Promise<void> {
   // 1. Stage-advance is a human affordance. Agents keep their own paths (e.g.
@@ -206,7 +208,15 @@ export async function executeStageAdvance(
   };
 
   // 3. Per-stage precondition. Its return value becomes the activity payload.
-  const activityValue = await definition.precondition(ctx);
+  const activityValue = {
+    ...(await definition.precondition(ctx)),
+    ...(temporaryCwd
+      ? {
+          temporaryHost: temporaryCwd.host,
+          temporaryRuntimeCwd: temporaryCwd.cwd,
+        }
+      : {}),
+  };
 
   // 4. Offline policy. "queue" never blocks on liveness; "require_online"
   // resolves the assignee and demands a live connection. The check SPLITS on the

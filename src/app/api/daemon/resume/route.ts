@@ -35,6 +35,7 @@ import {
   publishExecutionChange,
   isConnectionLive,
 } from "@/services/daemon-execution.service";
+import { prisma } from "@/lib/prisma";
 
 const bodySchema = z.object({
   connectionUuid: z.string().min(1),
@@ -98,6 +99,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       `Execution is not resumable (status=${result.status}, reason=${result.interruptedReason ?? "none"})`,
     );
   }
+  const execution = await prisma.daemonExecution?.findFirst({
+    where: { companyUuid: auth.companyUuid, connectionUuid, entityType, entityUuid },
+    select: { directIdeaUuid: true },
+  });
+  const resumedSession = await prisma.daemonSession?.findFirst({
+    where: {
+      companyUuid: auth.companyUuid,
+      agentUuid: authz.target.agentUuid,
+      sessionId: execution?.directIdeaUuid ?? entityUuid,
+    },
+    select: { runtimeCwd: true },
+  });
 
   // Tell the daemon to re-spawn and continue the session, then push the updated
   // active set so the UI reflects the resumed row immediately. `resumeReason` is the
@@ -109,6 +122,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityType,
     entityUuid,
     resumeReason: result.resumedFrom,
+    ...(resumedSession?.runtimeCwd ? { runtimeCwd: resumedSession.runtimeCwd } : {}),
   });
   await publishExecutionChange(auth.companyUuid, connectionUuid);
 

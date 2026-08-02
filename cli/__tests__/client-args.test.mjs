@@ -36,6 +36,11 @@ describe("parseClientFlags — new daemon flags", () => {
     expect(parseClientFlags(["--agent=codex"]).agent).toBe("codex");
   });
 
+  it("collects repeatable --browse-root values independently from --cwd", () => {
+    expect(parseClientFlags(["--browse-root", "/srv", "--browse-root=/home/u", "--cwd", "/repo"]))
+      .toMatchObject({ browseRoot: ["/srv", "/home/u"], cwd: ["/repo"] });
+  });
+
   it("parses boolean --chorus-only / --verbose / -d / --detach / --force", () => {
     expect(parseClientFlags(["--chorus-only"]).chorusOnly).toBe(true);
     expect(parseClientFlags(["--verbose"]).verbose).toBe(true);

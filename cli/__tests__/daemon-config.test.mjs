@@ -7,6 +7,7 @@ import {
   resolveSigintTimeoutMs,
   DEFAULT_SIGINT_TIMEOUT_MS,
   resolveDaemonCwds,
+  resolveBrowseRoots,
 } from "../daemon-config.mjs";
 
 describe("resolveSigintTimeoutMs layered precedence", () => {
@@ -61,6 +62,33 @@ describe("resolveSigintTimeoutMs layered precedence", () => {
   it("a malformed daemon.json (readJson returns null) falls through to the default", () => {
     const ms = resolveSigintTimeoutMs({}, { env: {}, readJson: () => null });
     expect(ms).toBe(10_000);
+  });
+});
+
+describe("resolveBrowseRoots layered precedence", () => {
+  const deps = { home: "/home/u", readJson: () => ({ browseRoots: ["/file"] }) };
+
+  it("uses home by default and never returns the cwd sentinel", () => {
+    expect(resolveBrowseRoots({}, { env: {}, readJson: () => null, home: "/home/u" }))
+      .toEqual(["/home/u"]);
+  });
+
+  it("resolves flag > env > file", () => {
+    expect(resolveBrowseRoots({ browseRoot: ["/flag"] }, {
+      ...deps, env: { CHORUS_DAEMON_BROWSE_ROOTS: "/env" },
+    })).toEqual(["/flag"]);
+    expect(resolveBrowseRoots({}, {
+      ...deps, env: { CHORUS_DAEMON_BROWSE_ROOTS: "/env-a,/env-b" },
+    })).toEqual(["/env-a", "/env-b"]);
+    expect(resolveBrowseRoots({}, { ...deps, env: {} })).toEqual(["/file"]);
+  });
+
+  it("is independent from startup cwds", () => {
+    const file = { cwds: ["/served"], browseRoots: ["/discoverable"] };
+    expect(resolveDaemonCwds({}, { env: {}, readJson: () => file, home: "/home/u" }))
+      .toEqual(["/served"]);
+    expect(resolveBrowseRoots({}, { env: {}, readJson: () => file, home: "/home/u" }))
+      .toEqual(["/discoverable"]);
   });
 });
 

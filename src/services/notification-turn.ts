@@ -210,6 +210,9 @@ export interface WakeNotificationContext {
   // lives on the created turn's `promptText`; the notification row carries the
   // denormalized copy. Null/undefined for autonomous wakes.
   instructionText?: string | null;
+  projectUuid?: string | null;
+  actorType?: string | null;
+  actorUuid?: string | null;
   // Pinned target daemon instance carried by a `mentioned` wake (cwd-addressable
   // instances): the owner-chosen `(host, cwd)` parsed from the mention markup and
   // threaded here by mention.service. The wake resolves it to a matching ONLINE
@@ -222,6 +225,8 @@ export interface WakeNotificationContext {
   // `pinnedCwd` null = unknown-path instance.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  temporaryHost?: string | null;
+  temporaryRuntimeCwd?: string | null;
 }
 
 /**
@@ -250,6 +255,7 @@ interface PinnedTarget {
   host: string;
   cwd: string | null;
   soft: boolean;
+  runtimeCwd?: string | null;
 }
 
 /**
@@ -328,6 +334,38 @@ async function resolvePinnedTarget(
   ctx: WakeNotificationContext,
   trigger: TurnTrigger,
 ): Promise<PinnedTarget | null> {
+  // A project preference is authoritative across every instance and inline selection
+  // for this user. Its cwd need not be a registered connection; any online connection
+  // for the same Agent + host is an anchor for directed runtime execution.
+  if (ctx.projectUuid && ctx.actorType === "user" && ctx.actorUuid) {
+    const preference = await prisma.projectAgentCwdPreference?.findFirst({
+      where: {
+        companyUuid: ctx.companyUuid,
+        userUuid: ctx.actorUuid,
+        projectUuid: ctx.projectUuid,
+        agentUuid: ctx.recipientUuid,
+      },
+      select: { host: true, cwd: true },
+    });
+    if (preference) {
+      return {
+        host: preference.host,
+        cwd: null,
+        runtimeCwd: preference.cwd,
+        soft: false,
+      };
+    }
+  }
+
+  if (ctx.temporaryHost && ctx.temporaryRuntimeCwd) {
+    return {
+      host: ctx.temporaryHost,
+      cwd: null,
+      runtimeCwd: ctx.temporaryRuntimeCwd,
+      soft: false,
+    };
+  }
+
   // (1) Mention pin — HARD. A human typed an exact place; offline stays notify-only.
   if (trigger === "mentioned") {
     return makePinnedTarget(ctx.pinnedHost, ctx.pinnedCwd, false);
@@ -484,7 +522,7 @@ function selectOriginConnection(
     const matched = connections.find(
       (c) =>
         c.host === pin.host &&
-        c.cwd === pin.cwd &&
+        (pin.runtimeCwd ? true : c.cwd === pin.cwd) &&
         c.effectiveStatus === "online",
     );
     if (matched) return { kind: "directed", connection: matched };
@@ -584,6 +622,7 @@ export async function resolveIdeaSessionOriginTarget(
 export interface WakeTurnResult {
   turn: TurnView | null;
   targetConnectionUuid: string | null;
+  runtimeCwd: string | null;
   suppressWake: boolean;
 }
 
@@ -636,6 +675,7 @@ export async function createTurnAndResolveTarget(
   const empty: WakeTurnResult = {
     turn: null,
     targetConnectionUuid: null,
+    runtimeCwd: null,
     suppressWake: false,
   };
 
@@ -717,7 +757,7 @@ export async function createTurnAndResolveTarget(
     // and a momentarily-no-online UN-PINNED wake must remain byte-identical to before (no new
     // suppression behavior). So only `offline_pin` suppresses agent-wide.
     if (selection.kind === "offline_pin") {
-      return { turn: null, targetConnectionUuid: null, suppressWake: true };
+      return { turn: null, targetConnectionUuid: null, runtimeCwd: pin?.runtimeCwd ?? null, suppressWake: true };
     }
     if (selection.kind === "none") {
       return empty;
@@ -725,6 +765,7 @@ export async function createTurnAndResolveTarget(
 
     const origin = selection.connection;
     const directed = selection.kind === "directed";
+    const runtimeCwd = pin?.runtimeCwd ?? null;
 
     // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
     // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
@@ -769,7 +810,10 @@ export async function createTurnAndResolveTarget(
         // ownership is proven by the same-agent connection resolution above.
         await prisma.daemonSession.update({
           where: { uuid: existing.uuid, companyUuid: ctx.companyUuid },
-          data: { originConnectionUuid: origin.uuid },
+          data: {
+            originConnectionUuid: origin.uuid,
+            ...(runtimeCwd ? { runtimeCwd } : {}),
+          },
         });
       }
     }
@@ -784,7 +828,9 @@ export async function createTurnAndResolveTarget(
       sessionId,
       directIdeaUuid: sessionDirectIdeaUuid,
       originConnectionUuid: origin.uuid,
+      ...(runtimeCwd ? { runtimeCwd } : {}),
     });
+    const effectiveRuntimeCwd = runtimeCwd ?? session.runtimeCwd ?? null;
 
     const promptText =
       trigger === "human_instruction" ? ctx.instructionText ?? null : null;
@@ -819,11 +865,17 @@ export async function createTurnAndResolveTarget(
         companyUuid: ctx.companyUuid,
         originConnectionUuid: origin.uuid,
         turnUuid: turn.uuid,
+        ...(effectiveRuntimeCwd ? { runtimeCwd: effectiveRuntimeCwd } : {}),
       });
-      return { turn, targetConnectionUuid: origin.uuid, suppressWake: false };
+      return {
+        turn,
+        targetConnectionUuid: origin.uuid,
+        runtimeCwd: effectiveRuntimeCwd,
+        suppressWake: false,
+      };
     }
 
-    return { turn, targetConnectionUuid: null, suppressWake: false };
+    return { turn, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
   } catch (error) {
     // VISIBLE failure (repo "no silent errors"): log with full context but DO NOT
     // rethrow — the notification was already created and must not be aborted by a

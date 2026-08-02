@@ -225,6 +225,39 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     });
   });
 
+  it("reports correlated directory success and typed failure", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+    await client.reportDirectoryRequest({
+      requestUuid: "req-1",
+      status: "succeeded",
+      items: [{ name: "repo", path: "/home/u/repo" }],
+      nextCursor: null,
+    });
+    await client.reportDirectoryRequest({
+      requestUuid: "req-2",
+      status: "failed",
+      errorCode: "OUTSIDE_ROOT",
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      "https://chorus.example.com/api/daemon/directory-request/report",
+      "https://chorus.example.com/api/daemon/directory-request/report",
+    ]);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      requestUuid: "req-1",
+      connectionUuid: "conn-1",
+      status: "succeeded",
+      items: [{ name: "repo", path: "/home/u/repo" }],
+      nextCursor: null,
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      requestUuid: "req-2",
+      connectionUuid: "conn-1",
+      status: "failed",
+      errorCode: "OUTSIDE_ROOT",
+    });
+  });
+
   it("readPendingTurns GETs ?connectionUuid=… (encoded) and returns the parsed turns", async () => {
     const turns = [
       { turnUuid: "t-1", sessionId: "idea-1", directIdeaUuid: "idea-1", trigger: "human_instruction", promptText: "do it" },

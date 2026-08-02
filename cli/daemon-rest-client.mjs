@@ -75,6 +75,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
  *   heartbeat: (p: { connectionUuid: string, connectedAt: string }) => Promise<DaemonRestResult>,
+ *   reportDirectoryRequest: (p: { requestUuid: string, status: "succeeded"|"failed", items?: Array<{name:string,path:string}>, nextCursor?: string|null, normalizedPath?: string, errorCode?: string }) => Promise<DaemonRestResult>,
  *   readPendingTurns: () => Promise<DaemonRestResult>,
  * }}
  */
@@ -252,6 +253,28 @@ export function createDaemonRestClient(opts) {
         "connection-heartbeat",
         "/api/daemon/connection-heartbeat",
         { connectionUuid, connectedAt },
+      );
+    },
+
+    async reportDirectoryRequest({ requestUuid, status, items, nextCursor, normalizedPath, errorCode }) {
+      const connectionUuid = getConnectionUuid();
+      if (!connectionUuid) {
+        const error = `cannot report directory request ${requestUuid} — no connection uuid yet`;
+        logger.warn(`[Chorus] ${error}`);
+        return { ok: false, status: null, error, skipped: true };
+      }
+      const body = { requestUuid, connectionUuid, status };
+      if (status === "succeeded") {
+        if (items !== undefined) body.items = items;
+        if (nextCursor !== undefined) body.nextCursor = nextCursor;
+        if (normalizedPath !== undefined) body.normalizedPath = normalizedPath;
+      } else {
+        body.errorCode = errorCode ?? "INTERNAL_ERROR";
+      }
+      return post(
+        "directory-request report",
+        "/api/daemon/directory-request/report",
+        body,
       );
     },
 
