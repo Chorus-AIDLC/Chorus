@@ -5,9 +5,26 @@ import { useTranslations } from "next-intl";
 import { Folder, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { isImeComposing } from "@/lib/ime";
 import type { InstanceCandidate } from "./instance-picker";
 
 type DirectoryItem = { name: string; path: string };
+const DIRECTORY_ERROR_CODES = new Set([
+  "HOST_OFFLINE",
+  "TIMEOUT",
+  "INVALID_PATH",
+  "OUTSIDE_ROOT",
+  "NOT_DIRECTORY",
+  "ACCESS_DENIED",
+  "STALE_TARGET",
+  "LIMIT_EXCEEDED",
+  "INTERNAL_ERROR",
+]);
+
+function normalizeDirectoryError(error: unknown): string {
+  const code = error instanceof Error ? error.message : "INTERNAL_ERROR";
+  return DIRECTORY_ERROR_CODES.has(code) ? code : "INTERNAL_ERROR";
+}
 
 export interface ValidatedDirectory {
   agentUuid: string;
@@ -86,7 +103,7 @@ export function DirectoryBrowser({
       setItems(result?.items ?? []);
     } catch (error) {
       setItems([]);
-      setErrorCode(error instanceof Error ? error.message : "INTERNAL_ERROR");
+      setErrorCode(normalizeDirectoryError(error));
     } finally {
       setPending(null);
     }
@@ -115,7 +132,7 @@ export function DirectoryBrowser({
         validationRequestUuid: request.uuid,
       });
     } catch (error) {
-      setErrorCode(error instanceof Error ? error.message : "INTERNAL_ERROR");
+      setErrorCode(normalizeDirectoryError(error));
     } finally {
       setPending(null);
     }
@@ -155,10 +172,9 @@ export function DirectoryBrowser({
               value={prefix}
               onChange={(event) => setPrefix(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void browse();
-                }
+                if (event.key !== "Enter" || isImeComposing(event)) return;
+                event.preventDefault();
+                void browse();
               }}
               placeholder={t("pathPlaceholder")}
               className="min-w-0 font-mono text-xs"
@@ -183,10 +199,12 @@ export function DirectoryBrowser({
           {items.length > 0 && (
             <div className="max-h-40 overflow-y-auto rounded-lg border border-border p-1">
               {items.map((item) => (
-                <button
+                <Button
                   key={item.path}
                   type="button"
-                  className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  variant="ghost"
+                  size="sm"
+                  className="flex h-auto w-full min-w-0 justify-start px-2 py-2 text-left text-xs"
                   onClick={() => {
                     setSelectedPath(item.path);
                     setPrefix(`${item.path}/`);
@@ -196,7 +214,7 @@ export function DirectoryBrowser({
                   <span className="truncate font-mono" title={item.path}>
                     {item.path}
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           )}

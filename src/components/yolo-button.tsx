@@ -69,6 +69,7 @@ const ERROR_CODE_I18N_KEY: Record<YoloRequestedErrorCode, string> = {
   assignee_not_agent: "errorAssigneeNotAgent",
   agent_offline: "errorAgentOffline",
   instance_offline: "errorInstanceOffline",
+  fixed_cwd_host_offline: "errorFixedCwdHostOffline",
   unknown: "errorGeneric",
 };
 

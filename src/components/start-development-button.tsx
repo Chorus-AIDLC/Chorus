@@ -57,6 +57,7 @@ const ERROR_CODE_I18N_KEY: Record<StartDevelopmentErrorCode, string> = {
   no_unfinished_tasks: "errorNoUnfinishedTasks",
   agent_offline: "errorAgentOffline",
   instance_offline: "errorInstanceOffline",
+  fixed_cwd_host_offline: "errorFixedCwdHostOffline",
   unknown: "errorGeneric",
 };
 

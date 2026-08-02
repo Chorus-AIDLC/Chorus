@@ -19,6 +19,9 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
     daemonConnection: {
       findFirst: vi.fn(),
     },
+    projectAgentCwdPreference: {
+      findFirst: vi.fn(),
+    },
   },
   mockEventBus: { emitChange: vi.fn() },
   mockCreateActivity: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +72,7 @@ beforeEach(() => {
   mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
   mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-1" });
   mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: AGENT_UUID });
+  mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
 });
 
 describe("requestYolo — success", () => {
@@ -188,6 +192,18 @@ describe("requestYolo — precondition failures (each emits nothing)", () => {
 
     await expect(requestYolo(PARAMS)).rejects.toMatchObject({
       code: "INSTANCE_OFFLINE",
+    });
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects with FIXED_CWD_HOST_OFFLINE when another Agent host is online", async () => {
+    mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      host: "fixed-host",
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(requestYolo(PARAMS)).rejects.toMatchObject({
+      code: "FIXED_CWD_HOST_OFFLINE",
     });
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });

@@ -26,7 +26,7 @@ describe("runDaemon — claude CLI NOT FOUND warning", () => {
     const errs = [];
     const build = vi.fn(() => ({ async start() {}, async stop() {} }));
     const code = await runDaemon(
-      { chorusOnly: true }, // restricted → no yolo warning to disambiguate from
+      { chorusOnly: true, agent: "claude-code" }, // explicit backend isolates host daemon config
       baseDeps({ build, errLog: (m) => errs.push(m), resolveClaudePath: () => null })
     );
     expect(code).toBe(0);
@@ -43,7 +43,7 @@ describe("runDaemon — claude CLI NOT FOUND warning", () => {
     const errs = [];
     const build = vi.fn(() => ({ async start() {}, async stop() {} }));
     const code = await runDaemon(
-      { chorusOnly: true },
+      { chorusOnly: true, agent: "claude-code" },
       baseDeps({ build, errLog: (m) => errs.push(m), resolveClaudePath: () => "/usr/bin/claude" })
     );
     expect(code).toBe(0);

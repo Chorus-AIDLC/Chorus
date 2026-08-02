@@ -974,6 +974,7 @@
     "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Start development after it reconnects.",
     "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Start development after that instance reconnects.",
+    "errorFixedCwdHostOffline": "The host for this project's fixed working directory is offline. Start development after that host reconnects.",
     "errorNoApprovedProposal": "This idea has no approved proposal yet",
     "errorNoUnfinishedTasks": "All tasks are already finished",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
@@ -990,6 +991,7 @@
     "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
     "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Run Yolo after that instance reconnects.",
+    "errorFixedCwdHostOffline": "The host for this project's fixed working directory is offline. Run Yolo after that host reconnects.",
     "errorAssigneeNotAgent": "The idea's assignee is not an agent",
     "errorGeneric": "Failed to start Yolo"
   },

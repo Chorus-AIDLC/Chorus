@@ -41,6 +41,7 @@ export type StageAdvanceErrorCode =
   | "PRECONDITION_FAILED"
   | "AGENT_OFFLINE"
   | "INSTANCE_OFFLINE"
+  | "FIXED_CWD_HOST_OFFLINE"
   | "ASSIGNEE_NOT_AGENT";
 
 export class StageAdvanceError extends Error {
@@ -106,6 +107,31 @@ async function hasEffectivelyOnlineConnection(agentUuid: string): Promise<boolea
   const online = await prisma.daemonConnection.findFirst({
     where: {
       agentUuid,
+      status: "online",
+      lastSeenAt: { gte: staleFloor },
+    },
+    select: { uuid: true },
+  });
+  return online !== null;
+}
+
+async function hasEffectivelyOnlineFixedCwdHost(
+  companyUuid: string,
+  userUuid: string,
+  projectUuid: string,
+  agentUuid: string,
+): Promise<boolean | null> {
+  const preference = await prisma.projectAgentCwdPreference.findFirst({
+    where: { companyUuid, userUuid, projectUuid, agentUuid },
+    select: { host: true },
+  });
+  if (!preference) return null;
+
+  const staleFloor = new Date(Date.now() - STALE_THRESHOLD_MS);
+  const online = await prisma.daemonConnection.findFirst({
+    where: {
+      agentUuid,
+      host: preference.host,
       status: "online",
       lastSeenAt: { gte: staleFloor },
     },
@@ -248,7 +274,19 @@ export async function executeStageAdvance(
           "The Idea's assignee is not an agent — there is no daemon to wake"
         );
       }
-      if (!(await hasEffectivelyOnlineConnection(agentUuid))) {
+      const fixedHostOnline = await hasEffectivelyOnlineFixedCwdHost(
+        companyUuid,
+        actorUuid,
+        ctx.idea.projectUuid,
+        agentUuid,
+      );
+      if (fixedHostOnline === false) {
+        throw new StageAdvanceError(
+          "FIXED_CWD_HOST_OFFLINE",
+          "The project's fixed cwd host has no online daemon connection"
+        );
+      }
+      if (fixedHostOnline === null && !(await hasEffectivelyOnlineConnection(agentUuid))) {
         throw new StageAdvanceError(
           "AGENT_OFFLINE",
           "The assigned agent has no online daemon connection"

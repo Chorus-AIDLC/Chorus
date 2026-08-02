@@ -25,6 +25,7 @@ export type StartDevelopmentErrorCode =
   | "no_unfinished_tasks"
   | "agent_offline"
   | "instance_offline"
+  | "fixed_cwd_host_offline"
   | "unknown";
 
 function toErrorCode(error: unknown): StartDevelopmentErrorCode {
@@ -40,6 +41,8 @@ function toErrorCode(error: unknown): StartDevelopmentErrorCode {
         return "agent_offline";
       case "INSTANCE_OFFLINE":
         return "instance_offline";
+      case "FIXED_CWD_HOST_OFFLINE":
+        return "fixed_cwd_host_offline";
       case "PRECONDITION_FAILED":
         if (error.reason === START_DEVELOPMENT_REASONS.NO_APPROVED_PROPOSAL)
           return "no_approved_proposal";
@@ -120,6 +123,7 @@ export type YoloRequestedErrorCode =
   | "assignee_not_agent"
   | "agent_offline"
   | "instance_offline"
+  | "fixed_cwd_host_offline"
   | "unknown";
 
 function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
@@ -135,6 +139,8 @@ function toYoloErrorCode(error: unknown): YoloRequestedErrorCode {
         return "agent_offline";
       case "INSTANCE_OFFLINE":
         return "instance_offline";
+      case "FIXED_CWD_HOST_OFFLINE":
+        return "fixed_cwd_host_offline";
       // PRECONDITION_FAILED cannot occur for yolo_requested (the precondition
       // only throws ASSIGNEE_NOT_AGENT), but keep the exhaustive fallthrough.
       case "PRECONDITION_FAILED":

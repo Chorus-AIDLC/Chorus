@@ -974,6 +974,7 @@
     "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再开始开发。",
     "errorInstanceOffline": "该 idea 已固定到一个离线的 daemon 实例，请等该实例重新连接后再开始开发。",
+    "errorFixedCwdHostOffline": "该项目固定工作目录所在的主机当前离线，请等该主机重新连接后再开始开发。",
     "errorNoApprovedProposal": "该 idea 还没有已批准的 proposal",
     "errorNoUnfinishedTasks": "所有任务都已完成",
     "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
@@ -990,6 +991,7 @@
     "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再执行 Yolo。",
     "errorInstanceOffline": "该 idea 已固定到一个离线的 daemon 实例，请等该实例重新连接后再执行 Yolo。",
+    "errorFixedCwdHostOffline": "该项目固定工作目录所在的主机当前离线，请等该主机重新连接后再执行 Yolo。",
     "errorAssigneeNotAgent": "该 idea 的负责人不是 agent",
     "errorGeneric": "启动 Yolo 失败"
   },

@@ -974,6 +974,7 @@
     "offlineHint": "에이전트 오프라인 — 재연결 시 사용 가능",
     "errorAgentOffline": "배정된 에이전트가 오프라인입니다. 다시 연결된 후 개발을 시작하세요.",
     "errorInstanceOffline": "이 아이디어는 오프라인 상태인 데몬 인스턴스에 고정되어 있습니다. 해당 인스턴스가 다시 연결된 후 개발을 시작하세요.",
+    "errorFixedCwdHostOffline": "이 프로젝트의 고정 작업 디렉터리 호스트가 오프라인입니다. 해당 호스트가 다시 연결된 후 개발을 시작하세요.",
     "errorNoApprovedProposal": "이 아이디어에는 승인된 제안이 아직 없습니다",
     "errorNoUnfinishedTasks": "모든 작업이 이미 완료되었습니다",
     "errorAssigneeNotAgent": "이 아이디어의 담당자는 에이전트가 아닙니다",
@@ -990,6 +991,7 @@
     "offlineHint": "에이전트 오프라인 — 재연결 시 사용 가능",
     "errorAgentOffline": "배정된 에이전트가 오프라인입니다. 다시 연결된 후 Yolo를 실행하세요.",
     "errorInstanceOffline": "이 아이디어는 오프라인 상태인 데몬 인스턴스에 고정되어 있습니다. 해당 인스턴스가 다시 연결된 후 Yolo를 실행하세요.",
+    "errorFixedCwdHostOffline": "이 프로젝트의 고정 작업 디렉터리 호스트가 오프라인입니다. 해당 호스트가 다시 연결된 후 Yolo를 실행하세요.",
     "errorAssigneeNotAgent": "이 아이디어의 담당자는 에이전트가 아닙니다",
     "errorGeneric": "Yolo를 시작하지 못했습니다"
   },
