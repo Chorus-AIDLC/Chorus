@@ -6,6 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import { buildDaemon, runDaemon } from "../daemon.mjs";
 import { transcriptPath } from "../claude-spawner.mjs";
 
@@ -189,7 +190,7 @@ describe("daemon integration: notification → spawn", () => {
 describe("daemon integration: reverse control channel (子3)", () => {
   it("a control event interrupts the running child, never enqueues a wake, and reports interrupted(user)", async () => {
     const CONN = "conn-itest";
-    const FAKE_CHILD = { pid: 24680 };
+    const FAKE_CHILD = Object.assign(new EventEmitter(), { pid: 24680 });
     const reportInterrupt = vi.fn(async () => {});
 
     // A controllable spawner: it registers the child via onChild, then HANGS until
@@ -201,7 +202,10 @@ describe("daemon integration: reverse control channel (子3)", () => {
           new Promise((resolve) => {
             params.onChild?.(FAKE_CHILD);
             params.onMessage?.({ type: "system", session_id: params.sessionId });
-            resolveWake = () => resolve({ sessionId: params.sessionId, exitCode: 0, isNew: params.isNew });
+            resolveWake = () => {
+              FAKE_CHILD.emit("exit", 0, null);
+              resolve({ sessionId: params.sessionId, exitCode: 0, isNew: params.isNew });
+            };
           })
       ),
     };
