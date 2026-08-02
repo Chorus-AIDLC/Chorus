@@ -36,6 +36,7 @@ import {
   completeDirectoryRequest,
   createDirectoryRequest,
   getDirectoryRequest,
+  listProjectAgentCwdPreferences,
   resolveProjectAgentCwdTarget,
   resolveTemporaryRuntimeCwd,
   saveProjectAgentCwdPreference,
@@ -55,6 +56,42 @@ beforeEach(() => {
 });
 
 describe("project-agent cwd request service", () => {
+  it("lists online Agents plus configured offline preferences only", async () => {
+    prismaMock.agent.findMany.mockResolvedValue([
+      { uuid: "online", name: "Online" },
+      { uuid: "offline-configured", name: "Configured" },
+      { uuid: "offline-empty", name: "Hidden" },
+    ]);
+    prismaMock.projectAgentCwdPreference.findMany.mockResolvedValue([{
+      uuid: "pref-1",
+      agentUuid: "offline-configured",
+      host: "old-host",
+      cwd: "/old",
+      anchorAgentInstanceUuid: "instance-old",
+      updatedAt: new Date(),
+    }]);
+    prismaMock.daemonConnection.findMany.mockResolvedValue([{
+      uuid: "conn-1",
+      agentUuid: "online",
+      agentInstanceUuid: "instance-1",
+      host: "host-1",
+      cwd: "/work",
+      lastSeenAt: new Date(),
+    }]);
+
+    const result = await listProjectAgentCwdPreferences(
+      "company-1",
+      "user-1",
+      "project-1",
+    );
+
+    expect(result.map((item) => item.agent.uuid)).toEqual([
+      "online",
+      "offline-configured",
+    ]);
+    expect(result[1].preference?.status).toBe("offline");
+  });
+
   it("returns non-disclosing NOT_FOUND when the agent is not owned in the tenant", async () => {
     prismaMock.agent.findFirst.mockResolvedValue(null);
     await expect(

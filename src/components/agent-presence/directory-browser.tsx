@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronUp, Folder, Loader2 } from "lucide-react";
+import { ChevronUp, Folder, HardDrive, Loader2, TextCursorInput } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { isImeComposing } from "@/lib/ime";
@@ -137,6 +137,7 @@ export function DirectoryBrowser({
   );
   const [roots, setRoots] = useState<string[]>([]);
   const [selectedRoot, setSelectedRoot] = useState("");
+  const [pathMode, setPathMode] = useState<"daemon" | "custom">("custom");
   const [manualMode, setManualMode] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
@@ -182,6 +183,7 @@ export function DirectoryBrowser({
     clearCandidates();
     setRoots([]);
     setSelectedRoot("");
+    setPathMode("custom");
     setManualMode(false);
     setPrefix("");
     setSelectedPath("");
@@ -362,6 +364,48 @@ export function DirectoryBrowser({
 
       {anchor && (
         <>
+          <div
+            className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2"
+            role="group"
+            aria-label={t("chooseDirectorySource")}
+          >
+            <Button
+              type="button"
+              variant={pathMode === "daemon" ? "default" : "outline"}
+              className="h-auto min-w-0 justify-start px-3 py-2 text-left"
+              onClick={() => {
+                cancelValidation();
+                clearCandidates();
+                setPathMode("daemon");
+                setSelectedPath(anchor.cwd ?? "");
+                setErrorCode(null);
+              }}
+            >
+              <HardDrive className="mr-2 size-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium">{t("daemonCwd")}</span>
+                <span className="block truncate font-mono text-[10px] opacity-75">
+                  {anchor.cwd ?? t("unknownHost")}
+                </span>
+              </span>
+            </Button>
+            <Button
+              type="button"
+              variant={pathMode === "custom" ? "default" : "outline"}
+              className="h-auto min-w-0 justify-start px-3 py-2 text-left"
+              onClick={() => {
+                cancelValidation();
+                setPathMode("custom");
+                setSelectedPath("");
+                setPrefix(selectedRoot ? withTrailingSeparator(selectedRoot) : "");
+                setErrorCode(null);
+              }}
+            >
+              <TextCursorInput className="mr-2 size-4 shrink-0" />
+              <span className="text-xs font-medium">{t("customCwd")}</span>
+            </Button>
+          </div>
+
           {pending === "roots" && (
             <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
@@ -369,7 +413,7 @@ export function DirectoryBrowser({
             </p>
           )}
 
-          {roots.length > 1 && (
+          {pathMode === "custom" && roots.length > 1 && (
             <label className="flex min-w-0 flex-col gap-1 text-xs font-medium">
               {t("browseRoot")}
               <select
@@ -390,7 +434,7 @@ export function DirectoryBrowser({
             </label>
           )}
 
-          {(selectedRoot || manualMode) && (
+          {pathMode === "custom" && (selectedRoot || manualMode) && (
             <div className="flex min-w-0 gap-2">
               <div className="relative min-w-0 flex-1">
                 <Input
@@ -468,7 +512,7 @@ export function DirectoryBrowser({
             </div>
           )}
 
-          {listOpen && items.length > 0 && (
+          {pathMode === "custom" && listOpen && items.length > 0 && (
             <div
               id="directory-candidates"
               role="listbox"
@@ -492,7 +536,8 @@ export function DirectoryBrowser({
             </div>
           )}
 
-          {completedPrefix === prefix &&
+          {pathMode === "custom" &&
+            completedPrefix === prefix &&
             items.length === 0 &&
             pending === null &&
             !errorCode && (

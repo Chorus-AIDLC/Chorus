@@ -17,6 +17,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { isImeComposing } from "@/lib/ime";
+import {
+  ProjectAgentCwdSettings,
+  type ProjectAgentCwdDraft,
+} from "@/components/project-agent-cwd-settings";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -40,6 +44,7 @@ export function CreateProjectDialog({
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [cwdDrafts, setCwdDrafts] = useState<ProjectAgentCwdDraft[]>([]);
 
   const displayGroupName = groupName || t("projectGroups.ungrouped");
 
@@ -61,10 +66,33 @@ export function CreateProjectDialog({
         const data = await res.json();
 
         if (data.success) {
+          try {
+            for (const draft of cwdDrafts) {
+              const cwdResponse = await fetch(
+                `/api/projects/${encodeURIComponent(data.data.uuid)}/agent-cwds`,
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    agentUuid: draft.agentUuid,
+                    validationRequestUuid: draft.validationRequestUuid,
+                  }),
+                },
+              );
+              if (!cwdResponse.ok) throw new Error("cwd save failed");
+            }
+          } catch {
+            await fetch(`/api/projects/${encodeURIComponent(data.data.uuid)}`, {
+              method: "DELETE",
+            });
+            setError(t("projectSettings.agentCwds.createFailed"));
+            return;
+          }
           setSuccess(true);
           setTimeout(() => {
             setTitle("");
             setDescription("");
+            setCwdDrafts([]);
             onOpenChange(false);
             onCreated?.();
             router.refresh();
@@ -82,7 +110,7 @@ export function CreateProjectDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-[480px] gap-0 p-0 rounded-[16px]"
+        className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-[16px] p-0 sm:max-w-[620px]"
         showCloseButton={false}
       >
         <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC] dark:border-[#2a2a2e]">
@@ -99,7 +127,7 @@ export function CreateProjectDialog({
           {t("projectGroups.newProjectTitle")}
         </DialogDescription>
 
-        <div className="flex flex-col gap-5 p-6">
+        <div className="flex min-h-0 flex-col gap-5 overflow-y-auto p-6">
           {error && (
             <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
               {error}
@@ -132,6 +160,10 @@ export function CreateProjectDialog({
               placeholder={t("projectGroups.projectDescriptionPlaceholder")}
               className="min-h-[80px] rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e]"
             />
+          </div>
+
+          <div className="border-t border-border pt-5">
+            <ProjectAgentCwdSettings onDraftChange={setCwdDrafts} />
           </div>
         </div>
 

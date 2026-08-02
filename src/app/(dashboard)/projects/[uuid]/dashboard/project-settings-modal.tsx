@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { Settings, Loader2, FolderCog, RotateCcw, Trash2 } from "lucide-react";
+import { Settings, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,21 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { updateProjectAction, deleteProjectAction } from "../actions";
-import {
-  DirectoryBrowser,
-  type ValidatedDirectory,
-} from "@/components/agent-presence/directory-browser";
-import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
-
-interface AgentCwdItem {
-  agent: { uuid: string; name: string };
-  onlineInstances: InstanceCandidate[];
-  preference: {
-    host: string;
-    cwd: string;
-    status: "valid" | "offline" | "invalid";
-  } | null;
-}
+import { ProjectAgentCwdSettings } from "@/components/project-agent-cwd-settings";
 
 interface ProjectSettingsModalProps {
   projectUuid: string;
@@ -64,66 +50,6 @@ export function ProjectSettingsModal({
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [cwdItems, setCwdItems] = useState<AgentCwdItem[]>([]);
-  const [cwdLoading, setCwdLoading] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<string | null>(null);
-  const [cwdError, setCwdError] = useState(false);
-
-  const loadCwds = async () => {
-    setCwdLoading(true);
-    setCwdError(false);
-    try {
-      const response = await fetch(
-        `/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`,
-      );
-      const body = await response.json();
-      if (!response.ok || !body.success) throw new Error("load failed");
-      setCwdItems(body.data.agents);
-    } catch {
-      setCwdError(true);
-    } finally {
-      setCwdLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (open) void loadCwds();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, projectUuid]);
-
-  const saveCwd = async (selection: ValidatedDirectory) => {
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentUuid: selection.agentUuid,
-          validationRequestUuid: selection.validationRequestUuid,
-        }),
-      },
-    );
-    if (!response.ok) throw new Error("save failed");
-    setEditingAgent(null);
-    await loadCwds();
-  };
-
-  const clearCwd = async (agentUuid: string) => {
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`,
-      {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentUuid }),
-      },
-    );
-    if (!response.ok) {
-      setCwdError(true);
-      return;
-    }
-    await loadCwds();
-  };
-
   const handleSave = async () => {
     setSaving(true);
     const result = await updateProjectAction(projectUuid, {
@@ -215,124 +141,7 @@ export function ProjectSettingsModal({
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-          <div className="flex min-w-0 flex-col gap-4">
-            <div>
-              <h3 className="text-[14px] font-semibold text-foreground">
-                {t("projectSettings.agentCwds.title")}
-              </h3>
-              <p className="mt-1 text-[12px] text-muted-foreground">
-                {t("projectSettings.agentCwds.description")}
-              </p>
-            </div>
-
-            {cwdLoading && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                {t("projectSettings.agentCwds.loading")}
-              </div>
-            )}
-            {cwdError && (
-              <div className="flex items-center justify-between gap-3" role="alert">
-                <span className="text-xs text-destructive">
-                  {t("projectSettings.agentCwds.loadFailed")}
-                </span>
-                <Button type="button" size="sm" variant="outline" onClick={loadCwds}>
-                  <RotateCcw className="mr-2 size-3.5" />
-                  {t("common.retry")}
-                </Button>
-              </div>
-            )}
-            {!cwdLoading && !cwdError && cwdItems.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                {t("projectSettings.agentCwds.empty")}
-              </p>
-            )}
-
-            {cwdItems.map((item) => (
-              <div
-                key={item.agent.uuid}
-                className="min-w-0 rounded-xl border border-[#E5E2DC] p-4 dark:border-[#2a2a2e]"
-              >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] font-semibold">{item.agent.name}</p>
-                    {item.preference ? (
-                      <>
-                        <p className="mt-1 break-all font-mono text-[11px]">
-                          {item.preference.cwd}
-                        </p>
-                        <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {item.preference.host}
-                        </p>
-                        <p
-                          className={
-                            item.preference.status === "valid"
-                              ? "mt-1 text-[11px] text-emerald-700 dark:text-emerald-400"
-                              : "mt-1 text-[11px] text-destructive"
-                          }
-                        >
-                          {t(
-                            `projectSettings.agentCwds.status.${item.preference.status}`,
-                          )}
-                        </p>
-                      </>
-                    ) : (
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {t("projectSettings.agentCwds.notConfigured")}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title={t(
-                        item.preference
-                          ? "projectSettings.agentCwds.replace"
-                          : "projectSettings.agentCwds.configure",
-                      )}
-                      aria-label={t(
-                        item.preference
-                          ? "projectSettings.agentCwds.replace"
-                          : "projectSettings.agentCwds.configure",
-                      )}
-                      onClick={() =>
-                        setEditingAgent(
-                          editingAgent === item.agent.uuid ? null : item.agent.uuid,
-                        )
-                      }
-                    >
-                      <FolderCog className="size-4" />
-                    </Button>
-                    {item.preference && (
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="text-destructive"
-                        title={t("projectSettings.agentCwds.clear")}
-                        aria-label={t("projectSettings.agentCwds.clear")}
-                        onClick={() => void clearCwd(item.agent.uuid)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                {editingAgent === item.agent.uuid && (
-                  <div className="mt-4 border-t border-border pt-4">
-                    <DirectoryBrowser
-                      agentUuid={item.agent.uuid}
-                      instances={item.onlineInstances}
-                      confirmLabel={t("projectSettings.agentCwds.save")}
-                      onValidated={saveCwd}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <ProjectAgentCwdSettings projectUuid={projectUuid} />
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 

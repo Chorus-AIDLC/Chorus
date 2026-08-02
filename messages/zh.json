@@ -309,9 +309,9 @@
     "deleteDescription": "永久删除此项目及其所有数据，此操作无法撤销。",
     "agentCwds": {
       "title": "Agent 工作目录", "description": "为此项目中的每个 Agent 固定主机和目录。",
-      "loading": "正在加载工作目录...", "loadFailed": "无法加载工作目录。", "empty": "暂无可用 Agent。",
+      "loading": "正在加载工作目录...", "loadFailed": "无法加载工作目录。", "empty": "暂无可用 Agent。", "emptyOnline": "暂无在线 Agent。",
       "notConfigured": "每次操作临时选择目录", "configure": "配置工作目录", "replace": "替换工作目录",
-      "clear": "清除固定工作目录", "save": "保存固定目录",
+      "clear": "清除固定工作目录", "save": "保存固定目录", "createFailed": "Agent 工作目录保存失败，项目未创建。",
       "status": { "valid": "可用", "offline": "主机离线", "invalid": "目录不可用" }
     }
   },
@@ -1707,7 +1707,7 @@
     "cancel": "取消", "browseAnother": "浏览其他目录", "registeredDirectories": "已注册目录", "useOnce": "仅用于本次操作"
   },
   "directoryBrowser": {
-    "chooseHost": "选择主机", "unknownHost": "未知主机", "pathPrefix": "目录路径前缀", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "选择主机", "unknownHost": "未知主机", "chooseDirectorySource": "选择工作目录来源", "daemonCwd": "Daemon 当前工作目录", "customCwd": "此主机上的其他目录", "pathPrefix": "目录路径前缀", "pathPlaceholder": "/home/user/project",
     "browseRoot": "浏览根目录", "loadingRoots": "正在加载允许的根目录…", "loadingCandidates": "正在加载目录建议", "parent": "返回上一级目录",
     "browse": "浏览目录", "noHosts": "此 Agent 暂无在线主机。", "empty": "没有匹配的目录。", "selection": "已选目录",
     "errors": {

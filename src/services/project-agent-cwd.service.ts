@@ -276,15 +276,32 @@ export async function listProjectAgentCwdPreferences(
   projectUuid: string,
 ) {
   await requireProject(companyUuid, projectUuid);
+  return listAgentCwdOptions(companyUuid, userUuid, projectUuid);
+}
+
+export async function listAvailableAgentCwdOptions(
+  companyUuid: string,
+  userUuid: string,
+) {
+  return listAgentCwdOptions(companyUuid, userUuid, null);
+}
+
+async function listAgentCwdOptions(
+  companyUuid: string,
+  userUuid: string,
+  projectUuid: string | null,
+) {
   const [agents, preferences] = await Promise.all([
     prisma.agent.findMany({
       where: { companyUuid, ownerUuid: userUuid },
       select: { uuid: true, name: true },
       orderBy: [{ name: "asc" }, { uuid: "asc" }],
     }),
-    prisma.projectAgentCwdPreference.findMany({
-      where: { companyUuid, userUuid, projectUuid },
-    }),
+    projectUuid
+      ? prisma.projectAgentCwdPreference.findMany({
+          where: { companyUuid, userUuid, projectUuid },
+        })
+      : Promise.resolve([]),
   ]);
   const connections = await prisma.daemonConnection.findMany({
     where: { companyUuid, agentUuid: { in: agents.map((agent) => agent.uuid) }, status: "online" },
@@ -299,19 +316,23 @@ export async function listProjectAgentCwdPreferences(
   });
   const onlineHosts = new Set(connections.map((connection) => `${connection.agentUuid}\0${connection.host}`));
   const byAgent = new Map(preferences.map((preference) => [preference.agentUuid, preference]));
-  return agents.map((agent) => {
+  return agents.flatMap((agent) => {
     const preference = byAgent.get(agent.uuid);
-    return {
+    const onlineInstances = connections
+      .filter((connection) => connection.agentUuid === agent.uuid)
+      .map((connection) => ({
+        connectionUuid: connection.uuid,
+        agentInstanceUuid: connection.agentInstanceUuid,
+        host: connection.host,
+        cwd: connection.cwd,
+        effectiveStatus: "online" as const,
+      }));
+    // Unconfigured offline Agents cannot provide a usable cwd choice. Keep an
+    // existing offline preference visible so the user can replace or clear it.
+    if (onlineInstances.length === 0 && !preference) return [];
+    return [{
       agent,
-      onlineInstances: connections
-        .filter((connection) => connection.agentUuid === agent.uuid)
-        .map((connection) => ({
-          connectionUuid: connection.uuid,
-          agentInstanceUuid: connection.agentInstanceUuid,
-          host: connection.host,
-          cwd: connection.cwd,
-          effectiveStatus: "online" as const,
-        })),
+      onlineInstances,
       preference: preference
         ? {
             uuid: preference.uuid,
@@ -322,7 +343,7 @@ export async function listProjectAgentCwdPreferences(
             updatedAt: preference.updatedAt,
           }
         : null,
-    };
+    }];
   });
 }
 

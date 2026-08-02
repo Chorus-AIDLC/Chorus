@@ -309,9 +309,9 @@
     "deleteDescription": "このプロジェクトとすべてのデータを完全に削除します。この操作は取り消せません。",
     "agentCwds": {
       "title": "Agent の作業ディレクトリ", "description": "このプロジェクトの Agent ごとにホストとディレクトリを固定します。",
-      "loading": "作業ディレクトリを読み込んでいます...", "loadFailed": "作業ディレクトリを読み込めませんでした。", "empty": "利用できる Agent がありません。",
+      "loading": "作業ディレクトリを読み込んでいます...", "loadFailed": "作業ディレクトリを読み込めませんでした。", "empty": "利用できる Agent がありません。", "emptyOnline": "オンラインの Agent がありません。",
       "notConfigured": "操作ごとに一時ディレクトリを使用", "configure": "作業ディレクトリを設定", "replace": "作業ディレクトリを変更",
-      "clear": "固定作業ディレクトリを解除", "save": "固定ディレクトリを保存",
+      "clear": "固定作業ディレクトリを解除", "save": "固定ディレクトリを保存", "createFailed": "Agent の作業ディレクトリを保存できなかったため、プロジェクトは作成されませんでした。",
       "status": { "valid": "利用可能", "offline": "ホストはオフライン", "invalid": "ディレクトリを利用できません" }
     }
   },
@@ -1707,7 +1707,7 @@
     "cancel": "キャンセル", "browseAnother": "別のディレクトリを参照", "registeredDirectories": "登録済みディレクトリ", "useOnce": "この操作のみで使用"
   },
   "directoryBrowser": {
-    "chooseHost": "ホストを選択", "unknownHost": "不明なホスト", "pathPrefix": "ディレクトリパスの接頭辞", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "ホストを選択", "unknownHost": "不明なホスト", "chooseDirectorySource": "作業ディレクトリのソースを選択", "daemonCwd": "Daemon の作業ディレクトリ", "customCwd": "このホスト上の別のディレクトリ", "pathPrefix": "ディレクトリパスの接頭辞", "pathPlaceholder": "/home/user/project",
     "browseRoot": "参照ルート", "loadingRoots": "許可されたルートを読み込み中…", "loadingCandidates": "ディレクトリ候補を読み込み中", "parent": "親ディレクトリへ移動",
     "browse": "ディレクトリを参照", "noHosts": "この Agent にオンラインのホストがありません。", "empty": "一致するディレクトリがありません。", "selection": "選択したディレクトリ",
     "errors": {

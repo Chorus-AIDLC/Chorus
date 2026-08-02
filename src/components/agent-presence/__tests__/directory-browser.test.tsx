@@ -67,6 +67,34 @@ describe("DirectoryBrowser", () => {
     vi.restoreAllMocks();
   });
 
+  it("validates the daemon working directory as a fixed-cwd shortcut", async () => {
+    const fetchMock = vi.fn();
+    const onValidated = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock
+      .mockImplementationOnce(() => success({ roots: ["/work"] }, "roots-1"))
+      .mockImplementationOnce(() =>
+        success({ normalizedPath: "/workspace" }, "validation-1"),
+      );
+    renderBrowser([instance], onValidated);
+
+    await screen.findByRole("combobox", { name: "pathPrefix" });
+    fireEvent.click(screen.getByRole("button", { name: /daemonCwd/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(onValidated).toHaveBeenCalledWith({
+      agentUuid: "agent-1",
+      connectionUuid: "connection-1",
+      host: "build-host",
+      cwd: "/workspace",
+      validationRequestUuid: "validation-1",
+    }));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      operation: "validate",
+      cwd: "/workspace",
+    });
+  });
+
   it("prefills one root and debounces the bounded first-page query", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
