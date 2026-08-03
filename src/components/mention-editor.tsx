@@ -79,6 +79,13 @@ const CustomMention = Mention.extend({
             ? {}
             : { "data-pinned-cwd": String(attributes.pinnedCwd) },
       },
+      runtimeCwd: {
+        default: false,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-runtime-cwd") === "true",
+        renderHTML: (attributes: Record<string, unknown>) =>
+          attributes.runtimeCwd ? { "data-runtime-cwd": "true" } : {},
+      },
     };
   },
 });
@@ -129,6 +136,7 @@ interface Mentionable {
 export interface MentionPin {
   host: string;
   cwd: string | null;
+  runtimeCwd?: boolean;
 }
 
 // The decision the mention-selection precedence yields for a chosen candidate:
@@ -175,6 +183,7 @@ export function resolveMentionSelection(item: Mentionable): MentionSelection {
       pin: {
         host: item.projectFixedCwd.host,
         cwd: item.projectFixedCwd.cwd,
+        runtimeCwd: true,
       },
     };
   }
@@ -263,7 +272,7 @@ function editorToPlainText(editor: Editor): string {
 
   function processNode(node: Record<string, unknown>): string {
     if (node.type === "mention") {
-      const attrs = node.attrs as Record<string, string | null> | undefined;
+      const attrs = node.attrs as Record<string, string | boolean | null> | undefined;
       if (attrs) {
         // Serialize via the shared codec so the optional pinned (host, cwd)
         // suffix matches what the service parser reads. Un-pinned (both null) →
@@ -272,8 +281,9 @@ function editorToPlainText(editor: Editor): string {
           (attrs.label || attrs.id) as string,
           ((attrs.mentionType as string) || "user") as "user" | "agent",
           attrs.id as string,
-          attrs.pinnedHost ?? null,
-          attrs.pinnedCwd ?? null,
+          (attrs.pinnedHost as string | null) ?? null,
+          (attrs.pinnedCwd as string | null) ?? null,
+          attrs.runtimeCwd === true,
         );
       }
       return "";
@@ -327,7 +337,7 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
         });
       }
 
-      const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+      const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
       inlineContent.push({
         type: "mention",
         attrs: {
@@ -336,6 +346,7 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
           mentionType: match[2],
           pinnedHost,
           pinnedCwd,
+          runtimeCwd: runtimeCwd === true,
         },
       });
 
@@ -790,7 +801,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         item: Mentionable,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         command: (attrs: any) => void,
-        pin?: { host: string; cwd: string | null },
+        pin?: { host: string; cwd: string | null; runtimeCwd?: boolean },
       ) => {
         command({
           id: item.uuid,
@@ -800,6 +811,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           // mention. host "" is preserved (unknown-host instance).
           pinnedHost: pin ? pin.host : null,
           pinnedCwd: pin ? pin.cwd : null,
+          runtimeCwd: pin?.runtimeCwd === true,
         });
       },
       [],

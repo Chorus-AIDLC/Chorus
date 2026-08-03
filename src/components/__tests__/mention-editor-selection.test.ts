@@ -63,7 +63,7 @@ describe("resolveMentionSelection — inherit the direct idea's pin", () => {
     });
     expect(decision).toEqual({
       kind: "insert",
-      pin: { host: "fixed-host", cwd: "/fixed/project" },
+      pin: { host: "fixed-host", cwd: "/fixed/project", runtimeCwd: true },
     });
   });
 

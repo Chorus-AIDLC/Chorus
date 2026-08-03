@@ -84,6 +84,7 @@ export interface MentionRef {
   // to the stored token and no migration of existing comment tokens.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  runtimeCwd?: boolean;
 }
 
 /**
@@ -350,7 +351,7 @@ export function parseMentions(content: string): MentionRef[] {
     const displayName = match[1];
     const type = match[2].toLowerCase() as "user" | "agent";
     const uuid = match[3].toLowerCase();
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
     const key = `${type}:${uuid}`;
 
     if (!seen.has(key)) {
@@ -361,6 +362,7 @@ export function parseMentions(content: string): MentionRef[] {
       if (pinnedHost !== null || pinnedCwd !== null) {
         ref.pinnedHost = pinnedHost;
         ref.pinnedCwd = pinnedCwd;
+        if (runtimeCwd) ref.runtimeCwd = true;
       }
       mentions.push(ref);
     }
