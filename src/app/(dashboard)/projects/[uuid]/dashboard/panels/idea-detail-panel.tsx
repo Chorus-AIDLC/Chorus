@@ -47,7 +47,6 @@ import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
-import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
 import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
@@ -212,7 +211,6 @@ export function IdeaDetailPanel({
     confirmPick: confirmVerifyPick,
     cancelPick: cancelVerifyPick,
     isResolving: isResolvingVerify,
-    fixedTarget,
   } = usePinThenWake({
     reassignNoWake: reassignIdeaInstanceNoWakeAction,
     previewIdeaUuid: idea?.uuid,
@@ -1061,7 +1059,6 @@ export function IdeaDetailPanel({
                       button) is the primary progression path instead. */}
                   {!isContainer && (
                     <>
-                      {fixedTarget && <FixedCwdAnchor target={fixedTarget} />}
                       {/* Verify Elaborate — human "elaboration confirmed, agent
                           writes the proposal" action, gated by the shared
                           predicate. No manual create-proposal fallback here. */}
