@@ -309,10 +309,23 @@
     "deleteDescription": "Permanently remove this project and all its data. This action cannot be undone.",
     "agentCwds": {
       "title": "Agent working directories", "description": "Fix a host and directory for each Agent in this project.",
-      "loading": "Loading working directories...", "loadFailed": "Working directories could not be loaded.", "empty": "No Agents are available.",
+      "loading": "Loading working directories...", "loadFailed": "Working directories could not be loaded.", "empty": "No Agents are available.", "emptyOnline": "No Agents are online.",
       "notConfigured": "Uses a temporary directory for each operation", "configure": "Configure working directory", "replace": "Replace working directory",
-      "clear": "Clear fixed working directory", "save": "Save fixed directory",
+      "clear": "Clear fixed working directory", "save": "Save fixed directory", "createFailed": "The project was not created because its Agent working directory could not be saved.",
       "status": { "valid": "Available", "offline": "Host offline", "invalid": "Directory unavailable" }
+    }
+  },
+  "fixedCwdAnchor": {
+    "title": "Fixed working directory",
+    "host": "Host",
+    "cwd": "Directory",
+    "status": "Status",
+    "unknown": "Unknown",
+    "manage": "Manage in project settings",
+    "availability": {
+      "ready": "Available",
+      "offline": "Host offline",
+      "invalid": "Directory unavailable"
     }
   },
   "projects": {
@@ -1694,7 +1707,7 @@
     "cancel": "Cancel", "browseAnother": "Browse another directory", "registeredDirectories": "Registered directories", "useOnce": "Use for this operation"
   },
   "directoryBrowser": {
-    "chooseHost": "Choose a host", "unknownHost": "Unknown host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "Choose a host", "unknownHost": "Unknown host", "chooseDirectorySource": "Choose a working directory source", "daemonCwd": "Daemon working directory", "configuredCwd": "Configured daemon directory", "customCwd": "Another directory on this host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
     "browseRoot": "Browse root", "loadingRoots": "Loading allowed roots…", "loadingCandidates": "Loading directory suggestions", "parent": "Go to parent directory",
     "browse": "Browse directories", "noHosts": "No online host is available for this Agent.", "empty": "No matching directories.", "selection": "Selected directory",
     "errors": {

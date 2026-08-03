@@ -67,6 +67,45 @@ describe("DirectoryBrowser", () => {
     vi.restoreAllMocks();
   });
 
+  it("lists every daemon.json cwd and validates the exact selected connection", async () => {
+    const fetchMock = vi.fn();
+    const onValidated = vi.fn();
+    const secondInstance = {
+      ...instance,
+      connectionUuid: "connection-2",
+      agentInstanceUuid: "instance-2",
+      cwd: "/strands-ai-sdk",
+    };
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock
+      .mockImplementationOnce(() => success({ roots: ["/work"] }, "roots-1"))
+      .mockImplementationOnce(() =>
+        success({ normalizedPath: "/strands-ai-sdk" }, "validation-1"),
+      );
+    renderBrowser([instance, secondInstance], onValidated);
+
+    await screen.findByRole("combobox", { name: "pathPrefix" });
+    expect(screen.getByRole("button", { name: /configuredCwd\/workspace/ }))
+      .toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: /configuredCwd\/strands-ai-sdk/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(onValidated).toHaveBeenCalledWith({
+      agentUuid: "agent-1",
+      connectionUuid: "connection-2",
+      host: "build-host",
+      cwd: "/strands-ai-sdk",
+      validationRequestUuid: "validation-1",
+    }));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      operation: "validate",
+      targetConnectionUuid: "connection-2",
+      cwd: "/strands-ai-sdk",
+    });
+  });
+
   it("prefills one root and debounces the bounded first-page query", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

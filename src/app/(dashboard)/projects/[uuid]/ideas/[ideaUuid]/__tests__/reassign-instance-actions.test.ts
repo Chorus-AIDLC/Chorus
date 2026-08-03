@@ -25,6 +25,11 @@ vi.mock("@/services/daemon-connection.service", () => ({
   listConnectionsForAgent: vi.fn(),
 }));
 
+const mockResolveProjectAgentCwdTarget = vi.hoisted(() => vi.fn());
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: mockResolveProjectAgentCwdTarget,
+}));
+
 // createActivity is the wake trigger; the non-waking action must NEVER call it.
 const mockCreateActivity = vi.hoisted(() => vi.fn());
 vi.mock("@/services/activity.service", () => ({
@@ -47,7 +52,10 @@ vi.mock("@/lib/logger", () => {
   return { default: noopLogger };
 });
 
-import { reassignIdeaInstanceNoWakeAction } from "../actions";
+import {
+  claimIdeaToAgentAction,
+  reassignIdeaInstanceNoWakeAction,
+} from "../actions";
 
 const COMPANY_A = "company-a";
 const PROJECT_UUID = "project-1";
@@ -238,5 +246,64 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     expect(result).toEqual({ success: false, error: "Failed to reassign idea" });
     expect(mockCreateActivity).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("claimIdeaToAgentAction fixed cwd", () => {
+  it("persists the selected Agent's fixed instance instead of a client picker value", async () => {
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow());
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      source: "project_fixed",
+      agentInstanceUuid: "fixed-instance",
+      host: "fixed-host",
+      cwd: "/discovered/project",
+    });
+    mockAssignIdea.mockResolvedValue(undefined);
+    mockCreateActivity.mockResolvedValue(undefined);
+
+    await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID, "stale-picker-instance");
+
+    expect(mockResolveProjectAgentCwdTarget).toHaveBeenCalledWith({
+      companyUuid: COMPANY_A,
+      actorUserUuid: "user-1",
+      projectUuid: PROJECT_UUID,
+      agentUuid: AGENT_UUID,
+    });
+    expect(mockAssignIdea).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceUuid: "fixed-instance",
+        cwdSource: "project_fixed",
+        cwdHost: "fixed-host",
+        runtimeCwd: "/discovered/project",
+      }),
+    );
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          instanceUuid: "fixed-instance",
+          resolvedCwdSource: "project_fixed",
+          resolvedCwdHost: "fixed-host",
+          resolvedRuntimeCwd: "/discovered/project",
+        }),
+      }),
+    );
+  });
+
+  it("restores the existing picker selection after the fixed preference is cleared", async () => {
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow());
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      source: "unconfigured",
+      agentInstanceUuid: null,
+      host: null,
+      cwd: null,
+    });
+
+    await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID, INSTANCE_UUID);
+
+    expect(mockAssignIdea).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceUuid: INSTANCE_UUID }),
+    );
   });
 });

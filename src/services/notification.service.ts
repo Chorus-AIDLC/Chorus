@@ -43,6 +43,10 @@ export interface NotificationCreateParams {
   pinnedCwd?: string | null;
   temporaryHost?: string | null;
   temporaryRuntimeCwd?: string | null;
+  resolvedCwdSource?: string | null;
+  resolvedCwdHost?: string | null;
+  resolvedRuntimeCwd?: string | null;
+  resolvedCwdAvailability?: "ready" | "offline" | "invalid" | null;
 }
 
 export interface NotificationListParams {

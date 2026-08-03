@@ -1,5 +1,34 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus, controlEventName } from "@/lib/event-bus";
+import {
+  listConnectionsForAgent,
+  type ConnectionView,
+} from "@/services/daemon-connection.service";
+
+export type ProjectAgentCwdSource =
+  | "project_fixed"
+  | "temporary"
+  | "registered_instance"
+  | "unconfigured";
+export type ProjectAgentCwdAvailability = "ready" | "offline" | "invalid";
+export type ProjectAgentCwdPromptPolicy = "suppress" | "none" | "select";
+
+export interface ResolvedProjectAgentCwdTarget {
+  actorUserUuid: string;
+  source: ProjectAgentCwdSource;
+  agentUuid: string;
+  host: string | null;
+  cwd: string | null;
+  availability: ProjectAgentCwdAvailability;
+  promptPolicy: ProjectAgentCwdPromptPolicy;
+  connectionUuid: string | null;
+  agentInstanceUuid: string | null;
+}
+
+export interface ProjectAgentCwdOperationTarget {
+  host: string;
+  cwd: string;
+}
 
 export const DIRECTORY_ERROR_CODES = [
   "HOST_OFFLINE",
@@ -30,6 +59,11 @@ const VALIDATION_FRESH_MS = 60_000;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 
+export interface ProjectAgentCwdDraftInput {
+  agentUuid: string;
+  validationRequestUuid: string;
+}
+
 async function requireOwnedAgent(companyUuid: string, userUuid: string, agentUuid: string) {
   const agent = await prisma.agent.findFirst({
     where: { uuid: agentUuid, companyUuid, ownerUuid: userUuid },
@@ -46,21 +80,339 @@ async function requireProject(companyUuid: string, projectUuid: string) {
   if (!project) throw new CwdServiceError("NOT_FOUND", "Project not found");
 }
 
+function onlineConnectionForHost(
+  connections: ConnectionView[],
+  host: string,
+): ConnectionView | null {
+  return (
+    connections.find(
+      (connection) =>
+        connection.host === host && connection.effectiveStatus === "online",
+    ) ?? null
+  );
+}
+
+async function materializeAgentInstance(
+  companyUuid: string,
+  agentUuid: string,
+  host: string,
+  cwd: string,
+): Promise<string> {
+  const row = await prisma.agentInstance.upsert({
+    where: {
+      companyUuid_agentUuid_host_cwd: { companyUuid, agentUuid, host, cwd },
+    },
+    create: { companyUuid, agentUuid, host, cwd },
+    update: { updatedAt: new Date() },
+    select: { uuid: true },
+  });
+  return row.uuid;
+}
+
+async function resolveValidatedPreference(params: {
+  companyUuid: string;
+  userUuid: string;
+  agentUuid: string;
+  validationRequestUuid: string;
+}) {
+  await requireOwnedAgent(params.companyUuid, params.userUuid, params.agentUuid);
+  const validation = await prisma.daemonDirectoryRequest.findFirst({
+    where: {
+      uuid: params.validationRequestUuid,
+      companyUuid: params.companyUuid,
+      callerUserUuid: params.userUuid,
+      agentUuid: params.agentUuid,
+      operation: "validate",
+      status: "success",
+      completedAt: { gte: new Date(Date.now() - VALIDATION_FRESH_MS) },
+    },
+  });
+  const cwd =
+    validation?.result &&
+    typeof validation.result === "object" &&
+    !Array.isArray(validation.result) &&
+    typeof (validation.result as { normalizedPath?: unknown }).normalizedPath === "string"
+      ? (validation.result as { normalizedPath: string }).normalizedPath
+      : null;
+  if (!validation || !cwd) {
+    throw new CwdServiceError("STALE_TARGET", "Fresh successful validation required");
+  }
+  const connection = await prisma.daemonConnection.findFirst({
+    where: {
+      uuid: validation.targetConnectionUuid,
+      companyUuid: params.companyUuid,
+      agentUuid: params.agentUuid,
+    },
+    select: { host: true },
+  });
+  if (!connection) throw new CwdServiceError("STALE_TARGET", "Validation target is stale");
+  return { agentUuid: params.agentUuid, host: connection.host, cwd };
+}
+
+export async function createProjectWithAgentCwds(params: {
+  companyUuid: string;
+  userUuid: string;
+  name: string;
+  description: string | null;
+  groupUuid: string | null;
+  agentCwds: ProjectAgentCwdDraftInput[];
+}) {
+  const targets = await Promise.all(
+    params.agentCwds.map((draft) => resolveValidatedPreference({
+      companyUuid: params.companyUuid,
+      userUuid: params.userUuid,
+      ...draft,
+    })),
+  );
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.project.create({
+      data: {
+        companyUuid: params.companyUuid,
+        name: params.name,
+        description: params.description,
+        groupUuid: params.groupUuid,
+      },
+      select: {
+        uuid: true,
+        name: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    for (const target of targets) {
+      const instance = await tx.agentInstance.upsert({
+        where: {
+          companyUuid_agentUuid_host_cwd: {
+            companyUuid: params.companyUuid,
+            agentUuid: target.agentUuid,
+            host: target.host,
+            cwd: target.cwd,
+          },
+        },
+        create: {
+          companyUuid: params.companyUuid,
+          agentUuid: target.agentUuid,
+          host: target.host,
+          cwd: target.cwd,
+        },
+        update: { updatedAt: new Date() },
+        select: { uuid: true },
+      });
+      await tx.projectAgentCwdPreference.create({
+        data: {
+          companyUuid: params.companyUuid,
+          userUuid: params.userUuid,
+          projectUuid: project.uuid,
+          agentUuid: target.agentUuid,
+          host: target.host,
+          cwd: target.cwd,
+          anchorAgentInstanceUuid: instance.uuid,
+        },
+      });
+    }
+    return project;
+  });
+}
+
+/**
+ * Resolve one immutable, actor-bearing target snapshot for a project operation.
+ * Callers pass this object through the operation rather than re-reading mutable
+ * preferences or connection state.
+ */
+export async function resolveProjectAgentCwdTarget(params: {
+  companyUuid: string;
+  actorUserUuid: string;
+  projectUuid: string;
+  agentUuid: string;
+  temporaryTarget?: ProjectAgentCwdOperationTarget | null;
+  registeredInstanceUuid?: string | null;
+  registeredSource?: ProjectAgentCwdSource | null;
+  registeredHost?: string | null;
+  registeredRuntimeCwd?: string | null;
+}): Promise<ResolvedProjectAgentCwdTarget> {
+  const [preference, connections] = await Promise.all([
+    prisma.projectAgentCwdPreference.findFirst({
+      where: {
+        companyUuid: params.companyUuid,
+        userUuid: params.actorUserUuid,
+        projectUuid: params.projectUuid,
+        agentUuid: params.agentUuid,
+      },
+      select: {
+        uuid: true,
+        host: true,
+        cwd: true,
+        anchorAgentInstanceUuid: true,
+      },
+    }),
+    listConnectionsForAgent(params.companyUuid, params.agentUuid),
+  ]);
+
+  // A registered instance supplied by the caller is an established assignment/root
+  // anchor. Once work is anchored, a later preference replacement or clear must not
+  // move that Idea/session to a different cwd.
+  if (params.registeredInstanceUuid) {
+    const instance = await prisma.agentInstance.findFirst({
+      where: {
+        uuid: params.registeredInstanceUuid,
+        companyUuid: params.companyUuid,
+        agentUuid: params.agentUuid,
+      },
+      select: { uuid: true, host: true, cwd: true },
+    });
+    if (instance) {
+      const host = params.registeredRuntimeCwd
+        ? params.registeredHost ?? instance.host
+        : instance.host;
+      const cwd = params.registeredRuntimeCwd ?? instance.cwd;
+      const connection = params.registeredRuntimeCwd
+        ? onlineConnectionForHost(connections, host)
+        : connections.find(
+            (candidate) =>
+              candidate.host === host &&
+              candidate.cwd === cwd &&
+              candidate.effectiveStatus === "online",
+          );
+      return {
+        actorUserUuid: params.actorUserUuid,
+        source:
+          params.registeredSource === "project_fixed"
+            ? "project_fixed"
+            : "registered_instance",
+        agentUuid: params.agentUuid,
+        host,
+        cwd,
+        availability: connection ? "ready" : "offline",
+        promptPolicy:
+          params.registeredSource === "project_fixed" ? "suppress" : "none",
+        connectionUuid: connection?.uuid ?? null,
+        agentInstanceUuid: instance.uuid,
+      };
+    }
+    return {
+      actorUserUuid: params.actorUserUuid,
+      source:
+        params.registeredSource === "project_fixed"
+          ? "project_fixed"
+          : "registered_instance",
+      agentUuid: params.agentUuid,
+      host: null,
+      cwd: null,
+      availability: "invalid",
+      promptPolicy:
+        params.registeredSource === "project_fixed" ? "suppress" : "none",
+      connectionUuid: null,
+      agentInstanceUuid: params.registeredInstanceUuid,
+    };
+  }
+
+  if (preference) {
+    if (!preference.host || !preference.cwd) {
+      return {
+        actorUserUuid: params.actorUserUuid,
+        source: "project_fixed",
+        agentUuid: params.agentUuid,
+        host: preference.host || null,
+        cwd: preference.cwd || null,
+        availability: "invalid",
+        promptPolicy: "suppress",
+        connectionUuid: null,
+        agentInstanceUuid: preference.anchorAgentInstanceUuid,
+      };
+    }
+    const agentInstanceUuid = await materializeAgentInstance(
+      params.companyUuid,
+      params.agentUuid,
+      preference.host,
+      preference.cwd,
+    );
+    if (preference.anchorAgentInstanceUuid !== agentInstanceUuid) {
+      await prisma.projectAgentCwdPreference.update({
+        where: { uuid: preference.uuid },
+        data: { anchorAgentInstanceUuid: agentInstanceUuid },
+      });
+    }
+    const connection = onlineConnectionForHost(connections, preference.host);
+    return {
+      actorUserUuid: params.actorUserUuid,
+      source: "project_fixed",
+      agentUuid: params.agentUuid,
+      host: preference.host,
+      cwd: preference.cwd,
+      availability: connection ? "ready" : "offline",
+      promptPolicy: "suppress",
+      connectionUuid: connection?.uuid ?? null,
+      agentInstanceUuid,
+    };
+  }
+
+  if (params.temporaryTarget) {
+    const connection = onlineConnectionForHost(
+      connections,
+      params.temporaryTarget.host,
+    );
+    return {
+      actorUserUuid: params.actorUserUuid,
+      source: "temporary",
+      agentUuid: params.agentUuid,
+      host: params.temporaryTarget.host,
+      cwd: params.temporaryTarget.cwd,
+      availability: connection ? "ready" : "offline",
+      promptPolicy: "none",
+      connectionUuid: connection?.uuid ?? null,
+      agentInstanceUuid: null,
+    };
+  }
+
+  const onlineFirst =
+    connections.find((connection) => connection.effectiveStatus === "online") ??
+    null;
+  return {
+    actorUserUuid: params.actorUserUuid,
+    source: "unconfigured",
+    agentUuid: params.agentUuid,
+    host: null,
+    cwd: null,
+    availability: onlineFirst ? "ready" : "offline",
+    promptPolicy: "select",
+    connectionUuid: onlineFirst?.uuid ?? null,
+    agentInstanceUuid: null,
+  };
+}
+
 export async function listProjectAgentCwdPreferences(
   companyUuid: string,
   userUuid: string,
   projectUuid: string,
 ) {
   await requireProject(companyUuid, projectUuid);
+  return listAgentCwdOptions(companyUuid, userUuid, projectUuid);
+}
+
+export async function listAvailableAgentCwdOptions(
+  companyUuid: string,
+  userUuid: string,
+) {
+  return listAgentCwdOptions(companyUuid, userUuid, null);
+}
+
+async function listAgentCwdOptions(
+  companyUuid: string,
+  userUuid: string,
+  projectUuid: string | null,
+) {
   const [agents, preferences] = await Promise.all([
     prisma.agent.findMany({
       where: { companyUuid, ownerUuid: userUuid },
       select: { uuid: true, name: true },
       orderBy: [{ name: "asc" }, { uuid: "asc" }],
     }),
-    prisma.projectAgentCwdPreference.findMany({
-      where: { companyUuid, userUuid, projectUuid },
-    }),
+    projectUuid
+      ? prisma.projectAgentCwdPreference.findMany({
+          where: { companyUuid, userUuid, projectUuid },
+        })
+      : Promise.resolve([]),
   ]);
   const connections = await prisma.daemonConnection.findMany({
     where: { companyUuid, agentUuid: { in: agents.map((agent) => agent.uuid) }, status: "online" },
@@ -75,19 +427,23 @@ export async function listProjectAgentCwdPreferences(
   });
   const onlineHosts = new Set(connections.map((connection) => `${connection.agentUuid}\0${connection.host}`));
   const byAgent = new Map(preferences.map((preference) => [preference.agentUuid, preference]));
-  return agents.map((agent) => {
+  return agents.flatMap((agent) => {
     const preference = byAgent.get(agent.uuid);
-    return {
+    const onlineInstances = connections
+      .filter((connection) => connection.agentUuid === agent.uuid)
+      .map((connection) => ({
+        connectionUuid: connection.uuid,
+        agentInstanceUuid: connection.agentInstanceUuid,
+        host: connection.host,
+        cwd: connection.cwd,
+        effectiveStatus: "online" as const,
+      }));
+    // Unconfigured offline Agents cannot provide a usable cwd choice. Keep an
+    // existing offline preference visible so the user can replace or clear it.
+    if (onlineInstances.length === 0 && !preference) return [];
+    return [{
       agent,
-      onlineInstances: connections
-        .filter((connection) => connection.agentUuid === agent.uuid)
-        .map((connection) => ({
-          connectionUuid: connection.uuid,
-          agentInstanceUuid: connection.agentInstanceUuid,
-          host: connection.host,
-          cwd: connection.cwd,
-          effectiveStatus: "online" as const,
-        })),
+      onlineInstances,
       preference: preference
         ? {
             uuid: preference.uuid,
@@ -98,7 +454,7 @@ export async function listProjectAgentCwdPreferences(
             updatedAt: preference.updatedAt,
           }
         : null,
-    };
+    }];
   });
 }
 
@@ -323,9 +679,15 @@ export async function saveProjectAgentCwdPreference(params: {
       companyUuid: params.companyUuid,
       agentUuid: params.agentUuid,
     },
-    select: { host: true, agentInstanceUuid: true },
+    select: { host: true },
   });
   if (!connection) throw new CwdServiceError("STALE_TARGET", "Validation target is stale");
+  const anchorAgentInstanceUuid = await materializeAgentInstance(
+    params.companyUuid,
+    params.agentUuid,
+    connection.host,
+    normalizedCwd,
+  );
   return prisma.projectAgentCwdPreference.upsert({
     where: {
       userUuid_projectUuid_agentUuid: {
@@ -341,12 +703,12 @@ export async function saveProjectAgentCwdPreference(params: {
       agentUuid: params.agentUuid,
       host: connection.host,
       cwd: normalizedCwd,
-      anchorAgentInstanceUuid: connection.agentInstanceUuid,
+      anchorAgentInstanceUuid,
     },
     update: {
       host: connection.host,
       cwd: normalizedCwd,
-      anchorAgentInstanceUuid: connection.agentInstanceUuid,
+      anchorAgentInstanceUuid,
     },
   });
 }

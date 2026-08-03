@@ -28,6 +28,7 @@ export interface MentionLivenessRef {
   uuid: string;
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  runtimeCwd?: boolean;
 }
 
 /**
@@ -88,16 +89,18 @@ export function resolveMentionLiveness(
     // The exact (host, cwd) place. host is "" for an unknown-host pin and cwd is
     // null for an unknown-path pin — strict equality handles both since the
     // connection projection uses the same sentinels (host: "", cwd: null).
-    const match = agentConnections.find(
-      (c) => c.host === pinnedHost && c.cwd === pinnedCwd,
+    const match = agentConnections.find((c) =>
+      ref.runtimeCwd
+        ? c.host === pinnedHost && c.effectiveStatus === "online"
+        : c.host === pinnedHost && c.cwd === pinnedCwd,
     );
     if (match) {
       return {
         pinned: true,
         online: match.effectiveStatus === "online",
         ownerUuid: match.ownerUuid,
-        host: match.host,
-        cwd: match.cwd,
+        host: ref.runtimeCwd ? pinnedHost : match.host,
+        cwd: ref.runtimeCwd ? pinnedCwd : match.cwd,
       };
     }
     // No connection for this exact place → offline. Echo the ref's place for

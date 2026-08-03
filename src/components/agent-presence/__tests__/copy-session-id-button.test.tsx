@@ -263,6 +263,37 @@ describe("CopySessionIdButton — responsive label (mobile icon-only)", () => {
 });
 
 describe("CopySessionIdButton — inside the TranscriptView header", () => {
+  it("shows the session runtime cwd instead of the origin connection startup cwd", () => {
+    const session = sessionView({ runtimeCwd: "/work/dynamic-project" });
+    render(
+      <TranscriptView
+        {...transcriptProps(session)}
+        originConnection={{
+          uuid: "conn-1",
+          agentUuid: "agent-1",
+          ownerUuid: "owner-1",
+          agentName: "Alpha",
+          clientType: "claude_code",
+          clientVersion: "1.0.0",
+          host: "host-a",
+          cwd: "/work/ai-pm",
+          startedAt: NOW,
+          status: "online",
+          effectiveStatus: "online",
+          connectedAt: NOW,
+          lastSeenAt: NOW,
+          disconnectedAt: null,
+        }}
+        originOnline
+      />,
+    );
+
+    expect(
+      screen.getByLabelText("Working directory: /work/dynamic-project"),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Working directory: /work/ai-pm")).toBeNull();
+  });
+
   it("keeps the existing control and copies backendSessionId for an idea-anchored session", async () => {
     const writeText = installClipboard();
     const session = sessionView({ backendSessionId: "codex-idea-thread" });

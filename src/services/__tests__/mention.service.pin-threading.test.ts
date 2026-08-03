@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Prisma is mocked via vi.hoisted(); createBatch is captured so we can assert
 // the exact pin payload that flows toward the wake-turn chokepoint.
 
-const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch } =
+const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch, mockResolveCwd } =
   vi.hoisted(() => ({
     mockPrisma: {
       mention: { createMany: vi.fn() },
@@ -31,6 +31,7 @@ const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch } =
     mockGetActorName: vi.fn().mockResolvedValue("Test Actor"),
     mockGetPreferences: vi.fn().mockResolvedValue({ mentioned: true }),
     mockCreateBatch: vi.fn().mockResolvedValue([]),
+    mockResolveCwd: vi.fn(),
   }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -38,6 +39,15 @@ vi.mock("@/lib/uuid-resolver", () => ({ getActorName: mockGetActorName }));
 vi.mock("@/services/notification.service", () => ({
   getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
   createBatch: (...args: unknown[]) => mockCreateBatch(...args),
+}));
+vi.mock("@/services/lineage.service", () => ({
+  resolveRootIdea: vi.fn().mockResolvedValue({
+    rootIdeaUuid: null,
+    directIdeaUuid: null,
+  }),
+}));
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: (...args: unknown[]) => mockResolveCwd(...args),
 }));
 
 import { createMentions } from "@/services/mention.service";
@@ -63,6 +73,17 @@ beforeEach(() => {
   mockPrisma.project.findUnique.mockResolvedValue({
     uuid: PROJECT_UUID,
     name: "Test Project",
+  });
+  mockResolveCwd.mockResolvedValue({
+    actorUserUuid: ACTOR_UUID,
+    source: "unconfigured",
+    agentUuid: AGENT_UUID,
+    host: null,
+    cwd: null,
+    availability: "ready",
+    promptPolicy: "select",
+    connectionUuid: null,
+    agentInstanceUuid: null,
   });
 });
 
@@ -96,6 +117,70 @@ function notifiedParams(): Record<string, unknown> {
 }
 
 describe("createMentions — threads the mention pin into the wake notification (T6 seam)", () => {
+  it("an unpinned Agent comment uses the project-fixed cwd snapshot", async () => {
+    mockResolveCwd.mockResolvedValue({
+      actorUserUuid: ACTOR_UUID,
+      source: "project_fixed",
+      agentUuid: AGENT_UUID,
+      host: "fixed-host",
+      cwd: "/fixed/project",
+      availability: "offline",
+      promptPolicy: "suppress",
+      connectionUuid: null,
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await mentionAgentWith(undefined, undefined);
+
+    expect(notifiedParams()).toMatchObject({
+      resolvedCwdSource: "project_fixed",
+      resolvedCwdHost: "fixed-host",
+      resolvedRuntimeCwd: "/fixed/project",
+      resolvedCwdAvailability: "offline",
+    });
+  });
+
+  it("resolves an Agent-authored MCP comment through the author's owner preference", async () => {
+    const authorAgentUuid = "77777777-7777-7777-7777-777777777777";
+    const ownerUuid = "88888888-8888-8888-8888-888888888888";
+    mockPrisma.agent.findFirst.mockImplementation(async ({ where }) =>
+      where.uuid === authorAgentUuid
+        ? { uuid: authorAgentUuid, ownerUuid }
+        : { uuid: AGENT_UUID },
+    );
+    mockResolveCwd.mockResolvedValue({
+      actorUserUuid: ownerUuid,
+      source: "project_fixed",
+      agentUuid: AGENT_UUID,
+      host: "agent-owner-host",
+      cwd: "/owner/project",
+      availability: "ready",
+      promptPolicy: "suppress",
+      connectionUuid: "fixed-connection",
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await createMentions({
+      companyUuid: COMPANY_UUID,
+      sourceType: "comment",
+      sourceUuid: SOURCE_UUID,
+      content: `cc ${buildMentionMarker("DevBot", "agent", AGENT_UUID)}`,
+      actorType: "agent",
+      actorUuid: authorAgentUuid,
+      projectUuid: PROJECT_UUID,
+      entityTitle: "Test Task",
+    });
+
+    expect(mockResolveCwd).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserUuid: ownerUuid }),
+    );
+    expect(notifiedParams()).toMatchObject({
+      resolvedCwdSource: "project_fixed",
+      resolvedCwdHost: "agent-owner-host",
+      resolvedRuntimeCwd: "/owner/project",
+    });
+  });
+
   it("a PINNED mention threads (pinnedHost, pinnedCwd) onto the wake notification — the AgentInstance identity the resolver matches", async () => {
     // Spec scenario: a comment contains @[Name](agent:uuid?cwd=/work&host=prod)
     // → the mention resolves to the AgentInstance at (host="prod", cwd="/work")
@@ -112,6 +197,53 @@ describe("createMentions — threads the mention pin into the wake notification 
       recipientUuid: AGENT_UUID,
       pinnedHost: PINNED_HOST,
       pinnedCwd: PINNED_CWD,
+    });
+  });
+
+  it("a project runtime pin resolves the server-side preference snapshot for host-routed wake", async () => {
+    mockResolveCwd.mockResolvedValue({
+      actorUserUuid: ACTOR_UUID,
+      source: "project_fixed",
+      agentUuid: AGENT_UUID,
+      host: "fixed-host",
+      cwd: "/fixed/dynamic",
+      availability: "ready",
+      promptPolicy: "suppress",
+      connectionUuid: "startup-connection",
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await createMentions({
+      companyUuid: COMPANY_UUID,
+      sourceType: "comment",
+      sourceUuid: SOURCE_UUID,
+      content: `cc ${buildMentionMarker(
+        "DevBot",
+        "agent",
+        AGENT_UUID,
+        "fixed-host",
+        "/fixed/dynamic",
+        true,
+      )}`,
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+      projectUuid: PROJECT_UUID,
+      entityTitle: "Test Task",
+    });
+
+    expect(mockResolveCwd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserUuid: ACTOR_UUID,
+        projectUuid: PROJECT_UUID,
+        agentUuid: AGENT_UUID,
+        registeredInstanceUuid: null,
+      }),
+    );
+    expect(notifiedParams()).toMatchObject({
+      resolvedCwdSource: "project_fixed",
+      resolvedCwdHost: "fixed-host",
+      resolvedRuntimeCwd: "/fixed/dynamic",
+      resolvedCwdAvailability: "ready",
     });
   });
 

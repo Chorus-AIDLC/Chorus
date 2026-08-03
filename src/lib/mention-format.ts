@@ -21,6 +21,7 @@
 export function encodePinSuffix(
   pinnedHost: string | null | undefined,
   pinnedCwd: string | null | undefined,
+  runtimeCwd = false,
 ): string {
   // No pin at all → no suffix (un-pinned mention is unchanged).
   if (
@@ -35,6 +36,7 @@ export function encodePinSuffix(
   // cwd present-but-null → empty value (distinct from "absent" by the decoder).
   parts.push(`cwd=${pinnedCwd == null ? "" : enc(pinnedCwd)}`);
   if (pinnedHost != null) parts.push(`host=${enc(pinnedHost)}`);
+  if (runtimeCwd) parts.push("runtime=1");
   return `?${parts.join("&")}`;
 }
 
@@ -48,6 +50,7 @@ export function encodePinSuffix(
 export function decodePinSuffix(suffix: string | undefined | null): {
   pinnedHost: string | null;
   pinnedCwd: string | null;
+  runtimeCwd?: true;
 } {
   if (!suffix) return { pinnedHost: null, pinnedCwd: null };
   const params = new URLSearchParams(suffix);
@@ -56,12 +59,18 @@ export function decodePinSuffix(suffix: string | undefined | null): {
   if (!hasCwd && !hasHost) return { pinnedHost: null, pinnedCwd: null };
   const rawCwd = params.get("cwd") ?? "";
   const rawHost = params.get("host");
-  return {
+  const decoded: {
+    pinnedHost: string | null;
+    pinnedCwd: string | null;
+    runtimeCwd?: true;
+  } = {
     // Empty cwd value → unknown-path pin (null). Otherwise the decoded path.
     pinnedCwd: hasCwd && rawCwd !== "" ? rawCwd : null,
     // host present (even empty) → the host pin ("" = unknown-host). Absent → null.
     pinnedHost: hasHost ? rawHost ?? "" : null,
   };
+  if (params.get("runtime") === "1") decoded.runtimeCwd = true;
+  return decoded;
 }
 
 /**
@@ -75,6 +84,7 @@ export function buildMentionMarker(
   uuid: string,
   pinnedHost?: string | null,
   pinnedCwd?: string | null,
+  runtimeCwd = false,
 ): string {
-  return `@[${displayName}](${type}:${uuid}${encodePinSuffix(pinnedHost, pinnedCwd)})`;
+  return `@[${displayName}](${type}:${uuid}${encodePinSuffix(pinnedHost, pinnedCwd, runtimeCwd)})`;
 }

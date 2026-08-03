@@ -47,6 +47,20 @@ describe("client mention parser — pin suffix support", () => {
     expect("pinnedCwd" in refs[0]).toBe(false);
   });
 
+  it("preserves the runtime cwd marker for comment liveness", () => {
+    const refs = extractMentions(
+      `@[DevBot](agent:${AGENT}?cwd=%2Fwork%2Fdynamic&host=prod&runtime=1)`,
+    );
+    expect(refs[0]).toEqual<ParsedMentionRef>({
+      type: "agent",
+      uuid: AGENT,
+      displayName: "DevBot",
+      pinnedHost: "prod",
+      pinnedCwd: "/work/dynamic",
+      runtimeCwd: true,
+    });
+  });
+
   it("parses an unknown-path pin (cwd=&host=…) as pinnedCwd:null, pinnedHost set", () => {
     const refs = extractMentions(`@[CI](agent:${AGENT}?cwd=&host=ci-runner)`);
     expect(refs[0]).toEqual<ParsedMentionRef>({

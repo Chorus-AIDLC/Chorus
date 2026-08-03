@@ -5,6 +5,10 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { claimTask, getTaskByUuid, updateTask, releaseTask, createTask, deleteTask, checkAcceptanceCriteriaGate, replaceAcceptanceCriteria } from "@/services/task.service";
 import { getAssignableAgents, getCompanyUsers } from "@/services/agent.service";
 import { listConnectionsForAgent } from "@/services/daemon-connection.service";
+import {
+  resolveProjectAgentCwdTarget,
+  type ResolvedProjectAgentCwdTarget,
+} from "@/services/project-agent-cwd.service";
 import { createActivity } from "@/services/activity.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
@@ -84,6 +88,17 @@ export async function claimTaskToAgentAction(
       return { success: false, error: "Task is not available for claiming" };
     }
 
+    const target = await resolveProjectAgentCwdTarget({
+      companyUuid: auth.companyUuid,
+      actorUserUuid: auth.actorUuid,
+      projectUuid: task.projectUuid,
+      agentUuid,
+    });
+    const resolvedInstanceUuid =
+      target.source === "project_fixed"
+        ? target.agentInstanceUuid
+        : instanceUuid;
+
     await claimTask({
       taskUuid,
       companyUuid: auth.companyUuid,
@@ -94,7 +109,10 @@ export async function claimTaskToAgentAction(
       // the company and promotes the row to assigneeType="agent_instance"; with
       // no instanceUuid the assignment stays a plain agent (also the path that
       // reverts a prior instance pin back to the plain agent on re-assignment).
-      instanceUuid: instanceUuid ?? undefined,
+      instanceUuid: resolvedInstanceUuid ?? undefined,
+      cwdSource: target.source === "project_fixed" ? target.source : null,
+      cwdHost: target.source === "project_fixed" ? target.host : null,
+      runtimeCwd: target.source === "project_fixed" ? target.cwd : null,
     });
 
     // Record activity
@@ -111,7 +129,14 @@ export async function claimTaskToAgentAction(
         assigneeUuid: agentUuid,
         // Record the durable instance pin in the activity value so the timeline
         // reflects which place was chosen (omitted when un-pinned).
-        ...(instanceUuid ? { instanceUuid } : {}),
+        ...(resolvedInstanceUuid ? { instanceUuid: resolvedInstanceUuid } : {}),
+        ...(target.source === "project_fixed"
+          ? {
+              resolvedCwdSource: target.source,
+              resolvedCwdHost: target.host,
+              resolvedRuntimeCwd: target.cwd,
+            }
+          : {}),
       },
     });
 
@@ -496,14 +521,28 @@ export async function getDeveloperAgentsAction() {
 // (InstanceCandidate / AgentInstanceCandidate) are now the single InstanceCandidate.
 export async function getAgentInstancesAction(
   agentUuid: string,
-): Promise<{ instances: InstanceCandidate[] }> {
+  projectUuid?: string,
+): Promise<{
+  instances: InstanceCandidate[];
+  resolvedTarget: ResolvedProjectAgentCwdTarget | null;
+}> {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
-    return { instances: [] };
+    return { instances: [], resolvedTarget: null };
   }
 
   try {
-    const connections = await listConnectionsForAgent(auth.companyUuid, agentUuid);
+    const [connections, resolvedTarget] = await Promise.all([
+      listConnectionsForAgent(auth.companyUuid, agentUuid),
+      projectUuid
+        ? resolveProjectAgentCwdTarget({
+            companyUuid: auth.companyUuid,
+            actorUserUuid: auth.actorUuid,
+            projectUuid,
+            agentUuid,
+          })
+        : null,
+    ]);
     return {
       instances: connections.map((c) => ({
         connectionUuid: c.uuid,
@@ -512,9 +551,10 @@ export async function getAgentInstancesAction(
         cwd: c.cwd,
         effectiveStatus: c.effectiveStatus,
       })),
+      resolvedTarget,
     };
   } catch (error) {
     logger.error({ err: error }, "Failed to get agent instances");
-    return { instances: [] };
+    return { instances: [], resolvedTarget: null };
   }
 }

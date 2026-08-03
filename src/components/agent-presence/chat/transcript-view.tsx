@@ -274,6 +274,10 @@ export function TranscriptView({
 
   const agentName =
     originConnection?.agentName?.trim() || t("roleAgent");
+  const displayConnection =
+    originConnection && session?.runtimeCwd
+      ? { ...originConnection, cwd: session.runtimeCwd }
+      : originConnection;
 
   // Current/last turn status for the header badge — the running turn if any,
   // otherwise the newest turn's status.
@@ -358,11 +362,11 @@ export function TranscriptView({
           <h3 className="truncate text-[17px] font-semibold text-foreground min-w-0">
             {title}
           </h3>
-          {originConnection && (
+          {displayConnection && (
             <div className="shrink-0">
               <InstanceIdentity
-                cwd={originConnection.cwd}
-                host={originConnection.host}
+                cwd={displayConnection.cwd}
+                host={displayConnection.host}
                 crossHost={originCrossHost}
               />
             </div>
@@ -439,31 +443,31 @@ export function TranscriptView({
               </div>
             )}
           </div>
-          {originConnection && (
+          {displayConnection && (
             <CollapsibleContent>
               <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-4">
-                <IdentityBlock connection={originConnection} size="sm" />
+                <IdentityBlock connection={displayConnection} size="sm" />
                 <div className="grid grid-cols-2 gap-3">
                   {originOnline && (
                     <DetailField
                       label={t("detailUptime")}
-                      value={formatUptime(originConnection.connectedAt, nowMs)}
+                      value={formatUptime(displayConnection.connectedAt, nowMs)}
                       mono
                     />
                   )}
                   <DetailField
                     label={t("detailHost")}
                     value={
-                      originConnection.host === ""
+                      displayConnection.host === ""
                         ? t("detailsHostUnknown")
-                        : originConnection.host
+                        : displayConnection.host
                     }
                     mono
                   />
-                  {originConnection.startedAt && (
+                  {displayConnection.startedAt && (
                     <DetailField
                       label={t("detailStarted")}
-                      value={formatRelative(originConnection.startedAt, nowMs)}
+                      value={formatRelative(displayConnection.startedAt, nowMs)}
                     />
                   )}
                 </div>

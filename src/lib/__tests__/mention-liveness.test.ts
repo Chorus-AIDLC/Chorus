@@ -85,6 +85,37 @@ describe("resolveMentionLiveness — pinned mention (instance-precise)", () => {
     expect(r.ownerUuid).toBe(OWNER);
   });
 
+  it("runtime cwd is online through any online connection on the fixed host", () => {
+    const runtimeRef: MentionLivenessRef = {
+      uuid: AGENT,
+      pinnedHost: "prod",
+      pinnedCwd: "/work/dynamic",
+      runtimeCwd: true,
+    };
+    const result = resolveMentionLiveness(runtimeRef, [
+      conn({ host: "prod", cwd: "/daemon/startup", effectiveStatus: "online" }),
+    ]);
+    expect(result).toMatchObject({
+      pinned: true,
+      online: true,
+      ownerUuid: OWNER,
+      host: "prod",
+      cwd: "/work/dynamic",
+    });
+  });
+
+  it("runtime cwd stays offline when only another host is online", () => {
+    const runtimeRef: MentionLivenessRef = {
+      uuid: AGENT,
+      pinnedHost: "fixed-host",
+      pinnedCwd: "/work/dynamic",
+      runtimeCwd: true,
+    };
+    expect(resolveMentionLiveness(runtimeRef, [
+      conn({ host: "other-host", cwd: "/daemon/startup", effectiveStatus: "online" }),
+    ]).online).toBe(false);
+  });
+
   it("pinned place exists but its connection is offline → offline, instance identity surfaced", () => {
     const connections = [
       conn({ host: "prod", cwd: "/work", effectiveStatus: "offline" }),

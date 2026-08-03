@@ -43,6 +43,25 @@ vi.mock("@/services/notification.service", () => ({
   getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
   createBatch: (...args: unknown[]) => mockCreateBatch(...args),
 }));
+vi.mock("@/services/lineage.service", () => ({
+  resolveRootIdea: vi.fn().mockResolvedValue({
+    rootIdeaUuid: null,
+    directIdeaUuid: null,
+  }),
+}));
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: vi.fn().mockResolvedValue({
+    actorUserUuid: "33333333-3333-3333-3333-333333333333",
+    source: "unconfigured",
+    agentUuid: "55555555-5555-5555-5555-555555555555",
+    host: null,
+    cwd: null,
+    availability: "ready",
+    promptPolicy: "select",
+    connectionUuid: null,
+    agentInstanceUuid: null,
+  }),
+}));
 
 import { createMentions, searchMentionables } from "@/services/mention.service";
 

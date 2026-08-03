@@ -19,6 +19,17 @@ describe("encodePinSuffix", () => {
     );
   });
 
+  it("marks a host-routed runtime cwd without changing ordinary instance pins", () => {
+    expect(encodePinSuffix("prod", "/work/dynamic", true)).toBe(
+      "?cwd=%2Fwork%2Fdynamic&host=prod&runtime=1",
+    );
+    expect(decodePinSuffix("cwd=%2Fwork%2Fdynamic&host=prod&runtime=1")).toEqual({
+      pinnedHost: "prod",
+      pinnedCwd: "/work/dynamic",
+      runtimeCwd: true,
+    });
+  });
+
   it("writes an empty cwd value for a null-cwd pin (unknown-path instance)", () => {
     // host pinned but cwd unknown → cwd present-but-empty so the decoder can
     // distinguish "pinned to unknown path" from "not pinned".
@@ -91,6 +102,12 @@ describe("buildMentionMarker", () => {
     expect(
       buildMentionMarker("DevBot", "agent", UUID, "Laptop-Q3", "/home/u/dev/chorus"),
     ).toBe(`@[DevBot](agent:${UUID}?cwd=%2Fhome%2Fu%2Fdev%2Fchorus&host=Laptop-Q3)`);
+  });
+
+  it("appends runtime=1 for a project-fixed runtime cwd", () => {
+    expect(buildMentionMarker("DevBot", "agent", UUID, "prod", "/dynamic", true)).toBe(
+      `@[DevBot](agent:${UUID}?cwd=%2Fdynamic&host=prod&runtime=1)`,
+    );
   });
 
   it("round-trips a pinned marker through encode→decode", () => {

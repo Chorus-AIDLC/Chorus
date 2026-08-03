@@ -42,6 +42,7 @@ export interface ParsedMentionRef {
   displayName: string;
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  runtimeCwd?: boolean;
 }
 
 interface MentionPart {
@@ -53,6 +54,7 @@ interface MentionPart {
   // (mirrors ParsedMentionRef / MentionRef — absent on un-pinned tokens).
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  runtimeCwd?: boolean;
 }
 
 function parseMentions(text: string): MentionPart[] {
@@ -73,7 +75,7 @@ function parseMentions(text: string): MentionPart[] {
     // Decode the optional pin suffix (group 4) via the shared codec. Attach the
     // pin fields ONLY when present, keeping un-pinned parts byte-identical to the
     // legacy shape (mirrors the server parser in mention.service.ts).
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
     const part: MentionPart = {
       type: "mention",
       content: match[1],
@@ -83,6 +85,7 @@ function parseMentions(text: string): MentionPart[] {
     if (pinnedHost !== null || pinnedCwd !== null) {
       part.pinnedHost = pinnedHost;
       part.pinnedCwd = pinnedCwd;
+      if (runtimeCwd) part.runtimeCwd = true;
     }
     parts.push(part);
 
@@ -120,6 +123,7 @@ export function preprocessMentions(content: string): {
     uuid: string;
     pinnedHost?: string | null;
     pinnedCwd?: string | null;
+    runtimeCwd?: boolean;
   }>;
 } {
   const mentions: Array<{
@@ -128,6 +132,7 @@ export function preprocessMentions(content: string): {
     uuid: string;
     pinnedHost?: string | null;
     pinnedCwd?: string | null;
+    runtimeCwd?: boolean;
   }> = [];
   const regex = new RegExp(MENTION_REGEX.source, MENTION_REGEX.flags);
 
@@ -136,17 +141,19 @@ export function preprocessMentions(content: string): {
   // placeholders stay byte-identical).
   const processed = content.replace(regex, (_match, name, type, uuid, pin) => {
     const index = mentions.length;
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(pin);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(pin);
     const entry: {
       displayName: string;
       type: string;
       uuid: string;
       pinnedHost?: string | null;
       pinnedCwd?: string | null;
+      runtimeCwd?: boolean;
     } = { displayName: name, type, uuid };
     if (pinnedHost !== null || pinnedCwd !== null) {
       entry.pinnedHost = pinnedHost;
       entry.pinnedCwd = pinnedCwd;
+      if (runtimeCwd) entry.runtimeCwd = true;
     }
     mentions.push(entry);
     return `${MENTION_PLACEHOLDER_PREFIX}${index}${MENTION_PLACEHOLDER_SUFFIX}`;
@@ -203,7 +210,7 @@ export function preprocessMentionsAsTags(content: string): {
 
   const processed = content.replace(regex, (_match, name, type, uuid, pin) => {
     const index = mentions.length;
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(pin);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(pin);
     const ref: ParsedMentionRef = {
       type: (type as string).toLowerCase() as "user" | "agent",
       uuid: (uuid as string).toLowerCase(),
@@ -212,6 +219,7 @@ export function preprocessMentionsAsTags(content: string): {
     if (pinnedHost !== null || pinnedCwd !== null) {
       ref.pinnedHost = pinnedHost;
       ref.pinnedCwd = pinnedCwd;
+      if (runtimeCwd) ref.runtimeCwd = true;
     }
     mentions.push(ref);
     const label = `@${name}`
@@ -487,7 +495,7 @@ export function extractMentions(text: string): ParsedMentionRef[] {
   let match;
 
   while ((match = regex.exec(text)) !== null) {
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
     const ref: ParsedMentionRef = {
       displayName: match[1],
       type: match[2].toLowerCase() as "user" | "agent",
@@ -496,6 +504,7 @@ export function extractMentions(text: string): ParsedMentionRef[] {
     if (pinnedHost !== null || pinnedCwd !== null) {
       ref.pinnedHost = pinnedHost;
       ref.pinnedCwd = pinnedCwd;
+      if (runtimeCwd) ref.runtimeCwd = true;
     }
     mentions.push(ref);
   }

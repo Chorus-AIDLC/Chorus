@@ -73,6 +73,9 @@ export interface IdeaClaimParams {
   // omitted/null, the assignment behaves exactly as before this change
   // (assigneeType="agent" → un-pinned, online-first at wake time).
   instanceUuid?: string | null;
+  cwdSource?: string | null;
+  cwdHost?: string | null;
+  runtimeCwd?: string | null;
   // Allow a SAME-owning-agent cwd re-pin on an ALREADY-elaborated idea
   // (pin-cwd-before-wake). An elaborated idea normally rejects every assignment
   // (its elaboration lifecycle is done), but pinning the (host, cwd) of the
@@ -762,6 +765,9 @@ export async function claimIdea({
   assigneeUuid,
   assignedByUuid,
   instanceUuid,
+  cwdSource,
+  cwdHost,
+  runtimeCwd,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
@@ -785,6 +791,9 @@ export async function claimIdea({
       status: "elaborating",
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
+      cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
+      cwdHost: runtimeCwd ? cwdHost : null,
+      runtimeCwd: runtimeCwd ?? null,
       assignedAt: new Date(),
       assignedByUuid,
     },
@@ -832,6 +841,9 @@ export async function assignIdea({
   assigneeUuid,
   assignedByUuid,
   instanceUuid,
+  cwdSource,
+  cwdHost,
+  runtimeCwd,
   allowElaboratedInstanceRepin = false,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
@@ -870,6 +882,9 @@ export async function assignIdea({
       status: newStatus,
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
+      cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
+      cwdHost: runtimeCwd ? cwdHost : null,
+      runtimeCwd: runtimeCwd ?? null,
       assignedAt: new Date(),
       assignedByUuid,
     },
@@ -898,6 +913,9 @@ export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
       status: "open",
       assigneeType: null,
       assigneeUuid: null,
+      cwdSource: null,
+      cwdHost: null,
+      runtimeCwd: null,
       assignedAt: null,
       assignedByUuid: null,
       elaborationDepth: null,

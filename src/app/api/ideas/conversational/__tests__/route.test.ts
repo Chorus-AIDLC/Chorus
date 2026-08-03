@@ -55,6 +55,9 @@ vi.mock("@/services/daemon-instruction.service", () => {
       this.reason = reason;
     }
   }
+  class ProjectCwdTargetUnavailableError extends Error {
+    readonly code = "project_cwd_target_unavailable";
+  }
   return {
     createConversationalIdeaSession: (...args: unknown[]) =>
       mockCreateConversational(...args),
@@ -63,6 +66,7 @@ vi.mock("@/services/daemon-instruction.service", () => {
     ConnectionInstanceMissingError,
     ProjectNotVisibleError,
     InstructionTextError,
+    ProjectCwdTargetUnavailableError,
   };
 });
 

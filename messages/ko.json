@@ -309,10 +309,23 @@
     "deleteDescription": "이 프로젝트와 모든 데이터를 영구적으로 제거합니다. 이 작업은 되돌릴 수 없습니다.",
     "agentCwds": {
       "title": "Agent 작업 디렉터리", "description": "이 프로젝트의 Agent마다 호스트와 디렉터리를 고정합니다.",
-      "loading": "작업 디렉터리를 불러오는 중...", "loadFailed": "작업 디렉터리를 불러올 수 없습니다.", "empty": "사용 가능한 Agent가 없습니다.",
+      "loading": "작업 디렉터리를 불러오는 중...", "loadFailed": "작업 디렉터리를 불러올 수 없습니다.", "empty": "사용 가능한 Agent가 없습니다.", "emptyOnline": "온라인 Agent가 없습니다.",
       "notConfigured": "작업마다 임시 디렉터리 사용", "configure": "작업 디렉터리 설정", "replace": "작업 디렉터리 변경",
-      "clear": "고정 작업 디렉터리 해제", "save": "고정 디렉터리 저장",
+      "clear": "고정 작업 디렉터리 해제", "save": "고정 디렉터리 저장", "createFailed": "Agent 작업 디렉터리를 저장할 수 없어 프로젝트가 생성되지 않았습니다.",
       "status": { "valid": "사용 가능", "offline": "호스트 오프라인", "invalid": "디렉터리 사용 불가" }
+    }
+  },
+  "fixedCwdAnchor": {
+    "title": "고정 작업 디렉터리",
+    "host": "호스트",
+    "cwd": "디렉터리",
+    "status": "상태",
+    "unknown": "알 수 없음",
+    "manage": "프로젝트 설정에서 관리",
+    "availability": {
+      "ready": "사용 가능",
+      "offline": "호스트 오프라인",
+      "invalid": "디렉터리를 사용할 수 없음"
     }
   },
   "projects": {
@@ -1694,7 +1707,7 @@
     "cancel": "취소", "browseAnother": "다른 디렉터리 찾아보기", "registeredDirectories": "등록된 디렉터리", "useOnce": "이 작업에만 사용"
   },
   "directoryBrowser": {
-    "chooseHost": "호스트 선택", "unknownHost": "알 수 없는 호스트", "pathPrefix": "디렉터리 경로 접두사", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "호스트 선택", "unknownHost": "알 수 없는 호스트", "chooseDirectorySource": "작업 디렉터리 소스 선택", "daemonCwd": "Daemon 작업 디렉터리", "configuredCwd": "Daemon 구성 디렉터리", "customCwd": "이 호스트의 다른 디렉터리", "pathPrefix": "디렉터리 경로 접두사", "pathPlaceholder": "/home/user/project",
     "browseRoot": "탐색 루트", "loadingRoots": "허용된 루트를 불러오는 중…", "loadingCandidates": "디렉터리 제안을 불러오는 중", "parent": "상위 디렉터리로 이동",
     "browse": "디렉터리 찾아보기", "noHosts": "이 Agent에 온라인 호스트가 없습니다.", "empty": "일치하는 디렉터리가 없습니다.", "selection": "선택한 디렉터리",
     "errors": {
