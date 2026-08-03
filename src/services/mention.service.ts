@@ -471,20 +471,32 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     const message = `${actorName} mentioned you: "${snippet}"`;
     const hasExplicitPin =
       mention.pinnedHost !== undefined || mention.pinnedCwd !== undefined;
+    // A runtime-cwd token is emitted only for a project-fixed preference. Resolve
+    // it again server-side (without lineage assignment inheritance) so the stored
+    // marker cannot authorize an arbitrary runtime directory and the wake receives
+    // an immutable host/runtime snapshot. Ordinary instance pins remain exact and
+    // deliberately skip the project resolver.
+    const shouldResolveProjectTarget =
+      mention.type === "agent" && (!hasExplicitPin || mention.runtimeCwd === true);
     const resolvedTarget =
-      mention.type === "agent" && !hasExplicitPin
+      shouldResolveProjectTarget
         ? await resolveMentionTarget({
             companyUuid,
             actorType,
             actorUuid,
             projectUuid,
             agentUuid: mention.uuid,
-            entityType: (
-              ["idea", "task", "proposal", "document"] as string[]
-            ).includes(notifEntityType)
-              ? (notifEntityType as LineageEntityType)
-              : undefined,
-            entityUuid: notifEntityUuid,
+            // Runtime markers represent the current project preference, not an
+            // existing root Idea's sticky assignment.
+            entityType:
+              mention.runtimeCwd === true
+                ? undefined
+                : (
+                    ["idea", "task", "proposal", "document"] as string[]
+                  ).includes(notifEntityType)
+                  ? (notifEntityType as LineageEntityType)
+                  : undefined,
+            entityUuid: mention.runtimeCwd === true ? undefined : notifEntityUuid,
           })
         : null;
 

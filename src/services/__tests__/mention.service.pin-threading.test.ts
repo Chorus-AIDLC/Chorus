@@ -200,6 +200,53 @@ describe("createMentions — threads the mention pin into the wake notification 
     });
   });
 
+  it("a project runtime pin resolves the server-side preference snapshot for host-routed wake", async () => {
+    mockResolveCwd.mockResolvedValue({
+      actorUserUuid: ACTOR_UUID,
+      source: "project_fixed",
+      agentUuid: AGENT_UUID,
+      host: "fixed-host",
+      cwd: "/fixed/dynamic",
+      availability: "ready",
+      promptPolicy: "suppress",
+      connectionUuid: "startup-connection",
+      agentInstanceUuid: "fixed-instance",
+    });
+
+    await createMentions({
+      companyUuid: COMPANY_UUID,
+      sourceType: "comment",
+      sourceUuid: SOURCE_UUID,
+      content: `cc ${buildMentionMarker(
+        "DevBot",
+        "agent",
+        AGENT_UUID,
+        "fixed-host",
+        "/fixed/dynamic",
+        true,
+      )}`,
+      actorType: "user",
+      actorUuid: ACTOR_UUID,
+      projectUuid: PROJECT_UUID,
+      entityTitle: "Test Task",
+    });
+
+    expect(mockResolveCwd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserUuid: ACTOR_UUID,
+        projectUuid: PROJECT_UUID,
+        agentUuid: AGENT_UUID,
+        registeredInstanceUuid: null,
+      }),
+    );
+    expect(notifiedParams()).toMatchObject({
+      resolvedCwdSource: "project_fixed",
+      resolvedCwdHost: "fixed-host",
+      resolvedRuntimeCwd: "/fixed/dynamic",
+      resolvedCwdAvailability: "ready",
+    });
+  });
+
   it("an UN-PINNED mention threads no pin (both undefined) → wake stays agent-overall online-first", async () => {
     // The whole point of the additive design: an un-pinned token carries no pin,
     // so resolvePinnedTarget(mentioned) gets pinnedHost/pinnedCwd === undefined →
