@@ -56,8 +56,8 @@ import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import type { SessionView } from "@/services/daemon-session.service";
 import { DaemonConnectCta } from "./daemon-connect-cta";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
-import { FixedCwdAnchor } from "./fixed-cwd-anchor";
 import type { ResolvedProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+import { FixedCwdAnchor } from "./fixed-cwd-anchor";
 import {
   connectionsToInstanceCandidates,
   extractInstructionError,
@@ -400,9 +400,9 @@ export function ConversationalEntry({
 
       {/* Instance picker for the selected agent (online instances only; a sole
           instance auto-selects). No agent selected yet → prompt instead. */}
-      {selectedAgent && fixedTarget ? (
+      {selectedAgent && fixedTarget && fixedTarget.availability !== "ready" ? (
         <FixedCwdAnchor target={fixedTarget} />
-      ) : selectedAgent ? (
+      ) : selectedAgent && !fixedTarget ? (
         <div className="flex flex-col gap-1.5">
           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("instanceLabel")}
@@ -414,9 +414,9 @@ export function ConversationalEntry({
             ariaLabel={t("instanceLabel")}
           />
         </div>
-      ) : (
+      ) : !selectedAgent ? (
         <p className="text-[12px] text-muted-foreground">{t("pickAgentFirst")}</p>
-      )}
+      ) : null}
 
       {/* Description input — plain Enter sends (IME-guarded), Shift+Enter newline. */}
       <div className="flex flex-col gap-1.5">

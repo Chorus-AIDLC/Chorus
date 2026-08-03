@@ -238,7 +238,7 @@ describe("ConversationalEntry — offline gating", () => {
 });
 
 describe("ConversationalEntry — selection", () => {
-  it("project-fixed cwd hides the instance picker and shows the read-only anchor", async () => {
+  it("project-fixed cwd hides the instance picker without repeating the project-level summary", async () => {
     setPresence([
       conn({ uuid: "c1", host: "fixed-host", cwd: "/startup" }),
       conn({ uuid: "c2", host: "other-host", cwd: "/other" }),
@@ -271,8 +271,9 @@ describe("ConversationalEntry — selection", () => {
       />,
     );
 
-    expect(await screen.findByText("/srv/project")).toBeTruthy();
-    expect(screen.getByText("fixed-host")).toBeTruthy();
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(screen.queryByText("/srv/project")).toBeNull();
+    expect(screen.queryByText("fixed-host")).toBeNull();
     expect(screen.queryByText("other")).toBeNull();
   });
 
