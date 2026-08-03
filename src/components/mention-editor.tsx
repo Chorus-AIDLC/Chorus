@@ -79,6 +79,13 @@ const CustomMention = Mention.extend({
             ? {}
             : { "data-pinned-cwd": String(attributes.pinnedCwd) },
       },
+      runtimeCwd: {
+        default: false,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-runtime-cwd") === "true",
+        renderHTML: (attributes: Record<string, unknown>) =>
+          attributes.runtimeCwd ? { "data-runtime-cwd": "true" } : {},
+      },
     };
   },
 });
@@ -115,6 +122,11 @@ interface Mentionable {
     cwd: string | null;
     agentInstanceUuid: string;
   };
+  projectFixedCwd?: {
+    host: string;
+    cwd: string;
+    availability: "ready" | "offline" | "invalid";
+  };
 }
 
 // The durable (host, cwd) "place" a mention pins to. A structural subset of both
@@ -124,6 +136,7 @@ interface Mentionable {
 export interface MentionPin {
   host: string;
   cwd: string | null;
+  runtimeCwd?: boolean;
 }
 
 // The decision the mention-selection precedence yields for a chosen candidate:
@@ -153,6 +166,20 @@ export type MentionSelection =
  *     persisted to the idea.
  */
 export function resolveMentionSelection(item: Mentionable): MentionSelection {
+  // A project-level preference takes over historical per-Idea assignments. The
+  // runtime marker is required so the server routes by host and runs in the
+  // configured cwd instead of treating the value as an exact daemon instance.
+  if (item.type === "agent" && item.projectFixedCwd) {
+    return {
+      kind: "insert",
+      pin: {
+        host: item.projectFixedCwd.host,
+        cwd: item.projectFixedCwd.cwd,
+        runtimeCwd: true,
+      },
+    };
+  }
+
   // Rule 1: inherit the direct idea's pin (HARD) — not filtered by online status.
   if (item.isIdeaAssignee && item.ideaPin) {
     return {
@@ -245,7 +272,7 @@ function editorToPlainText(editor: Editor): string {
 
   function processNode(node: Record<string, unknown>): string {
     if (node.type === "mention") {
-      const attrs = node.attrs as Record<string, string | null> | undefined;
+      const attrs = node.attrs as Record<string, string | boolean | null> | undefined;
       if (attrs) {
         // Serialize via the shared codec so the optional pinned (host, cwd)
         // suffix matches what the service parser reads. Un-pinned (both null) →
@@ -254,8 +281,9 @@ function editorToPlainText(editor: Editor): string {
           (attrs.label || attrs.id) as string,
           ((attrs.mentionType as string) || "user") as "user" | "agent",
           attrs.id as string,
-          attrs.pinnedHost ?? null,
-          attrs.pinnedCwd ?? null,
+          (attrs.pinnedHost as string | null) ?? null,
+          (attrs.pinnedCwd as string | null) ?? null,
+          attrs.runtimeCwd === true,
         );
       }
       return "";
@@ -309,7 +337,7 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
         });
       }
 
-      const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+      const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
       inlineContent.push({
         type: "mention",
         attrs: {
@@ -318,6 +346,7 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
           mentionType: match[2],
           pinnedHost,
           pinnedCwd,
+          runtimeCwd: runtimeCwd === true,
         },
       });
 
@@ -772,7 +801,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         item: Mentionable,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         command: (attrs: any) => void,
-        pin?: { host: string; cwd: string | null },
+        pin?: { host: string; cwd: string | null; runtimeCwd?: boolean },
       ) => {
         command({
           id: item.uuid,
@@ -782,6 +811,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
           // mention. host "" is preserved (unknown-host instance).
           pinnedHost: pin ? pin.host : null,
           pinnedCwd: pin ? pin.cwd : null,
+          runtimeCwd: pin?.runtimeCwd === true,
         });
       },
       [],

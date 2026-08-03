@@ -224,7 +224,7 @@ export class CodexSpawner {
    * @param {{ prompt: string, sessionId: string|null, isNew?: boolean, mcpConfigPath?: string,
    *           cwd?: string, onMessage?: (obj: any) => void,
    *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
-   * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
+   * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean }>}
    */
   async wake({ prompt, sessionId, cwd, onMessage, onChild }) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
@@ -245,7 +245,7 @@ export class CodexSpawner {
     if (!codexPath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `codex` executable on PATH; skipping wake");
-      return { sessionId: anchor, exitCode: null, isNew };
+      return { sessionId: anchor, backendSessionId: knownThreadId, exitCode: null, isNew };
     }
 
     if (!this.mcpConfigChecked) {
@@ -287,7 +287,7 @@ export class CodexSpawner {
         });
       } catch (err) {
         this.logger.error(`[Chorus] failed to spawn codex: ${err}`);
-        resolve({ sessionId: anchor, exitCode: null, isNew });
+        resolve({ sessionId: anchor, backendSessionId: knownThreadId, exitCode: null, isNew });
         return;
       }
 
@@ -350,14 +350,14 @@ export class CodexSpawner {
 
       child.on("error", (err) => {
         this.logger.error(`[Chorus] codex process error: ${err}`);
-        resolve({ sessionId: observedThreadId || anchor, exitCode: null, isNew });
+        resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: null, isNew });
       });
 
       child.on("close", (code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] codex exited with code ${code}`);
         }
-        resolve({ sessionId: observedThreadId || anchor, exitCode: code, isNew });
+        resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: code, isNew });
       });
 
       // Guard against an ASYNC stdin error (EPIPE) so it never becomes an

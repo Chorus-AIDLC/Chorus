@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.6"
+  version: "0.15.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -39,7 +39,7 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 | `chorus_edit_idea` | Edit an existing idea's title, description, and/or lineage parent. `parentUuid`: another same-project idea to reparent under, `null` to detach to top-level, omit to leave unchanged (cycle-checked + same-project). Single-parent **weak** lineage — a parent shows a read-only `+N derived` rollup but never blocks either idea's flow. Records an "edited" activity and signals presence. |
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
 | `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
-| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
 
 **Requirements Elaboration:**
 

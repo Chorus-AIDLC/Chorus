@@ -89,16 +89,19 @@ export async function startDevelopment({
   ideaUuid,
   actorUuid,
   actorType,
+  temporaryCwd,
 }: {
   companyUuid: string;
   ideaUuid: string;
   actorUuid: string;
   actorType: string;
+  temporaryCwd?: { host: string; cwd: string } | null;
 }): Promise<void> {
   await executeStageAdvance(START_DEVELOPMENT_STAGE, {
     companyUuid,
     ideaUuid,
     actorUuid,
     actorType,
+    temporaryCwd,
   });
 }

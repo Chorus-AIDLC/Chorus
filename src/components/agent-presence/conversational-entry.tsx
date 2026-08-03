@@ -36,7 +36,7 @@
 // connection list immediately (`refreshConnections`) so the picker re-syncs;
 // other failures surface the server reason inline the same way.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, SendHorizonal, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
@@ -56,6 +56,8 @@ import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import type { SessionView } from "@/services/daemon-session.service";
 import { DaemonConnectCta } from "./daemon-connect-cta";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
+import type { ResolvedProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+import { FixedCwdAnchor } from "./fixed-cwd-anchor";
 import {
   connectionsToInstanceCandidates,
   extractInstructionError,
@@ -117,7 +119,13 @@ export interface ConversationalEntryProps {
   // Preselect this agent when it has an online connection (e.g. a future
   // idea-detail entry point that already knows the assignee).
   defaultAgentUuid?: string;
+  projectUuid?: string;
 }
+
+type FixedTargetEntry = {
+  agentName: string;
+  target: ResolvedProjectAgentCwdTarget;
+};
 
 // Group the online connections by agent for the agent Select. Insertion order
 // follows the connection list (server-deterministic ordering).
@@ -149,6 +157,7 @@ export function ConversationalEntry({
   offlineFallback,
   onStarted,
   defaultAgentUuid,
+  projectUuid,
 }: ConversationalEntryProps) {
   const t = useTranslations("conversationalEntry");
   const presence = useAgentPresenceOptional();
@@ -163,18 +172,75 @@ export function ConversationalEntry({
       ),
     [presence?.connections],
   );
-  const agentGroups = useMemo(
-    () => groupByAgent(onlineConnections),
-    [onlineConnections],
+  const [fixedTargets, setFixedTargets] = useState<Map<string, FixedTargetEntry>>(
+    new Map(),
   );
+  const agentGroups = useMemo(() => {
+    const groups = groupByAgent(onlineConnections);
+    const present = new Set(groups.map((group) => group.agentUuid));
+    for (const [agentUuid, fixed] of fixedTargets) {
+      if (present.has(agentUuid)) continue;
+      groups.push({
+        agentUuid,
+        agentName: fixed.agentName,
+        connections: [],
+      });
+    }
+    return groups;
+  }, [fixedTargets, onlineConnections]);
 
   // Agent selection: explicit pick wins while it still resolves to an online
   // group; otherwise prefer the consumer's default, then the sole/first group.
   const [pickedAgentUuid, setPickedAgentUuid] = useState<string | null>(null);
+  useEffect(() => {
+    if (!projectUuid) {
+      setFixedTargets(new Map());
+      return;
+    }
+    let cancelled = false;
+    authFetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`)
+      .then(async (response) => {
+        if (!response.ok) return;
+        const json = await response.json();
+        const next = new Map<string, FixedTargetEntry>();
+        for (const item of json?.data?.agents ?? []) {
+          if (!item.preference) continue;
+          next.set(item.agent.uuid, {
+            agentName: item.agent.name,
+            target: {
+              actorUserUuid: "",
+              source: "project_fixed",
+              agentUuid: item.agent.uuid,
+              host: item.preference.host,
+              cwd: item.preference.cwd,
+              availability:
+                item.preference.status === "valid"
+                  ? "ready"
+                  : item.preference.status === "offline"
+                    ? "offline"
+                    : "invalid",
+              promptPolicy: "suppress",
+              connectionUuid: null,
+              agentInstanceUuid: item.preference.anchorAgentInstanceUuid ?? null,
+            },
+          });
+        }
+        if (!cancelled) setFixedTargets(next);
+      })
+      .catch((error) =>
+        clientLogger.error("Failed to load project Agent cwd preferences:", error),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [projectUuid]);
   const selectedAgent =
     agentGroups.find((g) => g.agentUuid === pickedAgentUuid) ??
     agentGroups.find((g) => g.agentUuid === defaultAgentUuid) ??
     (agentGroups.length === 1 ? agentGroups[0] : null);
+  const fixedTarget = selectedAgent
+    ? fixedTargets.get(selectedAgent.agentUuid)?.target ?? null
+    : null;
 
   // Instance selection within the picked agent. The picker auto-selects a sole
   // instance; 2+ instances require an explicit pick (send stays disabled).
@@ -188,7 +254,9 @@ export function ConversationalEntry({
   // The selection is valid only while it still points at one of the CURRENT
   // agent's online instances (agent switch / connection drop invalidates it).
   const selectedInstance =
-    instances.find((i) => i.connectionUuid === pickedConnectionUuid) ?? null;
+    (fixedTarget
+      ? instances.find((instance) => instance.host === fixedTarget.host)
+      : instances.find((i) => i.connectionUuid === pickedConnectionUuid)) ?? null;
 
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
@@ -286,7 +354,7 @@ export function ConversationalEntry({
   };
 
   // ===== Offline fallback =====
-  if (onlineConnections.length === 0) {
+  if (onlineConnections.length === 0 && fixedTargets.size === 0) {
     return (
       <div className="flex flex-col gap-2">
         <p className="text-[12.5px] leading-relaxed text-muted-foreground">
@@ -332,7 +400,9 @@ export function ConversationalEntry({
 
       {/* Instance picker for the selected agent (online instances only; a sole
           instance auto-selects). No agent selected yet → prompt instead. */}
-      {selectedAgent ? (
+      {selectedAgent && fixedTarget && fixedTarget.availability !== "ready" ? (
+        <FixedCwdAnchor target={fixedTarget} />
+      ) : selectedAgent && !fixedTarget ? (
         <div className="flex flex-col gap-1.5">
           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("instanceLabel")}
@@ -344,9 +414,9 @@ export function ConversationalEntry({
             ariaLabel={t("instanceLabel")}
           />
         </div>
-      ) : (
+      ) : !selectedAgent ? (
         <p className="text-[12px] text-muted-foreground">{t("pickAgentFirst")}</p>
-      )}
+      ) : null}
 
       {/* Description input — plain Enter sends (IME-guarded), Shift+Enter newline. */}
       <div className="flex flex-col gap-1.5">

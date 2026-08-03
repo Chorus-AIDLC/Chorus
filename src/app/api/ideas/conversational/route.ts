@@ -29,6 +29,7 @@ import {
   ConnectionInstanceMissingError,
   ProjectNotVisibleError,
   InstructionTextError,
+  ProjectCwdTargetUnavailableError,
 } from "@/services/daemon-instruction.service";
 
 // Request body schema. `descriptionText` length is validated in the service (the
@@ -87,6 +88,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       return errors.conflict(err.message);
     }
     if (err instanceof ConnectionInstanceMissingError) {
+      return errors.conflict(err.message);
+    }
+    if (err instanceof ProjectCwdTargetUnavailableError) {
       return errors.conflict(err.message);
     }
     // Empty description / over-length composed instruction → 400. Nothing was created.

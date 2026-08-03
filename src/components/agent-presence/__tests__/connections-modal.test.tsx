@@ -733,6 +733,7 @@ describe("Daemon chat modal — one-shot session focus (openChatForSession)", ()
     uuid: "s-fresh",
     agentUuid: "agent-1",
     sessionId: "sid-s-fresh",
+    backendSessionId: null,
     directIdeaUuid: null,
     originConnectionUuid: "1",
     status: "active",

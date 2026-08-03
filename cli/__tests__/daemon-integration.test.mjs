@@ -6,6 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import { buildDaemon, runDaemon } from "../daemon.mjs";
 import { transcriptPath } from "../claude-spawner.mjs";
 
@@ -189,7 +190,7 @@ describe("daemon integration: notification → spawn", () => {
 describe("daemon integration: reverse control channel (子3)", () => {
   it("a control event interrupts the running child, never enqueues a wake, and reports interrupted(user)", async () => {
     const CONN = "conn-itest";
-    const FAKE_CHILD = { pid: 24680 };
+    const FAKE_CHILD = Object.assign(new EventEmitter(), { pid: 24680 });
     const reportInterrupt = vi.fn(async () => {});
 
     // A controllable spawner: it registers the child via onChild, then HANGS until
@@ -201,7 +202,10 @@ describe("daemon integration: reverse control channel (子3)", () => {
           new Promise((resolve) => {
             params.onChild?.(FAKE_CHILD);
             params.onMessage?.({ type: "system", session_id: params.sessionId });
-            resolveWake = () => resolve({ sessionId: params.sessionId, exitCode: 0, isNew: params.isNew });
+            resolveWake = () => {
+              FAKE_CHILD.emit("exit", 0, null);
+              resolve({ sessionId: params.sessionId, exitCode: 0, isNew: params.isNew });
+            };
           })
       ),
     };
@@ -1144,6 +1148,15 @@ describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () =>
     };
     const turnReports = [];
     const mcp = mockMcp();
+    const killer = vi.fn(async () => {
+      order.push("killed");
+      releaseChild();
+      return { killed: true };
+    });
+    const advanceTurn = async (params) => {
+      turnReports.push(params);
+      order.push(`turn:${params.status}`);
+    };
     const daemon = buildDaemon(
       { url: "https://chorus.example", apiKey: "cho_x" },
       {
@@ -1154,19 +1167,10 @@ describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () =>
         cwd: "/nonexistent/chorus-daemon-shutdown-itest",
         makeSseListener: (o) => new MockSse(o),
         sigintTimeoutMs: 200,
+        killer,
+        advanceTurn,
       }
     );
-    // Spy on the primary waker's injected killer + turn reporter AFTER build. The
-    // killer releases the "child" (simulating the kill landing).
-    daemon.waker.killer = vi.fn(async () => {
-      order.push("killed");
-      releaseChild();
-      return { killed: true };
-    });
-    daemon.waker.advanceTurn = async (params) => {
-      turnReports.push(params);
-      order.push(`turn:${params.status}`);
-    };
 
     await daemon.start();
     daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });
@@ -1203,9 +1207,9 @@ describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () =>
         cwd: "/nonexistent/chorus-daemon-shutdown-itest2",
         makeSseListener: (o) => new MockSse(o),
         sigintTimeoutMs: 50, // drain bound = 50ms + 5s cap
+        killer: vi.fn(async () => ({ killed: false })),
       }
     );
-    daemon.waker.killer = vi.fn(async () => ({ killed: false }));
 
     await daemon.start();
     daemon.sseListener.opts.onEvent({ type: "new_notification", notificationUuid: "notif-1" });

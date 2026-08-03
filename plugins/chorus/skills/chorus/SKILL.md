@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.6"
+  version: "0.15.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -51,7 +51,7 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 | `pm_agent` | all `*:read` + `idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` |
 | `admin_agent` | all 15 permissions (every `read` + `write` + `admin`) |
 
-**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, sessions, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
+**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
@@ -97,15 +97,6 @@ url = "<BASE_URL>/api/mcp"
 Authorization = "Bearer cho_xxx"
 X-Chorus-Project = "project-uuid-1,project-uuid-2"
 ```
-
-### Session (Optional, Codex Port)
-
-The Codex port is currently **stateless**: it does NOT auto-create, heartbeat, or close Chorus sessions. Codex now supports `SubagentStart` / `SubagentStop` plugin hooks, but the Chorus Codex plugin has not yet wired them into automatic session lifecycle management. Sessions are optional bookkeeping you may use when running multiple workers in parallel:
-
-- Single-agent work — skip session tools entirely. Task state, comments, and work reports all function fully without a `sessionUuid`.
-- Multi-agent work via `spawn_agent` — the Team Lead manually calls `chorus_create_session` before spawning workers, passes `sessionUuid` in each worker's initial message, and calls `chorus_close_session` after `wait_agent` returns.
-
-See `$develop` for the multi-worker pattern.
 
 ### Project Groups
 
@@ -339,16 +330,15 @@ To turn it off, set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutr
 ## Execution Rules
 
 1. **Always check in first** — Call `chorus_checkin()` at session start
-2. **Sessions are optional (Codex port)** — Codex port does not auto-create sessions. Single-agent work: skip session tools entirely. Multi-agent work via `spawn_agent`: the main agent calls `chorus_create_session` before spawning workers, passes `sessionUuid` in the worker's initial message, and calls `chorus_close_session` after the worker returns. Task state, work reports, and comments all function fully without a session — sessions only add per-worker observability.
-3. **Stay in your role** — Only use tools available to your role
-4. **Report progress** — Use `chorus_report_work` or `chorus_add_comment`
-5. **Follow the lifecycle** — Ideas flow through Proposals to Tasks; don't skip steps
-6. **Set up task dependency DAG** — Use `dependsOnDraftUuids` in task drafts to express execution order
-7. **Verify before claiming** — Check available items before claiming
-8. **Document decisions** — Add comments explaining your reasoning
-9. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
-10. **Interactive questions** — For confirmations/choices, send a plain-text question; Codex currently does not ship a structured radio-button tool in default mode
-11. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill into a default sub-agent: `spawn_agent(agent_type="default", items=[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <uuid>."}])`. Codex 0.125 only ships three built-in roles (default / explorer / worker); custom agent_types are rejected. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
+2. **Stay in your role** — Only use tools available to your role
+3. **Report progress** — Use `chorus_report_work` or `chorus_add_comment`
+4. **Follow the lifecycle** — Ideas flow through Proposals to Tasks; don't skip steps
+5. **Set up task dependency DAG** — Use `dependsOnDraftUuids` in task drafts to express execution order
+6. **Verify before claiming** — Check available items before claiming
+7. **Document decisions** — Add comments explaining your reasoning
+8. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
+9. **Interactive questions** — For confirmations/choices, send a plain-text question; Codex currently does not ship a structured radio-button tool in default mode
+10. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill into a default sub-agent: `spawn_agent(agent_type="default", items=[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <uuid>."}])`. Codex 0.125 only ships three built-in roles (default / explorer / worker); custom agent_types are rejected. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
 
 ---
 
@@ -390,7 +380,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
-| **Development** | `/develop` | Claim Tasks, report work, (optional) session management, sub-agent spawn patterns |
+| **Development** | `/develop` | Claim Tasks, report work, and coordinate sub-agent workers |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
 | **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `proposal`, `develop`, and `yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-mcp-call.sh` wrapper. Skips silently in fallback mode. See `~/.codex/skills/openspec-aware/SKILL.md`. |
 

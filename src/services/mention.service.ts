@@ -33,6 +33,10 @@ import {
   listConnectionsForAgent,
 } from "@/services/daemon-connection.service";
 import { ACTIVE_EXECUTION_STATUSES } from "@/services/daemon-execution.service";
+import {
+  resolveProjectAgentCwdTarget,
+  type ResolvedProjectAgentCwdTarget,
+} from "@/services/project-agent-cwd.service";
 
 // ===== Constants =====
 
@@ -80,6 +84,7 @@ export interface MentionRef {
   // to the stored token and no migration of existing comment tokens.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  runtimeCwd?: boolean;
 }
 
 /**
@@ -154,6 +159,133 @@ export interface Mentionable {
     cwd: string | null;
     agentInstanceUuid: string;
   };
+  projectFixedCwd?: {
+    host: string;
+    cwd: string;
+    availability: "ready" | "offline" | "invalid";
+  };
+}
+
+async function resolveActorUserUuid(
+  companyUuid: string,
+  actorType: string,
+  actorUuid: string,
+): Promise<string | null> {
+  if (actorType === "user") return actorUuid;
+  const agent = await prisma.agent.findFirst({
+    where: { uuid: actorUuid, companyUuid },
+    select: { ownerUuid: true },
+  });
+  return agent?.ownerUuid ?? null;
+}
+
+async function resolveEntityProjectUuid(
+  companyUuid: string,
+  entityType: LineageEntityType,
+  entityUuid: string,
+): Promise<string | null> {
+  if (entityType === "idea") {
+    return (
+      await prisma.idea.findFirst({
+        where: { uuid: entityUuid, companyUuid },
+        select: { projectUuid: true },
+      })
+    )?.projectUuid ?? null;
+  }
+  if (entityType === "task") {
+    return (
+      await prisma.task.findFirst({
+        where: { uuid: entityUuid, companyUuid },
+        select: { projectUuid: true },
+      })
+    )?.projectUuid ?? null;
+  }
+  if (entityType === "proposal") {
+    return (
+      await prisma.proposal.findFirst({
+        where: { uuid: entityUuid, companyUuid },
+        select: { projectUuid: true },
+      })
+    )?.projectUuid ?? null;
+  }
+  return (
+    await prisma.document.findFirst({
+      where: { uuid: entityUuid, companyUuid },
+      select: { projectUuid: true },
+    })
+  )?.projectUuid ?? null;
+}
+
+async function resolveMentionTarget(params: {
+  companyUuid: string;
+  actorType: string;
+  actorUuid: string;
+  projectUuid: string;
+  agentUuid: string;
+  entityType?: LineageEntityType;
+  entityUuid?: string;
+}): Promise<ResolvedProjectAgentCwdTarget | null> {
+  const actorUserUuid = await resolveActorUserUuid(
+    params.companyUuid,
+    params.actorType,
+    params.actorUuid,
+  );
+  if (!actorUserUuid) return null;
+
+  let registeredInstanceUuid: string | null = null;
+  let registeredSource: "project_fixed" | "registered_instance" | null = null;
+  let registeredHost: string | null = null;
+  let registeredRuntimeCwd: string | null = null;
+
+  if (params.entityType && params.entityUuid) {
+    const { resolveRootIdea } = await import("@/services/lineage.service");
+    const { directIdeaUuid } = await resolveRootIdea(
+      params.companyUuid,
+      params.entityType,
+      params.entityUuid,
+    );
+    if (directIdeaUuid) {
+      const idea = await prisma.idea.findFirst({
+        where: { uuid: directIdeaUuid, companyUuid: params.companyUuid },
+        select: {
+          assigneeType: true,
+          assigneeUuid: true,
+          cwdSource: true,
+          cwdHost: true,
+          runtimeCwd: true,
+        },
+      });
+      const assigneeAgentUuid = idea
+        ? await resolveAssigneeAgentUuid(
+            params.companyUuid,
+            idea.assigneeType,
+            idea.assigneeUuid,
+          )
+        : null;
+      if (
+        idea?.assigneeType === "agent_instance" &&
+        idea.assigneeUuid &&
+        assigneeAgentUuid === params.agentUuid
+      ) {
+        registeredInstanceUuid = idea.assigneeUuid;
+        registeredSource =
+          idea.cwdSource === "project_fixed" ? "project_fixed" : "registered_instance";
+        registeredHost = idea.cwdHost;
+        registeredRuntimeCwd = idea.runtimeCwd;
+      }
+    }
+  }
+
+  return resolveProjectAgentCwdTarget({
+    companyUuid: params.companyUuid,
+    actorUserUuid,
+    projectUuid: params.projectUuid,
+    agentUuid: params.agentUuid,
+    registeredInstanceUuid,
+    registeredSource,
+    registeredHost,
+    registeredRuntimeCwd,
+  });
 }
 
 export interface CreateMentionsParams {
@@ -219,7 +351,7 @@ export function parseMentions(content: string): MentionRef[] {
     const displayName = match[1];
     const type = match[2].toLowerCase() as "user" | "agent";
     const uuid = match[3].toLowerCase();
-    const { pinnedHost, pinnedCwd } = decodePinSuffix(match[4]);
+    const { pinnedHost, pinnedCwd, runtimeCwd } = decodePinSuffix(match[4]);
     const key = `${type}:${uuid}`;
 
     if (!seen.has(key)) {
@@ -230,6 +362,7 @@ export function parseMentions(content: string): MentionRef[] {
       if (pinnedHost !== null || pinnedCwd !== null) {
         ref.pinnedHost = pinnedHost;
         ref.pinnedCwd = pinnedCwd;
+        if (runtimeCwd) ref.runtimeCwd = true;
       }
       mentions.push(ref);
     }
@@ -336,6 +469,36 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     if (!prefs.mentioned) continue;
 
     const message = `${actorName} mentioned you: "${snippet}"`;
+    const hasExplicitPin =
+      mention.pinnedHost !== undefined || mention.pinnedCwd !== undefined;
+    // A runtime-cwd token is emitted only for a project-fixed preference. Resolve
+    // it again server-side (without lineage assignment inheritance) so the stored
+    // marker cannot authorize an arbitrary runtime directory and the wake receives
+    // an immutable host/runtime snapshot. Ordinary instance pins remain exact and
+    // deliberately skip the project resolver.
+    const shouldResolveProjectTarget =
+      mention.type === "agent" && (!hasExplicitPin || mention.runtimeCwd === true);
+    const resolvedTarget =
+      shouldResolveProjectTarget
+        ? await resolveMentionTarget({
+            companyUuid,
+            actorType,
+            actorUuid,
+            projectUuid,
+            agentUuid: mention.uuid,
+            // Runtime markers represent the current project preference, not an
+            // existing root Idea's sticky assignment.
+            entityType:
+              mention.runtimeCwd === true
+                ? undefined
+                : (
+                    ["idea", "task", "proposal", "document"] as string[]
+                  ).includes(notifEntityType)
+                  ? (notifEntityType as LineageEntityType)
+                  : undefined,
+            entityUuid: mention.runtimeCwd === true ? undefined : notifEntityUuid,
+          })
+        : null;
 
     notifications.push({
       companyUuid,
@@ -359,6 +522,19 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       // pin is transport-only here — it is NOT persisted on the Notification row.
       pinnedHost: mention.pinnedHost,
       pinnedCwd: mention.pinnedCwd,
+      ...(resolvedTarget?.source === "project_fixed"
+        ? {
+            resolvedCwdSource: resolvedTarget.source,
+            resolvedCwdHost: resolvedTarget.host,
+            resolvedRuntimeCwd: resolvedTarget.cwd,
+            resolvedCwdAvailability: resolvedTarget.availability,
+          }
+        : resolvedTarget?.source === "registered_instance"
+          ? {
+              pinnedHost: resolvedTarget.host,
+              pinnedCwd: resolvedTarget.cwd,
+            }
+          : {}),
     });
   }
 
@@ -632,6 +808,55 @@ export async function enrichIdeaContext(
   }
 }
 
+async function enrichProjectFixedCwds(params: {
+  companyUuid: string;
+  actorType: string;
+  actorUuid: string;
+  ownerUuid?: string;
+  results: Mentionable[];
+  entityType: LineageEntityType;
+  entityUuid: string;
+}): Promise<void> {
+  const agentResults = params.results.filter(
+    (result): result is Mentionable & { type: "agent" } => result.type === "agent",
+  );
+  if (agentResults.length === 0) return;
+  const actorUserUuid =
+    params.actorType === "user" ? params.actorUuid : params.ownerUuid;
+  if (!actorUserUuid) return;
+  const projectUuid = await resolveEntityProjectUuid(
+    params.companyUuid,
+    params.entityType,
+    params.entityUuid,
+  );
+  if (!projectUuid) return;
+
+  const preferences = await prisma.projectAgentCwdPreference.findMany({
+    where: {
+      companyUuid: params.companyUuid,
+      userUuid: actorUserUuid,
+      projectUuid,
+      agentUuid: { in: agentResults.map((result) => result.uuid) },
+    },
+    select: { agentUuid: true, host: true, cwd: true },
+  });
+  const byAgent = new Map(preferences.map((preference) => [preference.agentUuid, preference]));
+  for (const result of agentResults) {
+    const preference = byAgent.get(result.uuid);
+    if (!preference) continue;
+    const ready = (result.instances ?? []).some(
+      (instance) =>
+        instance.host === preference.host && instance.effectiveStatus === "online",
+    );
+    result.projectFixedCwd = {
+      host: preference.host,
+      cwd: preference.cwd,
+      availability:
+        !preference.host || !preference.cwd ? "invalid" : ready ? "ready" : "offline",
+    };
+  }
+}
+
 /**
  * Search for mentionable users and agents within a company.
  * Permission scoping:
@@ -698,7 +923,18 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     if (withInstances) await enrichAgentInstances(companyUuid, sliced);
     // Annotate root-idea assignment context AFTER the slice too (pin-cwd-before-wake,
     // Part 2a) — the resolve is bounded (single root-idea resolve, no per-candidate query).
-    if (hasEntityContext) await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
+    if (hasEntityContext) {
+      await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
+      await enrichProjectFixedCwds({
+        companyUuid,
+        actorType,
+        actorUuid,
+        ownerUuid,
+        results: sliced,
+        entityType: entityType!,
+        entityUuid: entityUuid!,
+      });
+    }
     return sliced;
   }
   // Search users (all company users are mentionable)
@@ -778,7 +1014,18 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   if (withInstances) await enrichAgentInstances(companyUuid, sliced);
   // Annotate root-idea assignment context AFTER the slice too (pin-cwd-before-wake,
   // Part 2a) — the resolve is bounded (single root-idea resolve, no per-candidate query).
-  if (hasEntityContext) await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
+  if (hasEntityContext) {
+    await enrichIdeaContext(companyUuid, sliced, entityType!, entityUuid!);
+    await enrichProjectFixedCwds({
+      companyUuid,
+      actorType,
+      actorUuid,
+      ownerUuid,
+      results: sliced,
+      entityType: entityType!,
+      entityUuid: entityUuid!,
+    });
+  }
   return sliced;
 }
 

@@ -13,9 +13,18 @@ const mockIdeaFindFirst = vi.hoisted(() => vi.fn());
 const mockIdeaUpdate = vi.hoisted(() => vi.fn());
 const mockActivityCreate = vi.hoisted(() => vi.fn());
 const mockNotificationCreate = vi.hoisted(() => vi.fn());
+const mockPreferenceFindFirst = vi.hoisted(() => vi.fn());
+const mockPreferenceUpdate = vi.hoisted(() => vi.fn());
+const mockAgentInstanceUpsert = vi.hoisted(() => vi.fn());
+const mockAgentInstanceFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     idea: { findFirst: mockIdeaFindFirst, update: mockIdeaUpdate },
+    projectAgentCwdPreference: { findFirst: mockPreferenceFindFirst, update: mockPreferenceUpdate },
+    agentInstance: {
+      upsert: mockAgentInstanceUpsert,
+      findFirst: mockAgentInstanceFindFirst,
+    },
     activity: { create: mockActivityCreate },
     notification: { create: mockNotificationCreate },
   },
@@ -98,9 +107,16 @@ beforeEach(() => {
   mockIdeaFindFirst.mockResolvedValue({
     assigneeType: "agent",
     assigneeUuid: agentUuid,
+    projectUuid: "project-1",
+    cwdSource: null,
+    cwdHost: null,
+    runtimeCwd: null,
   });
   mockResolveAssigneeAgentUuid.mockResolvedValue(agentUuid);
   mockListConnectionsForAgent.mockResolvedValue([]);
+  mockPreferenceFindFirst.mockResolvedValue(null);
+  mockAgentInstanceUpsert.mockResolvedValue({ uuid: "fixed-instance" });
+  mockAgentInstanceFindFirst.mockResolvedValue(null);
 });
 
 describe("previewIdeaWakeTarget — outcome classification", () => {
@@ -143,6 +159,34 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
     expectNoSideEffects();
   });
 
+  it("direct: a fixed project-Agent cwd suppresses picker and auto-pin semantics", async () => {
+    mockIdeaFindFirst.mockImplementation(async ({ select }) =>
+      "projectUuid" in select
+        ? { projectUuid: "project-1" }
+        : { assigneeType: "agent", assigneeUuid: agentUuid },
+    );
+    mockPreferenceFindFirst.mockResolvedValue({ uuid: "preference-1" });
+    mockListConnectionsForAgent.mockResolvedValue([makeConnection(), makeConnection()]);
+
+    const preview = await previewIdeaWakeTarget(companyUuid, ideaUuid, "user-1");
+
+    expect(preview!.outcome).toBe("direct");
+    expect(mockPreferenceFindFirst).toHaveBeenCalledWith({
+      where: {
+        companyUuid,
+        userUuid: "user-1",
+        projectUuid: "project-1",
+        agentUuid,
+      },
+      select: {
+        uuid: true,
+        host: true,
+        cwd: true,
+        anchorAgentInstanceUuid: true,
+      },
+    });
+  });
+
   it("direct (sub-case: already agent_instance): assignee is instance-pinned", async () => {
     mockIdeaFindFirst.mockResolvedValue({
       assigneeType: "agent_instance",
@@ -159,6 +203,68 @@ describe("previewIdeaWakeTarget — outcome classification", () => {
     expect(preview!.outcome).toBe("direct");
     expect(preview!.assigneeAgentUuid).toBe(agentUuid);
     expectNoSideEffects();
+  });
+
+  it("direct: a persisted fixed assignment retains fixed origin and discovered runtime cwd", async () => {
+    mockIdeaFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "fixed-instance",
+      projectUuid: "project-1",
+      cwdSource: "project_fixed",
+      cwdHost: "fixed-host",
+      runtimeCwd: "/discovered/fixed",
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      uuid: "fixed-instance",
+      host: "fixed-host",
+      cwd: "/discovered/fixed",
+    });
+
+    const preview = await previewIdeaWakeTarget(
+      companyUuid,
+      ideaUuid,
+      "user-1",
+    );
+
+    expect(preview).toMatchObject({
+      outcome: "direct",
+      resolvedTarget: {
+        source: "project_fixed",
+        host: "fixed-host",
+        cwd: "/discovered/fixed",
+        availability: "offline",
+        promptPolicy: "suppress",
+      },
+    });
+  });
+
+  it("direct: an ordinary instance pin is not mislabeled as project fixed", async () => {
+    mockIdeaFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "ordinary-instance",
+      projectUuid: "project-1",
+      cwdSource: null,
+      cwdHost: null,
+      runtimeCwd: null,
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      uuid: "ordinary-instance",
+      host: "ordinary-host",
+      cwd: "/ordinary",
+    });
+
+    const preview = await previewIdeaWakeTarget(
+      companyUuid,
+      ideaUuid,
+      "user-1",
+    );
+
+    expect(preview?.resolvedTarget).toMatchObject({
+      source: "registered_instance",
+      host: "ordinary-host",
+      cwd: "/ordinary",
+      promptPolicy: "none",
+    });
   });
 
   it("direct (sub-case: zero online): the agent has connections but none online", async () => {
@@ -259,7 +365,14 @@ describe("previewIdeaWakeTarget — candidate shape & scoping", () => {
     // Company-scoped lookup: the miss came from the scoped where clause.
     expect(mockIdeaFindFirst).toHaveBeenCalledWith({
       where: { uuid: ideaUuid, companyUuid },
-      select: { assigneeType: true, assigneeUuid: true },
+      select: {
+        assigneeType: true,
+        assigneeUuid: true,
+        projectUuid: true,
+        cwdSource: true,
+        cwdHost: true,
+        runtimeCwd: true,
+      },
     });
     // Never resolves an assignee / touches the registry / wakes for a missing idea.
     expect(mockResolveAssigneeAgentUuid).not.toHaveBeenCalled();

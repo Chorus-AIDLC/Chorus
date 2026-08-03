@@ -47,6 +47,7 @@ import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
+import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
 import { reassignIdeaInstanceNoWakeAction } from "./[ideaUuid]/actions";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import type { ElaborationResponse } from "@/types/elaboration";
@@ -248,7 +249,11 @@ export function IdeaDetailPanel({
     confirmPick: confirmVerifyPick,
     cancelPick: cancelVerifyPick,
     isResolving: isResolvingVerify,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+    fixedTarget,
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: idea.uuid,
+  });
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -730,6 +735,7 @@ export function IdeaDetailPanel({
                       agent should write the proposal" action. Replaces the old
                       idea-panel "Create Proposal" button. No manual
                       create-proposal fallback is offered here. */}
+                  {fixedTarget && <FixedCwdAnchor target={fixedTarget} />}
                   {canVerify && !verified && (
                     <Button
                       className="bg-primary hover:bg-[#B56A42] text-white"

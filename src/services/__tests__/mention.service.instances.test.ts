@@ -105,6 +105,17 @@ describe("parseMentions — pinned instance suffix (T3)", () => {
     expect("pinnedCwd" in refs[0]).toBe(false);
   });
 
+  it("preserves a project-fixed runtime cwd marker", () => {
+    const refs = parseMentions(
+      `@[DevBot](agent:${AGENT_A}?cwd=%2Fwork%2Fdynamic&host=prod&runtime=1)`,
+    );
+    expect(refs[0]).toMatchObject({
+      pinnedHost: "prod",
+      pinnedCwd: "/work/dynamic",
+      runtimeCwd: true,
+    });
+  });
+
   it("decodes an unknown-path pin (empty cwd) to a null cwd", () => {
     const refs = parseMentions(`@[DevBot](agent:${AGENT_A}?cwd=&host=ci-runner)`);
     expect(refs[0].pinnedCwd).toBeNull();

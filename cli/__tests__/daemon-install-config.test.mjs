@@ -10,6 +10,7 @@ import {
   resolveInstallCredentials,
   resolveInstallCwds,
   resolveInstallAgent,
+  resolveInstallBrowseRoots,
 } from "../daemon-install-config.mjs";
 
 // ---- resolveInstallCredentials ------------------------------------------
@@ -88,6 +89,31 @@ describe("resolveInstallCredentials", () => {
     expect(r.ok).toBe(false);
     expect(d.validate).toHaveBeenCalledOnce();
     expect(d.writeConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveInstallBrowseRoots", () => {
+  it("normalizes, deduplicates, and field-merges explicit roots", async () => {
+    const writeConfig = vi.fn();
+    const result = await resolveInstallBrowseRoots(
+      { browseRoot: ["~/src", "/opt", "~/src"] },
+      { home: "/home/u", readJson: () => ({ cwds: ["/served"] }), writeConfig },
+    );
+    expect(result.browseRoots).toEqual(["/home/u/src", "/opt"]);
+    expect(writeConfig).toHaveBeenCalledWith({ browseRoots: ["/home/u/src", "/opt"] });
+  });
+
+  it("preserves stored roots and defaults to OS home when absent", async () => {
+    const writeConfig = vi.fn();
+    expect(await resolveInstallBrowseRoots({}, {
+      home: "/home/u", readJson: () => ({ browseRoots: ["/stored"] }), writeConfig,
+    })).toEqual({ browseRoots: ["/stored"] });
+    expect(writeConfig).not.toHaveBeenCalled();
+
+    expect(await resolveInstallBrowseRoots({}, {
+      home: "/home/u", readJson: () => null, writeConfig,
+    })).toEqual({ browseRoots: ["/home/u"] });
+    expect(writeConfig).toHaveBeenCalledWith({ browseRoots: ["/home/u"] });
   });
 });
 

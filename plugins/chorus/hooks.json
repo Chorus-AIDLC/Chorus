@@ -2,12 +2,13 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
             "command": "${PLUGIN_ROOT}/hooks/on-session-start.sh",
             "timeout": 20,
+            "additionalContextLimit": 5000,
             "statusMessage": "Chorus: checkin"
           }
         ]

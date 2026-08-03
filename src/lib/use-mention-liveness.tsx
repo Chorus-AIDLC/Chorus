@@ -37,12 +37,12 @@ export function useMentionLiveness(ref: MentionLivenessRef): MentionLiveness {
   // verdict stable across re-parses while satisfying exhaustive-deps. A fresh
   // MentionLivenessRef is rebuilt from these so resolveMentionLiveness sees the
   // same shape (pin keys present iff this is a pinned ref).
-  const { uuid, pinnedHost, pinnedCwd } = ref;
+  const { uuid, pinnedHost, pinnedCwd, runtimeCwd } = ref;
   const isPinned = "pinnedHost" in ref || "pinnedCwd" in ref;
   return useMemo(() => {
     const stableRef: MentionLivenessRef = isPinned
-      ? { uuid, pinnedHost, pinnedCwd }
+      ? { uuid, pinnedHost, pinnedCwd, runtimeCwd }
       : { uuid };
     return resolveMentionLiveness(stableRef, connections);
-  }, [connections, uuid, pinnedHost, pinnedCwd, isPinned]);
+  }, [connections, uuid, pinnedHost, pinnedCwd, runtimeCwd, isPinned]);
 }

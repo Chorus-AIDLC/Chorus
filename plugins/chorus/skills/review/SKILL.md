@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.6"
+  version: "0.15.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -190,7 +190,7 @@ chorus_pm_revoke_proposal({
 })
 ```
 
-Cascade effects: all materialized Tasks are closed, all materialized Documents are deleted, and related AcceptanceCriteria/TaskDependencies/SessionCheckins are cleaned up. The Proposal returns to `draft` status so the PM can revise and resubmit.
+Cascade effects: all materialized Tasks are closed, all materialized Documents are deleted, and related acceptance criteria and task dependencies are cleaned up. The Proposal returns to `draft` status so the PM can revise and resubmit.
 
 ### Workflow B: Task Verification
 

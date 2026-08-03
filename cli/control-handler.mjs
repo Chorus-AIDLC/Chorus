@@ -66,6 +66,8 @@ export function createControlHandler(deps) {
   const sigintTimeoutMs = deps.sigintTimeoutMs;
   const redispatchResume = deps.redispatchResume;
   const deliverTurn = deps.deliverTurn;
+  const handleDirectoryRequest = deps.handleDirectoryRequest;
+  const reportDirectoryRequest = deps.reportDirectoryRequest;
   const logger = deps.logger ?? NOOP_LOGGER;
 
   /** Registry key for a resource — MUST match waker.#execKey. */
@@ -89,7 +91,8 @@ export function createControlHandler(deps) {
       if (
         event.command !== "interrupt" &&
         event.command !== "resume" &&
-        event.command !== "deliver_turn"
+        event.command !== "deliver_turn" &&
+        event.command !== "browse_directory"
       ) {
         // Forward-compatible: the wire enum may grow.
         logger.warn(`[Chorus] control command "${event.command}" not supported; ignoring`);
@@ -106,6 +109,28 @@ export function createControlHandler(deps) {
           `[Chorus] control: ignoring ${command} for connection ${targetConnectionUuid} ` +
             `(this daemon is ${myConnectionUuid ?? "<unregistered>"})`
         );
+        return;
+      }
+
+      if (command === "browse_directory") {
+        const requestUuid = event.requestUuid;
+        if (typeof requestUuid !== "string" || !requestUuid) {
+          logger.warn("[Chorus] control: browse_directory missing requestUuid; ignoring");
+          return;
+        }
+        Promise.resolve()
+          .then(() => handleDirectoryRequest?.(event))
+          .then((result) => reportDirectoryRequest?.({
+            requestUuid,
+            status: "succeeded",
+            ...result,
+          }))
+          .catch((err) => reportDirectoryRequest?.({
+            requestUuid,
+            status: "failed",
+            errorCode: err?.code ?? "INTERNAL_ERROR",
+          }))
+          .catch((err) => logger.warn(`[Chorus] control: directory report failed: ${err}`));
         return;
       }
 
@@ -155,7 +180,11 @@ export function createControlHandler(deps) {
             `)`
         );
         try {
-          redispatchResume?.(entityType, entityUuid, resumeReason);
+          if (typeof event.runtimeCwd === "string" && event.runtimeCwd) {
+            redispatchResume?.(entityType, entityUuid, resumeReason, event.runtimeCwd);
+          } else {
+            redispatchResume?.(entityType, entityUuid, resumeReason);
+          }
         } catch (err) {
           logger.warn(`[Chorus] control: resume re-dispatch failed for ${entityType}:${entityUuid}: ${err}`);
         }

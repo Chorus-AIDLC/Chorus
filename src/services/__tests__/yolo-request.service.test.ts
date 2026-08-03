@@ -15,9 +15,15 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
     },
     agentInstance: {
       findFirst: vi.fn(),
+      upsert: vi.fn(),
     },
     daemonConnection: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
+    projectAgentCwdPreference: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
   },
   mockEventBus: { emitChange: vi.fn() },
@@ -68,7 +74,16 @@ beforeEach(() => {
   // incomplete stage), so the proposal/task mocks are intentionally left unset.
   mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
   mockPrisma.daemonConnection.findFirst.mockResolvedValue({ uuid: "conn-1" });
+  mockPrisma.daemonConnection.findMany.mockResolvedValue([{
+    uuid: "conn-1", agentUuid: AGENT_UUID, clientType: "claude_code",
+    clientVersion: null, host: "Laptop-Q3", cwd: "/home/u/dev/payments",
+    startedAt: null, status: "online", connectedAt: new Date(),
+    lastSeenAt: new Date(), disconnectedAt: null, agentInstanceUuid: INSTANCE_UUID,
+    agent: { name: "Agent", ownerUuid: USER_UUID },
+  }]);
+  mockPrisma.agentInstance.upsert.mockResolvedValue({ uuid: INSTANCE_UUID });
   mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: AGENT_UUID });
+  mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
 });
 
 describe("requestYolo — success", () => {
@@ -126,14 +141,9 @@ describe("requestYolo — success", () => {
       })
     );
     // HARD pin: the liveness check targets the pinned instance's exact (host, cwd) place.
-    expect(mockPrisma.daemonConnection.findFirst).toHaveBeenCalledWith(
+    expect(mockPrisma.daemonConnection.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          agentUuid: AGENT_UUID,
-          host: "Laptop-Q3",
-          cwd: "/home/u/dev/payments",
-          status: "online",
-        }),
+        where: { companyUuid: COMPANY_UUID, agentUuid: AGENT_UUID },
       })
     );
     expect(mockCreateActivity).toHaveBeenCalled();
@@ -165,6 +175,7 @@ describe("requestYolo — precondition failures (each emits nothing)", () => {
 
   it("rejects with AGENT_OFFLINE (distinguishable from ASSIGNEE_NOT_AGENT) when no online connection", async () => {
     mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
 
     await expect(requestYolo(PARAMS)).rejects.toMatchObject({
       code: "AGENT_OFFLINE",
@@ -185,9 +196,25 @@ describe("requestYolo — precondition failures (each emits nothing)", () => {
       cwd: "/home/u/dev/payments",
     });
     mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
 
     await expect(requestYolo(PARAMS)).rejects.toMatchObject({
       code: "INSTANCE_OFFLINE",
+    });
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects with FIXED_CWD_HOST_OFFLINE when another Agent host is online", async () => {
+    mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue({
+      uuid: "pref-1",
+      host: "fixed-host",
+      cwd: "/work/fixed",
+      anchorAgentInstanceUuid: INSTANCE_UUID,
+    });
+    mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+
+    await expect(requestYolo(PARAMS)).rejects.toMatchObject({
+      code: "FIXED_CWD_HOST_OFFLINE",
     });
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });

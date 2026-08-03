@@ -159,20 +159,12 @@ function InstanceIdentity({
   );
 }
 
-// A one-click "copy this conversation's session id" button for the header. The
-// session id IS the `claude --resume` anchor (daemon spawns idea-anchored sessions
-// with `--session-id = <idea uuid>`, and ad-hoc sessions carry a server-generated
-// uuid) — so copying it lets a human take the conversation over locally. We copy
-// the BARE id (not a `claude --resume <id>` command and not a `cd <dir> && …`): cwd
-// isn't reported yet, so a full command can't be assembled here. Mirrors the copy
-// idiom from `daemon-connect-cta.tsx` (guarded clipboard + 2s Copy→Check + a11y).
-//
-// Responsive label: on mobile the header is cramped, so at rest the button is
-// ICON-ONLY (label hidden) to save space; the moment it's copied it briefly
-// reveals the "Copied!" confirmation text (then collapses back after 2s). On
-// desktop (≥lg) the label is always shown. `aria-label` + `aria-live` keep it
-// accessible at every breakpoint, even while the visible label is hidden.
-export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
+// Keep the established copy control while using the backend-owned resume ID.
+export function CopySessionIdButton({
+  backendSessionId,
+}: {
+  backendSessionId: string;
+}) {
   const t = useTranslations("daemonChat");
   const [copied, setCopied] = useState(false);
   const label = copied ? t("sessionIdCopied") : t("copySessionId");
@@ -181,7 +173,7 @@ export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
     try {
       // Optional-chain so an unavailable Clipboard API (insecure context, etc.)
       // degrades gracefully — the button just no-ops instead of throwing.
-      await navigator.clipboard?.writeText(sessionId);
+      await navigator.clipboard?.writeText(backendSessionId);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
@@ -204,8 +196,6 @@ export function CopySessionIdButton({ sessionId }: { sessionId: string }) {
       ) : (
         <Copy className="h-3.5 w-3.5" aria-hidden />
       )}
-      {/* Hidden on mobile at rest (icon-only, space-saving); revealed on copy as
-          the transient confirmation, and always shown on desktop (≥lg). */}
       <span className={copied ? "inline" : "hidden lg:inline"}>{label}</span>
     </Button>
   );
@@ -284,6 +274,10 @@ export function TranscriptView({
 
   const agentName =
     originConnection?.agentName?.trim() || t("roleAgent");
+  const displayConnection =
+    originConnection && session?.runtimeCwd
+      ? { ...originConnection, cwd: session.runtimeCwd }
+      : originConnection;
 
   // Current/last turn status for the header badge — the running turn if any,
   // otherwise the newest turn's status.
@@ -368,11 +362,11 @@ export function TranscriptView({
           <h3 className="truncate text-[17px] font-semibold text-foreground min-w-0">
             {title}
           </h3>
-          {originConnection && (
+          {displayConnection && (
             <div className="shrink-0">
               <InstanceIdentity
-                cwd={originConnection.cwd}
-                host={originConnection.host}
+                cwd={displayConnection.cwd}
+                host={displayConnection.host}
                 crossHost={originCrossHost}
               />
             </div>
@@ -423,17 +417,15 @@ export function TranscriptView({
               totalCacheReadTokens={totalCacheReadTokens}
               totalCacheCreationTokens={totalCacheCreationTokens}
             />
-            {/* Right-aligned action group — the "Copy session ID" button and the
+            {/* Right-aligned action group — the session copy action and the
                 "Connection details" disclosure trigger sit ADJACENT at the end of the
-                status line. `ml-auto` lives on this wrapper (not on the trigger) so the
-                two stay grouped together rather than splitting to opposite ends. The
-                copy button is gated on `session` (an offline conversation can still be
-                resumed locally, so its id is still worth copying); the details trigger
-                is gated on `originConnection` (there's nothing to disclose without it). */}
-            {(session || originConnection) && (
+                status line. The copy action exists only for a usable backend resume ID. */}
+            {(session?.backendSessionId || originConnection) && (
               <div className="ml-auto flex items-center gap-1">
-                {session && (
-                  <CopySessionIdButton sessionId={session.sessionId} />
+                {session?.backendSessionId && (
+                  <CopySessionIdButton
+                    backendSessionId={session.backendSessionId}
+                  />
                 )}
                 {/* Connection details — DEMOTED to a collapsible disclosure that shares
                     the status line. The content (host / version / uptime / started via
@@ -451,31 +443,31 @@ export function TranscriptView({
               </div>
             )}
           </div>
-          {originConnection && (
+          {displayConnection && (
             <CollapsibleContent>
               <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[#EFEBE4] dark:border-[#2a2a2e] bg-[#FCFBF8] dark:bg-[#1e1d1b] p-4">
-                <IdentityBlock connection={originConnection} size="sm" />
+                <IdentityBlock connection={displayConnection} size="sm" />
                 <div className="grid grid-cols-2 gap-3">
                   {originOnline && (
                     <DetailField
                       label={t("detailUptime")}
-                      value={formatUptime(originConnection.connectedAt, nowMs)}
+                      value={formatUptime(displayConnection.connectedAt, nowMs)}
                       mono
                     />
                   )}
                   <DetailField
                     label={t("detailHost")}
                     value={
-                      originConnection.host === ""
+                      displayConnection.host === ""
                         ? t("detailsHostUnknown")
-                        : originConnection.host
+                        : displayConnection.host
                     }
                     mono
                   />
-                  {originConnection.startedAt && (
+                  {displayConnection.startedAt && (
                     <DetailField
                       label={t("detailStarted")}
-                      value={formatRelative(originConnection.startedAt, nowMs)}
+                      value={formatRelative(displayConnection.startedAt, nowMs)}
                     />
                   )}
                 </div>

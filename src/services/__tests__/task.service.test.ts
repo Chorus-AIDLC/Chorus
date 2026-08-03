@@ -600,6 +600,32 @@ describe("claimTask", () => {
     expect(updateData.assignedByUuid).toBe("user-123");
   });
 
+  it.each([undefined, "", "   "])(
+    "stores a null cwd source when runtime cwd exists but source is %j",
+    async (cwdSource) => {
+      const claimed = {
+        ...rawTask({ status: "assigned", assigneeUuid: "a1" }),
+        project: { uuid: PROJECT_UUID, name: "Test Project" },
+      };
+      mockPrisma.task.update.mockResolvedValue(claimed);
+
+      await claimTask({
+        taskUuid: TASK_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: "a1",
+        runtimeCwd: "/workspace/project",
+        cwdSource,
+      });
+
+      expect(mockPrisma.task.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ cwdSource: null }),
+        }),
+      );
+    },
+  );
+
   // add-agent-instance-addressing: an optional instance override persists the
   // pin as the TASK ROW's own agent_instance assignment (assigneeType=
   // "agent_instance", assigneeUuid=<instance uuid>), overriding the passed-in

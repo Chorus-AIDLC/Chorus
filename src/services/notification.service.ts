@@ -41,6 +41,12 @@ export interface NotificationCreateParams {
   // `pinnedHost` "" = unknown-host instance; `pinnedCwd` null = unknown-path instance.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  temporaryHost?: string | null;
+  temporaryRuntimeCwd?: string | null;
+  resolvedCwdSource?: string | null;
+  resolvedCwdHost?: string | null;
+  resolvedRuntimeCwd?: string | null;
+  resolvedCwdAvailability?: "ready" | "offline" | "invalid" | null;
 }
 
 export interface NotificationListParams {
@@ -211,7 +217,7 @@ export async function createReturningTurn(
   // target. It runs BEFORE the SSE emit so the `new_notification` event can stamp the
   // resolved `targetConnectionUuid` (the bridge reads only `params`, not the created row,
   // so this reorder is behavior-preserving for the notification row itself).
-  const { turn, targetConnectionUuid, suppressWake } =
+  const { turn, targetConnectionUuid, runtimeCwd, suppressWake } =
     await createTurnAndResolveTarget(params);
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
@@ -249,6 +255,7 @@ export async function createReturningTurn(
     projectUuid: params.projectUuid,
     // Transport-only directed-delivery target (null for un-pinned / notify-only wakes).
     targetConnectionUuid,
+    runtimeCwd,
     // Transport-only offline-pin marker: true ONLY for an offline-pin wake (suppress on
     // EVERY connection), false otherwise.
     suppressWake,
@@ -311,12 +318,12 @@ export async function createBatch(
   // notification params (referential identity) so the per-recipient emit below can read it.
   const targetByParams = new Map<
     NotificationCreateParams,
-    { targetConnectionUuid: string | null; suppressWake: boolean }
+    { targetConnectionUuid: string | null; runtimeCwd: string | null; suppressWake: boolean }
   >();
   for (const params of notifications) {
-    const { targetConnectionUuid, suppressWake } =
+    const { targetConnectionUuid, runtimeCwd, suppressWake } =
       await createTurnAndResolveTarget(params);
-    targetByParams.set(params, { targetConnectionUuid, suppressWake });
+    targetByParams.set(params, { targetConnectionUuid, runtimeCwd, suppressWake });
   }
 
   // Deduplicate recipients and emit one event per recipient
@@ -351,6 +358,9 @@ export async function createBatch(
       // un-pinned / notify-only). Resolved above by the wake-turn chokepoint.
       targetConnectionUuid: matchParams
         ? targetByParams.get(matchParams)?.targetConnectionUuid ?? null
+        : null,
+      runtimeCwd: matchParams
+        ? targetByParams.get(matchParams)?.runtimeCwd ?? null
         : null,
       // Transport-only offline-pin marker: true ONLY for an offline-pin wake — tells every
       // daemon to suppress (Q2 notify-only), distinguishing it from an un-pinned wake.

@@ -24,6 +24,8 @@ import {
   type InstanceCandidate,
 } from "@/components/agent-presence/instance-picker";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
+import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
+import type { ResolvedProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 import {
   claimIdeaAction,
   claimIdeaToAgentAction,
@@ -91,6 +93,8 @@ export function AssignIdeaModal({
   // online; a fully-offline agent yields no picker and assigns the plain agent.
   const [instances, setInstances] = useState<InstanceCandidate[]>([]);
   const [isLoadingInstances, setIsLoadingInstances] = useState(false);
+  const [resolvedTarget, setResolvedTarget] =
+    useState<ResolvedProjectAgentCwdTarget | null>(null);
   const [pinnedConnectionUuid, setPinnedConnectionUuid] = useState<string | null>(
     null,
   );
@@ -117,17 +121,19 @@ export function AssignIdeaModal({
     if (selectedOption !== "agent" || !selectedAgentUuid) {
       setInstances([]);
       setPinnedConnectionUuid(null);
+      setResolvedTarget(null);
       return;
     }
     let cancelled = false;
     setIsLoadingInstances(true);
     setPinnedConnectionUuid(null);
-    getAgentInstancesAction(selectedAgentUuid)
+    getAgentInstancesAction(selectedAgentUuid, projectUuid)
       .then((res) => {
         if (cancelled) return;
         // Online-only: an offline instance is not a wake target, so it never
         // appears in the picker. A fully-offline agent yields [] → no picker.
         setInstances(filterOnlineInstances(res.instances));
+        setResolvedTarget(res.resolvedTarget);
       })
       .finally(() => {
         if (!cancelled) setIsLoadingInstances(false);
@@ -135,7 +141,7 @@ export function AssignIdeaModal({
     return () => {
       cancelled = true;
     };
-  }, [selectedOption, selectedAgentUuid]);
+  }, [projectUuid, selectedOption, selectedAgentUuid]);
 
   // The instance the owner pinned, resolved from the controlled connectionUuid.
   // null → "inherit / plain agent" (revert-to-plain-agent is simply no pin).
@@ -374,6 +380,8 @@ export function AssignIdeaModal({
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             {t("assignInstance.loadingInstances")}
                           </div>
+                        ) : resolvedTarget?.source === "project_fixed" ? (
+                          <FixedCwdAnchor target={resolvedTarget} />
                         ) : instances.length === 0 ? (
                           <p className="rounded-lg bg-background p-2.5 text-[11px] leading-relaxed text-muted-foreground">
                             {t("assignInstance.noInstances")}
@@ -388,10 +396,12 @@ export function AssignIdeaModal({
                             ariaLabel={t("assignInstance.workingDirectory")}
                           />
                         )}
-                        <div className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A8C7E]">
-                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                          <span>{t("assignInstance.ideaPinNote")}</span>
-                        </div>
+                        {resolvedTarget?.source !== "project_fixed" && (
+                          <div className="flex items-start gap-1.5 text-[11px] leading-relaxed text-[#9A8C7E]">
+                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                            <span>{t("assignInstance.ideaPinNote")}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

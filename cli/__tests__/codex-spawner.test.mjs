@@ -224,7 +224,8 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     expect(onChild).toHaveBeenCalledWith(child);
     // returns the captured thread id as the session id
     expect(result.exitCode).toBe(0);
-    expect(result.sessionId).toBe(TID);
+    expect(result.sessionId).toBe(ANCHOR);
+    expect(result.backendSessionId).toBe(TID);
   });
 
   it("overwrites stale inherited Chorus connection values", async () => {

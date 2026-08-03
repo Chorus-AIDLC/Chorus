@@ -179,8 +179,22 @@ chorus daemon stop --force  # force-clean the pidfile when a stuck/unverifiable
 chorus daemon install --cwd ~/proj          # generate the systemd --user unit,
                                              # daemon-reload, enable --now
 chorus daemon install --cwd ~/a --cwd ~/b    # serve several paths at boot
+chorus daemon install --browse-root ~/work   # allow project directory browsing
 chorus daemon uninstall                      # disable + remove the unit
 ```
+
+`cwds` are registered as daemon instances at startup. `browseRoots` are a
+separate allowlist for remote directory discovery and directed runtime
+execution; they do not create startup connections. Repeat `--browse-root` for
+multiple roots. Precedence is command line, `CHORUS_DAEMON_BROWSE_ROOTS`,
+`daemon.json`, then the daemon user's home directory. File changes require
+`chorus daemon restart`.
+
+Project settings can fix one host and cwd independently for each Agent. A fixed
+cwd stays authoritative for that user and project until replaced or cleared.
+Without one, operation pickers can use a registered directory or browse an
+allowed directory for that operation only. Temporary choices do not modify
+`daemon.json`, register an instance, or persist a project preference.
 
 `install` generates a correct `systemd --user` unit and starts it — you never
 hand-write the file. It captures the `--chorus-only` flag you pass, plus absolute

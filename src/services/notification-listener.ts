@@ -640,7 +640,12 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
     const message = buildMessage(notificationType, actorName, entityTitle, event.value);
 
     const notifications: NotificationCreateParams[] = eligibleRecipients.map(
-      (recipient) => ({
+      (recipient) => {
+        const value =
+          event.value && typeof event.value === "object"
+            ? (event.value as Record<string, unknown>)
+            : {};
+        return {
         companyUuid: event.companyUuid,
         projectUuid: event.projectUuid,
         recipientType: recipient.type,
@@ -654,7 +659,26 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
         actorType: event.actorType,
         actorUuid: event.actorUuid,
         actorName,
-      })
+        temporaryHost:
+          typeof value.temporaryHost === "string" ? value.temporaryHost : undefined,
+        temporaryRuntimeCwd:
+          typeof value.temporaryRuntimeCwd === "string"
+            ? value.temporaryRuntimeCwd
+            : undefined,
+        resolvedCwdSource:
+          typeof value.resolvedCwdSource === "string"
+            ? value.resolvedCwdSource
+            : undefined,
+        resolvedCwdHost:
+          typeof value.resolvedCwdHost === "string"
+            ? value.resolvedCwdHost
+            : undefined,
+        resolvedRuntimeCwd:
+          typeof value.resolvedRuntimeCwd === "string"
+            ? value.resolvedRuntimeCwd
+            : undefined,
+      };
+      }
     );
 
     await notificationService.createBatch(notifications);

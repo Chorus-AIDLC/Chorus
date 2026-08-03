@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.15.0] - 2026-08-03
+
+### Added
+- **Project Agent cwd configuration**: Added daemon-backed directory discovery and per-project Agent working-directory preferences, with safe browsing, path autocomplete, and keyboard-friendly selection across fixed and temporary cwd flows. (#468, #469)
+- **Authoritative project cwd anchoring**: Project cwd settings now consistently govern Idea, Task, mention, conversational, stage-advance, wake, resume, and continuation routing while preserving existing assignment targets and active-session stickiness. (#470)
+
+### Changed
+- **Session-free Codex workflows**: Removed obsolete Chorus session-management guidance from Codex skills and hooks while retaining compact startup context and structured hook error handling. (#466)
+
+### Fixed
+- **Resumable Codex session IDs**: Persisted the backend Codex thread ID separately from Chorus routing identifiers so interrupted daemon conversations resume correctly and the existing copy action returns the usable session ID. (#467)
+
+### Plugin
+- **Plugin & skill versions → 0.15.0**: Claude Code, Codex, OpenClaw, Kiro, and Pi plugin and skill distributions bumped to 0.15.0.
+
+---
+
 ## [0.14.6] - 2026-07-30
 
 ### Added

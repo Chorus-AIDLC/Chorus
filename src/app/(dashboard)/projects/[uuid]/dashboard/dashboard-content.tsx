@@ -6,6 +6,7 @@ import { getDashboardData } from "./dashboard-data";
 import { ProjectSettingsModal } from "./project-settings-modal";
 import { IdeaTracker } from "./idea-tracker";
 import { CollapsibleMarkdown } from "@/components/collapsible-markdown";
+import { ProjectCwdSummary } from "./project-cwd-summary";
 
 interface DashboardContentProps {
   projectUuid: string;
@@ -21,7 +22,12 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("ideaTracker.overview")}</p>
-          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-foreground">{project.name}</h1>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground">
+              {project.name}
+            </h1>
+            <ProjectCwdSummary projectUuid={projectUuid} />
+          </div>
           {project.description?.trim() ? (
             <CollapsibleMarkdown
               content={project.description}

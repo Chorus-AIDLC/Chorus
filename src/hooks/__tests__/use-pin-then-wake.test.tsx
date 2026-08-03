@@ -46,6 +46,7 @@ function Harness({
   preview,
   reassignNoWake,
   wake,
+  previewIdeaUuid,
 }: {
   preview: WakeTargetPreview | null;
   reassignNoWake: (
@@ -53,15 +54,32 @@ function Harness({
     agentUuid: string,
     instanceUuid: string,
   ) => Promise<{ success: boolean; error?: string }>;
-  wake: () => void | Promise<void>;
+  wake: (temporary?: {
+    agentUuid: string;
+    validationRequestUuid: string;
+  }) => void | Promise<void>;
+  previewIdeaUuid?: string | null;
 }) {
-  const { start, pickerState, confirmPick, cancelPick } = usePinThenWake({
+  const {
+    start,
+    pickerState,
+    confirmPick,
+    confirmTemporary,
+    cancelPick,
+    fixedTarget,
+  } = usePinThenWake({
     fetchPreview: async () => preview,
     reassignNoWake,
+    previewIdeaUuid,
   });
   return (
     <div>
       <button onClick={() => start({ ideaUuid: IDEA, wake })}>go</button>
+      {fixedTarget && (
+        <span data-testid="fixed-target">
+          {fixedTarget.host}:{fixedTarget.cwd}
+        </span>
+      )}
       {pickerState && (
         <div data-testid="picker">
           <span data-testid="picker-count">{pickerState.instances.length}</span>
@@ -77,6 +95,17 @@ function Harness({
           <button data-testid="cancel" onClick={cancelPick}>
             cancel
           </button>
+          <button
+            data-testid="temporary"
+            onClick={() =>
+              confirmTemporary({
+                agentUuid: AGENT,
+                validationRequestUuid: "request-1",
+              })
+            }
+          >
+            temporary
+          </button>
         </div>
       )}
     </div>
@@ -88,6 +117,54 @@ beforeEach(() => {
 });
 
 describe("usePinThenWake", () => {
+  it("preloads a fixed target and clears it when selection behavior is restored", async () => {
+    const reassign = vi.fn();
+    const wake = vi.fn();
+    const fixedPreview: WakeTargetPreview = {
+      outcome: "direct",
+      assigneeAgentUuid: AGENT,
+      onlineInstances: [],
+      resolvedTarget: {
+        actorUserUuid: "user-1",
+        agentUuid: AGENT,
+        source: "project_fixed",
+        host: "fixed-host",
+        cwd: "/work/fixed",
+        availability: "ready",
+        promptPolicy: "suppress",
+        connectionUuid: "connection-1",
+        agentInstanceUuid: "instance-1",
+      },
+    };
+    const { rerender } = render(
+      <Harness
+        preview={fixedPreview}
+        previewIdeaUuid={IDEA}
+        reassignNoWake={reassign}
+        wake={wake}
+      />,
+    );
+
+    expect((await screen.findByTestId("fixed-target")).textContent).toBe(
+      "fixed-host:/work/fixed",
+    );
+
+    rerender(
+      <Harness
+        preview={{
+          outcome: "pick",
+          assigneeAgentUuid: AGENT,
+          onlineInstances: [candidate(), candidate({ connectionUuid: "conn-2" })],
+        }}
+        previewIdeaUuid="idea-2"
+        reassignNoWake={reassign}
+        wake={wake}
+      />,
+    );
+
+    await waitFor(() => expect(screen.queryByTestId("fixed-target")).toBeNull());
+  });
+
   it("direct → wakes immediately, no picker, no reassign", async () => {
     const reassign = vi.fn().mockResolvedValue({ success: true });
     const wake = vi.fn().mockResolvedValue(undefined);
@@ -188,6 +265,33 @@ describe("usePinThenWake", () => {
     expect(reassign).not.toHaveBeenCalled();
     expect(wake).not.toHaveBeenCalled();
     expect(screen.queryByTestId("picker")).toBeNull();
+  });
+
+  it("pick → temporary directory wakes with validation metadata without reassigning", async () => {
+    const reassign = vi.fn().mockResolvedValue({ success: true });
+    const wake = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Harness
+        preview={{
+          outcome: "pick",
+          assigneeAgentUuid: AGENT,
+          onlineInstances: [candidate(), candidate({ connectionUuid: "conn-2" })],
+        }}
+        reassignNoWake={reassign}
+        wake={wake}
+      />,
+    );
+
+    await userEvent.click(screen.getByText("go"));
+    await userEvent.click(await screen.findByTestId("temporary"));
+
+    await waitFor(() =>
+      expect(wake).toHaveBeenCalledWith({
+        agentUuid: AGENT,
+        validationRequestUuid: "request-1",
+      }),
+    );
+    expect(reassign).not.toHaveBeenCalled();
   });
 
   it("preview miss (null) → wakes directly", async () => {

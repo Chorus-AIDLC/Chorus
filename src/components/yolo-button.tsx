@@ -69,6 +69,7 @@ const ERROR_CODE_I18N_KEY: Record<YoloRequestedErrorCode, string> = {
   assignee_not_agent: "errorAssigneeNotAgent",
   agent_offline: "errorAgentOffline",
   instance_offline: "errorInstanceOffline",
+  fixed_cwd_host_offline: "errorFixedCwdHostOffline",
   unknown: "errorGeneric",
 };
 
@@ -101,9 +102,13 @@ export function YoloButton({
     start: startPinThenWake,
     pickerState,
     confirmPick,
+    confirmTemporary,
     cancelPick,
     isResolving,
-  } = usePinThenWake({ reassignNoWake: reassignIdeaInstanceNoWakeAction });
+  } = usePinThenWake({
+    reassignNoWake: reassignIdeaInstanceNoWakeAction,
+    previewIdeaUuid: ideaUuid,
+  });
 
   // The started hint is transient: it clears when the panel moves to another
   // idea, and — because a wake normally flips the idea into motion quickly —
@@ -142,9 +147,14 @@ export function YoloButton({
   // The actual wake — fired directly on `direct`/`auto_pin`, or after the human
   // picks a cwd on `pick`. The server re-validates every precondition (incl. the
   // HARD instance-offline check → instance_offline error code).
-  const runWake = async () => {
+  const runWake = async (temporary?: {
+    agentUuid: string;
+    validationRequestUuid: string;
+  }) => {
     setIsStarting(true);
-    const result = await yoloRequestedAction(ideaUuid);
+    const result = temporary
+      ? await yoloRequestedAction(ideaUuid, temporary)
+      : await yoloRequestedAction(ideaUuid);
     setIsStarting(false);
 
     if (result.success) {
@@ -244,7 +254,9 @@ export function YoloButton({
         open={pickerState !== null}
         agentName={assigneeName ?? ""}
         instances={pickerState?.instances ?? []}
+        agentUuid={pickerState?.agentUuid}
         onConfirm={confirmPick}
+        onTemporaryConfirm={confirmTemporary}
         onCancel={cancelPick}
       />
     </>

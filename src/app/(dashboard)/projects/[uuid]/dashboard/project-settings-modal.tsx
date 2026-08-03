@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Settings, Loader2 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { updateProjectAction, deleteProjectAction } from "../actions";
+import { ProjectAgentCwdSettings } from "@/components/project-agent-cwd-settings";
 
 interface ProjectSettingsModalProps {
   projectUuid: string;
@@ -41,13 +43,13 @@ export function ProjectSettingsModal({
   projectDescription,
 }: ProjectSettingsModalProps) {
   const t = useTranslations();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(searchParams.get("settings") === "agent-cwds");
   const [name, setName] = useState(projectName);
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
   const handleSave = async () => {
     setSaving(true);
     const result = await updateProjectAction(projectUuid, {
@@ -81,7 +83,7 @@ export function ProjectSettingsModal({
           {t("dashboard.settings")}
         </Button>
       </DialogTrigger>
-      <DialogContent className="gap-0 overflow-hidden rounded-2xl border-0 p-0 sm:max-w-[520px]">
+      <DialogContent className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 sm:max-w-[620px]">
         <DialogHeader className="px-7 py-6">
           <DialogTitle className="text-[20px] font-semibold tracking-tight text-foreground">
             {t("projectSettings.title")}
@@ -90,7 +92,8 @@ export function ProjectSettingsModal({
 
         <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-        <div className="flex flex-col gap-7 p-7">
+        <div className="min-h-0 overflow-y-auto">
+        <div className="flex flex-col gap-7 p-5 sm:p-7">
           {/* Basic Information */}
           <div className="flex flex-col gap-5">
             <h3 className="text-[14px] font-semibold text-foreground">
@@ -135,6 +138,10 @@ export function ProjectSettingsModal({
               )}
             </Button>
           </div>
+
+          <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
+
+          <ProjectAgentCwdSettings projectUuid={projectUuid} />
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
@@ -199,6 +206,7 @@ export function ProjectSettingsModal({
               </div>
             </div>
           </div>
+        </div>
         </div>
       </DialogContent>
     </Dialog>

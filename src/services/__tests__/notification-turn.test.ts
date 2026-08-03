@@ -40,12 +40,14 @@ const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
 // idea's canonical session (prisma.daemonSession.update) instead of forking a per-instance
 // `${idea}::${conn}` thread. Mock update so we can assert the re-point without a DB.
 const mockDaemonSessionUpdate = vi.hoisted(() => vi.fn());
+const mockPreferenceFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { findFirst: mockTaskFindFirst },
     idea: { findFirst: mockIdeaFindFirst },
     agentInstance: { findFirst: mockAgentInstanceFindFirst },
     daemonSession: { findFirst: mockDaemonSessionFindFirst, update: mockDaemonSessionUpdate },
+    projectAgentCwdPreference: { findFirst: mockPreferenceFindFirst },
   },
 }));
 
@@ -240,6 +242,135 @@ beforeEach(() => {
   // Default: the canonical-session re-point update resolves (no-op body) unless a case
   // asserts on its args.
   mockDaemonSessionUpdate.mockResolvedValue({});
+  mockPreferenceFindFirst.mockResolvedValue(null);
+});
+
+describe("project-Agent fixed cwd resolution", () => {
+  it.each([
+    {
+      label: "replacement",
+      preference: { host: "replacement-host", cwd: "/work/replacement" },
+    },
+    { label: "clear", preference: null },
+  ])(
+    "keeps an active root session on its captured target after preference $label",
+    async ({ preference }) => {
+      const rootConnection = "root-connection";
+      mockPreferenceFindFirst.mockResolvedValue(preference);
+      mockListConnectionsForAgent.mockResolvedValue([
+        onlineConn({ uuid: rootConnection, host: "root-host", cwd: "/work/root" }),
+        onlineConn({
+          uuid: "replacement-connection",
+          host: "replacement-host",
+          cwd: "/work/replacement",
+        }),
+      ]);
+      mockDaemonSessionFindFirst.mockResolvedValue({
+        uuid: sessionUuid,
+        originConnectionUuid: rootConnection,
+      });
+
+      const result = await createTurnAndResolveTarget(
+        ctx({
+          resolvedCwdSource: "registered_instance",
+          resolvedCwdHost: "root-host",
+          resolvedRuntimeCwd: "/work/root",
+        }),
+      );
+
+      expect(result.targetConnectionUuid).toBe(rootConnection);
+      expect(result.runtimeCwd).toBe("/work/root");
+      expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
+      expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: ideaUuid,
+          originConnectionUuid: rootConnection,
+          runtimeCwd: "/work/root",
+        }),
+      );
+      expect(mockPreferenceFindFirst).not.toHaveBeenCalled();
+    },
+  );
+
+  it("routes a temporary runtime cwd through its selected host without persisting an instance", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "temporary-anchor", host: "host-a", cwd: "/startup" }),
+      onlineConn({ uuid: "other-anchor", host: "host-b", cwd: "/other" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        actorType: "user",
+        actorUuid: "user-1",
+        temporaryHost: "host-a",
+        temporaryRuntimeCwd: "/work/temporary",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe("temporary-anchor");
+    expect(result.runtimeCwd).toBe("/work/temporary");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originConnectionUuid: "temporary-anchor",
+        runtimeCwd: "/work/temporary",
+      }),
+    );
+  });
+
+  it("uses the fixed host/runtime cwd ahead of an inline mention pin", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "fixed-anchor", host: "fixed-host", cwd: "/startup" }),
+      onlineConn({ uuid: "inline-target", host: "inline-host", cwd: "/inline" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        projectUuid: "project-1",
+        actorType: "user",
+        actorUuid: "user-1",
+        resolvedCwdSource: "project_fixed",
+        resolvedCwdHost: "fixed-host",
+        resolvedRuntimeCwd: "/work/fixed",
+        pinnedHost: "inline-host",
+        pinnedCwd: "/inline",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe("fixed-anchor");
+    expect(result.runtimeCwd).toBe("/work/fixed");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originConnectionUuid: "fixed-anchor",
+        runtimeCwd: "/work/fixed",
+      }),
+    );
+  });
+
+  it("blocks on an offline fixed host without rerouting to another online host", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "other-host", host: "online-elsewhere", cwd: "/repo" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        projectUuid: "project-1",
+        actorType: "user",
+        actorUuid: "user-1",
+        resolvedCwdSource: "project_fixed",
+        resolvedCwdHost: "offline-fixed-host",
+        resolvedRuntimeCwd: "/work/fixed",
+      }),
+    );
+
+    expect(result).toEqual({
+      turn: null,
+      targetConnectionUuid: null,
+      runtimeCwd: "/work/fixed",
+      suppressWake: true,
+    });
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+  });
 });
 
 // ===== Action → trigger mapping =====
@@ -1427,6 +1558,31 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
     expect(targetConnectionUuid).toBe(taskConnUuid);
   });
 
+  it("falls back from a blank task cwd host to the resolved instance host without rerouting", async () => {
+    mockTaskFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "task-inst",
+      cwdHost: "   ",
+      runtimeCwd: "/discovered/task",
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      host: taskHost,
+      cwd: "/materialized/not-a-startup-cwd",
+      agentUuid,
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "other-host", host: "elsewhere", cwd: "/startup-a" }),
+      taskInstanceConn({ cwd: "/startup-b" }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(result.targetConnectionUuid).toBe(taskConnUuid);
+    expect(result.runtimeCwd).toBe("/discovered/task");
+  });
+
   // ----- (3) root-idea inheritance WITH the same-agent guard -----
 
   it("inherits the root-idea instance (SAME agent) when the Task has no override → targets the idea's instance", async () => {
@@ -1451,6 +1607,41 @@ describe("createTurnAndResolveTarget — instance-based pin lineage (T11)", () =
       expect.objectContaining({ originConnectionUuid: ideaConnUuid, turnUuid: turn?.uuid }),
     );
     expect(targetConnectionUuid).toBe(ideaConnUuid);
+  });
+
+  it("inherits a discovered root runtime cwd through any online connection on its fixed host", async () => {
+    mockIdeaFindFirst.mockResolvedValue({
+      assigneeType: "agent_instance",
+      assigneeUuid: "idea-inst",
+      cwdHost: "   ",
+      runtimeCwd: "/discovered/project",
+    });
+    mockAgentInstanceFindFirst.mockResolvedValue({
+      host: ideaHost,
+      cwd: "/materialized/not-a-startup-cwd",
+      agentUuid,
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "other-host", host: "elsewhere", cwd: "/startup-a" }),
+      onlineConn({
+        uuid: ideaConnUuid,
+        host: ideaHost,
+        cwd: "/startup-b",
+      }),
+    ]);
+
+    const result = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned" }),
+    );
+
+    expect(result.targetConnectionUuid).toBe(ideaConnUuid);
+    expect(result.runtimeCwd).toBe("/discovered/project");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originConnectionUuid: ideaConnUuid,
+        runtimeCwd: "/discovered/project",
+      }),
+    );
   });
 
   // ----- (3) cross-agent → NO inherit (the same-agent guard blocks it) -----

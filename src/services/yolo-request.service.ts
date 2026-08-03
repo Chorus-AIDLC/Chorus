@@ -53,16 +53,19 @@ export async function requestYolo({
   ideaUuid,
   actorUuid,
   actorType,
+  temporaryCwd,
 }: {
   companyUuid: string;
   ideaUuid: string;
   actorUuid: string;
   actorType: string;
+  temporaryCwd?: { host: string; cwd: string } | null;
 }): Promise<void> {
   await executeStageAdvance(YOLO_REQUESTED_STAGE, {
     companyUuid,
     ideaUuid,
     actorUuid,
     actorType,
+    temporaryCwd,
   });
 }

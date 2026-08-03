@@ -30,6 +30,7 @@ export class Waker {
    *   lineage: { resolve: (event: any) => Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }> },
    *   spawner: { wake: (params: any) => Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }> },
    *   cwd?: string,  The connection/session-bound working directory this Waker serves; resolveCwd() is the single source the probe + spawn + resume use. `undefined` ⇒ the process default cwd (HARD-1 / single-path).
+   *   validateRuntimeCwd?: (cwd: string) => Promise<{normalizedPath?: string}>,
    *   hooks?: import("./upload-hooks.mjs").UploadHooks,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
    *   writeMcpConfigFn?: typeof writeMcpConfig,
@@ -38,7 +39,7 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, backendSessionId?: string|null, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
    *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
    *     → interrupted with the classified reason otherwise) to advance the server-side
@@ -67,6 +68,7 @@ export class Waker {
     // so resolveCwd() is the SINGLE place the process-default fallback is applied
     // (Module Contract 1 — one cwd source of truth, no scattered process.cwd()).
     this.cwd = opts.cwd;
+    this.validateRuntimeCwd = opts.validateRuntimeCwd;
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
@@ -145,8 +147,8 @@ export class Waker {
    * wake path reads `process.cwd()`.
    * @returns {string}
    */
-  resolveCwd() {
-    return this.cwd ?? process.cwd();
+  resolveCwd(runtimeCwd) {
+    return runtimeCwd ?? this.cwd ?? process.cwd();
   }
 
   /**
@@ -340,6 +342,11 @@ export class Waker {
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
+    const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
+    const requestedRuntimeCwd =
+      typeof notification?.runtimeCwd === "string" && notification.runtimeCwd
+        ? notification.runtimeCwd
+        : null;
     try {
       const prompt = buildPrompt(notification);
       if (!prompt) {
@@ -377,12 +384,21 @@ export class Waker {
       // Decide new-vs-resume by probing the on-disk transcript in the SAME cwd we
       // spawn in. The spawner re-validates the id is a lowercase UUID before
       // spawning, so a garbage id surfaces visibly rather than misanchoring.
-      const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
       // Resolve the connection/session-bound cwd ONCE for this wake (Module Contract
       // 1). The transcript probe and the spawn below BOTH use this same value, so a
       // session's repeated wakes/probes always land the same cwd (NFR-3) — and a
       // multi-path daemon's other Wakers (other cwds) never bleed in.
-      const cwd = this.resolveCwd();
+      let cwd = this.resolveCwd(requestedRuntimeCwd);
+      if (requestedRuntimeCwd) {
+        if (!this.validateRuntimeCwd) {
+          throw new Error("Directed runtime cwd cannot be validated by this daemon");
+        }
+        const validation = await this.validateRuntimeCwd(requestedRuntimeCwd);
+        if (!validation?.normalizedPath) {
+          throw new Error("Directed runtime cwd validation returned no normalized path");
+        }
+        cwd = validation.normalizedPath;
+      }
       const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
       // Spawners declare whether the shared transcript probe is authoritative
@@ -524,10 +540,10 @@ export class Waker {
           // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
           // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
           // `turnUsage` rides the same terminal advance (daemon-token-usage).
-          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage);
+          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage, result?.backendSessionId);
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage);
+          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage, result?.backendSessionId);
         }
       }
 
@@ -566,6 +582,16 @@ export class Waker {
       }
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
+      if (sessionId && requestedRuntimeCwd && typeof err?.code === "string") {
+        await this.#advanceTurn(sessionId, "running", entity);
+        await this.#advanceTurn(
+          sessionId,
+          "interrupted",
+          entity,
+          "invalid_path",
+          `${err.code}: ${err.message ?? "Runtime cwd validation failed"}`,
+        );
+      }
     } finally {
       // Wake finished (cleanly or not): the resource leaves the active set. Drop
       // it and emit a fresh snapshot so the server ends its running/queued row.
@@ -622,7 +648,7 @@ export class Waker {
    * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
    *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -632,6 +658,7 @@ export class Waker {
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         ...(usage ? { usage } : {}),
+        ...(backendSessionId ? { backendSessionId } : {}),
       });
     } catch (err) {
       this.logger.warn(

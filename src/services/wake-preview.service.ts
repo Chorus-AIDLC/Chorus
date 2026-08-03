@@ -43,6 +43,7 @@ import {
   listConnectionsForAgent,
   type ConnectionView,
 } from "@/services/daemon-connection.service";
+import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 // Type-only import (erased at compile) of the ONE canonical selectable-instance shape,
 // so the preview's `onlineInstances` are byte-compatible with what the InstancePicker
 // consumes and what a subsequent non-waking reassign persists (via `agentInstanceUuid`).
@@ -77,6 +78,7 @@ export interface WakeTargetPreview {
   outcome: WakeTargetOutcome;
   assigneeAgentUuid: string | null;
   onlineInstances: InstanceCandidate[];
+  resolvedTarget?: Awaited<ReturnType<typeof resolveProjectAgentCwdTarget>>;
 }
 
 /**
@@ -108,12 +110,20 @@ function toInstanceCandidate(c: ConnectionView): InstanceCandidate {
 export async function previewIdeaWakeTarget(
   companyUuid: string,
   ideaUuid: string,
+  userUuid?: string,
 ): Promise<WakeTargetPreview | null> {
   // (1) The idea's assignee — company-scoped. A miss is a not-found (route → 404), NOT a
   // cross-company read: an idea in another tenant simply is not returned.
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
-    select: { assigneeType: true, assigneeUuid: true },
+    select: {
+      assigneeType: true,
+      assigneeUuid: true,
+      projectUuid: true,
+      cwdSource: true,
+      cwdHost: true,
+      runtimeCwd: true,
+    },
   });
   if (!idea) return null;
 
@@ -134,6 +144,20 @@ export async function previewIdeaWakeTarget(
   // Resolved BEFORE the connection read matters, but we still surface the agent's online
   // instances for completeness (the client ignores them on `direct`).
   const alreadyPinned = idea.assigneeType === "agent_instance";
+  const resolvedTarget = userUuid
+    ? await resolveProjectAgentCwdTarget({
+        companyUuid,
+        actorUserUuid: userUuid,
+        projectUuid: idea.projectUuid,
+        agentUuid: assigneeAgentUuid,
+        registeredInstanceUuid:
+          idea.assigneeType === "agent_instance" ? idea.assigneeUuid : null,
+        registeredSource:
+          idea.cwdSource === "project_fixed" ? "project_fixed" : null,
+        registeredHost: idea.cwdHost,
+        registeredRuntimeCwd: idea.runtimeCwd,
+      })
+    : null;
 
   // (2) The agent's live registry (online-first sorted; carries effectiveStatus + the
   // durable agentInstanceUuid). Take the ONLINE subset as the picker candidates —
@@ -145,9 +169,14 @@ export async function previewIdeaWakeTarget(
   const onlineInstances = onlineConnections.map(toInstanceCandidate);
 
   // (3) The three-way decision tree (Tech Design D1), in exact priority order.
-  if (alreadyPinned) {
+  if (resolvedTarget?.source === "project_fixed" || alreadyPinned) {
     // Already pinned to a specific instance → wake as-is.
-    return { outcome: "direct", assigneeAgentUuid, onlineInstances };
+    return {
+      outcome: "direct",
+      assigneeAgentUuid,
+      onlineInstances,
+      ...(resolvedTarget ? { resolvedTarget } : {}),
+    };
   }
   if (onlineConnections.length === 0) {
     // Nothing online to pick; the server handles the offline case at wake time.

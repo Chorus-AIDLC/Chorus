@@ -135,7 +135,10 @@ describe("bannerRows", () => {
 
 describe("resolveAgentType", () => {
   it("defaults to claude-code", () => {
-    expect(resolveAgentType({}, {})).toEqual({ ok: true, agent: "claude-code" });
+    expect(resolveAgentType({}, {}, { readJson: () => null })).toEqual({
+      ok: true,
+      agent: "claude-code",
+    });
     expect(DEFAULT_AGENT).toBe("claude-code");
     expect(KNOWN_AGENTS).toContain("claude-code");
   });

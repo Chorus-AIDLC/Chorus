@@ -33,12 +33,13 @@
 // falls back to its own wake-target resolution (session-origin upgrade / HARD
 // pin) — the same behavior as before this change, so no regression.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { clientLogger } from "@/lib/logger-client";
 import {
   filterOnlineInstances,
   type InstanceCandidate,
 } from "@/components/agent-presence/instance-picker";
+import type { ResolvedProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 
 /** The three pre-wake outcomes returned by GET /api/ideas/[uuid]/wake-preview. */
 export type WakeTargetOutcome = "pick" | "auto_pin" | "direct";
@@ -48,6 +49,7 @@ export interface WakeTargetPreview {
   outcome: WakeTargetOutcome;
   assigneeAgentUuid: string | null;
   onlineInstances: InstanceCandidate[];
+  resolvedTarget?: ResolvedProjectAgentCwdTarget;
 }
 
 /**
@@ -78,6 +80,7 @@ export interface UsePinThenWakeOptions {
   fetchPreview?: (ideaUuid: string) => Promise<WakeTargetPreview | null>;
   /** The entity-specific non-waking reassign server action. */
   reassignNoWake: ReassignNoWakeAction;
+  previewIdeaUuid?: string | null;
 }
 
 export interface StartPinThenWakeArgs {
@@ -88,7 +91,12 @@ export interface StartPinThenWakeArgs {
    * action (e.g. startDevelopmentAction). The hook does not interpret its
    * result — the caller handles success/error toasts as it does today.
    */
-  wake: () => void | Promise<void>;
+  wake: (temporary?: TemporaryCwdSelection) => void | Promise<void>;
+}
+
+export interface TemporaryCwdSelection {
+  agentUuid: string;
+  validationRequestUuid: string;
 }
 
 /** Default preview fetch against the real REST endpoint. */
@@ -126,14 +134,38 @@ async function defaultFetchPreview(
 export function usePinThenWake({
   fetchPreview = defaultFetchPreview,
   reassignNoWake,
+  previewIdeaUuid,
 }: UsePinThenWakeOptions) {
   const [pickerState, setPickerState] = useState<PickerState | null>(null);
   const [isResolving, setIsResolving] = useState(false);
+  const [fixedTarget, setFixedTarget] =
+    useState<ResolvedProjectAgentCwdTarget | null>(null);
   // The wake bound to the currently-open picker, captured at `start` time so
   // `confirmPick` fires the exact wake the user initiated.
-  const [pendingWake, setPendingWake] = useState<{ run: () => void | Promise<void> } | null>(
+  const [pendingWake, setPendingWake] = useState<{
+    run: (temporary?: TemporaryCwdSelection) => void | Promise<void>;
+  } | null>(
     null,
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!previewIdeaUuid) {
+      setFixedTarget(null);
+      return;
+    }
+    void fetchPreview(previewIdeaUuid).then((preview) => {
+      if (cancelled) return;
+      setFixedTarget(
+        preview?.resolvedTarget?.source === "project_fixed"
+          ? preview.resolvedTarget
+          : null,
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchPreview, previewIdeaUuid]);
 
   // Reassign that never throws and never blocks the wake — logs and continues.
   // Used by both the auto_pin path and the picker confirm.
@@ -163,6 +195,11 @@ export function usePinThenWake({
       let preview: WakeTargetPreview | null = null;
       try {
         preview = await fetchPreview(ideaUuid);
+        setFixedTarget(
+          preview?.resolvedTarget?.source === "project_fixed"
+            ? preview.resolvedTarget
+            : null,
+        );
       } finally {
         setIsResolving(false);
       }
@@ -229,5 +266,23 @@ export function usePinThenWake({
     setPendingWake(null);
   }, []);
 
-  return { start, pickerState, confirmPick, cancelPick, isResolving };
+  const confirmTemporary = useCallback(
+    async (selection: TemporaryCwdSelection) => {
+      const wake = pendingWake;
+      setPickerState(null);
+      setPendingWake(null);
+      if (wake) await wake.run(selection);
+    },
+    [pendingWake],
+  );
+
+  return {
+    start,
+    pickerState,
+    confirmPick,
+    confirmTemporary,
+    cancelPick,
+    isResolving,
+    fixedTarget,
+  };
 }

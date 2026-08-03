@@ -70,11 +70,12 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
- *   turnAdvance: (p: { sessionId: string, status: string, entityType?: string|null, entityUuid?: string|null }) => Promise<DaemonRestResult>,
+ *   turnAdvance: (p: { sessionId: string, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
  *   heartbeat: (p: { connectionUuid: string, connectedAt: string }) => Promise<DaemonRestResult>,
+ *   reportDirectoryRequest: (p: { requestUuid: string, status: "succeeded"|"failed", roots?: string[], items?: Array<{name:string,path:string}>, nextCursor?: string|null, normalizedPath?: string, errorCode?: string }) => Promise<DaemonRestResult>,
  *   readPendingTurns: () => Promise<DaemonRestResult>,
  * }}
  */
@@ -146,7 +147,7 @@ export function createDaemonRestClient(opts) {
      * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -171,6 +172,7 @@ export function createDaemonRestClient(opts) {
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
         ...(usage && isTerminal ? { usage } : {}),
+        ...(backendSessionId && isTerminal ? { backendSessionId } : {}),
       };
       return post(
         "turn-advance",
@@ -251,6 +253,29 @@ export function createDaemonRestClient(opts) {
         "connection-heartbeat",
         "/api/daemon/connection-heartbeat",
         { connectionUuid, connectedAt },
+      );
+    },
+
+    async reportDirectoryRequest({ requestUuid, status, roots, items, nextCursor, normalizedPath, errorCode }) {
+      const connectionUuid = getConnectionUuid();
+      if (!connectionUuid) {
+        const error = `cannot report directory request ${requestUuid} — no connection uuid yet`;
+        logger.warn(`[Chorus] ${error}`);
+        return { ok: false, status: null, error, skipped: true };
+      }
+      const body = { requestUuid, connectionUuid, status };
+      if (status === "succeeded") {
+        if (roots !== undefined) body.roots = roots;
+        if (items !== undefined) body.items = items;
+        if (nextCursor !== undefined) body.nextCursor = nextCursor;
+        if (normalizedPath !== undefined) body.normalizedPath = normalizedPath;
+      } else {
+        body.errorCode = errorCode ?? "INTERNAL_ERROR";
+      }
+      return post(
+        "directory-request report",
+        "/api/daemon/directory-request/report",
+        body,
       );
     },
 

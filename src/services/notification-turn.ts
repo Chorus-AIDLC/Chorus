@@ -210,6 +210,9 @@ export interface WakeNotificationContext {
   // lives on the created turn's `promptText`; the notification row carries the
   // denormalized copy. Null/undefined for autonomous wakes.
   instructionText?: string | null;
+  projectUuid?: string | null;
+  actorType?: string | null;
+  actorUuid?: string | null;
   // Pinned target daemon instance carried by a `mentioned` wake (cwd-addressable
   // instances): the owner-chosen `(host, cwd)` parsed from the mention markup and
   // threaded here by mention.service. The wake resolves it to a matching ONLINE
@@ -222,6 +225,12 @@ export interface WakeNotificationContext {
   // `pinnedCwd` null = unknown-path instance.
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
+  temporaryHost?: string | null;
+  temporaryRuntimeCwd?: string | null;
+  resolvedCwdSource?: string | null;
+  resolvedCwdHost?: string | null;
+  resolvedRuntimeCwd?: string | null;
+  resolvedCwdAvailability?: "ready" | "offline" | "invalid" | null;
 }
 
 /**
@@ -250,6 +259,7 @@ interface PinnedTarget {
   host: string;
   cwd: string | null;
   soft: boolean;
+  runtimeCwd?: string | null;
 }
 
 /**
@@ -328,6 +338,32 @@ async function resolvePinnedTarget(
   ctx: WakeNotificationContext,
   trigger: TurnTrigger,
 ): Promise<PinnedTarget | null> {
+  // Stage-entry operations carry their actor-bearing target snapshot in the
+  // activity. Consume it verbatim so preference/actor/registry changes cannot
+  // alter the target between the stage action and notification delivery.
+  if (ctx.resolvedCwdSource && ctx.resolvedCwdSource !== "unconfigured") {
+    return {
+      // An invalid fixed target is still a hard pin. The sentinel cannot match a
+      // daemon host, producing the same notify-only behavior as an offline target.
+      host:
+        ctx.resolvedCwdAvailability === "invalid"
+          ? "\u0000invalid-project-cwd"
+          : (ctx.resolvedCwdHost ?? ""),
+      cwd: null,
+      runtimeCwd: ctx.resolvedRuntimeCwd,
+      soft: false,
+    };
+  }
+
+  if (ctx.temporaryHost && ctx.temporaryRuntimeCwd) {
+    return {
+      host: ctx.temporaryHost,
+      cwd: null,
+      runtimeCwd: ctx.temporaryRuntimeCwd,
+      soft: false,
+    };
+  }
+
   // (1) Mention pin — HARD. A human typed an exact place; offline stays notify-only.
   if (trigger === "mentioned") {
     return makePinnedTarget(ctx.pinnedHost, ctx.pinnedCwd, false);
@@ -345,14 +381,26 @@ async function resolvePinnedTarget(
   if (ctx.entityType === "task") {
     const task = await prisma.task.findFirst({
       where: { uuid: ctx.entityUuid, companyUuid: ctx.companyUuid },
-      select: { assigneeType: true, assigneeUuid: true },
+      select: {
+        assigneeType: true,
+        assigneeUuid: true,
+        cwdHost: true,
+        runtimeCwd: true,
+      },
     });
     if (task?.assigneeType === "agent_instance" && task.assigneeUuid) {
       const place = await resolveInstancePlace(ctx.companyUuid, task.assigneeUuid);
       if (place) {
         // HARD (owner choice B): an assignment pin is never re-routed. An offline
         // task-override pin is notify-only, identical to a mention pin.
-        const pin = makePinnedTarget(place.host, place.cwd, false);
+        const pin = task.runtimeCwd
+          ? {
+              host: task.cwdHost?.trim() ? task.cwdHost : place.host,
+              cwd: null,
+              runtimeCwd: task.runtimeCwd,
+              soft: false,
+            }
+          : makePinnedTarget(place.host, place.cwd, false);
         if (pin) return pin;
       }
     }
@@ -396,7 +444,12 @@ async function resolveIdeaInstancePin(
   if (!ideaUuid) return null;
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid: ctx.companyUuid },
-    select: { assigneeType: true, assigneeUuid: true },
+    select: {
+      assigneeType: true,
+      assigneeUuid: true,
+      cwdHost: true,
+      runtimeCwd: true,
+    },
   });
   if (idea?.assigneeType === "agent_instance" && idea.assigneeUuid) {
     const place = await resolveInstancePlace(ctx.companyUuid, idea.assigneeUuid);
@@ -404,7 +457,14 @@ async function resolveIdeaInstancePin(
     if (place && place.agentUuid === ctx.recipientUuid) {
       // HARD (owner choice B): an inherited idea-instance pin is never re-routed. An
       // offline pin is notify-only, identical to a mention pin.
-      return makePinnedTarget(place.host, place.cwd, false);
+      return idea.runtimeCwd
+        ? {
+            host: idea.cwdHost?.trim() ? idea.cwdHost : place.host,
+            cwd: null,
+            runtimeCwd: idea.runtimeCwd,
+            soft: false,
+          }
+        : makePinnedTarget(place.host, place.cwd, false);
     }
   }
   return null;
@@ -484,7 +544,7 @@ function selectOriginConnection(
     const matched = connections.find(
       (c) =>
         c.host === pin.host &&
-        c.cwd === pin.cwd &&
+        (pin.runtimeCwd ? true : c.cwd === pin.cwd) &&
         c.effectiveStatus === "online",
     );
     if (matched) return { kind: "directed", connection: matched };
@@ -584,6 +644,7 @@ export async function resolveIdeaSessionOriginTarget(
 export interface WakeTurnResult {
   turn: TurnView | null;
   targetConnectionUuid: string | null;
+  runtimeCwd: string | null;
   suppressWake: boolean;
 }
 
@@ -636,6 +697,7 @@ export async function createTurnAndResolveTarget(
   const empty: WakeTurnResult = {
     turn: null,
     targetConnectionUuid: null,
+    runtimeCwd: null,
     suppressWake: false,
   };
 
@@ -717,7 +779,7 @@ export async function createTurnAndResolveTarget(
     // and a momentarily-no-online UN-PINNED wake must remain byte-identical to before (no new
     // suppression behavior). So only `offline_pin` suppresses agent-wide.
     if (selection.kind === "offline_pin") {
-      return { turn: null, targetConnectionUuid: null, suppressWake: true };
+      return { turn: null, targetConnectionUuid: null, runtimeCwd: pin?.runtimeCwd ?? null, suppressWake: true };
     }
     if (selection.kind === "none") {
       return empty;
@@ -725,6 +787,7 @@ export async function createTurnAndResolveTarget(
 
     const origin = selection.connection;
     const directed = selection.kind === "directed";
+    const runtimeCwd = pin?.runtimeCwd ?? null;
 
     // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
     // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
@@ -769,7 +832,10 @@ export async function createTurnAndResolveTarget(
         // ownership is proven by the same-agent connection resolution above.
         await prisma.daemonSession.update({
           where: { uuid: existing.uuid, companyUuid: ctx.companyUuid },
-          data: { originConnectionUuid: origin.uuid },
+          data: {
+            originConnectionUuid: origin.uuid,
+            ...(runtimeCwd ? { runtimeCwd } : {}),
+          },
         });
       }
     }
@@ -784,7 +850,9 @@ export async function createTurnAndResolveTarget(
       sessionId,
       directIdeaUuid: sessionDirectIdeaUuid,
       originConnectionUuid: origin.uuid,
+      ...(runtimeCwd ? { runtimeCwd } : {}),
     });
+    const effectiveRuntimeCwd = runtimeCwd ?? session.runtimeCwd ?? null;
 
     const promptText =
       trigger === "human_instruction" ? ctx.instructionText ?? null : null;
@@ -819,11 +887,17 @@ export async function createTurnAndResolveTarget(
         companyUuid: ctx.companyUuid,
         originConnectionUuid: origin.uuid,
         turnUuid: turn.uuid,
+        ...(effectiveRuntimeCwd ? { runtimeCwd: effectiveRuntimeCwd } : {}),
       });
-      return { turn, targetConnectionUuid: origin.uuid, suppressWake: false };
+      return {
+        turn,
+        targetConnectionUuid: origin.uuid,
+        runtimeCwd: effectiveRuntimeCwd,
+        suppressWake: false,
+      };
     }
 
-    return { turn, targetConnectionUuid: null, suppressWake: false };
+    return { turn, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
   } catch (error) {
     // VISIBLE failure (repo "no silent errors"): log with full context but DO NOT
     // rethrow — the notification was already created and must not be aborted by a

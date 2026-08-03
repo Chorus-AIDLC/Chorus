@@ -30,6 +30,11 @@ vi.mock("@/services/daemon-connection.service", () => ({
   listConnectionsForAgent: vi.fn(),
 }));
 
+const mockResolveProjectAgentCwdTarget = vi.hoisted(() => vi.fn());
+vi.mock("@/services/project-agent-cwd.service", () => ({
+  resolveProjectAgentCwdTarget: mockResolveProjectAgentCwdTarget,
+}));
+
 // createActivity is the wake trigger; the non-waking action must NEVER call it.
 const mockCreateActivity = vi.hoisted(() => vi.fn());
 vi.mock("@/services/activity.service", () => ({
@@ -52,7 +57,10 @@ vi.mock("@/lib/logger", () => {
   return { default: noopLogger };
 });
 
-import { reassignTaskInstanceNoWakeAction } from "../actions";
+import {
+  claimTaskToAgentAction,
+  reassignTaskInstanceNoWakeAction,
+} from "../actions";
 
 const COMPANY_A = "company-a";
 const PROJECT_UUID = "project-1";
@@ -208,5 +216,58 @@ describe("reassignTaskInstanceNoWakeAction", () => {
     });
     expect(mockClaimTask).not.toHaveBeenCalled();
     expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("claimTaskToAgentAction fixed cwd", () => {
+  it("persists the selected Agent's own fixed instance", async () => {
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetTaskByUuid.mockResolvedValue(makeTaskRow());
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      source: "project_fixed",
+      agentInstanceUuid: "agent-b-fixed-instance",
+      host: "fixed-host",
+      cwd: "/discovered/task",
+    });
+    mockClaimTask.mockResolvedValue(undefined);
+    mockCreateActivity.mockResolvedValue(undefined);
+
+    await claimTaskToAgentAction(TASK_UUID, AGENT_UUID, "agent-a-instance");
+
+    expect(mockClaimTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceUuid: "agent-b-fixed-instance",
+        cwdSource: "project_fixed",
+        cwdHost: "fixed-host",
+        runtimeCwd: "/discovered/task",
+      }),
+    );
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        value: expect.objectContaining({
+          instanceUuid: "agent-b-fixed-instance",
+          resolvedCwdSource: "project_fixed",
+          resolvedCwdHost: "fixed-host",
+          resolvedRuntimeCwd: "/discovered/task",
+        }),
+      }),
+    );
+  });
+
+  it("keeps the existing picker selection when no fixed target exists", async () => {
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetTaskByUuid.mockResolvedValue(makeTaskRow());
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({
+      source: "unconfigured",
+      agentInstanceUuid: null,
+      host: null,
+      cwd: null,
+    });
+
+    await claimTaskToAgentAction(TASK_UUID, AGENT_UUID, INSTANCE_UUID);
+
+    expect(mockClaimTask).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceUuid: INSTANCE_UUID }),
+    );
   });
 });

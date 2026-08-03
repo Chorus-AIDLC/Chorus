@@ -64,6 +64,9 @@ vi.mock("@/lib/auth-client", () => ({
 vi.mock("@/lib/logger-client", () => ({
   clientLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ uuid: "project-1" }),
+}));
 
 // Presence spine mocked at the hook seam: each test sets the value.
 const mockPresence = vi.fn();
@@ -159,6 +162,45 @@ beforeEach(() => {
 });
 
 describe("ConversationalEntry — offline gating", () => {
+  it("keeps an offline project-fixed anchor visible instead of falling back", async () => {
+    setPresence([conn({ uuid: "c1", effectiveStatus: "offline" })]);
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [
+            {
+              agent: { uuid: "agent-1", name: "Alpha" },
+              preference: {
+                host: "fixed-host",
+                cwd: "/offline/fixed",
+                status: "offline",
+                anchorAgentInstanceUuid: "fixed-instance",
+              },
+            },
+          ],
+        },
+      }),
+    });
+
+    render(
+      <ConversationalEntry
+        projectUuid="project-1"
+        dispatch={vi.fn()}
+        onStarted={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("/offline/fixed")).toBeTruthy();
+    expect(screen.getByText("Host offline")).toBeTruthy();
+    expect(screen.queryByText(DAEMON_START_COMMAND)).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: /Send to agent/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
   it("renders the offline fallback with the shared daemon CTA when no connection is online", () => {
     setPresence([conn({ uuid: "c1", effectiveStatus: "offline" })]);
     render(
@@ -196,6 +238,45 @@ describe("ConversationalEntry — offline gating", () => {
 });
 
 describe("ConversationalEntry — selection", () => {
+  it("project-fixed cwd hides the instance picker without repeating the project-level summary", async () => {
+    setPresence([
+      conn({ uuid: "c1", host: "fixed-host", cwd: "/startup" }),
+      conn({ uuid: "c2", host: "other-host", cwd: "/other" }),
+    ]);
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [
+            {
+              agent: { uuid: "agent-1", name: "Alpha" },
+              preference: {
+                host: "fixed-host",
+                cwd: "/srv/project",
+                status: "valid",
+                anchorAgentInstanceUuid: "fixed-instance",
+              },
+            },
+          ],
+        },
+      }),
+    });
+
+    render(
+      <ConversationalEntry
+        projectUuid="project-1"
+        dispatch={vi.fn()}
+        onStarted={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(screen.queryByText("/srv/project")).toBeNull();
+    expect(screen.queryByText("fixed-host")).toBeNull();
+    expect(screen.queryByText("other")).toBeNull();
+  });
+
   it("sole agent + sole instance: agent Select still shows the agent's NAME, instance auto-selected, Send enabled once text present", async () => {
     setPresence([conn({ uuid: "c1" })]);
     respondOk();

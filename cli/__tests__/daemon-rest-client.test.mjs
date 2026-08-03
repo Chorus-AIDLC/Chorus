@@ -130,6 +130,17 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("usage");
   });
 
+  it("turnAdvance sends backendSessionId only on a terminal edge", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+
+    await client.turnAdvance({ sessionId: "idea-1", status: "running", backendSessionId: "thread-1" });
+    await client.turnAdvance({ sessionId: "idea-1", status: "ended", backendSessionId: "thread-1" });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).not.toHaveProperty("backendSessionId");
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).backendSessionId).toBe("thread-1");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId
@@ -211,6 +222,39 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(JSON.parse(init.body)).toEqual({
       connectionUuid: "conn-old",
       connectedAt: "2026-07-25T08:00:00.000Z",
+    });
+  });
+
+  it("reports correlated directory success and typed failure", async () => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+    await client.reportDirectoryRequest({
+      requestUuid: "req-1",
+      status: "succeeded",
+      items: [{ name: "repo", path: "/home/u/repo" }],
+      nextCursor: null,
+    });
+    await client.reportDirectoryRequest({
+      requestUuid: "req-2",
+      status: "failed",
+      errorCode: "OUTSIDE_ROOT",
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      "https://chorus.example.com/api/daemon/directory-request/report",
+      "https://chorus.example.com/api/daemon/directory-request/report",
+    ]);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      requestUuid: "req-1",
+      connectionUuid: "conn-1",
+      status: "succeeded",
+      items: [{ name: "repo", path: "/home/u/repo" }],
+      nextCursor: null,
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      requestUuid: "req-2",
+      connectionUuid: "conn-1",
+      status: "failed",
+      errorCode: "OUTSIDE_ROOT",
     });
   });
 
