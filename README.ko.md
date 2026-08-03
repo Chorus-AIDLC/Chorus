@@ -36,6 +36,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — 프로젝트별 Agent 작업 디렉터리: 각 사용자가 프로젝트의 Agent마다 호스트와 cwd를 지정하고, 데몬이 허용한 루트만 탐색할 수 있습니다. 배정, 웨이크, 재개, 후속 턴에서 같은 실행 위치를 사용하며 진행 중인 세션은 이동하지 않습니다. Codex는 재개 가능한 백엔드 thread ID를 별도로 저장하고, 더 이상 필요하지 않은 Chorus session 관리 단계를 제거했습니다.
+
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI가 네 번째 연결 방식이 되었습니다(Kiro CLI v2): 명령 한 줄로 설치하는 `install-kiro.sh` 플러그인과 `--agent kiro` 데몬 백엔드, 여기에 몇 가지 데몬 수정.
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — 앱 전체 다크 모드(라이트 / 다크 / 시스템). 참고 자료를 어떤 아이디어·제안·작업에도 첨부할 수 있고, 인라인으로도 MCP를 통해서도 읽을 수 있습니다. 한국어와 일본어 추가(한국어는 커뮤니티 기여). 그룹화를 위한 **테마** 아이디어, 그리고 데몬의 개발 시작 / Yolo 버튼, 대화식 아이디어 입력, 크래시 복구, `chorus daemon install`.

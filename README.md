@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — Project-level Agent working directories: each user can bind every Agent in a project to a host and cwd, browse only daemon-approved roots, and use the same target across assignment, wake, resume, and later turns without moving active sessions. Codex now persists its resumable backend thread ID separately and drops obsolete Chorus session-management steps.
+
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI is the fourth way to connect (Kiro CLI v2): a one-command `install-kiro.sh` plugin and a `--agent kiro` daemon backend, plus daemon fixes.
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — Dark mode across the app (light / dark / system). Reference artifacts: attach docs, repos, issues, and articles to any idea, proposal, or task, readable inline and over MCP. Korean and Japanese locales (Korean contributed by the community). **Theme** ideas for grouping, plus daemon Start Development / Yolo buttons, conversational idea entry, crash-resume, and `chorus daemon install`.
