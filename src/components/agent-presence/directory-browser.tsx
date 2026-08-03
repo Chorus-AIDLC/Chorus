@@ -137,7 +137,9 @@ export function DirectoryBrowser({
   );
   const [roots, setRoots] = useState<string[]>([]);
   const [selectedRoot, setSelectedRoot] = useState("");
-  const [pathMode, setPathMode] = useState<"daemon" | "custom">("custom");
+  const [pathMode, setPathMode] = useState<"configured" | "custom">("custom");
+  const [configuredSelection, setConfiguredSelection] =
+    useState<InstanceCandidate | null>(null);
   const [manualMode, setManualMode] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
@@ -184,6 +186,7 @@ export function DirectoryBrowser({
     setRoots([]);
     setSelectedRoot("");
     setPathMode("custom");
+    setConfiguredSelection(null);
     setManualMode(false);
     setPrefix("");
     setSelectedPath("");
@@ -301,7 +304,8 @@ export function DirectoryBrowser({
   };
 
   const validate = async () => {
-    if (!anchor || !selectedPath) return;
+    const validationAnchor = configuredSelection ?? anchor;
+    if (!validationAnchor || !selectedPath) return;
     validationGeneration.current += 1;
     validationController.current?.abort();
     const generation = validationGeneration.current;
@@ -313,7 +317,7 @@ export function DirectoryBrowser({
       const request = await requestDirectory({
         operation: "validate",
         agentUuid,
-        targetConnectionUuid: anchor.connectionUuid,
+        targetConnectionUuid: validationAnchor.connectionUuid,
         cwd: selectedPath,
       }, controller.signal);
       const normalizedPath =
@@ -323,8 +327,8 @@ export function DirectoryBrowser({
       if (generation !== validationGeneration.current) return;
       await onValidated({
         agentUuid,
-        connectionUuid: anchor.connectionUuid,
-        host: anchor.host,
+        connectionUuid: validationAnchor.connectionUuid,
+        host: validationAnchor.host,
         cwd: normalizedPath,
         validationRequestUuid: request.uuid,
       });
@@ -354,6 +358,8 @@ export function DirectoryBrowser({
             className="h-11 max-w-full sm:h-8"
             onClick={() => {
               cancelValidation();
+              setPathMode("custom");
+              setConfiguredSelection(null);
               setAnchor(host);
             }}
           >
@@ -364,31 +370,45 @@ export function DirectoryBrowser({
 
       {anchor && (
         <>
+          {(() => {
+            const configuredCwds = instances.filter(
+              (instance) => instance.host === anchor.host && instance.cwd,
+            );
+            return (
           <div
-            className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2"
+            className="grid min-w-0 grid-cols-1 gap-2"
             role="group"
             aria-label={t("chooseDirectorySource")}
           >
-            <Button
-              type="button"
-              variant={pathMode === "daemon" ? "default" : "outline"}
-              className="h-auto min-w-0 justify-start px-3 py-2 text-left"
-              onClick={() => {
-                cancelValidation();
-                clearCandidates();
-                setPathMode("daemon");
-                setSelectedPath(anchor.cwd ?? "");
-                setErrorCode(null);
-              }}
-            >
-              <HardDrive className="mr-2 size-4 shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-xs font-medium">{t("daemonCwd")}</span>
-                <span className="block truncate font-mono text-[10px] opacity-75">
-                  {anchor.cwd ?? t("unknownHost")}
+            {configuredCwds.map((instance) => (
+              <Button
+                key={instance.connectionUuid}
+                type="button"
+                variant={
+                  pathMode === "configured" &&
+                  configuredSelection?.connectionUuid === instance.connectionUuid
+                    ? "default"
+                    : "outline"
+                }
+                className="h-auto min-w-0 justify-start px-3 py-2 text-left"
+                onClick={() => {
+                  cancelValidation();
+                  clearCandidates();
+                  setPathMode("configured");
+                  setConfiguredSelection(instance);
+                  setSelectedPath(instance.cwd ?? "");
+                  setErrorCode(null);
+                }}
+              >
+                <HardDrive className="mr-2 size-4 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium">{t("configuredCwd")}</span>
+                  <span className="block truncate font-mono text-[10px] opacity-75">
+                    {instance.cwd}
+                  </span>
                 </span>
-              </span>
-            </Button>
+              </Button>
+            ))}
             <Button
               type="button"
               variant={pathMode === "custom" ? "default" : "outline"}
@@ -396,6 +416,7 @@ export function DirectoryBrowser({
               onClick={() => {
                 cancelValidation();
                 setPathMode("custom");
+                setConfiguredSelection(null);
                 setSelectedPath("");
                 setPrefix(selectedRoot ? withTrailingSeparator(selectedRoot) : "");
                 setErrorCode(null);
@@ -405,6 +426,8 @@ export function DirectoryBrowser({
               <span className="text-xs font-medium">{t("customCwd")}</span>
             </Button>
           </div>
+            );
+          })()}
 
           {pending === "roots" && (
             <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -551,7 +574,7 @@ export function DirectoryBrowser({
               </p>
               <p className="mt-1 break-all font-mono text-xs">{selectedPath}</p>
               <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                {anchor.host}
+                {(configuredSelection ?? anchor).host}
               </p>
             </div>
           )}

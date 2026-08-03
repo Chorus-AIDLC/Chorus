@@ -1707,7 +1707,7 @@
     "cancel": "Cancel", "browseAnother": "Browse another directory", "registeredDirectories": "Registered directories", "useOnce": "Use for this operation"
   },
   "directoryBrowser": {
-    "chooseHost": "Choose a host", "unknownHost": "Unknown host", "chooseDirectorySource": "Choose a working directory source", "daemonCwd": "Daemon working directory", "customCwd": "Another directory on this host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "Choose a host", "unknownHost": "Unknown host", "chooseDirectorySource": "Choose a working directory source", "daemonCwd": "Daemon working directory", "configuredCwd": "Configured daemon directory", "customCwd": "Another directory on this host", "pathPrefix": "Directory path prefix", "pathPlaceholder": "/home/user/project",
     "browseRoot": "Browse root", "loadingRoots": "Loading allowed roots…", "loadingCandidates": "Loading directory suggestions", "parent": "Go to parent directory",
     "browse": "Browse directories", "noHosts": "No online host is available for this Agent.", "empty": "No matching directories.", "selection": "Selected directory",
     "errors": {

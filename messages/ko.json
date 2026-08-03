@@ -1707,7 +1707,7 @@
     "cancel": "취소", "browseAnother": "다른 디렉터리 찾아보기", "registeredDirectories": "등록된 디렉터리", "useOnce": "이 작업에만 사용"
   },
   "directoryBrowser": {
-    "chooseHost": "호스트 선택", "unknownHost": "알 수 없는 호스트", "chooseDirectorySource": "작업 디렉터리 소스 선택", "daemonCwd": "Daemon 작업 디렉터리", "customCwd": "이 호스트의 다른 디렉터리", "pathPrefix": "디렉터리 경로 접두사", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "호스트 선택", "unknownHost": "알 수 없는 호스트", "chooseDirectorySource": "작업 디렉터리 소스 선택", "daemonCwd": "Daemon 작업 디렉터리", "configuredCwd": "Daemon 구성 디렉터리", "customCwd": "이 호스트의 다른 디렉터리", "pathPrefix": "디렉터리 경로 접두사", "pathPlaceholder": "/home/user/project",
     "browseRoot": "탐색 루트", "loadingRoots": "허용된 루트를 불러오는 중…", "loadingCandidates": "디렉터리 제안을 불러오는 중", "parent": "상위 디렉터리로 이동",
     "browse": "디렉터리 찾아보기", "noHosts": "이 Agent에 온라인 호스트가 없습니다.", "empty": "일치하는 디렉터리가 없습니다.", "selection": "선택한 디렉터리",
     "errors": {

@@ -1707,7 +1707,7 @@
     "cancel": "キャンセル", "browseAnother": "別のディレクトリを参照", "registeredDirectories": "登録済みディレクトリ", "useOnce": "この操作のみで使用"
   },
   "directoryBrowser": {
-    "chooseHost": "ホストを選択", "unknownHost": "不明なホスト", "chooseDirectorySource": "作業ディレクトリのソースを選択", "daemonCwd": "Daemon の作業ディレクトリ", "customCwd": "このホスト上の別のディレクトリ", "pathPrefix": "ディレクトリパスの接頭辞", "pathPlaceholder": "/home/user/project",
+    "chooseHost": "ホストを選択", "unknownHost": "不明なホスト", "chooseDirectorySource": "作業ディレクトリのソースを選択", "daemonCwd": "Daemon の作業ディレクトリ", "configuredCwd": "Daemon 設定ディレクトリ", "customCwd": "このホスト上の別のディレクトリ", "pathPrefix": "ディレクトリパスの接頭辞", "pathPlaceholder": "/home/user/project",
     "browseRoot": "参照ルート", "loadingRoots": "許可されたルートを読み込み中…", "loadingCandidates": "ディレクトリ候補を読み込み中", "parent": "親ディレクトリへ移動",
     "browse": "ディレクトリを参照", "noHosts": "この Agent にオンラインのホストがありません。", "empty": "一致するディレクトリがありません。", "selection": "選択したディレクトリ",
     "errors": {
