@@ -842,8 +842,6 @@ async function enrichProjectFixedCwds(params: {
   });
   const byAgent = new Map(preferences.map((preference) => [preference.agentUuid, preference]));
   for (const result of agentResults) {
-    // An existing direct-Idea assignment is immutable and takes precedence.
-    if (result.ideaPin) continue;
     const preference = byAgent.get(result.uuid);
     if (!preference) continue;
     const ready = (result.instances ?? []).some(

@@ -67,6 +67,31 @@ describe("resolveMentionSelection — inherit the direct idea's pin", () => {
     });
   });
 
+  it("project-fixed cwd overrides an inherited Idea pin and keeps runtime routing", () => {
+    const decision = resolveMentionSelection({
+      type: "agent",
+      uuid: "agent-G",
+      name: "Agent G",
+      isIdeaAssignee: true,
+      ideaPin: {
+        host: "old-host",
+        cwd: "/old/idea",
+        agentInstanceUuid: "inst-old",
+      },
+      projectFixedCwd: {
+        host: "fixed-host",
+        cwd: "/fixed/project",
+        availability: "ready",
+      },
+      instances: [onlineInstance("conn-a", "/daemon/startup", "fixed-host")],
+    });
+
+    expect(decision).toEqual({
+      kind: "insert",
+      pin: { host: "fixed-host", cwd: "/fixed/project", runtimeCwd: true },
+    });
+  });
+
   it("(a) assignee + ideaPin → insert with the inherited pin, NO picker (even when that place is offline)", () => {
     const decision = resolveMentionSelection({
       type: "agent",

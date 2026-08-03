@@ -166,17 +166,9 @@ export type MentionSelection =
  *     persisted to the idea.
  */
 export function resolveMentionSelection(item: Mentionable): MentionSelection {
-  // Rule 1: inherit the direct idea's pin (HARD) — not filtered by online status.
-  if (item.isIdeaAssignee && item.ideaPin) {
-    return {
-      kind: "insert",
-      pin: { host: item.ideaPin.host, cwd: item.ideaPin.cwd },
-    };
-  }
-
-  // Project-fixed cwd is authoritative for new mention work. It is encoded even
-  // while offline/invalid so the server keeps the wake notify-only instead of
-  // silently falling back to another live instance.
+  // A project-level preference takes over historical per-Idea assignments. The
+  // runtime marker is required so the server routes by host and runs in the
+  // configured cwd instead of treating the value as an exact daemon instance.
   if (item.type === "agent" && item.projectFixedCwd) {
     return {
       kind: "insert",
@@ -185,6 +177,14 @@ export function resolveMentionSelection(item: Mentionable): MentionSelection {
         cwd: item.projectFixedCwd.cwd,
         runtimeCwd: true,
       },
+    };
+  }
+
+  // Rule 1: inherit the direct idea's pin (HARD) — not filtered by online status.
+  if (item.isIdeaAssignee && item.ideaPin) {
+    return {
+      kind: "insert",
+      pin: { host: item.ideaPin.host, cwd: item.ideaPin.cwd },
     };
   }
 

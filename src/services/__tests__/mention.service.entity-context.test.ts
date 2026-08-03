@@ -107,7 +107,6 @@ describe("enrichIdeaContext (pin-cwd-before-wake, Part 2a)", () => {
       host: "Laptop-Q3",
       cwd: "/home/u/dev/chorus",
     });
-
     const results: Mentionable[] = [
       { type: "agent", uuid: AGENT_G, name: "G" },
       { type: "agent", uuid: AGENT_H, name: "H" },
@@ -276,6 +275,13 @@ describe("searchMentionables — entity context threading (pin-cwd-before-wake, 
       host: "Laptop-Q3",
       cwd: "/home/u/dev/chorus",
     });
+    mockPrisma.projectAgentCwdPreference.findMany.mockResolvedValue([
+      {
+        agentUuid: AGENT_G,
+        host: "runtime-host",
+        cwd: "/runtime/project",
+      },
+    ]);
 
     const results = await searchMentionables({
       companyUuid: COMPANY_UUID,
@@ -293,6 +299,11 @@ describe("searchMentionables — entity context threading (pin-cwd-before-wake, 
       host: "Laptop-Q3",
       cwd: "/home/u/dev/chorus",
       agentInstanceUuid: INSTANCE_A,
+    });
+    expect(g.projectFixedCwd).toEqual({
+      host: "runtime-host",
+      cwd: "/runtime/project",
+      availability: "offline",
     });
     expect(h.isIdeaAssignee).toBe(false);
     expect(h.ideaPin).toBeUndefined();
