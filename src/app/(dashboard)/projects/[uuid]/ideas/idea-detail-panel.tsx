@@ -275,7 +275,6 @@ export function IdeaDetailPanel({
     return () => clearTimeout(timer);
   }, []);
 
-  const canAssign = idea.status !== "elaborated";
   // Shared enable-predicate (also used by the dashboard idea-tracker panel) so
   // the two surfaces never drift. Computed from the elaboration data already
   // loaded into this panel — no extra fetch.
@@ -692,29 +691,27 @@ export function IdeaDetailPanel({
               </>
             ) : (
               <>
-                {canAssign && (
-                  // Icon-only (Option C — declutter the action row): the (re)assign
-                  // label rides a shadcn Tooltip (+ aria-label for a11y) so the
-                  // stage primary CTA stays the only full-text button.
-                  <TooltipProvider delayDuration={300}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0 h-8 w-8 border-border"
-                          onClick={() => setShowAssignModal(true)}
-                          aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
-                        >
-                          <User className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {idea.assignee ? t("common.reassign") : t("common.assign")}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
+                {/* Icon-only (Option C — declutter the action row): the (re)assign
+                    label rides a shadcn Tooltip (+ aria-label for a11y) so the
+                    stage primary CTA stays the only full-text button. */}
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0 h-8 w-8 border-border"
+                        onClick={() => setShowAssignModal(true)}
+                        aria-label={idea.assignee ? t("common.reassign") : t("common.assign")}
+                      >
+                        <User className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {idea.assignee ? t("common.reassign") : t("common.assign")}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {/* Middle area: help text or action buttons */}
                 <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
                   {canSkipElaboration && (

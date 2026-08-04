@@ -599,7 +599,7 @@ export function IdeaDetailPanel({
 
   const status = idea?.derivedStatus || "todo";
   const isContainer = idea?.isContainer === true;
-  const canAssign = idea ? idea.status !== "elaborated" : false;
+  const canAssign = idea !== null;
   // Shared enable-predicate (same helper as the /ideas idea-detail panel) so
   // the two surfaces never drift.
   const canVerify = canVerifyElaboration({
