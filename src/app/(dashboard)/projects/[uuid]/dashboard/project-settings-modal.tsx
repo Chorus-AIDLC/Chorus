@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
@@ -29,7 +29,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { updateProjectAction, deleteProjectAction } from "../actions";
-import { ProjectAgentCwdSettings } from "@/components/project-agent-cwd-settings";
+import {
+  ProjectAgentCwdSettings,
+  type ProjectAgentCwdSettingsHandle,
+} from "@/components/project-agent-cwd-settings";
 
 interface ProjectSettingsModalProps {
   projectUuid: string;
@@ -50,16 +53,36 @@ export function ProjectSettingsModal({
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
+  const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const handleSave = async () => {
     setSaving(true);
+    setCwdError(null);
+    const cwdMutations = await cwdSettingsRef.current?.validate();
+    if (!cwdMutations) {
+      setSaving(false);
+      return;
+    }
     const result = await updateProjectAction(projectUuid, {
       name,
       description: description || null,
+      agentCwds: {
+        upserts: cwdMutations.upserts.map(({ agentUuid, validationRequestUuid }) => ({
+          agentUuid,
+          validationRequestUuid,
+        })),
+        clears: cwdMutations.clears,
+      },
     });
     setSaving(false);
     if (result.success) {
+      window.dispatchEvent(new CustomEvent("project-cwd-updated", {
+        detail: { projectUuid },
+      }));
       setOpen(false);
       router.refresh();
+    } else if (result.error.agentUuid) {
+      setCwdError({ agentUuid: result.error.agentUuid, message: result.error.message });
     }
   };
 
@@ -123,25 +146,30 @@ export function ProjectSettingsModal({
               />
             </div>
 
-            <Button
-              onClick={handleSave}
-              disabled={saving || !name.trim()}
-              className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t("projectSettings.saving")}
-                </>
-              ) : (
-                t("projectSettings.saveChanges")
-              )}
-            </Button>
           </div>
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-          <ProjectAgentCwdSettings projectUuid={projectUuid} />
+          <ProjectAgentCwdSettings
+            ref={cwdSettingsRef}
+            projectUuid={projectUuid}
+            agentError={cwdError}
+          />
+
+          <Button
+            onClick={handleSave}
+            disabled={saving || !name.trim()}
+            className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {t("projectSettings.saving")}
+              </>
+            ) : (
+              t("projectSettings.saveChanges")
+            )}
+          </Button>
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 

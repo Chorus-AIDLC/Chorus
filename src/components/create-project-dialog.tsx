@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { isImeComposing } from "@/lib/ime";
 import {
   ProjectAgentCwdSettings,
-  type ProjectAgentCwdDraft,
+  type ProjectAgentCwdSettingsHandle,
 } from "@/components/project-agent-cwd-settings";
 
 interface CreateProjectDialogProps {
@@ -43,14 +43,18 @@ export function CreateProjectDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const [success, setSuccess] = useState(false);
-  const [cwdDrafts, setCwdDrafts] = useState<ProjectAgentCwdDraft[]>([]);
+  const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
 
   const displayGroupName = groupName || t("projectGroups.ungrouped");
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!title.trim()) return;
     setError(null);
+    setCwdError(null);
+    const cwdDrafts = await cwdSettingsRef.current?.validate();
+    if (!cwdDrafts) return;
 
     startTransition(async () => {
       try {
@@ -61,7 +65,7 @@ export function CreateProjectDialog({
             name: title.trim(),
             description: description.trim() || undefined,
             groupUuid: groupUuid || undefined,
-            agentCwds: cwdDrafts.map(({ agentUuid, validationRequestUuid }) => ({
+            agentCwds: cwdDrafts.upserts.map(({ agentUuid, validationRequestUuid }) => ({
               agentUuid,
               validationRequestUuid,
             })),
@@ -74,14 +78,24 @@ export function CreateProjectDialog({
           setTimeout(() => {
             setTitle("");
             setDescription("");
-            setCwdDrafts([]);
             onOpenChange(false);
             onCreated?.();
             router.refresh();
             setSuccess(false);
           }, 600);
         } else {
-          setError(data.error || t("projects.createFailed"));
+          const message = typeof data.error === "object" && data.error
+            ? data.error.message
+            : data.error;
+          const agentUuid = typeof data.error === "object" && data.error
+            && typeof data.error.details?.agentUuid === "string"
+            ? data.error.details.agentUuid
+            : null;
+          if (agentUuid) {
+            setCwdError({ agentUuid, message: message || t("projects.createFailed") });
+          } else {
+            setError(message || t("projects.createFailed"));
+          }
         }
       } catch {
         setError(t("common.genericError"));
@@ -145,7 +159,10 @@ export function CreateProjectDialog({
           </div>
 
           <div className="border-t border-border pt-5">
-            <ProjectAgentCwdSettings onDraftChange={setCwdDrafts} />
+            <ProjectAgentCwdSettings
+              ref={cwdSettingsRef}
+              agentError={cwdError}
+            />
           </div>
         </div>
 
