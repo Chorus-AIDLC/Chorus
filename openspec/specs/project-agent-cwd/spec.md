@@ -143,6 +143,11 @@ form MUST NOT expose a separate persistence action for cwd preferences.
 - **THEN** Chorus MUST apply the metadata, replacement, and clear in one transaction
 - **AND** unchanged Agent cwd preferences MUST remain unchanged
 
+#### Scenario: Project settings presents and reflects the combined save
+- **WHEN** a user edits cwd settings in the Project settings dialog
+- **THEN** the single Save Changes action MUST appear after the cwd configuration area
+- **AND** a successful save MUST refresh the Project fixed-cwd summary without requiring a page reload
+
 #### Scenario: User selects a directory inside the form
 - **WHEN** a user selects or enters a cwd inside the Project form
 - **THEN** Chorus MUST keep that cwd as a local draft without showing a separate cwd confirmation action

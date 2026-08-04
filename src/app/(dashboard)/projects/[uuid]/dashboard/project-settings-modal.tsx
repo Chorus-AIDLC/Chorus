@@ -76,6 +76,9 @@ export function ProjectSettingsModal({
     });
     setSaving(false);
     if (result.success) {
+      window.dispatchEvent(new CustomEvent("project-cwd-updated", {
+        detail: { projectUuid },
+      }));
       setOpen(false);
       router.refresh();
     } else if (result.error.agentUuid) {
@@ -143,20 +146,6 @@ export function ProjectSettingsModal({
               />
             </div>
 
-            <Button
-              onClick={handleSave}
-              disabled={saving || !name.trim()}
-              className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t("projectSettings.saving")}
-                </>
-              ) : (
-                t("projectSettings.saveChanges")
-              )}
-            </Button>
           </div>
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
@@ -166,6 +155,21 @@ export function ProjectSettingsModal({
             projectUuid={projectUuid}
             agentError={cwdError}
           />
+
+          <Button
+            onClick={handleSave}
+            disabled={saving || !name.trim()}
+            className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {t("projectSettings.saving")}
+              </>
+            ) : (
+              t("projectSettings.saveChanges")
+            )}
+          </Button>
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
