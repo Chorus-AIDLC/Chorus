@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, resolveAssigneeAgentUuid, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -807,33 +807,7 @@ export async function claimIdea({
   return formatIdeaResponse(idea);
 }
 
-// Assign Idea (reassign: works regardless of current assignee, any non-terminal status)
-// Does `instanceUuid` belong to the SAME agent that currently owns the idea's
-// assignment? Used to gate the elaborated-idea cwd re-pin: pinning a cwd of the
-// idea's own assignee agent is a wake-target refinement (allowed post-
-// elaboration), whereas pinning a different agent's instance would be a
-// reassignment (still blocked). Resolves both sides to their owning AGENT uuid
-// (an `agent_instance` assignee → its agent) before comparing. Returns false if
-// the idea has no agent assignee, or the instance is missing/foreign-company.
-async function isSameOwningAgentInstance(
-  companyUuid: string,
-  currentAssigneeType: string | null,
-  currentAssigneeUuid: string | null,
-  instanceUuid: string,
-): Promise<boolean> {
-  const currentAgentUuid = await resolveAssigneeAgentUuid(
-    companyUuid,
-    currentAssigneeType,
-    currentAssigneeUuid,
-  );
-  if (!currentAgentUuid) return false;
-  const instance = await prisma.agentInstance.findFirst({
-    where: { uuid: instanceUuid, companyUuid },
-    select: { agentUuid: true },
-  });
-  return instance?.agentUuid === currentAgentUuid;
-}
-
+// Assign Idea (reassign: works regardless of current assignee or lifecycle)
 export async function assignIdea({
   ideaUuid,
   companyUuid,
@@ -844,29 +818,11 @@ export async function assignIdea({
   cwdSource,
   cwdHost,
   runtimeCwd,
-  allowElaboratedInstanceRepin = false,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new Error("Idea not found");
-  const normalizedAssignStatus = normalizeIdeaStatus(existing.status);
-  if (normalizedAssignStatus === "elaborated") {
-    // An elaborated idea rejects reassignment — EXCEPT a same-owning-agent cwd
-    // re-pin (pin-cwd-before-wake). The post-elaboration wakes must run in the
-    // pinned cwd, so the pin has to persist even though the idea is elaborated.
-    // Guarded three ways: the caller opts in, an instance is actually being
-    // pinned, and the instance's owning agent equals the idea's current
-    // assignee owning agent (a cwd refinement, never an owner change).
-    const isSameAgentRepin =
-      allowElaboratedInstanceRepin &&
-      !!instanceUuid &&
-      (await isSameOwningAgentInstance(companyUuid, existing.assigneeType, existing.assigneeUuid, instanceUuid));
-    if (!isSameAgentRepin) {
-      throw new Error("Cannot assign an elaborated Idea");
-    }
-  }
-
   // If currently open, move to elaborating; otherwise keep current status
   const newStatus = existing.status === "open" ? "elaborating" : existing.status;
 
@@ -898,19 +854,21 @@ export async function assignIdea({
   return formatIdeaResponse(idea);
 }
 
-// Release Idea (clears assignee, resets to open; any non-terminal status)
+// Release Idea. Terminal lifecycle and elaboration state are preserved.
 export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
   const existing = await prisma.idea.findUnique({ where: { uuid } });
   if (!existing) throw new Error("Idea not found");
   const normalizedReleaseStatus = normalizeIdeaStatus(existing.status);
-  if (normalizedReleaseStatus === "elaborated") {
-    throw new Error("Cannot release an elaborated Idea");
-  }
+  const isElaborated = normalizedReleaseStatus === "elaborated";
 
   const idea = await prisma.idea.update({
     where: { uuid },
     data: {
-      status: "open",
+      ...(!isElaborated && {
+        status: "open",
+        elaborationDepth: null,
+        elaborationStatus: null,
+      }),
       assigneeType: null,
       assigneeUuid: null,
       cwdSource: null,
@@ -918,8 +876,6 @@ export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
       runtimeCwd: null,
       assignedAt: null,
       assignedByUuid: null,
-      elaborationDepth: null,
-      elaborationStatus: null,
     },
     include: {
       project: { select: { uuid: true, name: true } },

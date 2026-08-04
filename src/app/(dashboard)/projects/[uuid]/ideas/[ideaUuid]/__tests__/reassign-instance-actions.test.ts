@@ -7,12 +7,13 @@ vi.mock("@/lib/auth-server", () => ({
 }));
 
 const mockAssignIdea = vi.hoisted(() => vi.fn());
+const mockReleaseIdea = vi.hoisted(() => vi.fn());
 const mockGetIdeaByUuid = vi.hoisted(() => vi.fn());
 vi.mock("@/services/idea.service", () => ({
   // Sibling actions in the same module import these; stub them so the module
   // loads without pulling in prisma transitively.
   assignIdea: mockAssignIdea,
-  releaseIdea: vi.fn(),
+  releaseIdea: mockReleaseIdea,
   getIdeaByUuid: mockGetIdeaByUuid,
 }));
 
@@ -53,8 +54,11 @@ vi.mock("@/lib/logger", () => {
 });
 
 import {
+  claimIdeaAction,
   claimIdeaToAgentAction,
+  claimIdeaToUserAction,
   reassignIdeaInstanceNoWakeAction,
+  releaseIdeaAction,
 } from "../actions";
 
 const COMPANY_A = "company-a";
@@ -142,10 +146,7 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
 
     expect(result).toEqual({ success: true });
     // Threads the durable instance pin into the non-waking service primitive so
-    // it promotes the row to assigneeType="agent_instance". Passes
-    // allowElaboratedInstanceRepin so a same-owning-agent cwd re-pin is honored
-    // even on an elaborated idea (the pin-then-wake surfaces act on elaborated
-    // ideas); assignIdea still enforces the same-agent guard for that exception.
+    // it promotes the row to assigneeType="agent_instance".
     expect(mockAssignIdea).toHaveBeenCalledTimes(1);
     expect(mockAssignIdea).toHaveBeenCalledWith({
       ideaUuid: IDEA_UUID,
@@ -199,12 +200,7 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
-  it("delegates an elaborated idea to assignIdea with the same-agent re-pin flag (does NOT short-circuit)", async () => {
-    // The pin-then-wake surfaces (Start Development / Yolo / proposal
-    // approve-reject) act on ELABORATED ideas, so this action must NOT reject
-    // them up front — it delegates to assignIdea, opting into the narrow
-    // same-owning-agent cwd re-pin exception. assignIdea itself enforces that the
-    // instance belongs to the idea's current assignee agent.
+  it("delegates an elaborated idea to assignIdea", async () => {
     mockGetServerAuthContext.mockResolvedValue(humanAuth());
     mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow({ status: "elaborated" }));
     mockAssignIdea.mockResolvedValue(undefined);
@@ -229,13 +225,10 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
-  it("surfaces a clean error when assignIdea rejects a cross-agent re-pin on an elaborated idea", async () => {
-    // assignIdea throws "Cannot assign an elaborated Idea" when the instance's
-    // owning agent is NOT the idea's assignee agent (the same-agent guard fails).
-    // The action must surface a clean error without leaking the raw message.
+  it("surfaces a clean error when assignIdea rejects an invalid instance", async () => {
     mockGetServerAuthContext.mockResolvedValue(humanAuth());
     mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow({ status: "elaborated" }));
-    mockAssignIdea.mockRejectedValue(new Error("Cannot assign an elaborated Idea"));
+    mockAssignIdea.mockRejectedValue(new Error("Agent instance not found"));
 
     const result = await reassignIdeaInstanceNoWakeAction(
       IDEA_UUID,
@@ -246,6 +239,52 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     expect(result).toEqual({ success: false, error: "Failed to reassign idea" });
     expect(mockCreateActivity).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("elaborated Idea assignment actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow({ status: "elaborated" }));
+    mockAssignIdea.mockResolvedValue(undefined);
+    mockReleaseIdea.mockResolvedValue(undefined);
+    mockCreateActivity.mockResolvedValue(undefined);
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({ source: "none" });
+  });
+
+  it("allows self assignment and records the existing assignment activity", async () => {
+    expect(await claimIdeaAction(IDEA_UUID)).toEqual({ success: true });
+    expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
+      ideaUuid: IDEA_UUID,
+      assigneeType: "user",
+      assigneeUuid: "user-1",
+    }));
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "assigned" }),
+    );
+  });
+
+  it("allows agent assignment with existing target resolution", async () => {
+    expect(await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID)).toEqual({ success: true });
+    expect(mockResolveProjectAgentCwdTarget).toHaveBeenCalled();
+    expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
+      assigneeType: "agent",
+      assigneeUuid: AGENT_UUID,
+    }));
+  });
+
+  it("allows user assignment", async () => {
+    expect(await claimIdeaToUserAction(IDEA_UUID, "user-2")).toEqual({ success: true });
+    expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
+      assigneeType: "user",
+      assigneeUuid: "user-2",
+    }));
+  });
+
+  it("allows release", async () => {
+    expect(await releaseIdeaAction(IDEA_UUID)).toEqual({ success: true });
+    expect(mockReleaseIdea).toHaveBeenCalledWith(IDEA_UUID);
   });
 });
 

@@ -63,8 +63,14 @@ vi.mock("@/components/unified-comments", () => ({ UnifiedComments: () => <div />
 vi.mock("@/components/references-section", () => ({ ReferencesSection: () => <div /> }));
 vi.mock("@/components/markdown-content", () => ({ MarkdownContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock("@/components/mention-renderer", () => ({ ContentWithMentions: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
-vi.mock("./assign-idea-modal", () => ({ AssignIdeaModal: () => <div /> }));
+vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal", () => ({
+  AssignIdeaModal: () => <div data-testid="assign-idea-modal" />,
+}));
 vi.mock("@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog", () => ({ MoveIdeaDialog: () => <div /> }));
+vi.mock("@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions", () => ({
+  getProposalsForIdeaAction: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  getTasksForProposalAction: vi.fn().mockResolvedValue({ success: true, data: [] }),
+}));
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../../../../messages/en.json")).default as Record<string, unknown>;
@@ -171,6 +177,18 @@ beforeEach(() => {
 });
 
 describe("/ideas IdeaDetailPanel — Verify Elaborate replaces Create Proposal", () => {
+  it("keeps reassignment available for an elaborated Idea and opens the modal", async () => {
+    const user = userEvent.setup();
+    renderPanel({ status: "elaborated", elaborationStatus: "resolved" });
+
+    const reassign = await screen.findByRole("button", { name: "Reassign" });
+    expect(screen.queryByTestId("assign-idea-modal")).toBeNull();
+
+    await user.click(reassign);
+
+    expect(screen.getByTestId("assign-idea-modal")).toBeTruthy();
+  });
+
   it("renders an enabled Verify Elaborate button when every round is answered", async () => {
     renderPanel();
     const btn = (await screen.findByRole("button", { name: "Verify Elaborate" })) as HTMLButtonElement;

@@ -38,9 +38,7 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
       updateMany: vi.fn(),
       count: vi.fn(),
     },
-    // AgentInstance lookups back the optional instance pin on claim/assign
-    // (add-agent-instance-addressing). findFirst is company-scoped: a foreign /
-    // missing instance resolves to null and the call is rejected.
+    // AgentInstance lookups back the optional instance pin on claim/assign.
     agentInstance: {
       findFirst: vi.fn(),
     },
@@ -63,25 +61,6 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
   buildAssigneeMatch: mockBuildAssigneeMatch,
-  // Real logic (mirrors src/lib/uuid-resolver): an `agent` assignee resolves to
-  // itself; an `agent_instance` resolves to its owning agent via the (mocked)
-  // prisma.agentInstance lookup. Used by assignIdea's elaborated cwd-re-pin guard.
-  resolveAssigneeAgentUuid: async (
-    companyUuid: string,
-    assigneeType: string | null,
-    assigneeUuid: string | null,
-  ) => {
-    if (!assigneeType || !assigneeUuid) return null;
-    if (assigneeType === "agent") return assigneeUuid;
-    if (assigneeType === "agent_instance") {
-      const inst = await mockPrisma.agentInstance.findFirst({
-        where: { uuid: assigneeUuid, companyUuid },
-        select: { agentUuid: true },
-      });
-      return inst?.agentUuid ?? null;
-    }
-    return null;
-  },
 }));
 vi.mock("@/services/mention.service", () => ({
   parseMentions: mockParseMentions,
@@ -185,7 +164,6 @@ describe("createIdea", () => {
     });
 
     expect(result.content).toBeNull();
-  });
 });
 
 describe("claimIdea", () => {
@@ -493,32 +471,57 @@ describe("assignIdea", () => {
     ).rejects.toThrow("Idea not found");
   });
 
-  it("should throw if idea is elaborated", async () => {
+  it("reassigns an elaborated idea without changing its lifecycle", async () => {
     const existing = makeIdeaRecord({ status: "elaborated" });
+    const assigned = makeIdeaRecord({
+      status: "elaborated",
+      assigneeType: "user",
+      assigneeUuid: ACTOR_UUID,
+    });
     mockPrisma.idea.findFirst.mockResolvedValue(existing);
+    mockPrisma.idea.update.mockResolvedValue(assigned);
 
-    await expect(
-      assignIdea({
-        ideaUuid: IDEA_UUID,
-        companyUuid: COMPANY_UUID,
-        assigneeType: "user",
-        assigneeUuid: ACTOR_UUID,
-      })
-    ).rejects.toThrow("Cannot assign an elaborated Idea");
+    const result = await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "user",
+      assigneeUuid: ACTOR_UUID,
+    });
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "elaborated",
+          assigneeType: "user",
+          assigneeUuid: ACTOR_UUID,
+        }),
+      }),
+    );
+    expect(result.status).toBe("elaborated");
   });
 
-  it("should throw if idea has legacy completed status (normalizes to elaborated)", async () => {
+  it("reassigns a legacy completed idea without rewriting its stored lifecycle", async () => {
     const existing = makeIdeaRecord({ status: "completed" });
+    const assigned = makeIdeaRecord({
+      status: "completed",
+      assigneeType: "user",
+      assigneeUuid: ACTOR_UUID,
+    });
     mockPrisma.idea.findFirst.mockResolvedValue(existing);
+    mockPrisma.idea.update.mockResolvedValue(assigned);
 
-    await expect(
-      assignIdea({
-        ideaUuid: IDEA_UUID,
-        companyUuid: COMPANY_UUID,
-        assigneeType: "user",
-        assigneeUuid: ACTOR_UUID,
-      })
-    ).rejects.toThrow("Cannot assign an elaborated Idea");
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "user",
+      assigneeUuid: ACTOR_UUID,
+    });
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "completed" }),
+      }),
+    );
   });
 
   // Re-assignment matrix (add-agent-instance-addressing): agent → different
@@ -602,25 +605,13 @@ describe("assignIdea", () => {
     );
   });
 
-  // Elaborated-idea cwd re-pin exception (pin-cwd-before-wake, task 1d). An
-  // elaborated idea rejects reassignment, EXCEPT a same-owning-agent cwd re-pin
-  // opted into via `allowElaboratedInstanceRepin` — the post-elaboration wakes
-  // (Start Development / Yolo / proposal approve-reject) must run in the pinned
-  // cwd, so the pin has to persist even though the idea is elaborated.
   const AGENT_X = "agent-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
 
-  it("allows a SAME-owning-agent cwd re-pin on an elaborated idea when opted in", async () => {
-    // Idea already assigned to a bare agent AGENT_X; pin instance A (owned by
-    // AGENT_X). The elaborated guard is bypassed because the owning agent matches.
+  it("allows an instance-pinned reassignment on an elaborated idea", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
     );
-    // 1st agentInstance.findFirst = the same-agent guard lookup (isSameOwningAgent
-    // → instance A owned by AGENT_X); 2nd = resolveAssigneeFields promoting to
-    // agent_instance. Both resolve to instance A.
-    mockPrisma.agentInstance.findFirst
-      .mockResolvedValueOnce({ agentUuid: AGENT_X })
-      .mockResolvedValueOnce({ uuid: INSTANCE_A });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_A });
     mockPrisma.idea.update.mockResolvedValue(
       makeIdeaRecord({ status: "elaborated", assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
     );
@@ -635,22 +626,22 @@ describe("assignIdea", () => {
       allowElaboratedInstanceRepin: true,
     });
 
-    // The pin persisted (assigneeType promoted) despite the elaborated status.
     expect(mockPrisma.idea.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ assigneeType: "agent_instance", assigneeUuid: INSTANCE_A }),
+        data: expect.objectContaining({
+          status: "elaborated",
+          assigneeType: "agent_instance",
+          assigneeUuid: INSTANCE_A,
+        }),
       }),
     );
   });
 
-  it("rejects a DIFFERENT-agent instance re-pin on an elaborated idea even when opted in", async () => {
-    // Idea assigned to AGENT_X; the instance being pinned is owned by a DIFFERENT
-    // agent → the same-agent guard fails → still "Cannot assign an elaborated Idea".
+  it("retains instance validation when reassigning an elaborated idea", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
     );
-    // The guard lookup returns a foreign owning agent → not the same agent.
-    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
 
     await expect(
       assignIdea({
@@ -662,53 +653,8 @@ describe("assignIdea", () => {
         instanceUuid: INSTANCE_B,
         allowElaboratedInstanceRepin: true,
       }),
-    ).rejects.toThrow("Cannot assign an elaborated Idea");
+    ).rejects.toThrow("Agent instance not found");
 
-    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
-  });
-
-  it("rejects an elaborated re-pin when the idea has no agent assignee (nothing to match)", async () => {
-    // A user-assigned (or unassigned) elaborated idea has no owning agent, so the
-    // same-agent guard can't pass → the elaborated rejection stands even with the
-    // flag set. This exercises the `!currentAgentUuid → false` guard branch.
-    mockPrisma.idea.findFirst.mockResolvedValue(
-      makeIdeaRecord({ status: "elaborated", assigneeType: "user", assigneeUuid: ACTOR_UUID }),
-    );
-
-    await expect(
-      assignIdea({
-        ideaUuid: IDEA_UUID,
-        companyUuid: COMPANY_UUID,
-        assigneeType: "agent",
-        assigneeUuid: AGENT_X,
-        assignedByUuid: "admin-uuid",
-        instanceUuid: INSTANCE_A,
-        allowElaboratedInstanceRepin: true,
-      }),
-    ).rejects.toThrow("Cannot assign an elaborated Idea");
-
-    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
-  });
-
-  it("still rejects an elaborated re-pin when the flag is NOT set (default behavior unchanged)", async () => {
-    mockPrisma.idea.findFirst.mockResolvedValue(
-      makeIdeaRecord({ status: "elaborated", assigneeType: "agent", assigneeUuid: AGENT_X }),
-    );
-
-    await expect(
-      assignIdea({
-        ideaUuid: IDEA_UUID,
-        companyUuid: COMPANY_UUID,
-        assigneeType: "agent",
-        assigneeUuid: AGENT_X,
-        assignedByUuid: "admin-uuid",
-        instanceUuid: INSTANCE_A,
-        // allowElaboratedInstanceRepin omitted → defaults false
-      }),
-    ).rejects.toThrow("Cannot assign an elaborated Idea");
-
-    // Guard never even consulted — the flag gates it before any instance lookup.
-    expect(mockPrisma.agentInstance.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 });
@@ -760,20 +706,33 @@ describe("releaseIdea", () => {
     await expect(releaseIdea(IDEA_UUID)).rejects.toThrow("Idea not found");
   });
 
-  it("should throw if idea is elaborated", async () => {
-    mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "elaborated" }));
+  it.each(["elaborated", "closed"])(
+    "clears assignment for %s without changing lifecycle or elaboration state",
+    async (status) => {
+      const existing = makeIdeaRecord({
+        status,
+        elaborationDepth: "standard",
+        elaborationStatus: "resolved",
+      });
+      mockPrisma.idea.findUnique.mockResolvedValue(existing);
+      mockPrisma.idea.update.mockResolvedValue({
+        ...existing,
+        assigneeType: null,
+        assigneeUuid: null,
+      });
 
-    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
-      "Cannot release an elaborated Idea"
-    );
-  });
+      await releaseIdea(IDEA_UUID);
 
-  it("should throw if idea has legacy closed status (normalizes to elaborated)", async () => {
-    mockPrisma.idea.findUnique.mockResolvedValue(makeIdeaRecord({ status: "closed" }));
-
-    await expect(releaseIdea(IDEA_UUID)).rejects.toThrow(
-      "Cannot release an elaborated Idea"
-    );
+      const update = mockPrisma.idea.update.mock.calls[0][0];
+      expect(update.data).not.toHaveProperty("status");
+      expect(update.data).not.toHaveProperty("elaborationDepth");
+      expect(update.data).not.toHaveProperty("elaborationStatus");
+      expect(update.data).toEqual(expect.objectContaining({
+        assigneeType: null,
+        assigneeUuid: null,
+      }));
+    },
+  );
   });
 });
 

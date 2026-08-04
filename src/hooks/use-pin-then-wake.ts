@@ -24,14 +24,9 @@
 // the caller simply retries the wake. A pinned-but-not-woken idea is a valid
 // resting state.
 //
-// ELABORATED-IDEA NOTE: the non-waking reassign (task 1c) and the underlying
-// `assignIdea` service both reject an `elaborated` idea, whereas Start
-// Development / Yolo / Proposal-approve act on elaborated ideas. So the reassign
-// step is BEST-EFFORT: a failed reassign never blocks the wake. On an
-// `elaborating` idea (Verify Elaborate, or Yolo before elaboration) the pin
-// persists fully; on an `elaborated` idea the reassign is a no-op and the server
-// falls back to its own wake-target resolution (session-origin upgrade / HARD
-// pin) — the same behavior as before this change, so no regression.
+// The reassign step is BEST-EFFORT because the selected instance can disappear
+// or fail validation between preview and submission. A failed pin never blocks
+// the wake; the server falls back to its own wake-target resolution.
 
 import { useCallback, useEffect, useState } from "react";
 import { clientLogger } from "@/lib/logger-client";
@@ -174,9 +169,8 @@ export function usePinThenWake({
       try {
         const result = await reassignNoWake(ideaUuid, agentUuid, instanceUuid);
         if (!result.success) {
-          // Expected on an elaborated idea (reassign guard) — not an error; the
-          // server resolves the wake target itself. Kept at debug so real logs
-          // stay quiet.
+          // A stale or invalid instance does not invalidate the wake; the server
+          // resolves the wake target itself. Kept at debug so logs stay quiet.
           clientLogger.debug(
             "pin-then-wake reassign did not persist (continuing to wake)",
             result.error,

@@ -25,17 +25,14 @@ interface AssigneeSectionProps {
   // it calls onReassign (opens the assign modal). This replaces the panel's old
   // footer reassign button — the entry point now lives on the assignee itself.
   onReassign?: () => void;
-  // Gates the trigger the same way the removed footer button was gated
-  // (idea.status !== "elaborated"). When false/omitted the box is read-only.
+  // When false/omitted the box is read-only.
   editable?: boolean;
 }
 
 export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSectionProps) {
   const tCommon = useTranslations("common");
 
-  // The reassign entry is active only while editable AND a handler is wired —
-  // read-only usages (e.g. an elaborated idea, or callers that omit the props)
-  // render exactly as before.
+  // The reassign entry is active only while editable AND a handler is wired.
   const interactive = editable === true && typeof onReassign === "function";
   const actionLabel = assignee ? tCommon("reassign") : tCommon("assign");
 
