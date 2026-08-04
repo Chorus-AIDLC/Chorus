@@ -67,6 +67,33 @@ describe("DirectoryBrowser", () => {
     vi.restoreAllMocks();
   });
 
+  it("can expose selection without rendering a confirm button", async () => {
+    const fetchMock = vi.fn();
+    const onSelectionChange = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementationOnce(() => success({ roots: ["/work"] }, "roots-1"));
+    render(
+      <DirectoryBrowser
+        agentUuid="agent-1"
+        instances={[instance]}
+        showConfirm={false}
+        onSelectionChange={onSelectionChange}
+        onValidated={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "pathPrefix" });
+    fireEvent.click(screen.getByRole("button", { name: /configuredCwd\/workspace/ }));
+
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+    await waitFor(() => expect(onSelectionChange).toHaveBeenCalledWith({
+      agentUuid: "agent-1",
+      connectionUuid: "connection-1",
+      host: "build-host",
+      cwd: "/workspace",
+    }));
+  });
+
   it("lists every daemon.json cwd and validates the exact selected connection", async () => {
     const fetchMock = vi.fn();
     const onValidated = vi.fn();

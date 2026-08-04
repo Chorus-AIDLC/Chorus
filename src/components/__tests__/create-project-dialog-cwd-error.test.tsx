@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { forwardRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
@@ -8,41 +9,42 @@ vi.mock("next-intl", () => ({
 vi.mock("@/hooks/use-progress-router", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
+const validateCwdSettings = vi.fn();
 vi.mock("@/components/project-agent-cwd-settings", () => ({
-  ProjectAgentCwdSettings: ({
-    onDraftChange,
+  ProjectAgentCwdSettings: forwardRef(function MockProjectAgentCwdSettings({
     agentError,
   }: {
-    onDraftChange: (value: {
-      upserts: Array<{ agentUuid: string; validationRequestUuid: string }>;
-      clears: string[];
-    }) => void;
     agentError?: { agentUuid: string; message: string } | null;
-  }) => (
+  }, ref) {
+    if (typeof ref === "object" && ref) {
+      ref.current = { validate: validateCwdSettings };
+    }
+    return (
     <div>
-      <button
-        type="button"
-        onClick={() => onDraftChange({
-          upserts: [{
-            agentUuid: "agent-1",
-            validationRequestUuid: "validation-1",
-          }],
-          clears: [],
-        })}
-      >
-        select cwd draft
-      </button>
+      <span>cwd draft remains</span>
       {agentError?.agentUuid === "agent-1" && (
         <p role="alert">{agentError.message}</p>
       )}
     </div>
-  ),
+    );
+  }),
 }));
 
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 
 describe("CreateProjectDialog cwd validation", () => {
   beforeEach(() => {
+    validateCwdSettings.mockReset();
+    validateCwdSettings.mockResolvedValue({
+      upserts: [{
+        agentUuid: "agent-1",
+        connectionUuid: "connection-1",
+        host: "host-1",
+        cwd: "/workspace",
+        validationRequestUuid: "validation-1",
+      }],
+      clears: [],
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,
       json: async () => ({
@@ -70,13 +72,13 @@ describe("CreateProjectDialog cwd validation", () => {
       screen.getByPlaceholderText("projectGroups.projectTitlePlaceholder"),
       { target: { value: "New Project" } },
     );
-    fireEvent.click(screen.getByText("select cwd draft"));
     fireEvent.click(screen.getByText("projectGroups.createProject"));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
       "Fresh successful validation required",
     );
-    expect(screen.getByText("select cwd draft")).toBeTruthy();
+    expect(validateCwdSettings).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("cwd draft remains")).toBeTruthy();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       "/api/projects",
       expect.objectContaining({

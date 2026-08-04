@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { isImeComposing } from "@/lib/ime";
 import {
   ProjectAgentCwdSettings,
-  type ProjectAgentCwdMutations,
+  type ProjectAgentCwdSettingsHandle,
 } from "@/components/project-agent-cwd-settings";
 
 interface CreateProjectDialogProps {
@@ -45,17 +45,16 @@ export function CreateProjectDialog({
   const [error, setError] = useState<string | null>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const [success, setSuccess] = useState(false);
-  const [cwdDrafts, setCwdDrafts] = useState<ProjectAgentCwdMutations>({
-    upserts: [],
-    clears: [],
-  });
+  const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
 
   const displayGroupName = groupName || t("projectGroups.ungrouped");
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!title.trim()) return;
     setError(null);
     setCwdError(null);
+    const cwdDrafts = await cwdSettingsRef.current?.validate();
+    if (!cwdDrafts) return;
 
     startTransition(async () => {
       try {
@@ -79,7 +78,6 @@ export function CreateProjectDialog({
           setTimeout(() => {
             setTitle("");
             setDescription("");
-            setCwdDrafts({ upserts: [], clears: [] });
             onOpenChange(false);
             onCreated?.();
             router.refresh();
@@ -162,7 +160,7 @@ export function CreateProjectDialog({
 
           <div className="border-t border-border pt-5">
             <ProjectAgentCwdSettings
-              onDraftChange={setCwdDrafts}
+              ref={cwdSettingsRef}
               agentError={cwdError}
             />
           </div>

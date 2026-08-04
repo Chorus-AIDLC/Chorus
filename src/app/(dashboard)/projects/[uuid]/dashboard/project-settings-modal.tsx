@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
@@ -31,7 +31,7 @@ import {
 import { updateProjectAction, deleteProjectAction } from "../actions";
 import {
   ProjectAgentCwdSettings,
-  type ProjectAgentCwdMutations,
+  type ProjectAgentCwdSettingsHandle,
 } from "@/components/project-agent-cwd-settings";
 
 interface ProjectSettingsModalProps {
@@ -53,14 +53,16 @@ export function ProjectSettingsModal({
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [cwdMutations, setCwdMutations] = useState<ProjectAgentCwdMutations>({
-    upserts: [],
-    clears: [],
-  });
+  const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const handleSave = async () => {
     setSaving(true);
     setCwdError(null);
+    const cwdMutations = await cwdSettingsRef.current?.validate();
+    if (!cwdMutations) {
+      setSaving(false);
+      return;
+    }
     const result = await updateProjectAction(projectUuid, {
       name,
       description: description || null,
@@ -160,8 +162,8 @@ export function ProjectSettingsModal({
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
           <ProjectAgentCwdSettings
+            ref={cwdSettingsRef}
             projectUuid={projectUuid}
-            onDraftChange={setCwdMutations}
             agentError={cwdError}
           />
 

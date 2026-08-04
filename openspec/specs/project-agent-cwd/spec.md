@@ -143,10 +143,10 @@ form MUST NOT expose a separate persistence action for cwd preferences.
 - **THEN** Chorus MUST apply the metadata, replacement, and clear in one transaction
 - **AND** unchanged Agent cwd preferences MUST remain unchanged
 
-#### Scenario: User confirms a directory inside the form
-- **WHEN** daemon validation succeeds for a selected directory
-- **THEN** Chorus MUST show the normalized cwd as a local draft
-- **AND** Chorus MUST NOT persist that preference until the Project create or save action succeeds
+#### Scenario: User selects a directory inside the form
+- **WHEN** a user selects or enters a cwd inside the Project form
+- **THEN** Chorus MUST keep that cwd as a local draft without showing a separate cwd confirmation action
+- **AND** the Project create or save action MUST validate and normalize the draft before persisting it
 
 ### Requirement: Project form reports cwd validation inline
 Chorus MUST validate every non-empty cwd draft before committing the Project
