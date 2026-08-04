@@ -170,6 +170,7 @@ export function DirectoryBrowser({
   const [configuredSelection, setConfiguredSelection] =
     useState<InstanceCandidate | null>(null);
   const [manualMode, setManualMode] = useState(false);
+  const [customPathEdited, setCustomPathEdited] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [items, setItems] = useState<DirectoryItem[]>([]);
@@ -219,6 +220,7 @@ export function DirectoryBrowser({
     setPathMode("custom");
     setConfiguredSelection(null);
     setManualMode(false);
+    setCustomPathEdited(false);
     setPrefix("");
     setSelectedPath("");
     setErrorCode(null);
@@ -328,22 +330,34 @@ export function DirectoryBrowser({
 
   useEffect(() => {
     const selectionAnchor = configuredSelection ?? anchor;
+    const draftPath = selectedPath ||
+      (!showConfirm && pathMode === "custom" && customPathEdited ? prefix.trim() : "");
     selectionChangeRef.current?.(
-      selectionAnchor && selectedPath
+      selectionAnchor && draftPath
         ? {
             agentUuid,
             connectionUuid: selectionAnchor.connectionUuid,
             host: selectionAnchor.host,
-            cwd: selectedPath,
+            cwd: draftPath,
           }
         : null,
     );
-  }, [agentUuid, anchor, configuredSelection, selectedPath]);
+  }, [
+    agentUuid,
+    anchor,
+    configuredSelection,
+    customPathEdited,
+    pathMode,
+    prefix,
+    selectedPath,
+    showConfirm,
+  ]);
 
   const chooseCandidate = (item: DirectoryItem) => {
     cancelValidation();
     clearCandidates();
     setSelectedPath(item.path);
+    setCustomPathEdited(true);
     setPrefix(withTrailingSeparator(item.path));
     setErrorCode(null);
   };
@@ -441,6 +455,7 @@ export function DirectoryBrowser({
                   clearCandidates();
                   setPathMode("configured");
                   setConfiguredSelection(instance);
+                  setCustomPathEdited(false);
                   setSelectedPath(instance.cwd ?? "");
                   setErrorCode(null);
                 }}
@@ -462,6 +477,7 @@ export function DirectoryBrowser({
                 cancelValidation();
                 setPathMode("custom");
                 setConfiguredSelection(null);
+                setCustomPathEdited(false);
                 setSelectedPath("");
                 setPrefix(selectedRoot ? withTrailingSeparator(selectedRoot) : "");
                 setErrorCode(null);
@@ -492,6 +508,7 @@ export function DirectoryBrowser({
                   cancelValidation();
                   clearCandidates();
                   setSelectedRoot(event.target.value);
+                  setCustomPathEdited(false);
                   setPrefix(withTrailingSeparator(event.target.value));
                   setSelectedPath("");
                   setErrorCode(null);
@@ -520,6 +537,7 @@ export function DirectoryBrowser({
                   onChange={(event) => {
                     cancelValidation();
                     setPrefix(event.target.value);
+                    setCustomPathEdited(true);
                     setSelectedPath(manualMode ? event.target.value.trim() : "");
                     setErrorCode(null);
                   }}
@@ -567,6 +585,7 @@ export function DirectoryBrowser({
                     cancelValidation();
                     const parent = parentWithinRoot(prefix, selectedRoot);
                     clearCandidates();
+                    setCustomPathEdited(true);
                     setPrefix(withTrailingSeparator(parent));
                     setSelectedPath(parent);
                     setErrorCode(null);

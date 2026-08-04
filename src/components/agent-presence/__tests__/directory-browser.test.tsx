@@ -94,6 +94,38 @@ describe("DirectoryBrowser", () => {
     }));
   });
 
+  it("exposes an edited custom path for project-submit validation", async () => {
+    const fetchMock = vi.fn();
+    const onSelectionChange = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementationOnce(() => success({ roots: ["/work"] }, "roots-1"));
+    render(
+      <DirectoryBrowser
+        agentUuid="agent-1"
+        instances={[instance]}
+        showConfirm={false}
+        onSelectionChange={onSelectionChange}
+        onValidated={vi.fn()}
+      />,
+    );
+
+    const input = await screen.findByRole("combobox", { name: "pathPrefix" });
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("/work/"));
+    expect(onSelectionChange).not.toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "/work/",
+    }));
+
+    fireEvent.change(input, { target: { value: "/work/does-not-exist" } });
+
+    await waitFor(() => expect(onSelectionChange).toHaveBeenCalledWith({
+      agentUuid: "agent-1",
+      connectionUuid: "connection-1",
+      host: "build-host",
+      cwd: "/work/does-not-exist",
+    }));
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
+  });
+
   it("lists every daemon.json cwd and validates the exact selected connection", async () => {
     const fetchMock = vi.fn();
     const onValidated = vi.fn();

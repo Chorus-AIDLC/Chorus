@@ -113,4 +113,24 @@ describe("ProjectAgentCwdSettings", () => {
     }));
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects an invalid custom draft instead of allowing project submit", async () => {
+    validateDirectorySelection.mockRejectedValueOnce(new Error("NOT_FOUND"));
+    const ref = createRef<ProjectAgentCwdSettingsHandle>();
+    render(<ProjectAgentCwdSettings ref={ref} />);
+    await screen.findByText("Agent One");
+    fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.replace"));
+    fireEvent.click(screen.getByText("choose draft"));
+
+    await act(async () => {
+      await expect(ref.current?.validate()).resolves.toBeNull();
+    });
+
+    expect(validateDirectorySelection).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "/workspace/draft",
+    }));
+    expect(screen.getByText("/workspace/draft")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent)
+      .toBe("directoryBrowser.errors.NOT_FOUND");
+  });
 });

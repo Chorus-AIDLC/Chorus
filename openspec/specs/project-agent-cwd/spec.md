@@ -160,6 +160,11 @@ control.
 - **AND** the form MUST remain open with its drafts intact
 - **AND** the affected Agent cwd editor MUST display the validation error
 
+#### Scenario: User types a nonexistent cwd
+- **WHEN** a user edits the Project cwd input to a non-empty path that is not an autocomplete candidate
+- **THEN** Chorus MUST treat the typed value as a cwd draft and validate it during the Project create or save action
+- **AND** a failed validation MUST prevent the Project request while preserving the typed value and displaying the error
+
 #### Scenario: Project form has no cwd value
 - **WHEN** an Agent has neither a saved preference nor a selected cwd draft
 - **THEN** the Project form MUST allow submission without cwd validation for that Agent
