@@ -27,16 +27,24 @@ export interface ProjectAgentCwdDraft {
   cwd: string;
 }
 
+export interface ProjectAgentCwdMutations {
+  upserts: ProjectAgentCwdDraft[];
+  clears: string[];
+}
+
 export function ProjectAgentCwdSettings({
   projectUuid,
   onDraftChange,
+  agentError,
 }: {
   projectUuid?: string;
-  onDraftChange?: (drafts: ProjectAgentCwdDraft[]) => void;
+  onDraftChange?: (mutations: ProjectAgentCwdMutations) => void;
+  agentError?: { agentUuid: string; message: string } | null;
 }) {
   const t = useTranslations();
   const [items, setItems] = useState<AgentCwdItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
+  const [clears, setClears] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -62,55 +70,36 @@ export function ProjectAgentCwdSettings({
     void load();
   }, [load]);
 
-  const updateDrafts = (next: Record<string, ProjectAgentCwdDraft>) => {
+  const updateMutations = (
+    next: Record<string, ProjectAgentCwdDraft>,
+    nextClears: Set<string>,
+  ) => {
     setDrafts(next);
-    onDraftChange?.(Object.values(next));
+    setClears(nextClears);
+    onDraftChange?.({ upserts: Object.values(next), clears: [...nextClears] });
   };
 
   const save = async (selection: ValidatedDirectory) => {
-    if (!projectUuid) {
-      updateDrafts({
-        ...drafts,
-        [selection.agentUuid]: {
-          agentUuid: selection.agentUuid,
-          validationRequestUuid: selection.validationRequestUuid,
-          host: selection.host,
-          cwd: selection.cwd,
-        },
-      });
-      setEditingAgent(null);
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const nextClears = new Set(clears);
+    nextClears.delete(selection.agentUuid);
+    updateMutations({
+      ...drafts,
+      [selection.agentUuid]: {
         agentUuid: selection.agentUuid,
         validationRequestUuid: selection.validationRequestUuid,
-      }),
-    });
-    if (!response.ok) throw new Error("save failed");
+        host: selection.host,
+        cwd: selection.cwd,
+      },
+    }, nextClears);
     setEditingAgent(null);
-    await load();
   };
 
-  const clear = async (agentUuid: string) => {
-    if (!projectUuid) {
-      const next = { ...drafts };
-      delete next[agentUuid];
-      updateDrafts(next);
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentUuid }),
-    });
-    if (!response.ok) {
-      setError(true);
-      return;
-    }
-    await load();
+  const clear = (agentUuid: string) => {
+    const next = { ...drafts };
+    delete next[agentUuid];
+    const nextClears = new Set(clears);
+    if (projectUuid) nextClears.add(agentUuid);
+    updateMutations(next, nextClears);
   };
 
   return (
@@ -149,7 +138,7 @@ export function ProjectAgentCwdSettings({
 
       {items.map((item) => {
         const draft = drafts[item.agent.uuid];
-        const preference = draft
+        const preference = clears.has(item.agent.uuid) ? null : draft
           ? { host: draft.host, cwd: draft.cwd, status: "valid" as const }
           : item.preference;
         return (
@@ -200,7 +189,7 @@ export function ProjectAgentCwdSettings({
                     className="text-destructive"
                     title={t("projectSettings.agentCwds.clear")}
                     aria-label={t("projectSettings.agentCwds.clear")}
-                    onClick={() => void clear(item.agent.uuid)}
+                    onClick={() => clear(item.agent.uuid)}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -212,10 +201,15 @@ export function ProjectAgentCwdSettings({
                 <DirectoryBrowser
                   agentUuid={item.agent.uuid}
                   instances={item.onlineInstances}
-                  confirmLabel={t("projectSettings.agentCwds.save")}
+                  confirmLabel={t("projectSettings.agentCwds.select")}
                   onValidated={save}
                 />
               </div>
+            )}
+            {agentError?.agentUuid === item.agent.uuid && (
+              <p className="mt-2 text-xs text-destructive" role="alert">
+                {agentError.message}
+              </p>
             )}
           </div>
         );

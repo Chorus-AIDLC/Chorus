@@ -311,7 +311,7 @@
       "title": "Agent 工作目录", "description": "为此项目中的每个 Agent 固定主机和目录。",
       "loading": "正在加载工作目录...", "loadFailed": "无法加载工作目录。", "empty": "暂无可用 Agent。", "emptyOnline": "暂无在线 Agent。",
       "notConfigured": "每次操作临时选择目录", "configure": "配置工作目录", "replace": "替换工作目录",
-      "clear": "清除固定工作目录", "save": "保存固定目录", "createFailed": "Agent 工作目录保存失败，项目未创建。",
+      "clear": "清除固定工作目录", "select": "选择目录", "createFailed": "Agent 工作目录保存失败，项目未创建。",
       "status": { "valid": "可用", "offline": "主机离线", "invalid": "目录不可用" }
     }
   },

@@ -5,7 +5,7 @@ const { emit, prismaMock } = vi.hoisted(() => ({
   prismaMock: {
     $transaction: vi.fn(),
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
-    project: { findFirst: vi.fn(), create: vi.fn() },
+    project: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     daemonConnection: { findFirst: vi.fn(), findMany: vi.fn() },
     daemonDirectoryRequest: {
       create: vi.fn(),
@@ -43,6 +43,7 @@ import {
   resolveProjectAgentCwdTarget,
   resolveTemporaryRuntimeCwd,
   saveProjectAgentCwdPreference,
+  updateProjectWithAgentCwds,
 } from "@/services/project-agent-cwd.service";
 
 const base = {
@@ -97,6 +98,119 @@ describe("project-agent cwd request service", () => {
         cwd: "/workspace",
       }),
     });
+  });
+
+  it("attributes create validation failures to the affected Agent", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue(null);
+
+    await expect(createProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      name: "New",
+      description: null,
+      groupUuid: null,
+      agentCwds: [{
+        agentUuid: "agent-1",
+        validationRequestUuid: "stale",
+      }],
+    })).rejects.toMatchObject({
+      code: "STALE_TARGET",
+      agentUuid: "agent-1",
+    });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("updates metadata, cwd replacements, and explicit clears in one transaction", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
+      targetConnectionUuid: "conn-1",
+      result: { normalizedPath: "/workspace/normalized" },
+    });
+    prismaMock.daemonConnection.findFirst.mockResolvedValue({ host: "host-1" });
+    prismaMock.project.update.mockResolvedValue({
+      uuid: "project-1",
+      name: "Updated",
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await updateProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      projectUuid: "project-1",
+      name: "Updated",
+      description: null,
+      agentCwds: {
+        upserts: [{
+          agentUuid: "agent-1",
+          validationRequestUuid: "validation-1",
+        }],
+        clears: ["agent-2"],
+      },
+    });
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaMock.project.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uuid: "project-1" },
+      data: { name: "Updated", description: null },
+    }));
+    expect(prismaMock.projectAgentCwdPreference.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          agentUuid: "agent-1",
+          cwd: "/workspace/normalized",
+        }),
+      }),
+    );
+    expect(prismaMock.projectAgentCwdPreference.deleteMany).toHaveBeenCalledWith({
+      where: {
+        companyUuid: "company-1",
+        userUuid: "user-1",
+        projectUuid: "project-1",
+        agentUuid: { in: ["agent-2"] },
+      },
+    });
+  });
+
+  it("leaves unchanged cwd preferences untouched", async () => {
+    prismaMock.project.update.mockResolvedValue({
+      uuid: "project-1",
+      name: "Metadata only",
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await updateProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      projectUuid: "project-1",
+      name: "Metadata only",
+      agentCwds: { upserts: [], clears: [] },
+    });
+
+    expect(prismaMock.projectAgentCwdPreference.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.projectAgentCwdPreference.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale validation with Agent scope before opening the transaction", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue(null);
+
+    await expect(updateProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      projectUuid: "project-1",
+      name: "Must not persist",
+      agentCwds: {
+        upserts: [{ agentUuid: "agent-1", validationRequestUuid: "stale" }],
+        clears: [],
+      },
+    })).rejects.toMatchObject({
+      code: "STALE_TARGET",
+      agentUuid: "agent-1",
+    });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(prismaMock.project.update).not.toHaveBeenCalled();
   });
 
   it("lists online Agents plus configured offline preferences only", async () => {

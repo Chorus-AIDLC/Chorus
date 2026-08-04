@@ -311,7 +311,7 @@
       "title": "Agent working directories", "description": "Fix a host and directory for each Agent in this project.",
       "loading": "Loading working directories...", "loadFailed": "Working directories could not be loaded.", "empty": "No Agents are available.", "emptyOnline": "No Agents are online.",
       "notConfigured": "Uses a temporary directory for each operation", "configure": "Configure working directory", "replace": "Replace working directory",
-      "clear": "Clear fixed working directory", "save": "Save fixed directory", "createFailed": "The project was not created because its Agent working directory could not be saved.",
+      "clear": "Clear fixed working directory", "select": "Select directory", "createFailed": "The project was not created because its Agent working directory could not be saved.",
       "status": { "valid": "Available", "offline": "Host offline", "invalid": "Directory unavailable" }
     }
   },

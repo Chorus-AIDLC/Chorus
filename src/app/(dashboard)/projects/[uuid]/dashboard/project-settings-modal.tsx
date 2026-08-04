@@ -29,7 +29,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { updateProjectAction, deleteProjectAction } from "../actions";
-import { ProjectAgentCwdSettings } from "@/components/project-agent-cwd-settings";
+import {
+  ProjectAgentCwdSettings,
+  type ProjectAgentCwdMutations,
+} from "@/components/project-agent-cwd-settings";
 
 interface ProjectSettingsModalProps {
   projectUuid: string;
@@ -50,16 +53,31 @@ export function ProjectSettingsModal({
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [cwdMutations, setCwdMutations] = useState<ProjectAgentCwdMutations>({
+    upserts: [],
+    clears: [],
+  });
+  const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const handleSave = async () => {
     setSaving(true);
+    setCwdError(null);
     const result = await updateProjectAction(projectUuid, {
       name,
       description: description || null,
+      agentCwds: {
+        upserts: cwdMutations.upserts.map(({ agentUuid, validationRequestUuid }) => ({
+          agentUuid,
+          validationRequestUuid,
+        })),
+        clears: cwdMutations.clears,
+      },
     });
     setSaving(false);
     if (result.success) {
       setOpen(false);
       router.refresh();
+    } else if (result.error.agentUuid) {
+      setCwdError({ agentUuid: result.error.agentUuid, message: result.error.message });
     }
   };
 
@@ -141,7 +159,11 @@ export function ProjectSettingsModal({
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-          <ProjectAgentCwdSettings projectUuid={projectUuid} />
+          <ProjectAgentCwdSettings
+            projectUuid={projectUuid}
+            onDraftChange={setCwdMutations}
+            agentError={cwdError}
+          />
 
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
