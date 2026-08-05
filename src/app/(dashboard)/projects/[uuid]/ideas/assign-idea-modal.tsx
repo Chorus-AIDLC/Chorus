@@ -254,17 +254,6 @@ export function AssignIdeaModal({
       }
       bodyClassName="space-y-4"
     >
-      {/* Body */}
-      {/* Idea Info */}
-          <div className="rounded-lg bg-background p-3">
-            <p className="text-[13px] font-medium text-foreground">{idea.title}</p>
-            {idea.content && (
-              <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2">
-                {idea.content}
-              </p>
-            )}
-          </div>
-
           {/* Current Assignee (if assigned) */}
           {isAssigned && (
             <div className="rounded-lg bg-[#E3F2FD] dark:bg-[#13253a] p-3">
