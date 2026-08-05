@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.1] - 2026-08-05
+
+### Added
+- **Lifecycle-wide Idea reassignment**: Ideas can now be reassigned throughout their lifecycle while preserving project cwd routing and wake behavior. (#473)
+
+### Fixed
+- **Unified project cwd persistence**: Project creation and settings now share validated cwd persistence, with refreshed status after saving. (#472)
+- **Cleaner assignment modal**: Removed the redundant Idea summary from the assignment dialog. (#474)
+- **Cleaner Proposal header**: Removed the redundant cwd card from Proposal actions. (#475)
+
+---
+
 ## [0.15.0] - 2026-08-03
 
 ### Added
