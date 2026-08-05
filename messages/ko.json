@@ -311,7 +311,7 @@
       "title": "Agent 작업 디렉터리", "description": "이 프로젝트의 Agent마다 호스트와 디렉터리를 고정합니다.",
       "loading": "작업 디렉터리를 불러오는 중...", "loadFailed": "작업 디렉터리를 불러올 수 없습니다.", "empty": "사용 가능한 Agent가 없습니다.", "emptyOnline": "온라인 Agent가 없습니다.",
       "notConfigured": "작업마다 임시 디렉터리 사용", "configure": "작업 디렉터리 설정", "replace": "작업 디렉터리 변경",
-      "clear": "고정 작업 디렉터리 해제", "save": "고정 디렉터리 저장", "createFailed": "Agent 작업 디렉터리를 저장할 수 없어 프로젝트가 생성되지 않았습니다.",
+      "clear": "고정 작업 디렉터리 해제", "select": "디렉터리 선택", "createFailed": "Agent 작업 디렉터리를 저장할 수 없어 프로젝트가 생성되지 않았습니다.",
       "status": { "valid": "사용 가능", "offline": "호스트 오프라인", "invalid": "디렉터리 사용 불가" }
     }
   },

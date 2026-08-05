@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useState,
+} from "react";
 import { useTranslations } from "next-intl";
 import { FolderCog, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DirectoryBrowser,
-  type ValidatedDirectory,
+  type DirectorySelection,
+  validateDirectorySelection,
 } from "@/components/agent-presence/directory-browser";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 
@@ -22,24 +29,36 @@ interface AgentCwdItem {
 
 export interface ProjectAgentCwdDraft {
   agentUuid: string;
-  validationRequestUuid: string;
+  connectionUuid: string;
   host: string;
   cwd: string;
+  validationRequestUuid?: string;
 }
 
-export function ProjectAgentCwdSettings({
-  projectUuid,
-  onDraftChange,
-}: {
+export interface ProjectAgentCwdMutations {
+  upserts: Array<ProjectAgentCwdDraft & { validationRequestUuid: string }>;
+  clears: string[];
+}
+
+export interface ProjectAgentCwdSettingsHandle {
+  validate: () => Promise<ProjectAgentCwdMutations | null>;
+}
+
+export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle, {
   projectUuid?: string;
-  onDraftChange?: (drafts: ProjectAgentCwdDraft[]) => void;
-}) {
+  agentError?: { agentUuid: string; message: string } | null;
+}>(function ProjectAgentCwdSettings({
+  projectUuid,
+  agentError,
+}, ref) {
   const t = useTranslations();
   const [items, setItems] = useState<AgentCwdItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
+  const [clears, setClears] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,56 +81,60 @@ export function ProjectAgentCwdSettings({
     void load();
   }, [load]);
 
-  const updateDrafts = (next: Record<string, ProjectAgentCwdDraft>) => {
+  const updateMutations = (next: Record<string, ProjectAgentCwdDraft>, nextClears: Set<string>) => {
     setDrafts(next);
-    onDraftChange?.(Object.values(next));
+    setClears(nextClears);
   };
 
-  const save = async (selection: ValidatedDirectory) => {
-    if (!projectUuid) {
-      updateDrafts({
-        ...drafts,
-        [selection.agentUuid]: {
-          agentUuid: selection.agentUuid,
-          validationRequestUuid: selection.validationRequestUuid,
-          host: selection.host,
-          cwd: selection.cwd,
-        },
-      });
-      setEditingAgent(null);
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agentUuid: selection.agentUuid,
-        validationRequestUuid: selection.validationRequestUuid,
-      }),
-    });
-    if (!response.ok) throw new Error("save failed");
-    setEditingAgent(null);
-    await load();
-  };
-
-  const clear = async (agentUuid: string) => {
-    if (!projectUuid) {
-      const next = { ...drafts };
+  const select = (selection: DirectorySelection | null, agentUuid: string) => {
+    if (!selection) return;
+    const nextClears = new Set(clears);
+    nextClears.delete(agentUuid);
+    updateMutations({
+      ...drafts,
+      [agentUuid]: selection,
+    }, nextClears);
+    setValidationErrors((current) => {
+      const next = { ...current };
       delete next[agentUuid];
-      updateDrafts(next);
-      return;
-    }
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentUuid }),
+      return next;
     });
-    if (!response.ok) {
-      setError(true);
-      return;
-    }
-    await load();
   };
+
+  const clear = (agentUuid: string) => {
+    const next = { ...drafts };
+    delete next[agentUuid];
+    const nextClears = new Set(clears);
+    if (projectUuid) nextClears.add(agentUuid);
+    updateMutations(next, nextClears);
+  };
+
+  useImperativeHandle(ref, () => ({
+    validate: async () => {
+      const validated: ProjectAgentCwdMutations["upserts"] = [];
+      for (const draft of Object.values(drafts)) {
+        try {
+          const result = await validateDirectorySelection(draft);
+          validated.push(result);
+          setDrafts((current) => ({
+            ...current,
+            [draft.agentUuid]: result,
+          }));
+        } catch (validationError) {
+          const code = validationError instanceof Error
+            ? validationError.message
+            : "INTERNAL_ERROR";
+          setValidationErrors((current) => ({
+            ...current,
+            [draft.agentUuid]: t(`directoryBrowser.errors.${code}`),
+          }));
+          setEditingAgent(draft.agentUuid);
+          return null;
+        }
+      }
+      return { upserts: validated, clears: [...clears] };
+    },
+  }), [clears, drafts, t]);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -149,7 +172,7 @@ export function ProjectAgentCwdSettings({
 
       {items.map((item) => {
         const draft = drafts[item.agent.uuid];
-        const preference = draft
+        const preference = clears.has(item.agent.uuid) ? null : draft
           ? { host: draft.host, cwd: draft.cwd, status: "valid" as const }
           : item.preference;
         return (
@@ -200,7 +223,7 @@ export function ProjectAgentCwdSettings({
                     className="text-destructive"
                     title={t("projectSettings.agentCwds.clear")}
                     aria-label={t("projectSettings.agentCwds.clear")}
-                    onClick={() => void clear(item.agent.uuid)}
+                    onClick={() => clear(item.agent.uuid)}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -212,14 +235,27 @@ export function ProjectAgentCwdSettings({
                 <DirectoryBrowser
                   agentUuid={item.agent.uuid}
                   instances={item.onlineInstances}
-                  confirmLabel={t("projectSettings.agentCwds.save")}
-                  onValidated={save}
+                  showConfirm={false}
+                  onValidated={() => undefined}
+                  onSelectionChange={(selection) => select(selection, item.agent.uuid)}
                 />
+                {(validationErrors[item.agent.uuid]
+                  || agentError?.agentUuid === item.agent.uuid) && (
+                  <p className="mt-2 text-xs text-destructive" role="alert">
+                    {validationErrors[item.agent.uuid] || agentError?.message}
+                  </p>
+                )}
               </div>
             )}
+            {editingAgent !== item.agent.uuid
+              && agentError?.agentUuid === item.agent.uuid && (
+                <p className="mt-2 text-xs text-destructive" role="alert">
+                  {agentError.message}
+                </p>
+              )}
           </div>
         );
       })}
     </div>
   );
-}
+});

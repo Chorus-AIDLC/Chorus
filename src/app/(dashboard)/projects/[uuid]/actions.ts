@@ -2,7 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { getServerAuthContext } from "@/lib/auth-server";
-import { deleteProject, updateProject } from "@/services/project.service";
+import { deleteProject } from "@/services/project.service";
+import {
+  CwdServiceError,
+  type ProjectAgentCwdMutations,
+  updateProjectWithAgentCwds,
+} from "@/services/project-agent-cwd.service";
 import { revalidatePath } from "next/cache";
 import { getActiveSessionsForProject, type TaskSessionInfo } from "@/services/session.service";
 import logger from "@/lib/logger";
@@ -28,23 +33,45 @@ export async function deleteProjectAction(projectUuid: string) {
 
 export async function updateProjectAction(
   projectUuid: string,
-  data: { name?: string; description?: string | null }
-) {
+  data: {
+    name?: string;
+    description?: string | null;
+    agentCwds: ProjectAgentCwdMutations;
+  },
+): Promise<
+  | { success: true; data: Awaited<ReturnType<typeof updateProjectWithAgentCwds>> }
+  | { success: false; error: { code: string; message: string; agentUuid?: string } }
+> {
   const auth = await getServerAuthContext();
   if (!auth) {
-    return { success: false, error: "Unauthorized" };
+    return { success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
   }
 
   try {
-    const updated = await updateProject(auth.companyUuid, projectUuid, data);
-    if (!updated) {
-      return { success: false, error: "Project not found" };
-    }
+    const updated = await updateProjectWithAgentCwds({
+      companyUuid: auth.companyUuid,
+      userUuid: auth.actorUuid,
+      projectUuid,
+      ...data,
+    });
     revalidatePath(`/projects/${projectUuid}/dashboard`);
     return { success: true, data: updated };
   } catch (error) {
+    if (error instanceof CwdServiceError) {
+      return {
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.agentUuid ? { agentUuid: error.agentUuid } : {}),
+        },
+      };
+    }
     logger.error({ err: error }, "Failed to update project");
-    return { success: false, error: "Failed to update project" };
+    return {
+      success: false,
+      error: { code: "INTERNAL_ERROR", message: "Failed to update project" },
+    };
   }
 }
 

@@ -10,8 +10,8 @@
 //
 // Plus: preview miss / no-assignee → wake directly; a failed wake after a
 // successful reassign does NOT roll back the pin (retry allowed); the reassign
-// is best-effort (a rejected reassign still fires the wake — the elaborated-idea
-// case); cancelling the picker aborts both reassign and wake.
+// is best-effort (a rejected reassign still fires the wake); cancelling the
+// picker aborts both reassign and wake.
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -322,11 +322,11 @@ describe("usePinThenWake", () => {
     expect(reassign).not.toHaveBeenCalled();
   });
 
-  it("best-effort reassign: a rejected reassign still fires the wake (elaborated-idea case)", async () => {
-    // The reassign action rejects an elaborated idea; the wake must still fire.
+  it("best-effort reassign: a rejected instance pin still fires the wake", async () => {
+    // A stale or invalid instance pin must not suppress the wake.
     const reassign = vi
       .fn()
-      .mockResolvedValue({ success: false, error: "Idea is not available for assignment" });
+      .mockResolvedValue({ success: false, error: "Agent instance not found" });
     const wake = vi.fn().mockResolvedValue(undefined);
     render(
       <Harness

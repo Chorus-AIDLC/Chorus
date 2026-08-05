@@ -58,7 +58,11 @@ vi.mock("@/contexts/realtime-context", () => ({
 }));
 
 // Stub the tab/child views — they fetch their own data and are out of scope here.
-vi.mock("../elaboration-view", () => ({ ElaborationView: () => <div data-testid="elaboration-view" /> }));
+vi.mock("../elaboration-view", () => ({
+  ElaborationView: ({ canReassign }: { canReassign?: boolean }) => (
+    <div data-testid="elaboration-view" data-can-reassign={String(canReassign)} />
+  ),
+}));
 vi.mock("../proposal-view", () => ({ ProposalView: () => <div /> }));
 vi.mock("../overview-timeline", () => ({ OverviewTimeline: () => <div /> }));
 vi.mock("../reports-list", () => ({ ReportsList: () => <div /> }));
@@ -198,6 +202,17 @@ beforeEach(() => {
 });
 
 describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {
+  it.each(["open", "elaborating", "elaborated"])(
+    "keeps the assignee control interactive for %s Ideas",
+    async (status) => {
+      getIdeaActionMock.mockResolvedValue(ideaResponse({ status }));
+      renderPanel();
+      expect(
+        (await screen.findByTestId("elaboration-view")).getAttribute("data-can-reassign"),
+      ).toBe("true");
+    },
+  );
+
   it("renders an enabled Verify Elaborate button when every round is answered", async () => {
     renderPanel();
     const btn = (await screen.findByRole("button", { name: "Verify Elaborate" })) as HTMLButtonElement;

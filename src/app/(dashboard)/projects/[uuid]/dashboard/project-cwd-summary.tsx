@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FolderLock } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { authFetch } from "@/lib/auth-client";
@@ -16,27 +16,37 @@ export function ProjectCwdSummary({ projectUuid }: { projectUuid: string }) {
   const t = useTranslations("fixedCwdAnchor");
   const [preferences, setPreferences] = useState<FixedCwdPreference[]>([]);
 
+  const load = useCallback(async () => {
+    const response = await authFetch(
+      `/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`,
+    );
+    if (!response.ok) return;
+    const json = await response.json();
+    setPreferences(
+      (json?.data?.agents ?? []).filter(
+        (item: FixedCwdPreference) => item.preference?.cwd,
+      ),
+    );
+  }, [projectUuid]);
+
   useEffect(() => {
     let cancelled = false;
-    authFetch(`/api/projects/${encodeURIComponent(projectUuid)}/agent-cwds`)
-      .then(async (response) => {
-        if (!response.ok) return;
-        const json = await response.json();
-        if (!cancelled) {
-          setPreferences(
-            (json?.data?.agents ?? []).filter(
-              (item: FixedCwdPreference) => item.preference?.cwd,
-            ),
-          );
-        }
-      })
+    const reload = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectUuid?: string }>).detail;
+      if (detail?.projectUuid === projectUuid) {
+        void load().catch(() => setPreferences([]));
+      }
+    };
+    void load()
       .catch(() => {
         if (!cancelled) setPreferences([]);
       });
+    window.addEventListener("project-cwd-updated", reload);
     return () => {
       cancelled = true;
+      window.removeEventListener("project-cwd-updated", reload);
     };
-  }, [projectUuid]);
+  }, [load, projectUuid]);
 
   if (preferences.length === 0) return null;
 

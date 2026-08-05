@@ -5,7 +5,7 @@
 // both provided it renders as a clickable button (with an accessible
 // reassign/assign label) whose click invokes onReassign; otherwise it renders
 // as a non-interactive block (default render unchanged), so callers that omit
-// the props — and the elaborated (read-only) state — get no reassign entry.
+// the props get no reassign entry.
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -90,7 +90,7 @@ describe("AssigneeSection — reassign trigger", () => {
     expect(onReassign).toHaveBeenCalledTimes(1);
   });
 
-  it("renders non-interactively when editable is false (elaborated / read-only)", () => {
+  it("renders non-interactively when editable is false", () => {
     const onReassign = vi.fn();
     render(
       <AssigneeSection assignee={agentAssignee} editable={false} onReassign={onReassign} />

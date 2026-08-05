@@ -26,11 +26,6 @@ export async function claimIdeaAction(ideaUuid: string) {
       return { success: false, error: "Idea not found" };
     }
 
-    // Elaborated ideas cannot be reassigned (lifecycle is done)
-    if (idea.status === "elaborated") {
-      return { success: false, error: "Idea is not available for assignment" };
-    }
-
     await assignIdea({
       ideaUuid,
       companyUuid: auth.companyUuid,
@@ -82,11 +77,6 @@ export async function claimIdeaToAgentAction(
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
     if (!idea) {
       return { success: false, error: "Idea not found" };
-    }
-
-    // Elaborated ideas cannot be reassigned (lifecycle is done)
-    if (idea.status === "elaborated") {
-      return { success: false, error: "Idea is not available for assignment" };
     }
 
     const target = await resolveProjectAgentCwdTarget({
@@ -171,15 +161,6 @@ export async function reassignIdeaInstanceNoWakeAction(
       return { success: false, error: "Idea not found" };
     }
 
-    // NOTE: no status short-circuit here. This action is the pin step of the
-    // pin-then-wake flow, and its wake surfaces (Start Development / Yolo /
-    // proposal approve-reject) act on ALREADY-elaborated ideas — the pin MUST
-    // persist there for the wake to run in the chosen cwd. `assignIdea` still
-    // rejects an elaborated idea for a genuine REASSIGNMENT; we opt into the
-    // narrow same-owning-agent cwd re-pin exception via
-    // `allowElaboratedInstanceRepin` so a different agent can never be pinned
-    // onto an elaborated idea through this path.
-    //
     // Promote to agent_instance via the non-waking service primitive. A foreign
     // or missing instance is rejected inside assignIdea (resolveAssigneeFields
     // throws) BEFORE any assignee write, so the assignee is left unchanged.
@@ -219,11 +200,6 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
       return { success: false, error: "Idea not found" };
     }
 
-    // Elaborated ideas cannot be reassigned (lifecycle is done)
-    if (idea.status === "elaborated") {
-      return { success: false, error: "Idea is not available for assignment" };
-    }
-
     await assignIdea({
       ideaUuid,
       companyUuid: auth.companyUuid,
@@ -242,7 +218,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
   }
 }
 
-// Release idea (clear assignee, back to open)
+// Release idea (clear assignee; completed lifecycle state is preserved)
 export async function releaseIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -253,11 +229,6 @@ export async function releaseIdeaAction(ideaUuid: string) {
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
     if (!idea) {
       return { success: false, error: "Idea not found" };
-    }
-
-    // Elaborated ideas cannot be released (lifecycle is done)
-    if (idea.status === "elaborated") {
-      return { success: false, error: "Idea cannot be released from current status" };
     }
 
     await releaseIdea(idea.uuid);

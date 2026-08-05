@@ -69,11 +69,20 @@ export interface ValidatedDirectory {
   validationRequestUuid: string;
 }
 
+export interface DirectorySelection {
+  agentUuid: string;
+  connectionUuid: string;
+  host: string;
+  cwd: string;
+}
+
 interface DirectoryBrowserProps {
   agentUuid: string;
   instances: InstanceCandidate[];
   onValidated: (selection: ValidatedDirectory) => void | Promise<void>;
-  confirmLabel: string;
+  confirmLabel?: string;
+  showConfirm?: boolean;
+  onSelectionChange?: (selection: DirectorySelection | null) => void;
 }
 
 function abortableDelay(signal: AbortSignal, delay: number) {
@@ -119,11 +128,31 @@ async function requestDirectory(
   return request;
 }
 
+export async function validateDirectorySelection(
+  selection: DirectorySelection,
+): Promise<ValidatedDirectory> {
+  const request = await requestDirectory({
+    operation: "validate",
+    agentUuid: selection.agentUuid,
+    targetConnectionUuid: selection.connectionUuid,
+    cwd: selection.cwd,
+  }, new AbortController().signal);
+  return {
+    ...selection,
+    cwd: typeof request.result?.normalizedPath === "string"
+      ? request.result.normalizedPath
+      : selection.cwd,
+    validationRequestUuid: request.uuid,
+  };
+}
+
 export function DirectoryBrowser({
   agentUuid,
   instances,
   onValidated,
   confirmLabel,
+  showConfirm = true,
+  onSelectionChange,
 }: DirectoryBrowserProps) {
   const t = useTranslations("directoryBrowser");
   const hosts = useMemo(
@@ -141,6 +170,7 @@ export function DirectoryBrowser({
   const [configuredSelection, setConfiguredSelection] =
     useState<InstanceCandidate | null>(null);
   const [manualMode, setManualMode] = useState(false);
+  const [customPathEdited, setCustomPathEdited] = useState(false);
   const [prefix, setPrefix] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const [items, setItems] = useState<DirectoryItem[]>([]);
@@ -155,6 +185,8 @@ export function DirectoryBrowser({
   const rootsController = useRef<AbortController | null>(null);
   const browseController = useRef<AbortController | null>(null);
   const validationController = useRef<AbortController | null>(null);
+  const selectionChangeRef = useRef(onSelectionChange);
+  selectionChangeRef.current = onSelectionChange;
 
   useEffect(() => {
     if (!listOpen || highlightedIndex < 0) return;
@@ -188,6 +220,7 @@ export function DirectoryBrowser({
     setPathMode("custom");
     setConfiguredSelection(null);
     setManualMode(false);
+    setCustomPathEdited(false);
     setPrefix("");
     setSelectedPath("");
     setErrorCode(null);
@@ -295,10 +328,36 @@ export function DirectoryBrowser({
     validationController.current?.abort();
   }, []);
 
+  useEffect(() => {
+    const selectionAnchor = configuredSelection ?? anchor;
+    const draftPath = selectedPath ||
+      (!showConfirm && pathMode === "custom" && customPathEdited ? prefix.trim() : "");
+    selectionChangeRef.current?.(
+      selectionAnchor && draftPath
+        ? {
+            agentUuid,
+            connectionUuid: selectionAnchor.connectionUuid,
+            host: selectionAnchor.host,
+            cwd: draftPath,
+          }
+        : null,
+    );
+  }, [
+    agentUuid,
+    anchor,
+    configuredSelection,
+    customPathEdited,
+    pathMode,
+    prefix,
+    selectedPath,
+    showConfirm,
+  ]);
+
   const chooseCandidate = (item: DirectoryItem) => {
     cancelValidation();
     clearCandidates();
     setSelectedPath(item.path);
+    setCustomPathEdited(true);
     setPrefix(withTrailingSeparator(item.path));
     setErrorCode(null);
   };
@@ -396,6 +455,7 @@ export function DirectoryBrowser({
                   clearCandidates();
                   setPathMode("configured");
                   setConfiguredSelection(instance);
+                  setCustomPathEdited(false);
                   setSelectedPath(instance.cwd ?? "");
                   setErrorCode(null);
                 }}
@@ -417,6 +477,7 @@ export function DirectoryBrowser({
                 cancelValidation();
                 setPathMode("custom");
                 setConfiguredSelection(null);
+                setCustomPathEdited(false);
                 setSelectedPath("");
                 setPrefix(selectedRoot ? withTrailingSeparator(selectedRoot) : "");
                 setErrorCode(null);
@@ -447,6 +508,7 @@ export function DirectoryBrowser({
                   cancelValidation();
                   clearCandidates();
                   setSelectedRoot(event.target.value);
+                  setCustomPathEdited(false);
                   setPrefix(withTrailingSeparator(event.target.value));
                   setSelectedPath("");
                   setErrorCode(null);
@@ -475,6 +537,7 @@ export function DirectoryBrowser({
                   onChange={(event) => {
                     cancelValidation();
                     setPrefix(event.target.value);
+                    setCustomPathEdited(true);
                     setSelectedPath(manualMode ? event.target.value.trim() : "");
                     setErrorCode(null);
                   }}
@@ -522,6 +585,7 @@ export function DirectoryBrowser({
                     cancelValidation();
                     const parent = parentWithinRoot(prefix, selectedRoot);
                     clearCandidates();
+                    setCustomPathEdited(true);
                     setPrefix(withTrailingSeparator(parent));
                     setSelectedPath(parent);
                     setErrorCode(null);
@@ -585,16 +649,18 @@ export function DirectoryBrowser({
             </p>
           )}
 
-          <Button
-            type="button"
-            size="sm"
-            className="h-11 w-fit sm:h-8"
-            disabled={!selectedPath || pending !== null}
-            onClick={() => void validate()}
-          >
-            {pending === "validate" && <Loader2 className="mr-2 size-4 animate-spin" />}
-            {confirmLabel}
-          </Button>
+          {showConfirm && (
+            <Button
+              type="button"
+              size="sm"
+              className="h-11 w-fit sm:h-8"
+              disabled={!selectedPath || pending !== null}
+              onClick={() => void validate()}
+            >
+              {pending === "validate" && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {confirmLabel}
+            </Button>
+          )}
         </>
       )}
     </div>

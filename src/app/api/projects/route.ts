@@ -5,7 +5,13 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
-import { success, paginated, errors } from "@/lib/api-response";
+import {
+  ErrorCode,
+  error as errorResponse,
+  success,
+  paginated,
+  errors,
+} from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
 import {
   CwdServiceError,
@@ -140,7 +146,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
   } catch (error) {
     if (error instanceof CwdServiceError) {
-      return errors.conflict(error.message);
+      return errorResponse(
+        ErrorCode.CONFLICT,
+        error.message,
+        error.agentUuid ? { agentUuid: error.agentUuid } : undefined,
+      );
     }
     throw error;
   }
