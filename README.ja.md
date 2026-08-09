@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — エージェントをドキュメントサイト（[doc.chorus-ai.dev](https://doc.chorus-ai.dev)）へ案内する `docs` スキルを追加し、記憶に頼らず現在のドキュメントを読んで回答するようにしました。
+
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — プロジェクト単位の Agent 作業ディレクトリ：各ユーザーがプロジェクト内の Agent ごとにホストと cwd を設定し、デーモンが許可したルートだけを参照できます。割り当て、ウェイク、再開、後続ターンで同じ実行先を使い、進行中のセッションは移動しません。Codex は再開可能なバックエンド thread ID を別に保存し、不要になった Chorus の session 管理手順を削除しました。
 
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI が 4 つ目の接続方法になりました（Kiro CLI v2）：ワンコマンドの `install-kiro.sh` プラグインと `--agent kiro` デーモンバックエンド、加えていくつかのデーモン修正。

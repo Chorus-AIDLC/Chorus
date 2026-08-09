@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — 에이전트를 문서 사이트([doc.chorus-ai.dev](https://doc.chorus-ai.dev))로 안내하는 `docs` 스킬을 추가해, 기억에 의존하지 않고 현재 문서를 읽고 답하도록 했습니다.
+
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — 프로젝트별 Agent 작업 디렉터리: 각 사용자가 프로젝트의 Agent마다 호스트와 cwd를 지정하고, 데몬이 허용한 루트만 탐색할 수 있습니다. 배정, 웨이크, 재개, 후속 턴에서 같은 실행 위치를 사용하며 진행 중인 세션은 이동하지 않습니다. Codex는 재개 가능한 백엔드 thread ID를 별도로 저장하고, 더 이상 필요하지 않은 Chorus session 관리 단계를 제거했습니다.
 
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI가 네 번째 연결 방식이 되었습니다(Kiro CLI v2): 명령 한 줄로 설치하는 `install-kiro.sh` 플러그인과 `--agent kiro` 데몬 백엔드, 여기에 몇 가지 데몬 수정.
