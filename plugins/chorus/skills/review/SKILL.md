@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -20,8 +20,8 @@ This skill covers the **Review** stage of the AI-DLC workflow: approving or reje
 Admin Agent has **full access to all Chorus operations**. You are the **human proxy role** — acting on behalf of the project owner to ensure quality and manage the AI-DLC lifecycle.
 
 Key responsibilities:
-- **Proposal review** — approve or reject Proposals submitted by PM Agents (see `/proposal`)
-- **Task verification** — verify or reopen Tasks submitted by Developer Agents (see `/develop`)
+- **Proposal review** — approve or reject Proposals submitted by PM Agents (see `$proposal`)
+- **Task verification** — verify or reopen Tasks submitted by Developer Agents (see `$develop`)
 - **Project governance** — create projects/ideas, manage groups, close/delete entities
 
 ---
@@ -56,7 +56,7 @@ Key responsibilities:
 
 **All PM tools** (`chorus_pm_*`, `chorus_*_idea`) and **all Developer tools** (`chorus_*_task`, `chorus_report_work`) are also available to Admin.
 
-**Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
+**Shared tools** (checkin, query, comment, search, notifications): see `$chorus`
 
 ---
 
@@ -299,7 +299,7 @@ chorus_admin_close_idea({ ideaUuid: "<idea-uuid>" })
 chorus_admin_delete_idea({ ideaUuid: "<idea-uuid>" })
 ```
 
-> **Note:** Creating ideas is a PM tool (`chorus_pm_create_idea`). See `/idea`.
+> **Note:** Creating ideas is a PM tool (`chorus_pm_create_idea`). See `$idea`.
 
 #### Document Management
 
@@ -348,7 +348,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 
 ## Next
 
-- For platform overview and shared tools, see `/chorus`
-- For Idea elaboration (before proposals), see `/idea`
-- For Proposal creation (what you're reviewing), see `/proposal`
-- For Developer workflow (what you're verifying), see `/develop`
+- For platform overview and shared tools, see `$chorus`
+- For Idea elaboration (before proposals), see `$idea`
+- For Proposal creation (what you're reviewing), see `$proposal`
+- For Developer workflow (what you're verifying), see `$develop`

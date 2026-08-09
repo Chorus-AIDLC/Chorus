@@ -4,7 +4,7 @@ description: 'Read-only Chorus code-review gateway — the final ship-time revie
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus code-review gateway

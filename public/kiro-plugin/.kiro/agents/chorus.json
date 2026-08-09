@@ -19,6 +19,7 @@
     "skill://.kiro/skills/chorus-quick-dev/SKILL.md",
     "skill://.kiro/skills/chorus-brainstorm/SKILL.md",
     "skill://.kiro/skills/chorus-openspec-aware/SKILL.md",
+    "skill://.kiro/skills/chorus-docs/SKILL.md",
     "file://.kiro/steering/chorus.md"
   ],
   "hooks": {

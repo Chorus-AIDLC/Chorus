@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -17,7 +17,7 @@ This skill covers the **Ideation** stage of the AI-DLC workflow: claiming Ideas,
 
 ## Overview
 
-Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) create Ideas describing what they need. The PM Agent claims an Idea, runs elaboration to clarify requirements, and then moves on to `/proposal` to create a Proposal with document and task drafts.
+Ideas are the starting point of the AI-DLC pipeline. Humans (or Admin agents) create Ideas describing what they need. The PM Agent claims an Idea, runs elaboration to clarify requirements, and then moves on to `$proposal` to create a Proposal with document and task drafts.
 
 **Idea status lifecycle (3 stored states):**
 
@@ -51,7 +51,7 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 | `chorus_answer_elaboration` | Submit answers for an elaboration round (`roundUuid` optional — auto-locates the active round) |
 | `chorus_get_elaboration` | Get full elaboration state (rounds, questions, answers) |
 
-**Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
+**Shared tools** (checkin, query, comment, search, notifications): see `$chorus`
 
 ---
 
@@ -151,9 +151,9 @@ chorus_pm_create_idea({
 If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice questions, offer the user a brainstorm prelude before structured elaboration. Present two choices to the user (existing convention used elsewhere in this skill — see Step 5's `AskUserQuestion` usage for the host-specific prompt mechanism): `"Already clear, run structured elaboration"` and `"Brainstorm first to explore directions"`.
 
 - **"Already clear":** Skip to Step 5.
-- **"Brainstorm first":** Invoke the `/brainstorm` skill. See `/brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
+- **"Brainstorm first":** Invoke the `$brainstorm` skill. See `$brainstorm` for the dialogue cadence and synthesis rules — do NOT re-implement them here.
 
-When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
+When `$brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
 
 - If the synthesized round answers cover everything → obtain human confirmation, then call `chorus_pm_validate_elaboration` to resolve the elaboration. (Resolve needs `idea:admin` — see Step 5.6 if your key is `pm_agent`-preset.)
 - If gaps remain → call `chorus_pm_start_elaboration` again to open a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
@@ -341,6 +341,6 @@ When a theme is created via the conversational "help me break this into child id
 
 ## Next
 
-- Once elaboration is resolved, use `/proposal` to create a Proposal with document and task drafts
+- Once elaboration is resolved, use `$proposal` to create a Proposal with document and task drafts
 - **Human "Yolo" handoff:** the idea-detail panel shows a **Yolo** button at any incomplete stage (enabled while the assignee agent is online), confirmed via a dialog before it fires. A `yolo_requested` wake means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline) — read the idea's current state first and resume from whatever phase it is in, never assuming a fixed stage. Complete through done + the completion report, but never merge or push a PR without explicit human approval.
-- For platform overview and shared tools, see `/chorus`
+- For platform overview and shared tools, see `$chorus`

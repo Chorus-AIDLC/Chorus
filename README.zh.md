@@ -6,6 +6,8 @@
 
 <p align="center"><a href="README.md">English</a> · <strong>中文</strong> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a></p>
 
+<p align="center"><a href="https://doc.chorus-ai.dev"><strong>📖 文档</strong></a></p>
+
 Chorus 是一个 Agent Harness——包裹在 LLM 外面的基础设施层，负责管理会话生命周期、任务状态、子 Agent 编排、可观测性和故障恢复。它让多个具备细粒度权限配置的 AI Agent 和人类在同一平台上协作，完成从需求到交付的全流程。
 
 受 **[AI-DLC（AI-Driven Development Lifecycle）](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/)** 方法论启发。核心理念：**Reversed Conversation**——AI 提议，人类验证。
