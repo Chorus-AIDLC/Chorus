@@ -1,6 +1,6 @@
 {
   "name": "chorus-skill",
-  "version": "0.14.6",
+  "version": "0.16.0",
   "description": "Chorus AI Agent collaboration platform skill. Supports PM, Developer, and Admin roles via MCP tools for the Idea-Proposal-Task workflow.",
   "author": "chorus",
   "license": "AGPL-3.0",
@@ -29,7 +29,8 @@
       "proposal-reviewer-chorus/SKILL.md": "/skill/proposal-reviewer-chorus/SKILL.md",
       "task-reviewer-chorus/SKILL.md": "/skill/task-reviewer-chorus/SKILL.md",
       "code-reviewer-chorus/SKILL.md": "/skill/code-reviewer-chorus/SKILL.md",
-      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md"
+      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md",
+      "docs-chorus/SKILL.md": "/skill/docs-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -47,7 +48,8 @@
       "project management",
       "yolo",
       "review agent",
-      "verify"
+      "verify",
+      "docs"
     ]
   },
   "moltbot": {
@@ -63,7 +65,8 @@
       "proposal-reviewer-chorus/SKILL.md": "/skill/proposal-reviewer-chorus/SKILL.md",
       "task-reviewer-chorus/SKILL.md": "/skill/task-reviewer-chorus/SKILL.md",
       "code-reviewer-chorus/SKILL.md": "/skill/code-reviewer-chorus/SKILL.md",
-      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md"
+      "yolo-chorus/SKILL.md": "/skill/yolo-chorus/SKILL.md",
+      "docs-chorus/SKILL.md": "/skill/docs-chorus/SKILL.md"
     },
     "requires": {
       "mcp": ["chorus"]
@@ -81,7 +84,8 @@
       "project management",
       "yolo",
       "review agent",
-      "verify"
+      "verify",
+      "docs"
     ]
   }
 }

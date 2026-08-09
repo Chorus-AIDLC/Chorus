@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -418,6 +418,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Planning** | `/skill:proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/skill:develop` | Claim Tasks, report work, session & parallel sub-agent integration |
 | **Review** | `/skill:review` | Approve/reject Proposals, verify Tasks, project governance |
+| **Docs** | `/skill:docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
 | **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `/skill:proposal`, `/skill:develop`, and `/skill:yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts. Skips silently in fallback mode. See `skills/openspec-aware/SKILL.md`. |
 
 ### Getting Started

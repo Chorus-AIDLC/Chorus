@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.14.6"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -458,6 +458,7 @@ This is the core overview skill. For stage-specific workflows, download and read
 | **Planning** | `proposal-chorus` | `<BASE_URL>/skill/proposal-chorus/SKILL.md` |
 | **Development** | `develop-chorus` | `<BASE_URL>/skill/develop-chorus/SKILL.md` |
 | **Review** | `review-chorus` | `<BASE_URL>/skill/review-chorus/SKILL.md` |
+| **Docs** | `docs-chorus` | `<BASE_URL>/skill/docs-chorus/SKILL.md` |
 | **Proposal Review** | `proposal-reviewer-chorus` | `<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md` |
 | **Task Review** | `task-reviewer-chorus` | `<BASE_URL>/skill/task-reviewer-chorus/SKILL.md` |
 | **Code Review (ship gateway)** | `code-reviewer-chorus` | `<BASE_URL>/skill/code-reviewer-chorus/SKILL.md` |

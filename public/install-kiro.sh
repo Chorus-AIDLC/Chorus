@@ -42,7 +42,7 @@ is_tty() { [ -t 0 ] && [ -t 1 ]; }
 # ---------- config: the artifact manifest (single source of truth) ----------
 # These lists drive BOTH the local copy and the remote download, so the two
 # source modes can never diverge.
-SKILLS="chorus-idea chorus-proposal chorus-develop chorus-yolo chorus-review chorus-quick-dev chorus-brainstorm chorus-openspec-aware"
+SKILLS="chorus-idea chorus-proposal chorus-develop chorus-yolo chorus-review chorus-quick-dev chorus-brainstorm chorus-openspec-aware chorus-docs"
 REVIEWER_AGENTS="chorus-code-reviewer chorus-proposal-reviewer chorus-task-reviewer"
 HOOK_SCRIPTS="on-agent-spawn.sh on-stop.sh on-post-submit-proposal.sh on-post-submit-for-verify.sh on-post-verify-task.sh chorus-api.sh verify-document-roundtrip.sh test-syntax.sh"
 
