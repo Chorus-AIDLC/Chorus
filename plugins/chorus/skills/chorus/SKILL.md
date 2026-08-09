@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -139,7 +139,7 @@ A **report** is a short idea-completion summary persisted as a `type="report"` D
 
 A **reference** is a first-class external-evidence link (`docs` / `repo` / `issue_pr` / `paper_blog`) attached to an idea / proposal / task via `chorus_add_reference`, or inline at creation via the `references[]` param on `chorus_pm_create_idea` / `chorus_pm_create_proposal` / `chorus_create_tasks`. References read back inline through the `chorus_get_*` tools.
 
-**Make it a reflex:** the moment you come across an external link that is evidence for what you're working on — a precedent issue/PR, a reference implementation, official docs, a paper/blog — attach it, and **prefer attaching inline at creation time** rather than after the fact. See `/idea` (Step 4.4) for the type-selection criteria and a worked example.
+**Make it a reflex:** the moment you come across an external link that is evidence for what you're working on — a precedent issue/PR, a reference implementation, official docs, a paper/blog — attach it, and **prefer attaching inline at creation time** rather than after the fact. See `$idea` (Step 4.4) for the type-selection criteria and a worked example.
 
 ### Proposals
 
@@ -198,7 +198,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 3. Mentioned users/agents automatically receive a notification
 
 **When to @mention:**
-- **Elaboration completion** — confirm understanding with the answerer before validating (see `/idea`)
+- **Elaboration completion** — confirm understanding with the answerer before validating (see `$idea`)
 - **Proposal creation/update** — notify stakeholders when submitting
 - **Task submission** — notify PM/owner for significant decisions
 - **Blocking issues** — notify relevant person for human input
@@ -376,12 +376,13 @@ This is the core overview skill. For stage-specific workflows, use:
 
 | Stage | Skill | Description |
 |-------|-------|-------------|
-| **Full Auto** | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done. Automates Idea → Proposal → Execute → Verify with adversarial reviewers |
-| **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
-| **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
-| **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
-| **Development** | `/develop` | Claim Tasks, report work, and coordinate sub-agent workers |
-| **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
+| **Full Auto** | `$yolo` | Full-auto AI-DLC pipeline — from prompt to done. Automates Idea → Proposal → Execute → Verify with adversarial reviewers |
+| **Quick Dev** | `$quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
+| **Ideation** | `$idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
+| **Planning** | `$proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
+| **Development** | `$develop` | Claim Tasks, report work, and coordinate sub-agent workers |
+| **Review** | `$review` | Approve/reject Proposals, verify Tasks, project governance |
+| **Docs** | `$docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
 | **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `proposal`, `develop`, and `yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-mcp-call.sh` wrapper. Skips silently in fallback mode. See `~/.codex/skills/openspec-aware/SKILL.md`. |
 
 ### Getting Started
@@ -389,6 +390,6 @@ This is the core overview skill. For stage-specific workflows, use:
 1. Call `chorus_checkin()` to learn your role and assignments
 2. Based on your role, use the appropriate skill:
    - **Full Auto** → `$yolo` — give a prompt, agent handles everything (requires Admin-preset permissions: write on every resource + approve/verify admin bits)
-   - PM Agent → `/idea` then `/proposal`
-   - Developer Agent → `/develop`
-   - Admin Agent → `/review` (also has access to all PM and Developer tools)
+   - PM Agent → `$idea` then `$proposal`
+   - Developer Agent → `$develop`
+   - Admin Agent → `$review` (also has access to all PM and Developer tools)

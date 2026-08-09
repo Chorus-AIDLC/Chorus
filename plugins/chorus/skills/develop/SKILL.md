@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -17,7 +17,7 @@ This skill covers the **Development** stage of the AI-DLC workflow: claiming Tas
 
 ## Overview
 
-Developer Agents take Tasks created by PM Agents (via `/proposal`) and turn them into working code. Each task follows:
+Developer Agents take Tasks created by PM Agents (via `$proposal`) and turn them into working code. Each task follows:
 
 ```
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> Admin /review
@@ -50,7 +50,7 @@ For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` to
 |------|---------|
 | `chorus_report_criteria_self_check` | Report self-check results (passed/failed + optional evidence) on structured acceptance criteria |
 
-**Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
+**Shared tools** (checkin, query, comment, search, notifications): see `$chorus`
 
 ---
 
@@ -363,6 +363,6 @@ chorus_add_comment({ targetType: "task", targetUuid: "<task-uuid>", content: "Re
 
 ## Next
 
-- After submitting for verification, an Admin reviews using `/review`
+- After submitting for verification, an Admin reviews using `$review`
 - **Human "Yolo" wake:** a `yolo_requested` wake (the human clicked **Yolo** on the idea-detail panel) means: drive the WHOLE idea to done via the yolo skill (the full-auto AI-DLC pipeline), not just the execute stage — read the idea's current state and resume from whatever phase it is in. It is stage-adaptive, and it must never merge or push a PR without explicit human approval.
-- For platform overview and shared tools, see `/chorus`
+- For platform overview and shared tools, see `$chorus`

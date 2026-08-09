@@ -10,6 +10,7 @@ const { lang } = Astro.props;
 const pre = langPrefix(lang);
 const githubUrl = "https://github.com/Chorus-AIDLC/chorus";
 const dockerUrl = "https://hub.docker.com/r/chorusaidlc/chorus-app";
+const docsUrl = lang === 'zh' ? 'https://doc.chorus-ai.dev/zh' : 'https://doc.chorus-ai.dev';
 const altLang = lang === 'en' ? 'zh' : 'en';
 const altUrl = getAlternateUrl(Astro.url) + '?lang=' + altLang;
 const enUrl = (lang === 'en' ? Astro.url.pathname : getAlternateUrl(Astro.url)) + '?lang=en';
@@ -27,6 +28,7 @@ const currentLabel = lang === 'en' ? 'EN' : '中文';
       <a href={`${pre}/#features`}>{t(lang, 'nav.features')}</a>
       <a href={`${pre}/#showcase`}>{t(lang, 'nav.showcase')}</a>
       <a href={`${pre}/#agents`}>{t(lang, 'nav.agents')}</a>
+      <a href={docsUrl} target="_blank" rel="noopener noreferrer">{t(lang, 'nav.docs')}</a>
       <a href={`${pre}/blog/`}>{t(lang, 'nav.blog')}</a>
     </div>
     <div class="nav-actions">
@@ -64,6 +66,7 @@ const currentLabel = lang === 'en' ? 'EN' : '中文';
     <a href={`${pre}/#features`}>{t(lang, 'nav.features')}</a>
     <a href={`${pre}/#showcase`}>{t(lang, 'nav.showcase')}</a>
     <a href={`${pre}/#agents`}>{t(lang, 'nav.agents')}</a>
+    <a href={docsUrl} target="_blank" rel="noopener noreferrer">{t(lang, 'nav.docs')}</a>
     <a href={`${pre}/blog/`}>{t(lang, 'nav.blog')}</a>
     <div class="mobile-divider"></div>
     <div class="mobile-lang">

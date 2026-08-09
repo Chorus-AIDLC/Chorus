@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -17,7 +17,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 ## Overview
 
-`/yolo` automates the complete AI-DLC workflow. You provide a natural language description of what you want built, and the agent handles everything:
+`$yolo` automates the complete AI-DLC workflow. You provide a natural language description of what you want built, and the agent handles everything:
 
 1. **Planning** -- create project, idea, self-elaboration, proposal with docs & tasks
 2. **Proposal Review** -- proposal-reviewer adversarial loop
@@ -26,7 +26,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 5. **Report** -- completion summary
 
 ```
-/yolo <prompt>
+$yolo <prompt>
        |
        v
   Project + Idea + Elaboration + Proposal
@@ -47,7 +47,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
   Done. Report summary.
 ```
 
-**Escape hatch:** Ctrl+C at any time. All created entities (project, idea, proposal, tasks) persist in Chorus. Resume manually via `/develop` or `/review`.
+**Escape hatch:** Ctrl+C at any time. All created entities (project, idea, proposal, tasks) persist in Chorus. Resume manually via `$develop` or `$review`.
 
 ---
 
@@ -71,7 +71,7 @@ need = { idea: ["write"], proposal: ["write","admin"],
 
 for resource, actions in need:
   missing = [a for a in actions if a not in (perms[resource] or [])]
-  if missing: ABORT "/yolo needs {resource}: {missing}. Use an Admin-preset API key."
+  if missing: ABORT "$yolo needs {resource}: {missing}. Use an Admin-preset API key."
 ```
 
 ---
@@ -79,8 +79,8 @@ for resource, actions in need:
 ## Input
 
 ```
-/yolo <natural language prompt>
-/yolo <prompt> --project <project-uuid>
+$yolo <natural language prompt>
+$yolo <prompt> --project <project-uuid>
 ```
 
 - `<prompt>` -- what you want built (becomes the Idea content)
@@ -136,7 +136,7 @@ chorus_claim_idea({ ideaUuid: "<idea-uuid>" })
 
 #### Step 1.3: Self-Elaboration
 
-In /yolo mode, the agent generates elaboration questions and answers them itself -- no `AskUserQuestion` calls. This preserves an audit trail without interrupting the user.
+In $yolo mode, the agent generates elaboration questions and answers them itself -- no `AskUserQuestion` calls. This preserves an audit trail without interrupting the user.
 
 > **Self-elaboration is still a loop.** If answering your own questions surfaces a **new question, contradiction, or gap**, loop back to `chorus_pm_start_elaboration` for another self-answered round before resolving — don't force a resolve over unresolved ambiguity. There is no human gate in YOLO, so the loop exits on **your** judgment that nothing material is left open (round cap 10). Steps 1–2 are one round; repeat them as needed, then resolve once in Step 3.
 
@@ -172,7 +172,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-3. **Resolve** — in YOLO mode the agent resolves elaboration **autonomously, with no human-confirmation gate** (the human-confirmation requirement that applies to the interactive `/idea` flow is explicitly waived under `/yolo` automation):
+3. **Resolve** — in YOLO mode the agent resolves elaboration **autonomously, with no human-confirmation gate** (the human-confirmation requirement that applies to the interactive `$idea` flow is explicitly waived under `$yolo` automation):
 
    ```
    chorus_pm_validate_elaboration({
@@ -180,7 +180,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   > `chorus_pm_validate_elaboration` requires `idea:admin`. `/yolo` already mandates an Admin-preset key in Prerequisites, so this is satisfied. To open another self-elaboration round instead of resolving, just call `chorus_pm_start_elaboration` again.
+   > `chorus_pm_validate_elaboration` requires `idea:admin`. `$yolo` already mandates an Admin-preset key in Prerequisites, so this is satisfied. To open another self-elaboration round instead of resolving, just call `chorus_pm_start_elaboration` again.
 
 #### Step 1.4: Create Proposal
 
@@ -380,7 +380,7 @@ If parallel spawn is not practical (rate limits, token budget, or simpler debugg
 
 ```
 for each task in unblocked:
-  # Follow the /develop workflow directly as main agent
+  # Follow the $develop workflow directly as main agent
   chorus_claim_task({ taskUuid: "<task-uuid>" })
   chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })
 
@@ -507,7 +507,7 @@ ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
 After all waves complete, output a markdown summary:
 
 ```markdown
-## /yolo Complete
+## $yolo Complete
 
 **Project:** <project-name> (<project-uuid>)
 **Proposal:** <proposal-title> (<proposal-uuid>)
@@ -546,7 +546,7 @@ A successful `$yolo` run always finishes the Idea — call `chorus_create_report
 | Proposal reviewer FAIL after maxRounds | Stop pipeline, report persisting BLOCKERs, suggest manual review |
 | Task reviewer FAIL after maxRounds | Flag task as escalation-needed, continue with other tasks |
 | Sub-agent crash / no submit | Log error, skip task, pick it up in next wave if possible |
-| Ctrl+C | All entities persist in Chorus. User can resume via `/develop` or `/review` |
+| Ctrl+C | All entities persist in Chorus. User can resume via `$develop` or `$review` |
 
 ---
 
@@ -556,14 +556,14 @@ A successful `$yolo` run always finishes the Idea — call `chorus_create_report
 - The proposal-reviewer is your quality gate -- if it keeps FAILing, the prompt may be too vague
 - Watch the wave count -- if tasks keep getting reopened, consider Ctrl+C and manually reviewing the feedback
 - All audit trail is preserved: elaboration Q&A, reviewer VERDICTs, work reports. Check Chorus UI for full history
-- For small/simple tasks, consider `/quick-dev` instead -- it skips the Idea->Proposal overhead
+- For small/simple tasks, consider `$quick-dev` instead -- it skips the Idea->Proposal overhead
 - Sub-agents share your API key; ensure it has the permissions listed in Prerequisites before starting
 
 ---
 
 ## Next
 
-- To manually review proposals: `/review`
-- To manually develop tasks: `/develop`
-- To create quick standalone tasks: `/quick-dev`
-- For platform overview: `/chorus`
+- To manually review proposals: `$review`
+- To manually develop tasks: `$develop`
+- To create quick standalone tasks: `$quick-dev`
+- For platform overview: `$chorus`

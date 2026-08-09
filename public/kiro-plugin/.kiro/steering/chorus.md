@@ -394,6 +394,7 @@ The `chorus` main agent owns `/chorus` and pre-loads all skills below. For stage
 | **Planning** | `/chorus-proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/chorus-develop` | Claim Tasks, report work, session & subagent management |
 | **Review** | `/chorus-review` | Approve/reject Proposals, verify Tasks, project governance |
+| **Docs** | `/chorus-docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
 | **OpenSpec mode** | `/chorus-openspec-aware` | Opt-in **shared sub-procedure** invoked by `/chorus-proposal`, `/chorus-develop`, and `/chorus-yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. Skips silently in fallback mode. |
 
 ### Getting Started

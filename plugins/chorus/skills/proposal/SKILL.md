@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -17,7 +17,7 @@ This skill covers the **Planning** stage of the AI-DLC workflow: creating Propos
 
 ## Overview
 
-After an Idea's elaboration is resolved (see `/idea`), the PM Agent creates a Proposal — a container that holds document drafts and task drafts. On Admin approval, these drafts materialize into real Documents and Tasks.
+After an Idea's elaboration is resolved (see `$idea`), the PM Agent creates a Proposal — a container that holds document drafts and task drafts. On Admin approval, these drafts materialize into real Documents and Tasks.
 
 ```
 Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit --> Admin /review
@@ -61,7 +61,7 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 | `chorus_pm_update_document` | Update document content (increments version) |
 | `chorus_update_task` (with `addDependsOn` / `removeDependsOn`) | Add or remove dependencies on existing tasks (with cycle detection) |
 
-**Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
+**Shared tools** (checkin, query, comment, search, notifications): see `$chorus`
 
 ---
 
@@ -83,7 +83,7 @@ chorus_pm_create_proposal({
 
 **Multiple Ideas:** You can combine multiple ideas into one proposal by passing multiple UUIDs in `inputUuids`.
 
-> **A theme cannot be a proposal input** — `chorus_pm_create_proposal` rejects any input idea with `isContainer = true`. Derive a child idea from the theme and write the proposal on the child instead. (See the theme-ideas section of the `/idea` skill.)
+> **A theme cannot be a proposal input** — `chorus_pm_create_proposal` rejects any input idea with `isContainer = true`. Derive a child idea from the theme and write the proposal on the child instead. (See the theme-ideas section of the `$idea` skill.)
 
 ### Step 1.5: Detect OpenSpec mode
 
@@ -203,7 +203,7 @@ When validation passes:
 chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
 ```
 
-This changes the status from `draft` to `pending`. An Admin will review it (see `/review`).
+This changes the status from `draft` to `pending`. An Admin will review it (see `$review`).
 
 Add a comment explaining your reasoning:
 
@@ -376,7 +376,7 @@ Each task should correspond to an **independently runnable and testable function
 
 ## Next
 
-- After submission, an Admin will review using `/review`
-- After approval, Developers claim tasks using `/develop`
-- For Idea elaboration, see `/idea`
-- For platform overview, see `/chorus`
+- After submission, an Admin will review using `$review`
+- After approval, Developers claim tasks using `$develop`
+- For Idea elaboration, see `$idea`
+- For platform overview, see `$chorus`

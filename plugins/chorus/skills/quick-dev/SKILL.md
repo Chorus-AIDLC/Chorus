@@ -4,7 +4,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.15.0"
+  version: "0.16.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -36,7 +36,7 @@ check explicit task:admin permission → create/claim → implement → self-che
 - Stakeholder elaboration is needed to clarify requirements
 - The work impacts architecture or shared components significantly
 
-For complex work, use `/idea` + `/proposal` instead.
+For complex work, use `$idea` + `$proposal` instead.
 
 ---
 
@@ -164,7 +164,7 @@ This handoff applies in interactive and headless daemon sessions. Do not use an 
 
 ## Tips
 
-- Keep Quick Tasks small — if you need more than 2-3 tasks, consider using `/proposal`
+- Keep Quick Tasks small — if you need more than 2-3 tasks, consider using `$proposal`
 - **Acceptance criteria are required at creation time** — `chorus_create_tasks` rejects tasks without them. They are your self-check contract; specific, testable AC enables autonomous verification and makes the entire workflow self-contained
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
@@ -175,7 +175,7 @@ This handoff applies in interactive and headless daemon sessions. Do not use an 
 
 ## Next
 
-- For full task lifecycle details, see `/develop`
-- For admin verification, see `/review`
-- For the standard planning flow, see `/idea` and `/proposal`
-- For platform overview, see `/chorus`
+- For full task lifecycle details, see `$develop`
+- For admin verification, see `$review`
+- For the standard planning flow, see `$idea` and `$proposal`
+- For platform overview, see `$chorus`
