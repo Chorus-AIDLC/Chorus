@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0] - 2026-08-09
+
+### Added
+- **Documentation site surfaced to agents & users**: Wired the live docs site (https://doc.chorus-ai.dev) into three entry points — a new `docs` router skill on all six skill surfaces (Claude Code, Codex, OpenClaw, Kiro, Pi, standalone) that reads the root-only `/llms.txt` index and fetches raw Markdown per page, a localized Documentation link in each README (en/zh/ko/ja) header, and a language-aware Documentation entry in the landing-page nav. (#477)
+
+### Fixed
+- **Codex skill-invocation hints**: Corrected Codex skill docs to use the proper `$`-prefix invocation form (e.g. `$develop`, `$yolo`) instead of the slash form. (#477)
+
+### Plugin
+- **Plugin & skill versions → 0.16.0**: Claude Code, Codex, OpenClaw, Kiro, and Pi plugin and skill distributions plus the standalone skill bumped to 0.16.0. (#477)
+
+---
+
 ## [0.15.1] - 2026-08-05
 
 ### Added
