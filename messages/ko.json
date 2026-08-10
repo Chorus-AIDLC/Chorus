@@ -1564,7 +1564,6 @@
     "loadMore": "더 보기",
     "loadEarlier": "이전 메시지 불러오기",
     "loadingEarlier": "이전 메시지를 불러오는 중…",
-    "loading": "대화를 불러오는 중…",
     "transcriptLoading": "대화 기록을 불러오는 중…",
     "mobileBack": "대화",
     "conversationAdHoc": "대화 {id}",
