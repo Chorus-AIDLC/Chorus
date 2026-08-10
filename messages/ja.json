@@ -1775,5 +1775,11 @@
     "pinToSidebar": "サイドバーにピン留め",
     "removeFromRecent": "最近から削除",
     "moreActions": "{name} のその他の操作"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "ドキュメント",
+    "githubAria": "Chorus の GitHub リポジトリを開く（新しいタブで開きます）",
+    "docsAria": "Chorus のドキュメントサイトを開く（新しいタブで開きます）"
   }
 }

@@ -5,6 +5,7 @@ import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { AnimatePresence } from "framer-motion";
+import { ResourceLinks } from "@/components/resource-links";
 import { StepIndicator } from "./StepIndicator";
 import { WelcomeStep } from "./WelcomeStep";
 import { CreateAgentStep } from "./CreateAgentStep";
@@ -110,6 +111,11 @@ export function OnboardingWizard() {
           {t("skip")}
         </Button>
       )}
+
+      {/* Persistent resource links footer — visible on every step so users can
+          reach the GitHub repo and docs site at any point in onboarding. Kept
+          outside AnimatePresence so it does not animate in/out per step. */}
+      <ResourceLinks variant="footer" />
     </div>
   );
 }

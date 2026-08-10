@@ -1775,5 +1775,11 @@
     "pinToSidebar": "사이드바에 고정",
     "removeFromRecent": "최근에서 제거",
     "moreActions": "{name} 추가 작업"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "문서",
+    "githubAria": "Chorus GitHub 저장소 열기(새 탭에서 열림)",
+    "docsAria": "Chorus 문서 사이트 열기(새 탭에서 열림)"
   }
 }
