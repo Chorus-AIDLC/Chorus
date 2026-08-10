@@ -284,7 +284,11 @@ export class ClaudeSpawner {
    *   so the waker can store the handle in its execution registry for the interrupt
    *   path BEFORE this promise resolves. It is invoked once, synchronously, only on a
    *   successful spawn; a spawn failure never calls it.
-   * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
+   * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean }>}
+   *   `backendSessionId` is the Claude `--resume` anchor (the input `sessionId`) on a
+   *   terminal resolution after a spawn, so the conversation UI can offer a resumable
+   *   id — mirrors codex-spawner's shape. `null` on the pre-spawn failure paths (no
+   *   turn ran, nothing to resume).
    */
   async wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }) {
     const id = sessionId;
@@ -295,14 +299,14 @@ export class ClaudeSpawner {
       this.logger.error(
         `[Chorus] refusing to spawn: session id is not a valid lowercase UUID: ${id}`
       );
-      return { sessionId: typeof id === "string" ? id : "", exitCode: null, isNew: Boolean(isNew) };
+      return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew) };
     }
 
     const claudePath = this.claudePath ?? resolveClaudePath();
     if (!claudePath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `claude` executable on PATH; skipping wake");
-      return { sessionId: id, exitCode: null, isNew };
+      return { sessionId: id, backendSessionId: null, exitCode: null, isNew };
     }
 
     const args = buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode });
@@ -345,7 +349,7 @@ export class ClaudeSpawner {
         });
       } catch (err) {
         this.logger.error(`[Chorus] failed to spawn claude: ${err}`);
-        resolve({ sessionId: id, exitCode: null, isNew });
+        resolve({ sessionId: id, backendSessionId: null, exitCode: null, isNew });
         return;
       }
 
@@ -391,14 +395,19 @@ export class ClaudeSpawner {
       child.on("error", (err) => {
         // e.g. ENOENT if the resolved path vanished — log, don't throw.
         this.logger.error(`[Chorus] claude process error: ${err}`);
-        resolve({ sessionId: observedSessionId, exitCode: null, isNew });
+        // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
+        // a fork-on-resume claude can emit a new stream session_id, but the daemon
+        // resumes and files the transcript under `id`, so `id` is the resumable value.
+        resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: null, isNew });
       });
 
       child.on("close", (code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] claude exited with code ${code}`);
         }
-        resolve({ sessionId: observedSessionId, exitCode: code, isNew });
+        // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId (see
+        // the process-error handler above for why the anchor is the resumable value).
+        resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: code, isNew });
       });
 
       // Guard against an ASYNC stdin error (EPIPE): if claude exits/closes
