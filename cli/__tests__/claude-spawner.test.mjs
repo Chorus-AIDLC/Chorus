@@ -199,7 +199,7 @@ describe("ClaudeSpawner.wake", () => {
     child.emit("close", 0);
 
     const result = await p;
-    expect(result).toEqual({ sessionId: SID, exitCode: 0, isNew: true });
+    expect(result).toEqual({ sessionId: SID, backendSessionId: SID, exitCode: 0, isNew: true });
 
     // argv: no prompt; spawned without shell
     const [path, args, opts] = spawnImpl.mock.calls[0];
@@ -229,6 +229,24 @@ describe("ClaudeSpawner.wake", () => {
     expect(onMessage).toHaveBeenCalledWith({ type: "assistant", session_id: SID });
   });
 
+  it("reports backendSessionId = the --resume anchor (not a fork-diverged stream session_id)", async () => {
+    // A fork-on-resume claude can emit a DIFFERENT session_id on the stream than the
+    // anchor the daemon resumed with. The resumable value the UI copies must be the
+    // anchor (`SID`) — the id the transcript file and `--resume` are keyed on — NOT
+    // the observed stream id. `sessionId` still reflects the observed stream value.
+    const forked = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const child = makeFakeChild();
+    const spawner = new ClaudeSpawner({ claudePath: "/c", spawnImpl: () => child, logger: silent });
+
+    const p = spawner.wake({ prompt: "go", sessionId: SID, isNew: false });
+    child.stdout.emit("data", `{"type":"system","session_id":"${forked}"}\n`);
+    child.emit("close", 0);
+    const result = await p;
+
+    expect(result.backendSessionId).toBe(SID); // the resume anchor, verbatim
+    expect(result.sessionId).toBe(forked); // observed stream id, unchanged behavior
+  });
+
   it("REFUSES to spawn (visible log, no subprocess) when the session id is not a valid UUID", async () => {
     const errs = [];
     const spawnImpl = vi.fn();
@@ -240,6 +258,9 @@ describe("ClaudeSpawner.wake", () => {
     const result = await spawner.wake({ prompt: "x", sessionId: "not-a-uuid", isNew: true });
     expect(spawnImpl).not.toHaveBeenCalled(); // never spawned
     expect(result.exitCode).toBeNull();
+    // Uniform return shape: the pre-spawn refusal carries backendSessionId (null — no
+    // turn ran, nothing to resume), matching the codex-spawner shape convention.
+    expect(result.backendSessionId).toBeNull();
     expect(errs.join("")).toMatch(/not a valid lowercase UUID/);
   });
 
@@ -387,7 +408,7 @@ describe("ClaudeSpawner.wake — detached spawn + onChild (子3)", () => {
     expect(child.stdin.writes.join("")).toBe("PROMPT"); // prompt over stdin
     expect(child.stdin.end).toHaveBeenCalled();
     expect(onMessage).toHaveBeenCalledWith({ type: "system", session_id: SID }); // NDJSON parsed
-    expect(result).toEqual({ sessionId: SID, exitCode: 0, isNew: true });
+    expect(result).toEqual({ sessionId: SID, backendSessionId: SID, exitCode: 0, isNew: true });
   });
 
   it("does NOT set detached on Windows (taskkill walks the tree by pid)", async () => {
