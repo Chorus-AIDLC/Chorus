@@ -179,6 +179,46 @@ export function applyTranscriptEvent(
   return next;
 }
 
+// Which top-level card the chat body shows, plus whether the conversation list is still
+// loading. Extracted as a PURE function (like `applyTranscriptEvent` / `mergeTurnPage`
+// above) so the loading-vs-empty-vs-error precedence is unit-testable without mounting the
+// whole context-heavy component.
+//
+// The crux of the daemon-chat-list-loading-state fix: `listLoading` is gated on the LIST's
+// own fetch status ALONE — NOT AND-ed with the shell presence `status`, which settles
+// independently. AND-ing them left a window (`status === "ok"` but `listStatus ===
+// "loading"`) where nothing matched and the list fell through to its empty state, reading
+// as "no conversations" while the fetch was still in flight. Gating on `listStatus` closes
+// that window: during first load `listLoading` is true and the list pane renders its
+// skeleton. `fetchSessions` only ever sets `listStatus` to `"ok"` / `"error"` (never back
+// to `"loading"`), so the 15s background poll never re-raises the skeleton after first load.
+//
+// Precedence (unchanged from before, minus the removed top-level loading text branch):
+//   error card  >  no-agents card  >  the two-pane body (whose list shows a skeleton while
+//   `listLoading`).
+export type ChatBodyState = "error" | "no-agents" | "body";
+
+export function deriveChatBodyState(args: {
+  listStatus: "loading" | "ok" | "error";
+  sessionCount: number;
+  agentCount: number;
+}): { body: ChatBodyState; listLoading: boolean } {
+  const listLoading = args.listStatus === "loading";
+  // A list-load failure with nothing cached → a distinct error card (no silent empty).
+  const showListError = args.listStatus === "error" && args.sessionCount === 0;
+  // Genuinely-no-history — only after a SETTLED load (`listStatus === "ok"`), so an
+  // in-flight load never reads as empty.
+  const noConversations = args.listStatus === "ok" && args.sessionCount === 0;
+  // The only remaining dead-end: no agent to talk to AND no history.
+  const noAgentsAtAll = noConversations && args.agentCount === 0;
+  const body: ChatBodyState = showListError
+    ? "error"
+    : noAgentsAtAll
+      ? "no-agents"
+      : "body";
+  return { body, listLoading };
+}
+
 export function DaemonChat() {
   const t = useTranslations("daemonChat");
   const {
@@ -769,17 +809,17 @@ export function DaemonChat() {
   }, [focusTarget, clearChatFocusTarget, handleSessionStarted]);
 
   // ===== States =====
-  const loading = status === "loading" && listStatus === "loading";
-  // A list-load failure with nothing cached → a distinct error card (no silent empty).
-  const showListError =
-    listStatus === "error" && sessions.length === 0;
-  // Genuinely-no-history. We no longer dead-end here: an agent that is connected can
-  // start a NEW conversation straight from this state (the right pane / drill-down is
-  // the composer). The calm "nothing yet" card is reserved for the case where there
-  // is also no agent to talk to at all (no connections AND no history).
-  const noConversations =
-    listStatus === "ok" && sessions.length === 0;
-  const noAgentsAtAll = noConversations && agents.length === 0;
+  // The chat body's card + list-loading flag, derived by the pure `deriveChatBodyState`
+  // helper (see its doc for the loading-vs-empty leak this fixes). The list pane shows a
+  // skeleton whenever `listLoading` — gated on the LIST fetch status alone, NOT AND-ed with
+  // the independently-settling presence `status`, so the empty state never shows mid-load.
+  const { body: bodyState, listLoading } = deriveChatBodyState({
+    listStatus,
+    sessionCount: sessions.length,
+    agentCount: agents.length,
+  });
+  const showListError = bodyState === "error";
+  const noAgentsAtAll = bodyState === "no-agents";
 
   // The transcript pane is reused on both breakpoints, differing ONLY in the reply
   // composer's action-row geometry: desktop two-pane keeps it inline (actions on the
@@ -867,10 +907,11 @@ export function DaemonChat() {
           </h2>
         </header>
 
-        {/* Body */}
-        {loading ? (
-          <p className="text-sm text-muted-foreground">{t("loading")}</p>
-        ) : showListError ? (
+        {/* Body — the conversation list's own skeleton (via ConversationList's `loading`
+            prop) covers the first-load window, so there is no top-level loading text branch:
+            the header + two-pane layout stay mounted and don't jump. The error / no-agents
+            cards keep priority over the normal body. */}
+        {showListError ? (
           <Card className="items-center gap-3 rounded-2xl border-[#E7D9C9] dark:border-[#33302a] bg-[#FFF9F3] dark:bg-[#2a2113] p-8 text-center shadow-none md:p-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D9770615]">
               <WifiOff className="h-6 w-6 text-[#B45309] dark:text-[#E0A34E]" />
@@ -922,6 +963,7 @@ export function DaemonChat() {
                 onNewConversation={startNewConversation}
                 visibleCount={visibleCount}
                 onLoadMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                loading={listLoading}
               />
             </div>
 
@@ -941,6 +983,7 @@ export function DaemonChat() {
                   onNewConversation={startNewConversation}
                   visibleCount={visibleCount}
                   onLoadMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                  loading={listLoading}
                 />
               </div>
 

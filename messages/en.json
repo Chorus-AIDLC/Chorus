@@ -1564,7 +1564,6 @@
     "loadMore": "Load more",
     "loadEarlier": "Load earlier messages",
     "loadingEarlier": "Loading earlier…",
-    "loading": "Loading conversations…",
     "transcriptLoading": "Loading transcript…",
     "mobileBack": "Conversations",
     "conversationAdHoc": "Conversation {id}",
