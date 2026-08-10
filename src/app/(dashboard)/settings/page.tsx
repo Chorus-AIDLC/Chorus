@@ -16,6 +16,7 @@ import {
 import { Plus, Key, X, Globe, ChevronDown, ChevronRight, Activity, Bell, Pencil, Rocket } from "lucide-react";
 import Link from "next/link";
 import { AgentCreateForm } from "@/components/AgentCreateForm";
+import { ResourceLinks } from "@/components/resource-links";
 import { AgentFormFields } from "@/components/AgentFormFields";
 import type { AgentPermissionPickerChange } from "@/components/AgentPermissionPicker";
 import { Badge } from "@/components/ui/badge";
@@ -262,11 +263,14 @@ export default function SettingsPage() {
       <div className="mb-6 text-xs text-[#9A9A9A]">{t("settings.breadcrumb")}</div>
 
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-foreground">{t("settings.title")}</h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          {t("settings.subtitle")}
-        </p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">{t("settings.title")}</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            {t("settings.subtitle")}
+          </p>
+        </div>
+        <ResourceLinks variant="inline" />
       </div>
 
       {/* Language Section */}

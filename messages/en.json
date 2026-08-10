@@ -1775,5 +1775,11 @@
     "pinToSidebar": "Pin to sidebar",
     "removeFromRecent": "Remove from recent",
     "moreActions": "More actions for {name}"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "Docs",
+    "githubAria": "Open the Chorus GitHub repository (opens in a new tab)",
+    "docsAria": "Open the Chorus documentation site (opens in a new tab)"
   }
 }
