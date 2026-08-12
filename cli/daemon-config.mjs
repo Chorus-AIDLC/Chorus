@@ -15,10 +15,20 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve as resolvePath } from "node:path";
-import { loginFilePath } from "./credentials.mjs";
+import { loginFilePath, resolveCredentials, resolveCredentialDefaults } from "./credentials.mjs";
+import { resolveAgentType, KNOWN_AGENTS } from "./daemon-agent.mjs";
+import { resolvePermissionMode } from "./daemon-permission-mode.mjs";
 
 /** Built-in default escalation window (ms) — matches the spec's 10 seconds. */
 export const DEFAULT_SIGINT_TIMEOUT_MS = 10_000;
+
+/**
+ * Built-in default per-agent wake concurrency. This was the process-wide
+ * hardcoded WakeQueue cap (`maxConcurrency ?? 4` in daemon.mjs) before it became
+ * a per-agent, configurable value — kept at 4 so an agent that specifies no
+ * `maxConcurrency` behaves exactly as the daemon did before.
+ */
+export const DEFAULT_MAX_CONCURRENCY = 4;
 
 /**
  * Coerce a value to a positive finite integer of milliseconds, or undefined when it
@@ -234,4 +244,178 @@ export function resolveBrowseRoots(flags = {}, deps = {}) {
     ? cleanCwdList(file.browseRoots, home)
     : [];
   return fromFile.length ? fromFile : [normalizeCwd(home, home)];
+}
+
+// ===== Multi-agent config (daemon-multi-agent — N independent agents per daemon) =====
+//
+// One daemon process may serve a LIST of fully-independent agents, each with its
+// own credentials + working directories + backend + permission mode + concurrency.
+// `resolveAgentConfigs` returns that list as `AgentConfig[]`, every field already
+// merged with its default. Two shapes are supported:
+//
+//   1. `~/.chorus/daemon.json` has a non-empty `agents: [ … ]` array → one
+//      AgentConfig per entry, each entry's fields merged OVER the top-level
+//      defaults (per-agent value wins; an omitted field inherits the default).
+//   2. No `agents[]` (or empty) → exactly ONE AgentConfig synthesized from the
+//      existing flat resolution (resolveCredentials + resolveDaemonCwds +
+//      resolveAgentType + sigint + browseRoots). This is byte-for-byte the
+//      daemon's current single-agent behavior — old installs run unchanged, and
+//      flags / env still resolve this single agent's fields.
+//
+// Validation is strict and visible: a missing apiKey, an unresolvable url, an
+// unknown agentType, or an invalid permissionMode THROWS an Error naming the
+// offending agent. The daemon's top-level error handler turns that into a
+// non-zero exit — the resolver never silently drops or falls back to a default
+// agent (matching resolveCredentials' throw-on-nothing contract).
+
+/** A non-empty trimmed string, or undefined. */
+function nonEmptyStr(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Coerce to a positive finite integer (count), or undefined. Accepts number or
+ * numeric string; rejects 0, negatives, NaN, Infinity. Used for maxConcurrency.
+ * @param {unknown} value @returns {number | undefined}
+ */
+function positiveInt(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+/**
+ * @typedef {Object} AgentConfig  One fully-resolved agent runtime config.
+ * @property {string} url                       Chorus server URL for this agent.
+ * @property {string} apiKey                    This agent's `cho_` API key.
+ * @property {string} agentType                 Backend: claude-code | codex | kiro.
+ * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
+ * @property {"yolo"|"chorus"} permissionMode   Woken-agent permission posture.
+ * @property {number} maxConcurrency            This agent's wake-queue cap.
+ * @property {number} sigintTimeoutMs           Interrupt escalation window (ms).
+ * @property {string[]} browseRoots             Directory-discovery allowlist.
+ * @property {string} label                     Diagnostic label ("agent" or "agents[i]").
+ */
+
+/**
+ * Resolve the list of agents this daemon serves. See the block comment above.
+ *
+ * @param {{ url?: string, apiKey?: string, agent?: string, cwd?: string|string[],
+ *           browseRoot?: string|string[], sigintTimeout?: number|string,
+ *           chorusOnly?: boolean, yolo?: boolean }} [flags]
+ * @param {{
+ *   env?: Record<string, string|undefined>,
+ *   readJson?: (path: string) => (Record<string, unknown>|null),
+ *   loginPath?: string,
+ *   settingsPath?: string,
+ *   home?: string,
+ *   permissionMode?: "yolo"|"chorus",   // pre-resolved global posture (else computed)
+ * }} [deps]
+ * @returns {AgentConfig[]}  Non-empty list; throws on an invalid agent entry.
+ */
+export function resolveAgentConfigs(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const home = deps.home ?? homedir();
+  const file = readJson(loginPath);
+
+  // Global default permission posture; a per-agent `permissionMode` overrides it.
+  // needConfirm/hasAck is vestigial, so isTTY/hasAck do not affect the resolved mode.
+  const defaultPermissionMode =
+    deps.permissionMode ??
+    resolvePermissionMode(flags, env, { isTTY: false, hasAck: false }).mode;
+
+  const agentEntries =
+    file && Array.isArray(file.agents)
+      ? file.agents.filter((a) => a && typeof a === "object")
+      : [];
+
+  // ---- Back-compat: no agents[] → exactly one agent from flat resolution ----
+  if (agentEntries.length === 0) {
+    const creds = resolveCredentials(flags, deps); // throws if no complete pair (today's behavior)
+    const at = resolveAgentType(flags, env, deps);
+    if (!at.ok) throw new Error(at.error);
+    return [
+      {
+        url: creds.url,
+        apiKey: creds.apiKey,
+        agentType: at.agent,
+        cwds: resolveDaemonCwds(flags, deps),
+        permissionMode: defaultPermissionMode,
+        maxConcurrency: positiveInt(file?.maxConcurrency) ?? DEFAULT_MAX_CONCURRENCY,
+        sigintTimeoutMs: resolveSigintTimeoutMs(flags, deps),
+        browseRoots: resolveBrowseRoots(flags, deps),
+        label: "agent",
+      },
+    ];
+  }
+
+  // ---- Multi-agent: each entry merged over the top-level defaults ----
+  const credDefaults = resolveCredentialDefaults(flags, deps);
+  const defaultCwds = resolveDaemonCwds(flags, deps);
+  const defaultAgentType = resolveAgentType(flags, env, deps); // top-level default (may be {ok:false} if top-level `agent` is garbage)
+  const defaultSigint = resolveSigintTimeoutMs(flags, deps);
+  const defaultBrowseRoots = resolveBrowseRoots(flags, deps);
+  const defaultMaxConcurrency = positiveInt(file?.maxConcurrency) ?? DEFAULT_MAX_CONCURRENCY;
+
+  return agentEntries.map((entry, i) => {
+    const label = nonEmptyStr(entry.label) ?? nonEmptyStr(entry.name) ?? `agents[${i}]`;
+
+    const url = nonEmptyStr(entry.url) ?? credDefaults.url;
+    const apiKey = nonEmptyStr(entry.apiKey) ?? credDefaults.apiKey;
+    if (!apiKey) {
+      throw new Error(`Agent ${label}: missing apiKey (no per-agent apiKey and no top-level default).`);
+    }
+    if (!url) {
+      throw new Error(`Agent ${label}: missing/unresolvable url (no per-agent url and no top-level default).`);
+    }
+
+    // agentType: per-agent value, else the top-level default (which must itself be valid).
+    let agentType;
+    if (nonEmptyStr(entry.agentType)) {
+      agentType = nonEmptyStr(entry.agentType);
+    } else if (defaultAgentType.ok) {
+      agentType = defaultAgentType.agent;
+    } else {
+      throw new Error(
+        `Agent ${label}: no agentType and the top-level agent default is invalid (${defaultAgentType.error}).`,
+      );
+    }
+    if (!KNOWN_AGENTS.includes(agentType)) {
+      throw new Error(
+        `Agent ${label}: unknown agentType "${agentType}". Accepted: ${KNOWN_AGENTS.join(", ")}.`,
+      );
+    }
+
+    // permissionMode: per-agent override (yolo|chorus only), else global posture.
+    let permissionMode = defaultPermissionMode;
+    if (entry.permissionMode !== undefined) {
+      const pm = nonEmptyStr(entry.permissionMode);
+      if (pm !== "yolo" && pm !== "chorus") {
+        throw new Error(
+          `Agent ${label}: invalid permissionMode "${entry.permissionMode}". Accepted: yolo, chorus.`,
+        );
+      }
+      permissionMode = pm;
+    }
+
+    // cwds: per-agent list (cleaned); an empty/blank list degrades to [undefined]
+    // (serve the process cwd). Omitted → inherit the top-level default set.
+    let cwds;
+    if (entry.cwds !== undefined) {
+      const cleaned = cleanCwdList(entry.cwds, home);
+      cwds = cleaned.length ? cleaned : [undefined];
+    } else {
+      cwds = defaultCwds;
+    }
+
+    const maxConcurrency = positiveInt(entry.maxConcurrency) ?? defaultMaxConcurrency;
+    const sigintTimeoutMs = positiveIntMs(entry.sigintTimeoutMs) ?? defaultSigint;
+    const browseRoots =
+      entry.browseRoots !== undefined ? cleanCwdList(entry.browseRoots, home) : defaultBrowseRoots;
+
+    return { url, apiKey, agentType, cwds, permissionMode, maxConcurrency, sigintTimeoutMs, browseRoots, label };
+  });
 }
