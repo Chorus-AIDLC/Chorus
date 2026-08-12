@@ -24,7 +24,7 @@ export CHORUS_URL="http://localhost:8637"
 export CHORUS_API_KEY="cho_your_api_key"
 ```
 
-> Add these to `~/.bashrc` or `~/.zshrc` so they persist across shells. Kiro CLI interpolates `${env:CHORUS_API_KEY}` at runtime, so the key is **never written to disk** — it must stay exported in the shell you launch Kiro from. (The URL is written into `mcp.json` as a plain literal, since it is not a secret.)
+> Add these to `~/.bashrc` or `~/.zshrc` so they persist across shells. Kiro CLI interpolates both values at runtime — the generated `mcp.json` references `${CHORUS_URL}` and `${env:CHORUS_API_KEY}` — so neither is baked into the file and both must stay exported in the shell you launch Kiro from. (This is also what lets a single Chorus daemon serve multiple Kiro agents, each resolving its own URL + key from its own environment.)
 
 ## Step 2: Run the installer
 

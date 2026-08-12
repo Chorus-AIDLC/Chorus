@@ -133,6 +133,74 @@ no `--agent`.
 
 ---
 
+## Multiple agents in one daemon (`agents[]`)
+
+One `chorus daemon` process can serve **several fully-independent agents at once** —
+different personas, permissions, accounts, or even different backends — instead of
+running a separate daemon per agent. Add an `agents` array to `~/.chorus/daemon.json`:
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "sigintTimeoutMs": 8000,
+  "agents": [
+    { "apiKey": "cho_alpha", "agentType": "claude-code", "cwds": ["/home/me/projA"] },
+    { "apiKey": "cho_beta",  "agentType": "kiro",        "cwds": ["/home/me/projB"], "permissionMode": "chorus" }
+  ]
+}
+```
+
+Each entry is one agent. Every **top-level** field is a **default**; a field set on an
+agent **overrides** it for that agent only. Per-agent fields:
+
+| Field | Meaning |
+|-------|---------|
+| `apiKey` | *(required)* the agent's `cho_` key — determines its identity |
+| `url` | Chorus server (may differ per agent — different server/company) |
+| `agentType` | `claude-code` \| `codex` \| `kiro` (backends may be mixed) |
+| `cwds` | working directories this agent serves (one connection each) |
+| `permissionMode` | `yolo` \| `chorus` |
+| `maxConcurrency` | this agent's own wake-concurrency cap (default `4`) |
+| `sigintTimeoutMs` | interrupt escalation window (ms) |
+| `browseRoots` | directory-discovery allowlist |
+
+Each agent gets its own identity (via its key), its own connections (one per its
+`cwds`), its own wake queue, and its own spawner — so they run and are woken
+independently, and one agent's failure never disrupts the others. On the server each
+appears as its own connection/instance (keyed on agent + host + cwd). Agents may even
+share the same cwd; the daemon does not serialize them, so avoid concurrent conflicting
+work in one git tree (use separate branches / worktrees).
+
+**Back-compat:** with **no** `agents[]`, the flat top-level `url` / `apiKey` / `cwds`
+are treated as exactly one agent — existing single-agent installs run unchanged.
+
+### Adding agents
+
+- **`chorus login --add`** — validate a new key and append it as another agent
+  (masked entry). The first `--add` on a flat file migrates the existing credentials
+  into `agents[0]` and adds the new one as `agents[1]`; a duplicate key is refused and
+  an existing agent is never overwritten.
+- **`chorus daemon install --add`** — the install wizard offers to add more agents in
+  one run (TTY only).
+- **Hand-editing** `~/.chorus/daemon.json` is always supported.
+
+### Per-backend key delivery (important)
+
+How each agent's Chorus key reaches its woken subprocess differs by backend:
+
+- **Claude Code** — automatic per-agent: the daemon writes a per-wake `--mcp-config`
+  carrying that agent's URL + key. Nothing to configure.
+- **Kiro** — automatic per-agent via env: the installed `mcp.json` references
+  `${CHORUS_URL}` / `${env:CHORUS_API_KEY}`, which the daemon exports per wake, so each
+  Kiro agent authenticates with its own key.
+- **Codex** — **user-managed.** Codex reads its Chorus MCP server (URL + key) from its
+  own `~/.codex/config.toml` and does not read the key from the environment. A single
+  Codex agent (or several sharing one key) works out of the box. To run **two Codex
+  agents with different keys** in one daemon, give each its own config directory via a
+  per-agent `CODEX_HOME` (the daemon does not auto-inject a per-agent Codex key).
+
+---
+
 ## Background mode & lifecycle
 
 Run the daemon detached in the background and manage it with lifecycle

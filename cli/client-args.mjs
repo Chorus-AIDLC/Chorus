@@ -203,9 +203,16 @@ USAGE
 OPTIONS
   --url <url>              Remote Chorus server URL            (env: CHORUS_URL)
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
+  --add                    Add this key as an ADDITIONAL agent (multi-agent daemon)
+                           instead of overwriting the single credential
   -h, --help               Show this help message
 
   With no flags, login prompts interactively for the URL and a masked API key,
   validates them against the server, and on success saves the credentials.
+
+  With --add, the validated key is appended to the daemon.json 'agents[]' array
+  so one daemon can serve several independent agents (see docs/DAEMON.md). The
+  first --add migrates an existing flat credential into agents[0]; a duplicate
+  key is refused and existing agents are never overwritten.
 `;
 }
