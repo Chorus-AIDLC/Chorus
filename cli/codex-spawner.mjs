@@ -13,9 +13,13 @@
 //     it and persist anchor→thread_id (codex-session-map.mjs) so a later wake can
 //     `resume <thread_id>`. (serde: ThreadEvent tag="type", rename="thread.started";
 //     ThreadStartedEvent.thread_id: String — codex-rs/exec/src/exec_events.rs.)
-//   • No `--mcp-config`: MCP comes from the user's ~/.codex/config.toml. The daemon
-//     exports its resolved URL for SessionStart hooks and its key for the configured
-//     bearer_token_env_var (default CHORUS_API_KEY) — never argv.
+//   • No `--mcp-config`: Codex reads MCP servers from the user's ~/.codex/config.toml.
+//     The Chorus MCP key there is USER-MANAGED: the installer writes a LITERAL Bearer
+//     header and Codex does NOT expand ${VAR} inside http_headers, so the CHORUS_API_KEY
+//     the daemon exports does NOT reach Codex's MCP auth. The daemon still exports
+//     CHORUS_URL / CHORUS_API_KEY into the child env — but only for the plugin's shell
+//     tooling (chorus-api.sh / SessionStart hooks), never argv and never Codex MCP.
+//     (Multi-agent: two Codex agents with different keys each need their own CODEX_HOME.)
 //   • Permission is a SANDBOX mode, not a tool allowlist.
 //
 // Reuses claude-spawner's platform-neutral helpers: parseNdjsonChunk (NDJSON
