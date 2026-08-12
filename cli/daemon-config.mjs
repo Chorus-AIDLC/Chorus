@@ -274,6 +274,23 @@ function nonEmptyStr(value) {
 }
 
 /**
+ * True iff `~/.chorus/daemon.json` declares a non-empty `agents[]` with at least
+ * one object entry — i.e. the daemon should run in multi-agent mode. Lets the
+ * daemon pick the multi-agent startup path (bypassing the flat single-credential
+ * preflight) without duplicating the file read. Never throws.
+ * @param {{ readJson?: (p: string) => (Record<string, unknown>|null), loginPath?: string }} [deps]
+ * @returns {boolean}
+ */
+export function hasConfiguredAgents(deps = {}) {
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const file = readJson(loginPath);
+  return Boolean(
+    file && Array.isArray(file.agents) && file.agents.some((a) => a && typeof a === "object"),
+  );
+}
+
+/**
  * Coerce to a positive finite integer (count), or undefined. Accepts number or
  * numeric string; rejects 0, negatives, NaN, Infinity. Used for maxConcurrency.
  * @param {unknown} value @returns {number | undefined}
