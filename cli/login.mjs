@@ -144,15 +144,86 @@ export function recordYoloAck(yoloAckAt, deps = {}) {
   return updateDaemonConfig({ yoloAckAt }, deps);
 }
 
+/** A non-empty trimmed string, or undefined. */
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Append a new agent to `~/.chorus/daemon.json`'s `agents[]` (daemon-multi-agent),
+ * via the same field-merge writer, WITHOUT overwriting any existing agent.
+ *
+ * Migration rule: if the file is still a flat single-agent config (top-level
+ * `apiKey`, no `agents[]`), the flat fields are first folded into `agents[0]` so
+ * the newly added key becomes `agents[1]` — the result is unambiguous (once
+ * `agents[]` exists, the flat top-level fields serve only as defaults, never as a
+ * standalone agent). Duplicate protection: if the new `apiKey` already matches an
+ * existing agent (or the pre-migration flat key), nothing is written.
+ *
+ * @param {{ url?: string, apiKey: string, agentType?: string, agentUuid?: string, agentName?: string }} agentObj
+ * @param {{ path?: string, read?: (p: string) => string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void, rename?: (from: string, to: string) => void }} [deps]
+ * @returns {{ ok: true, path: string, agents: object[], index: number } | { ok: false, reason: "duplicate" }}
+ */
+export function appendAgentConfig(agentObj, deps = {}) {
+  const path = deps.path ?? loginFilePath();
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+
+  let current = {};
+  try {
+    const parsed = JSON.parse(read(path));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+  } catch {
+    // treat as empty
+  }
+
+  const existingAgents =
+    Array.isArray(current.agents) ? current.agents.filter((a) => a && typeof a === "object") : [];
+
+  /** @type {object[]} */
+  let agents;
+  if (existingAgents.length > 0) {
+    agents = existingAgents.slice();
+  } else if (nonEmpty(current.apiKey)) {
+    // Migrate the flat single-agent config into agents[0] so the new key is agents[1].
+    const flat = { apiKey: current.apiKey };
+    if (nonEmpty(current.url)) flat.url = current.url;
+    if (nonEmpty(current.agent)) flat.agentType = current.agent;
+    if (Array.isArray(current.cwds)) flat.cwds = current.cwds;
+    if (nonEmpty(current.agentName)) flat.agentName = current.agentName;
+    if (nonEmpty(current.agentUuid)) flat.agentUuid = current.agentUuid;
+    agents = [flat];
+  } else {
+    agents = [];
+  }
+
+  // Never add a duplicate: refuse if this apiKey already backs an agent (checking
+  // both the agents[] entries and any pre-migration flat top-level key).
+  const existingKeys = new Set(agents.map((a) => a.apiKey).filter(Boolean));
+  if (nonEmpty(current.apiKey)) existingKeys.add(current.apiKey);
+  if (existingKeys.has(agentObj.apiKey)) {
+    return { ok: false, reason: "duplicate" };
+  }
+
+  agents.push(agentObj);
+  const writtenPath = updateDaemonConfig({ agents }, deps);
+  return { ok: true, path: writtenPath, agents, index: agents.length - 1 };
+}
+
 /**
  * Run the login flow: collect url + key (flags or interactive), validate
  * against the server, and on success persist + echo identity. Returns an exit
  * code (0 success, non-zero failure). Never throws.
  *
- * @param {{ url?: string, apiKey?: string }} flags
+ * With `flags.add`, the validated key is APPENDED as an additional agent
+ * (daemon-multi-agent) via {@link appendAgentConfig} instead of overwriting the
+ * single flat credential — so one daemon can serve several agents. On an invalid
+ * key, or a duplicate, nothing is written.
+ *
+ * @param {{ url?: string, apiKey?: string, agent?: string, add?: boolean }} flags
  * @param {{
  *   validate?: typeof validateAndFetchIdentity,
  *   write?: typeof writeLoginFile,
+ *   appendAgent?: typeof appendAgentConfig,
  *   prompt?: typeof prompt,
  *   log?: (m: string) => void,
  *   errLog?: (m: string) => void,
@@ -162,6 +233,7 @@ export function recordYoloAck(yoloAckAt, deps = {}) {
 export async function runLogin(flags = {}, deps = {}) {
   const validate = deps.validate ?? validateAndFetchIdentity;
   const write = deps.write ?? writeLoginFile;
+  const appendAgent = deps.appendAgent ?? appendAgentConfig;
   const ask = deps.prompt ?? prompt;
   const log = deps.log ?? ((m) => process.stdout.write(m + "\n"));
   const errLog = deps.errLog ?? ((m) => process.stderr.write(m + "\n"));
@@ -183,8 +255,24 @@ export async function runLogin(flags = {}, deps = {}) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errLog(`Login failed: ${msg}`);
-    errLog("Credentials were NOT saved.");
+    errLog(flags.add ? "No agent was added." : "Credentials were NOT saved.");
     return 1;
+  }
+
+  // --add: append as an additional agent (multi-agent) instead of overwriting.
+  if (flags.add) {
+    const agentObj = { url, apiKey, agentUuid: identity.uuid, agentName: identity.name };
+    if (nonEmpty(flags.agent)) agentObj.agentType = nonEmpty(flags.agent);
+    const res = appendAgent(agentObj);
+    if (!res.ok) {
+      errLog(
+        `Agent ${identity.name} (${identity.uuid}) is already configured (same API key) — nothing changed.`,
+      );
+      return 1;
+    }
+    log(`Added agent ${identity.name} (${identity.uuid}) as agents[${res.index}] in ${res.path}.`);
+    log(`This daemon now serves ${res.agents.length} agent(s).`);
+    return 0;
   }
 
   const path = write({ url, apiKey, agentUuid: identity.uuid, agentName: identity.name });

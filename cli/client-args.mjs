@@ -69,6 +69,7 @@ export function parseClientFlags(argv) {
     else if (a === "-d" || a === "--detach") out.detach = true;
     else if (a === "--force") out.force = true;
     else if (a === "--yes" || a === "-y") out.yes = true;
+    else if (a === "--add") out.add = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
