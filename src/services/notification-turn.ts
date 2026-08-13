@@ -166,12 +166,13 @@ const LINEAGE_ENTITY_TYPES = new Set<string>(["task", "document", "proposal", "i
  *   - `elaboration_verified` — the human "Verify Elaborate" → write-the-proposal wake (the
  *     original, now-generalized, home of this upgrade).
  *
- * `mentioned` and `human_instruction` are DELIBERATELY EXCLUDED: an un-pinned `mentioned`
- * wake is contractually a broadcast → online-first (stamping no target), a pinned mention
- * is resolved as a HARD pin before this branch, and `human_instruction` resolves its own
- * exact target + `deliver_turn` ping in `daemon-instruction.service` — upgrading it here
- * would double-deliver or mis-route. Both carry their own target resolution, so the
- * heuristic session-origin upgrade must never touch them.
+ * `human_instruction` is DELIBERATELY EXCLUDED from this AUTONOMOUS family: it resolves its
+ * own exact target + `deliver_turn` ping in `daemon-instruction.service`, so upgrading it here
+ * would double-deliver or mis-route. `mentioned` is likewise NOT in this autonomous set — but,
+ * unlike `human_instruction`, an un-pinned `mentioned` wake that resolved NO pin at creation
+ * time DOES earn the same residual-cwd upgrades via `RESIDUAL_CWD_UPGRADE_TRIGGERS` below
+ * (mention-wake-respect-pinned-cwd); a pinned mention is still resolved as a HARD pin before
+ * this branch and short-circuits the upgrade.
  */
 const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   "task_assigned",
@@ -184,6 +185,32 @@ const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   // the full-auto run must continue the idea's existing conversation, not fan
   // out to an arbitrary online cwd.
   "yolo_requested",
+]);
+
+/**
+ * Triggers eligible for the RESIDUAL-cwd upgrades — the idea session-origin upgrade (step 4)
+ * and the agent-owner project-cwd fallback (step 4a) — which fire ONLY when connection
+ * selection would OTHERWISE be a raw online-first pick. This is the AUTONOMOUS idea-anchored
+ * family (above) PLUS the un-pinned `mentioned` wake (mention-wake-respect-pinned-cwd).
+ *
+ * A `mentioned` wake reaches this set already having had its pins resolved at CREATION time by
+ * `mention.service` (`resolveMentionTarget` → `resolveProjectAgentCwdTarget`): an explicit
+ * `(host,cwd)` in the markup, the direct idea's `agent_instance` pin, and the MENTIONER-owner's
+ * project-fixed cwd are all threaded onto the context and become HARD pins in
+ * `resolvePinnedTarget` — so selection is `directed` / `offline_pin` and this residual step is
+ * SKIPPED. ONLY when none of those resolved (selection stayed `online_first`) does an un-pinned
+ * mention walk the SAME residual ladder as `task_assigned`: idea session-origin → the
+ * MENTIONED-agent-owner project pin → online-first. That makes an un-pinned @mention land where
+ * the idea's conversation already lives (or the target agent's owner-pinned cwd) instead of a
+ * random online cwd — and, because an agent→agent return-wake (agent B @mentions the assigner A
+ * on completion) IS an un-pinned mention, it makes that return-wake land in A's pinned cwd too.
+ *
+ * `human_instruction` (owns its own send-path target) and `resource_resumed` (a synthetic
+ * control dispatch that is never persisted and never reaches this chokepoint) stay excluded.
+ */
+const RESIDUAL_CWD_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
+  ...IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS,
+  "mentioned",
 ]);
 
 /**
@@ -808,9 +835,11 @@ export async function createTurnAndResolveTarget(
     // idea's existing ONLINE session origin (where the idea's conversation already lives),
     // fixing the proposal approve/reject random-cwd wake. No session, an offline origin, or a
     // non-idea-anchored wake (directIdeaUuid null) → stays online-first.
-    // `mentioned` / `human_instruction` are excluded from the set (they own their own target).
+    // Un-pinned `mentioned` is now INCLUDED via RESIDUAL_CWD_UPGRADE_TRIGGERS (a pinned mention
+    // already resolved a HARD pin above, so it is directed and skips this); `human_instruction`
+    // is still excluded — it owns its own send-path target.
     if (
-      IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS.has(trigger) &&
+      RESIDUAL_CWD_UPGRADE_TRIGGERS.has(trigger) &&
       selection.kind === "online_first"
     ) {
       const ideaTarget = await resolveIdeaSessionOriginTarget(
@@ -837,7 +866,7 @@ export async function createTurnAndResolveTarget(
     // preference → `makePinnedTarget` null → selection stays `online_first`, unchanged.
     if (
       selection.kind === "online_first" &&
-      IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS.has(trigger) &&
+      RESIDUAL_CWD_UPGRADE_TRIGGERS.has(trigger) &&
       ctx.projectUuid
     ) {
       const projectPin = await resolveProjectOwnerCwdPin(
