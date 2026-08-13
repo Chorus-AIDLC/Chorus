@@ -23,7 +23,7 @@
 
 import { homedir } from "node:os";
 import { resolveCredentials, loginFilePath } from "./credentials.mjs";
-import { updateDaemonConfig, prompt as defaultPrompt } from "./login.mjs";
+import { updateDaemonConfig, appendAgentConfig, prompt as defaultPrompt } from "./login.mjs";
 import { validateAndFetchIdentity } from "./chorus-client.mjs";
 import { normalizeCwd, cleanCwdList } from "./daemon-config.mjs";
 import { KNOWN_AGENTS, DEFAULT_AGENT } from "./daemon-agent.mjs";
@@ -132,6 +132,43 @@ export async function resolveInstallCredentials(flags = {}, env = {}, opts = {})
   //    field-merge writer preserves cwds / yoloAckAt / sigintTimeoutMs.
   writeConfig({ url, apiKey, agentUuid: identity.uuid, agentName: identity.name });
   log(`[Chorus] credentials saved for ${identity.name} (${identity.uuid}).`);
+
+  // Multi-agent (daemon-multi-agent): with `--add` on a TTY, offer to add more
+  // agents in the same run. Each additional key is validated then APPENDED to
+  // agents[] (the first agent above is folded into agents[0] on the first
+  // append). Opt-in via --add so a plain install prompts for nothing extra;
+  // never runs on a non-TTY / --yes / skip run. Hand-editing daemon.json remains
+  // fully supported regardless.
+  if (isTTY && !skip && flags.add === true) {
+    const appendAgent = opts.appendAgent ?? appendAgentConfig;
+    // Bound the loop so a stuck/looping prompt can never spin forever.
+    for (let added = 0; added < 32; added += 1) {
+      const more = nonEmpty(await ask("Add another agent? [y/N]: "));
+      if (!more || !/^y(es)?$/i.test(more)) break;
+      const u = nonEmpty(await ask("  Chorus URL: "));
+      const k = nonEmpty(await ask("  Chorus API key (cho_...): ", { mask: true }));
+      if (!u || !k) {
+        errLog("[Chorus] both a URL and an API key are required — skipping this agent.");
+        continue;
+      }
+      let id;
+      try {
+        id = await validate({ url: u, apiKey: k });
+      } catch (err) {
+        errLog(
+          `[Chorus] validation failed: ${err instanceof Error ? err.message : String(err)} — this agent was NOT added.`,
+        );
+        continue;
+      }
+      const res = appendAgent({ url: u, apiKey: k, agentUuid: id.uuid, agentName: id.name });
+      if (!res.ok) {
+        errLog(`[Chorus] agent ${id.name} (${id.uuid}) is already configured — skipping.`);
+        continue;
+      }
+      log(`[Chorus] added agent ${id.name} (${id.uuid}) — this daemon now serves ${res.agents.length} agents.`);
+    }
+  }
+
   return { ok: true, creds: { url, apiKey }, identity };
 }
 

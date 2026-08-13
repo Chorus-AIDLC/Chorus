@@ -280,23 +280,26 @@ if [ ! -f "$MCP_JSON.chorus-bak" ]; then
   ok "Backed up original to ${MCP_JSON}.chorus-bak"
 fi
 
-# The chorus server object. The URL is concretized (non-secret, set once); the
-# API key stays an ${env:CHORUS_API_KEY} reference so the secret is NOT written
-# to disk — Kiro CLI interpolates ${env:VAR} at runtime. Single-quote the auth
-# string so the shell never expands ${env:...}.
+# The chorus server object. BOTH the URL and the API key stay ${...} references
+# (not baked literals) so Kiro CLI interpolates them from the environment at
+# runtime — this is what makes a single daemon serving MULTIPLE agents work: each
+# woken Kiro child inherits that agent's own CHORUS_URL / CHORUS_API_KEY, so the
+# same mcp.json resolves to the right server + key per agent. The API key is never
+# written to disk. Single-quote both refs so the shell never expands ${...} here.
+URL_REF='${CHORUS_URL}/api/mcp'
 AUTH_REF='Bearer ${env:CHORUS_API_KEY}'
 
 merged=""
 if command -v jq >/dev/null 2>&1; then
   # Build the server object, then set only .mcpServers.chorus (in place if it
   # already exists — preserving position and every other user server).
-  server_json="$(jq -n --arg url "$url" --arg auth "$AUTH_REF" \
+  server_json="$(jq -n --arg url "$URL_REF" --arg auth "$AUTH_REF" \
     '{type:"http", url:$url, headers:{Authorization:$auth}, disabled:false}')"
   merged="$(jq --argjson srv "$server_json" \
     '(.mcpServers // {}) as $m | .mcpServers = ($m + {chorus:$srv})' "$MCP_JSON")" \
     || die "Failed to merge mcp.json with jq (is $MCP_JSON valid JSON?)"
 elif command -v node >/dev/null 2>&1; then
-  merged="$(CHORUS_MCP_URL="$url" CHORUS_MCP_AUTH="$AUTH_REF" node - "$MCP_JSON" <<'NODE'
+  merged="$(CHORUS_MCP_URL="$URL_REF" CHORUS_MCP_AUTH="$AUTH_REF" node - "$MCP_JSON" <<'NODE'
 const fs = require("fs");
 const file = process.argv[2];
 let data = {};
