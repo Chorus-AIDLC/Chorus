@@ -12,6 +12,13 @@ vi.mock("@/lib/auth-client", () => ({
 }));
 
 import { ProjectCwdSummary } from "../project-cwd-summary";
+import { getAgentColor } from "@/lib/agent-color";
+
+// React/jsdom serialize an inline hex color to `rgb(...)`; convert for comparison.
+function hexToRgb(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 function response(cwd: string | null) {
   return Promise.resolve({
@@ -27,12 +34,16 @@ function response(cwd: string | null) {
   });
 }
 
+function badgeFor(name: string): HTMLElement | null {
+  return screen.getByText(name).closest("span[title]") as HTMLElement | null;
+}
+
 describe("ProjectCwdSummary", () => {
   beforeEach(() => {
     authFetch.mockReset();
   });
 
-  it("renders configured Agent cwd values beside the project title", async () => {
+  it("shows the agent name as the visible label with the cwd in the tooltip", async () => {
     authFetch.mockImplementationOnce(() => Promise.resolve({
       ok: true,
       json: async () => ({
@@ -55,9 +66,51 @@ describe("ProjectCwdSummary", () => {
     render(<ProjectCwdSummary projectUuid="project-1" />);
 
     const summary = await screen.findByLabelText("title");
-    expect(summary.textContent).toContain("/work/dynamic-project");
     expect(summary.getAttribute("class")).toContain("flex-wrap");
+    // Agent name is visible; the cwd path is in the badge tooltip, not the label.
+    expect(await screen.findByText("Claude")).toBeTruthy();
+    expect(badgeFor("Claude")?.getAttribute("title")).toBe("/work/dynamic-project");
+    expect(summary.textContent).not.toContain("/work/dynamic-project");
+    // Agent with no preference is filtered out entirely.
     expect(screen.queryByText("Codex")).toBeNull();
+  });
+
+  it("distinguishes multiple agents by a per-agent identity dot even with common-prefix cwds", async () => {
+    authFetch.mockImplementationOnce(() => Promise.resolve({
+      ok: true,
+      json: async () => ({
+        data: {
+          agents: [
+            {
+              agent: { uuid: "a1", name: "Claude" },
+              preference: { cwd: "/home/ubuntu/dev/ai-pm" },
+            },
+            {
+              agent: { uuid: "a2", name: "Codex" },
+              preference: { cwd: "/home/ubuntu/dev/ai-pm-worktree" },
+            },
+          ],
+        },
+      }),
+    }));
+
+    render(<ProjectCwdSummary projectUuid="project-1" />);
+
+    // Both agents are identifiable by their visible names (no hover needed)...
+    expect(await screen.findByText("Claude")).toBeTruthy();
+    expect(screen.getByText("Codex")).toBeTruthy();
+    // ...and each cwd lives in its own badge tooltip.
+    expect(badgeFor("Claude")?.getAttribute("title")).toBe("/home/ubuntu/dev/ai-pm");
+    expect(badgeFor("Codex")?.getAttribute("title")).toBe(
+      "/home/ubuntu/dev/ai-pm-worktree",
+    );
+    // Each identity dot is colored by the shared per-agent palette helper.
+    const dots = screen.getAllByTestId("cwd-agent-dot");
+    expect(dots).toHaveLength(2);
+    expect(dots[0].style.backgroundColor).toBe(hexToRgb(getAgentColor("Claude")));
+    expect(dots[1].style.backgroundColor).toBe(hexToRgb(getAgentColor("Codex")));
+    // Distinct agents → distinct dot colors.
+    expect(dots[0].style.backgroundColor).not.toBe(dots[1].style.backgroundColor);
   });
 
   it("reloads the fixed cwd marker after the project settings save event", async () => {
@@ -75,7 +128,11 @@ describe("ProjectCwdSummary", () => {
       }));
     });
 
-    expect(await screen.findByText("/workspace/fixed")).toBeTruthy();
+    // Agent name becomes visible; the cwd is carried in the badge tooltip.
+    const label = await screen.findByText("Agent One");
+    expect(label.closest("span[title]")?.getAttribute("title")).toBe(
+      "/workspace/fixed",
+    );
     expect(authFetch).toHaveBeenCalledTimes(2);
   });
 

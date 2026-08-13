@@ -68,7 +68,6 @@ export function DaemonPresenceEntry() {
   const t = useTranslations("agentPresence");
   const {
     status,
-    onlineCount,
     connections,
     executionsByConnection,
     setModalOpen,
@@ -79,7 +78,21 @@ export function DaemonPresenceEntry() {
   // "View activity" affordance is omitted entirely — not merely disabled.
   const pixel = usePixelActivityOptional();
 
-  const dotState = deriveDotState(status, onlineCount);
+  // Online-only presence: filter to the ONLINE connection set FIRST, then group by
+  // agent. `onlineAgentGroups.length` is the number of DISTINCT agents with >= 1 online
+  // instance (grouped on agentUuid, never the nullable agentName), which is what the
+  // pill's "agents online" count and its dot state reflect — an agent online across
+  // multiple hosts/cwds counts ONCE. The provider's `onlineCount` stays connection-based
+  // for the connection-oriented "View all" modal; the pill is agent-oriented.
+  // `onlineConnectionsOnly` also applies the stable identity sort, so raw refresh array
+  // order cannot make the roster jump.
+  const onlineAgentGroups = groupConnectionsByAgent(
+    onlineConnectionsOnly(connections, executionsByConnection),
+    executionsByConnection,
+  ).filter((g) => g.onlineCount > 0);
+  const onlineAgentCount = onlineAgentGroups.length;
+
+  const dotState = deriveDotState(status, onlineAgentCount);
 
   // The trigger body. Error must NEVER read as "0 online" (no silent error);
   // loading is a muted placeholder with no count flash; idle and online show the
@@ -99,7 +112,7 @@ export function DaemonPresenceEntry() {
     );
   } else {
     const onlineTint =
-      onlineCount > 0
+      onlineAgentCount > 0
         ? "text-[#15803D] dark:text-[#4FD07A]"
         : "text-foreground/80";
     body = (
@@ -107,24 +120,14 @@ export function DaemonPresenceEntry() {
         <span
           className={`text-[15px] font-semibold leading-none tabular-nums ${onlineTint}`}
         >
-          {onlineCount}
+          {onlineAgentCount}
         </span>
         <span className="truncate text-muted-foreground">
-          {t("onlineUnit", { count: onlineCount })}
+          {t("onlineUnit", { count: onlineAgentCount })}
         </span>
       </span>
     );
   }
-
-  // Online-only presence: filter to the ONLINE connection set FIRST, then group.
-  // The roster lists only live (host, cwd) instances — an offline instance never
-  // appears, and an agent with zero online instances produces no group at all.
-  // `onlineConnectionsOnly` also applies the stable identity sort, so raw refresh
-  // array order cannot make the roster jump.
-  const onlineAgentGroups = groupConnectionsByAgent(
-    onlineConnectionsOnly(connections, executionsByConnection),
-    executionsByConnection,
-  ).filter((g) => g.onlineCount > 0);
 
   return (
     <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-40">

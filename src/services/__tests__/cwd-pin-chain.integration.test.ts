@@ -68,6 +68,7 @@ function makeStore() {
     project: [] as Row[],
     user: [] as Row[],
     agent: [] as Row[],
+    projectAgentCwdPreference: [] as Row[],
   };
   let autoId = 1;
   let autoUuid = 1;
@@ -319,6 +320,11 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("agent", args)),
       findMany: vi.fn(async (args: Row) => findMany("agent", args)),
       count: vi.fn(async (args: Row) => count("agent", args)),
+    },
+    // idea 5b8ee573: the autonomous-wake project-owner cwd fallback reads this. Empty here
+    // (no fixed preference seeded) → the un-pinned wake stays online-first, unchanged.
+    projectAgentCwdPreference: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectAgentCwdPreference", args)),
     },
     project: {
       findUnique: vi.fn(async (args: Row) => findFirst("project", { where: args.where })),

@@ -231,11 +231,18 @@ describe("DaemonPresenceEntry — three presence states", () => {
     expect(text).not.toMatch(/\d/);
   });
 
-  it("online (count > 0): emphasizes the count, shows the plural unit, and renders the pulsing-green dot", () => {
+  it("online (multiple distinct agents): shows the DISTINCT-AGENT count (not per-connection), plural unit, pulsing dot", () => {
+    // Three distinct agents online. The provider's connection-based onlineCount is set to a
+    // DIFFERENT (bogus) value to prove the pill uses the distinct-agent count
+    // (onlineAgentGroups.length), never the per-connection onlineCount.
     setPresence({
       status: "ok",
-      onlineCount: 3,
-      connections: [makeConnection()],
+      onlineCount: 7,
+      connections: [
+        makeConnection({ uuid: "c1", agentUuid: "agent-1", host: "h1", cwd: "/a" }),
+        makeConnection({ uuid: "c2", agentUuid: "agent-2", host: "h2", cwd: "/b" }),
+        makeConnection({ uuid: "c3", agentUuid: "agent-3", host: "h3", cwd: "/c" }),
+      ],
     });
     const { container } = render(<DaemonPresenceEntry />);
 
@@ -243,9 +250,33 @@ describe("DaemonPresenceEntry — three presence states", () => {
     const text = trigger.textContent ?? "";
     expect(text).toContain("3");
     expect(text).toContain("agents online");
+    // Must NOT reflect the per-connection count from the provider.
+    expect(text).not.toContain("7");
     // The pulsing-green dot reuses motion-safe:animate-ping (static under
     // reduced motion). The error/idle dots never carry it.
     expect(container.querySelector(".motion-safe\\:animate-ping")).not.toBeNull();
+  });
+
+  it("one agent online across multiple cwds counts ONCE (distinct-agent, not per-connection)", () => {
+    // Same agentUuid on three (host, cwd) connections → the provider counts 3 connections,
+    // but the pill must show a single distinct agent (the headline of idea 5b8ee573 point 4).
+    setPresence({
+      status: "ok",
+      onlineCount: 3,
+      connections: [
+        makeConnection({ uuid: "c1", agentUuid: "agent-1", host: "h", cwd: "/one" }),
+        makeConnection({ uuid: "c2", agentUuid: "agent-1", host: "h", cwd: "/two" }),
+        makeConnection({ uuid: "c3", agentUuid: "agent-1", host: "h", cwd: "/three" }),
+      ],
+    });
+    render(<DaemonPresenceEntry />);
+
+    const trigger = screen.getByRole("button", { name: TRIGGER_LABEL });
+    const text = trigger.textContent ?? "";
+    expect(text).toContain("1");
+    expect(text).toContain("agent online");
+    expect(text).not.toContain("agents online"); // singular, not plural
+    expect(text).not.toContain("3"); // NOT the per-connection count
   });
 
   it("online (count === 1): uses the SINGULAR unit 'agent online'", () => {
