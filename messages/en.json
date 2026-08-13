@@ -321,6 +321,7 @@
     "cwd": "Directory",
     "status": "Status",
     "unknown": "Unknown",
+    "openAgentChat": "Open {agent}'s conversation",
     "manage": "Manage in project settings",
     "availability": {
       "ready": "Available",

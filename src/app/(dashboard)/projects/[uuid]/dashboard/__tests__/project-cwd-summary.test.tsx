@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor } from "@testing-library/react";
+import React from "react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
@@ -11,6 +13,25 @@ vi.mock("@/lib/auth-client", () => ({
   authFetch: (...args: unknown[]) => authFetch(...args),
 }));
 
+// The badge is clickable → opens the agent's daemon chat via the presence context.
+const openChatForAgent = vi.fn();
+vi.mock("@/contexts/agent-presence-context", () => ({
+  useAgentPresenceOptional: () => ({ openChatForAgent }),
+}));
+
+// Mock the Radix-based Tooltip primitive: Radix's hover/pointer open path is unreliable in
+// jsdom, so we render TooltipContent inline (in a portal-like sibling, NOT inside the badge)
+// to deterministically assert MY wiring — that the cwd is passed as the tooltip content and
+// is NOT part of the badge's visible label. Radix's actual open-on-hover is its own contract.
+vi.mock("@/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="cwd-tooltip">{children}</div>
+  ),
+}));
+
 import { ProjectCwdSummary } from "../project-cwd-summary";
 import { getAgentColor } from "@/lib/agent-color";
 
@@ -20,103 +41,103 @@ function hexToRgb(hex: string): string {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-function response(cwd: string | null) {
+function agentsResponse(
+  agents: { uuid: string; name: string; host?: string; cwd: string | null }[],
+) {
   return Promise.resolve({
     ok: true,
     json: async () => ({
       data: {
-        agents: [{
-          agent: { uuid: "agent-1", name: "Agent One" },
-          preference: cwd ? { cwd } : null,
-        }],
+        agents: agents.map((a) => ({
+          agent: { uuid: a.uuid, name: a.name },
+          preference: a.cwd ? { host: a.host ?? "host-1", cwd: a.cwd } : null,
+        })),
       },
     }),
   });
 }
 
-function badgeFor(name: string): HTMLElement | null {
-  return screen.getByText(name).closest("span[title]") as HTMLElement | null;
+function badgeButton(name: string): HTMLButtonElement {
+  return screen.getByText(name).closest("button") as HTMLButtonElement;
 }
 
 describe("ProjectCwdSummary", () => {
   beforeEach(() => {
     authFetch.mockReset();
+    openChatForAgent.mockReset();
   });
 
-  it("shows the agent name as the visible label with the cwd in the tooltip", async () => {
-    authFetch.mockImplementationOnce(() => Promise.resolve({
-      ok: true,
-      json: async () => ({
-        success: true,
-        data: {
-          agents: [
-            {
-              agent: { uuid: "agent-1", name: "Claude" },
-              preference: { cwd: "/work/dynamic-project" },
-            },
-            {
-              agent: { uuid: "agent-2", name: "Codex" },
-              preference: null,
-            },
-          ],
-        },
-      }),
-    }));
+  it("shows the agent NAME as the visible badge label and puts the cwd in the tooltip (not the label)", async () => {
+    authFetch.mockImplementationOnce(() =>
+      agentsResponse([
+        { uuid: "agent-1", name: "Claude", cwd: "/work/dynamic-project" },
+        { uuid: "agent-2", name: "Codex", cwd: null },
+      ]),
+    );
 
     render(<ProjectCwdSummary projectUuid="project-1" />);
 
-    const summary = await screen.findByLabelText("title");
-    expect(summary.getAttribute("class")).toContain("flex-wrap");
-    // Agent name is visible; the cwd path is in the badge tooltip, not the label.
-    expect(await screen.findByText("Claude")).toBeTruthy();
-    expect(badgeFor("Claude")?.getAttribute("title")).toBe("/work/dynamic-project");
-    expect(summary.textContent).not.toContain("/work/dynamic-project");
-    // Agent with no preference is filtered out entirely.
+    await screen.findByText("Claude");
+    // The badge's own visible label is the agent name — the cwd is NOT in the button text
+    // (this is the regression: previously the cwd was the only visible content).
+    const btn = badgeButton("Claude");
+    expect(btn.textContent).toContain("Claude");
+    expect(btn.textContent).not.toContain("/work/dynamic-project");
+    // The cwd IS wired into the tooltip content.
+    expect(within(screen.getByTestId("cwd-tooltip")).getByText("/work/dynamic-project")).toBeTruthy();
+    // Agent with no preference is filtered out.
     expect(screen.queryByText("Codex")).toBeNull();
   });
 
   it("distinguishes multiple agents by a per-agent identity dot even with common-prefix cwds", async () => {
-    authFetch.mockImplementationOnce(() => Promise.resolve({
-      ok: true,
-      json: async () => ({
-        data: {
-          agents: [
-            {
-              agent: { uuid: "a1", name: "Claude" },
-              preference: { cwd: "/home/ubuntu/dev/ai-pm" },
-            },
-            {
-              agent: { uuid: "a2", name: "Codex" },
-              preference: { cwd: "/home/ubuntu/dev/ai-pm-worktree" },
-            },
-          ],
-        },
-      }),
-    }));
+    authFetch.mockImplementationOnce(() =>
+      agentsResponse([
+        { uuid: "a1", name: "Claude", cwd: "/home/ubuntu/dev/ai-pm" },
+        { uuid: "a2", name: "Codex", cwd: "/home/ubuntu/dev/ai-pm-worktree" },
+      ]),
+    );
 
     render(<ProjectCwdSummary projectUuid="project-1" />);
 
-    // Both agents are identifiable by their visible names (no hover needed)...
     expect(await screen.findByText("Claude")).toBeTruthy();
     expect(screen.getByText("Codex")).toBeTruthy();
-    // ...and each cwd lives in its own badge tooltip.
-    expect(badgeFor("Claude")?.getAttribute("title")).toBe("/home/ubuntu/dev/ai-pm");
-    expect(badgeFor("Codex")?.getAttribute("title")).toBe(
-      "/home/ubuntu/dev/ai-pm-worktree",
-    );
-    // Each identity dot is colored by the shared per-agent palette helper.
     const dots = screen.getAllByTestId("cwd-agent-dot");
     expect(dots).toHaveLength(2);
     expect(dots[0].style.backgroundColor).toBe(hexToRgb(getAgentColor("Claude")));
     expect(dots[1].style.backgroundColor).toBe(hexToRgb(getAgentColor("Codex")));
-    // Distinct agents → distinct dot colors.
     expect(dots[0].style.backgroundColor).not.toBe(dots[1].style.backgroundColor);
+    // Each agent's cwd lives in its own tooltip.
+    const tips = screen.getAllByTestId("cwd-tooltip").map((el) => el.textContent);
+    expect(tips).toContain("/home/ubuntu/dev/ai-pm");
+    expect(tips).toContain("/home/ubuntu/dev/ai-pm-worktree");
+  });
+
+  it("opens the agent's chat (pinned to its host+cwd) when the badge is clicked", async () => {
+    authFetch.mockImplementationOnce(() =>
+      agentsResponse([
+        { uuid: "a1", name: "Claude", host: "host-A", cwd: "/work/alpha" },
+      ]),
+    );
+
+    const user = userEvent.setup();
+    render(<ProjectCwdSummary projectUuid="project-1" />);
+
+    await screen.findByText("Claude");
+    await user.click(badgeButton("Claude"));
+
+    expect(openChatForAgent).toHaveBeenCalledTimes(1);
+    expect(openChatForAgent).toHaveBeenCalledWith("a1", {
+      host: "host-A",
+      cwd: "/work/alpha",
+    });
   });
 
   it("reloads the fixed cwd marker after the project settings save event", async () => {
     authFetch
-      .mockImplementationOnce(() => response(null))
-      .mockImplementationOnce(() => response("/workspace/fixed"));
+      .mockImplementationOnce(() => agentsResponse([{ uuid: "agent-1", name: "Agent One", cwd: null }]))
+      .mockImplementationOnce(() =>
+        agentsResponse([{ uuid: "agent-1", name: "Agent One", cwd: "/workspace/fixed" }]),
+      );
 
     render(<ProjectCwdSummary projectUuid="project-1" />);
     await waitFor(() => expect(authFetch).toHaveBeenCalledTimes(1));
@@ -128,16 +149,13 @@ describe("ProjectCwdSummary", () => {
       }));
     });
 
-    // Agent name becomes visible; the cwd is carried in the badge tooltip.
-    const label = await screen.findByText("Agent One");
-    expect(label.closest("span[title]")?.getAttribute("title")).toBe(
-      "/workspace/fixed",
-    );
+    expect(await screen.findByText("Agent One")).toBeTruthy();
+    expect(within(screen.getByTestId("cwd-tooltip")).getByText("/workspace/fixed")).toBeTruthy();
     expect(authFetch).toHaveBeenCalledTimes(2);
   });
 
   it("ignores cwd updates for another project", async () => {
-    authFetch.mockImplementation(() => response(null));
+    authFetch.mockImplementation(() => agentsResponse([{ uuid: "agent-1", name: "Agent One", cwd: null }]));
     render(<ProjectCwdSummary projectUuid="project-1" />);
     await waitFor(() => expect(authFetch).toHaveBeenCalledTimes(1));
 
