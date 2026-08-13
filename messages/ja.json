@@ -321,6 +321,7 @@
     "cwd": "ディレクトリ",
     "status": "状態",
     "unknown": "不明",
+    "openAgentChat": "{agent} の会話を開く",
     "manage": "プロジェクト設定で管理",
     "availability": {
       "ready": "利用可能",

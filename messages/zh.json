@@ -321,6 +321,7 @@
     "cwd": "目录",
     "status": "状态",
     "unknown": "未知",
+    "openAgentChat": "打开 {agent} 的对话",
     "manage": "在项目设置中管理",
     "availability": {
       "ready": "可用",
