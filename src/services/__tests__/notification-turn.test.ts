@@ -2498,4 +2498,51 @@ describe("createTurnAndResolveTarget — un-pinned @mention residual cwd upgrade
       expect.objectContaining({ originConnectionUuid: onlineFirst }),
     );
   });
+
+  it("regresses an un-pinned mention to the MENTIONER-owner project-fixed pin OVER an existing session-origin (owner regression e40f2b2c / RETEST-C)", async () => {
+    // CONTRAST with the step-4a project-owner FALLBACK (see "an ONLINE idea-session-origin
+    // OUTRANKS the project pin"), where a live session-origin beats the project pin. HERE
+    // mention.service pre-resolved the MENTIONER-owner's project-fixed cwd and threaded it as
+    // `resolvedCwdSource: "project_fixed"` — that is a HARD pin resolved at step 1, so it MUST
+    // beat the session-origin upgrade. Live repro (RETEST-C): an un-pinned @Codex on a project
+    // pinned to ai-pm, while the idea's Codex session-origin was on strands, woke Codex in ai-pm
+    // (the project pin), NOT strands.
+    const projConn = "conn-project-pin-aipm";
+    const sessionOriginConn = "conn-session-strands";
+    mockListConnectionsForAgent.mockResolvedValue([
+      // The idea's existing session-origin (strands) is listed FIRST — a session-origin
+      // upgrade, had it wrongly fired, would have picked this.
+      onlineConn({ uuid: sessionOriginConn, host: "host-strands", cwd: "/home/u/dev/strands" }),
+      onlineConn({ uuid: projConn, host: "host-aipm", cwd: "/home/u/dev/ai-pm" }),
+    ]);
+    // Codex's idea session currently lives on the strands connection.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: sessionOriginConn,
+    });
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        projectUuid: "project-1",
+        // mention.service pre-resolved the mentioner-owner's project-fixed cwd (ai-pm).
+        resolvedCwdSource: "project_fixed",
+        resolvedCwdHost: "host-aipm",
+        resolvedRuntimeCwd: "/home/u/dev/ai-pm",
+      }),
+    );
+
+    // Directed to the PROJECT pin (ai-pm), NOT the strands session-origin.
+    expect(result.targetConnectionUuid).toBe(projConn);
+    expect(result.runtimeCwd).toBe("/home/u/dev/ai-pm");
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: projConn, runtimeCwd: "/home/u/dev/ai-pm" }),
+    );
+    // The session-origin upgrade MUST have been skipped (a HARD project_fixed pin resolved first).
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: sessionOriginConn }),
+    );
+  });
 });
