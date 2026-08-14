@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.16.1](https://chorus-ai.dev/zh/blog/chorus-v0.16.1-release/)** — 一个 `chorus daemon` 现在可以同时服务多个互相独立的 agent，每个都有自己的密钥、工作目录、后端和权限（通过 `agents[]` 配置）；agent 之间还能通过 @ 把活递给对方，每次唤醒都落在该 agent 自己的项目目录里。
+
 **[v0.16.0](https://chorus-ai.dev/zh/blog/chorus-v0.16.0-release/)** — 新增 `docs` skill，引导 Agent 查阅文档站点（[doc.chorus-ai.dev](https://doc.chorus-ai.dev)），基于当前文档作答，而不是凭记忆复述。
 
 **[v0.15.0](https://chorus-ai.dev/zh/blog/chorus-v0.15.0-release/)** — 项目级 Agent 工作目录：每位用户可以为项目中的每个 Agent 绑定主机和 cwd，只浏览 daemon 允许的目录，并让任务分配、唤醒、恢复和后续对话使用同一个执行位置，且不迁移进行中的会话。Codex 现在会单独保存可恢复的后端 thread ID，并移除不再需要的 Chorus session 管理步骤。
@@ -36,20 +38,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.14.1](https://chorus-ai.dev/zh/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI 成为第四种接入方式（Kiro CLI v2）：一条命令的 `install-kiro.sh` 插件，以及 `--agent kiro` 的 daemon 后端，另有若干 daemon 修复。
 
 **[v0.14.0](https://chorus-ai.dev/zh/blog/chorus-v0.14.0-release/)** — 全应用深色模式（浅色 / 深色 / 跟随系统）。参考资料可挂到任意想法、提案或任务上，行内可读，也能通过 MCP 读写。新增韩语和日语（韩语由社区贡献）。用于归类的**主题**想法，以及 daemon 的「开始开发」/「Yolo」按钮、对话式建想法、崩溃恢复与 `chorus daemon install`。
-
-**[v0.13.0](https://chorus-ai.dev/zh/blog/chorus-v0.13.0-release/)** — 项目资源思维导图：新增 Graph 视图，把每个项目的想法、提案、文档、任务连成一棵可折叠的树，从项目自身结构自动生成。每张卡片都标着当前状态（想法用想法列表那套派生状态），标题搜索会自动展开命中节点的上游并高亮/调暗、配上下切换定位，同一张可缩放可拖动的图在桌面与手机上通用（捏合 + 双击缩放）。
-
-**[v0.12.0](https://chorus-ai.dev/zh/blog/chorus-v0.12.0-release/)** — 可寻址的 daemon 实例：一个 `chorus daemon` 可同时守多个工作目录（`--cwd`），每一个 `(agent, 主机, 目录)` 都成为一个能单独看见、单独点名的实例，贯穿 presence、@-mention 与任务指派。在想法上钉一次实例，其下的提案、任务与唤醒都会继承；带钉的唤醒被精确投递到那个实例，而非全员广播。评论区的 Agent @-mention 渲染为实时在线状态徽章，评论列表改为游标式无限滚动。
-
-**[v0.11.0](https://chorus-ai.dev/zh/blog/chorus-v0.11.0-release/)** — Chorus Daemon：`chorus daemon` 将本机变为常驻 Agent 运行时，在每次派发时唤起本地 Claude Code。Agent Connections 界面提供实时可观测与控制：流式 transcript、指令注入、打断 / 恢复；新增"完成细化"按钮，唤起被指派的 Agent 撰写提案。
-
-**[v0.10.0](https://chorus-ai.dev/zh/blog/chorus-v0.10.0-release/)** — 单父想法血缘：一条想法可派生子想法或挂靠至另一条之下，构成森林结构。该关联为弱关联，父想法仅呈现只读的 "+N derived" 汇总，不约束子想法的细化、提案与任务流程。想法浏览统一收敛至 Dashboard（Ideas / Lineage / Stats 三档视图切换，支持自适应默认）；独立的 Idea List 页面下线，原 URL 经 308 重定向至 Dashboard。
-
-**[v0.9.4](https://chorus-ai.dev/zh/blog/chorus-v0.9.4-release/)** — OpenClaw 插件基于 OpenClaw 2026.4.27 Plugin SDK 全面重写（原生 MCP 注册、`runEmbeddedAgent` 处理 SSE 唤醒、reviewer 改为原生 skill）；Codex 插件 hook 改为随插件包分发，安装器同时清理用户目录中的历史 hook 拷贝。
-
-**[v0.9.0](https://chorus-ai.dev/zh/blog/chorus-v0.9.0-release/)** — 头脑风暴 skill 帮你把模糊的想法聊出形状（在结构化多选题前先开放式对话），想法落地后自动生成总结报告（Summary / Decisions / Follow-ups 三段式，挂在想法概览页）。
-
-**[v0.8.0](https://chorus-ai.dev/zh/blog/chorus-v0.8.0-release/)** — OpenSpec-aware 模式（仅 Claude Code）：当仓库下同时存在 `openspec/` 目录和 `openspec` CLI 时自动启用，新增 `/opsx/{explore,propose,apply,archive}` 与 task verify 后的 archive-trigger 钩子。
 
 > 完整更新日志：[CHANGELOG.md](CHANGELOG.md)
 

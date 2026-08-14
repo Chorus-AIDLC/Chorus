@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 이제 하나의 `chorus daemon`이 서로 독립적인 여러 에이전트를 동시에 서비스합니다. 각 에이전트는 `agents[]` 배열로 자신의 키·작업 디렉터리·백엔드·권한을 가집니다. 에이전트끼리 @멘션으로 작업을 넘길 수 있고, 각 웨이크는 해당 에이전트 자신의 프로젝트 디렉터리에 도착합니다.
+
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — 에이전트를 문서 사이트([doc.chorus-ai.dev](https://doc.chorus-ai.dev))로 안내하는 `docs` 스킬을 추가해, 기억에 의존하지 않고 현재 문서를 읽고 답하도록 했습니다.
 
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — 프로젝트별 Agent 작업 디렉터리: 각 사용자가 프로젝트의 Agent마다 호스트와 cwd를 지정하고, 데몬이 허용한 루트만 탐색할 수 있습니다. 배정, 웨이크, 재개, 후속 턴에서 같은 실행 위치를 사용하며 진행 중인 세션은 이동하지 않습니다. Codex는 재개 가능한 백엔드 thread ID를 별도로 저장하고, 더 이상 필요하지 않은 Chorus session 관리 단계를 제거했습니다.
@@ -45,20 +47,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI가 네 번째 연결 방식이 되었습니다(Kiro CLI v2): 명령 한 줄로 설치하는 `install-kiro.sh` 플러그인과 `--agent kiro` 데몬 백엔드, 여기에 몇 가지 데몬 수정.
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — 앱 전체 다크 모드(라이트 / 다크 / 시스템). 참고 자료를 어떤 아이디어·제안·작업에도 첨부할 수 있고, 인라인으로도 MCP를 통해서도 읽을 수 있습니다. 한국어와 일본어 추가(한국어는 커뮤니티 기여). 그룹화를 위한 **테마** 아이디어, 그리고 데몬의 개발 시작 / Yolo 버튼, 대화식 아이디어 입력, 크래시 복구, `chorus daemon install`.
-
-**[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — 프로젝트별 리소스 마인드맵: 새로운 Graph 뷰가 각 프로젝트의 아이디어·제안·문서·작업을 프로젝트 자체 구조에서 생성한 하나의 접을 수 있는 트리로 엮습니다. 모든 카드에 현재 상태가 표시되며(아이디어는 아이디어 트래커가 사용하는 파생 파이프라인 상태를 보여줍니다), 제목 검색은 모든 일치 항목까지의 경로를 자동으로 펼쳐 하이라이트/디밍하고 이전/다음 탐색을 제공합니다. 동일한 줌/팬 캔버스가 데스크톱과 모바일 모두에서 렌더링됩니다(핀치 + 더블탭).
-
-**[v0.12.0](https://chorus-ai.dev/blog/chorus-v0.12.0-release/)** — 주소 지정 가능한 데몬 인스턴스: 하나의 `chorus daemon`이 여러 작업 디렉터리(`--cwd`)를 서비스할 수 있으며, 각 `(agent, host, cwd)`가 프레즌스·@멘션·배정 전반에 걸쳐 개별적으로 보이고 개별적으로 지정할 수 있는 인스턴스가 됩니다. 아이디어에 인스턴스를 한 번 고정하면 그 아래의 제안·작업·웨이크가 이를 상속합니다. 고정된 웨이크는 브로드캐스트가 아니라 바로 그 인스턴스로 정확히 전달됩니다. 댓글의 @멘션은 실시간 온라인 상태 배지로 렌더링되고, 댓글은 커서 기반 무한 스크롤로 전환되었습니다.
-
-**[v0.11.0](https://chorus-ai.dev/blog/chorus-v0.11.0-release/)** — Chorus 데몬: `chorus daemon`은 여러분의 머신을 상주형 에이전트 런타임으로 만들어, 디스패치가 있을 때마다 로컬 Claude Code를 깨웁니다. Agent Connections 화면이 스트리밍 트랜스크립트, 지시 주입, 중단 / 재개 같은 실시간 관측 가능성과 제어를 제공합니다. 또한 "구체화 검증" 버튼이 배정된 에이전트를 깨워 제안을 작성하게 합니다.
-
-**[v0.10.0](https://chorus-ai.dev/blog/chorus-v0.10.0-release/)** — 단일 부모 아이디어 계보: 하나의 아이디어는 자식을 파생시키거나 다른 아이디어 아래에 붙어 숲(forest)을 이룰 수 있습니다. 이 관계는 의도적으로 약하게 유지됩니다 — 부모는 읽기 전용 "+N derived" 요약만 보여줄 뿐, 자식의 요구사항 구체화·제안·작업 흐름을 전혀 제약하지 않습니다. 아이디어 탐색은 Dashboard로 통합되었습니다(Ideas / Lineage / Stats 세 가지 뷰 전환, 적응형 기본값 포함). 독립적이던 Idea List 페이지는 폐지되었고, 그 URL은 Dashboard로 308 리디렉션됩니다.
-
-**[v0.9.4](https://chorus-ai.dev/blog/chorus-v0.9.4-release/)** — OpenClaw 플러그인을 OpenClaw 2026.4.27 Plugin SDK 위에서 전면 재작성했습니다(네이티브 MCP 등록, SSE 웨이크를 위한 `runEmbeddedAgent`, 리뷰어를 네이티브 스킬로 구현). Codex 플러그인 훅은 이제 패키지 안에 함께 제공되며, 인스톨러가 사용자 디렉터리에 있는 예전 훅 사본을 정리합니다.
-
-**[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — 모호한 아이디어를 위한 브레인스토밍 스킬(구조화된 Q&A 이전에 먼저 자유로운 대화를 진행)과 아이디어 완료 리포트(출시된 모든 아이디어에 Summary / Decisions / Follow-ups 정리가 붙어 아이디어 개요에 표시됩니다).
-
-**[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware 모드(Claude Code): `openspec/` 디렉터리와 `openspec` CLI가 모두 존재할 때 자동으로 활성화되며, `/opsx/{explore,propose,apply,archive}`와 검증 후 archive 트리거 훅을 추가합니다.
 
 > 전체 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 

@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — One `chorus daemon` now serves many independent agents at once — each with its own key, working directories, backend, and permissions via an `agents[]` array — and agents can hand work to each other by @-mention, with each wake landing in that agent's own project directory.
+
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — A `docs` skill that points agents at the live docs site ([doc.chorus-ai.dev](https://doc.chorus-ai.dev)), so they answer from the current docs instead of reciting from memory.
 
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — Project-level Agent working directories: each user can bind every Agent in a project to a host and cwd, browse only daemon-approved roots, and use the same target across assignment, wake, resume, and later turns without moving active sessions. Codex now persists its resumable backend thread ID separately and drops obsolete Chorus session-management steps.
@@ -45,20 +47,6 @@ The labels under each stage are the **permissions** an actor needs at that stage
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI is the fourth way to connect (Kiro CLI v2): a one-command `install-kiro.sh` plugin and a `--agent kiro` daemon backend, plus daemon fixes.
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — Dark mode across the app (light / dark / system). Reference artifacts: attach docs, repos, issues, and articles to any idea, proposal, or task, readable inline and over MCP. Korean and Japanese locales (Korean contributed by the community). **Theme** ideas for grouping, plus daemon Start Development / Yolo buttons, conversational idea entry, crash-resume, and `chorus daemon install`.
-
-**[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — Per-project resource mind-map: a new Graph view wires each project's Ideas, Proposals, Documents, and Tasks into one collapsible tree, generated from the project's own structure. Every card carries its current status (ideas show the derived pipeline status the idea tracker uses), a title search auto-expands the path to every match with highlight/dim and prev/next navigation, and the same zoom/pan canvas renders on desktop and mobile (pinch + double-tap).
-
-**[v0.12.0](https://chorus-ai.dev/blog/chorus-v0.12.0-release/)** — Addressable daemon instances: one `chorus daemon` can serve multiple working directories (`--cwd`), and each `(agent, host, cwd)` becomes an individually visible, individually targetable instance across presence, @-mention, and assignment. Pin an instance once on an idea and its proposals, tasks, and wakes inherit it; pinned wakes are delivered to exactly that instance instead of broadcast. Comment @-mentions render as live online-status badges, and comments switch to cursor-based infinite scroll.
-
-**[v0.11.0](https://chorus-ai.dev/blog/chorus-v0.11.0-release/)** — The Chorus Daemon: `chorus daemon` turns your machine into a resident agent runtime that wakes a local Claude Code on each dispatch. An Agent Connections surface gives live observability and control — streaming transcripts, instruction injection, and interrupt / resume — and a "Verify Elaborate" button wakes the assigned agent to write the proposal.
-
-**[v0.10.0](https://chorus-ai.dev/blog/chorus-v0.10.0-release/)** — Single-parent idea lineage: an idea may derive a child or be attached under another, forming a forest. The relation is intentionally weak — a parent surfaces a read-only "+N derived" rollup and does not constrain any child's elaboration, proposal, or task flow. Idea browsing consolidates onto the Dashboard (a three-way Ideas / Lineage / Stats view switch with an adaptive default); the standalone Idea List page is retired and its URLs 308-redirect to the Dashboard.
-
-**[v0.9.4](https://chorus-ai.dev/blog/chorus-v0.9.4-release/)** — OpenClaw plugin rewritten on the OpenClaw 2026.4.27 Plugin SDK (native MCP registration, `runEmbeddedAgent` for SSE wake, reviewers as native skills); Codex plugin hooks now ship inside the package, with an installer that cleans up legacy hook copies in the user directory.
-
-**[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — Brainstorm skill for fuzzy ideas (open-ended chat before structured Q&A) and idea-completion reports (every shipped idea gets a Summary / Decisions / Follow-ups writeup, surfaced on the idea overview).
-
-**[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware mode (Claude Code): auto-activates when an `openspec/` directory and the `openspec` CLI are both present, adds `/opsx/{explore,propose,apply,archive}` and a post-verify archive-trigger hook.
 
 > Full changelog: [CHANGELOG.md](CHANGELOG.md)
 
