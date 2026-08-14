@@ -12,11 +12,14 @@
 // the server-resolved root, NEVER re-derived from the (direct-idea) serialization
 // key.
 //
-// Module contract (design.md): Waker.wake(notification, key, attribution) →
-// Promise<void>. A failure is logged and swallowed — it must never crash the
-// daemon (no-silent-errors: visible log, no throw).
+// Module contract (design.md): Waker.wakeBatch(notifications, key, attribution) →
+// Promise<void> runs ONE coalesced turn for a batch of same-session notifications
+// (add-daemon-wake-coalescing); Waker.wake(n, key, attribution) is a thin wrapper =
+// wakeBatch([n], ...) so a batch of one is byte-identical to the pre-coalescing single
+// wake. A failure is logged and swallowed — it must never crash the daemon
+// (no-silent-errors: visible log, no throw).
 
-import { buildPrompt } from "./prompts.mjs";
+import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
 import { isNewSession } from "./claude-spawner.mjs";
 import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
@@ -320,49 +323,122 @@ export class Waker {
   }
 
   /**
-   * Run one wake. Never throws.
+   * Run one wake. Never throws. Thin wrapper over {@link wakeBatch} with a batch of one,
+   * so a single wake is byte-identical to the pre-coalescing behavior (prompt, execution
+   * row, turn accounting, coalescedCount = 1).
    * @param {import("./prompts.mjs").NotificationDetail} notification
    * @param {string} key  The serialization key (from keyFor) — anchored on the direct idea.
    * @param {{ rootIdeaUuid?: string|null, directIdeaUuid?: string|null }} [attribution]
-   *   Server-resolved ids from keyFor. `rootIdeaUuid` → execution snapshot;
-   *   `directIdeaUuid` → the deterministic Claude session id (when the entity has
-   *   an idea ancestor). When there is no direct idea, the session is anchored on
-   *   the entity's own uuid instead (see below).
    */
   async wake(notification, key, attribution) {
+    return this.wakeBatch([notification], key, attribution);
+  }
+
+  /**
+   * Run ONE coalesced turn for a batch of same-session notifications
+   * (add-daemon-wake-coalescing, Tech Design §C3). The WakeQueue drains all same-key
+   * pending wakes and hands them here as one batch; this composes their single combined
+   * prompt (buildBatchPrompt), spawns ONE subprocess (one `claude --resume <anchor>`), and
+   * accounts for the whole thing as ONE running turn. Never throws.
+   *
+   * A batch of ONE is byte-identical to the pre-coalescing single wake: `buildBatchPrompt`
+   * delegates to `buildPrompt`, the execution row + turn-advance carry the item's OWN
+   * entity, and `coalescedCount = 1` (so the wire is unchanged).
+   *
+   * Execution snapshot (Q6): a coalesced batch (> 1) is anchored on the SESSION, so it emits
+   * ONE running row synthesized from `attribution` — `idea:<directIdeaUuid>` (NOT necessarily
+   * one of the merged items — a batch of mentions on child tasks A+B under idea D has no
+   * `idea:D` item, yet the anchor IS `idea:D`), else the ad-hoc entity. Every drained/merged
+   * resource is removed from the executions map so the server reconcile ends its queued row.
+   *
+   * @param {import("./prompts.mjs").NotificationDetail[]} notifications  Arrival-ordered batch.
+   * @param {string} key  The serialization key (from keyFor) — shared by every item.
+   * @param {{ rootIdeaUuid?: string|null, directIdeaUuid?: string|null }} [attribution]
+   *   Server-resolved ids (shared across the batch — the key IS `idea:<directIdeaUuid>`, so
+   *   all items carry the same ids). `rootIdeaUuid` → snapshot; `directIdeaUuid` → session anchor.
+   */
+  async wakeBatch(notifications, key, attribution) {
     let cfg;
-    const entity = this.#entityOf(notification);
-    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid) : null;
+    const list = Array.isArray(notifications) ? notifications : [];
+    // Physical batch size — how many wakes were coalesced into this one turn. Drives the
+    // session-anchor synthesis (a coalesced batch shows ONE synthesized idea row) and the
+    // arrival log label. Independent of the wire count below.
+    const batchSize = list.length;
+    // The number of coalesced wakes reported to the server on the running-transition so it can
+    // settle the next (coalescedCount − 1) same-session pending turns. Counted as ONLY the
+    // TURN-BACKED items: each notification-backed wake created a server-side pending
+    // DaemonSessionTurn at the chokepoint, so those are the turns the server can settle.
+    //
+    // A synthetic `resource_resumed` (子3 control-channel resume) is EXCLUDED: it is NEVER a
+    // persisted notification and creates NO server pending turn (src/services/notification-turn.ts
+    // deliberately omits it from the trigger map), so counting it would inflate N. An inflated N
+    // lets the server's `take: coalescedCount-1` seq-window settlement over-reach and mark a
+    // genuinely-separate post-drain pending turn as `merged` — which getPendingTurnsForConnection
+    // then never re-dispatches, silently dropping a piled-up chat message (defeats Q3).
+    // `resource_resumed` is the ONLY synthetic, non-notification wake action; every other
+    // WAKE_ACTIONS entry (incl. human_instruction) is notification-backed and turn-creating. A
+    // batch that reduces to 0 or 1 turn-backed items reports ≤ 1, which the client omits from the
+    // wire (see #advanceTurn) so no settlement runs.
+    const coalescedCount = list.filter((n) => n?.action !== "resource_resumed").length;
+    const first = list[0];
     // Both ids come from the resolved `attribution` (supplied by keyFor via the
     // router) and are threaded SEPARATELY — NEVER sliced from `key`. The ROOT idea
     // is reported in the snapshot; the DIRECT idea is the preferred session anchor.
     const rootIdeaUuid = attribution?.rootIdeaUuid ?? null;
     const directIdeaUuid = attribution?.directIdeaUuid ?? null;
+    // The resources markQueued tracked for THIS batch — every item's own entity. They must
+    // all leave the executions map when the batch settles so the server reconcile ends the
+    // queued rows the batch coalesced away (a coalesced batch shows only ONE running row).
+    const drainedExecKeys = [];
+    for (const n of list) {
+      const e = this.#entityOf(n);
+      if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid));
+    }
+    // The session-anchor resource for the ONE running row:
+    //  - a coalesced batch (> 1) is anchored on the SESSION, synthesized from attribution:
+    //    idea:<directIdeaUuid> when idea-anchored (NOT necessarily one of the merged items),
+    //    else the ad-hoc entity (all ad-hoc items share one entity → the first item's entity).
+    //  - a single wake (batch of one) keeps the item's OWN entity — byte-identical to before.
+    const entity =
+      batchSize > 1 && directIdeaUuid
+        ? { entityType: "idea", entityUuid: directIdeaUuid }
+        : this.#entityOf(first);
+    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid) : null;
     // Per-wake lifecycle logging: stamp the start so completion can report a
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
-    const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
+    const sessionId = directIdeaUuid ?? first?.entityUuid ?? null;
     const requestedRuntimeCwd =
-      typeof notification?.runtimeCwd === "string" && notification.runtimeCwd
-        ? notification.runtimeCwd
+      typeof first?.runtimeCwd === "string" && first.runtimeCwd
+        ? first.runtimeCwd
         : null;
+    // Arrival label: the single action for a batch of one, else a batch count (the physical
+    // number of merged events — includes any resource_resumed, which is a real wake even
+    // though it is not turn-backed for settlement).
+    const arrivalAction =
+      batchSize > 1 ? `coalesced batch of ${batchSize}` : first?.action;
     try {
-      const prompt = buildPrompt(notification);
+      const prompt = buildBatchPrompt(list);
       if (!prompt) {
-        this.logger.info(`[Chorus] no wake prompt for action "${notification.action}" — skipping`);
+        this.logger.info(`[Chorus] no wake prompt for ${arrivalAction} on ${key} — skipping`);
         return;
       }
 
-      // Lifecycle line 1 — arrival: which action targets which idea/task/entity.
-      this.logger.info(`[Chorus] ▶ wake: ${notification.action} → ${target}`);
+      // Lifecycle line 1 — arrival: which action(s) target which idea/task/entity.
+      this.logger.info(`[Chorus] ▶ wake: ${arrivalAction} → ${target}`);
 
-      // Transition this resource to RUNNING with a start timestamp and emit a
-      // fresh snapshot, so the server/UI sees it leave the queue and begin
-      // executing. Report the server-resolved ROOT idea (not the direct-idea key).
-      // `child` starts null and is filled in by the spawner's onChild the moment the
-      // subprocess spawns (子3) — so the control handler can target it for interrupt.
+      // Transition to RUNNING and emit a fresh snapshot. First REMOVE every merged/drained
+      // resource (so the server reconcile ends their queued rows), then set the ONE
+      // synthesized anchor running row with a start timestamp — so the server/UI sees the
+      // batch as a single running entry with no leftover queued entries. Report the
+      // server-resolved ROOT idea (not the direct-idea key). `child` starts null and is
+      // filled in by the spawner's onChild the moment the subprocess spawns (子3) — so the
+      // control handler can target it for interrupt.
       if (entity && execKey) {
+        for (const dk of drainedExecKeys) {
+          if (dk !== execKey) this.executions.delete(dk);
+        }
         this.executions.set(execKey, {
           entityType: entity.entityType,
           entityUuid: entity.entityUuid,
@@ -416,7 +492,7 @@ export class Waker {
         this.logger.info(`[Chorus] dispatching session ${sessionId ?? "(none)"}`);
       }
       if (this.verbose) {
-        this.logger.info(`[Chorus]   cwd=${cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
+        this.logger.info(`[Chorus]   cwd=${cwd} action=${arrivalAction} root=${rootIdeaUuid ?? "(none)"}`);
       }
 
       cfg = this.writeMcpConfigFn(this.creds);
@@ -456,7 +532,10 @@ export class Waker {
             turnAdvancedToRunning = true;
             // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
             // turn-report error never crashes the spawn callback (no-silent-errors).
-            this.#advanceTurn(sessionId, "running", entity).catch(() => {});
+            // The coalescedCount rides this → running edge so the server settles the
+            // (count − 1) same-session pending turns coalesced into this one (a single
+            // wake reports 1, which the client omits from the wire).
+            this.#advanceTurn(sessionId, "running", entity, null, null, null, null, coalescedCount).catch(() => {});
           }
         },
         onMessage: (message) => {
@@ -577,7 +656,7 @@ export class Waker {
       );
       if (this.verbose) {
         this.logger.info(
-          `[Chorus]   action=${notification.action} session=${result?.sessionId} key=${key}`
+          `[Chorus]   action=${arrivalAction} session=${result?.sessionId} key=${key}`
         );
       }
     } catch (err) {
@@ -593,17 +672,22 @@ export class Waker {
         );
       }
     } finally {
-      // Wake finished (cleanly or not): the resource leaves the active set. Drop
-      // it and emit a fresh snapshot so the server ends its running/queued row.
-      // The server reconcile is snapshot-authoritative, so absence == ended. Also
-      // clear the per-entity interrupting flag so it can never leak into a later
-      // wake of the same entity.
+      // Wake finished (cleanly or not): EVERY resource this batch touched leaves the active
+      // set — the running anchor AND any drained/merged resources that were never promoted to
+      // the running row (e.g. a null-prompt batch that returned before the running transition,
+      // so their queued rows still linger). Drop them all and emit ONE fresh snapshot so the
+      // server ends their running/queued rows. The server reconcile is snapshot-authoritative,
+      // so absence == ended. Also clear the anchor's interrupting flag so it can never leak
+      // into a later wake of the same entity.
+      let changed = false;
+      for (const dk of drainedExecKeys) {
+        if (this.executions.delete(dk)) changed = true;
+      }
       if (execKey) {
         this.interrupting.delete(execKey);
-        if (this.executions.delete(execKey)) {
-          this.#emitExecutionChange();
-        }
+        if (this.executions.delete(execKey)) changed = true;
       }
+      if (changed) this.#emitExecutionChange();
       try {
         cfg?.cleanup?.();
       } catch {
@@ -647,8 +731,12 @@ export class Waker {
    * @param {string|null} [transcriptRelayError]
    * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
    *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
+   * @param {string|null} [backendSessionId]
+   * @param {number} [coalescedCount]  Number of wakes coalesced into this turn
+   *   (add-daemon-wake-coalescing); forwarded only on the → running edge and only when > 1,
+   *   so a single wake (default 1) leaves the field absent — byte-identical to before.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1) {
     try {
       await this.advanceTurn({
         sessionId,
@@ -659,6 +747,7 @@ export class Waker {
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         ...(usage ? { usage } : {}),
         ...(backendSessionId ? { backendSessionId } : {}),
+        ...(status === "running" && coalescedCount > 1 ? { coalescedCount } : {}),
       });
     } catch (err) {
       this.logger.warn(

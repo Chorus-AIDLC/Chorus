@@ -646,26 +646,31 @@ describe("AC2 — origin-only live delivery: the deliver_turn control event targ
     // A shared seen set across router + backfill (the real idempotency contract).
     const seen = new Set<string>();
     const enqueued: { key: string; n: Row }[] = [];
-    // The WakeQueue is the injected boundary: enqueue(key, task) records the wake instead
-    // of spawning a real `claude` (a true headless e2e is not runnable here — see file
-    // header / AC5 note). We also RUN the task so the wake's body is exercised.
-    const queue = {
-      enqueue: (key: string, task: () => Promise<void>) => {
-        enqueued.push({ key, n: {} });
-        // Fire-and-forget the wake body (no real subprocess; the waker.wake stub just
-        // records its args). Errors are swallowed like the real queue would log them.
-        void task();
-      },
-    };
     const wokeWith: Row[] = [];
+    // The waker facade the queue's runBatch drives. dispatchPendingTurn reconstructs the wake's
+    // session anchor directly from the turn — record what it would wake with. daemon.mjs wires
+    // the queue's runBatch → waker.wakeBatch (add-daemon-wake-coalescing), so the stub exposes
+    // wakeBatch and records every coalesced notification (a batch of one here).
     const waker = {
-      // dispatchPendingTurn reconstructs the wake's session anchor directly from the
-      // turn — record what it would wake with.
       keyFor: vi.fn(),
       markQueued: vi.fn(),
-      wake: vi.fn(async (n: Row) => {
-        wokeWith.push(n);
+      wakeBatch: vi.fn(async (notifications: Row[], _key?: string, _attribution?: Row) => {
+        for (const n of notifications) wokeWith.push(n);
       }),
+    };
+    // The WakeQueue is the injected boundary: enqueue records the wake instead of spawning a
+    // real `claude` (a true headless e2e is not runnable here — see file header / AC5 note).
+    // Post add-daemon-wake-coalescing the enqueued value is an opaque DATA payload
+    // { notification, attribution } (NOT a thunk); the real queue coalesces same-key items and
+    // hands the batch to its runBatch. Mirror daemon.mjs's runBatch exactly — each enqueue here
+    // is a single item, so drive waker.wakeBatch with a batch of one.
+    const queue = {
+      enqueue: (key: string, item: { notification: Row; attribution: Row }) => {
+        enqueued.push({ key, n: item.notification });
+        // Fire-and-forget the wake body; waker.wakeBatch just records its args. Errors are
+        // swallowed like the real queue would log them.
+        void waker.wakeBatch([item.notification], key, item.attribution);
+      },
     };
     const router = new EventRouter({
       mcpClient: { callTool: vi.fn(async () => ({ notifications: [] })) },
@@ -791,19 +796,23 @@ describe("AC3 — durability: a lost live ping is recovered by the reconnect pen
     //     the REAL pending-turns route → REAL dispatchPendingTurn. Shared seen set. ---
     const seen = new Set<string>();
     const enqueued: string[] = [];
-    const queue = {
-      enqueue: (key: string, task: () => Promise<void>) => {
-        enqueued.push(key);
-        void task();
-      },
-    };
     const wokeWith: Row[] = [];
+    // The waker facade the queue's runBatch drives (daemon.mjs wires runBatch → waker.wakeBatch,
+    // add-daemon-wake-coalescing). Record every coalesced notification (a batch of one here).
     const waker = {
       keyFor: vi.fn(),
       markQueued: vi.fn(),
-      wake: vi.fn(async (n: Row) => {
-        wokeWith.push(n);
+      wakeBatch: vi.fn(async (notifications: Row[], _key?: string, _attribution?: Row) => {
+        for (const n of notifications) wokeWith.push(n);
       }),
+    };
+    // Enqueue now carries an opaque DATA payload { notification, attribution } (NOT a thunk);
+    // mirror daemon.mjs's runBatch and drive waker.wakeBatch with the single-item batch.
+    const queue = {
+      enqueue: (key: string, item: { notification: Row; attribution: Row }) => {
+        enqueued.push(key);
+        void waker.wakeBatch([item.notification], key, item.attribution);
+      },
     };
     const router = new EventRouter({
       mcpClient: { callTool: vi.fn(async () => ({ notifications: [] })) },

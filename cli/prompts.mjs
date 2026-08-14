@@ -100,6 +100,96 @@ export function buildPrompt(n) {
 }
 
 /**
+ * Build ONE combined wake prompt for a coalesced batch of same-session notifications
+ * (add-daemon-wake-coalescing, tech design §C2). The daemon serializes wakes per session
+ * key; while a turn runs, later same-key wakes pile up and — when the slot frees — are
+ * drained together into a single `claude --resume` turn. This composes their one prompt.
+ *
+ * Rules:
+ *  - **Size 1** → delegate to `buildPrompt(n)` verbatim, so the single-event path is
+ *    BYTE-IDENTICAL to today (and all current prompt tests keep passing). This is keyed on
+ *    the count of RENDERABLE events (non-null body): a batch that reduces to a single
+ *    renderable event — e.g. a real wake plus an empty `human_instruction` — also takes
+ *    the single-event path.
+ *  - **Size > 1 renderable** → `HEADLESS_PREAMBLE` ONCE (it is a per-turn guard, paid once
+ *    per turn, not per event), then a short backlog preamble, then one labeled block per
+ *    event in ARRIVAL order, each block being the reused per-action `buildPromptBody(n)` so
+ *    every event keeps its own tool hints and @mention guidance.
+ *  - **Same-entity collapse (Q2)**: events sharing `(action, entityUuid)` collapse into one
+ *    block at the group's FIRST-SEEN position, noting the occurrence count and showing the
+ *    NEWEST message. This is safe only because such actions' full content is re-derivable
+ *    server-side (comments via chorus_get_comments, task lifecycle via chorus_get_*).
+ *  - **`human_instruction` is NEVER collapsed (Q3, Round-1 BLOCKER-2)**: every queued chat
+ *    message carries `action=human_instruction` and `entityUuid=directIdeaUuid`, and its
+ *    text lives ONLY on the turn/notification (not re-fetchable), so collapsing to
+ *    newest-only would silently drop earlier chat and defeat the feature. Each renders its
+ *    full body as its own block, in arrival order.
+ *  - Events whose body is null (empty `human_instruction`, non-wake action) are omitted; a
+ *    batch with no renderable event returns null (the router then spawns nothing).
+ *
+ * @param {NotificationDetail[]} notifications  Arrival-ordered batch (FIFO drain order).
+ * @returns {string | null}
+ */
+export function buildBatchPrompt(notifications) {
+  if (!Array.isArray(notifications) || notifications.length === 0) return null;
+
+  // Keep only events with a renderable per-action body, in arrival order.
+  const items = [];
+  for (const n of notifications) {
+    const body = buildPromptBody(n);
+    if (body != null) items.push({ n, body });
+  }
+  if (items.length === 0) return null;
+  // One renderable event → byte-identical single-event prompt (delegates to buildPrompt so
+  // the exact "PREAMBLE\n\nbody" shape is preserved). Covers a true batch of size 1 and a
+  // batch that reduced to one renderable event after null-body events were dropped.
+  if (items.length === 1) return buildPrompt(items[0].n);
+
+  // Group into ordered blocks. Collapsible actions merge by (action, entityUuid) at their
+  // first-seen slot; human_instruction is exempt and always gets its own block.
+  const blocks = [];
+  const collapseIndex = new Map(); // "action::entityUuid" -> index into `blocks`
+  for (const { n, body } of items) {
+    if (n.action === "human_instruction") {
+      blocks.push({ notif: n, body, count: 1 });
+      continue;
+    }
+    const groupKey = `${n.action}::${n.entityUuid ?? ""}`;
+    const existing = collapseIndex.get(groupKey);
+    if (existing != null) {
+      const g = blocks[existing];
+      g.count += 1;
+      g.notif = n; // newest wins (arrival order → last member is newest)
+      g.body = body; // newest body
+    } else {
+      collapseIndex.set(groupKey, blocks.length);
+      blocks.push({ notif: n, body, count: 1 });
+    }
+  }
+
+  // Backlog preamble. N = number of renderable events that arrived (not the collapsed block
+  // count) — collapse is a rendering optimization; each collapsed block states its own count.
+  const backlogPreamble =
+    `You have ${items.length} queued Chorus events on this session that arrived while you ` +
+    `were busy — handle them together, in order; each is labeled with its type below.`;
+
+  const rendered = blocks.map((g, idx) => {
+    const n = g.notif;
+    const entityType = n.entityType || "session";
+    const entityUuid = n.entityUuid || "";
+    const header = `### Event ${idx + 1} — ${n.action} on ${entityType} ${entityUuid}`.replace(/\s+$/, "");
+    const collapseNote =
+      g.count > 1
+        ? `\n(${g.count} ${n.action} events on this ${entityType} arrived — showing the newest ` +
+          `below; earlier ones are re-derivable via the entity's own chorus_get_* tools.)`
+        : "";
+    return `${header}${collapseNote}\n\n${g.body}`;
+  });
+
+  return [HEADLESS_PREAMBLE, backlogPreamble, ...rendered].join("\n\n");
+}
+
+/**
  * The per-action wake body (without the headless preamble). Mirrors the OpenClaw
  * event-router handlers; returns null for actions that have no wake.
  * @param {NotificationDetail} n
