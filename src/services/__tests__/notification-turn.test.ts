@@ -900,18 +900,69 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
     );
-    // deliver_turn ping emitted to ONLY the resolved target, carrying the precise turnUuid.
+    // deliver_turn ping emitted to ONLY the resolved target, carrying the precise turnUuid
+    // AND the resolved connection's OWN cwd as runtimeCwd (mention-wake-respect-pinned-cwd:
+    // an explicit pin is FIXED to that pin's cwd — the daemon must spawn there, not in a
+    // stale session cwd).
     expect(mockDeliverTurnPing).toHaveBeenCalledTimes(1);
     expect(mockDeliverTurnPing).toHaveBeenCalledWith({
       companyUuid,
       originConnectionUuid: pinnedConnUuid,
       turnUuid: turn?.uuid,
+      runtimeCwd: pinnedCwd,
     });
     // The resolved target is surfaced transport-only (for non-target broadcast suppression).
     expect(targetConnectionUuid).toBe(pinnedConnUuid);
     // A directed wake does NOT set suppressWake — the target wakes (others suppress by target).
     expect(suppressWake).toBe(false);
     expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  // ----- (1b) spawn cwd = the RESOLVED pin, NEVER a stale session cwd (idea e40f2b2c) -----
+
+  it("a directed (host,cwd) mention whose idea session has a STALE runtimeCwd stamps the PIN's cwd, not the stale one", async () => {
+    // Daemon-seam repro: the idea's canonical session still lives on an OLD origin (ai-pm)
+    // carrying a stale runtimeCwd, but THIS @mention is pinned to a DIFFERENT online
+    // connection (strands). The wake must spawn in the PINNED connection's cwd — falling back
+    // to the stale session.runtimeCwd is exactly the bug (codex woke in ai-pm despite the
+    // strands pin, because the daemon honors notification.runtimeCwd over the receiving
+    // connection's own cwd). So the server MUST stamp the RESOLVED connection's cwd.
+    const staleCwd = "/home/u/dev/ai-pm";
+    const oldOriginUuid = "conn-old-origin-aipm";
+    mockListConnectionsForAgent.mockResolvedValue([
+      pinnedConn(), // strands-equivalent: host=pinnedHost, cwd=pinnedCwd
+      onlineConn({ uuid: oldOriginUuid, host: pinnedHost, cwd: staleCwd }),
+    ]);
+    // Existing idea session lives on the OLD origin and carries the STALE cwd.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: oldOriginUuid,
+    });
+    mockResolveOrCreateSession.mockResolvedValue(
+      sessionView({ originConnectionUuid: pinnedConnUuid, runtimeCwd: staleCwd }),
+    );
+
+    const { targetConnectionUuid, runtimeCwd } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", entityType: "idea", entityUuid: ideaUuid, pinnedHost, pinnedCwd }),
+    );
+
+    // Directed to the pinned (strands) connection...
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+    // ...and the spawn cwd is the PIN's cwd, NOT the stale session.runtimeCwd.
+    expect(runtimeCwd).toBe(pinnedCwd);
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd }),
+    );
+    // The cross-cwd re-point ALSO refreshes the stored session.runtimeCwd to the resolved cwd,
+    // so a later wake never re-reads the stale value.
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          originConnectionUuid: pinnedConnUuid,
+          runtimeCwd: pinnedCwd,
+        }),
+      }),
+    );
   });
 
   it("a pinned task_assigned wake matching an ONLINE connection: creates the turn, PINGS it, surfaces the target", async () => {
@@ -1197,7 +1248,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     // The canonical session's origin is RE-POINTED (companyUuid-scoped update on its uuid).
     expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
       where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
-      data: { originConnectionUuid: pinnedConnUuid },
+      data: { originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd },
     });
     // The turn lands on the SAME canonical session: sessionId === ideaUuid, directIdeaUuid
     // non-null, origin = the resolved (pinned) connection. NO `::` per-instance thread.
@@ -1308,7 +1359,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     // Re-point the canonical session — NOT a per-instance fork.
     expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
       where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
-      data: { originConnectionUuid: pinnedConnUuid },
+      data: { originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd },
     });
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({

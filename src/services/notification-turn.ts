@@ -902,7 +902,20 @@ export async function createTurnAndResolveTarget(
 
     const origin = selection.connection;
     const directed = selection.kind === "directed";
+    // The wake's spawn cwd. A pin that fixed an explicit runtime cwd (project_fixed /
+    // temporary / a task instance carrying its own runtimeCwd) keeps it on `pin.runtimeCwd`.
+    // For a DIRECTED wake resolved to a specific ONLINE connection by `(host, cwd)` — an
+    // explicit mention pin, an instance pin, or the idea session-origin upgrade — the spawn
+    // cwd is that RESOLVED connection's OWN cwd (`origin.cwd`), NEVER a stale `session.runtimeCwd`
+    // left over from a PREVIOUS origin (mention-wake-respect-pinned-cwd, idea e40f2b2c). That
+    // stale-fallback was the daemon-seam bug: a cross-cwd directed wake re-pointed the session's
+    // origin but not its runtimeCwd, so the daemon (`selectWaker`/`resolveCwd` prefer
+    // `notification.runtimeCwd` over the receiving connection's cwd) spawned in the OLD cwd.
+    // Owner rule: an explicit pin is FIXED to that pin — no fallback. Non-directed (online-first /
+    // offline / none) never stamps a runtime cwd (broadcast → the daemon uses each connection's
+    // own bound cwd), so it stays null there.
     const runtimeCwd = pin?.runtimeCwd ?? null;
+    const directedRuntimeCwd = directed ? runtimeCwd ?? origin.cwd ?? null : runtimeCwd;
 
     // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
     // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
@@ -949,7 +962,7 @@ export async function createTurnAndResolveTarget(
           where: { uuid: existing.uuid, companyUuid: ctx.companyUuid },
           data: {
             originConnectionUuid: origin.uuid,
-            ...(runtimeCwd ? { runtimeCwd } : {}),
+            ...(directedRuntimeCwd ? { runtimeCwd: directedRuntimeCwd } : {}),
           },
         });
       }
@@ -965,9 +978,9 @@ export async function createTurnAndResolveTarget(
       sessionId,
       directIdeaUuid: sessionDirectIdeaUuid,
       originConnectionUuid: origin.uuid,
-      ...(runtimeCwd ? { runtimeCwd } : {}),
+      ...(directedRuntimeCwd ? { runtimeCwd: directedRuntimeCwd } : {}),
     });
-    const effectiveRuntimeCwd = runtimeCwd ?? session.runtimeCwd ?? null;
+    const effectiveRuntimeCwd = directedRuntimeCwd ?? session.runtimeCwd ?? null;
 
     const promptText =
       trigger === "human_instruction" ? ctx.instructionText ?? null : null;
