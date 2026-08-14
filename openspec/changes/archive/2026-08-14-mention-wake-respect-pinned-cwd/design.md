@@ -174,3 +174,31 @@ corrections, now reflected in the code comments and the shipped tests:
    already resolves via the existing step-3a lineage walk. Only the
    deleted-comment edge (target lookup missing) leaves `entityType: "comment"`,
    which degrades gracefully to online-first.
+
+## Post-approval fix 2: directed-wake spawn cwd (the daemon seam)
+
+The live Codex e2e surfaced a SEPARATE bug that blocked the idea's end-to-end
+goal even though the server routing (above) was correct: an explicit `@mention`
+pin to `strands` was correctly DIRECTED to Codex's strands connection, yet Codex
+physically spawned in `ai-pm` (the daemon's startup cwd). Root cause, confined to
+the same `createTurnAndResolveTarget` chokepoint:
+
+- A `(host, cwd)` pin (explicit mention pin, instance pin, or the session-origin
+  upgrade) carries no `runtimeCwd`. The cross-cwd re-point updated the session's
+  `originConnectionUuid` to the resolved connection but left `session.runtimeCwd`
+  pointing at the PREVIOUS origin.
+- The server then stamped that stale `session.runtimeCwd` onto the `deliver_turn`
+  (`effectiveRuntimeCwd = runtimeCwd ?? session.runtimeCwd`), and the daemon
+  (`selectWaker` / `Waker.resolveCwd` prefer `notification.runtimeCwd` over the
+  receiving connection's own bound cwd) spawned the agent in the stale cwd.
+
+Fix (owner decision: an explicit pin is FIXED to that pin, no fallback): for a
+DIRECTED wake, stamp the RESOLVED target connection's own cwd (`origin.cwd`) as
+the spawn `runtimeCwd` — `directedRuntimeCwd = pin.runtimeCwd ?? origin.cwd` —
+and refresh `session.runtimeCwd` to that value on the cross-cwd re-point.
+project-fixed / temporary / task-runtime pins keep their explicit `pin.runtimeCwd`
+(may address a cwd no connection is bound to); non-directed (online-first / offline
+/ none) wakes are unchanged (broadcast → each connection's own bound cwd). No
+schema, endpoint, transport, or daemon-code change; server-only, ECS-deployable.
+Verified end-to-end on a fresh daemon (RETEST-A2: explicit pin → strands →
+codex `pwd` = strands; return-wake → assigner's ai-pm instance pin).

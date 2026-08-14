@@ -112,10 +112,17 @@ anchor card while retaining fixed-target execution behavior.
 ### Requirement: Autonomous wakes resolve the agent-owner's fixed project cwd
 Autonomous server-minted wakes SHALL resolve a fixed project-Agent cwd before falling back to raw first-online-connection selection, closing the gap where only UI-threaded and stage-advance wakes honored the fixed anchor. The project pin SHALL replace exactly the first-online ("first cwd") fallback and SHALL sit below the existing higher-priority resolution steps: it SHALL apply only when the selection would otherwise be a raw first-online pick — that is, when no idea/task instance pin, no pre-resolved cwd target, and no existing ONLINE idea-session-origin apply. An existing online idea-session-origin (the cwd where the idea's live conversation already runs) SHALL take precedence over the project pin so a live conversation is never rerouted. When those higher-priority steps do not apply, Chorus SHALL look up the `ProjectAgentCwdPreference` of that **Agent's owner** for the wake's `(project, Agent)` pair, and when one exists SHALL treat its `(host, cwd)` as a hard execution anchor and SHALL NOT select the first online connection. When the Agent owner has no preference for that `(project, Agent)`, resolution SHALL fall back to the existing online-first behavior unchanged. This change SHALL add no database schema change, no migration, and no new permission bit.
 
+For this fallback, "autonomous server-minted wakes" SHALL include the un-pinned `mentioned` wake: the `Agent` is the mentioned agent, and the `project` is the mention target's project (via the mention's root Idea when one exists). Thus an `@mention` of an agent that is pinned only at the project level — with no explicit in-mention pin, no instance pin, and no online idea-session-origin for that agent — SHALL land in the owner-pinned `(host, cwd)` rather than an arbitrary first-online cwd. A `human_instruction` wake SHALL remain excluded from this fallback (its target is resolved by the instruction send path, not this chokepoint).
+
 #### Scenario: Autonomous wake uses the owner's project pin instead of the first cwd
 - **WHEN** an autonomous wake is minted for an Agent that has a fixed project cwd pin set by its owner, the Idea/Task carries no instance pin, and the Agent is online in that pinned cwd plus another cwd
 - **THEN** the wake MUST target the owner-pinned `(host, cwd)`
 - **AND** it MUST NOT select the other (first-online) cwd
+
+#### Scenario: An un-pinned mention uses the owner's project pin
+- **WHEN** an un-pinned `@mention` wakes an Agent whose owner has a fixed project cwd pin for the mention target's project, the mention carries no explicit pin, no instance pin applies, and the mentioned Agent has no online idea-session-origin for that idea
+- **THEN** the wake MUST target the owner-pinned `(host, cwd)`
+- **AND** it MUST NOT select an arbitrary first-online cwd
 
 #### Scenario: Pinned cwd offline does not reroute
 - **WHEN** an autonomous wake resolves to the owner's fixed project cwd but that `(host, cwd)` has no online connection, while the same Agent is online in a different cwd
