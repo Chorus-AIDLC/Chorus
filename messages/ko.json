@@ -321,6 +321,7 @@
     "cwd": "디렉터리",
     "status": "상태",
     "unknown": "알 수 없음",
+    "openAgentChat": "{agent}의 대화 열기",
     "manage": "프로젝트 설정에서 관리",
     "availability": {
       "ready": "사용 가능",
@@ -1564,7 +1565,6 @@
     "loadMore": "더 보기",
     "loadEarlier": "이전 메시지 불러오기",
     "loadingEarlier": "이전 메시지를 불러오는 중…",
-    "loading": "대화를 불러오는 중…",
     "transcriptLoading": "대화 기록을 불러오는 중…",
     "mobileBack": "대화",
     "conversationAdHoc": "대화 {id}",
@@ -1775,5 +1775,11 @@
     "pinToSidebar": "사이드바에 고정",
     "removeFromRecent": "최근에서 제거",
     "moreActions": "{name} 추가 작업"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "문서",
+    "githubAria": "Chorus GitHub 저장소 열기(새 탭에서 열림)",
+    "docsAria": "Chorus 문서 사이트 열기(새 탭에서 열림)"
   }
 }

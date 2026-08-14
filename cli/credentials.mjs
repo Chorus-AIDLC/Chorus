@@ -71,6 +71,47 @@ export function readYoloAck(deps = {}) {
 }
 
 /**
+ * Resolve the DEFAULT url + apiKey layer (per-field, non-throwing) for the
+ * multi-agent config. Unlike `resolveCredentials` (which needs a COMPLETE pair
+ * and throws when none resolves), this resolves each field independently and
+ * returns `undefined` for any field no source supplies. It is the "top-level
+ * defaults" layer that each `agents[]` entry merges over: an agent that omits
+ * `url` inherits this default `url`, an agent that omits `apiKey` inherits this
+ * default `apiKey` (rarely useful, but symmetric with every other default).
+ *
+ * Same source order as `resolveCredentials`, applied per field:
+ *   flag > env > login file (top-level) > plugin fallback.
+ *
+ * @param {{ url?: string, apiKey?: string }} flags
+ * @param {ResolveDeps} [deps]
+ * @returns {{ url: string | undefined, apiKey: string | undefined }}
+ */
+export function resolveCredentialDefaults(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const settingsPath = deps.settingsPath ?? claudeSettingsPath();
+
+  const file = readJson(loginPath);
+  const settings = readJson(settingsPath);
+  const pluginEnv =
+    settings && typeof settings.env === "object" && settings.env !== null
+      ? /** @type {Record<string, unknown>} */ (settings.env)
+      : null;
+
+  const pick = (flagVal, envKey, fileKey) =>
+    nonEmpty(flagVal) ??
+    nonEmpty(env[envKey]) ??
+    (file ? nonEmpty(file[fileKey]) : undefined) ??
+    (pluginEnv ? nonEmpty(pluginEnv[envKey]) : undefined);
+
+  return {
+    url: pick(flags.url, "CHORUS_URL", "url"),
+    apiKey: pick(flags.apiKey, "CHORUS_API_KEY", "apiKey"),
+  };
+}
+
+/**
  * @typedef {Object} ResolvedCredentials
  * @property {string} url
  * @property {string} apiKey

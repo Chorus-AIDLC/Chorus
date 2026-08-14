@@ -321,6 +321,7 @@
     "cwd": "Directory",
     "status": "Status",
     "unknown": "Unknown",
+    "openAgentChat": "Open {agent}'s conversation",
     "manage": "Manage in project settings",
     "availability": {
       "ready": "Available",
@@ -1564,7 +1565,6 @@
     "loadMore": "Load more",
     "loadEarlier": "Load earlier messages",
     "loadingEarlier": "Loading earlier…",
-    "loading": "Loading conversations…",
     "transcriptLoading": "Loading transcript…",
     "mobileBack": "Conversations",
     "conversationAdHoc": "Conversation {id}",
@@ -1775,5 +1775,11 @@
     "pinToSidebar": "Pin to sidebar",
     "removeFromRecent": "Remove from recent",
     "moreActions": "More actions for {name}"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "Docs",
+    "githubAria": "Open the Chorus GitHub repository (opens in a new tab)",
+    "docsAria": "Open the Chorus documentation site (opens in a new tab)"
   }
 }

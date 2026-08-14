@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 1 つの `chorus daemon` が、互いに独立した複数のエージェントを同時に扱えるようになりました。各エージェントは `agents[]` 配列で自分のキー・作業ディレクトリ・バックエンド・権限を持ちます。エージェント同士は @メンションで作業を渡し合え、各ウェイクはそのエージェント自身のプロジェクトディレクトリに届きます。
+
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — エージェントをドキュメントサイト（[doc.chorus-ai.dev](https://doc.chorus-ai.dev)）へ案内する `docs` スキルを追加し、記憶に頼らず現在のドキュメントを読んで回答するようにしました。
 
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — プロジェクト単位の Agent 作業ディレクトリ：各ユーザーがプロジェクト内の Agent ごとにホストと cwd を設定し、デーモンが許可したルートだけを参照できます。割り当て、ウェイク、再開、後続ターンで同じ実行先を使い、進行中のセッションは移動しません。Codex は再開可能なバックエンド thread ID を別に保存し、不要になった Chorus の session 管理手順を削除しました。
@@ -45,20 +47,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI が 4 つ目の接続方法になりました（Kiro CLI v2）：ワンコマンドの `install-kiro.sh` プラグインと `--agent kiro` デーモンバックエンド、加えていくつかのデーモン修正。
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — アプリ全体のダークモード（ライト / ダーク / システム）。参考資料をあらゆる着想・提案・課題に添付でき、インラインでも MCP 経由でも読み取れます。韓国語と日本語を追加（韓国語はコミュニティによる貢献）。グループ化のための**テーマ**着想、デーモンの「開発を開始」/「Yolo」ボタン、対話式の着想入力、クラッシュからの再開、`chorus daemon install`。
-
-**[v0.13.0](https://chorus-ai.dev/blog/chorus-v0.13.0-release/)** — プロジェクトごとのリソースマインドマップ：新しい Graph ビューが、各プロジェクトの着想・提案・文書・課題を、プロジェクト自身の構造から生成した 1 本の折りたたみ可能なツリーにつなぎます。各カードには現在のステータスが表示され（着想には、着想トラッカーが使う派生パイプラインステータスが表示されます）、タイトル検索はヒットした各ノードまでの経路を自動展開してハイライト／減光し、前後ナビゲーションを備えます。同じズーム／パン対応のキャンバスが、デスクトップとモバイルの両方で描画されます（ピンチ + ダブルタップ）。
-
-**[v0.12.0](https://chorus-ai.dev/blog/chorus-v0.12.0-release/)** — アドレス指定可能なデーモンインスタンス：1 つの `chorus daemon` が複数の作業ディレクトリ（`--cwd`）を扱えるようになり、各 `(agent, host, cwd)` が、プレゼンス・@メンション・割り当てを横断して個別に見え、個別に指定できるインスタンスになります。着想に一度インスタンスをピン留めすると、その提案・課題・ウェイクがそれを引き継ぎます。ピン留めされたウェイクは、ブロードキャストではなく、まさにそのインスタンスへ届けられます。コメントの @メンションはリアルタイムのオンライン状態バッジとして表示され、コメントはカーソルベースの無限スクロールに変わりました。
-
-**[v0.11.0](https://chorus-ai.dev/blog/chorus-v0.11.0-release/)** — Chorus デーモン：`chorus daemon` は、あなたのマシンを常駐型のエージェントランタイムに変え、ディスパッチのたびにローカルの Claude Code をウェイクします。Agent Connections 画面が、ストリーミングされるトランスクリプト・指示の注入・中断／再開といったライブな可観測性と制御を提供します。さらに「詳細化を確定」ボタンが、割り当てられたエージェントをウェイクして提案を書かせます。
-
-**[v0.10.0](https://chorus-ai.dev/blog/chorus-v0.10.0-release/)** — 単一親の着想系統：ある着想は子を派生させたり、別の着想の下に紐付けたりでき、森（フォレスト）を形成します。この関係は意図的に弱く保たれており — 親は読み取り専用の「+N derived」サマリーを示すだけで、子の要件詳細化・提案・課題フローを一切制約しません。着想の閲覧は Dashboard に集約されました（Ideas / Lineage / Stats の 3 通りのビュー切り替え、適応的なデフォルト付き）。独立していた Idea List ページは廃止され、その URL は Dashboard へ 308 リダイレクトされます。
-
-**[v0.9.4](https://chorus-ai.dev/blog/chorus-v0.9.4-release/)** — OpenClaw プラグインを OpenClaw 2026.4.27 Plugin SDK 上で全面的に書き直しました（ネイティブな MCP 登録、SSE ウェイクのための `runEmbeddedAgent`、レビュアーをネイティブなスキルとして実装）。Codex プラグインのフックはパッケージ内に同梱されるようになり、インストーラーがユーザーディレクトリにある旧来のフックのコピーを整理します。
-
-**[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — 曖昧な着想のためのブレインストーミングスキル（構造化された Q&A の前に、まず自由な対話を行います）と、着想の完了レポート（出荷されたすべての着想に Summary / Decisions / Follow-ups のまとめが付き、着想の概要ページに表示されます）。
-
-**[v0.8.0](https://chorus-ai.dev/blog/chorus-v0.8.0-release/)** — OpenSpec-aware モード（Claude Code）：`openspec/` ディレクトリと `openspec` CLI の両方が存在するときに自動で有効化され、`/opsx/{explore,propose,apply,archive}` と、検証後の archive トリガーフックを追加します。
 
 > 完全な変更履歴：[CHANGELOG.md](CHANGELOG.md)
 

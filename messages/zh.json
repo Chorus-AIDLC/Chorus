@@ -321,6 +321,7 @@
     "cwd": "目录",
     "status": "状态",
     "unknown": "未知",
+    "openAgentChat": "打开 {agent} 的对话",
     "manage": "在项目设置中管理",
     "availability": {
       "ready": "可用",
@@ -1564,7 +1565,6 @@
     "loadMore": "加载更多",
     "loadEarlier": "加载更早的消息",
     "loadingEarlier": "正在加载更早…",
-    "loading": "正在加载对话…",
     "transcriptLoading": "正在加载记录…",
     "mobileBack": "对话",
     "conversationAdHoc": "对话 {id}",
@@ -1775,5 +1775,11 @@
     "pinToSidebar": "置顶到侧边栏",
     "removeFromRecent": "从最近移除",
     "moreActions": "{name} 的更多操作"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "文档",
+    "githubAria": "打开 Chorus GitHub 仓库（在新标签页打开）",
+    "docsAria": "打开 Chorus 文档站（在新标签页打开）"
   }
 }

@@ -41,8 +41,12 @@ const mockDaemonSessionFindFirst = vi.hoisted(() => vi.fn());
 // `${idea}::${conn}` thread. Mock update so we can assert the re-point without a DB.
 const mockDaemonSessionUpdate = vi.hoisted(() => vi.fn());
 const mockPreferenceFindFirst = vi.hoisted(() => vi.fn());
+// idea 5b8ee573: the autonomous-wake project-owner cwd fallback reads the agent's owner
+// (prisma.agent.findFirst) then that owner's ProjectAgentCwdPreference. Mock agent too.
+const mockAgentFindFirst = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    agent: { findFirst: mockAgentFindFirst },
     task: { findFirst: mockTaskFindFirst },
     idea: { findFirst: mockIdeaFindFirst },
     agentInstance: { findFirst: mockAgentInstanceFindFirst },
@@ -243,6 +247,11 @@ beforeEach(() => {
   // asserts on its args.
   mockDaemonSessionUpdate.mockResolvedValue({});
   mockPreferenceFindFirst.mockResolvedValue(null);
+  // Default: the wake's agent has an owner, but that owner has NO project cwd preference
+  // (mockPreferenceFindFirst → null) — so the project-owner cwd fallback is a no-op and every
+  // existing test keeps its unchanged online-first behavior. Tests that also leave projectUuid
+  // unset on the ctx skip the fallback entirely (its `ctx.projectUuid` gate is false).
+  mockAgentFindFirst.mockResolvedValue({ ownerUuid: "owner-0000-0000-0000-000000000001" });
 });
 
 describe("project-Agent fixed cwd resolution", () => {
@@ -891,18 +900,69 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
     );
-    // deliver_turn ping emitted to ONLY the resolved target, carrying the precise turnUuid.
+    // deliver_turn ping emitted to ONLY the resolved target, carrying the precise turnUuid
+    // AND the resolved connection's OWN cwd as runtimeCwd (mention-wake-respect-pinned-cwd:
+    // an explicit pin is FIXED to that pin's cwd — the daemon must spawn there, not in a
+    // stale session cwd).
     expect(mockDeliverTurnPing).toHaveBeenCalledTimes(1);
     expect(mockDeliverTurnPing).toHaveBeenCalledWith({
       companyUuid,
       originConnectionUuid: pinnedConnUuid,
       turnUuid: turn?.uuid,
+      runtimeCwd: pinnedCwd,
     });
     // The resolved target is surfaced transport-only (for non-target broadcast suppression).
     expect(targetConnectionUuid).toBe(pinnedConnUuid);
     // A directed wake does NOT set suppressWake — the target wakes (others suppress by target).
     expect(suppressWake).toBe(false);
     expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  // ----- (1b) spawn cwd = the RESOLVED pin, NEVER a stale session cwd (idea e40f2b2c) -----
+
+  it("a directed (host,cwd) mention whose idea session has a STALE runtimeCwd stamps the PIN's cwd, not the stale one", async () => {
+    // Daemon-seam repro: the idea's canonical session still lives on an OLD origin (ai-pm)
+    // carrying a stale runtimeCwd, but THIS @mention is pinned to a DIFFERENT online
+    // connection (strands). The wake must spawn in the PINNED connection's cwd — falling back
+    // to the stale session.runtimeCwd is exactly the bug (codex woke in ai-pm despite the
+    // strands pin, because the daemon honors notification.runtimeCwd over the receiving
+    // connection's own cwd). So the server MUST stamp the RESOLVED connection's cwd.
+    const staleCwd = "/home/u/dev/ai-pm";
+    const oldOriginUuid = "conn-old-origin-aipm";
+    mockListConnectionsForAgent.mockResolvedValue([
+      pinnedConn(), // strands-equivalent: host=pinnedHost, cwd=pinnedCwd
+      onlineConn({ uuid: oldOriginUuid, host: pinnedHost, cwd: staleCwd }),
+    ]);
+    // Existing idea session lives on the OLD origin and carries the STALE cwd.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: oldOriginUuid,
+    });
+    mockResolveOrCreateSession.mockResolvedValue(
+      sessionView({ originConnectionUuid: pinnedConnUuid, runtimeCwd: staleCwd }),
+    );
+
+    const { targetConnectionUuid, runtimeCwd } = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", entityType: "idea", entityUuid: ideaUuid, pinnedHost, pinnedCwd }),
+    );
+
+    // Directed to the pinned (strands) connection...
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+    // ...and the spawn cwd is the PIN's cwd, NOT the stale session.runtimeCwd.
+    expect(runtimeCwd).toBe(pinnedCwd);
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd }),
+    );
+    // The cross-cwd re-point ALSO refreshes the stored session.runtimeCwd to the resolved cwd,
+    // so a later wake never re-reads the stale value.
+    expect(mockDaemonSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          originConnectionUuid: pinnedConnUuid,
+          runtimeCwd: pinnedCwd,
+        }),
+      }),
+    );
   });
 
   it("a pinned task_assigned wake matching an ONLINE connection: creates the turn, PINGS it, surfaces the target", async () => {
@@ -1188,7 +1248,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     // The canonical session's origin is RE-POINTED (companyUuid-scoped update on its uuid).
     expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
       where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
-      data: { originConnectionUuid: pinnedConnUuid },
+      data: { originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd },
     });
     // The turn lands on the SAME canonical session: sessionId === ideaUuid, directIdeaUuid
     // non-null, origin = the resolved (pinned) connection. NO `::` per-instance thread.
@@ -1299,7 +1359,7 @@ describe("createTurnAndResolveTarget — directed live delivery", () => {
     // Re-point the canonical session — NOT a per-instance fork.
     expect(mockDaemonSessionUpdate).toHaveBeenCalledWith({
       where: { uuid: ideaSessionUuid, companyUuid: companyUuid },
-      data: { originConnectionUuid: pinnedConnUuid },
+      data: { originConnectionUuid: pinnedConnUuid, runtimeCwd: pinnedCwd },
     });
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2118,11 +2178,12 @@ describe("createTurnAndResolveTarget — generalized idea-session-origin upgrade
     expect(targetConnectionUuid).toBeNull();
   });
 
-  // ----- EXCLUSIONS: mentioned + human_instruction are NOT upgraded even with a session -----
+  // ----- EXCLUSION: human_instruction is NOT upgraded; mentioned IS now upgraded -----
 
-  it("an un-pinned mentioned wake is NOT redirected to the idea session origin (broadcast, no target)", async () => {
-    // A resolvable idea session exists, but `mentioned` is excluded from the upgrade set: the
-    // wake must stay online-first with no target (the un-pinned broadcast contract).
+  it("an un-pinned mentioned wake IS redirected to the idea session origin (mention-wake-respect-pinned-cwd)", async () => {
+    // mention-wake-respect-pinned-cwd: `mentioned` now joins the residual upgrade family, so an
+    // un-pinned mention whose idea has an ONLINE session origin is directed there rather than to
+    // the raw online-first connection. (A pinned mention still short-circuits as a HARD pin.)
     const onlineFirst = "conn-online-first";
     mockListConnectionsForAgent.mockResolvedValue([
       onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
@@ -2135,13 +2196,10 @@ describe("createTurnAndResolveTarget — generalized idea-session-origin upgrade
     );
 
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
-    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
     );
-    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
-    expect(targetConnectionUuid).toBeNull();
+    expect(mockDeliverTurnPing).toHaveBeenCalled();
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
   });
 
   it("a human_instruction wake is NOT upgraded to the idea session origin even when one exists", async () => {
@@ -2162,5 +2220,282 @@ describe("createTurnAndResolveTarget — generalized idea-session-origin upgrade
     );
     expect(mockDeliverTurnPing).not.toHaveBeenCalled();
     expect(targetConnectionUuid).toBeNull();
+  });
+});
+
+// ===== Project-owner fixed-cwd fallback (idea 5b8ee573 / project-cwd-anchoring) =====
+//
+// The autonomous wake path now honors the AGENT OWNER's fixed project cwd as the online-first
+// REPLACEMENT — applied in createTurnAndResolveTarget AFTER the idea-session-origin upgrade and
+// gated on `selection.kind === "online_first"`. Precedence: instance pin → online session-origin
+// (b729713b) → project-owner pin (this) → raw online-first. Strict offline (owner Q3): an offline
+// pinned cwd is offline_pin (suppressWake, notify-only), never re-routed.
+describe("createTurnAndResolveTarget — project-owner fixed-cwd fallback (idea 5b8ee573)", () => {
+  const ownerUuid = "owner-0000-0000-0000-000000000001";
+  const projectUuid = "project-0000-0000-0000-000000000001";
+  const projHost = "proj-host";
+  const projCwd = "/home/u/dev/project-cwd";
+  const projConnUuid = "conn-project-pin";
+
+  it("targets the agent-owner's fixed project cwd instead of the first online cwd (project-pin hit)", async () => {
+    // Plain-agent task, no idea session → selection stays online_first. The owner pinned a
+    // project cwd that is ONLINE (but NOT the online-first entry) → the wake targets it.
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid });
+    mockPreferenceFindFirst.mockResolvedValue({ host: projHost, cwd: projCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: projConnUuid, host: projHost, cwd: projCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", projectUuid }),
+    );
+
+    // The owner's pin is read for (owner, project, agent)...
+    expect(mockAgentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ uuid: agentUuid, companyUuid }) }),
+    );
+    expect(mockPreferenceFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userUuid: ownerUuid, projectUuid, agentUuid, companyUuid }),
+      }),
+    );
+    // ...and the wake is directed to the pinned cwd, NOT the online-first entry.
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: projConnUuid }),
+    );
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: "conn-online-first" }),
+    );
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: projConnUuid, turnUuid: turn?.uuid }),
+    );
+    expect(targetConnectionUuid).toBe(projConnUuid);
+    expect(suppressWake).toBe(false);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("an ONLINE idea-session-origin OUTRANKS the project pin (live conversation is never rerouted)", async () => {
+    // The idea already has an online session-origin on cwd A → the session-origin upgrade fires
+    // FIRST (selection becomes directed), so the project pin (cwd B) is never even consulted.
+    const ideaOriginConn = "conn-idea-origin";
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid });
+    mockPreferenceFindFirst.mockResolvedValue({ host: projHost, cwd: projCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-idea", cwd: "/home/u/dev/idea" }),
+      onlineConn({ uuid: projConnUuid, host: projHost, cwd: projCwd }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", projectUuid }),
+    );
+
+    // Directed to the live session origin (cwd A), NOT the project pin (cwd B).
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
+    // The project pin is never consulted once the session-origin upgrade wins.
+    expect(mockPreferenceFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("strict offline: an offline project-pinned cwd is notify-only (suppressWake), never re-routed", async () => {
+    // The owner's pinned cwd is OFFLINE while the agent is online elsewhere. Per owner Q3 the
+    // wake must NOT re-route — it becomes offline_pin (suppressWake TRUE, no turn, no ping).
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid });
+    mockPreferenceFindFirst.mockResolvedValue({ host: projHost, cwd: projCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-elsewhere", host: "host-A", cwd: "/home/u/dev/a" }),
+      offlineConn({ uuid: projConnUuid, host: projHost, cwd: projCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", projectUuid }),
+    );
+
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(suppressWake).toBe(true);
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    // Crucially, it did NOT re-route to the online-elsewhere connection.
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: "conn-online-elsewhere" }),
+    );
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it("no owner preference → unchanged online-first fallback", async () => {
+    // The owner has NO fixed project cwd for this (project, agent) → makePinnedTarget yields
+    // null → selection stays online_first, byte-identical to before.
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid });
+    mockPreferenceFindFirst.mockResolvedValue(null);
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", projectUuid }),
+    );
+
+    expect(mockPreferenceFindFirst).toHaveBeenCalled();
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    // Un-pinned broadcast → no directed target.
+    expect(targetConnectionUuid).toBeNull();
+  });
+
+  it("agent with no owner → project pin skipped → online-first (short-circuit, no preference read)", async () => {
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid: null });
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { targetConnectionUuid } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", projectUuid }),
+    );
+
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+    expect(targetConnectionUuid).toBeNull();
+    // No owner → the preference is never queried.
+    expect(mockPreferenceFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Un-pinned @mention residual cwd upgrades (mention-wake-respect-pinned-cwd) =====
+//
+// An un-pinned `mentioned` wake for which mention.service resolved NO pin at creation time
+// (no explicit (host,cwd) in the markup, not the direct idea's instance assignee, and no
+// mentioner-owner project-fixed cwd → nothing threaded onto the context) must now walk the
+// SAME residual ladder as `task_assigned`: idea session-origin upgrade → agent-owner project
+// pin → online-first. A pinned mention, human_instruction, and the no-session/no-pref case
+// are unchanged. These four+ cases are the T1 characterization + the RED target behavior.
+describe("createTurnAndResolveTarget — un-pinned @mention residual cwd upgrades", () => {
+  it("upgrades an un-pinned mention to the root idea's ONLINE session origin (aligned with task_assigned)", async () => {
+    const originConn = "conn-idea-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/a" }),
+      onlineConn({ uuid: originConn, host: "host-B", cwd: "/idea-home" }),
+    ]);
+    // The mention's idea has an existing daemon session whose origin is the 2nd (not-first) conn.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: originConn,
+    });
+
+    const result = await createTurnAndResolveTarget(
+      ctx({ action: "mentioned", entityType: "idea", entityUuid: ideaUuid }),
+    );
+
+    // Directed to the idea's session origin, NOT the raw online-first connection.
+    expect(result.targetConnectionUuid).toBe(originConn);
+    expect(mockDeliverTurnPing).toHaveBeenCalled();
+  });
+
+  it("falls back to the mentioned agent's owner project pin when there is no idea session (step 4a)", async () => {
+    const pinnedConn = "conn-owner-pin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/a" }),
+      onlineConn({ uuid: pinnedConn, host: "owner-host", cwd: "/owner/cwd" }),
+    ]);
+    mockDaemonSessionFindFirst.mockResolvedValue(null); // no idea session → step 4a applies
+    mockPreferenceFindFirst.mockResolvedValue({ host: "owner-host", cwd: "/owner/cwd" });
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        projectUuid: "project-1",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe(pinnedConn);
+    expect(mockPreferenceFindFirst).toHaveBeenCalled();
+  });
+
+  it("stays online-first for an un-pinned mention with no idea session and no owner project pin (unchanged)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/a" }),
+    ]);
+    // Defaults: no session (mockDaemonSessionFindFirst → null), no preference.
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        projectUuid: "project-1",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBeNull();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
+  });
+
+  it("an explicit-pin mention still resolves as a HARD pin and SKIPS the residual upgrade", async () => {
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-pin", host: "pin-host", cwd: "/pin/cwd" }),
+      onlineConn({ uuid: "conn-idea-origin", host: "host-B", cwd: "/idea-home" }),
+    ]);
+    // Even with an online idea session origin present, the explicit pin wins.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: "conn-idea-origin",
+    });
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "mentioned",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        pinnedHost: "pin-host",
+        pinnedCwd: "/pin/cwd",
+      }),
+    );
+
+    expect(result.targetConnectionUuid).toBe("conn-pin");
+  });
+
+  it("does NOT apply the residual upgrade to a human_instruction wake (still excluded)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/a" }),
+      onlineConn({ uuid: "conn-idea-origin", host: "host-B", cwd: "/idea-home" }),
+    ]);
+    // An idea session origin AND an owner project pin both exist, but neither must apply.
+    mockDaemonSessionFindFirst.mockResolvedValue({
+      uuid: sessionUuid,
+      originConnectionUuid: "conn-idea-origin",
+    });
+    mockPreferenceFindFirst.mockResolvedValue({ host: "host-B", cwd: "/idea-home" });
+
+    const result = await createTurnAndResolveTarget(
+      ctx({
+        action: "human_instruction",
+        entityType: "idea",
+        entityUuid: ideaUuid,
+        instructionText: "do the thing",
+        projectUuid: "project-1",
+      }),
+    );
+
+    // human_instruction owns its own target resolution → stays online-first here.
+    expect(result.targetConnectionUuid).toBeNull();
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst }),
+    );
   });
 });

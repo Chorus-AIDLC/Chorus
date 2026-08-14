@@ -47,7 +47,13 @@ import { createInterruptReporter } from "./interrupt-reporter.mjs";
 import { createTurnReporter } from "./turn-reporter.mjs";
 import { createDaemonRestClient } from "./daemon-rest-client.mjs";
 import { createControlHandler } from "./control-handler.mjs";
-import { resolveSigintTimeoutMs, resolveDaemonCwds, resolveBrowseRoots } from "./daemon-config.mjs";
+import {
+  resolveSigintTimeoutMs,
+  resolveDaemonCwds,
+  resolveBrowseRoots,
+  resolveAgentConfigs,
+  hasConfiguredAgents,
+} from "./daemon-config.mjs";
 import { discoverDirectories, validateDirectory } from "./directory-discovery.mjs";
 import {
   startBackground,
@@ -545,6 +551,122 @@ export function buildDaemon(creds, deps = {}) {
 }
 
 /**
+ * Fan-out builder: compose ONE `buildDaemon` runtime per agent config, so a single
+ * daemon process serves N fully-independent agents — each with its own creds,
+ * ChorusClient, LineageResolver, spawner (by its `agentType`), WakeQueue (its own
+ * `maxConcurrency`), and connections over its OWN cwds. For N=1 this is behaviorally
+ * identical to `buildDaemon({url,apiKey}, deps)`.
+ *
+ * Each agent's runtime is isolated: a build/start failure in one agent is logged and
+ * skipped, and the others keep serving. The aggregate `allConflict` settles only when
+ * EVERY agent's paths are all already served (nothing left to do at all).
+ *
+ * Injectable seams mirror `buildDaemon`; array-valued deps (`spawner`, `mcpClient`,
+ * `lineage`, `sseListener`, `makeSseListener`) are indexed PER agent for tests.
+ *
+ * @param {import("./daemon-config.mjs").AgentConfig[]} agentConfigs
+ * @param {object} [deps]
+ * @returns {{ agents: Array<{cfg: any, daemon: any}>, connections: any[],
+ *   waker: any, router: any, sseListener: any, allConflict: Promise<void>,
+ *   start: () => Promise<void>, stop: () => Promise<void> }}
+ */
+export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
+  const logger = deps.logger ?? defaultLogger();
+  if (!Array.isArray(agentConfigs) || agentConfigs.length === 0) {
+    throw new Error("buildMultiAgentDaemon: at least one agent config is required");
+  }
+  const build = deps.build ?? buildDaemon;
+  const perAgent = (key, i) => {
+    const v = deps[key];
+    return Array.isArray(v) ? v[i] : i === 0 ? v : undefined;
+  };
+
+  const agents = agentConfigs
+    .map((cfg, i) => {
+      // Per-agent deps: cfg fields drive the per-agent runtime; injectable fakes are
+      // indexed per agent. `cwd` (singular) is cleared so a caller's single value can
+      // never leak across agents — each agent's `cwds` is authoritative.
+      const agentDeps = {
+        ...deps,
+        logger,
+        permissionMode: cfg.permissionMode,
+        agentType: cfg.agentType,
+        cwds: cfg.cwds,
+        cwd: undefined,
+        maxConcurrency: cfg.maxConcurrency,
+        sigintTimeoutMs: cfg.sigintTimeoutMs,
+        browseRoots: cfg.browseRoots,
+        mcpClient: perAgent("mcpClient", i),
+        lineage: perAgent("lineage", i),
+        spawner: perAgent("spawner", i),
+        sseListener: perAgent("sseListener", i),
+        makeSseListener: Array.isArray(deps.makeSseListener)
+          ? deps.makeSseListener[i]
+          : deps.makeSseListener,
+      };
+      try {
+        return { cfg, daemon: build({ url: cfg.url, apiKey: cfg.apiKey }, agentDeps) };
+      } catch (err) {
+        logger.error?.(
+          `[Chorus] agent ${cfg.label}: failed to build runtime — skipping ` +
+            `(${err instanceof Error ? err.message : String(err)})`,
+        );
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (agents.length === 0) {
+    throw new Error("buildMultiAgentDaemon: all agent runtimes failed to build");
+  }
+
+  const connections = agents.flatMap((a) => a.daemon.connections ?? []);
+  const primary = agents[0].daemon;
+  // Aggregate all-conflict: settles only when EVERY agent's paths are all already
+  // served by a live daemon (each agent's allConflict settles only in that case, and
+  // never otherwise). A single serving agent keeps the whole daemon alive.
+  const allConflict = Promise.all(
+    agents.map((a) => a.daemon.allConflict ?? new Promise(() => {})),
+  ).then(() => {});
+
+  return {
+    agents,
+    connections,
+    // Back-compat single aliases (first agent's primary connection) for inspection.
+    waker: primary.waker,
+    router: primary.router,
+    sseListener: primary.sseListener,
+    allConflict,
+    async start() {
+      // Start each agent independently; one agent's start failure is logged and
+      // isolated so the others still serve.
+      for (const a of agents) {
+        try {
+          await a.daemon.start();
+        } catch (err) {
+          logger.error?.(
+            `[Chorus] agent ${a.cfg.label}: start failed — ` +
+              `${err instanceof Error ? err.message : String(err)} (other agents continue)`,
+          );
+        }
+      }
+    },
+    async stop() {
+      for (const a of agents) {
+        try {
+          await a.daemon.stop();
+        } catch (err) {
+          logger.warn?.(
+            `[Chorus] agent ${a.cfg.label}: stop error — ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    },
+  };
+}
+
+/**
  * Entry point for `chorus daemon`. Resolves credentials, validates them
  * (echoing the agent identity), and runs the daemon until terminated.
  *
@@ -649,6 +771,105 @@ export async function runDaemon(flags = {}, deps = {}) {
   // binding (DEC-5: cwd ⟂ project). The daemon process's own cwd never changes.
   const cwds = resolveDaemonCwds({ cwd: flags.cwd }, { env });
   const browseRoots = resolveBrowseRoots({ browseRoot: flags.browseRoot }, { env });
+
+  // ===== Multi-agent mode (daemon-multi-agent) =====
+  // When daemon.json declares a non-empty agents[], run N fully-independent agents in
+  // one process. Each agent carries its OWN creds, so this bypasses the flat single-
+  // credential preflight (interactive credential completion is a single-agent
+  // affordance). Each agent authenticates on its own key; a failure is isolated
+  // (logged + that agent skipped) so the rest still serve.
+  if (hasConfiguredAgents({ readJson: deps.readJson, loginPath: deps.loginPath })) {
+    const buildMulti = deps.buildMulti ?? buildMultiAgentDaemon;
+    let agentConfigs;
+    try {
+      agentConfigs = resolveAgentConfigs(
+        {
+          url: flags.url,
+          apiKey: flags.apiKey,
+          agent: flags.agent,
+          cwd: flags.cwd,
+          browseRoot: flags.browseRoot,
+          sigintTimeout: flags.sigintTimeout,
+          chorusOnly: flags.chorusOnly,
+          yolo: flags.yolo,
+        },
+        { env, readJson: deps.readJson, loginPath: deps.loginPath },
+      );
+    } catch (err) {
+      errLog(`[Chorus] ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+
+    // Validate each agent independently. A validation failure logs + skips that agent
+    // (isolation) — the daemon still serves the agents that authenticated.
+    const okConfigs = [];
+    for (const cfg of agentConfigs) {
+      try {
+        const id = await validate({ url: cfg.url, apiKey: cfg.apiKey });
+        okConfigs.push(cfg);
+        log(
+          `[Chorus] agent ${cfg.label}: ${id.name} (${id.uuid}) — ${cfg.agentType}, ` +
+            `${cfg.permissionMode}, ${cfg.cwds.length} path(s), maxConcurrency=${cfg.maxConcurrency}`,
+        );
+        if (cfg.permissionMode === "yolo") errLog(`[Chorus] agent ${cfg.label}: ${yoloWarningLine()}`);
+      } catch (err) {
+        errLog(
+          `[Chorus] agent ${cfg.label}: credential validation failed — ` +
+            `${err instanceof Error ? err.message : String(err)} (skipping this agent)`,
+        );
+      }
+    }
+    if (okConfigs.length === 0) {
+      errLog(
+        `[Chorus] no agents authenticated — nothing to serve. Check the apiKeys in ${loginFilePath()}.`,
+      );
+      return 1;
+    }
+
+    const totalPaths = okConfigs.reduce((n, c) => n + c.cwds.length, 0);
+    log(
+      `[Chorus] multi-agent daemon starting — ${okConfigs.length} agent(s), ` +
+        `${totalPaths} connection(s), subscribing to ${okConfigs[0].url}/api/events/notifications`,
+    );
+    const multiDaemon = buildMulti(okConfigs, {
+      logger: { info: log, warn: errLog, error: errLog },
+      verbose,
+      fetchImpl: deps.fetchImpl,
+      killer: deps.killer,
+      sseListener: deps.sseListener,
+      makeSseListener: deps.makeSseListener,
+      spawner: deps.spawner,
+      mcpClient: deps.mcpClient,
+      lineage: deps.lineage,
+      build: deps.build,
+    });
+
+    const shutdownMulti = () => {
+      log("[Chorus] shutting down daemon...");
+      Promise.resolve(multiDaemon.stop()).finally(() => process.exit(0));
+    };
+    process.on("SIGINT", shutdownMulti);
+    process.on("SIGTERM", shutdownMulti);
+    await multiDaemon.start();
+    log("[Chorus] multi-agent daemon running. Waiting for task dispatches (Ctrl+C to stop).");
+
+    const ALL_CONFLICT_M = Symbol("all-conflict");
+    const waitForeverM = deps.waitForever ?? (() => new Promise(() => {}));
+    const allConflictSignalM = multiDaemon.allConflict ?? new Promise(() => {});
+    const outcomeM = await Promise.race([
+      waitForeverM().then(() => 0),
+      allConflictSignalM.then(() => ALL_CONFLICT_M),
+    ]);
+    if (outcomeM === ALL_CONFLICT_M) {
+      errLog(
+        `[Chorus] every declared path for every agent is already served by a live daemon — ` +
+          `nothing to do. Stop the other daemon(s) or remove the conflicting path(s), then restart.`,
+      );
+      await multiDaemon.stop();
+      return 1;
+    }
+    return 0;
+  }
 
   // Foreground preflight: resolve/complete credentials + resolve the permission
   // posture (confirming yolo on a TTY). Reuses the same pfDeps bundle the detach

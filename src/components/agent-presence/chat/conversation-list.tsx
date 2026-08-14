@@ -20,6 +20,7 @@ import { MessageCirclePlus, PauseCircle, Sparkles, TriangleAlert } from "lucide-
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -155,6 +156,29 @@ function Row({
   );
 }
 
+// A loading placeholder shaped like a real `Row`: a leading dot-sized square, a wide
+// title-line, and a short meta-line, padded identically (`px-4 py-3.5`). Purely
+// decorative (aria-hidden) — the accessible "loading" affordance is the list card's
+// `aria-busy`. Reuses the semantic `bg-accent` Skeleton token, so it adapts to light /
+// dark for free (no `dark:` variant needed).
+function SkeletonRow() {
+  return (
+    <div aria-hidden className="flex w-full items-center gap-3 px-4 py-3.5">
+      <span className="flex w-2.5 shrink-0 justify-center">
+        <Skeleton className="h-2.5 w-2.5 rounded-full" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <Skeleton className="h-3.5 w-3/4 rounded" />
+        <Skeleton className="mt-1.5 h-2.5 w-1/3 rounded" />
+      </span>
+    </div>
+  );
+}
+
+// How many placeholder rows the loading state renders — enough to fill the list card
+// without implying a specific count.
+const SKELETON_ROW_COUNT = 5;
+
 export function ConversationList({
   agents,
   selectedAgentUuid,
@@ -165,6 +189,7 @@ export function ConversationList({
   onNewConversation,
   visibleCount,
   onLoadMore,
+  loading = false,
 }: {
   agents: AgentOption[];
   selectedAgentUuid: string | null;
@@ -182,6 +207,12 @@ export function ConversationList({
   // so it survives a re-render); "Load more" grows it.
   visibleCount: number;
   onLoadMore: () => void;
+  // True while the session list is still loading (first load / no data yet). Renders
+  // skeleton placeholder rows INSTEAD of the empty state, so an in-flight load is never
+  // mistaken for a genuinely empty list. Defaults to false so existing call sites are
+  // unaffected. The container gates this on its list-fetch status alone, so the periodic
+  // background refresh does not re-trigger it once a first load has succeeded.
+  loading?: boolean;
 }) {
   const t = useTranslations("daemonChat");
   const nowMs = useNowTick();
@@ -238,17 +269,42 @@ export function ConversationList({
       </div>
 
       {/* Conversation list card. */}
-      <Card className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
+      <Card
+        aria-busy={loading}
+        className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none"
+      >
         <div className="flex items-center justify-between px-4 py-3.5">
           <span className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-muted-foreground">
             {t("listHeader")}
           </span>
-          <span className="font-mono text-[11px] font-medium text-muted-foreground">
-            {rows.length}
-          </span>
+          {/* Count is meaningless mid-load — render a neutral placeholder instead of
+              flashing `0` before the first fetch settles. */}
+          {loading ? (
+            <Skeleton aria-hidden className="h-3 w-4 rounded" />
+          ) : (
+            <span className="font-mono text-[11px] font-medium text-muted-foreground">
+              {rows.length}
+            </span>
+          )}
         </div>
         <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
-        {rows.length === 0 ? (
+        {loading ? (
+          // Loading: skeleton placeholder rows, shaped like real rows, INSTEAD of the
+          // empty state — so an in-flight load is never mistaken for an empty list.
+          <div
+            data-testid="conversation-list-skeleton"
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+          >
+            {Array.from({ length: SKELETON_ROW_COUNT }).map((_, idx) => (
+              <div key={idx}>
+                <SkeletonRow />
+                {idx < SKELETON_ROW_COUNT - 1 && (
+                  <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
+                )}
+              </div>
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-1.5 p-8 text-center">
             <p className="text-[13px] font-medium text-muted-foreground">
               {t("noSessions.title")}

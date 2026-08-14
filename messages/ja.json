@@ -321,6 +321,7 @@
     "cwd": "ディレクトリ",
     "status": "状態",
     "unknown": "不明",
+    "openAgentChat": "{agent} の会話を開く",
     "manage": "プロジェクト設定で管理",
     "availability": {
       "ready": "利用可能",
@@ -1564,7 +1565,6 @@
     "loadMore": "さらに読み込む",
     "loadEarlier": "以前のメッセージを読み込む",
     "loadingEarlier": "以前のメッセージを読み込み中…",
-    "loading": "会話を読み込み中…",
     "transcriptLoading": "トランスクリプトを読み込み中…",
     "mobileBack": "会話",
     "conversationAdHoc": "会話 {id}",
@@ -1775,5 +1775,11 @@
     "pinToSidebar": "サイドバーにピン留め",
     "removeFromRecent": "最近から削除",
     "moreActions": "{name} のその他の操作"
+  },
+  "resourceLinks": {
+    "github": "GitHub",
+    "docs": "ドキュメント",
+    "githubAria": "Chorus の GitHub リポジトリを開く（新しいタブで開きます）",
+    "docsAria": "Chorus のドキュメントサイトを開く（新しいタブで開きます）"
   }
 }

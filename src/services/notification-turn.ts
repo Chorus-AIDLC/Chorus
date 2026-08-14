@@ -166,12 +166,13 @@ const LINEAGE_ENTITY_TYPES = new Set<string>(["task", "document", "proposal", "i
  *   - `elaboration_verified` — the human "Verify Elaborate" → write-the-proposal wake (the
  *     original, now-generalized, home of this upgrade).
  *
- * `mentioned` and `human_instruction` are DELIBERATELY EXCLUDED: an un-pinned `mentioned`
- * wake is contractually a broadcast → online-first (stamping no target), a pinned mention
- * is resolved as a HARD pin before this branch, and `human_instruction` resolves its own
- * exact target + `deliver_turn` ping in `daemon-instruction.service` — upgrading it here
- * would double-deliver or mis-route. Both carry their own target resolution, so the
- * heuristic session-origin upgrade must never touch them.
+ * `human_instruction` is DELIBERATELY EXCLUDED from this AUTONOMOUS family: it resolves its
+ * own exact target + `deliver_turn` ping in `daemon-instruction.service`, so upgrading it here
+ * would double-deliver or mis-route. `mentioned` is likewise NOT in this autonomous set — but,
+ * unlike `human_instruction`, an un-pinned `mentioned` wake that resolved NO pin at creation
+ * time DOES earn the same residual-cwd upgrades via `RESIDUAL_CWD_UPGRADE_TRIGGERS` below
+ * (mention-wake-respect-pinned-cwd); a pinned mention is still resolved as a HARD pin before
+ * this branch and short-circuits the upgrade.
  */
 const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   "task_assigned",
@@ -184,6 +185,32 @@ const IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
   // the full-auto run must continue the idea's existing conversation, not fan
   // out to an arbitrary online cwd.
   "yolo_requested",
+]);
+
+/**
+ * Triggers eligible for the RESIDUAL-cwd upgrades — the idea session-origin upgrade (step 4)
+ * and the agent-owner project-cwd fallback (step 4a) — which fire ONLY when connection
+ * selection would OTHERWISE be a raw online-first pick. This is the AUTONOMOUS idea-anchored
+ * family (above) PLUS the un-pinned `mentioned` wake (mention-wake-respect-pinned-cwd).
+ *
+ * A `mentioned` wake reaches this set already having had its pins resolved at CREATION time by
+ * `mention.service` (`resolveMentionTarget` → `resolveProjectAgentCwdTarget`): an explicit
+ * `(host,cwd)` in the markup, the direct idea's `agent_instance` pin, and the MENTIONER-owner's
+ * project-fixed cwd are all threaded onto the context and become HARD pins in
+ * `resolvePinnedTarget` — so selection is `directed` / `offline_pin` and this residual step is
+ * SKIPPED. ONLY when none of those resolved (selection stayed `online_first`) does an un-pinned
+ * mention walk the SAME residual ladder as `task_assigned`: idea session-origin → the
+ * MENTIONED-agent-owner project pin → online-first. That makes an un-pinned @mention land where
+ * the idea's conversation already lives (or the target agent's owner-pinned cwd) instead of a
+ * random online cwd — and, because an agent→agent return-wake (agent B @mentions the assigner A
+ * on completion) IS an un-pinned mention, it makes that return-wake land in A's pinned cwd too.
+ *
+ * `human_instruction` (owns its own send-path target) and `resource_resumed` (a synthetic
+ * control dispatch that is never persisted and never reaches this chokepoint) stay excluded.
+ */
+const RESIDUAL_CWD_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
+  ...IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS,
+  "mentioned",
 ]);
 
 /**
@@ -303,9 +330,12 @@ function makePinnedTarget(
 
 /**
  * Resolve the wake's pinned target instance — the durable `(host, cwd)` an owner chose
- * (cwd-addressable instances) — or null when the wake carries no pin. DEC-5: the cwd is
- * NEVER inferred from the project; the ONLY pin sources are the explicit owner choices
- * below, resolved in PRIORITY ORDER and tagged with their origin (`soft`):
+ * (cwd-addressable instances) — or null when the wake carries no pin. DEC-5 (SCOPED): THIS
+ * resolver NEVER infers cwd from the project; its ONLY pin sources are the explicit owner
+ * choices below, resolved in PRIORITY ORDER and tagged with their origin (`soft`). The one
+ * project-derived fallback — the agent-owner's fixed project cwd — is applied by the caller
+ * (createTurnAndResolveTarget step 4a), BELOW the session-origin upgrade, replacing only the
+ * online-first pick; see there:
  *
  *  1. mention pin (HARD, `soft:false`) — `trigger === "mentioned"`: a human typed an
  *     exact place in the mention markup, threaded onto the context
@@ -427,6 +457,54 @@ async function resolvePinnedTarget(
   // inherit (it resolves against its own agent → online-first).
   const rootIdeaUuid = await resolveRootIdeaUuidForPin(ctx);
   return resolveIdeaInstancePin(ctx, rootIdeaUuid);
+}
+
+/**
+ * Autonomous-wake project cwd fallback (idea 5b8ee573 / project-cwd-anchoring). Resolve the
+ * AGENT OWNER's fixed project cwd preference for `(project, agent)` into a HARD PinnedTarget,
+ * or null when the agent has no owner or the owner set no preference (→ caller keeps the
+ * unchanged online-first selection). This is the ONLY place the wake path derives a cwd from
+ * the project — a SCOPED reversal of DEC-5 — and the caller (createTurnAndResolveTarget step
+ * 4a) applies it BELOW the idea-session-origin upgrade, so a live online conversation is never
+ * rerouted. The preference is stored PER USER (`@@unique([userUuid, projectUuid, agentUuid])`);
+ * per the owner's elaboration decision an autonomous wake reads the AGENT OWNER's row. The
+ * pin is HARD (`soft:false`): `makePinnedTarget` normalizes to the registry sentinels and
+ * returns null for an empty `(host, cwd)`, so an unset/invalid preference falls through to
+ * online-first rather than stalling on a garbage pin.
+ */
+async function resolveProjectOwnerCwdPin(
+  companyUuid: string,
+  agentUuid: string,
+  projectUuid: string,
+): Promise<PinnedTarget | null> {
+  try {
+    const agent = await prisma.agent.findFirst({
+      where: { uuid: agentUuid, companyUuid },
+      select: { ownerUuid: true },
+    });
+    if (!agent?.ownerUuid) return null;
+    const preference = await prisma.projectAgentCwdPreference.findFirst({
+      where: {
+        companyUuid,
+        userUuid: agent.ownerUuid,
+        projectUuid,
+        agentUuid,
+      },
+      select: { host: true, cwd: true },
+    });
+    if (!preference) return null;
+    return makePinnedTarget(preference.host, preference.cwd, false);
+  } catch (error) {
+    // The project-owner cwd fallback is a BEST-EFFORT replacement for the online-first
+    // pick. A failure resolving it must NOT drop the wake: log VISIBLY (no silent errors)
+    // and degrade to the unchanged online-first selection rather than aborting the whole
+    // turn via the caller's catch.
+    turnLogger.warn(
+      { err: error, companyUuid, agentUuid, projectUuid },
+      "resolveProjectOwnerCwdPin failed; degrading to online-first",
+    );
+    return null;
+  }
 }
 
 /**
@@ -659,7 +737,8 @@ export interface WakeTurnResult {
  *  3. Resolve the wake's pinned target instance via assignment LINEAGE (cwd-addressable
  *     instances): the mention's `(host, cwd)` for a `mentioned` wake; else the Task's own
  *     `agent_instance` override, then the root Idea's `agent_instance` assignee under the
- *     same-agent guard; else none (DEC-5: NEVER inferred from the project). ALL pins are
+ *     same-agent guard; else none here (DEC-5 is now SCOPED — this lineage step never infers
+ *     from the project, but step 4a below adds the agent-owner project-cwd fallback). ALL pins are
  *     HARD now (owner choice B). Select the ONLINE origin, classified by HOW it was chosen:
  *       - `directed`     — pin matched an ONLINE connection (turn delivered to ONLY it).
  *       - `online_first` — un-pinned → first online (broadcast → online-first).
@@ -672,6 +751,11 @@ export interface WakeTurnResult {
  *     session-origin heuristic apply: if the idea has an existing ONLINE session origin,
  *     UPGRADE the selection to `directed` on that origin so the proposal-writing wake lands
  *     where the idea's conversation already lives — else stay `online_first`.
+ *  4a. Project-owner cwd fallback (idea 5b8ee573): if selection is STILL `online_first` after
+ *     step 4 (no instance pin, no online session-origin) for an autonomous idea-anchored /
+ *     stage-advance trigger, resolve the AGENT OWNER's fixed project cwd and, when set,
+ *     re-select against it as a HARD pin — replacing the arbitrary "first cwd". Offline
+ *     pinned cwd → `offline_pin` (notify-only), never re-routed.
  *  5. Derive the session id: the entity's `directIdeaUuid` via lineage when the entityType
  *     is lineage-walkable, else the entity uuid (ad-hoc). For a CROSS-CWD directed mention
  *     (the resolved target differs from the idea's existing session origin), the resolved
@@ -716,9 +800,11 @@ export async function createTurnAndResolveTarget(
       ctx.companyUuid,
       ctx.recipientUuid,
     );
-    // The wake's pinned (host, cwd), or null when un-pinned. DEC-5: cwd is only ever the
-    // explicit pin — never inferred from the project.
-    const pin = await resolvePinnedTarget(ctx, trigger);
+    // The wake's pinned (host, cwd), or null when un-pinned. DEC-5 (SCOPED): the
+    // assignment-lineage resolver NEVER infers cwd from the project; the ONE project-
+    // derived fallback — the agent-owner's fixed project cwd — is applied later in step 4a,
+    // BELOW the session-origin upgrade, replacing only the online-first pick.
+    let pin = await resolvePinnedTarget(ctx, trigger);
     // Pin-aware selection, classified by HOW the origin was chosen (drives directed
     // delivery). A PINNED wake whose pin matched no online connection is `offline_pin` →
     // notify-only with NO online-first fallback (REVERSES #354).
@@ -749,9 +835,11 @@ export async function createTurnAndResolveTarget(
     // idea's existing ONLINE session origin (where the idea's conversation already lives),
     // fixing the proposal approve/reject random-cwd wake. No session, an offline origin, or a
     // non-idea-anchored wake (directIdeaUuid null) → stays online-first.
-    // `mentioned` / `human_instruction` are excluded from the set (they own their own target).
+    // Un-pinned `mentioned` is now INCLUDED via RESIDUAL_CWD_UPGRADE_TRIGGERS (a pinned mention
+    // already resolved a HARD pin above, so it is directed and skips this); `human_instruction`
+    // is still excluded — it owns its own send-path target.
     if (
-      IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS.has(trigger) &&
+      RESIDUAL_CWD_UPGRADE_TRIGGERS.has(trigger) &&
       selection.kind === "online_first"
     ) {
       const ideaTarget = await resolveIdeaSessionOriginTarget(
@@ -762,6 +850,33 @@ export async function createTurnAndResolveTarget(
       );
       if (ideaTarget) {
         selection = { kind: "directed", connection: ideaTarget };
+      }
+    }
+
+    // (4a) Project-owner fixed-cwd fallback (idea 5b8ee573 / project-cwd-anchoring): when
+    // the wake would OTHERWISE pick a raw first-online cwd — no instance pin (resolvePinned-
+    // Target) AND no online session-origin upgrade above (selection still `online_first`) —
+    // honor the AGENT OWNER's fixed project cwd instead of the arbitrary "first cwd". This is
+    // the ONE deliberate, SCOPED reversal of DEC-5 ("never infer cwd from project"): it runs
+    // only here, on the autonomous idea-anchored / stage-advance path, gated on the same
+    // trigger family as the session-origin upgrade — so it can never override an instance pin
+    // or a live online conversation (the b729713b fix wins, resolved above). HARD pin (owner
+    // elaboration Q3 = strict): an offline pinned cwd becomes `offline_pin` (notify-only,
+    // reconnect-backfill only to the original host+cwd), never re-routed. No owner or no
+    // preference → `makePinnedTarget` null → selection stays `online_first`, unchanged.
+    if (
+      selection.kind === "online_first" &&
+      RESIDUAL_CWD_UPGRADE_TRIGGERS.has(trigger) &&
+      ctx.projectUuid
+    ) {
+      const projectPin = await resolveProjectOwnerCwdPin(
+        ctx.companyUuid,
+        ctx.recipientUuid,
+        ctx.projectUuid,
+      );
+      if (projectPin) {
+        pin = projectPin;
+        selection = selectOriginConnection(connections, projectPin);
       }
     }
 
@@ -787,7 +902,20 @@ export async function createTurnAndResolveTarget(
 
     const origin = selection.connection;
     const directed = selection.kind === "directed";
+    // The wake's spawn cwd. A pin that fixed an explicit runtime cwd (project_fixed /
+    // temporary / a task instance carrying its own runtimeCwd) keeps it on `pin.runtimeCwd`.
+    // For a DIRECTED wake resolved to a specific ONLINE connection by `(host, cwd)` — an
+    // explicit mention pin, an instance pin, or the idea session-origin upgrade — the spawn
+    // cwd is that RESOLVED connection's OWN cwd (`origin.cwd`), NEVER a stale `session.runtimeCwd`
+    // left over from a PREVIOUS origin (mention-wake-respect-pinned-cwd, idea e40f2b2c). That
+    // stale-fallback was the daemon-seam bug: a cross-cwd directed wake re-pointed the session's
+    // origin but not its runtimeCwd, so the daemon (`selectWaker`/`resolveCwd` prefer
+    // `notification.runtimeCwd` over the receiving connection's cwd) spawned in the OLD cwd.
+    // Owner rule: an explicit pin is FIXED to that pin — no fallback. Non-directed (online-first /
+    // offline / none) never stamps a runtime cwd (broadcast → the daemon uses each connection's
+    // own bound cwd), so it stays null there.
     const runtimeCwd = pin?.runtimeCwd ?? null;
+    const directedRuntimeCwd = directed ? runtimeCwd ?? origin.cwd ?? null : runtimeCwd;
 
     // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
     // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
@@ -834,7 +962,7 @@ export async function createTurnAndResolveTarget(
           where: { uuid: existing.uuid, companyUuid: ctx.companyUuid },
           data: {
             originConnectionUuid: origin.uuid,
-            ...(runtimeCwd ? { runtimeCwd } : {}),
+            ...(directedRuntimeCwd ? { runtimeCwd: directedRuntimeCwd } : {}),
           },
         });
       }
@@ -850,9 +978,9 @@ export async function createTurnAndResolveTarget(
       sessionId,
       directIdeaUuid: sessionDirectIdeaUuid,
       originConnectionUuid: origin.uuid,
-      ...(runtimeCwd ? { runtimeCwd } : {}),
+      ...(directedRuntimeCwd ? { runtimeCwd: directedRuntimeCwd } : {}),
     });
-    const effectiveRuntimeCwd = runtimeCwd ?? session.runtimeCwd ?? null;
+    const effectiveRuntimeCwd = directedRuntimeCwd ?? session.runtimeCwd ?? null;
 
     const promptText =
       trigger === "human_instruction" ? ctx.instructionText ?? null : null;
