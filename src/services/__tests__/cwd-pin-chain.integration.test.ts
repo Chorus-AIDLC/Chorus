@@ -926,6 +926,7 @@ describe("integration: an un-pinned assignment behaves exactly as before this ch
       companyUuid: COMPANY,
       assigneeType: "agent",
       assigneeUuid: AGENT,
+      assignedByType: "user",
       assignedByUuid: USER,
       // No instanceUuid → no pin.
     });

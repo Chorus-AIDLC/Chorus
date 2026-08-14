@@ -31,6 +31,7 @@ export async function claimIdeaAction(ideaUuid: string) {
       companyUuid: auth.companyUuid,
       assigneeType: auth.type,
       assigneeUuid: auth.actorUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
     });
 
@@ -95,6 +96,7 @@ export async function claimIdeaToAgentAction(
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
       instanceUuid: resolvedInstanceUuid ?? undefined,
       cwdSource: target.source === "project_fixed" ? target.source : null,
@@ -169,6 +171,7 @@ export async function reassignIdeaInstanceNoWakeAction(
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
       instanceUuid,
       allowElaboratedInstanceRepin: true,
@@ -205,6 +208,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
       companyUuid: auth.companyUuid,
       assigneeType: "user",
       assigneeUuid: userUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
     });
 

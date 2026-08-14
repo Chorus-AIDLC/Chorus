@@ -23,6 +23,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus, controlEventName, type ControlEvent } from "@/lib/event-bus";
+import type { OrchestratorAttribution } from "@/services/orchestrator.service";
 
 // ===== Constants =====
 
@@ -195,6 +196,7 @@ export type DispatchControlParams =
       entityUuid: string;
       resumeReason?: "user" | "crash";
       runtimeCwd?: string | null;
+      orchestrator?: OrchestratorAttribution | null;
     }
   | {
       companyUuid: string;
@@ -227,6 +229,9 @@ export function dispatchControl(params: DispatchControlParams): void {
           // Only a resume carries a reason; spread-if-present keeps the interrupt
           // wire shape byte-identical to before.
           ...(params.resumeReason ? { resumeReason: params.resumeReason } : {}),
+          ...(params.command === "resume"
+            ? { orchestrator: params.orchestrator ?? null }
+            : {}),
         };
   eventBus.emit(controlEventName(params.targetConnectionUuid), event);
 }

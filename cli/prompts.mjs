@@ -25,6 +25,7 @@
  * @property {string} actorType
  * @property {string} actorUuid
  * @property {string} actorName
+ * @property {{type: string, uuid: string, name: string} | null} [orchestrator]
  * @property {string} [instructionText]  Free-text body of a `human_instruction` wake
  *   (子1 — daemon-session-conversation). The server denormalizes the canonical turn
  *   promptText onto the wake notification so the daemon reads it in the
@@ -37,6 +38,17 @@ function mentionGuidance(n, entityType) {
   return (
     `After completing your work, post a comment on this ${entityType} using ` +
     `chorus_add_comment with @mention: @[${n.actorName}](${n.actorType}:${n.actorUuid})`
+  );
+}
+
+/** @param {NotificationDetail} n */
+function orchestratorGuidance(n) {
+  if (n.orchestrator?.type !== "agent") return null;
+  return (
+    `Your orchestrator for this resource is @${n.orchestrator.name}.\n` +
+    `At a human gate or when this child resource is complete, hand control back by ` +
+    `commenting on the resource and mentioning ` +
+    `@[${n.orchestrator.name}](agent:${n.orchestrator.uuid}).`
   );
 }
 
@@ -96,7 +108,8 @@ export const HEADLESS_PREAMBLE = [
 export function buildPrompt(n) {
   const body = buildPromptBody(n);
   if (body == null) return null;
-  return `${HEADLESS_PREAMBLE}\n\n${body}`;
+  const handoff = orchestratorGuidance(n);
+  return `${HEADLESS_PREAMBLE}\n\n${body}${handoff ? `\n\n${handoff}` : ""}`;
 }
 
 /**

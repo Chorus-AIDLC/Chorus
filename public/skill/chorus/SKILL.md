@@ -445,6 +445,18 @@ When sub-agents are **not** available in your harness, run the review inline you
 
 ---
 
+## Orchestrator Handoff
+
+When a daemon wake identifies an agent orchestrator for the current Idea or Task,
+treat that identity as a handoff target, not an automatic subscriber. At a
+required human-only gate the worker cannot cross, or when the assigned child
+Idea/Task is complete, comment on that resource, mention the orchestrator with
+the exact injected `@[Name](agent:uuid)` handle, state the requested handoff or
+completion evidence, and leave a human-gated resource pending after the comment.
+Do not mention the orchestrator for ordinary internal progress.
+
+---
+
 ## Skill Routing
 
 This is the core overview skill. For stage-specific workflows, download and read the appropriate skill:

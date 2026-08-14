@@ -389,6 +389,16 @@ Each task should correspond to an **independently runnable and testable function
 
 ---
 
+## Orchestrator Handoff
+
+If the originating Idea wake names an agent orchestrator, proposal approval is a
+human-only gate: after validation and submission, comment on the current Proposal
+with the exact injected `@[Name](agent:uuid)` handle, summarize the review request
+and evidence, then end the turn with the Proposal pending. Do not mention the
+orchestrator for ordinary drafting, validation, or revision progress.
+
+---
+
 ## Tips
 
 - Keep PRD focused on *what* and *why*; tech design focused on *how*

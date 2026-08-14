@@ -171,6 +171,32 @@ describe("control-handler double-check (q1=a)", () => {
     expect(redispatchResume).toHaveBeenLastCalledWith(ENTITY.entityType, ENTITY.entityUuid, "user");
   });
 
+  it("resume: threads orchestrator attribution through to the synthetic wake", () => {
+    const waker = makeWaker([]);
+    const redispatchResume = vi.fn();
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      redispatchResume,
+      logger: silent,
+    });
+    const orchestrator = {
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    };
+
+    onControl(controlEvent({ command: "resume", orchestrator }));
+
+    expect(redispatchResume).toHaveBeenCalledWith(
+      ENTITY.entityType,
+      ENTITY.entityUuid,
+      undefined,
+      undefined,
+      orchestrator,
+    );
+  });
+
   it("resume: an unknown resumeReason degrades to undefined (never fails the resume)", () => {
     const waker = makeWaker([]);
     const redispatchResume = vi.fn();

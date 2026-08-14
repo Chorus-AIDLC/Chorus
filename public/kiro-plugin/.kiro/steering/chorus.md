@@ -382,6 +382,18 @@ approved --> draft  (via revoke — cascade-closes tasks, deletes documents)
 
 ---
 
+## Orchestrator Handoff
+
+When a daemon wake identifies an agent orchestrator for the current Idea or Task,
+that identity is a handoff target, not an automatic subscriber. At a required
+human-only gate the worker cannot cross, or when the assigned child Idea/Task is
+complete, the worker MUST comment on that resource, mention the orchestrator with
+the exact injected `@[Name](agent:uuid)` handle, state the requested handoff or
+completion evidence, and leave a human-gated resource pending after the comment.
+Do not mention the orchestrator for ordinary internal progress.
+
+---
+
 ## Skill Routing
 
 The `chorus` main agent owns `/chorus` and pre-loads all skills below. For stage-specific workflows, invoke:

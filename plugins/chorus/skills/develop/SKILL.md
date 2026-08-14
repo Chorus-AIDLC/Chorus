@@ -333,6 +333,17 @@ Acceptance criteria:
 
 ---
 
+## Orchestrator Handoff
+
+If the Task wake names an agent orchestrator, mention that exact
+`@[Name](agent:uuid)` handle in a comment on the current Task when the assigned
+child Task is complete, including verification evidence and the resulting status.
+Use the same explicit comment when blocked at a required human-only gate you
+cannot cross, then end the turn and leave the Task pending. Do not mention the
+orchestrator for ordinary implementation progress.
+
+---
+
 ## Tips
 
 - **Read task comments first** — they contain previous work reports and decisions

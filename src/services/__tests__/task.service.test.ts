@@ -76,6 +76,10 @@ const mockUuidResolver = vi.hoisted(() => ({
   // place of any agent_instance assignee. Default to an empty map (no instance pins
   // in these fixtures).
   batchGetAssigneeInstanceInfo: vi.fn().mockResolvedValue(new Map()),
+  batchResolveAssignmentActors: vi.fn().mockImplementation(
+    async (_companyUuid: string, assignments: Array<{ assignedByUuid: string | null }>) =>
+      assignments.map(() => null),
+  ),
 }));
 vi.mock("@/lib/uuid-resolver", () => mockUuidResolver);
 
@@ -493,7 +497,8 @@ describe("claimTask", () => {
     });
 
     expect(result.status).toBe("assigned");
-    expect(mockPrisma.task.update).toHaveBeenCalledWith(
+    const update = mockPrisma.task.update.mock.calls[0][0];
+    expect(update).toEqual(
       expect.objectContaining({
         where: { uuid: TASK_UUID, status: { in: ["open", "assigned"] } },
         data: expect.objectContaining({
@@ -503,6 +508,33 @@ describe("claimTask", () => {
         }),
       }),
     );
+    expect(update.data).not.toHaveProperty("assignedByType");
+    expect(update.data).not.toHaveProperty("assignedByUuid");
+  });
+
+  it("preserves an orchestrator when the assigned worker claims without provenance", async () => {
+    const claimed = {
+      ...rawTask({
+        status: "assigned",
+        assigneeType: "agent",
+        assigneeUuid: "worker-agent",
+        assignedByType: "agent",
+        assignedByUuid: "orchestrator-agent",
+      }),
+      project: { uuid: PROJECT_UUID, name: "Test Project" },
+    };
+    mockPrisma.task.update.mockResolvedValue(claimed);
+
+    await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "worker-agent",
+    });
+
+    const updateData = mockPrisma.task.update.mock.calls[0][0].data;
+    expect(updateData).not.toHaveProperty("assignedByType");
+    expect(updateData).not.toHaveProperty("assignedByUuid");
   });
 
   it("reassigns an already-assigned task to a different agent", async () => {
@@ -517,6 +549,7 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a2",
+      assignedByType: "user",
       assignedByUuid: "user-123",
     });
 
@@ -527,6 +560,8 @@ describe("claimTask", () => {
         data: expect.objectContaining({
           assigneeType: "agent",
           assigneeUuid: "a2",
+          assignedByType: "user",
+          assignedByUuid: "user-123",
         }),
       }),
     );
@@ -593,11 +628,26 @@ describe("claimTask", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "a1",
+      assignedByType: "user",
       assignedByUuid: "user-123",
     });
 
     const updateData = mockPrisma.task.update.mock.calls[0][0].data;
+    expect(updateData.assignedByType).toBe("user");
     expect(updateData.assignedByUuid).toBe("user-123");
+  });
+
+  it("rejects a provenance UUID without its actor type", async () => {
+    await expect(
+      claimTask({
+        taskUuid: TASK_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: "a1",
+        assignedByUuid: "legacy-writer",
+      }),
+    ).rejects.toThrow("Assignment provenance type and UUID must be provided together");
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "", "   "])(
@@ -734,6 +784,7 @@ describe("releaseTask", () => {
           assigneeType: null,
           assigneeUuid: null,
           assignedAt: null,
+          assignedByType: null,
           assignedByUuid: null,
         }),
       }),

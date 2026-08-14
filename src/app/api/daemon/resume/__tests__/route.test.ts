@@ -9,6 +9,7 @@ const mockDispatchControl = vi.fn();
 const mockResumeExecution = vi.fn();
 const mockPublishExecutionChange = vi.fn();
 const mockIsConnectionLive = vi.fn();
+const mockResolveResourceOrchestrator = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -25,6 +26,11 @@ vi.mock("@/services/daemon-execution.service", () => ({
   resumeExecution: (...args: unknown[]) => mockResumeExecution(...args),
   publishExecutionChange: (...args: unknown[]) => mockPublishExecutionChange(...args),
   isConnectionLive: (...args: unknown[]) => mockIsConnectionLive(...args),
+}));
+
+vi.mock("@/services/orchestrator.service", () => ({
+  resolveResourceOrchestrator: (...args: unknown[]) =>
+    mockResolveResourceOrchestrator(...args),
 }));
 
 import { POST } from "@/app/api/daemon/resume/route";
@@ -57,6 +63,7 @@ beforeEach(() => {
   mockResumeExecution.mockResolvedValue({ ok: true, resumedFrom: "user" });
   mockPublishExecutionChange.mockResolvedValue(undefined);
   mockIsConnectionLive.mockResolvedValue(true);
+  mockResolveResourceOrchestrator.mockResolvedValue(null);
 });
 
 describe("POST /api/daemon/resume", () => {
@@ -86,6 +93,7 @@ describe("POST /api/daemon/resume", () => {
       entityType: "task",
       entityUuid: t1,
       resumeReason: "user",
+      orchestrator: null,
     });
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
@@ -101,8 +109,30 @@ describe("POST /api/daemon/resume", () => {
       entityType: "task",
       entityUuid: t1,
       resumeReason: "crash",
+      orchestrator: null,
     });
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
+  });
+
+  it("resolves and forwards the Task's current agent orchestrator", async () => {
+    const orchestrator = {
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    };
+    mockResolveResourceOrchestrator.mockResolvedValue(orchestrator);
+
+    const res = await POST(postRequest(validBody), emptyCtx);
+
+    expect(res.status).toBe(200);
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledWith(
+      companyUuid,
+      "task",
+      t1,
+    );
+    expect(mockDispatchControl).toHaveBeenCalledWith(
+      expect.objectContaining({ orchestrator }),
+    );
   });
 
   it("returns 404 non-disclosure for a connection the caller cannot control", async () => {

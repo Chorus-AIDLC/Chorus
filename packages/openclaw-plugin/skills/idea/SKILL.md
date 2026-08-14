@@ -330,6 +330,18 @@ When a theme is created via the conversational "help me break this into child id
 
 ---
 
+## Orchestrator Handoff
+
+If the wake prompt names an agent orchestrator, reaching elaboration verification
+or another required human-only gate you cannot cross requires a comment on the
+current Idea that mentions the exact injected `@[Name](agent:uuid)` handle and
+states the decision needed. End the turn and leave the Idea pending after that
+asynchronous handoff. When the assigned child Idea is complete, mention the same
+orchestrator with completion status and evidence. Do not hand off ordinary
+internal progress.
+
+---
+
 ## Tips
 
 - When combining multiple ideas, explain how they relate in the proposal description
