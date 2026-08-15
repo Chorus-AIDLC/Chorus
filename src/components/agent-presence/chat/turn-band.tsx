@@ -25,20 +25,38 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 import {
   AtSign,
+  BadgeCheck,
+  ChevronDown,
   ExternalLink,
+  GitMerge,
   HelpCircle,
   ListChecks,
   Loader2,
   PenLine,
+  Rocket,
   RotateCw,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { execHref } from "../hooks";
 import type { ExecutionView } from "../types";
 import type { TurnWithMessagesView } from "@/services/daemon-session.service";
 import { Message } from "./message";
 import { TokenUsageBadge } from "./token-usage-badge";
+
+// A coalesced-away turn folded into an absorbing band, paired with its (optional) live
+// execution so the expandable row can deep-link to the related entity. Built by the
+// transcript view's seq-adjacency grouping (see `groupMergedTurns`).
+export interface MergedEvent {
+  turn: TurnWithMessagesView;
+  linkedExecution: ExecutionView | null;
+}
 
 // Trigger → glyph + i18n label-key, the eyebrow vocabulary. A trigger outside the
 // known set falls back to a neutral glyph + "Turn" so an unrecognized value never
@@ -47,6 +65,9 @@ const TRIGGER_META: Record<string, { icon: LucideIcon; labelKey: string }> = {
   task_assigned: { icon: ListChecks, labelKey: "triggerTask" },
   mentioned: { icon: AtSign, labelKey: "triggerMention" },
   elaboration: { icon: HelpCircle, labelKey: "triggerElaboration" },
+  elaboration_verified: { icon: BadgeCheck, labelKey: "triggerElaborationVerified" },
+  start_development: { icon: Rocket, labelKey: "triggerStartDevelopment" },
+  yolo_requested: { icon: Zap, labelKey: "triggerYoloRequested" },
   human_instruction: { icon: PenLine, labelKey: "triggerInstruction" },
   resume: { icon: RotateCw, labelKey: "triggerResume" },
 };
@@ -59,10 +80,17 @@ export function TurnBand({
   // isn't in the live snapshot. When present AND it resolves an href, the band
   // shows a deep link to the related task/idea.
   linkedExecution,
+  // The coalesced-away turns folded INTO this (absorbing) turn by wake coalescing —
+  // the contiguous run of `merged` turns that immediately followed it (see the
+  // transcript view's `groupMergedTurns`). When non-empty, the band gains a
+  // collapsed-by-default "merged N events" disclosure listing each one's provenance.
+  // Empty for an ordinary turn and for a standalone merged band.
+  mergedEvents = [],
 }: {
   turn: TurnWithMessagesView;
   agentName: string;
   linkedExecution: ExecutionView | null;
+  mergedEvents?: MergedEvent[];
 }) {
   const t = useTranslations("daemonChat");
 
@@ -76,12 +104,20 @@ export function TurnBand({
   // stopped — structurally quiet like `ended` (no pulse, no spinner, no timer) but
   // labeled distinctly so an abnormal termination never masquerades as a clean end.
   const interrupted = turn.status === "interrupted";
+  // A coalesced-away turn: wake coalescing settled it to `merged` because its wake was
+  // merged into the absorbing turn (the oldest pending turn of the batch). It is a
+  // SETTLED, non-error terminal state that never ran on its own — labeled distinctly so
+  // it never masquerades as a clean "Ended" and never shows the "no transcript" dead-end.
+  const merged = turn.status === "merged";
   // A turn is TERMINAL once it has ended or been interrupted — no more output will come.
+  // `merged` is also settled, but it is intentionally NOT folded in here: it short-circuits
+  // the body ladder below on its own, so the `terminal`-gated relay/empty-instruction
+  // branches never apply to it (they'd imply a turn that should have produced output).
   const terminal = turn.status === "ended" || interrupted;
 
   // Live status label (pending → Queued, running → Running, interrupted →
-  // Interrupted, ended → Ended). One generic "Interrupted" label covers every
-  // `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
+  // Interrupted, merged → Merged, ended → Ended). One generic "Interrupted" label covers
+  // every `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
   const statusLabel =
     turn.status === "running"
       ? t("turnStatusRunning")
@@ -89,7 +125,9 @@ export function TurnBand({
         ? t("turnStatusPending")
         : interrupted
           ? t("turnStatusInterrupted")
-          : t("turnStatusEnded");
+          : merged
+            ? t("turnStatusMerged")
+            : t("turnStatusEnded");
 
   // Drop the synthetic promptText slot (uuid `synthetic:{turnUuid}`) the message-level
   // read folds in for pagination — the prompt is already rendered as its canonical
@@ -219,6 +257,15 @@ export function TurnBand({
             visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
+          ) : merged ? (
+            // A coalesced-away turn never ran on its own — its wake was folded into the
+            // absorbing turn. Present that settled fact honestly (NOT the "no transcript"
+            // dead-end, NOT "no reply received", NOT a relay-drop error): those framings
+            // imply a turn that should have produced output but didn't. Its `promptText`,
+            // when present, still renders above as the merged instruction's body.
+            <p className="text-[12px] italic text-muted-foreground">
+              {t("turnMergedNote")}
+            </p>
           ) : hasRelayError ? (
             // Honest KNOWN-relay-drop state (fix #444 follow-up): the agent replied but the
             // reply could not be uploaded. Same warning-muted band; the localized
@@ -248,7 +295,89 @@ export function TurnBand({
             </p>
           )}
         </div>
+
+        {/* Wake-coalescing: the N-1 turns whose wakes were folded INTO this turn. A
+            collapsed-by-default disclosure (touch/keyboard-activatable — a real button,
+            not a hover affordance) that says "merged N events" and, when expanded, lists
+            each one's provenance so "this turn processed N events at once" is legible
+            without a wall of empty bands. Semantic tokens throughout (light + dark). */}
+        {mergedEvents.length > 0 && (
+          <Collapsible className="mt-3">
+            <CollapsibleTrigger className="group inline-flex items-center gap-1.5 rounded-md text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <GitMerge className="h-3.5 w-3.5" aria-hidden />
+              {t("turnMergedCount", { count: mergedEvents.length })}
+              <ChevronDown
+                className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180"
+                aria-hidden
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2 flex flex-col gap-2.5">
+              {mergedEvents.map((ev) => (
+                <MergedEventRow
+                  key={ev.turn.uuid}
+                  turn={ev.turn}
+                  linkedExecution={ev.linkedExecution}
+                />
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
+    </div>
+  );
+}
+
+// One coalesced-away event inside the absorbing band's expandable "merged N events"
+// section. Reuses the SAME provenance vocabulary as a top-level band — trigger glyph +
+// label, the seq label, the instruction prompt text when present, and the entity deep
+// link when its execution resolves — rendered compact/muted with semantic tokens so it
+// reads as a nested detail, correct in both light and dark themes.
+function MergedEventRow({
+  turn,
+  linkedExecution,
+}: {
+  turn: TurnWithMessagesView;
+  linkedExecution: ExecutionView | null;
+}) {
+  const t = useTranslations("daemonChat");
+
+  const meta = TRIGGER_META[turn.trigger];
+  const Icon = meta?.icon ?? ListChecks;
+  const triggerLabel = meta ? t(meta.labelKey) : t("triggerUnknown");
+
+  const href = linkedExecution ? execHref(linkedExecution) : null;
+  const linkLabel =
+    linkedExecution?.entityType === "idea" ? t("openIdea") : t("openTask");
+
+  const prompt = turn.promptText?.trim() ?? "";
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1 border-l border-border pl-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className="inline-flex items-center gap-1.5">
+          <Icon className="h-3 w-3 text-muted-foreground" aria-hidden />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {triggerLabel}
+          </span>
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+          {t("turnLabel", { seq: turn.seq })}
+        </span>
+        {href && (
+          <Link
+            href={href}
+            className="group inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:text-primary/80"
+          >
+            {linkLabel}
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </Link>
+        )}
+      </div>
+      {prompt.length > 0 && (
+        <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-muted-foreground">
+          {prompt}
+        </p>
+      )}
     </div>
   );
 }

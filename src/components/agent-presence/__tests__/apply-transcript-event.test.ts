@@ -13,6 +13,7 @@ import {
   applyTranscriptEvent,
   mergeTurnPage,
 } from "@/components/agent-presence/chat/daemon-chat";
+import { groupMergedTurns } from "@/components/agent-presence/chat/transcript-view";
 import type {
   TranscriptMessageView,
   TurnWithMessagesView,
@@ -374,5 +375,83 @@ describe("message-level pagination — live append during paging", () => {
       messages: [msg({ uuid: "m2", seq: 2, turnUuid: "t7" })],
     });
     expect(turns[0].messages.map((m) => m.uuid)).toEqual(["m1", "m2"]);
+  });
+});
+
+// ── groupMergedTurns — wake-coalescing collapse grouping (daemon-merged-turn-transcript) ──
+describe("groupMergedTurns", () => {
+  it("collapses a contiguous merged run into the immediately-preceding absorbing turn (one group)", () => {
+    const groups = groupMergedTurns([
+      turn({ uuid: "a", seq: 10, status: "ended" }),
+      turn({ uuid: "m1", seq: 11, status: "merged" }),
+      turn({ uuid: "m2", seq: 12, status: "merged" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].absorbing.uuid).toBe("a");
+    expect(groups[0].merged.map((t) => t.uuid)).toEqual(["m1", "m2"]);
+  });
+
+  it("a leading merged run (absorbing turn outside the window) survives as standalone groups, never dropped or nested", () => {
+    const groups = groupMergedTurns([
+      turn({ uuid: "m1", seq: 5, status: "merged" }),
+      turn({ uuid: "m2", seq: 6, status: "merged" }),
+      turn({ uuid: "e", seq: 7, status: "ended" }),
+    ]);
+    // A merged turn never anchors another → two standalone merged bands + the ended turn.
+    expect(groups.map((g) => g.absorbing.uuid)).toEqual(["m1", "m2", "e"]);
+    expect(groups.every((g) => g.merged.length === 0)).toBe(true);
+  });
+
+  it("starts a fresh group at each non-merged turn (a later batch never attaches to an earlier absorber)", () => {
+    const groups = groupMergedTurns([
+      turn({ uuid: "a", seq: 1, status: "ended" }),
+      turn({ uuid: "m1", seq: 2, status: "merged" }),
+      turn({ uuid: "b", seq: 3, status: "running" }),
+      turn({ uuid: "m2", seq: 4, status: "merged" }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].absorbing.uuid).toBe("a");
+    expect(groups[0].merged.map((t) => t.uuid)).toEqual(["m1"]);
+    expect(groups[1].absorbing.uuid).toBe("b");
+    expect(groups[1].merged.map((t) => t.uuid)).toEqual(["m2"]);
+  });
+
+  it("leaves ordinary (non-merged) turns as their own single-turn groups", () => {
+    const groups = groupMergedTurns([
+      turn({ uuid: "a", seq: 1, status: "ended" }),
+      turn({ uuid: "b", seq: 2, status: "running" }),
+    ]);
+    expect(groups.map((g) => g.absorbing.uuid)).toEqual(["a", "b"]);
+    expect(groups.every((g) => g.merged.length === 0)).toBe(true);
+  });
+});
+
+// ── B1: the emit → applyTranscriptEvent → groupMergedTurns live-convergence seam ──
+// Task 2 emits a `turn_status_changed` event carrying status "merged" for a settled turn.
+// The client folds it in via applyTranscriptEvent; the grouping then collapses it into the
+// absorbing band — WITHOUT a reload. This exercises all three module boundaries in one test.
+describe("live-convergence seam: turn_status_changed(merged) → apply → group", () => {
+  it("a settled turn's status event collapses its band into the absorbing turn, no refetch", () => {
+    // Live pre-settlement snapshot: absorbing turn running, the coalesced-away turn still pending.
+    let turns = [
+      turn({ uuid: "a", seq: 10, status: "running" }),
+      turn({ uuid: "m1", seq: 11, status: "pending" }),
+    ];
+    // Before the event they are TWO independent top-level groups (the pending band shows "Queued").
+    expect(groupMergedTurns(turns)).toHaveLength(2);
+
+    // Task 2's server emit shape: trigger turn_status_changed, turn carries status "merged".
+    turns = applyTranscriptEvent(turns, {
+      trigger: "turn_status_changed",
+      turn: turn({ uuid: "m1", seq: 11, status: "merged" }),
+      messages: [],
+    });
+    expect(turns.find((t) => t.uuid === "m1")?.status).toBe("merged");
+
+    // The seam converges: the now-merged turn folds into the absorbing band — ONE group.
+    const groups = groupMergedTurns(turns);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].absorbing.uuid).toBe("a");
+    expect(groups[0].merged.map((t) => t.uuid)).toEqual(["m1"]);
   });
 });

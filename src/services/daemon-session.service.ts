@@ -1853,13 +1853,35 @@ export async function advanceTurnForWake(params: {
       },
       orderBy: { seq: "asc" },
       take: coalescedCount - 1,
-      select: { uuid: true },
     });
     if (superseded.length > 0) {
       await prisma.daemonSessionTurn.updateMany({
         where: { uuid: { in: superseded.map((t) => t.uuid) } },
         data: { status: MERGED_TURN_STATUS },
       });
+      // ── Live convergence (daemon-merged-turn-transcript) ───────────────────────────────
+      // The settlement above is a raw `updateMany`, so — unlike EVERY other turn transition,
+      // which routes through `advanceTurn` and publishes a `turn_status_changed` event
+      // (see the emit near the top of this file) — it emits NOTHING. A viewer watching the
+      // session live therefore keeps its in-memory copy of these turns stuck at their last
+      // `pending` (`turn_created`) state until a manual refetch re-reads them as `merged`.
+      // Emit one `turn_status_changed` per settled turn on the existing
+      // `transcript:{sessionUuid}` channel so a live viewer's `applyTranscriptEvent` flips
+      // it pending→merged and the front-end collapse rendering applies without a reload. We
+      // just wrote `MERGED_TURN_STATUS` to these rows, so project the view with that status
+      // (avoids a second read). This reuses the existing `TranscriptEvent` shape and
+      // `publishTranscriptEvent` — NO new field, NO migration. `coalescedCount === 1` never
+      // enters this block, so the single-wake path stays byte-identical (no extra emit).
+      for (const row of superseded) {
+        publishTranscriptEvent({
+          companyUuid: params.companyUuid,
+          sessionUuid: session.uuid,
+          trigger: "turn_status_changed",
+          turn: toTurnView({ ...row, status: MERGED_TURN_STATUS }),
+          // No messages changed on a settlement — empty tail (always-array contract).
+          messages: [],
+        });
+      }
     }
   }
 
