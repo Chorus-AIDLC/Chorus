@@ -45,6 +45,11 @@ const bodySchema = z
     sessionId: z.string().min(1),
     backendSessionId: z.string().trim().min(1).max(200).nullish(),
     status: z.enum([...TURN_STATUSES]),
+    // Number of same-session wakes the daemon coalesced into THIS batch (daemon-wake-
+    // coalescing). Optional, defaults to 1 (a single, non-coalesced wake). Meaningful on the
+    // running-transition: the service settles the next `coalescedCount − 1` pending turns of
+    // the session to `merged`. Positive integer; a smaller/fractional value is a client bug.
+    coalescedCount: z.number().int().min(1).default(1),
     entityType: z.enum([...EXECUTION_ENTITY_TYPES]).optional(),
     entityUuid: z.string().min(1).optional(),
     startedAt: z.coerce.date().nullish(),
@@ -106,6 +111,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     sessionId,
     backendSessionId,
     status,
+    coalescedCount,
     entityType,
     entityUuid,
     startedAt,
@@ -131,6 +137,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     sessionId,
     backendSessionId: backendSessionId ?? undefined,
     status,
+    coalescedCount,
     entityType: entityType ?? null,
     entityUuid: entityUuid ?? null,
     startedAt: startedAt ?? undefined,

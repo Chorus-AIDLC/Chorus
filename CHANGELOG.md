@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.16.1] - 2026-08-14
+
+### Added
+- **Multi-agent daemon configs**: One daemon can now serve N independent agents, each with its own credentials and working directory. (#483)
+- **GitHub + Docs resource links**: Added quick links to the GitHub repo and documentation site in settings and onboarding. (#481)
+
+### Changed
+- **Multi-agent project-scope polish**: cwd badge/tooltip, autonomous-wake project-owner pin, and presence count for multi-agent daemon setups. (#484)
+
+### Fixed
+- **@mention wake cwd**: @mention wakes now respect the pinned cwd, and directed wakes spawn in the resolved connection's cwd rather than a stale/random one. (#485)
+- **Daemon chat list empty state**: The conversation list shows a loading skeleton instead of an ambiguous empty state while loading. (#482)
+- **Claude session anchor**: The daemon reports the Claude `--resume` anchor as `backendSessionId`, restoring the Copy session ID action. (#480)
+
+---
+
 ## [0.16.0] - 2026-08-09
 
 ### Added

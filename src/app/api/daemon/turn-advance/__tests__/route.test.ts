@@ -317,6 +317,38 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
   });
 
+  it("threads an explicit coalescedCount through to the service (daemon-wake-coalescing)", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "running", coalescedCount: 4 }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    expect(mockAdvanceTurnForWake.mock.calls[0][0].coalescedCount).toBe(4);
+  });
+
+  it("defaults coalescedCount to 1 when the body omits it (single-wake, byte-identical)", async () => {
+    await POST(postRequest({ connectionUuid, sessionId, status: "running" }), emptyCtx);
+    expect(mockAdvanceTurnForWake.mock.calls[0][0].coalescedCount).toBe(1);
+  });
+
+  it("rejects coalescedCount < 1 at the zod boundary (422, service not called)", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "running", coalescedCount: 0 }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-integer coalescedCount (422)", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, status: "running", coalescedCount: 2.5 }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
   it("rejects a bad status at the zod boundary (422)", async () => {
     const res = await POST(postRequest({ connectionUuid, sessionId, status: "weird" }), emptyCtx);
     expect(res.status).toBe(422);

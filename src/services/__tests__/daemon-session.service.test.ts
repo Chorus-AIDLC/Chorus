@@ -16,6 +16,7 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   daemonTranscriptMessage: {
     findFirst: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock("@/services/daemon-connection.service", () => ({
 import {
   TURN_TRIGGERS,
   TURN_STATUSES,
+  MERGED_TURN_STATUS,
   SESSION_STATUSES,
   TRANSCRIPT_ROLES,
   MAX_TRANSCRIPT_MESSAGES_PER_SESSION,
@@ -166,6 +168,7 @@ beforeEach(() => {
   mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
   mockPrisma.daemonSessionTurn.create.mockResolvedValue(turnRow());
   mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow());
+  mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 0 });
   mockPrisma.daemonTranscriptMessage.findFirst.mockResolvedValue(null);
   mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
   mockPrisma.daemonTranscriptMessage.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) =>
@@ -212,6 +215,13 @@ describe("constants", () => {
 
   it("TURN_STATUSES are the strict forward lifecycle pending/running/ended|interrupted", () => {
     expect([...TURN_STATUSES]).toEqual(["pending", "running", "ended", "interrupted"]);
+  });
+
+  it("MERGED_TURN_STATUS is 'merged' and is a SERVER-ONLY settlement status — NOT in the daemon-reportable TURN_STATUSES", () => {
+    // A coalesced-away pending turn is settled to this terminal status by the server; the
+    // daemon never reports it, so it must stay out of the turn-advance lifecycle enum.
+    expect(MERGED_TURN_STATUS).toBe("merged");
+    expect([...TURN_STATUSES]).not.toContain(MERGED_TURN_STATUS);
   });
 
   it("SESSION_STATUSES are active/ended", () => {
@@ -1016,6 +1026,21 @@ describe("getSessionTurns", () => {
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
     const result = await getSessionTurns({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
     expect(result).toEqual([]);
+  });
+
+  it("renders a 'merged' turn (coalesced-away) without error — a settled, non-error status passes through toTurnView", async () => {
+    // AC: a server-settled `merged` turn must read back cleanly alongside ordinary turns —
+    // TurnView.status is a free string, so the read never rejects it as unknown/error.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "t1", seq: 1, status: "ended" }),
+      turnRow({ uuid: "t2", seq: 2, status: "merged" }),
+    ]);
+    const result = await getSessionTurns({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
+    expect(result?.map((t) => ({ uuid: t.uuid, status: t.status }))).toEqual([
+      { uuid: "t1", status: "ended" },
+      { uuid: "t2", status: "merged" },
+    ]);
   });
 
   it("PROPAGATES a query error (read, does not swallow)", async () => {
@@ -2243,6 +2268,167 @@ describe("advanceTurnForWake", () => {
     });
     expect(res).toMatchObject({ ok: false, reason: "invalid_transition", from: "ended", to: "running" });
     expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+});
+
+// ===== advanceTurnForWake — coalesced-away pending-turn settlement (daemon-wake-coalescing) =====
+describe("advanceTurnForWake — coalescedCount settlement of superseded pending turns", () => {
+  // Set up a legal pending→running advance where the OLDEST pending turn resolves at `seq`
+  // (the settlement filter needs the running turn's seq).
+  function runningTransition(runningSeq = 10) {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    // findFirst resolves the oldest pending turn by status — now carrying its seq.
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: turnUuid, seq: runningSeq });
+    // advanceTurn chokepoint lookups for a legal pending→running write.
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({ uuid: turnUuid, sessionUuid, status: "pending" });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "running", seq: runningSeq }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+  }
+
+  it("resolves the running turn's seq (findFirst select includes seq) so the settlement can filter seq > X", async () => {
+    runningTransition(10);
+    await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running", coalescedCount: 2 });
+    // The FROM-status resolve must select seq (the settlement's seq>X anchor).
+    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].select).toEqual({ uuid: true, seq: true });
+  });
+
+  it("on →running with coalescedCount=N, settles the next N-1 pending turns of the SAME session (by ascending seq, seq > X) to 'merged'", async () => {
+    runningTransition(10);
+    // Full rows (not just uuid) so the live-convergence emit can project each via toTurnView.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ uuid: "turn-2", seq: 11, status: "pending" }),
+      turnRow({ uuid: "turn-3", seq: 12, status: "pending" }),
+    ]);
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "running",
+      coalescedCount: 3,
+    });
+    expect(res).toMatchObject({ ok: true });
+
+    // The N-1 coalesced-away turns are the next PENDING ones by ascending seq, seq > X(=10), capped at N-1(=2).
+    const findArg = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(findArg.where).toEqual({ sessionUuid, status: "pending", seq: { gt: 10 } });
+    expect(findArg.orderBy).toEqual({ seq: "asc" });
+    expect(findArg.take).toBe(2);
+
+    // They are settled to the terminal 'merged' status by uuid — nothing else touched.
+    expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
+      where: { uuid: { in: ["turn-2", "turn-3"] } },
+      data: { status: MERGED_TURN_STATUS },
+    });
+    expect(MERGED_TURN_STATUS).toBe("merged");
+
+    // Live convergence: exactly N-1 turn_status_changed events carry the settled turns as
+    // `merged`, so a live viewer converges without a refetch. (The running-transition emit
+    // is separate and carries status "running", not "merged".)
+    const mergedEmits = mockEventBus.emit.mock.calls.filter(
+      ([, payload]) => payload?.trigger === "turn_status_changed" && payload?.turn?.status === MERGED_TURN_STATUS,
+    );
+    expect(mergedEmits).toHaveLength(2);
+    expect(mergedEmits.map(([, p]) => p.turn.uuid).sort()).toEqual(["turn-2", "turn-3"]);
+    // Emitted on the per-session transcript channel with an empty message tail.
+    for (const [channel, payload] of mergedEmits) {
+      expect(channel).toBe(`transcript:${sessionUuid}`);
+      expect(payload.messages).toEqual([]);
+      expect(payload.companyUuid).toBe(companyUuid);
+    }
+  });
+
+  it("caps the settlement at N-1: a pending turn beyond the first N (arrived after the drain) is NOT selected and survives as pending", async () => {
+    runningTransition(10);
+    // coalescedCount=2 → only the single (N-1) oldest pending tail turn is the coalesced batch;
+    // the `take: 1` cap guarantees any later-arriving higher-seq turn is never selected.
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([turnRow({ uuid: "turn-2", seq: 11, status: "pending" })]);
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "running",
+      coalescedCount: 2,
+    });
+    expect(res).toMatchObject({ ok: true });
+
+    const findArg = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
+    expect(findArg.take).toBe(1);
+    expect(findArg.where.seq).toEqual({ gt: 10 });
+    expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
+      where: { uuid: { in: ["turn-2"] } },
+      data: { status: MERGED_TURN_STATUS },
+    });
+  });
+
+  it("coalescedCount=1 (default, omitted) settles NOTHING — no settlement query, no updateMany, other pending turns untouched", async () => {
+    runningTransition(10);
+    const res = await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running" });
+    expect(res).toMatchObject({ ok: true });
+    // Only the running-transition ran; no coalesced-settlement read or write.
+    expect(mockPrisma.daemonSessionTurn.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("explicit coalescedCount=1 also settles nothing (byte-identical to the pre-coalescing single-wake path)", async () => {
+    runningTransition(10);
+    await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running", coalescedCount: 1 });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("coalescedCount=1 publishes ZERO merged-settlement events (only the running-transition emit fires)", async () => {
+    runningTransition(10);
+    await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running", coalescedCount: 1 });
+    // No turn_status_changed event carries a `merged` turn on the single-wake path.
+    const mergedEmits = mockEventBus.emit.mock.calls.filter(
+      ([, payload]) => payload?.turn?.status === MERGED_TURN_STATUS,
+    );
+    expect(mergedEmits).toHaveLength(0);
+    // The running-transition itself still emits exactly once (its turn is "running").
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit.mock.calls[0][1].turn.status).toBe("running");
+  });
+
+  it("settlement is bound to the RUNNING transition — a terminal edge (→ended) with coalescedCount>1 settles nothing", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: turnUuid, seq: 10 });
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({ uuid: turnUuid, sessionUuid, status: "running" });
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "ended" }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "ended", coalescedCount: 3 });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does NOT settle when the running-transition itself fails (invalid_transition) — no half-applied merge", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: turnUuid, seq: 10 });
+    // The resolved turn is already `running`, so advanceTurn rejects pending→running.
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({ uuid: turnUuid, sessionUuid, status: "running" });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "running",
+      coalescedCount: 3,
+    });
+    expect(res.ok).toBe(false);
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the updateMany when there are no coalesced-away pending turns to settle (settlement query returns empty)", async () => {
+    runningTransition(10);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+
+    await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running", coalescedCount: 3 });
+    // The settlement read still ran once, but with nothing to settle no write is issued.
+    expect(mockPrisma.daemonSessionTurn.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
   });
 });
 
