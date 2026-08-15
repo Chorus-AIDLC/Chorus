@@ -127,6 +127,55 @@ describe("TurnBand interrupted presentation", () => {
   });
 });
 
+describe("TurnBand merged (wake-coalescing) presentation", () => {
+  it("labels a merged turn 'Merged', never 'Ended'", () => {
+    renderBand(turn({ status: "merged" }));
+    expect(screen.getByText("Merged")).toBeTruthy();
+    expect(screen.queryByText("Ended")).toBeNull();
+  });
+
+  it("shows the neutral merged note, not the 'no transcript retained' dead-end", () => {
+    renderBand(turn({ status: "merged", messages: [] }));
+    expect(screen.getByText("Merged into a single coalesced turn.")).toBeTruthy();
+    expect(screen.queryByText("No transcript retained for this turn.")).toBeNull();
+  });
+
+  it("a merged human_instruction turn shows the merged note, not 'no reply received'", () => {
+    // Guard: a coalesced-away instruction turn must NOT read as "ended without a reply".
+    renderBand(
+      turn({
+        status: "merged",
+        trigger: "human_instruction",
+        promptText: "please also check the docs",
+        messages: [],
+      }),
+    );
+    expect(screen.getByText("Merged into a single coalesced turn.")).toBeTruthy();
+    expect(screen.queryByText("No reply was received from the agent on this turn.")).toBeNull();
+    // Its instruction body still renders above.
+    expect(screen.getByText("please also check the docs")).toBeTruthy();
+  });
+
+  it("renders as a quiet settled state: no spinner, no running pulse", () => {
+    const { container } = renderBand(turn({ status: "merged" }));
+    expect(container.querySelector(".motion-safe\\:animate-spin")).toBeNull();
+    expect(container.querySelector(".motion-safe\\:animate-pulse")).toBeNull();
+  });
+});
+
+describe("TurnBand trigger vocabulary (all 8 triggers mapped)", () => {
+  // A merged event can carry any trigger; none should fall to the generic "Turn" fallback.
+  it.each([
+    ["elaboration_verified", "Verified"],
+    ["start_development", "Develop"],
+    ["yolo_requested", "Yolo"],
+  ])("maps trigger %s to its own label, not the 'Turn' fallback", (trigger, label) => {
+    renderBand(turn({ status: "ended", trigger }));
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.queryByText("Turn")).toBeNull();
+  });
+});
+
 describe("TurnBand empty-terminal instruction (fix #444)", () => {
   const emptyInstruction = (overrides: Partial<TurnWithMessagesView> = {}) =>
     turn({

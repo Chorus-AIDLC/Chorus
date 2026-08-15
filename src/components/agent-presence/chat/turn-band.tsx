@@ -25,12 +25,15 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 import {
   AtSign,
+  BadgeCheck,
   ExternalLink,
   HelpCircle,
   ListChecks,
   Loader2,
   PenLine,
+  Rocket,
   RotateCw,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +50,9 @@ const TRIGGER_META: Record<string, { icon: LucideIcon; labelKey: string }> = {
   task_assigned: { icon: ListChecks, labelKey: "triggerTask" },
   mentioned: { icon: AtSign, labelKey: "triggerMention" },
   elaboration: { icon: HelpCircle, labelKey: "triggerElaboration" },
+  elaboration_verified: { icon: BadgeCheck, labelKey: "triggerElaborationVerified" },
+  start_development: { icon: Rocket, labelKey: "triggerStartDevelopment" },
+  yolo_requested: { icon: Zap, labelKey: "triggerYoloRequested" },
   human_instruction: { icon: PenLine, labelKey: "triggerInstruction" },
   resume: { icon: RotateCw, labelKey: "triggerResume" },
 };
@@ -76,12 +82,17 @@ export function TurnBand({
   // stopped — structurally quiet like `ended` (no pulse, no spinner, no timer) but
   // labeled distinctly so an abnormal termination never masquerades as a clean end.
   const interrupted = turn.status === "interrupted";
+  // A coalesced-away turn: wake coalescing settled it to `merged` because its wake was
+  // merged into the absorbing turn (the oldest pending turn of the batch). It is a
+  // SETTLED, non-error terminal state that never ran on its own — labeled distinctly so
+  // it never masquerades as a clean "Ended" and never shows the "no transcript" dead-end.
+  const merged = turn.status === "merged";
   // A turn is TERMINAL once it has ended or been interrupted — no more output will come.
   const terminal = turn.status === "ended" || interrupted;
 
   // Live status label (pending → Queued, running → Running, interrupted →
-  // Interrupted, ended → Ended). One generic "Interrupted" label covers every
-  // `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
+  // Interrupted, merged → Merged, ended → Ended). One generic "Interrupted" label covers
+  // every `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
   const statusLabel =
     turn.status === "running"
       ? t("turnStatusRunning")
@@ -89,7 +100,9 @@ export function TurnBand({
         ? t("turnStatusPending")
         : interrupted
           ? t("turnStatusInterrupted")
-          : t("turnStatusEnded");
+          : merged
+            ? t("turnStatusMerged")
+            : t("turnStatusEnded");
 
   // Drop the synthetic promptText slot (uuid `synthetic:{turnUuid}`) the message-level
   // read folds in for pagination — the prompt is already rendered as its canonical
@@ -219,6 +232,15 @@ export function TurnBand({
             visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
+          ) : merged ? (
+            // A coalesced-away turn never ran on its own — its wake was folded into the
+            // absorbing turn. Present that settled fact honestly (NOT the "no transcript"
+            // dead-end, NOT "no reply received", NOT a relay-drop error): those framings
+            // imply a turn that should have produced output but didn't. Its `promptText`,
+            // when present, still renders above as the merged instruction's body.
+            <p className="text-[12px] italic text-muted-foreground">
+              {t("turnMergedNote")}
+            </p>
           ) : hasRelayError ? (
             // Honest KNOWN-relay-drop state (fix #444 follow-up): the agent replied but the
             // reply could not be uploaded. Same warning-muted band; the localized
