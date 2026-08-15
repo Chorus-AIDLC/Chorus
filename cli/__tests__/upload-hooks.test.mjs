@@ -349,11 +349,16 @@ describe("execution upload end-to-end through router/queue/waker", () => {
       fetchImpl,
     });
 
-    const queue = new WakeQueue({ logger: silent });
     const spawner = {
       wake: vi.fn(async () => ({ sessionId: "sid", exitCode: 0, isNew: true })),
     };
     waker = makeWaker(hooks, { spawner }).waker;
+    // The queue now coalesces DATA items and runs them via runBatch → waker.wakeBatch
+    // (add-daemon-wake-coalescing); wire it exactly as daemon.mjs does.
+    const queue = new WakeQueue({
+      logger: silent,
+      runBatch: (key, items) => waker.wakeBatch(items.map((i) => i.notification), key, items[0].attribution),
+    });
     const mcpClient = { callTool: vi.fn(async () => ({ notifications: [TASK_NOTIF] })) };
     const router = new EventRouter({
       mcpClient,

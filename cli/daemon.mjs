@@ -8,6 +8,12 @@
 // so a human can `claude --resume <idea-uuid>`); new-vs-resume is decided by
 // probing the on-disk transcript — there is no persisted session-id map.
 //
+// Wake coalescing (add-daemon-wake-coalescing): the WakeQueue is PER-CONNECTION
+// and serializes per DIRECT idea (= per session). Wakes that pile up on the same
+// key while a turn runs are drained together and delivered as ONE batch — a
+// single runBatch → waker.wakeBatch → one `claude --resume` turn — so N
+// same-session queued wakes coalesce into one turn, never N sequential turns.
+//
 // Connection / session / transcript reporting to the server is intentionally
 // NOT done here — the no-op UploadHooks reserve those seams for the derived
 // observability idea.
@@ -147,10 +153,7 @@ export function buildDaemon(creds, deps = {}) {
   // passed through so the Codex backend can export the daemon key into the woken
   // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
   const spawner = deps.spawner ?? selectSpawner(agentType, { logger, permissionMode, creds });
-  // The WakeQueue serializes per DIRECT idea (keyFor's key). It is shared across all
-  // path-connections: serialization-per-idea still holds, and maxConcurrency caps the
-  // whole process's in-flight wakes rather than per-cwd — the right global budget.
-  const queue = new WakeQueue({ maxConcurrency: deps.maxConcurrency ?? 4, logger });
+  const maxConcurrency = deps.maxConcurrency ?? 4;
 
   // ===== Multi-path: the SET of cwds this daemon serves (T3 — FR-5) =====
   // Each declared path becomes one INDEPENDENT connection (own SSE self-report + own
@@ -338,6 +341,11 @@ export function buildDaemon(creds, deps = {}) {
         selectWaker(notification).markQueued(notification, key, attribution),
       wake: (notification, key, attribution) =>
         selectWaker(notification).wake(notification, key, attribution),
+      // Coalesced batch (add-daemon-wake-coalescing): every item shares the key → the same
+      // session → the same cwd (a session's cwd is pinned), so route the whole batch to the
+      // waker selected by the first item's runtimeCwd.
+      wakeBatch: (notifications, key, attribution) =>
+        selectWaker(notifications[0]).wakeBatch(notifications, key, attribution),
       markInterrupting(entityType, entityUuid) {
         for (const candidate of runtimeWakers.values()) {
           if (candidate.executions.has(`${entityType}:${entityUuid}`)) {
@@ -351,6 +359,19 @@ export function buildDaemon(creds, deps = {}) {
       buildExecutionSnapshot: () =>
         [...runtimeWakers.values()].flatMap((candidate) => candidate.buildExecutionSnapshot()),
     };
+    // The WakeQueue serializes per DIRECT idea (keyFor's key) and coalesces same-key pending
+    // wakes into one batch (add-daemon-wake-coalescing §C1/§C4). It is PER-CONNECTION so the
+    // batch runs on THIS connection's own waker facade — the runBatch drains the per-key data
+    // items { notification, attribution } and hands the whole batch to waker.wakeBatch (all
+    // items on one key share the session anchor, so items[0].attribution is the batch
+    // attribution). maxConcurrency caps this connection's in-flight batches.
+    const queue = new WakeQueue({
+      maxConcurrency,
+      logger,
+      runBatch: (key, items) =>
+        waker.wakeBatch(items.map((i) => i.notification), key, items[0].attribution),
+    });
+
     // The router reads THIS connection's own uuid lazily (same source the control handler
     // uses) to suppress a DIRECTED (pinned) wake stamped for a different connection
     // (fix-pinned-wake-directed-delivery, T2). Null until the SSE handshake assigns it — a
@@ -483,6 +504,7 @@ export function buildDaemon(creds, deps = {}) {
       connectionState,
       waker,
       runtimeWakers,
+      queue,
       router,
       backfill,
       sseListener,
@@ -501,9 +523,11 @@ export function buildDaemon(creds, deps = {}) {
     mcpClient,
     lineage,
     spawner,
-    queue,
     // Back-compat single-connection aliases (the common single-path case). The full
-    // set is exposed as `connections` for multi-path inspection/tests.
+    // set is exposed as `connections` for multi-path inspection/tests. The WakeQueue is
+    // now per-connection (add-daemon-wake-coalescing) so its runBatch can run on the right
+    // connection's waker facade; the primary connection's queue is aliased here.
+    queue: primary.queue,
     waker: primary.waker,
     router: primary.router,
     sseListener: primary.sseListener,
@@ -526,8 +550,10 @@ export function buildDaemon(creds, deps = {}) {
       //    and latch the queue (queued-but-unstarted wakes never spawn).
       for (const c of connections) {
         c.sseListener.disconnect?.();
+        // Latch each connection's OWN queue (queues are per-connection now — add-daemon-
+        // wake-coalescing) so queued-but-unstarted wakes never spawn.
+        c.queue?.stop?.();
       }
-      queue.stop();
       // 2. Interrupt every in-flight wake subprocess via the shared kill escalation.
       //    Each wake's exit path — seeing shuttingDown — reports its turn
       //    interrupted(shutdown) and suppresses the execution crash report.
@@ -538,7 +564,11 @@ export function buildDaemon(creds, deps = {}) {
       //    the kill escalation window plus a hard 5s cap for the exit path's REST
       //    reports. A wake that outlives this does NOT hang the shutdown — its
       //    orphaned turn is the server-side offline reconcile's job (the backstop).
-      const drained = await queue.drain(sigintTimeoutMs + 5_000);
+      //    Drain every connection's queue in parallel; `drained` is true only if all did.
+      const drainResults = await Promise.all(
+        connections.map((c) => c.queue?.drain?.(sigintTimeoutMs + 5_000) ?? true),
+      );
+      const drained = drainResults.every(Boolean);
       if (!drained) {
         logger.warn(
           "[Chorus] shutdown: in-flight wake(s) did not finish within the bound — exiting anyway (server reconcile will finalize their turns)",

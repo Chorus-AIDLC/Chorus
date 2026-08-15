@@ -52,7 +52,7 @@ export const TURN_INTERRUPT_REASONS = new Set([
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>}
+ * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null, coalescedCount?: number }) => Promise<void>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -76,6 +76,7 @@ export function createTurnReporter(opts) {
     transcriptRelayError,
     usage,
     backendSessionId,
+    coalescedCount,
   }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
@@ -111,6 +112,9 @@ export function createTurnReporter(opts) {
       // only on a terminal edge. No validation here — usage is an opaque nested object.
       usage,
       backendSessionId,
+      // Coalesced-wake count (add-daemon-wake-coalescing): threaded straight through; the
+      // client sends it only on the → running edge and only when > 1 (a single wake omits it).
+      coalescedCount,
     });
   };
 }

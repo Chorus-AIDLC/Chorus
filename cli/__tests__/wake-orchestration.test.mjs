@@ -3,7 +3,7 @@
 // failure isolation, and the no-op upload hooks (cli-daemon spec
 // "Task-dispatch wake" + "Reserved upload hooks").
 import { describe, it, expect, vi } from "vitest";
-import { buildPrompt, WAKE_ACTIONS, HEADLESS_PREAMBLE } from "../prompts.mjs";
+import { buildPrompt, buildBatchPrompt, WAKE_ACTIONS, HEADLESS_PREAMBLE } from "../prompts.mjs";
 import { createNoopUploadHooks } from "../upload-hooks.mjs";
 import { Waker } from "../waker.mjs";
 import { EventRouter } from "../event-router.mjs";
@@ -345,6 +345,8 @@ function makeWaker(overrides = {}) {
   const isNewSessionFn = overrides.isNewSessionFn ?? vi.fn(() => true);
   // Interrupt reporter (子3): injected spy so tests assert user-vs-crash reporting.
   const reportInterrupt = overrides.reportInterrupt ?? vi.fn(async () => {});
+  // Turn reporter (子1 / coalescing): injected spy so tests can assert coalescedCount.
+  const advanceTurn = overrides.advanceTurn ?? vi.fn(async () => {});
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage,
@@ -355,8 +357,9 @@ function makeWaker(overrides = {}) {
     writeMcpConfigFn,
     isNewSessionFn,
     reportInterrupt,
+    advanceTurn,
   });
-  return { waker, spawner, lineage, hooks, writeMcpConfigFn, isNewSessionFn, reportInterrupt };
+  return { waker, spawner, lineage, hooks, writeMcpConfigFn, isNewSessionFn, reportInterrupt, advanceTurn };
 }
 
 describe("Waker.wake full loop", () => {
@@ -509,6 +512,153 @@ describe("Waker.wake full loop", () => {
     expect(snap).toHaveLength(1);
     expect(snap[0].rootIdeaUuid).toBe(ROOT_IDEA);
     expect(snap[0].status).toBe("queued");
+  });
+});
+
+describe("Waker.wakeBatch (coalescing §C3)", () => {
+  // Two @mentions on DISTINCT child tasks that both resolve to idea D — so neither item
+  // equals the session anchor idea:D. The reviewer NOTE case: the anchor is SYNTHESIZED.
+  const ATTR = { key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA };
+  const MENTION_A = { ...TASK_NOTIF, uuid: "a", action: "mentioned", entityType: "task", entityUuid: "task-a", message: "look at A" };
+  const MENTION_B = { ...TASK_NOTIF, uuid: "b", action: "mentioned", entityType: "task", entityUuid: "task-b", message: "look at B" };
+  // A synthetic control-channel resume (子3): entity-generic, NEVER a persisted notification, so
+  // it creates NO server pending turn — it must NOT count toward coalescedCount (BLOCKER-2), or
+  // the server's take:(coalescedCount-1) settlement over-reaches and drops a separate pending turn.
+  const RESUME = { action: "resource_resumed", entityType: "task", entityUuid: "task-r" };
+
+  // A spawner that fires onChild (where the → running turn-advance hangs off) then exits clean.
+  const spawnerWithChild = () => ({
+    wake: vi.fn(async ({ sessionId, onChild, onMessage }) => {
+      onChild?.({ pid: 1, on: () => {}, kill: () => {} });
+      onMessage?.({ type: "system", session_id: sessionId });
+      return { sessionId, exitCode: 0, isNew: true };
+    }),
+  });
+
+  it("spawns exactly ONE subprocess for N notifications, with the prompt built via buildBatchPrompt", async () => {
+    const { waker, spawner } = makeWaker();
+    await waker.wakeBatch([MENTION_A, MENTION_B], ATTR.key, ATTR);
+
+    expect(spawner.wake).toHaveBeenCalledTimes(1); // ONE subprocess for the whole batch
+    const args = spawner.wake.mock.calls[0][0];
+    // The merged prompt is exactly buildBatchPrompt's output — backlog preamble + both blocks.
+    expect(args.prompt).toBe(buildBatchPrompt([MENTION_A, MENTION_B]));
+    expect(args.prompt).toContain("task-a");
+    expect(args.prompt).toContain("task-b");
+    expect(args.prompt).toContain("queued Chorus events");
+    // The session anchor = the direct idea (one --resume turn).
+    expect(args.sessionId).toBe(DIRECT_IDEA);
+  });
+
+  it("emits ONE running row synthesized as idea:<directIdeaUuid> (NOT one of the merged items) and drops the merged resources", async () => {
+    let snapshotDuringRun;
+    const { waker } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId }) => {
+          snapshotDuringRun = waker.buildExecutionSnapshot();
+          return { sessionId, exitCode: 0, isNew: true };
+        }),
+      },
+    });
+    // The router marks each merged resource queued before enqueue — replicate that.
+    waker.markQueued(MENTION_A, ATTR.key, ATTR);
+    waker.markQueued(MENTION_B, ATTR.key, ATTR);
+    expect(waker.buildExecutionSnapshot().map((e) => e.entityUuid).sort()).toEqual(["task-a", "task-b"]);
+
+    await waker.wakeBatch([MENTION_A, MENTION_B], ATTR.key, ATTR);
+
+    // During the run: exactly ONE running row = the SYNTHESIZED idea anchor — even though
+    // neither merged item is idea:D.
+    expect(snapshotDuringRun).toHaveLength(1);
+    expect(snapshotDuringRun[0]).toMatchObject({
+      entityType: "idea",
+      entityUuid: DIRECT_IDEA,
+      status: "running",
+      rootIdeaUuid: ROOT_IDEA,
+    });
+    // The merged-away resources are ABSENT so reconcileSnapshot ends their queued rows.
+    const uuids = snapshotDuringRun.map((e) => e.entityUuid);
+    expect(uuids).not.toContain("task-a");
+    expect(uuids).not.toContain("task-b");
+    // After the wake everything is gone (the anchor leaves the active set too).
+    expect(waker.buildExecutionSnapshot()).toHaveLength(0);
+  });
+
+  it("advances the ONE running turn keyed by sessionId and reports coalescedCount = N on the running edge", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
+    await waker.wakeBatch([MENTION_A, MENTION_B], ATTR.key, ATTR);
+
+    // Exactly one turn: running then ended.
+    expect(advanceTurn.mock.calls.map((c) => c[0].status)).toEqual(["running", "ended"]);
+    const running = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    expect(running.sessionId).toBe(DIRECT_IDEA);
+    expect(running.coalescedCount).toBe(2);
+    // The terminal edge carries no coalescedCount (it rides only the running-transition).
+    expect(advanceTurn.mock.calls.find((c) => c[0].status === "ended")[0]).not.toHaveProperty("coalescedCount");
+  });
+
+  it("EXCLUDES a synthetic resource_resumed from coalescedCount (no server pending turn): [resource_resumed, mentionA, mentionB] → 2, not 3", async () => {
+    // BLOCKER-2: the batch has 3 physical items but only 2 are TURN-BACKED (the mentions each
+    // created a server pending turn; resource_resumed did not). The wire count must be 2 so the
+    // server settles (2 − 1) = 1 same-session pending turn — never over-reaching into a
+    // genuinely-separate post-drain turn (which it would silently mark `merged` and drop).
+    const advanceTurn = vi.fn(async () => {});
+    const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
+    await waker.wakeBatch([RESUME, MENTION_A, MENTION_B], ATTR.key, ATTR);
+
+    const running = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    expect(running.coalescedCount).toBe(2); // NOT 3
+  });
+
+  it("a batch that reduces to ONE turn-backed item after excluding resource_resumed reports 1 → omitted from the wire (no settlement)", async () => {
+    // [resource_resumed, mention] → 1 turn-backed item → default 1, which the client omits from
+    // the running-edge payload, so the server runs no settlement (default window of 1). The
+    // batch still runs as ONE coalesced turn: a physical batch of 2 → the synthesized idea anchor.
+    const advanceTurn = vi.fn(async () => {});
+    const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
+    await waker.wakeBatch([RESUME, MENTION_A], ATTR.key, ATTR);
+
+    const running = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    expect(running).not.toHaveProperty("coalescedCount"); // 1 → omitted on the wire
+    // Anchor synthesis still keys off the PHYSICAL batch size (2 > 1) — the fix touched only
+    // the wire count, not the coalescing/anchor design.
+    expect(running.entityType).toBe("idea");
+    expect(running.entityUuid).toBe(DIRECT_IDEA);
+  });
+
+  it("a single-item batch is anchored on the item's OWN entity (ad-hoc: no idea synthesis)", async () => {
+    // A batch of one keeps the item's own entity as the running row (byte-identical to the
+    // pre-coalescing single wake) — the idea-anchor synthesis is a coalesced-only behavior.
+    let snapshotDuringRun;
+    const { waker } = makeWaker({
+      spawner: {
+        wake: vi.fn(async ({ sessionId }) => {
+          snapshotDuringRun = waker.buildExecutionSnapshot();
+          return { sessionId, exitCode: 0, isNew: true };
+        }),
+      },
+    });
+    await waker.wakeBatch([MENTION_A], ATTR.key, ATTR);
+    expect(snapshotDuringRun).toHaveLength(1);
+    expect(snapshotDuringRun[0].entityUuid).toBe("task-a"); // the item, NOT idea:D
+  });
+
+  it("wake(n) is a thin wakeBatch([n]) — single-wake prompt + turn accounting unchanged, coalescedCount omitted", async () => {
+    const advanceTurn = vi.fn(async () => {});
+    const { waker, spawner } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    // ONE subprocess; prompt byte-identical to buildPrompt(n) (== buildBatchPrompt([n])).
+    expect(spawner.wake).toHaveBeenCalledTimes(1);
+    expect(spawner.wake.mock.calls[0][0].prompt).toBe(buildPrompt(TASK_NOTIF));
+    // The running advance carries the item's OWN entity (task-1), NOT the idea anchor, and
+    // NO coalescedCount (a single wake reports 1, which the client omits).
+    const running = advanceTurn.mock.calls.find((c) => c[0].status === "running")[0];
+    expect(running.entityType).toBe("task");
+    expect(running.entityUuid).toBe("task-1");
+    expect(running).not.toHaveProperty("coalescedCount");
   });
 });
 
@@ -757,14 +907,14 @@ describe("EventRouter dispatch", () => {
     return { router, mcpClient };
   }
 
-  it("routes a task_assigned notification onto the queue under its direct-idea key", async () => {
+  it("routes a task_assigned notification onto the queue under its direct-idea key, as a DATA payload", async () => {
     const enqueued = [];
-    const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
+    const queue = { enqueue: (key, item) => enqueued.push({ key, item }) };
     const attribution = { key: `idea:${DIRECT_IDEA}`, rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA };
     const waker = {
       keyFor: vi.fn(async () => attribution),
       markQueued: vi.fn(),
-      wake: vi.fn(async () => {}),
+      wakeBatch: vi.fn(async () => {}),
     };
     const { router } = makeRouter([TASK_NOTIF], waker, queue);
 
@@ -775,9 +925,10 @@ describe("EventRouter dispatch", () => {
     expect(enqueued[0].key).toBe(`idea:${DIRECT_IDEA}`);
     // markQueued got the resolved attribution (so the snapshot can report the root)
     expect(waker.markQueued).toHaveBeenCalledWith(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attribution);
-    // running the enqueued task calls waker.wake with the notification + key + attribution
-    await enqueued[0].task();
-    expect(waker.wake).toHaveBeenCalledWith(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attribution);
+    // The enqueued value is now the opaque DATA item { notification, attribution } — NOT a
+    // thunk. The queue coalesces same-key items and hands the batch to runBatch → wakeBatch
+    // (wired in daemon.mjs); the router no longer invokes the waker directly.
+    expect(enqueued[0].item).toEqual({ notification: TASK_NOTIF, attribution });
   });
 
   it("ignores non-new_notification events and non-wake actions", async () => {
@@ -812,34 +963,122 @@ describe("EventRouter dispatch", () => {
     expect(seen.has("notif-1")).toBe(true);
   });
 
-  it("two same-direct-idea notifications do not spawn concurrently (serialized via the real queue)", async () => {
-    const queue = new WakeQueue({ logger: silent });
-    let concurrent = 0;
-    let maxConcurrent = 0;
+  it("coalesces same-key dispatches that pile up during a running batch into ONE wakeBatch → ONE subprocess", async () => {
+    // Router → queue → waker.wakeBatch integration (add-daemon-wake-coalescing §C1/§C4).
+    // The first batch is held open on a gate so later same-key dispatches pile up; when the
+    // slot frees they drain together into ONE coalesced batch (one subprocess, one prompt).
+    let started = 0;
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const prompts = [];
     const spawner = {
-      wake: vi.fn(async ({ sessionId }) => {
-        concurrent++;
-        maxConcurrent = Math.max(maxConcurrent, concurrent);
-        await new Promise((r) => setTimeout(r, 5));
-        concurrent--;
+      wake: vi.fn(async ({ sessionId, prompt, onChild }) => {
+        started++;
+        prompts.push(prompt);
+        onChild?.({ pid: started, on: () => {}, kill: () => {} }); // fires the → running turn-advance
+        if (started === 1) await gate; // hold batch #1 open
         return { sessionId, exitCode: 0, isNew: true };
       }),
     };
-    // Both notifications resolve to the SAME direct idea → same key → serialized.
+    const advanceTurn = vi.fn(async () => {});
+    // All notifications resolve to the SAME direct idea → same key.
+    const { waker } = makeWaker({
+      spawner,
+      advanceTurn,
+      lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
+    });
+    const queue = new WakeQueue({
+      logger: silent,
+      runBatch: (key, items) => waker.wakeBatch(items.map((i) => i.notification), key, items[0].attribution),
+    });
+    const notifA = { ...TASK_NOTIF, uuid: "a", entityUuid: "task-a" };
+    const notifB = { ...TASK_NOTIF, uuid: "b", entityUuid: "task-b" };
+    const notifC = { ...TASK_NOTIF, uuid: "c", entityUuid: "task-c" };
+    const { router } = makeRouter([notifA, notifB, notifC], waker, queue);
+
+    router.dispatch({ type: "new_notification", notificationUuid: "a" });
+    await new Promise((r) => setTimeout(r, 15)); // batch [a] is running, hanging on the gate
+    expect(spawner.wake).toHaveBeenCalledTimes(1);
+
+    // Two more same-key dispatches while [a] runs → they MUST coalesce into ONE batch.
+    router.dispatch({ type: "new_notification", notificationUuid: "b" });
+    router.dispatch({ type: "new_notification", notificationUuid: "c" });
+    await new Promise((r) => setTimeout(r, 15));
+    expect(spawner.wake).toHaveBeenCalledTimes(1); // still serialized — nothing new spawned
+
+    release();
+    await new Promise((r) => setTimeout(r, 15));
+    expect(spawner.wake).toHaveBeenCalledTimes(2); // [a], then the coalesced [b,c] — ONE more
+
+    // The coalesced batch's single prompt merged BOTH b and c under one backlog preamble.
+    const coalesced = prompts[1];
+    expect(coalesced).toContain("task-b");
+    expect(coalesced).toContain("task-c");
+    expect(coalesced).toContain("queued Chorus events");
+    // coalescedCount = 2 is reported on the coalesced batch's running edge (single wakes omit it).
+    const runningAdvances = advanceTurn.mock.calls.filter((c) => c[0].status === "running");
+    expect(runningAdvances.some((c) => c[0].coalescedCount === 2)).toBe(true);
+    expect(runningAdvances.filter((c) => "coalescedCount" in c[0])).toHaveLength(1); // only the batch of 2
+  });
+
+  it("a human_instruction and an autonomous wake for the same session land on one key and merge", async () => {
+    // Q3: chat backlog coalesces WITH autonomous events. A human_instruction (turn-keyed
+    // dispatch) and a mention (notification path) for the same session share the direct-idea
+    // key, so a held batch lets them pile up and drain together as one coalesced turn.
+    let started = 0;
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const prompts = [];
+    const spawner = {
+      wake: vi.fn(async ({ sessionId, prompt }) => {
+        started++;
+        prompts.push(prompt);
+        if (started === 1) await gate;
+        return { sessionId, exitCode: 0, isNew: true };
+      }),
+    };
     const { waker } = makeWaker({
       spawner,
       lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
     });
-    const notifA = { ...TASK_NOTIF, uuid: "a" };
-    const notifB = { ...TASK_NOTIF, uuid: "b" };
-    const { router } = makeRouter([notifA, notifB], waker, queue);
+    const queue = new WakeQueue({
+      logger: silent,
+      runBatch: (key, items) => waker.wakeBatch(items.map((i) => i.notification), key, items[0].attribution),
+    });
+    const mention = { ...TASK_NOTIF, uuid: "m1", action: "mentioned", entityType: "idea", entityUuid: DIRECT_IDEA, message: "hey look" };
+    const { router } = makeRouter([mention], waker, queue);
 
-    router.dispatch({ type: "new_notification", notificationUuid: "a" });
-    router.dispatch({ type: "new_notification", notificationUuid: "b" });
-    await new Promise((r) => setTimeout(r, 40));
+    // Batch #1 opens on a human_instruction and hangs on the gate.
+    router.dispatchPendingTurn({
+      turnUuid: "t-hold",
+      sessionId: DIRECT_IDEA,
+      directIdeaUuid: DIRECT_IDEA,
+      trigger: "human_instruction",
+      promptText: "first instruction (holds the slot)",
+    });
+    await new Promise((r) => setTimeout(r, 15));
+    expect(spawner.wake).toHaveBeenCalledTimes(1);
 
-    expect(spawner.wake).toHaveBeenCalledTimes(2);
-    expect(maxConcurrent).toBe(1); // same direct idea → never concurrent
+    // While it runs: a second human_instruction AND an autonomous mention, same session.
+    router.dispatchPendingTurn({
+      turnUuid: "t-2",
+      sessionId: DIRECT_IDEA,
+      directIdeaUuid: DIRECT_IDEA,
+      trigger: "human_instruction",
+      promptText: "deploy the retry fix now",
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "m1" });
+    await new Promise((r) => setTimeout(r, 15));
+    expect(spawner.wake).toHaveBeenCalledTimes(1); // both piled up on the same key
+
+    release();
+    await new Promise((r) => setTimeout(r, 15));
+    expect(spawner.wake).toHaveBeenCalledTimes(2); // ONE coalesced batch for the chat + mention
+
+    const merged = prompts[1];
+    expect(merged).toContain("deploy the retry fix now"); // human_instruction body, in full
+    expect(merged).toContain("hey look"); // the autonomous mention merged in
+    expect(merged).toContain("queued Chorus events"); // backlog preamble
   });
 
   it("dispatchResume stamps resumedFrom on the synthetic wake only for known reasons (add-crash-execution-resume)", async () => {
