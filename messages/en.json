@@ -1605,6 +1605,7 @@
     "roleAgent": "Agent",
     "turnNoMessages": "No transcript retained for this turn.",
     "turnMergedNote": "Merged into a single coalesced turn.",
+    "turnMergedCount": "{count, plural, one {merged # event} other {merged # events}}",
     "turnEndedNoReply": "No reply was received from the agent on this turn.",
     "turnRelayFailed": "The agent replied, but the reply could not be uploaded to Chorus:",
     "privacyNote": "Transcript text is reported by the agent's daemon and may include local file paths. Only the most recent messages are kept.",

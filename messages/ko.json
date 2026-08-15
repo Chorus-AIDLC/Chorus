@@ -1605,6 +1605,7 @@
     "roleAgent": "에이전트",
     "turnNoMessages": "이 턴에 대해 보존된 기록이 없습니다.",
     "turnMergedNote": "하나의 병합된 턴으로 통합되었습니다.",
+    "turnMergedCount": "{count}개 이벤트 병합됨",
     "turnEndedNoReply": "이 턴에서 에이전트의 응답을 받지 못했습니다.",
     "turnRelayFailed": "에이전트가 응답했지만 응답을 Chorus에 업로드하지 못했습니다:",
     "privacyNote": "대화 기록은 에이전트의 데몬이 보고한 것으로, 로컬 파일 경로가 포함될 수 있습니다. 가장 최근 메시지만 보관됩니다.",

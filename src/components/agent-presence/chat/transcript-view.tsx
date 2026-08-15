@@ -65,6 +65,34 @@ import type {
 } from "@/services/daemon-session.service";
 import { TurnBand } from "./turn-band";
 
+// A render group: an absorbing turn plus the coalesced-away `merged` turns folded into it.
+// Wake coalescing settles the next N-1 same-session pending turns (by ascending seq,
+// immediately after the absorbing turn) to `merged`, so the transcript collapses a
+// contiguous run of `merged` turns into the immediately-preceding non-merged turn. Pure
+// front-end seq-adjacency — no server back-link, no migration (idea 9ea96d38 q2).
+export interface TurnGroup {
+  absorbing: TurnWithMessagesView;
+  merged: TurnWithMessagesView[];
+}
+
+// Single O(n) pass over the ascending-by-seq turn list. A `merged` turn folds into the
+// most recent NON-merged group; a `merged` turn with no such anchor (a leading run whose
+// absorbing turn is outside the loaded window) becomes its OWN standalone group — never
+// dropped, and never an anchor for a later merged turn (a merged turn cannot absorb
+// another).
+export function groupMergedTurns(turns: TurnWithMessagesView[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const turn of turns) {
+    const last = groups[groups.length - 1];
+    if (turn.status === "merged" && last && last.absorbing.status !== "merged") {
+      last.merged.push(turn);
+    } else {
+      groups.push({ absorbing: turn, merged: [] });
+    }
+  }
+  return groups;
+}
+
 // One labeled metadata field inside the collapsed details disclosure.
 function DetailField({
   label,
@@ -285,6 +313,11 @@ export function TranscriptView({
     const running = turns.find((tn) => tn.status === "running");
     return running ?? turns[turns.length - 1] ?? null;
   }, [turns]);
+
+  // Collapse contiguous coalesced-away `merged` runs into their absorbing turn so a
+  // wake-coalescing batch reads as ONE band (with an expandable "merged N events"
+  // section) rather than a string of empty bands. Pure presentational grouping.
+  const turnGroups = useMemo(() => groupMergedTurns(turns), [turns]);
 
   // Conversation token usage (daemon-token-usage): the header renders the SAME badge a turn
   // shows — a compact in+out SUM on the face, with the full breakdown (Input / Output /
@@ -547,16 +580,22 @@ export function TranscriptView({
                 </Button>
               </div>
             )}
-            {turns.map((turn) => (
+            {turnGroups.map((group) => (
               <TurnBand
-                key={turn.uuid}
-                turn={turn}
+                key={group.absorbing.uuid}
+                turn={group.absorbing}
                 agentName={agentName}
                 linkedExecution={
-                  turn.executionUuid
-                    ? executionsByUuid.get(turn.executionUuid) ?? null
+                  group.absorbing.executionUuid
+                    ? executionsByUuid.get(group.absorbing.executionUuid) ?? null
                     : null
                 }
+                mergedEvents={group.merged.map((m) => ({
+                  turn: m,
+                  linkedExecution: m.executionUuid
+                    ? executionsByUuid.get(m.executionUuid) ?? null
+                    : null,
+                }))}
               />
             ))}
             <div ref={bottomRef} />
