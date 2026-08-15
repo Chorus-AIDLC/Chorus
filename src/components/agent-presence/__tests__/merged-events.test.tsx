@@ -10,46 +10,19 @@
 //   - no disclosure at all for an ordinary turn.
 //
 // Unlike the sibling turn-band tests (which use a plain string-substitution mock), this
-// file formats through the REAL ICU engine so the plural label is exercised end to end.
+// file renders through the REAL next-intl client provider with the real en.json messages,
+// so the ICU plural label is exercised end to end — without depending on next-intl's
+// transitive `intl-messageformat` (which isn't a declared dependency).
 
-import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
+import type { ReactElement } from "react";
+import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { IntlMessageFormat } from "intl-messageformat";
-
-vi.mock("next-intl", async () => {
-  const en = (await import("../../../../messages/en.json")).default as Record<
-    string,
-    unknown
-  >;
-  function resolve(namespace: string, key: string): string {
-    const fullKey = namespace ? `${namespace}.${key}` : key;
-    let node: unknown = en;
-    for (const p of fullKey.split(".")) {
-      if (node && typeof node === "object" && p in (node as Record<string, unknown>)) {
-        node = (node as Record<string, unknown>)[p];
-      } else {
-        return fullKey;
-      }
-    }
-    return typeof node === "string" ? node : fullKey;
-  }
-  return {
-    useTranslations:
-      (namespace = "") =>
-      (key: string, params?: Record<string, string | number>) => {
-        const msg = resolve(namespace, key);
-        try {
-          return String(new IntlMessageFormat(msg, "en").format(params ?? {}));
-        } catch {
-          return msg;
-        }
-      },
-  };
-});
+import { NextIntlClientProvider } from "next-intl";
 
 import { TurnBand, type MergedEvent } from "../chat/turn-band";
 import type { ExecutionView } from "../types";
 import type { TurnWithMessagesView } from "@/services/daemon-session.service";
+import enMessages from "../../../../messages/en.json";
 
 function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesView {
   return {
@@ -84,6 +57,15 @@ function mergedEvents(count: number): MergedEvent[] {
   }));
 }
 
+// Render through the real next-intl client provider so ICU plurals format correctly.
+function renderBand(ui: ReactElement) {
+  return render(
+    <NextIntlClientProvider locale="en" timeZone="UTC" messages={enMessages}>
+      {ui}
+    </NextIntlClientProvider>,
+  );
+}
+
 beforeEach(() => {
   if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
@@ -98,7 +80,7 @@ afterEach(() => cleanup());
 
 describe("TurnBand merged-events section", () => {
   it("renders a collapsed-by-default 'merged N events' disclosure whose label is the exact plural count", () => {
-    render(
+    renderBand(
       <TurnBand
         turn={turn({ status: "ended", seq: 10 })}
         agentName="Alpha"
@@ -112,7 +94,7 @@ describe("TurnBand merged-events section", () => {
   });
 
   it("uses the singular ICU form for a single merged event", () => {
-    render(
+    renderBand(
       <TurnBand
         turn={turn({ status: "ended", seq: 10 })}
         agentName="Alpha"
@@ -124,7 +106,7 @@ describe("TurnBand merged-events section", () => {
   });
 
   it("expands to list each merged event's provenance (trigger label + prompt), one row per event", () => {
-    render(
+    renderBand(
       <TurnBand
         turn={turn({ status: "ended", seq: 10 })}
         agentName="Alpha"
@@ -145,7 +127,7 @@ describe("TurnBand merged-events section", () => {
       entityUuid: "task-9",
       projectUuid: "p1",
     } as unknown as ExecutionView;
-    render(
+    renderBand(
       <TurnBand
         turn={turn({ status: "ended", seq: 10 })}
         agentName="Alpha"
@@ -161,7 +143,7 @@ describe("TurnBand merged-events section", () => {
   });
 
   it("renders no merged-events disclosure for an ordinary turn (no merged events)", () => {
-    render(<TurnBand turn={turn({ status: "ended" })} agentName="Alpha" linkedExecution={null} />);
+    renderBand(<TurnBand turn={turn({ status: "ended" })} agentName="Alpha" linkedExecution={null} />);
     expect(screen.queryByRole("button", { name: /merged/i })).toBeNull();
   });
 });
