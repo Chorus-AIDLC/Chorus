@@ -27,7 +27,7 @@ When Claude Code, Codex, Kiro, Pi, and OpenClaw participate in the same body of 
 5. 各自看到由 credential 与 permission 塑造的 MCP surface；
 6. 各自在选定的 working directory 中读写文件。
 
-其中没有一个步骤要求，也没有一个 Chorus schema 能够，把一个 runtime 的完整 context window 搬进另一个 runtime。跨 runtime 唤醒携带的是 durable entity identity、notification 内容、actor attribution 与 handoff instruction，不是发送方的隐藏模型状态。
+其中没有一个步骤要求，也没有一个 Chorus schema 能够，把一个 runtime 的完整 context window 搬进另一个 runtime。跨 runtime 唤醒携带的是 durable entity identity、notification 内容、actor attribution 与 handoff instruction，不是发送方的隐藏模型状态。OpenAI 对 harness engineering 的描述同样把 agent 的有效运行条件落在 repository、工具、反馈回路与环境设计上，而不是把另一 Agent 的隐藏上下文当作可移植输入 [3]。
 
 因此本文使用 federation 的严格定义：
 
@@ -280,7 +280,7 @@ Codex adapter 以 Chorus entity anchor 查找持久化的 `anchor -> thread_id`�
 
 ### 5.4 Kiro：session store 推断与诚实退化
 
-Kiro 没有等价的 ID-bearing stream event。Adapter 在新 run 前后 snapshot session store，以 diff 推断新 session ID；若同时出现零个或多个 candidate，它拒绝猜测，避免把两个 Idea 的 conversation cross-wire。Headless run 不产生可用 store session 时，transcript reconstruction 退化到 raw stdout（`cli/kiro-spawner.mjs:285-399`）。
+Kiro 没有等价的 ID-bearing stream event。Adapter 在新 run 前后 snapshot session store，以 diff 推断新 session ID；若同时出现零个或多个 candidate，它拒绝猜测，避免把两个 Idea 的 conversation cross-wire（`cli/kiro-spawner.mjs:285-399`）。Headless run 不产生可用 store session 时，transcript reconstruction 退化到 raw stdout（`cli/kiro-transcript.mjs:239-279`）。
 
 这说明 federation contract 不能依赖所有 runtime 拥有相同 session primitive。Control plane 保持 entity、notification 与 attribution 语义稳定；adapter 对本地 continuity 做能力范围内的 best effort。
 
@@ -417,7 +417,7 @@ Chorus 可以让两个 Agent 同时收到不同 Task，也可以让一个 daemon
 
 #### 7.2.2 Git worktree 是隔离工具，不是 Chorus 已有保证
 
-Git 官方文档说明，一个 repository 可以通过 `git worktree` 管理多个 working tree，让不同 branch 同时 checkout 到不同路径 [2]。这为并行 Agent 提供实用隔离单元：
+Git 官方文档说明，一个 repository 可以通过 `git worktree` 管理多个 working tree，让不同 branch 同时 checkout 到不同路径 [4]。这为并行 Agent 提供实用隔离单元：
 
 ```text
 Agent A -> /repo/.worktrees/task-a -> branch task-a
@@ -476,7 +476,7 @@ Agent C -> read-only review of committed artifact
 
 #### 7.3.3 Federation 与 swarm 的边界
 
-Swarm 通常意味着某种统一 orchestration：worker creation、task decomposition、scheduling、result aggregation 或 shared planning policy。Chorus 的 federation 可以承载由 runtime 发起的 swarm attribution，也可以协调几个完全独立的 top-level Agent，但它本身不创建统一 inference scheduler。
+常见的 multi-agent orchestration taxonomy 会把 sequential、parallel、supervisor、hierarchical、handoff 与 swarm 分成不同模式 [2]。其中 swarm 通常意味着某种统一 orchestration：worker creation、task decomposition、scheduling、result aggregation 或 shared planning policy。Chorus 的 federation 可以承载由 runtime 发起的 swarm attribution，也可以协调几个完全独立的 top-level Agent，但它本身不创建统一 inference scheduler。
 
 简化地说：
 
@@ -582,10 +582,14 @@ Federation 不是 shared memory。它是一套让不共享 memory 的参与者�
 
 1. Model Context Protocol, “Architecture overview.”
    <https://modelcontextprotocol.io/docs/learn/architecture>
-2. Git, “git-worktree Documentation.”
+2. Developers Digest, “7 AI Agent Orchestration Patterns Every Developer Should Know (2026).”
+   <https://www.developersdigest.tech/blog/seven-ai-agent-orchestration-patterns>
+3. OpenAI, “Harness engineering: leveraging Codex in an agent-first world.”
+   <https://openai.com/index/harness-engineering/>
+4. Git, “git-worktree Documentation.”
    <https://git-scm.com/docs/git-worktree>
-3. Chorus 技术分享第 2 篇，[Portability is Semantics, Not Prompt Copying](02-portability-is-semantics.md)。
-4. Chorus 技术分享第 5 篇，[Conversation as a Durable Protocol](05-conversation-as-durable-protocol.md)。
-5. Chorus 技术分享第 6 篇，[Context and Attribution](06-context-and-attribution.md)。
+5. Chorus 技术分享第 2 篇，[Portability is Semantics, Not Prompt Copying](02-portability-is-semantics.md)。
+6. Chorus 技术分享第 5 篇，[Conversation as a Durable Protocol](05-conversation-as-durable-protocol.md)。
+7. Chorus 技术分享第 6 篇，[Context and Attribution](06-context-and-attribution.md)。
 
 > 外部资料用于说明协议分层与 repository working-tree isolation 的通用概念；Chorus 的实现结论均以本文引用的仓库源码为准。
