@@ -6,6 +6,10 @@ import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
 import type { TurnView } from "@/services/daemon-session.service";
+import {
+  resolveResourceOrchestrator,
+  type OrchestratorAttribution,
+} from "@/services/orchestrator.service";
 
 // ===== Type Definitions =====
 
@@ -85,6 +89,7 @@ export interface NotificationResponse {
   // fetch). Surfaced here in the read projection so the daemon's event-router can thread
   // it into the wake prompt.
   instructionText: string | null;
+  orchestrator: OrchestratorAttribution | null;
 }
 
 export interface NotificationPreferenceFields {
@@ -122,7 +127,8 @@ export interface NotificationPreferenceResponse {
 
 // ===== Internal Helper Functions =====
 
-function formatNotification(n: {
+type RawNotification = {
+  companyUuid: string;
   uuid: string;
   projectUuid: string;
   projectName: string;
@@ -140,7 +146,58 @@ function formatNotification(n: {
   archivedAt: Date | null;
   createdAt: Date;
   instructionText?: string | null;
-}): NotificationResponse {
+};
+
+function notificationResourceKey(n: RawNotification): string | null {
+  if (n.entityType !== "idea" && n.entityType !== "task") return null;
+  return `${n.companyUuid}:${n.entityType}:${n.entityUuid}`;
+}
+
+async function formatNotifications(
+  notifications: RawNotification[],
+): Promise<NotificationResponse[]> {
+  const resources = new Map<
+    string,
+    { companyUuid: string; entityType: "idea" | "task"; entityUuid: string }
+  >();
+  for (const notification of notifications) {
+    const key = notificationResourceKey(notification);
+    if (key && !resources.has(key)) {
+      resources.set(key, {
+        companyUuid: notification.companyUuid,
+        entityType: notification.entityType as "idea" | "task",
+        entityUuid: notification.entityUuid,
+      });
+    }
+  }
+
+  const orchestrators = new Map<string, OrchestratorAttribution | null>();
+  await Promise.all(
+    [...resources.entries()].map(async ([key, resource]) => {
+      orchestrators.set(
+        key,
+        await resolveResourceOrchestrator(
+          resource.companyUuid,
+          resource.entityType,
+          resource.entityUuid,
+        ),
+      );
+    }),
+  );
+
+  return notifications.map((notification) => {
+    const key = notificationResourceKey(notification);
+    return formatNotification(
+      notification,
+      key ? orchestrators.get(key) ?? null : null,
+    );
+  });
+}
+
+function formatNotification(
+  n: RawNotification,
+  orchestrator: OrchestratorAttribution | null,
+): NotificationResponse {
   return {
     uuid: n.uuid,
     projectUuid: n.projectUuid,
@@ -160,6 +217,7 @@ function formatNotification(n: {
     createdAt: n.createdAt.toISOString(),
     // Denormalized human_instruction body (子1) — null for every non-instruction action.
     instructionText: n.instructionText ?? null,
+    orchestrator,
   };
 }
 
@@ -261,7 +319,8 @@ export async function createReturningTurn(
     suppressWake,
   });
 
-  return { notification: formatNotification(notification), turn };
+  const [formatted] = await formatNotifications([notification]);
+  return { notification: formatted, turn };
 }
 
 /**
@@ -370,7 +429,7 @@ export async function createBatch(
     });
   }
 
-  return created.map(formatNotification);
+  return formatNotifications(created);
 }
 
 /**
@@ -406,7 +465,7 @@ export async function list(
   ]);
 
   return {
-    notifications: rawNotifications.map(formatNotification),
+    notifications: await formatNotifications(rawNotifications),
     total,
     unreadCount,
   };
@@ -465,7 +524,8 @@ export async function markRead(
     unreadCount,
   });
 
-  return formatNotification(updated);
+  const [formatted] = await formatNotifications([updated]);
+  return formatted;
 }
 
 /**
@@ -531,7 +591,8 @@ export async function archive(
     unreadCount,
   });
 
-  return formatNotification(updated);
+  const [formatted] = await formatNotifications([updated]);
+  return formatted;
 }
 
 /**

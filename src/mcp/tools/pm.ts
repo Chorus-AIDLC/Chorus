@@ -792,6 +792,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           companyUuid: auth.companyUuid,
           assigneeType: "agent",
           assigneeUuid: agentUuid,
+          assignedByType: "agent",
           assignedByUuid: auth.actorUuid,
           ...(instanceUuid != null ? { instanceUuid } : {}),
         });

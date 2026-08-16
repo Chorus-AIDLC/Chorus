@@ -94,6 +94,7 @@ function makeIdeaRecord(overrides: Record<string, unknown> = {}) {
     assigneeType: null,
     assigneeUuid: null,
     assignedAt: null,
+    assignedByType: null,
     assignedByUuid: null,
     createdByUuid: ACTOR_UUID,
     companyUuid: COMPANY_UUID,
@@ -197,6 +198,9 @@ describe("claimIdea", () => {
         }),
       })
     );
+    const updateData = mockPrisma.idea.update.mock.calls[0][0].data;
+    expect(updateData).not.toHaveProperty("assignedByType");
+    expect(updateData).not.toHaveProperty("assignedByUuid");
 
     expect(result.status).toBe("elaborating");
     expect(mockEventBus.emitChange).toHaveBeenCalled();
@@ -381,6 +385,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "user",
       assigneeUuid: ACTOR_UUID,
+      assignedByType: "user",
       assignedByUuid: "admin-uuid",
     });
 
@@ -391,6 +396,8 @@ describe("assignIdea", () => {
           status: "elaborating",
           assigneeType: "user",
           assigneeUuid: ACTOR_UUID,
+          assignedByType: "user",
+          assignedByUuid: "admin-uuid",
         }),
       })
     );
@@ -421,6 +428,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "user",
       assigneeUuid: ACTOR_UUID,
+      assignedByType: "user",
       assignedByUuid: "admin-uuid",
     });
 
@@ -433,6 +441,21 @@ describe("assignIdea", () => {
     );
 
     expect(result.status).toBe("elaborating");
+  });
+
+  it("rejects a provenance UUID without its actor type", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord());
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: ACTOR_UUID,
+        assignedByUuid: "legacy-writer",
+      }),
+    ).rejects.toThrow("Assignment provenance type and UUID must be provided together");
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 
   it("clears a stale cwd source when reassigning with runtime cwd but no source", async () => {
@@ -543,6 +566,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: "new-agent",
+      assignedByType: "agent",
       assignedByUuid: "admin-uuid",
     });
 
@@ -568,6 +592,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: ACTOR_UUID,
+      assignedByType: "agent",
       assignedByUuid: "admin-uuid",
       instanceUuid: INSTANCE_B,
     });
@@ -592,6 +617,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: ACTOR_UUID,
+      assignedByType: "agent",
       assignedByUuid: "admin-uuid",
       // no instanceUuid → revert to plain agent
     });
@@ -621,6 +647,7 @@ describe("assignIdea", () => {
       companyUuid: COMPANY_UUID,
       assigneeType: "agent",
       assigneeUuid: AGENT_X,
+      assignedByType: "agent",
       assignedByUuid: "admin-uuid",
       instanceUuid: INSTANCE_A,
       allowElaboratedInstanceRepin: true,
@@ -649,6 +676,7 @@ describe("assignIdea", () => {
         companyUuid: COMPANY_UUID,
         assigneeType: "agent",
         assigneeUuid: "other-agent",
+        assignedByType: "agent",
         assignedByUuid: "admin-uuid",
         instanceUuid: INSTANCE_B,
         allowElaboratedInstanceRepin: true,
@@ -689,6 +717,7 @@ describe("releaseIdea", () => {
           assigneeType: null,
           assigneeUuid: null,
           assignedAt: null,
+          assignedByType: null,
           assignedByUuid: null,
           elaborationDepth: null,
           elaborationStatus: null,

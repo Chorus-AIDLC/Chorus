@@ -228,7 +228,8 @@ export class EventRouter {
    * reason ("user" | "crash") threaded from the control event; it is stamped on the
    * synthetic notification as `resumedFrom` so the prompt builder can state a crash
    * explicitly. Absent/unknown → not stamped → the user-resume prompt.
-   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string }} target
+   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string,
+   *   orchestrator?: { type?: string, uuid?: string, name?: string } | null }} target
    */
   dispatchResume(target) {
     const entityType = target?.entityType;
@@ -247,6 +248,11 @@ export class EventRouter {
       entityUuid,
       ...(resumedFrom ? { resumedFrom } : {}),
       ...(typeof target?.runtimeCwd === "string" ? { runtimeCwd: target.runtimeCwd } : {}),
+      ...(target?.orchestrator?.type === "agent" &&
+      typeof target.orchestrator.uuid === "string" &&
+      typeof target.orchestrator.name === "string"
+        ? { orchestrator: target.orchestrator }
+        : {}),
     };
     this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
       this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);

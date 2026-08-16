@@ -208,3 +208,67 @@ describe("ChorusEventRouter — wake attribution (daemon parity)", () => {
     expect(wake.mock.calls[0][2]).toEqual({ entityType: "task", entityUuid: "task-1" });
   });
 });
+
+describe("ChorusEventRouter — orchestrator handoff (daemon parity)", () => {
+  let wake: ReturnType<typeof vi.fn>;
+  let logger: ReturnType<typeof makeLogger>;
+
+  beforeEach(() => {
+    wake = vi.fn();
+    logger = makeLogger();
+  });
+
+  function build(responses: Record<string, unknown>) {
+    const mcpClient = makeMcpClient(responses) as never;
+    const router = new ChorusEventRouter({ mcpClient, wake, logger });
+    return { router };
+  }
+
+  const orchestrator = { type: "agent", uuid: "agent-orch", name: "Coordinator" };
+
+  it("appends the agent-orchestrator handback instruction to the wake message", async () => {
+    const { router } = build({
+      chorus_get_notifications: { notifications: [makeNotification({ orchestrator })] },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    const msg = wake.mock.calls[0][0] as string;
+    // Mirrors the daemon's orchestratorGuidance wording (cli/prompts.mjs) — kept in sync.
+    expect(msg).toContain("Your orchestrator for this resource is @Coordinator.");
+    expect(msg).toContain("@[Coordinator](agent:agent-orch)");
+    // The wrapper only rewrites the message; contextKey + attribution thread through unchanged.
+    expect(wake.mock.calls[0][1]).toBe("chorus:task_assigned:task-1");
+  });
+
+  it("appends handoff on EVERY routed action (parity with the daemon's buildPrompt)", async () => {
+    for (const action of ["mentioned", "proposal_approved", "task_verified", "yolo_requested"]) {
+      wake = vi.fn();
+      const { router } = build({
+        chorus_get_notifications: {
+          notifications: [makeNotification({ action, uuid: "n1", orchestrator })],
+        },
+      });
+      router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+      await flush();
+      expect(wake.mock.calls[0][0]).toContain("@[Coordinator](agent:agent-orch)");
+    }
+  });
+
+  it("adds NO handoff when the resource has no orchestrator", async () => {
+    const { router } = build({ chorus_get_notifications: { notifications: [makeNotification()] } });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake.mock.calls[0][0]).not.toContain("Your orchestrator for this resource");
+  });
+
+  it("adds NO handoff when the orchestrator is a human (only agent orchestrators hand back here)", async () => {
+    const { router } = build({
+      chorus_get_notifications: {
+        notifications: [makeNotification({ orchestrator: { type: "user", uuid: "u9", name: "Boss" } })],
+      },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake.mock.calls[0][0]).not.toContain("Your orchestrator for this resource");
+  });
+});

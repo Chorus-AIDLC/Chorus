@@ -25,6 +25,7 @@
  * @property {string} actorType
  * @property {string} actorUuid
  * @property {string} actorName
+ * @property {{type: string, uuid: string, name: string} | null} [orchestrator]
  * @property {string} [instructionText]  Free-text body of a `human_instruction` wake
  *   (子1 — daemon-session-conversation). The server denormalizes the canonical turn
  *   promptText onto the wake notification so the daemon reads it in the
@@ -37,6 +38,29 @@ function mentionGuidance(n, entityType) {
   return (
     `After completing your work, post a comment on this ${entityType} using ` +
     `chorus_add_comment with @mention: @[${n.actorName}](${n.actorType}:${n.actorUuid})`
+  );
+}
+
+/**
+ * Orchestrator-handoff guidance, appended to every wake body by buildPrompt. This is
+ * the SINGLE home of the "hand back to the agent that dispatched you" instruction —
+ * it is runtime PE (it depends on who the wake resolved as orchestrator), so it lives
+ * here in the wake prompt, NOT in the static skill docs. Its OpenClaw twin is
+ * `buildOrchestratorGuidance` in packages/openclaw-plugin/src/event-router.ts —
+ * KEEP THE TWO WORDINGS IN SYNC.
+ * Returns null unless the resource has an AGENT orchestrator; a human-assigned
+ * resource hands back to the human via the per-event actor @mention (mentionGuidance).
+ * @param {NotificationDetail} n
+ */
+function orchestratorGuidance(n) {
+  if (n.orchestrator?.type !== "agent") return null;
+  return (
+    `Your orchestrator for this resource is @${n.orchestrator.name}.\n` +
+    `At a human-only gate you cannot cross, or when this child resource is complete, hand control ` +
+    `back by commenting on the resource and mentioning ` +
+    `@[${n.orchestrator.name}](agent:${n.orchestrator.uuid}) with the decision needed or completion ` +
+    `evidence, then leave any human-gated resource pending and end the turn. Do not @mention the ` +
+    `orchestrator for ordinary internal progress.`
   );
 }
 
@@ -96,7 +120,8 @@ export const HEADLESS_PREAMBLE = [
 export function buildPrompt(n) {
   const body = buildPromptBody(n);
   if (body == null) return null;
-  return `${HEADLESS_PREAMBLE}\n\n${body}`;
+  const handoff = orchestratorGuidance(n);
+  return `${HEADLESS_PREAMBLE}\n\n${body}${handoff ? `\n\n${handoff}` : ""}`;
 }
 
 /**

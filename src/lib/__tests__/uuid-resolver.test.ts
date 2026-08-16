@@ -5,10 +5,12 @@ const prismaMock = vi.hoisted(() => {
   return {
     user: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
     },
     agent: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
     },
     agentSession: {
@@ -50,6 +52,8 @@ import {
   isAssignmentOwnedByActor,
   resolveAssigneeInstanceInfo,
   batchGetAssigneeInstanceInfo,
+  resolveAssignmentActor,
+  batchResolveAssignmentActors,
 } from '../uuid-resolver';
 import type { AuthContext } from '@/types/auth';
 import { makeUser, makeAgent } from '@/__test-utils__/fixtures';
@@ -350,6 +354,76 @@ describe('formatAssigneeComplete', () => {
       assignedBy: null,
     });
     expect((result as { instance?: unknown }).instance).toBeUndefined();
+  });
+});
+
+describe('assignment provenance resolution', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resolves a typed agent within the resource company', async () => {
+    prismaMock.agent.findFirst.mockResolvedValue({ name: 'Orchestrator' });
+
+    await expect(
+      resolveAssignmentActor('company-1', 'agent', 'agent-1'),
+    ).resolves.toEqual({
+      type: 'agent',
+      uuid: 'agent-1',
+      name: 'Orchestrator',
+    });
+    expect(prismaMock.agent.findFirst).toHaveBeenCalledWith({
+      where: { uuid: 'agent-1', companyUuid: 'company-1' },
+      select: { name: true },
+    });
+    expect(prismaMock.user.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('infers legacy provenance user-first, then agent', async () => {
+    prismaMock.user.findFirst.mockResolvedValue(null);
+    prismaMock.agent.findFirst.mockResolvedValue({ name: 'Legacy Agent' });
+
+    await expect(
+      resolveAssignmentActor('company-1', null, 'legacy-1'),
+    ).resolves.toEqual({
+      type: 'agent',
+      uuid: 'legacy-1',
+      name: 'Legacy Agent',
+    });
+    expect(prismaMock.user.findFirst).toHaveBeenCalledBefore(
+      prismaMock.agent.findFirst,
+    );
+  });
+
+  it('returns null for unknown or deleted typed identities', async () => {
+    prismaMock.agent.findFirst.mockResolvedValue(null);
+    await expect(
+      resolveAssignmentActor('company-1', 'agent', 'missing'),
+    ).resolves.toBeNull();
+  });
+
+  it('batch-resolves typed and legacy provenance with two company-scoped queries', async () => {
+    prismaMock.user.findMany.mockResolvedValue([
+      { uuid: 'shared', name: 'Historical User', email: 'u@example.com' },
+    ]);
+    prismaMock.agent.findMany.mockResolvedValue([
+      { uuid: 'shared', name: 'Agent Same UUID' },
+      { uuid: 'agent-2', name: 'Agent Two' },
+    ]);
+
+    await expect(
+      batchResolveAssignmentActors('company-1', [
+        { assignedByType: null, assignedByUuid: 'shared' },
+        { assignedByType: 'agent', assignedByUuid: 'agent-2' },
+        { assignedByType: 'user', assignedByUuid: 'missing' },
+      ]),
+    ).resolves.toEqual([
+      { type: 'user', uuid: 'shared', name: 'Historical User' },
+      { type: 'agent', uuid: 'agent-2', name: 'Agent Two' },
+      null,
+    ]);
+    expect(prismaMock.user.findMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.agent.findMany).toHaveBeenCalledTimes(1);
   });
 });
 

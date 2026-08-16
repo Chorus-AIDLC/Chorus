@@ -12,6 +12,13 @@ export type TargetType = "idea" | "proposal" | "task" | "document";
 // AgentInstance.uuid, NOT an Agent.uuid. Use resolveAssigneeAgentUuid() to map it
 // back to the owning agent before any agent-identity comparison or lookup.
 export type ActorType = "user" | "agent" | "agent_instance";
+export type AssignmentActorType = "user" | "agent";
+
+export interface AssignmentActorInfo {
+  type: AssignmentActorType;
+  uuid: string;
+  name: string;
+}
 
 // Get Actor name by UUID (for display)
 export async function getActorName(
@@ -220,6 +227,108 @@ export async function formatCreatedBy(
 }
 
 /**
+ * Resolve typed assignment provenance within the resource's company. Legacy
+ * rows have no type, so retain the historical user interpretation first and
+ * then try agent. Unknown/deleted identities resolve to null.
+ */
+export async function resolveAssignmentActor(
+  companyUuid: string,
+  assignedByType: string | null,
+  assignedByUuid: string | null,
+): Promise<AssignmentActorInfo | null> {
+  if (!assignedByUuid) return null;
+
+  if (assignedByType === "user" || assignedByType == null) {
+    const user = await prisma.user.findFirst({
+      where: { uuid: assignedByUuid, companyUuid },
+      select: { name: true, email: true },
+    });
+    if (user) {
+      return {
+        type: "user",
+        uuid: assignedByUuid,
+        name: user.name || user.email || "Unknown",
+      };
+    }
+    if (assignedByType === "user") return null;
+  }
+
+  if (assignedByType === "agent" || assignedByType == null) {
+    const agent = await prisma.agent.findFirst({
+      where: { uuid: assignedByUuid, companyUuid },
+      select: { name: true },
+    });
+    if (agent) {
+      return { type: "agent", uuid: assignedByUuid, name: agent.name };
+    }
+  }
+
+  return null;
+}
+
+export async function batchResolveAssignmentActors(
+  companyUuid: string,
+  assignments: Array<{
+    assignedByType: string | null;
+    assignedByUuid: string | null;
+  }>,
+): Promise<Array<AssignmentActorInfo | null>> {
+  const userUuids = [
+    ...new Set(
+      assignments
+        .filter((item) => item.assignedByType === "user" || item.assignedByType == null)
+        .flatMap((item) => (item.assignedByUuid ? [item.assignedByUuid] : [])),
+    ),
+  ];
+  const agentUuids = [
+    ...new Set(
+      assignments
+        .filter((item) => item.assignedByType === "agent" || item.assignedByType == null)
+        .flatMap((item) => (item.assignedByUuid ? [item.assignedByUuid] : [])),
+    ),
+  ];
+
+  const [users, agents] = await Promise.all([
+    userUuids.length > 0
+      ? prisma.user.findMany({
+          where: { companyUuid, uuid: { in: userUuids } },
+          select: { uuid: true, name: true, email: true },
+        })
+      : [],
+    agentUuids.length > 0
+      ? prisma.agent.findMany({
+          where: { companyUuid, uuid: { in: agentUuids } },
+          select: { uuid: true, name: true },
+        })
+      : [],
+  ]);
+  const userMap = new Map(users.map((user) => [user.uuid, user]));
+  const agentMap = new Map(agents.map((agent) => [agent.uuid, agent]));
+
+  return assignments.map(({ assignedByType, assignedByUuid }) => {
+    if (!assignedByUuid) return null;
+    if (assignedByType === "user" || assignedByType == null) {
+      const user = userMap.get(assignedByUuid);
+      if (user) {
+        return {
+          type: "user",
+          uuid: assignedByUuid,
+          name: user.name || user.email || "Unknown",
+        };
+      }
+      if (assignedByType === "user") return null;
+    }
+    if (assignedByType === "agent" || assignedByType == null) {
+      const agent = agentMap.get(assignedByUuid);
+      if (agent) {
+        return { type: "agent", uuid: assignedByUuid, name: agent.name };
+      }
+    }
+    return null;
+  });
+}
+
+/**
  * The durable (host, cwd) place + owning agent of an `agent_instance` assignee,
  * carried on the assignee payload so the UI can render the pinned instance via the
  * daemon-instance-format helpers AND compare ownership against the owning agent
@@ -271,7 +380,9 @@ export async function formatAssigneeComplete(
   assigneeType: string | null,
   assigneeUuid: string | null,
   assignedAt: Date | null,
-  assignedByUuid: string | null // assignedBy is always user
+  assignedByUuid: string | null,
+  assignedByType: string | null = null,
+  companyUuid?: string,
 ): Promise<AssigneeInfo | null> {
   if (!assigneeType || !assigneeUuid) return null;
 
@@ -281,17 +392,12 @@ export async function formatAssigneeComplete(
   ]);
   if (!assigneeName) return null;
 
-  let assignedByInfo: { type: string; uuid: string; name: string } | null = null;
-  if (assignedByUuid) {
-    const userName = await getActorName("user", assignedByUuid);
-    if (userName) {
-      assignedByInfo = {
-        type: "user",
-        uuid: assignedByUuid,
-        name: userName,
-      };
-    }
-  }
+  const assignedByInfo =
+    assignedByUuid && companyUuid
+      ? await resolveAssignmentActor(companyUuid, assignedByType, assignedByUuid)
+      : assignedByUuid
+        ? await resolveLegacyAssignmentActorWithoutCompany(assignedByType, assignedByUuid)
+        : null;
 
   return {
     type: assigneeType,
@@ -301,6 +407,36 @@ export async function formatAssigneeComplete(
     assignedBy: assignedByInfo,
     ...(instanceInfo ? { instance: instanceInfo } : {}),
   };
+}
+
+async function resolveLegacyAssignmentActorWithoutCompany(
+  assignedByType: string | null,
+  assignedByUuid: string,
+): Promise<AssignmentActorInfo | null> {
+  if (assignedByType === "user" || assignedByType == null) {
+    const user = await prisma.user.findUnique({
+      where: { uuid: assignedByUuid },
+      select: { name: true, email: true },
+    });
+    if (user) {
+      return {
+        type: "user",
+        uuid: assignedByUuid,
+        name: user.name || user.email || "Unknown",
+      };
+    }
+    if (assignedByType === "user") return null;
+  }
+  if (assignedByType === "agent" || assignedByType == null) {
+    const agent = await prisma.agent.findUnique({
+      where: { uuid: assignedByUuid },
+      select: { name: true },
+    });
+    if (agent) {
+      return { type: "agent", uuid: assignedByUuid, name: agent.name };
+    }
+  }
+  return null;
 }
 
 // Format Proposal review info

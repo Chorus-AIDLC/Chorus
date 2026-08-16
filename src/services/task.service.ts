@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
 import { batchCommentCounts } from "@/services/comment.service";
@@ -46,6 +46,7 @@ export interface TaskClaimParams {
   companyUuid: string;
   assigneeType: string;
   assigneeUuid: string;
+  assignedByType?: "user" | "agent" | null;
   assignedByUuid?: string | null;
   // Optional durable AgentInstance override pin (add-agent-instance-addressing).
   // When provided, the TASK ROW carries its own pin via the polymorphic assignee:
@@ -238,9 +239,26 @@ async function resolveTaskAssigneeFields(
   return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
 }
 
+function normalizeAssignmentProvenance(
+  assignedByType?: "user" | "agent" | null,
+  assignedByUuid?: string | null,
+): {
+  assignedByType?: "user" | "agent";
+  assignedByUuid?: string;
+} {
+  if (!assignedByType && !assignedByUuid) {
+    return {};
+  }
+  if (!assignedByType || !assignedByUuid) {
+    throw new Error("Assignment provenance type and UUID must be provided together");
+  }
+  return { assignedByType, assignedByUuid };
+}
+
 // Format a single Task into API response format
 async function formatTaskResponse(
   task: {
+    companyUuid: string;
     uuid: string;
     title: string;
     description: string | null;
@@ -251,6 +269,7 @@ async function formatTaskResponse(
     assigneeType: string | null;
     assigneeUuid: string | null;
     assignedAt: Date | null;
+    assignedByType: string | null;
     assignedByUuid: string | null;
     proposalUuid: string | null;
     createdByUuid: string;
@@ -264,7 +283,14 @@ async function formatTaskResponse(
   commentCount: number = 0,
 ): Promise<TaskResponse> {
   const [assignee, createdBy] = await Promise.all([
-    formatAssigneeComplete(task.assigneeType, task.assigneeUuid, task.assignedAt, task.assignedByUuid),
+    formatAssigneeComplete(
+      task.assigneeType,
+      task.assigneeUuid,
+      task.assignedAt,
+      task.assignedByUuid,
+      task.assignedByType,
+      task.companyUuid,
+    ),
     formatCreatedBy(task.createdByUuid),
   ]);
 
@@ -308,8 +334,9 @@ async function formatTaskResponse(
   };
 }
 
-// Batch format multiple tasks - 2 batch queries instead of N * (3-4) individual queries
+// Batch format multiple tasks with bounded queries instead of per-task lookups.
 type RawTaskForBatch = {
+  companyUuid: string;
   uuid: string;
   title: string;
   description: string | null;
@@ -320,6 +347,7 @@ type RawTaskForBatch = {
   assigneeType: string | null;
   assigneeUuid: string | null;
   assignedAt: Date | null;
+  assignedByType: string | null;
   assignedByUuid: string | null;
   proposalUuid: string | null;
   createdByUuid: string;
@@ -351,32 +379,30 @@ async function formatTaskResponsesBatch(
         instanceUuids.push(task.assigneeUuid);
       }
     }
-    if (task.assignedByUuid) {
-      actors.push({ type: "user", uuid: task.assignedByUuid });
-    }
     createdByUuids.push(task.createdByUuid);
   }
 
   // Batch queries instead of N * (3-5) individual queries
-  const [actorNames, createdByMap, instanceInfoMap] = await Promise.all([
+  const [actorNames, createdByMap, instanceInfoMap, assignedByActors] = await Promise.all([
     batchGetActorNames(actors),
     batchFormatCreatedBy(createdByUuids),
     batchGetAssigneeInstanceInfo(instanceUuids),
+    batchResolveAssignmentActors(
+      tasks[0].companyUuid,
+      tasks.map((task) => ({
+        assignedByType: task.assignedByType,
+        assignedByUuid: task.assignedByUuid,
+      })),
+    ),
   ]);
 
   // Build responses synchronously from lookup maps
-  return tasks.map((task) => {
+  return tasks.map((task, taskIndex) => {
     let assignee: TaskResponse["assignee"] = null;
     if (task.assigneeType && task.assigneeUuid) {
       const assigneeName = actorNames.get(task.assigneeUuid);
       if (assigneeName) {
-        let assignedBy: { type: string; uuid: string; name: string } | null = null;
-        if (task.assignedByUuid) {
-          const assignedByName = actorNames.get(task.assignedByUuid);
-          if (assignedByName) {
-            assignedBy = { type: "user", uuid: task.assignedByUuid, name: assignedByName };
-          }
-        }
+        const assignedBy = assignedByActors[taskIndex];
         const instanceInfo =
           task.assigneeType === "agent_instance"
             ? instanceInfoMap.get(task.assigneeUuid)
@@ -487,9 +513,11 @@ export async function listTasks({
         priority: true,
         storyPoints: true,
         acceptanceCriteria: true,
+        companyUuid: true,
         assigneeType: true,
         assigneeUuid: true,
         assignedAt: true,
+        assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
         createdByUuid: true,
@@ -565,9 +593,11 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
       priority: true,
       storyPoints: true,
       acceptanceCriteria: true,
+      companyUuid: true,
       assigneeType: true,
       assigneeUuid: true,
       assignedAt: true,
+      assignedByType: true,
       assignedByUuid: true,
       proposalUuid: true,
       createdByUuid: true,
@@ -656,6 +686,7 @@ export async function claimTask({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  assignedByType,
   instanceUuid,
   cwdSource,
   cwdHost,
@@ -667,6 +698,7 @@ export async function claimTask({
     // override the assignee fields are written as-is — re-assigning without an
     // override therefore reverts a prior instance pin back to a plain agent.
     const resolved = await resolveTaskAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+    const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
 
     const task = await prisma.task.update({
       where: { uuid: taskUuid, status: { in: ["open", "assigned"] } },
@@ -678,7 +710,7 @@ export async function claimTask({
         cwdHost: runtimeCwd ? cwdHost : null,
         runtimeCwd: runtimeCwd ?? null,
         assignedAt: new Date(),
-        assignedByUuid,
+        ...provenance,
       },
       include: {
         project: { select: { uuid: true, name: true } },
@@ -709,6 +741,7 @@ export async function releaseTask(uuid: string): Promise<TaskResponse> {
         cwdHost: null,
         runtimeCwd: null,
         assignedAt: null,
+        assignedByType: null,
         assignedByUuid: null,
       },
       include: {
@@ -769,9 +802,11 @@ export async function createTasksFromProposal(
         priority: true,
         storyPoints: true,
         acceptanceCriteria: true,
+        companyUuid: true,
         assigneeType: true,
         assigneeUuid: true,
         assignedAt: true,
+        assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
         createdByUuid: true,
@@ -1300,9 +1335,11 @@ export async function getUnblockedTasks({
         priority: true,
         storyPoints: true,
         acceptanceCriteria: true,
+        companyUuid: true,
         assigneeType: true,
         assigneeUuid: true,
         assignedAt: true,
+        assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
         createdByUuid: true,

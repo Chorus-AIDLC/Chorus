@@ -5,6 +5,7 @@ import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
 import { isRedisEnabled, getRedisPublisher, getRedisSubscriber } from "./redis";
 import logger from "@/lib/logger";
+import type { OrchestratorAttribution } from "@/services/orchestrator.service";
 
 const ebLogger = logger.child({ module: "event-bus" });
 
@@ -78,6 +79,7 @@ export interface ControlEvent {
   // inject a crash-specific continue instruction into the resumed wake
   // (add-crash-execution-resume). Older daemons ignore it.
   resumeReason?: "user" | "crash";
+  orchestrator?: OrchestratorAttribution | null;
 }
 
 /**

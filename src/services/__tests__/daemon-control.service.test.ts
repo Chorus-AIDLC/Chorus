@@ -283,6 +283,24 @@ describe("dispatchControl resume", () => {
     expect(event).toMatchObject({ command: "resume", resumeReason: "crash" });
   });
 
+  it("carries orchestrator attribution on resume without changing the event actor model", () => {
+    const orchestrator = {
+      type: "agent" as const,
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    };
+    dispatchControl({
+      companyUuid,
+      targetConnectionUuid: connectionUuid,
+      command: "resume",
+      entityType: "task",
+      entityUuid: t1,
+      orchestrator,
+    });
+    const [, event] = mockEventBus.emit.mock.calls[0];
+    expect(event).toMatchObject({ command: "resume", orchestrator });
+  });
+
   it("omits resumeReason from the wire when absent (interrupt shape stays byte-identical)", () => {
     dispatchControl({
       companyUuid,

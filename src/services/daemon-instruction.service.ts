@@ -832,6 +832,7 @@ export async function createConversationalIdeaSession(
         cwdHost,
         runtimeCwd,
         assignedAt: new Date(),
+        assignedByType: auth.type === "agent" ? "agent" : "user",
         assignedByUuid: auth.actorUuid,
         createdByUuid: auth.actorUuid,
       },

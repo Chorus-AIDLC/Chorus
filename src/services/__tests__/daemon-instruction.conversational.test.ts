@@ -381,6 +381,7 @@ describe("createConversationalIdeaSession", () => {
       status: "elaborating",
       assigneeType: "agent_instance",
       assigneeUuid: instanceUuid,
+      assignedByType: "user",
       assignedByUuid: ownerUuid,
       createdByUuid: ownerUuid,
     });

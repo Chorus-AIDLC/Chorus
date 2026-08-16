@@ -43,6 +43,73 @@ describe("buildPrompt", () => {
     expect(buildPrompt({ ...TASK_NOTIF, action: "report_created" })).toBeNull();
   });
 
+  it("keeps the current actor separate from the resource orchestrator", () => {
+    const p = buildPrompt({
+      ...TASK_NOTIF,
+      orchestrator: {
+        type: "agent",
+        uuid: "agent-orchestrator",
+        name: "Coordinator",
+      },
+    });
+
+    expect(p).toContain("@[Alice](user:user-1)");
+    expect(p).toContain("Your orchestrator for this resource is @Coordinator.");
+    expect(p).toContain("@[Coordinator](agent:agent-orchestrator)");
+  });
+
+  it("appends orchestrator guidance to every non-null wake body", () => {
+    for (const action of WAKE_ACTIONS) {
+      const extra =
+        action === "human_instruction"
+          ? { instructionText: "please continue" }
+          : {};
+      const p = buildPrompt({
+        ...TASK_NOTIF,
+        action,
+        ...extra,
+        orchestrator: {
+          type: "agent",
+          uuid: "agent-orchestrator",
+          name: "Coordinator",
+        },
+      });
+      expect(p).toContain("@[Coordinator](agent:agent-orchestrator)");
+    }
+  });
+
+  it("does not append an orchestrator block when attribution is absent", () => {
+    expect(buildPrompt(TASK_NOTIF)).not.toContain(
+      "Your orchestrator for this resource",
+    );
+  });
+
+  it("keeps null wake bodies null even when orchestrator attribution exists", () => {
+    expect(
+      buildPrompt({
+        ...TASK_NOTIF,
+        action: "unknown_action",
+        orchestrator: {
+          type: "agent",
+          uuid: "agent-orchestrator",
+          name: "Coordinator",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      buildPrompt({
+        ...TASK_NOTIF,
+        action: "human_instruction",
+        instructionText: "   ",
+        orchestrator: {
+          type: "agent",
+          uuid: "agent-orchestrator",
+          name: "Coordinator",
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("comment_added does NOT wake (too noisy); only an explicit @mention does", () => {
     // A plain comment to the task's assignee/creator should be ignored...
     expect(buildPrompt({ ...TASK_NOTIF, action: "comment_added", message: "please rebase" })).toBeNull();
@@ -126,6 +193,20 @@ describe("buildPrompt", () => {
     const pi = buildPrompt({ action: "resource_resumed", entityType: "idea", entityUuid: "idea-7" });
     expect(pi).not.toBeNull();
     expect(pi).toContain("idea-7");
+  });
+
+  it("resource_resumed repeats orchestrator handoff guidance", () => {
+    const p = buildPrompt({
+      action: "resource_resumed",
+      entityType: "task",
+      entityUuid: "task-1",
+      orchestrator: {
+        type: "agent",
+        uuid: "agent-orchestrator",
+        name: "Coordinator",
+      },
+    });
+    expect(p).toContain("@[Coordinator](agent:agent-orchestrator)");
   });
 
   it("resource_resumed with resumedFrom=crash injects the crash-specific continue instruction (add-crash-execution-resume)", () => {
@@ -1096,15 +1177,32 @@ describe("EventRouter dispatch", () => {
     router.dispatchResume({ entityType: "task", entityUuid: "task-2", resumeReason: "user" });
     router.dispatchResume({ entityType: "task", entityUuid: "task-3" });
     router.dispatchResume({ entityType: "task", entityUuid: "task-4", resumeReason: "meteor" });
+    router.dispatchResume({
+      entityType: "task",
+      entityUuid: "task-5",
+      orchestrator: {
+        type: "agent",
+        uuid: "agent-orchestrator",
+        name: "Coordinator",
+      },
+    });
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(enqueued).toHaveLength(4);
+    expect(enqueued).toHaveLength(5);
     const wakes = waker.markQueued.mock.calls.map((c) => c[0]);
     expect(wakes[0]).toMatchObject({ action: "resource_resumed", entityUuid: "task-1", resumedFrom: "crash" });
     expect(wakes[1]).toMatchObject({ action: "resource_resumed", entityUuid: "task-2", resumedFrom: "user" });
     // Absent / unknown reasons are NOT stamped — buildPrompt then falls back to the user text.
     expect(wakes[2]).not.toHaveProperty("resumedFrom");
     expect(wakes[3]).not.toHaveProperty("resumedFrom");
+    expect(wakes[4]).toMatchObject({
+      entityUuid: "task-5",
+      orchestrator: {
+        type: "agent",
+        uuid: "agent-orchestrator",
+        name: "Coordinator",
+      },
+    });
   });
 });
 
