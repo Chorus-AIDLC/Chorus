@@ -10,9 +10,9 @@
     "menu": "菜单"
   },
   "hero": {
-    "badge": "The Agent Harness",
-    "title": "模型是大脑，<highlight>Chorus</highlight> 是除此之外的一切。",
-    "subtitle": "Chorus 为 AI Agent 提供完整的项目迭代环境 —— 从需求澄清到任务验收的结构化流水线 —— 让 Agent 团队能交付项目，而不只是写代码。AI 提议，人类把关。"
+    "badge": "你的编程 Agent 之上的 Harness",
+    "title": "模型负责推理，Agent 负责写代码，<highlight>Chorus</highlight> 负责交付。",
+    "subtitle": "你的编程 Agent 只管写代码，Chorus 高它们一层：把多个 Agent 和你收进同一条流水线，Agent 提议，你来验收，交付的是软件，不只是代码。"
   },
   "pipeline": {
     "steps": [
@@ -45,8 +45,8 @@
   },
   "features": {
     "label": "核心能力",
-    "title": "Harness 帮你搞定的事",
-    "subtitle": "模型之外，让 AI 和人顺畅协作所需的一切 —— 从会话管理到人工审核闭环。",
+    "title": "Chorus 帮你搞定的事",
+    "subtitle": "让一队编程 Agent 和一个把关的人把软件真正交付出来，靠的就是这些：从会话管理到人工审核闭环。",
     "items": [
       {
         "title": "零上下文注入",
@@ -238,8 +238,8 @@
     "next": "下一篇"
   },
   "meta": {
-    "siteTitle": "Chorus - AI-Human 协作的 Agent Harness",
-    "siteDescription": "Chorus 是 AI-Human 协作的 Agent Harness。AI 提议，人类把关。",
+    "siteTitle": "Chorus - 你的编程 Agent 之上的 Harness",
+    "siteDescription": "Chorus 是你的编程 Agent 之上的 Harness：Agent 提议，人类把关，想法最终交付成软件。",
     "blogTitle": "博客 - Chorus"
   }
 }

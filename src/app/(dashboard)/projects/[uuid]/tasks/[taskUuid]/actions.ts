@@ -37,6 +37,7 @@ export async function claimTaskAction(taskUuid: string) {
       companyUuid: auth.companyUuid,
       assigneeType: auth.type,
       assigneeUuid: auth.actorUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
     });
 
@@ -104,6 +105,7 @@ export async function claimTaskToAgentAction(
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
       // Thread the durable AgentInstance pin. claimTask validates it belongs to
       // the company and promotes the row to assigneeType="agent_instance"; with
@@ -190,6 +192,7 @@ export async function reassignTaskInstanceNoWakeAction(
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
       instanceUuid,
     });
@@ -343,6 +346,7 @@ export async function claimTaskToUserAction(taskUuid: string, userUuid: string) 
       companyUuid: auth.companyUuid,
       assigneeType: "user",
       assigneeUuid: userUuid,
+      assignedByType: "user",
       assignedByUuid: auth.actorUuid,
     });
 

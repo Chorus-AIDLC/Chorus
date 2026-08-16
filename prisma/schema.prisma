@@ -199,7 +199,8 @@ model Idea {
   cwdHost           String? // Host anchor for a discovered runtime cwd assignment
   runtimeCwd        String? // Runtime cwd executed through any online connection on cwdHost
   assignedAt        DateTime? // Assignment timestamp
-  assignedByUuid    String? // User UUID (human assignment)
+  assignedByType    String? // user | agent (explicit assignment provenance)
+  assignedByUuid    String? // User or Agent UUID (polymorphic provenance)
   // Elaboration (AI-DLC Stage 3 — structured requirements clarification)
   elaborationDepth  String? // "minimal" | "standard" | "comprehensive"
   elaborationStatus String? // "pending_answers" | "validating" | "resolved"
@@ -269,7 +270,8 @@ model Task {
   cwdHost                 String? // Host anchor for a discovered runtime cwd assignment
   runtimeCwd              String? // Runtime cwd executed through any online connection on cwdHost
   assignedAt              DateTime? // Assignment timestamp
-  assignedByUuid          String? // User UUID (human assignment)
+  assignedByType          String? // user | agent (explicit assignment provenance)
+  assignedByUuid          String? // User or Agent UUID (polymorphic provenance)
   proposalUuid            String? // Source Proposal UUID (traceable, optional)
   createdByUuid           String // User or Agent UUID
   createdAt               DateTime              @default(now())

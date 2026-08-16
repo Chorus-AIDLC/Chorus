@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus task reviewer — independently verifi
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -99,6 +99,7 @@ Do **not** batch AC items as "all look good" — check each one separately. Flag
 - Do module contracts match what other tasks expect (return formats, error patterns, call points)?
 - Does the PRD mention fields, behaviors, or error scenarios not covered by any AC, and were they silently dropped?
 - No silent divergence between what was specified and what was built.
+- **Project constraints** — Read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule is a BLOCKER.
 
 ### Step 5: Adversarial Probes
 

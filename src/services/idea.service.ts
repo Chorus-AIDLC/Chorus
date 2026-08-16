@@ -64,6 +64,7 @@ export interface IdeaClaimParams {
   companyUuid: string;
   assigneeType: string;
   assigneeUuid: string;
+  assignedByType?: "user" | "agent" | null;
   assignedByUuid?: string | null;
   // Optional durable AgentInstance pin (add-agent-instance-addressing). When
   // provided, the idea is pinned to that (agent, host, cwd) instance: the row is
@@ -220,9 +221,26 @@ async function resolveAssigneeFields(
   return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
 }
 
+function normalizeAssignmentProvenance(
+  assignedByType?: "user" | "agent" | null,
+  assignedByUuid?: string | null,
+): {
+  assignedByType?: "user" | "agent";
+  assignedByUuid?: string;
+} {
+  if (!assignedByType && !assignedByUuid) {
+    return {};
+  }
+  if (!assignedByType || !assignedByUuid) {
+    throw new Error("Assignment provenance type and UUID must be provided together");
+  }
+  return { assignedByType, assignedByUuid };
+}
+
 // Format a single Idea into API response format
 async function formatIdeaResponse(
   idea: {
+    companyUuid: string;
     uuid: string;
     title: string;
     content: string | null;
@@ -233,6 +251,7 @@ async function formatIdeaResponse(
     assigneeType: string | null;
     assigneeUuid: string | null;
     assignedAt: Date | null;
+    assignedByType: string | null;
     assignedByUuid: string | null;
     isContainer: boolean;
     createdByUuid: string;
@@ -242,7 +261,14 @@ async function formatIdeaResponse(
   }
 ): Promise<IdeaResponse> {
   const [assignee, createdBy] = await Promise.all([
-    formatAssigneeComplete(idea.assigneeType, idea.assigneeUuid, idea.assignedAt, idea.assignedByUuid),
+    formatAssigneeComplete(
+      idea.assigneeType,
+      idea.assigneeUuid,
+      idea.assignedAt,
+      idea.assignedByUuid,
+      idea.assignedByType,
+      idea.companyUuid,
+    ),
     formatCreatedBy(idea.createdByUuid),
   ]);
 
@@ -315,9 +341,11 @@ export async function listIdeas({
         status: true,
         elaborationStatus: true,
         elaborationDepth: true,
+        companyUuid: true,
         assigneeType: true,
         assigneeUuid: true,
         assignedAt: true,
+        assignedByType: true,
         assignedByUuid: true,
         parentUuid: true,
         isContainer: true,
@@ -552,9 +580,11 @@ export async function createIdea(params: IdeaCreateParams): Promise<IdeaResponse
       status: true,
       elaborationStatus: true,
       elaborationDepth: true,
+      companyUuid: true,
       assigneeType: true,
       assigneeUuid: true,
       assignedAt: true,
+      assignedByType: true,
       assignedByUuid: true,
       parentUuid: true,
       isContainer: true,
@@ -764,6 +794,7 @@ export async function claimIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  assignedByType,
   instanceUuid,
   cwdSource,
   cwdHost,
@@ -784,6 +815,7 @@ export async function claimIdea({
   // Resolve the polymorphic assignee, applying an optional durable instance pin
   // (validates company ownership and may promote to assigneeType="agent_instance").
   const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+  const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
 
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
@@ -795,7 +827,7 @@ export async function claimIdea({
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,
       assignedAt: new Date(),
-      assignedByUuid,
+      ...provenance,
     },
     include: {
       project: { select: { uuid: true, name: true } },
@@ -814,6 +846,7 @@ export async function assignIdea({
   assigneeType,
   assigneeUuid,
   assignedByUuid,
+  assignedByType,
   instanceUuid,
   cwdSource,
   cwdHost,
@@ -831,6 +864,7 @@ export async function assignIdea({
   // assignment (agent→agent, instance→instance, or instance→agent revert), since
   // the caller's `assigneeType`/`assigneeUuid` are persisted as-is when no pin.
   const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
+  const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
 
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
@@ -842,7 +876,7 @@ export async function assignIdea({
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,
       assignedAt: new Date(),
-      assignedByUuid,
+      ...provenance,
     },
     include: {
       project: { select: { uuid: true, name: true } },
@@ -875,6 +909,7 @@ export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
       cwdHost: null,
       runtimeCwd: null,
       assignedAt: null,
+      assignedByType: null,
       assignedByUuid: null,
     },
     include: {

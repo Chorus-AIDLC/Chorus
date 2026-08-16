@@ -36,6 +36,11 @@ vi.mock("@/services/notification-turn", () => ({
   createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
 }));
 
+const mockResolveResourceOrchestrator = vi.hoisted(() => vi.fn());
+vi.mock("@/services/orchestrator.service", () => ({
+  resolveResourceOrchestrator: mockResolveResourceOrchestrator,
+}));
+
 import {
   create,
   createBatch,
@@ -93,6 +98,7 @@ beforeEach(() => {
     targetConnectionUuid: null,
     suppressWake: false,
   });
+  mockResolveResourceOrchestrator.mockResolvedValue(null);
 });
 
 // ===== create =====
@@ -250,6 +256,30 @@ describe("create", () => {
     expect(result.instructionText).toBeNull();
   });
 
+  it("projects direct-resource orchestrator attribution separately from the event actor", async () => {
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord());
+    mockPrisma.notification.count.mockResolvedValue(0);
+    mockResolveResourceOrchestrator.mockResolvedValue({
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    });
+
+    const result = await create(makeNotifParams());
+
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledWith(
+      companyUuid,
+      "task",
+      "task-0000-0000-0000-000000000001",
+    );
+    expect(result.actorUuid).toBe("agent-0000-0000-0000-000000000001");
+    expect(result.orchestrator).toEqual({
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    });
+  });
+
   it("should still return the notification when the turn bridge resolves (failure-isolated)", async () => {
     // The bridge never throws (it logs+swallows internally), but assert create() does
     // not depend on the bridge's outcome: the notification is returned regardless.
@@ -298,6 +328,24 @@ describe("createBatch", () => {
 
     // Same recipient => one emit
     expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves orchestrator attribution once for duplicate batch resources", async () => {
+    const params = makeNotifParams();
+    const record = makeNotifRecord();
+    mockPrisma.notification.create
+      .mockResolvedValueOnce(record)
+      .mockResolvedValueOnce({ ...record, uuid: "notif-2" });
+    mockPrisma.notification.count.mockResolvedValue(2);
+
+    await createBatch([params, params]);
+
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledTimes(1);
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledWith(
+      companyUuid,
+      "task",
+      params.entityUuid,
+    );
   });
 
   it("should invoke the turn bridge once per notification param (not deduped)", async () => {
@@ -416,6 +464,50 @@ describe("list", () => {
     expect(result.notifications).toHaveLength(1);
     expect(result.total).toBe(10);
     expect(result.unreadCount).toBe(5);
+    expect(result.notifications[0].orchestrator).toBeNull();
+  });
+
+  it("enriches every listed notification with its directly addressed orchestrator", async () => {
+    const taskRecord = makeNotifRecord();
+    const duplicateTaskRecord = makeNotifRecord({ uuid: "notif-task-2" });
+    const proposalRecord = makeNotifRecord({
+      uuid: "notif-proposal",
+      entityType: "proposal",
+      entityUuid: "proposal-1",
+    });
+    mockPrisma.notification.findMany.mockResolvedValue([
+      taskRecord,
+      duplicateTaskRecord,
+      proposalRecord,
+    ]);
+    mockPrisma.notification.count.mockResolvedValue(3);
+    mockResolveResourceOrchestrator.mockResolvedValue({
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    });
+
+    const result = await list({
+      companyUuid,
+      recipientType: "user",
+      recipientUuid,
+    });
+
+    expect(result.notifications[0].orchestrator).toEqual({
+      type: "agent",
+      uuid: "agent-orchestrator",
+      name: "Coordinator",
+    });
+    expect(result.notifications[1].orchestrator).toEqual(
+      result.notifications[0].orchestrator,
+    );
+    expect(result.notifications[2].orchestrator).toBeNull();
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledTimes(1);
+    expect(mockResolveResourceOrchestrator).toHaveBeenCalledWith(
+      companyUuid,
+      "task",
+      taskRecord.entityUuid,
+    );
   });
 
   it("should apply unread filter", async () => {

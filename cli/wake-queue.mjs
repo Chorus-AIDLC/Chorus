@@ -1,14 +1,22 @@
 // cli/wake-queue.mjs
-// Per-key FIFO scheduler with a global concurrency cap. This is what makes the
-// idea_root session anchor safe (cli-daemon spec "Per-root-idea wake
-// serialization", design.md "Concurrency model"):
-//   • within one key (root idea) → strictly serial, FIFO. The 2nd wake waits
-//     for the 1st subprocess to exit, so we never run two
+// Per-key FIFO scheduler with a global concurrency cap, coalescing same-key
+// wakes into batches. This is what makes the idea_root session anchor safe
+// (cli-daemon spec "Per-root-idea wake serialization", design.md "Concurrency
+// model") AND implements daemon-wake-coalescing (design.md §C1):
+//   • within one key (root idea) → strictly serial, FIFO. The next batch waits
+//     for the current runBatch to settle, so we never run two
 //     `claude --resume <sameSessionId>` against one session.
+//   • coalescing: when a key's slot frees, the ENTIRE pending array for that key
+//     is drained (splice) and delivered to runBatch ONCE as a single batch. So
+//     N events that pile up while the previous turn runs become ONE turn.
+//     Natural batching only — NO debounce/collect timer, NO batch-size cap.
 //   • across keys → concurrent, bounded by maxConcurrency.
 //   • enqueue() returns immediately — never blocks the SSE loop.
-//   • a task that throws is logged and the next task for that key proceeds (a
-//     poisoned wake must not wedge the key's queue forever).
+//   • a batch whose runBatch throws is logged and the next batch for that key
+//     proceeds (a poisoned wake must not wedge the key's queue forever).
+// The queue carries opaque DATA items (the router passes `{ notification,
+// attribution }`); it never introspects them — the runBatch callback (supplied
+// at construction, wired to waker.wakeBatch in daemon.mjs) does.
 // Plain ESM, zero deps, in-memory.
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
@@ -18,41 +26,49 @@ export class WakeQueue {
    * @param {{
    *   maxConcurrency?: number,
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
+   *   runBatch?: (key: string, items: any[]) => Promise<void>,
    * }} [opts]
    */
   constructor(opts = {}) {
     this.maxConcurrency = opts.maxConcurrency ?? 4;
     this.logger = opts.logger ?? NOOP_LOGGER;
-    /** @type {Map<string, Array<() => Promise<void>>>} pending tasks per key. */
+    // The batch runner: called ONCE per drained batch with every pending item
+    // for the key. Defaults to a no-op so an unwired queue never throws (the
+    // daemon always supplies the real waker.wakeBatch runner).
+    this.runBatch = opts.runBatch ?? (async () => {});
+    /** @type {Map<string, any[]>} pending data items per key. */
     this.pending = new Map();
-    /** @type {Set<string>} keys with a task currently running. */
+    /** @type {Set<string>} keys with a batch currently running. */
     this.running = new Set();
     /** @type {string[]} keys waiting for a global concurrency slot. */
     this.readyKeys = [];
     this.activeCount = 0;
-    // Graceful-shutdown latch: once set, #pump starts NOTHING new — in-flight tasks
-    // finish (drain observes them) but queued work stays queued and dies with the
-    // process. Never cleared; a stopping queue is on its way out.
+    // Graceful-shutdown latch: once set, #pump starts NOTHING new — in-flight
+    // batches finish (drain observes them) but queued work stays queued and dies
+    // with the process. Never cleared; a stopping queue is on its way out.
     this.stopped = false;
   }
 
-  /** Stop starting new tasks (graceful shutdown). In-flight tasks are unaffected. */
+  /** Stop starting new batches (graceful shutdown). In-flight batches are unaffected. */
   stop() {
     this.stopped = true;
   }
 
   /**
-   * Enqueue a wake task under a key. Returns immediately. The task is a thunk
-   * returning a promise (the actual wake). Same key → serialized; different
-   * keys → concurrent up to maxConcurrency.
+   * Enqueue an opaque data item under a key. Returns immediately. Items on the
+   * same key coalesce: while a key's batch runs, later items pile up and are
+   * drained together as ONE batch when the slot frees. Different keys run
+   * concurrently up to maxConcurrency.
    * @param {string} key
-   * @param {() => Promise<void>} task
+   * @param {any} item  opaque data (e.g. `{ notification, attribution }`)
    */
-  enqueue(key, task) {
+  enqueue(key, item) {
     if (!this.pending.has(key)) this.pending.set(key, []);
-    this.pending.get(key).push(task);
+    this.pending.get(key).push(item);
     // A key becomes "ready" to claim a global slot only when it's not already
-    // running (serial-per-key) and not already queued for a slot.
+    // running (serial-per-key) and not already queued for a slot. While it IS
+    // running, later items simply accumulate in `pending` and are picked up by
+    // the next batch — this is where coalescing happens.
     if (!this.running.has(key) && !this.readyKeys.includes(key)) {
       this.readyKeys.push(key);
     }
@@ -65,7 +81,7 @@ export class WakeQueue {
   }
 
   /**
-   * Snapshot of the keys with a task currently running (observability read).
+   * Snapshot of the keys with a batch currently running (observability read).
    * Returns a fresh array so a caller can't mutate the internal Set.
    * @returns {string[]}
    */
@@ -74,7 +90,7 @@ export class WakeQueue {
   }
 
   /**
-   * Snapshot of the keys that have at least one task still waiting to run —
+   * Snapshot of the keys that have at least one item still waiting to run —
    * i.e. enqueued but not yet started (observability read). A key that is
    * currently running with no further queued work is NOT pending. Returns a
    * fresh array so a caller can't mutate internal state.
@@ -85,13 +101,13 @@ export class WakeQueue {
   }
 
   /**
-   * Wait (bounded) for every in-flight task to finish — the graceful-shutdown drain
+   * Wait (bounded) for every in-flight batch to finish — the graceful-shutdown drain
    * (fix-daemon-exit-orphan-running-turn). Resolves `true` when the queue went idle
-   * (no active task) within `timeoutMs`, `false` on timeout — the caller exits
+   * (no active batch) within `timeoutMs`, `false` on timeout — the caller exits
    * anyway and leaves the rest to the server-side reconcile backstop. Pending
-   * (not-yet-started) tasks are NOT waited for: a shutting-down daemon stops
+   * (not-yet-started) items are NOT waited for: a shutting-down daemon stops
    * starting new work, so only the in-flight subprocesses (and their exit reports)
-   * matter. Polling (50ms) keeps this zero-dep and independent of task internals.
+   * matter. Polling (50ms) keeps this zero-dep and independent of batch internals.
    * @param {number} timeoutMs
    * @returns {Promise<boolean>}
    */
@@ -112,33 +128,39 @@ export class WakeQueue {
       if (this.running.has(key)) continue; // already running under another slot
       const queue = this.pending.get(key);
       if (!queue || queue.length === 0) continue;
-      this.#runNext(key);
+      this.#startBatch(key);
     }
   }
 
-  /** Run the next task for a key, then chain to the following one. */
-  #runNext(key) {
+  /**
+   * Drain the ENTIRE pending array for a key into one batch and run it, then
+   * chain to the following batch. No batch-size cap (design.md §C1, Q7).
+   */
+  #startBatch(key) {
     const queue = this.pending.get(key);
     if (!queue || queue.length === 0) {
       this.running.delete(key);
       return;
     }
-    const task = queue.shift();
+    // Coalesce: take everything pending for this key right now as one batch.
+    // Items that arrive after this splice accumulate for the NEXT batch.
+    const items = queue.splice(0);
     this.running.add(key);
     this.activeCount++;
 
     Promise.resolve()
-      .then(task)
+      .then(() => this.runBatch(key, items))
       .catch((err) => {
-        // Poisoned wake: log, do NOT let it wedge the key's queue.
-        this.logger.warn(`[Chorus] wake task for ${key} failed: ${err}`);
+        // Poisoned batch: log, do NOT let it wedge the key's queue.
+        this.logger.warn(`[Chorus] wake batch for ${key} failed: ${err}`);
       })
       .finally(() => {
         this.activeCount--;
         const remaining = this.pending.get(key);
         if (remaining && remaining.length > 0) {
-          // Same key still has work → it must run serially. Re-mark ready;
-          // #pump will pick it up (respecting the global cap).
+          // Same key accumulated more work while this batch ran → it must run
+          // serially as the next batch. Re-mark ready; #pump will pick it up
+          // (respecting the global cap).
           if (!this.readyKeys.includes(key)) this.readyKeys.push(key);
           this.running.delete(key); // free the key so #pump can re-claim it
         } else {

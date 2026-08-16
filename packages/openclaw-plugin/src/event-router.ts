@@ -63,6 +63,14 @@ interface NotificationDetail {
   actorType: string;
   actorUuid: string;
   actorName: string;
+  /**
+   * The agent orchestrator for this resource (server read-projection,
+   * add-agent-orchestrator-handoff). Present only when the resource was assigned by an
+   * agent; null/absent for human-assigned or unattributed resources. Mirrors the
+   * daemon's cli/prompts.mjs `orchestrator` field so buildOrchestratorGuidance can
+   * inject the same handback instruction the daemon does.
+   */
+  orchestrator?: { type: string; uuid: string; name: string } | null;
 }
 
 export class ChorusEventRouter {
@@ -228,12 +236,48 @@ export class ChorusEventRouter {
     );
   }
 
+  /**
+   * Orchestrator-handoff guidance for a wake — the OpenClaw twin of the daemon's
+   * orchestratorGuidance in cli/prompts.mjs. KEEP THE TWO WORDINGS IN SYNC. Returns
+   * null unless the resource has an AGENT orchestrator; a human-assigned resource
+   * hands back to the human via the actor @mention above (buildMentionGuidance).
+   */
+  private buildOrchestratorGuidance(n: NotificationDetail): string | null {
+    if (n.orchestrator?.type !== "agent") return null;
+    return (
+      `Your orchestrator for this resource is @${n.orchestrator.name}.\n` +
+      `At a human-only gate you cannot cross, or when this child resource is complete, hand control ` +
+      `back by commenting on the resource and mentioning ` +
+      `@[${n.orchestrator.name}](agent:${n.orchestrator.uuid}) with the decision needed or completion ` +
+      `evidence, then leave any human-gated resource pending and end the turn. Do not @mention the ` +
+      `orchestrator for ordinary internal progress.`
+    );
+  }
+
+  /**
+   * Append orchestrator-handoff guidance (when the resource has an agent orchestrator)
+   * to a wake message and dispatch it. Every handler routes its wake through this so the
+   * handback instruction rides EVERY action — parity with the daemon, which appends
+   * orchestratorGuidance once in buildPrompt (cli/prompts.mjs). No orchestrator → the
+   * message is dispatched unchanged.
+   */
+  private wakeWithHandoff(
+    message: string,
+    contextKey: string,
+    n: NotificationDetail,
+    attr: WakeAttribution,
+  ): void {
+    const handoff = this.buildOrchestratorGuidance(n);
+    this.wake(handoff ? `${message}\n\n${handoff}` : message, contextKey, attr);
+  }
+
   private handleTaskAssigned(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "task");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Task assigned: ${n.entityTitle}. Task UUID: ${n.entityUuid}, Project UUID: ${n.projectUuid}. Use chorus_get_task to review the task, then chorus_claim_task to start work.\n${mentionGuidance}`,
       this.contextKeyFor("task_assigned", n.entityUuid),
+      n,
       attr
     );
   }
@@ -241,19 +285,21 @@ export class ChorusEventRouter {
   private handleMentioned(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, n.entityType);
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] You were @mentioned in ${n.entityType} '${n.entityTitle}' (entityType: ${n.entityType}, entityUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}): ${n.message}\n` +
       `Review the ${n.entityType} content and use chorus_get_comments (targetType: "${n.entityType}", targetUuid: "${n.entityUuid}") to see the full conversation, then respond.\n` +
       mentionGuidance,
       this.contextKeyFor("mentioned", n.entityUuid),
+      n,
       attr
     );
   }
 
   private handleElaborationRequested(n: NotificationDetail, attr: WakeAttribution): void {
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Elaboration requested for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Use chorus_get_elaboration to review questions.`,
       this.contextKeyFor("elaboration_requested", n.entityUuid),
+      n,
       attr
     );
   }
@@ -261,12 +307,13 @@ export class ChorusEventRouter {
   private handleProposalRejected(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "proposal");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Proposal '${n.entityTitle}' was REJECTED (proposalUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). Review note: "${n.message}". ` +
       `Use chorus_get_proposal to review the proposal, then fix issues with chorus_update_task_draft / chorus_update_document_draft. ` +
       `After fixing, call chorus_validate_proposal then chorus_submit_proposal to resubmit.\n` +
       mentionGuidance,
       this.contextKeyFor("proposal_rejected", n.entityUuid),
+      n,
       attr
     );
   }
@@ -275,11 +322,12 @@ export class ChorusEventRouter {
     const mentionGuidance = this.buildMentionGuidance(n, "proposal");
 
     const reviewInfo = n.message.includes("Note: ") ? ` Review note: "${n.message.split("Note: ").pop()}"` : "";
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Proposal '${n.entityTitle}' was APPROVED (proposalUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid})!${reviewInfo} Documents and tasks have been created. ` +
       `Use chorus_get_available_tasks with projectUuid: "${n.projectUuid}" to see the new tasks ready for work.\n` +
       mentionGuidance,
       this.contextKeyFor("proposal_approved", n.entityUuid),
+      n,
       attr
     );
   }
@@ -287,20 +335,22 @@ export class ChorusEventRouter {
   private handleIdeaClaimed(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Idea '${n.entityTitle}' has been assigned to you (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Use chorus_get_idea to review the idea, then chorus_claim_idea to start elaboration.\n` +
       mentionGuidance,
       this.contextKeyFor("idea_claimed", n.entityUuid),
+      n,
       attr
     );
   }
 
   private handleTaskVerified(n: NotificationDetail, attr: WakeAttribution): void {
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Task '${n.entityTitle}' has been verified and is now done (taskUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Check if this unblocks other tasks: use chorus_get_unblocked_tasks with projectUuid "${n.projectUuid}" to find tasks that are now ready to start.`,
       this.contextKeyFor("task_verified", n.entityUuid),
+      n,
       attr
     );
   }
@@ -308,10 +358,11 @@ export class ChorusEventRouter {
   private handleTaskReopened(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "task");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Task '${n.entityTitle}' has been reopened and needs rework (taskUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Use chorus_get_task to review the task and chorus_get_comments to see verification feedback, then fix the issues.\n${mentionGuidance}`,
       this.contextKeyFor("task_reopened", n.entityUuid),
+      n,
       attr
     );
   }
@@ -319,7 +370,7 @@ export class ChorusEventRouter {
   private handleElaborationAnswered(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Elaboration answers submitted for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Review the answers with chorus_get_elaboration, then either:\n` +
       `- Call chorus_validate_elaboration with empty issues [] to resolve and proceed to proposal creation\n` +
@@ -327,6 +378,7 @@ export class ChorusEventRouter {
       `After reviewing, @mention the answerer to ask if they have any further questions before you proceed.\n` +
       mentionGuidance,
       this.contextKeyFor("elaboration_answered", n.entityUuid),
+      n,
       attr
     );
   }
@@ -341,12 +393,13 @@ export class ChorusEventRouter {
   private handleElaborationVerified(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] Elaboration for idea '${n.entityTitle}' was VERIFIED by a human (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `The idea is now elaborated — do NOT answer elaboration questions. Proceed to WRITE THE PROPOSAL: gather context with ` +
       `chorus_get_idea and chorus_get_elaboration, then author the proposal via the existing proposal flow ` +
       `(chorus_pm_create_proposal / the proposal skill).\n${mentionGuidance}`,
       this.contextKeyFor("elaboration_verified", n.entityUuid),
+      n,
       attr
     );
   }
@@ -361,7 +414,7 @@ export class ChorusEventRouter {
   private handleStartDevelopment(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] A human started DEVELOPMENT for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `The idea's proposal is approved and unfinished tasks remain. Claim and execute ALL remaining tasks of that proposal in ` +
       `dependency order, following the develop workflow: repeatedly find claimable tasks (chorus_get_unblocked_tasks with ` +
@@ -370,6 +423,7 @@ export class ChorusEventRouter {
       `Do NOT stop after one task. Leave tasks already in to_verify (awaiting human verification) and tasks claimed by other ` +
       `sessions untouched. If nothing is claimable, post a brief status comment on the idea and end the turn.\n${mentionGuidance}`,
       this.contextKeyFor("start_development", n.entityUuid),
+      n,
       attr
     );
   }
@@ -386,7 +440,7 @@ export class ChorusEventRouter {
   private handleYoloRequested(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
-    this.wake(
+    this.wakeWithHandoff(
       `[Chorus] A human requested a YOLO run for idea '${n.entityTitle}' (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
       `Drive this idea all the way to done following the yolo skill (the full-auto AI-DLC pipeline: Idea → Elaboration → Proposal → ` +
       `Execute → Verify). First read the idea's current state with chorus_get_idea (plus chorus_get_elaboration / ` +
@@ -395,6 +449,7 @@ export class ChorusEventRouter {
       `and so on. Complete the pipeline through the final done state and completion report, but do NOT merge or push a pull request ` +
       `without explicit human approval.\n${mentionGuidance}`,
       this.contextKeyFor("yolo_requested", n.entityUuid),
+      n,
       attr
     );
   }

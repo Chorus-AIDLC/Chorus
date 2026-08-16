@@ -37,8 +37,8 @@ export class EventRouter {
   /**
    * @param {{
    *   mcpClient: { callTool: (name: string, args?: Record<string, unknown>) => Promise<any> },
-   *   waker: { keyFor: (n: any) => Promise<{ key: string, rootIdeaUuid: string|null, directIdeaUuid: string|null }>, wake: (n: any, key: string, attribution?: any) => Promise<void>, markQueued?: (n: any, key: string, attribution?: any) => void },
-   *   queue: { enqueue: (key: string, task: () => Promise<void>) => void },
+   *   waker: { keyFor: (n: any) => Promise<{ key: string, rootIdeaUuid: string|null, directIdeaUuid: string|null }>, wakeBatch: (ns: any[], key: string, attribution?: any) => Promise<void>, markQueued?: (n: any, key: string, attribution?: any) => void },
+   *   queue: { enqueue: (key: string, item: { notification: any, attribution: any }) => void },
    *   wakeActions: Set<string>,
    *   getConnectionUuid?: () => (string|null),  This daemon's registered connection uuid
    *                                             (null until the SSE handshake reports it).
@@ -228,7 +228,8 @@ export class EventRouter {
    * reason ("user" | "crash") threaded from the control event; it is stamped on the
    * synthetic notification as `resumedFrom` so the prompt builder can state a crash
    * explicitly. Absent/unknown → not stamped → the user-resume prompt.
-   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string }} target
+   * @param {{ entityType?: string, entityUuid?: string, resumeReason?: string,
+   *   orchestrator?: { type?: string, uuid?: string, name?: string } | null }} target
    */
   dispatchResume(target) {
     const entityType = target?.entityType;
@@ -247,6 +248,11 @@ export class EventRouter {
       entityUuid,
       ...(resumedFrom ? { resumedFrom } : {}),
       ...(typeof target?.runtimeCwd === "string" ? { runtimeCwd: target.runtimeCwd } : {}),
+      ...(target?.orchestrator?.type === "agent" &&
+      typeof target.orchestrator.uuid === "string" &&
+      typeof target.orchestrator.name === "string"
+        ? { orchestrator: target.orchestrator }
+        : {}),
     };
     this.#resolveAndEnqueue(n, `resume:${entityType}:${entityUuid}`).catch((err) => {
       this.logger.error(`[Chorus] failed to dispatch resume for ${entityType}:${entityUuid}: ${err}`);
@@ -383,7 +389,10 @@ export class EventRouter {
     } catch (err) {
       this.logger.warn(`[Chorus] markQueued failed for pending turn ${turnUuid}: ${err}`);
     }
-    this.queue.enqueue(key, () => this.waker.wake(n, key, attribution));
+    // Enqueue an opaque DATA payload (add-daemon-wake-coalescing §C4), NOT a thunk: the
+    // queue coalesces all same-key pending items and hands the whole batch to its runBatch
+    // (wired to waker.wakeBatch in daemon.mjs). markQueued was already called per-item above.
+    this.queue.enqueue(key, { notification: n, attribution });
   }
 
   /**
@@ -531,6 +540,9 @@ export class EventRouter {
     } catch (err) {
       this.logger.warn(`[Chorus] markQueued failed for ${label}: ${err}`);
     }
-    this.queue.enqueue(key, () => this.waker.wake(n, key, attribution));
+    // Enqueue an opaque DATA payload (add-daemon-wake-coalescing §C4), NOT a thunk: the
+    // queue coalesces all same-key pending items and hands the whole batch to its runBatch
+    // (wired to waker.wakeBatch in daemon.mjs). markQueued was already called per-item above.
+    this.queue.enqueue(key, { notification: n, attribution });
   }
 }

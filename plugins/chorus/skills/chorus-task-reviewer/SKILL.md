@@ -4,7 +4,7 @@ description: 'Read-only Chorus task reviewer. Fetches a task plus its acceptance
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus task reviewer
@@ -97,6 +97,7 @@ For each AC item:
 - Implementation matches PRD wording / pseudocode (structural match, not exact match — pseudocode mismatches are NOTE).
 - Module contracts match what other tasks expect.
 - No silent divergence.
+- **Project constraints**: Read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule → BLOCKER.
 
 === RECOGNIZE YOUR OWN RATIONALIZATIONS ===
 

@@ -4,7 +4,7 @@ description: Adversarial read-only review of a submitted Chorus proposal — doc
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -52,6 +52,7 @@ chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 - **Tech feasibility**: Does the architecture make sense? Missing auth, race conditions, no error handling?
 - **Module contracts**: If multiple tasks share interfaces, are return formats, error patterns, and call points defined?
 - **Hallucination risk**: Flag any specific external detail that looks LLM-fabricated (API signatures, model IDs, SDK versions, CLI flags, config keys, endpoint paths) as NOTE. The PM is an LLM — it confidently invents plausible-looking specifics.
+- **Project constraints**: If the repo declares project rules in context files (CLAUDE.md / AGENTS.md / .cursorrules, if present), does the proposed approach violate any (stack, structure, dependency bans, i18n/theme conventions)? Conflict → BLOCKER.
 
 **Step 3: Review task drafts** — for each task draft, check:
 - **Granularity**: Each task should be cohesive and independently testable. 2–10 AC items is the sweet spot.

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.16.2] - 2026-08-16
+
+### Added
+- **Daemon wake coalescing**: When a session's wake-queue slot frees, all still-pending same-session wakes now drain into ONE `claude --resume` turn instead of one turn per wake (human instructions exempt, so chat backlog is never dropped). (#489)
+- **Persisted orchestrator handoff**: Agent orchestrator handoff is now persisted, and daemon/OpenClaw wake prompts carry handback guidance — leave a human-gated resource pending and hand a finished or gated resource back to whoever engaged you. (#487)
+
+### Changed
+- **Merged-turn transcript collapse**: Coalesced-away turns collapse into a single band with a dedicated "Merged" label and an expandable merged-events section, with live SSE convergence so a viewer no longer sees them stuck at "pending". (#490)
+- **Reviewers enforce project context files**: Proposal, task, and aggregate code reviewers across all five plugin ports and the standalone skill now flag any plan or code that violates a repo's declared context-file rules (CLAUDE.md / AGENTS.md / .cursorrules) as a BLOCKER. (#492)
+- **Repositioned landing + slim READMEs**: "Harness" now names Chorus one level above your coding agents; all four READMEs slimmed from ~461 to ~130 lines, with deep reference content moved to doc.chorus-ai.dev. (#491)
+
+### Plugin
+- **Plugin & skill versions → 0.16.2**: Claude Code, Codex, OpenClaw, Kiro, and Pi plugin/skill distributions plus the standalone skill bumped to 0.16.2. (#492)
+
+---
+
 ## [0.16.1] - 2026-08-14
 
 ### Added

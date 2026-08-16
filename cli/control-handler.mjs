@@ -38,7 +38,8 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *                                            (null until the SSE handshake reports it).
  *   killer?: (child: any, opts: any) => Promise<any>,  Injectable; defaults to killProcessTree.
  *   sigintTimeoutMs?: number,                           Layered-resolved escalation window.
- *   redispatchResume?: (entityType: string, entityUuid: string, resumeReason?: string) => void,
+ *   redispatchResume?: (entityType: string, entityUuid: string, resumeReason?: string,
+ *                       runtimeCwd?: string, orchestrator?: object|null) => void,
  *                                            Re-run a wake for a resumed entity (子3); injected
  *                                            by the daemon. `resumeReason` ("user" | "crash",
  *                                            add-crash-execution-resume) is the row's prior
@@ -180,8 +181,17 @@ export function createControlHandler(deps) {
             `)`
         );
         try {
-          if (typeof event.runtimeCwd === "string" && event.runtimeCwd) {
-            redispatchResume?.(entityType, entityUuid, resumeReason, event.runtimeCwd);
+          if (
+            (typeof event.runtimeCwd === "string" && event.runtimeCwd) ||
+            event.orchestrator != null
+          ) {
+            redispatchResume?.(
+              entityType,
+              entityUuid,
+              resumeReason,
+              typeof event.runtimeCwd === "string" ? event.runtimeCwd : undefined,
+              event.orchestrator ?? null,
+            );
           } else {
             redispatchResume?.(entityType, entityUuid, resumeReason);
           }

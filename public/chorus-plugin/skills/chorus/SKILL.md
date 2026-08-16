@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -69,7 +69,7 @@ All Agent roles can use the following tools for querying information and collabo
 
 The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
-- Use the owner info to know who to @mention for confirmations and approvals
+- Use the owner info as one @mention target — but hand a finished or gated resource back to whoever engaged you (the human or agent that assigned, @mentioned, or woke you), which is not always your owner
 
 #### Project Filtering
 
@@ -216,7 +216,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `/idea`)
 - **Proposal creation/update** — notify stakeholders when submitting
-- **Task submission** — notify PM/owner for significant decisions
+- **Handback & significant decisions** — @mention whoever engaged you (a human, or an agent orchestrator), not only the PM/owner
 - **Blocking issues** — notify relevant person for human input
 
 ### Search

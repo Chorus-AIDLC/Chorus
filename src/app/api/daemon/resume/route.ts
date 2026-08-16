@@ -36,6 +36,7 @@ import {
   isConnectionLive,
 } from "@/services/daemon-execution.service";
 import { prisma } from "@/lib/prisma";
+import { resolveResourceOrchestrator } from "@/services/orchestrator.service";
 
 const bodySchema = z.object({
   connectionUuid: z.string().min(1),
@@ -90,6 +91,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
+  const orchestrator = await resolveResourceOrchestrator(
+    auth.companyUuid,
+    entityType,
+    entityUuid,
+  );
+
   // Record the row transition. An interrupted row (reason user OR crash) is
   // resumable; any non-interrupted row is rejected with a precise error.
   const result = await resumeExecution(auth.companyUuid, connectionUuid, entityType, entityUuid);
@@ -122,6 +129,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityType,
     entityUuid,
     resumeReason: result.resumedFrom,
+    orchestrator,
     ...(resumedSession?.runtimeCwd ? { runtimeCwd: resumedSession.runtimeCwd } : {}),
   });
   await publishExecutionChange(auth.companyUuid, connectionUuid);

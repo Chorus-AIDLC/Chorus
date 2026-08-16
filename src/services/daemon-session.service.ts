@@ -67,6 +67,18 @@ export type TurnTrigger = (typeof TURN_TRIGGERS)[number];
 export const TURN_STATUSES = ["pending", "running", "ended", "interrupted"] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
 
+// A SERVER-ONLY terminal turn status (daemon-wake-coalescing). Assigned when a pending
+// turn is COALESCED AWAY — an earlier same-session wake drained it into one batch, so it
+// will never run on its own. Deliberately NOT a member of TURN_STATUSES (the daemon-
+// reportable lifecycle enum the turn-advance route validates against): the daemon never
+// reports `merged`; the server assigns it directly on the running-transition (see
+// `advanceTurnForWake`). Terminal like `ended`/`interrupted`, and crucially NOT `pending`,
+// so `getPendingTurnsForConnection` (which filters `status = "pending"`) never re-dispatches
+// a coalesced-away turn as a duplicate wake on reconnect. `status` is a free String column,
+// so this value needs NO Prisma migration and NO new DB enum; the conversation read
+// (`toTurnView`) passes it through verbatim as a settled, non-error turn.
+export const MERGED_TURN_STATUS = "merged" as const;
+
 // Discriminator vocabulary for `status = interrupted`. `user`/`crash`/`shutdown` are
 // daemon-reported outcomes; `offline` is reserved to SERVER-side reconcile of a turn
 // whose origin connection went stale — the turn-advance route rejects a daemon
@@ -175,7 +187,7 @@ export interface TurnView {
   seq: number;
   trigger: string;
   promptText: string | null;
-  status: string; // pending | running | ended | interrupted
+  status: string; // pending | running | ended | interrupted | merged (server-only, coalesced-away)
   interruptedReason: string | null; // user | crash | shutdown | offline; set iff interrupted
   // Transcript-relay failure annotation (fix #444 follow-up): non-null when the daemon KNEW
   // this turn's transcript upload finally failed (retry exhausted / non-2xx / network) even
@@ -1699,6 +1711,12 @@ export async function advanceTurnForWake(params: {
   // Per-turn token usage forwarded from the daemon's exit-path report (daemon-token-usage).
   // Persisted verbatim on the terminal edge only; ignored on → running.
   usage?: TokenUsage | null;
+  // Number of same-session wakes the daemon coalesced into THIS one batch (daemon-wake-
+  // coalescing). Reported on the running-transition; defaults to 1 (a single, non-coalesced
+  // wake → no settlement, byte-identical to the pre-coalescing path). When > 1, after the
+  // oldest pending turn advances to `running`, the next `coalescedCount − 1` pending turns of
+  // the same session (by ascending seq) are settled to `merged` — see below.
+  coalescedCount?: number;
 }): Promise<AdvanceTurnForWakeResult> {
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
@@ -1755,7 +1773,8 @@ export async function advanceTurnForWake(params: {
     },
     // Oldest-first so a `→running` advance picks up the next queued turn in FIFO order.
     orderBy: { seq: "asc" },
-    select: { uuid: true },
+    // `seq` anchors the coalesced-away settlement below (the `seq > X` filter).
+    select: { uuid: true, seq: true },
   });
   if (!turn) return { ok: false, reason: "not_found" };
 
@@ -1804,9 +1823,69 @@ export async function advanceTurnForWake(params: {
     ...(params.usage !== undefined ? { usage: params.usage } : {}),
   });
 
-  if (result.ok) return { ok: true, turn: result.turn };
-  if (result.reason === "not_found") return { ok: false, reason: "not_found" };
-  return { ok: false, reason: "invalid_transition", from: result.from, to: result.to };
+  if (!result.ok) {
+    if (result.reason === "not_found") return { ok: false, reason: "not_found" };
+    return { ok: false, reason: "invalid_transition", from: result.from, to: result.to };
+  }
+
+  // ── Coalesced-away pending-turn settlement (daemon-wake-coalescing) ────────────────────
+  // The daemon merges the wakes that piled up during the previous turn into ONE batch and
+  // reports how many it coalesced (`coalescedCount = N`). We have JUST advanced the OLDEST
+  // pending turn (seq `turn.seq`) to `running`; the remaining N−1 turns of that same batch
+  // are exactly the NEXT N−1 pending turns of this session by ascending seq. Settle them to
+  // the terminal `merged` status so they do not linger `pending` and re-dispatch as duplicate
+  // wakes on reconnect (`getPendingTurnsForConnection` filters `status = "pending"`).
+  //
+  // Race-safety: the daemon drains its per-key queue FIFO and the server assigns `seq`
+  // monotonically in arrival order, so "the N oldest pending turns" IS the coalesced batch.
+  // A notification that arrives AFTER the drain has a higher seq beyond the first N — the
+  // `take: N−1` cap never selects it, so it correctly survives for the next batch. The
+  // `seq > turn.seq` fence + same-session scope also guarantee the running turn itself and
+  // every OTHER session are never touched. `coalescedCount` defaults to 1 → no settlement,
+  // byte-identical to the pre-coalescing single-wake path.
+  const coalescedCount = params.coalescedCount ?? 1;
+  if (params.status === "running" && coalescedCount > 1) {
+    const superseded = await prisma.daemonSessionTurn.findMany({
+      where: {
+        sessionUuid: session.uuid,
+        status: "pending",
+        seq: { gt: turn.seq },
+      },
+      orderBy: { seq: "asc" },
+      take: coalescedCount - 1,
+    });
+    if (superseded.length > 0) {
+      await prisma.daemonSessionTurn.updateMany({
+        where: { uuid: { in: superseded.map((t) => t.uuid) } },
+        data: { status: MERGED_TURN_STATUS },
+      });
+      // ── Live convergence (daemon-merged-turn-transcript) ───────────────────────────────
+      // The settlement above is a raw `updateMany`, so — unlike EVERY other turn transition,
+      // which routes through `advanceTurn` and publishes a `turn_status_changed` event
+      // (see the emit near the top of this file) — it emits NOTHING. A viewer watching the
+      // session live therefore keeps its in-memory copy of these turns stuck at their last
+      // `pending` (`turn_created`) state until a manual refetch re-reads them as `merged`.
+      // Emit one `turn_status_changed` per settled turn on the existing
+      // `transcript:{sessionUuid}` channel so a live viewer's `applyTranscriptEvent` flips
+      // it pending→merged and the front-end collapse rendering applies without a reload. We
+      // just wrote `MERGED_TURN_STATUS` to these rows, so project the view with that status
+      // (avoids a second read). This reuses the existing `TranscriptEvent` shape and
+      // `publishTranscriptEvent` — NO new field, NO migration. `coalescedCount === 1` never
+      // enters this block, so the single-wake path stays byte-identical (no extra emit).
+      for (const row of superseded) {
+        publishTranscriptEvent({
+          companyUuid: params.companyUuid,
+          sessionUuid: session.uuid,
+          trigger: "turn_status_changed",
+          turn: toTurnView({ ...row, status: MERGED_TURN_STATUS }),
+          // No messages changed on a settlement — empty tail (always-array contract).
+          messages: [],
+        });
+      }
+    }
+  }
+
+  return { ok: true, turn: result.turn };
 }
 
 // ===== Backfill read: unstarted (pending) turns for a connection's sessions =====

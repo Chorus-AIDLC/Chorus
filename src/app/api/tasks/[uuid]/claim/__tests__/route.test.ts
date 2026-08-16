@@ -72,6 +72,7 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
       expect.objectContaining({
         assigneeType: "agent",
         assigneeUuid: agentUuid,
+        assignedByType: "user",
         assignedByUuid: userUuid,
       }),
     );
@@ -134,6 +135,7 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
       expect.objectContaining({
         assigneeType: "agent",
         assigneeUuid: agentUuid,
+        assignedByType: "user",
         assignedByUuid: userUuid,
         instanceUuid,
       }),
@@ -188,6 +190,8 @@ describe("POST /api/tasks/[uuid]/claim — agent selection gating", () => {
     expect(claimArgs).not.toHaveProperty("instanceUuid");
     expect(claimArgs.assigneeType).toBe("agent");
     expect(claimArgs.assigneeUuid).toBe(agentUuid);
+    expect(claimArgs.assignedByType).toBeNull();
+    expect(claimArgs.assignedByUuid).toBeNull();
   });
 
   it("looks up the agent scoped by companyUuid (no cross-tenant leakage)", async () => {

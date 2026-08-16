@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus proposal reviewer — audits PRD/task 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -68,6 +68,7 @@ For each document draft, check:
 - **Tech feasibility** — Does the architecture make sense? Missing auth, race conditions, no error handling?
 - **Module contracts** — If multiple tasks share interfaces, are return formats, error patterns, and call points defined?
 - **Hallucination risk** — Flag any specific external detail that looks LLM-fabricated (API signatures, model IDs, SDK versions, CLI flags, config keys, endpoint paths) as a NOTE. The PM is an LLM — it confidently invents plausible-looking specifics.
+- **Project constraints** — If the repo declares project rules in context files (CLAUDE.md / AGENTS.md / .cursorrules, if present), check whether the proposed approach conflicts with any (stack, structure, dependency bans); a conflict is a BLOCKER.
 
 ### Step 3: Review Task Drafts
 

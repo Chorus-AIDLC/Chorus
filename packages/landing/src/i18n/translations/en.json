@@ -10,9 +10,9 @@
     "menu": "Menu"
   },
   "hero": {
-    "badge": "The Agent Harness",
-    "title": "The Model Is the Brain. <highlight>Chorus</highlight> Is Everything Else.",
-    "subtitle": "Chorus wraps AI agents in a structured pipeline — from idea elaboration to task verification — so teams of agents can ship projects, not just write functions. AI proposes, humans verify."
+    "badge": "The harness for your coding agents",
+    "title": "The model reasons. The agent codes. <highlight>Chorus</highlight> ships.",
+    "subtitle": "Chorus is the layer above the coding agents you already use. It harnesses a whole team of them, plus you, into one shared pipeline. Agents propose, humans verify, and ideas turn into delivered software."
   },
   "pipeline": {
     "steps": [
@@ -45,8 +45,8 @@
   },
   "features": {
     "label": "Features",
-    "title": "What the Harness Handles",
-    "subtitle": "Everything outside the model that enables AI-human collaboration — from session management to human review loops.",
+    "title": "What Chorus Runs",
+    "subtitle": "Everything it takes to turn a team of coding agents and a human reviewer into shipped software, from session management to human review loops.",
     "items": [
       {
         "title": "Zero Context Injection",
@@ -238,8 +238,8 @@
     "next": "Next"
   },
   "meta": {
-    "siteTitle": "Chorus - The Agent Harness for AI-Human Collaboration",
-    "siteDescription": "Chorus is the agent harness for AI-human collaboration. AI proposes, humans verify.",
+    "siteTitle": "Chorus - The harness for your coding agents",
+    "siteDescription": "Chorus is the harness for your coding agents: agents propose, humans verify, and ideas turn into delivered software.",
     "blogTitle": "Blog - Chorus"
   }
 }

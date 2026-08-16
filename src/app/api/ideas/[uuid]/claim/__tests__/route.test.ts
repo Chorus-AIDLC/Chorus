@@ -72,6 +72,7 @@ describe("POST /api/ideas/[uuid]/claim — agent selection gating", () => {
       expect.objectContaining({
         assigneeType: "agent",
         assigneeUuid: agentUuid,
+        assignedByType: "user",
         assignedByUuid: userUuid,
       }),
     );
@@ -153,6 +154,7 @@ describe("POST /api/ideas/[uuid]/claim — instance pin", () => {
       expect.objectContaining({
         assigneeType: "agent",
         assigneeUuid: agentUuid,
+        assignedByType: "user",
         assignedByUuid: userUuid,
         instanceUuid,
       }),

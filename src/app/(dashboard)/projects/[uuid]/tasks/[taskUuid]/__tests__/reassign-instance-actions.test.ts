@@ -154,6 +154,7 @@ describe("reassignTaskInstanceNoWakeAction", () => {
       companyUuid: COMPANY_A,
       assigneeType: "agent",
       assigneeUuid: AGENT_UUID,
+      assignedByType: "user",
       assignedByUuid: "user-1",
       instanceUuid: INSTANCE_UUID,
     });

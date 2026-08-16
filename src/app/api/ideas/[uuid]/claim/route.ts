@@ -30,6 +30,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     let assigneeType: string;
     let assigneeUuid: string;
+    let assignedByType: "user" | null = null;
     let assignedByUuid: string | null = null;
     // Optional durable AgentInstance pin (add-agent-instance-addressing). When a
     // user assigns an idea to an agent, they may pin which (agent, host, cwd)
@@ -88,6 +89,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
         assigneeType = "agent";
         assigneeUuid = agent.uuid;
+        assignedByType = "user";
         assignedByUuid = auth.actorUuid;
         // Carry the optional instance pin only when assigning to an agent. The
         // service validates the instance belongs to this company and, when
@@ -97,6 +99,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
         // Assign to self (all owned PM Agents can handle it)
         assigneeType = "user";
         assigneeUuid = auth.actorUuid;
+        assignedByType = "user";
         assignedByUuid = auth.actorUuid;
       }
     } else {
@@ -114,6 +117,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
         companyUuid: auth.companyUuid,
         assigneeType,
         assigneeUuid,
+        assignedByType,
         assignedByUuid,
         ...(instanceUuid != null ? { instanceUuid } : {}),
       });

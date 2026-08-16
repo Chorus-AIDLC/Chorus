@@ -113,6 +113,7 @@ describe("chorus_pm_assign_task — assignee gate uses effective task:write", ()
         taskUuid,
         assigneeType: "agent",
         assigneeUuid: targetUuid,
+        assignedByType: "agent",
       }),
     );
   });
@@ -200,6 +201,7 @@ describe("chorus_pm_assign_task — optional instance pin", () => {
         taskUuid,
         assigneeType: "agent",
         assigneeUuid: targetUuid,
+        assignedByType: "agent",
         instanceUuid,
       }),
     );

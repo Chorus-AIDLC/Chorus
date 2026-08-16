@@ -7,7 +7,8 @@
 // The five operations and their EXACT server payload shapes (verified against
 // src/app/api/daemon/*/route.ts — the server is NOT changed by this work):
 //   turnAdvance      → POST /api/daemon/turn-advance
-//                      { connectionUuid, sessionId, status, entityType?, entityUuid? }
+//                      { connectionUuid, sessionId, status, entityType?, entityUuid?,
+//                        coalescedCount? }
 //   transcript       → POST /api/daemon/transcript
 //                      { sessionId, messages: [{ role, text }] }
 //   executionState   → POST /api/daemon/execution-state
@@ -70,7 +71,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
- *   turnAdvance: (p: { sessionId: string, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null }) => Promise<DaemonRestResult>,
+ *   turnAdvance: (p: { sessionId: string, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
@@ -147,7 +148,7 @@ export function createDaemonRestClient(opts) {
      * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId }) {
+    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId, coalescedCount }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -173,6 +174,13 @@ export function createDaemonRestClient(opts) {
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
         ...(usage && isTerminal ? { usage } : {}),
         ...(backendSessionId && isTerminal ? { backendSessionId } : {}),
+        // Coalesced-wake count (add-daemon-wake-coalescing): meaningful ONLY on the → running
+        // edge, where the server settles the next (count − 1) same-session pending turns to
+        // `merged`. Sent only when a real batch coalesced (> 1); a single wake (default 1)
+        // omits it so the wire — and every existing turn-advance test — stays byte-identical.
+        ...(status === "running" && typeof coalescedCount === "number" && coalescedCount > 1
+          ? { coalescedCount }
+          : {}),
       };
       return post(
         "turn-advance",
