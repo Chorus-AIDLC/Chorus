@@ -11,6 +11,6 @@
 | 03 | Agent Harness / 控制 | [Capability-Shaped Tool Surface](03-capability-shaped-tool-surface.md) | 已完成 |
 | 04 | 协作 / 控制 | [Reversed Conversation：Agent 提议，人只在关键边界作决定](04-reversed-conversation.md) | 已完成 |
 | 05 | 协作 | [Conversation as a Durable Protocol](05-conversation-as-durable-protocol.md) | 已完成 |
-| 06 | 多 Agent | Context and Attribution | 计划中 |
+| 06 | 多 Agent | [Context and Attribution](06-context-and-attribution.md) | 已完成 |
 | 07 | 多 Agent | Cross-Vendor Federation | 计划中 |
 | 08 | 控制 / 治理 | Govern the Environment, Not the Prompt | 计划中 |
