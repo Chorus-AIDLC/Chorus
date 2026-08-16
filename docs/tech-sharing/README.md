@@ -13,4 +13,4 @@
 | 05 | 协作 | [Conversation as a Durable Protocol](05-conversation-as-durable-protocol.md) | 已完成 |
 | 06 | 多 Agent | [Context and Attribution](06-context-and-attribution.md) | 已完成 |
 | 07 | 多 Agent | [Cross-Vendor Federation](07-cross-vendor-federation.md) | 已完成 |
-| 08 | 控制 / 治理 | Govern the Environment, Not the Prompt | 计划中 |
+| 08 | 控制 / 治理 | [Govern the Environment, Not the Prompt](08-govern-the-environment.md) | 已完成 |
