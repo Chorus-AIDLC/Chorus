@@ -4,7 +4,7 @@ description: Adversarial verification of a submitted Chorus task against its AC 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -50,7 +50,7 @@ chorus_get_document({ documentUuid: "<doc-uuid>" })
 
 **Step 3: Verify each AC independently.** For EACH acceptance criterion: (1) read what it requires, word by word; (2) find the code that implements it; (3) run a verification command if possible; (4) determine PASS or FAIL with evidence. Do NOT batch AC as "all look good." Check each one.
 
-**Step 4: Cross-reference with proposal documents.** Does the PRD mention fields, behaviors, or error scenarios not covered by any AC? Does the tech design specify contracts the code doesn't follow?
+**Step 4: Cross-reference with proposal documents.** Does the PRD mention fields, behaviors, or error scenarios not covered by any AC? Does the tech design specify contracts the code doesn't follow? **Project constraints:** read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule → BLOCKER.
 
 **Step 5: Run tests/build if available.** A broken build or failing tests is an automatic FAIL. Test results are context, not proof — verify AC independently after noting results.
 

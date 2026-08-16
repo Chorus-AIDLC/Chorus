@@ -4,7 +4,7 @@ description: 'Read-only Chorus code-review gateway — the final ship-time revie
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus code-review gateway
@@ -90,7 +90,7 @@ Read each task's work report (in its comments) — the developers describe what 
 **Step 3: Review the whole-feature dimensions** (these are what per-task review structurally cannot catch — cover each):
 
 1. **Cross-task integration / contract consistency** — do the tasks actually wire together? Interface contracts, return formats, error patterns, call points across module boundaries different tasks built.
-2. **Architecture & convention consistency (no drift)** — does the aggregate conform to project patterns, or did tasks each invent their own approach? Duplicated logic, divergent naming, inconsistent layering.
+2. **Architecture & convention consistency (no drift)** — does the aggregate conform to project patterns and the rules its context files declare (CLAUDE.md / AGENTS.md / .cursorrules, if present), or did any task drift from them or violate a declared project-level constraint? Duplicated logic, divergent naming, inconsistent layering.
 3. **Security** — does the combination introduce a security risk (authz gaps at a seam, injection, secret handling, unsafe deserialization, missing tenant scoping) — especially risks visible only when the pieces are seen together.
 4. **Regression risk / impact on untouched areas / performance** — does the change break or degrade code no single task owned? N+1s, hot-path cost, shared-state contention.
 5. **Feature-level test coverage adequacy** — across the whole feature, are integration seams and end-to-end paths tested, or only per-task units? Gaps between tasks.

@@ -57,6 +57,7 @@ For each document draft, check:
 - **Tech feasibility**: Does the architecture make sense? Missing auth, race conditions, no error handling?
 - **Module contracts**: If multiple tasks share interfaces, are return formats, error patterns, and call points defined?
 - **Hallucination risk**: Flag any specific external detail that looks like it could be LLM-fabricated (API signatures, model IDs, SDK versions, CLI flags, config keys, endpoint paths, etc.) as NOTE. The PM is an LLM — it confidently invents plausible-looking specifics.
+- **Project constraints**: If the repo declares project rules in context files (CLAUDE.md / AGENTS.md / .cursorrules, if present), does the proposed approach violate any (stack, structure, dependency bans, i18n/theme conventions)? Conflict → BLOCKER.
 
 **Step 3: Review task drafts**
 
