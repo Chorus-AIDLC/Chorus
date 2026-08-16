@@ -138,7 +138,7 @@ All Agent roles can use the following tools for querying information and collabo
 
 The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
-- Use the owner info to know who to @mention for confirmations and approvals
+- Use the owner info as one @mention target — but hand a finished or gated resource back to whoever engaged you (the human or agent that assigned, @mentioned, or woke you), which is not always your owner
 
 #### Project Filtering
 
@@ -263,7 +263,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `idea-chorus`)
 - **Proposal creation/update** — notify stakeholders when submitting
-- **Task submission** — notify PM/owner for significant decisions
+- **Handback & significant decisions** — @mention whoever engaged you (a human, or an agent orchestrator), not only the PM/owner
 - **Blocking issues** — notify relevant person for human input
 
 ### Search
@@ -442,18 +442,6 @@ How you spawn the read-only sub-agent depends on your agent harness — give it 
 ### Inline Self-Review Fallback
 
 When sub-agents are **not** available in your harness, run the review inline yourself: load the relevant reviewer skill's procedure (`proposal-reviewer-chorus`, `task-reviewer-chorus`, or `code-reviewer-chorus`), audit the proposal/task/idea against its checklist with the same adversarial posture, and post the single `VERDICT` comment yourself before acting on it. A same-agent self-review is weaker than a fresh independent reviewer, but it is far better than skipping the gate.
-
----
-
-## Orchestrator Handoff
-
-When a daemon wake identifies an agent orchestrator for the current Idea or Task,
-treat that identity as a handoff target, not an automatic subscriber. At a
-required human-only gate the worker cannot cross, or when the assigned child
-Idea/Task is complete, comment on that resource, mention the orchestrator with
-the exact injected `@[Name](agent:uuid)` handle, state the requested handoff or
-completion evidence, and leave a human-gated resource pending after the comment.
-Do not mention the orchestrator for ordinary internal progress.
 
 ---
 

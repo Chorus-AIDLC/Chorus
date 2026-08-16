@@ -62,7 +62,7 @@ All Agent roles can use the following tools for querying information and collabo
 
 The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
-- Use the owner info to know who to @mention for confirmations and approvals
+- Use the owner info as one @mention target — but hand a finished or gated resource back to whoever engaged you (the human or agent that assigned, @mentioned, or woke you), which is not always your owner
 
 > On the `chorus` main agent, checkin runs automatically via the `agentSpawn` hook — its output is added to your startup context. You still call `chorus_checkin` yourself if you switch context or need a refresh.
 
@@ -210,7 +210,7 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `/chorus-idea`)
 - **Proposal creation/update** — notify stakeholders when submitting
-- **Task submission** — notify PM/owner for significant decisions
+- **Handback & significant decisions** — @mention whoever engaged you (a human, or an agent orchestrator), not only the PM/owner
 - **Blocking issues** — notify relevant person for human input
 
 ### Search
@@ -379,18 +379,6 @@ draft --> pending --> approved
                  \-> rejected --> revised --> pending ...
 approved --> draft  (via revoke — cascade-closes tasks, deletes documents)
 ```
-
----
-
-## Orchestrator Handoff
-
-When a daemon wake identifies an agent orchestrator for the current Idea or Task,
-that identity is a handoff target, not an automatic subscriber. At a required
-human-only gate the worker cannot cross, or when the assigned child Idea/Task is
-complete, the worker MUST comment on that resource, mention the orchestrator with
-the exact injected `@[Name](agent:uuid)` handle, state the requested handoff or
-completion evidence, and leave a human-gated resource pending after the comment.
-Do not mention the orchestrator for ordinary internal progress.
 
 ---
 
