@@ -119,7 +119,7 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
       params: {
         protocolVersion: "2025-03-26",
         capabilities: {},
-        clientInfo: { name: "chorus-pi", version: "0.16.0" },
+        clientInfo: { name: "chorus-pi", version: "0.16.2" },
       },
     }),
   });

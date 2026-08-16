@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, au
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.0"
+  version: "0.16.2"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus proposal reviewer
@@ -74,6 +74,7 @@ For each document draft, check:
 - **Tech feasibility**: Does the architecture make sense? Missing auth, race conditions, no error handling?
 - **Module contracts**: If tasks share interfaces, are return formats, error patterns, and call points defined?
 - **Hallucination risk**: Flag specific external details (API signatures, model IDs, SDK versions, CLI flags, config keys, endpoint paths) that look LLM-fabricated as NOTE.
+- **Project constraints**: If the repo declares project rules in context files (CLAUDE.md / AGENTS.md / .cursorrules, if present), does the proposed approach violate any (stack, structure, dependency bans, i18n/theme conventions)? Conflict → BLOCKER.
 
 **Step 3: Review task drafts**
 

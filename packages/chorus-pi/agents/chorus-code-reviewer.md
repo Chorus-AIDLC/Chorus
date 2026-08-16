@@ -83,7 +83,7 @@ git show <commit>                  # for commits the reports reference
 These are the dimensions that per-task review structurally cannot catch. Cover each:
 
 1. **Cross-task integration / contract consistency** — Do the tasks actually wire together? Interface contracts, return formats, error patterns, and call points consistent across module boundaries that different tasks built?
-2. **Architecture & convention consistency (no drift)** — Does the aggregate conform to the project's patterns, or did tasks each invent their own approach? Duplicated logic, divergent naming, inconsistent layering.
+2. **Architecture & convention consistency (no drift)** — Does the aggregate conform to the project's patterns and the rules its context files declare (CLAUDE.md / AGENTS.md / .cursorrules, if present), or did any task drift from them or violate a declared project-level constraint? Duplicated logic, divergent naming, inconsistent layering.
 3. **Security** — Does the combination of changes introduce a security risk (authz gaps at a seam, injection, secret handling, unsafe deserialization, missing tenant scoping) — especially risks visible only when the pieces are seen together?
 4. **Regression risk / impact on untouched areas / performance** — Does the change break or degrade code no single task "owned"? N+1s, hot-path cost, shared-state contention introduced by the aggregate.
 5. **Feature-level test coverage adequacy** — Across the whole feature, are the integration seams and end-to-end paths tested, or only per-task units? Gaps between tasks.

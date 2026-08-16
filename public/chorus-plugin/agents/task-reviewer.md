@@ -79,6 +79,8 @@ Do NOT batch AC items as "all look good." Check each one.
 
 Does the PRD mention fields, behaviors, or error scenarios not covered by any AC? Does the tech design specify contracts the code doesn't follow?
 
+**Project constraints:** Read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule (stack, structure, dependency bans, i18n/theme conventions) → BLOCKER.
+
 **Step 5: Run tests/build if available**
 
 A broken build or failing tests is an automatic FAIL. Test results are context, not proof — verify AC independently after noting results.
