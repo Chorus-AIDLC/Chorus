@@ -9,7 +9,7 @@
 | 01 | Agent Harness | [把一次通知可靠地变成一个可恢复的 Agent Turn](01-reliable-agent-turn.md) | 已完成 |
 | 02 | Agent Harness | [Portability is Semantics, Not Prompt Copying](02-portability-is-semantics.md) | 已完成 |
 | 03 | Agent Harness / 控制 | [Capability-Shaped Tool Surface](03-capability-shaped-tool-surface.md) | 已完成 |
-| 04 | 协作 / 控制 | Reversed Conversation | 计划中 |
+| 04 | 协作 / 控制 | [Reversed Conversation：Agent 提议，人只在关键边界作决定](04-reversed-conversation.md) | 已完成 |
 | 05 | 协作 | Conversation as a Durable Protocol | 计划中 |
 | 06 | 多 Agent | Context and Attribution | 计划中 |
 | 07 | 多 Agent | Cross-Vendor Federation | 计划中 |
