@@ -7,7 +7,7 @@
 | # | 技术支柱 | 论文 | 状态 |
 |---|---|---|---|
 | 01 | Agent Harness | [把一次通知可靠地变成一个可恢复的 Agent Turn](01-reliable-agent-turn.md) | 已完成 |
-| 02 | Agent Harness | Portability is Semantics, Not Prompt Copying | 计划中 |
+| 02 | Agent Harness | [Portability is Semantics, Not Prompt Copying](02-portability-is-semantics.md) | 已完成 |
 | 03 | Agent Harness / 控制 | Capability-Shaped Tool Surface | 计划中 |
 | 04 | 协作 / 控制 | Reversed Conversation | 计划中 |
 | 05 | 协作 | Conversation as a Durable Protocol | 计划中 |
