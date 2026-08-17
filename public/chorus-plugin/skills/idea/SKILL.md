@@ -47,7 +47,7 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 | Tool | Purpose |
 |------|---------|
 | `chorus_pm_start_elaboration` | Generate an elaboration round (first, follow-up, or appended-after-resolution) |
-| `chorus_pm_validate_elaboration` | Mark the whole elaboration complete (requires `idea:admin`; requires human confirmation first) |
+| `chorus_pm_validate_elaboration` | Mark the whole elaboration complete (requires `idea:admin`; requires human confirmation first) — callable by the Idea's assignee, or a non-assignee `idea:admin` gateway (wakes the assignee) |
 | `chorus_pm_skip_elaboration` | Skip elaboration for trivially clear Ideas |
 | `chorus_answer_elaboration` | Submit answers for an elaboration round (`roundUuid` optional — auto-locates the active round) |
 | `chorus_get_elaboration` | Get full elaboration state (rounds, questions, answers) |
@@ -156,7 +156,7 @@ If the Idea is fuzzy and you'd struggle to enumerate concrete multi-choice quest
 
 When `/brainstorm` returns, you own the lifecycle decision (the brainstorm skill deliberately leaves it to you):
 
-- If the synthesized round answers cover everything → obtain human confirmation, then call `chorus_pm_validate_elaboration` to resolve the elaboration. (Resolve needs `idea:admin` — see Step 5.6 if your key is `pm_agent`-preset.)
+- If the synthesized round answers cover everything → obtain human confirmation, then call `chorus_pm_validate_elaboration` to resolve the elaboration. (Resolve needs `idea:admin` — see Step 5.6 if your key is `pm_agent`-preset, or a non-assignee `idea:admin` gateway (wakes the assignee).)
 - If gaps remain → call `chorus_pm_start_elaboration` again to open a structured Round 2. Pick the depth yourself — do NOT re-prompt the user.
 
 Either outcome ends Step 4.5; skip Step 5.
@@ -287,7 +287,7 @@ chorus_pm_skip_elaboration({
 
    > **Permission (N1): `chorus_pm_validate_elaboration` requires `idea:admin`.** The `pm_agent` preset only grants `idea:write`, so a PM-preset agent **cannot** resolve — it must hand off to an `admin_agent`-preset agent (or an admin-preset API key) to perform the resolve. If your key lacks `idea:admin`, surface this to the human and request the handoff instead of failing silently.
 
-   > **Assignee precondition (N2):** the resolving actor must be the Idea's **assignee**. A separate human reviewer resolving a PM-owned Idea therefore needs **both** `idea:admin` **and** to be assigned the Idea (claim/reassign it first). Admin permission alone is not enough.
+   > **Assignee OR idea:admin gateway (N2):** the resolving actor may be the Idea's **assignee**, OR a non-assignee holding **`idea:admin`** acting as a gateway. A gateway resolve (or skip via `chorus_pm_skip_elaboration`) is the MCP analogue of the human UI **Verify-Elaborate**: it logs an `elaboration_verified` activity that wakes the Idea's **assignee** agent to write the proposal. So an orchestrator/admin no longer needs to claim/reassign the Idea to resolve it — holding `idea:admin` is enough. (Assignee self-resolve/skip is unchanged and wakes no one.)
 
    ```
    chorus_pm_validate_elaboration({

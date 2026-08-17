@@ -1386,7 +1386,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Required Permission**: `idea:admin`
 
-> **Permission handoff:** the `pm_agent` preset grants only `idea:write`, so a PM-preset agent cannot resolve — resolving requires an `admin_agent`-preset agent (or an admin-preset key). **Assignee precondition:** the resolving actor must also be the Idea's assignee, so a separate human reviewer resolving a PM-owned Idea needs both `idea:admin` and the Idea assignment (claim/reassign first).
+> **Permission handoff:** the `pm_agent` preset grants only `idea:write`, so a PM-preset agent cannot resolve — resolving requires an `admin_agent`-preset agent (or an admin-preset key). **Assignee OR idea:admin gateway:** the caller may be the Idea's assignee (logs `elaboration_resolved`, no wake) OR a non-assignee holding `idea:admin` acting as a gateway. A gateway resolve logs `elaboration_verified`, which wakes the Idea's **assignee** agent to write the proposal — the MCP parity of the human UI "Verify-Elaborate" handoff. A separate human/admin no longer needs to claim the Idea first. Resolution always succeeds even if the assignee is offline (the wake is queued).
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1400,6 +1400,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 **Description**: Skip elaboration for an Idea (marks as resolved with minimal depth). Use only for trivially clear Ideas (e.g., bug fixes with clear reproduction steps). A reason is required and logged in the activity stream. Prefer chorus_pm_start_elaboration for most Ideas.
 
 **Required Permission**: `idea:write`
+
+> **Assignee OR idea:admin gateway:** the caller may be the Idea's assignee (logs `elaboration_skipped`, no wake) OR a non-assignee holding `idea:admin` acting as a gateway. A gateway skip logs an `elaboration_verified` activity carrying the skip reason, which wakes the Idea's **assignee** agent to write the proposal (parity with the gateway resolve path). The tool stays `idea:write`-gated so an assignee skips its own Idea with write; a non-assignee is rejected unless it holds `idea:admin`.
 
 **Input**:
 | Parameter | Type | Required | Description |

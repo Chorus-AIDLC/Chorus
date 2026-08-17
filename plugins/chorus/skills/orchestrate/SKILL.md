@@ -108,6 +108,7 @@ Guidance: start narrow. If a single owner can hold the whole feature in their he
 
 Chorus is **AI proposes, humans verify**. As orchestrator you enforce that, you do not bypass it:
 
+- **Elaboration gate (gateway resolve/skip).** When a child idea you assigned to another agent has its elaboration answered, you can close the elaboration gate yourself via `chorus_pm_validate_elaboration` (or `chorus_pm_skip_elaboration` for a trivially clear idea) even though you are not the assignee — holding `idea:admin` is enough. This is the MCP parity of the UI Verify-Elaborate: it wakes the **assignee** agent to write the proposal. You gatekeep the gate; the assignee still authors the proposal (Reversed-Conversation preserved).
 - **Proposal gate.** When a delegated owner submits a proposal, STOP. Run the proposal reviewer, then hand the approve/reject decision to the human owner. Do not self-approve just because you *can* (`proposal:admin`).
 - **Verify gate.** When a task reaches `to_verify`, STOP. Run the task reviewer, then let the human verify. Permission to verify is not authorization to rubber-stamp your own coordinated work.
 - **Never merge or push.** The orchestrator drives work up to "PR ready" and hands it back to the human — it does not merge, push, or otherwise ship autonomously.
