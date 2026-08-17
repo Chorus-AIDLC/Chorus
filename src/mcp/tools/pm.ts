@@ -1062,7 +1062,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:admin",
     "chorus_pm_validate_elaboration",
     {
-      description: "Mark an Idea's elaboration complete (Idea -> elaborated, elaborationStatus -> resolved). Operates on the whole Idea — takes only ideaUuid. Requires every elaboration round to be answered. Requires human confirmation before calling (except in YOLO mode).",
+      description: "Mark an Idea's elaboration complete (Idea -> elaborated, elaborationStatus -> resolved). Operates on the whole Idea — takes only ideaUuid. Requires every elaboration round to be answered. Requires human confirmation before calling (except in YOLO mode). The caller may be the Idea's assignee (logs elaboration_resolved) OR a non-assignee idea:admin gateway resolving an Idea assigned to another agent — the gateway path wakes the assignee to write the proposal (MCP parity with the UI Verify-Elaborate handoff).",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
       }),
@@ -1074,6 +1074,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           ideaUuid,
           actorUuid: auth.actorUuid,
           actorType: "agent",
+          actorIsIdeaAdmin: hasPermission(auth, "idea:admin"),
         });
 
         return {
@@ -1095,7 +1096,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_pm_skip_elaboration",
     {
-      description: "Skip elaboration for an Idea (marks as resolved with minimal depth). Use only for trivially clear Ideas (e.g., bug fixes with clear reproduction steps). A reason is required and logged in the activity stream. IMPORTANT: You MUST ask the user for permission before skipping — never skip on your own judgment alone. Prefer chorus_pm_start_elaboration for most Ideas.",
+      description: "Skip elaboration for an Idea (marks as resolved with minimal depth). Use only for trivially clear Ideas (e.g., bug fixes with clear reproduction steps). A reason is required and logged in the activity stream. IMPORTANT: You MUST ask the user for permission before skipping — never skip on your own judgment alone. Prefer chorus_pm_start_elaboration for most Ideas. The caller may be the Idea's assignee, OR a non-assignee holding idea:admin skipping an Idea assigned to another agent — the gateway path wakes the assignee to write the proposal (parity with the gateway resolve path).",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         reason: z.string().describe("Reason for skipping elaboration"),
@@ -1109,6 +1110,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           actorUuid: auth.actorUuid,
           actorType: "agent",
           reason,
+          actorIsIdeaAdmin: hasPermission(auth, "idea:admin"),
         });
 
         return {

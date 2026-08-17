@@ -747,7 +747,7 @@ describe("resolveElaboration", () => {
     expect(mockPrisma.idea.update).not.toHaveBeenCalled();
   });
 
-  it("should throw if actor is not the idea assignee", async () => {
+  it("should throw if a non-assignee actor lacks idea:admin", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeUuid: "other-agent" })
     );
@@ -758,8 +758,48 @@ describe("resolveElaboration", () => {
         ideaUuid: IDEA_UUID,
         actorUuid: ACTOR_UUID,
         actorType: "agent",
+        // actorIsIdeaAdmin defaults to false
       })
-    ).rejects.toThrow("Only the assigned agent can resolve elaboration");
+    ).rejects.toThrow(
+      "Only the assigned agent or an idea:admin gateway can resolve elaboration"
+    );
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
+  it("gateway (non-assignee idea:admin) resolves another agent's idea → emits elaboration_verified, not elaboration_resolved", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeUuid: "other-agent", elaborationStatus: "validating" })
+    );
+    mockPrisma.elaborationRound.findMany.mockResolvedValue([
+      makeRound({ status: "answered", validatedAt: now }),
+    ]);
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      resolveElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID, // gateway, NOT the assignee ("other-agent")
+        actorType: "agent",
+        actorIsIdeaAdmin: true,
+      })
+    ).resolves.toBeDefined();
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID },
+        data: { status: "elaborated", elaborationStatus: "resolved" },
+      })
+    );
+    // The gateway path wakes the assignee via elaboration_verified.
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "elaboration_verified" })
+    );
+    const resolveActions = mockCreateActivity.mock.calls.map((c) => c[0].action);
+    expect(resolveActions).not.toContain("elaboration_resolved");
+    // Offline is a queue: the service performs NO daemon-liveness check, so the
+    // resolution succeeds regardless of whether the assignee is online.
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
   });
 
   it("should throw if the Idea is not found", async () => {
@@ -948,7 +988,7 @@ describe("skipElaboration", () => {
     expect(mockEventBus.emitChange).toHaveBeenCalled();
   });
 
-  it("should throw if actor is not the assignee", async () => {
+  it("should throw if a non-assignee actor lacks idea:admin", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(
       makeIdea({ assigneeUuid: "other-agent" })
     );
@@ -960,8 +1000,52 @@ describe("skipElaboration", () => {
         actorUuid: ACTOR_UUID,
         actorType: "agent",
         reason: "Clear enough",
+        // actorIsIdeaAdmin defaults to false
       })
-    ).rejects.toThrow("Only the assigned agent can skip elaboration");
+    ).rejects.toThrow(
+      "Only the assigned agent or an idea:admin gateway can skip elaboration"
+    );
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
+  it("gateway (non-assignee idea:admin) skips another agent's idea → emits elaboration_verified with the skip reason", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(
+      makeIdea({ assigneeUuid: "other-agent" })
+    );
+    mockPrisma.idea.update.mockResolvedValue({});
+
+    await expect(
+      skipElaboration({
+        companyUuid: COMPANY_UUID,
+        ideaUuid: IDEA_UUID,
+        actorUuid: ACTOR_UUID, // gateway, NOT the assignee ("other-agent")
+        actorType: "agent",
+        reason: "Trivially clear",
+        actorIsIdeaAdmin: true,
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockPrisma.idea.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: IDEA_UUID },
+        data: {
+          status: "elaborated",
+          elaborationDepth: "minimal",
+          elaborationStatus: "resolved",
+        },
+      })
+    );
+    // Gateway skip wakes the assignee via elaboration_verified, carrying the reason.
+    expect(mockCreateActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "elaboration_verified",
+        value: { reason: "Trivially clear", viaSkip: true },
+      })
+    );
+    const skipActions = mockCreateActivity.mock.calls.map((c) => c[0].action);
+    expect(skipActions).not.toContain("elaboration_skipped");
+    // Offline is a queue: no daemon-liveness check → succeeds regardless.
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
   });
 
   it("should throw if idea is not in elaborating status", async () => {
@@ -1071,7 +1155,7 @@ describe("ownership gate — agent_instance assignment (add-agent-instance-addre
     ).resolves.toBeUndefined();
   });
 
-  it("skipElaboration: rejects an agent that does not own the pinned instance", async () => {
+  it("skipElaboration: rejects a non-owner of the pinned instance that lacks idea:admin", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(instanceIdea());
     mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "other-agent" });
 
@@ -1083,7 +1167,9 @@ describe("ownership gate — agent_instance assignment (add-agent-instance-addre
         actorType: "agent",
         reason: "Clear",
       })
-    ).rejects.toThrow("Only the assigned agent can skip elaboration");
+    ).rejects.toThrow(
+      "Only the assigned agent or an idea:admin gateway can skip elaboration"
+    );
   });
 });
 
