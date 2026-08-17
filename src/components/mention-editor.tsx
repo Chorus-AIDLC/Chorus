@@ -473,7 +473,7 @@ export function createSuggestionPopupRenderer(
           img.src = uri;
           img.alt = item.name;
           img.draggable = false;
-          img.className = "h-full w-full origin-top scale-[1.5]";
+          img.className = "h-full w-full origin-top scale-[1.5] -translate-y-[10%]";
           imgBox.appendChild(img);
           avatarWrap.appendChild(imgBox);
         } else {
