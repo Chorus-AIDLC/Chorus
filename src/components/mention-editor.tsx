@@ -449,7 +449,7 @@ export function createSuggestionPopupRenderer(
       const avatarWrap = document.createElement("div");
       avatarWrap.className = "relative shrink-0";
 
-      // Agents render the shared DiceBear Clay avatar (same seed = name as the
+      // Agents render the shared DiceBear Voxel Bot avatar (same seed = name as the
       // React <AgentAvatar>). This is raw-DOM, so we mount the generated data URI
       // on an <img>; on a generation failure we fall back to the Bot glyph. Users
       // keep the plain User-icon avatar tile, unchanged. Reduced-motion is read
@@ -464,12 +464,18 @@ export function createSuggestionPopupRenderer(
           prefersReducedMotion ? "static" : "animated",
         );
         if (uri) {
+          // Clip box so the face-zoom (scale + origin-top, mirroring
+          // FACE_ZOOM_CLASS in <AgentAvatar>) is cropped to the head; the presence
+          // dot stays on avatarWrap (outside this box) so it is not clipped.
+          const imgBox = document.createElement("div");
+          imgBox.className = "h-6 w-6 overflow-hidden rounded-full bg-muted";
           const img = document.createElement("img");
           img.src = uri;
           img.alt = item.name;
           img.draggable = false;
-          img.className = "h-6 w-6 rounded-full bg-muted";
-          avatarWrap.appendChild(img);
+          img.className = "h-full w-full origin-top scale-[1.5]";
+          imgBox.appendChild(img);
+          avatarWrap.appendChild(imgBox);
         } else {
           const avatar = document.createElement("div");
           avatar.className =
