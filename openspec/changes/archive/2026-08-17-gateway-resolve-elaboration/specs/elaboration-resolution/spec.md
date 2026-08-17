@@ -1,8 +1,5 @@
-# elaboration-resolution Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change simplify-elaboration-flow. Update Purpose after archive.
-## Requirements
 ### Requirement: Dedicated admin-gated resolution action
 
 The system SHALL provide a `chorus_pm_validate_elaboration` MCP tool that marks an Idea's whole elaboration complete. This tool SHALL require the `idea:admin` permission. It SHALL be an Idea-level action that accepts only `ideaUuid` — it does not target a single round and does not modify any round's status. The caller MAY be the Idea's assignee OR a non-assignee acting as an `idea:admin` gateway, mirroring the human UI Verify-Elaborate handoff. When the caller is the assignee, the tool SHALL log an `elaboration_resolved` activity and SHALL NOT wake any agent. When the caller is a non-assignee `idea:admin` gateway, the tool SHALL log an `elaboration_verified` activity so that the Idea's assigned agent (not the gateway) is woken to write the proposal, and the resolution SHALL succeed even when that assignee agent is offline (the wake is queued and recovered on reconnect).
@@ -44,29 +41,7 @@ The system SHALL provide a `chorus_pm_validate_elaboration` MCP tool that marks 
 - **WHEN** `chorus_pm_validate_elaboration` is called on an Idea that has no elaboration rounds
 - **THEN** the call fails with an error indicating there are no elaboration rounds to resolve
 
-### Requirement: Human confirmation is required before resolving
-
-The `chorus_pm_validate_elaboration` tool description and every Chorus skill that invokes it (idea, yolo, brainstorm) SHALL state that human confirmation is required before calling it, except in YOLO mode where the agent may resolve autonomously.
-
-#### Scenario: Tool description states the confirmation requirement
-
-- **WHEN** a client inspects the `chorus_pm_validate_elaboration` tool description
-- **THEN** the description states that human confirmation is required before calling it (except in YOLO mode)
-
-#### Scenario: Skill docs carry the confirmation note
-
-- **WHEN** the idea, yolo, and brainstorm skill documents reference resolution
-- **THEN** each instructs the agent to obtain human confirmation before resolving, except under YOLO automation
-
-### Requirement: Validate performs only resolution
-
-The `chorus_pm_validate_elaboration` tool SHALL perform only the resolution action. It SHALL NOT tag per-question issues and SHALL NOT create follow-up rounds. Opening a follow-up round SHALL be achieved by calling `chorus_pm_start_elaboration` again.
-
-#### Scenario: Validate tool only resolves
-
-- **WHEN** an agent holding `idea:admin` calls `chorus_pm_validate_elaboration`
-- **THEN** the tool marks the elaboration complete and accepts only `ideaUuid`
-- **AND** opening a follow-up round is achieved by calling `chorus_pm_start_elaboration` again
+## ADDED Requirements
 
 ### Requirement: Gateway skip of elaboration
 
@@ -96,4 +71,3 @@ An `idea:admin` gateway that is NOT the Idea's assignee SHALL be able to skip el
 - **WHEN** a non-assignee `idea:admin` gateway skips an Idea whose assigned agent has no online daemon connection
 - **THEN** the skip still succeeds
 - **AND** the `elaboration_verified` wake is queued for the assignee and recovered on reconnect
-
