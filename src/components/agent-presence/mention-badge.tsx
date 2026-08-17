@@ -31,6 +31,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { StatusDot } from "@/components/agent-presence/status";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import { useAuth } from "@/contexts/auth-context";
@@ -108,6 +109,7 @@ export function MentionBadge({ mention, displayName }: MentionBadgeProps) {
           className="cursor-pointer gap-1 align-baseline"
           aria-label={t("badgeAria", { name: displayName, status: statusLabel })}
         >
+          <AgentAvatar name={displayName} size={14} className="rounded-full" />
           <StatusDot online={online} />
           <span>@{displayName}</span>
         </Badge>
@@ -116,14 +118,17 @@ export function MentionBadge({ mention, displayName }: MentionBadgeProps) {
           scrollable comment list's overflow. */}
       <PopoverContent className="w-64" align="start">
         <div className="flex flex-col gap-3">
-          {/* Identity header: name + online status. Visible to everyone (q5). */}
+          {/* Identity header: avatar + name + online status. Visible to everyone (q5). */}
           <div className="flex items-center gap-2">
-            <StatusDot online={online} size="md" />
+            <AgentAvatar name={displayName} size="sm" className="rounded-full" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-foreground">
                 {displayName}
               </p>
-              <p className="text-xs text-muted-foreground">{statusLabel}</p>
+              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                <StatusDot online={online} />
+                {statusLabel}
+              </p>
             </div>
           </div>
 

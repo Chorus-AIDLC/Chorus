@@ -7,6 +7,8 @@ import Link from "next/link";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { getBatchWorkerCountsAction } from "@/app/(dashboard)/projects/[uuid]/tasks/session-actions";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { isAgentAssignee } from "@/lib/assignee-identity";
 import { getTaskStatusDotColor, type FlatTask } from "../utils";
 
 interface TaskListViewProps {
@@ -200,7 +202,11 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
                         {/* Assignee */}
                         {task.assignee && (
                           <span className="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted-foreground max-w-[72px] truncate" title={task.assignee.name}>
-                            <User className="h-2.5 w-2.5 shrink-0" />
+                            {isAgentAssignee(task.assignee) ? (
+                              <AgentAvatar name={task.assignee.name} size={14} className="shrink-0 rounded-full" />
+                            ) : (
+                              <User className="h-2.5 w-2.5 shrink-0" />
+                            )}
                             {task.assignee.name.split(/[@\s]/)[0]}
                           </span>
                         )}

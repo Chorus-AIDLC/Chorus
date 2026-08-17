@@ -1,8 +1,8 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Label } from "@/components/ui/label";
 import {
   Tooltip,
@@ -39,21 +39,15 @@ export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSect
   // Shared inner content for both interactive and read-only renders.
   const inner = assignee ? (
     <>
-      <Avatar className="h-7 w-7">
-        <AvatarFallback
-          className={
-            isAgentAssignee(assignee)
-              ? "bg-primary text-white"
-              : "bg-border text-muted-foreground"
-          }
-        >
-          {isAgentAssignee(assignee) ? (
-            <Bot className="h-3.5 w-3.5" />
-          ) : (
-            assignee.name.charAt(0).toUpperCase()
-          )}
-        </AvatarFallback>
-      </Avatar>
+      {isAgentAssignee(assignee) ? (
+        <AgentAvatar name={assignee.name} size={28} className="rounded-full" />
+      ) : (
+        <Avatar className="h-7 w-7">
+          <AvatarFallback className="bg-border text-muted-foreground">
+            {assignee.name.charAt(0).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+      )}
       <div className="min-w-0">
         <div className="text-sm font-medium text-foreground">{assignee.name}</div>
         <div className="text-xs text-muted-foreground">

@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { getAgentAvatarDataUri } from "@/components/ui/agent-avatar";
 
 // Localized strings the (module-level, hook-less) popup renderer needs. Built in
 // the component via useTranslations and threaded through as plain strings.
@@ -448,17 +449,43 @@ export function createSuggestionPopupRenderer(
       const avatarWrap = document.createElement("div");
       avatarWrap.className = "relative shrink-0";
 
-      const avatar = document.createElement("div");
-      avatar.className = `flex h-6 w-6 items-center justify-center rounded-full ${
-        item.type === "agent"
-          ? "bg-primary text-white"
-          : "bg-border text-muted-foreground"
-      }`;
-      avatar.innerHTML =
-        item.type === "agent"
-          ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>'
-          : '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-      avatarWrap.appendChild(avatar);
+      // Agents render the shared DiceBear Thumbs avatar (same seed = name as the
+      // React <AgentAvatar>). This is raw-DOM, so we mount the generated data URI
+      // on an <img>; on a generation failure we fall back to the Bot glyph. Users
+      // keep the plain User-icon avatar tile, unchanged. Reduced-motion is read
+      // synchronously here (client-only render path) to pick the static form.
+      if (item.type === "agent") {
+        const prefersReducedMotion =
+          typeof window !== "undefined" &&
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const uri = getAgentAvatarDataUri(
+          item.name,
+          prefersReducedMotion ? "static" : "animated",
+        );
+        if (uri) {
+          const img = document.createElement("img");
+          img.src = uri;
+          img.alt = item.name;
+          img.draggable = false;
+          img.className = "h-6 w-6 rounded-full bg-muted";
+          avatarWrap.appendChild(img);
+        } else {
+          const avatar = document.createElement("div");
+          avatar.className =
+            "flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white";
+          avatar.innerHTML =
+            '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+          avatarWrap.appendChild(avatar);
+        }
+      } else {
+        const avatar = document.createElement("div");
+        avatar.className =
+          "flex h-6 w-6 items-center justify-center rounded-full bg-border text-muted-foreground";
+        avatar.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+        avatarWrap.appendChild(avatar);
+      }
 
       // Online presence dot at the avatar's bottom-right, online agents only.
       // The white ring (border) lifts it off the avatar fill. Offline agents

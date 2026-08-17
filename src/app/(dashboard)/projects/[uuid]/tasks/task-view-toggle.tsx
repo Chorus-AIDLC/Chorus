@@ -13,6 +13,8 @@ import { ProposalFilter } from "@/components/proposal-filter";
 import { KanbanBoard } from "./kanban-board";
 import { DagView } from "./dag-view";
 import { TaskDetailPanel } from "./task-detail-panel";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { isAgentAssignee } from "@/lib/assignee-identity";
 import { motion } from "framer-motion";
 
 interface Task {
@@ -267,6 +269,13 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
                   </div>
                   {task.assignee && (
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-[#9A9A9A]">
+                      {isAgentAssignee(task.assignee) && (
+                        <AgentAvatar
+                          name={task.assignee.name}
+                          size={16}
+                          className="shrink-0 rounded-full"
+                        />
+                      )}
                       <span className="truncate">{task.assignee.name}</span>
                     </div>
                   )}
