@@ -2,7 +2,7 @@
 
 import { usePresence, type PresenceEntry } from "@/hooks/use-presence";
 import { getAgentColor } from "@/lib/agent-color";
-import { Bot } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 
 interface PresenceIndicatorProps {
   entityType: string;
@@ -66,7 +66,10 @@ function AgentBadge({ entry }: { entry: PresenceEntry }) {
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white whitespace-nowrap animate-in fade-in duration-300 ease-out sm:text-[11px] sm:px-2"
       style={{ backgroundColor: color }}
     >
-      <Bot className="h-2.5 w-2.5" />
+      {/* Shared DiceBear <AgentAvatar> seeded by the agent name (replaces the
+          Bot glyph). The pill keeps its name-hashed getAgentColor fill so the
+          badge still matches the presence outline color. */}
+      <AgentAvatar name={entry.agentName} size={14} className="rounded-full" />
       {entry.agentName}
     </span>
   );

@@ -1393,6 +1393,17 @@ function paintNode(
 
   // Presence ring (view = dashed, mutate = solid) — same convention as
   // PresenceIndicator. Painted first so the card sits on top of its glow.
+  //
+  // AGENT-AVATAR SWEEP — Tech Design D5 decision (documented here per the sweep
+  // task): the presence highlight KEEPS the `getAgentColor` ring + name pill and
+  // does NOT mount a DiceBear <AgentAvatar>. Canvas 2D can't mount a React
+  // component; drawing the avatar would mean (a) decoding its SVG data URI into
+  // an HTMLImageElement, an async image cache, and a repaint-on-load dance, and
+  // (b) `drawImage` only paints a STATIC frame of the SVG — the "always animate"
+  // intent is lost on canvas regardless. The name-hashed ring is already seeded
+  // by the SAME agent name as the avatar, so its hue stays visually coordinated
+  // with the agent's avatar hue everywhere else. Best-effort per D5 = keep the
+  // ring (do not over-engineer the canvas).
   const presence = getPresence(type, node.id);
   const mutating = presence.find((p) => p.action === "mutate");
   const primary = mutating ?? presence[presence.length - 1];

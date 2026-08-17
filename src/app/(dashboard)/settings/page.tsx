@@ -16,6 +16,7 @@ import {
 import { Plus, Key, X, Globe, ChevronDown, ChevronRight, Activity, Bell, Pencil, Rocket } from "lucide-react";
 import Link from "next/link";
 import { AgentCreateForm } from "@/components/AgentCreateForm";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { ResourceLinks } from "@/components/resource-links";
 import { AgentFormFields } from "@/components/AgentFormFields";
 import type { AgentPermissionPickerChange } from "@/components/AgentPermissionPicker";
@@ -353,21 +354,30 @@ export default function SettingsPage() {
                 {/* Header Row */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div
-                      className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                        key.roles.includes("developer_agent")
-                          ? "bg-green-100"
-                          : "bg-primary/10"
-                      }`}
-                    >
-                      <Key
-                        className={`h-[18px] w-[18px] ${
+                    {/* Owning-agent identity — the shared DiceBear <AgentAvatar>
+                        seeded by the agent's display name (key.name resolves to
+                        key.agent?.name in the action, so a rename syncs), NOT the
+                        key prefix. A key with no agent name falls back to the
+                        original Key icon square. */}
+                    {key.name ? (
+                      <AgentAvatar name={key.name} size={36} className="rounded-lg" />
+                    ) : (
+                      <div
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg ${
                           key.roles.includes("developer_agent")
-                            ? "text-green-600"
-                            : "text-primary"
+                            ? "bg-green-100"
+                            : "bg-primary/10"
                         }`}
-                      />
-                    </div>
+                      >
+                        <Key
+                          className={`h-[18px] w-[18px] ${
+                            key.roles.includes("developer_agent")
+                              ? "text-green-600"
+                              : "text-primary"
+                          }`}
+                        />
+                      </div>
+                    )}
                     <div>
                       <div className="text-sm font-medium text-foreground">
                         {key.name || key.keyPrefix + "..."}
