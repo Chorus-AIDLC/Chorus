@@ -109,7 +109,6 @@ export function MentionBadge({ mention, displayName }: MentionBadgeProps) {
           className="cursor-pointer gap-1 align-baseline"
           aria-label={t("badgeAria", { name: displayName, status: statusLabel })}
         >
-          <AgentAvatar name={displayName} size={14} className="rounded-full" />
           <StatusDot online={online} />
           <span>@{displayName}</span>
         </Badge>
