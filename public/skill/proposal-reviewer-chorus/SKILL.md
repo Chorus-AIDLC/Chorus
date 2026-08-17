@@ -4,7 +4,7 @@ description: Read-only adversarial Chorus proposal reviewer — audits PRD/task 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.2"
+  version: "0.16.3"
   category: project-management
   mcp_server: chorus
 ---

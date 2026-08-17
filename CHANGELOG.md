@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.16.3] - 2026-08-17
+
+### Added
+- **Assign an idea to an agent or user (MCP)**: New `chorus_pm_assign_idea` tool (idea:admin) assigns an Idea to a specified agent or user, reusing the existing `idea_claimed` wake; the wake prompt now names the assigner and advances from the current stage. Ships alongside a new `chorus:orchestrate` multi-agent-collaboration skill across all six skill surfaces with entry-skill routing. (#494)
+- **DiceBear agent avatars**: Agents now render as deterministic, animated DiceBear (Voxel Bot) avatars via a single shared `<AgentAvatar>` component, swept across ~30 surfaces — collaboration/comments, idea & task assignees, real-time presence/connections, proposal creators, onboarding, cwd pins, API-key list, and daemon chat. Humans keep their initials/User icon; the presence graph canvas keeps its name-hashed color ring. (#497)
+
+### Changed
+- **Gateway resolve/skip of an assigned idea's elaboration**: A non-assignee holding `idea:admin` can now resolve or skip an assigned idea's elaboration; doing so emits `elaboration_verified` to wake the assignee agent to write the proposal — MCP parity with the UI Verify-Elaborate handoff. Assignee self-validate/skip is unchanged. (#495)
+
+### Fixed
+- **Concurrent daemon sessions duplicating work**: An autonomous idea-anchored wake still resolving to `online_first` after all pin steps now deterministically narrows to a single connection instead of broadcasting to every online connection of the agent, closing the Case-4 fan-out that produced duplicate elaboration rounds and near-duplicate comments. (#496)
+
+### Plugin
+- **Plugin & skill versions → 0.16.3**: Claude Code, Codex, OpenClaw, Kiro, and Pi plugin/skill distributions plus the standalone skill all bumped to 0.16.3.
+
+---
+
 ## [0.16.2] - 2026-08-16
 
 ### Added
