@@ -2,7 +2,9 @@
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
+import { Bot } from "lucide-react";
 
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -54,6 +56,26 @@ export function AgentFormFields({
 
   return (
     <div className="space-y-5">
+      {/* Live avatar preview — a deterministic DiceBear avatar seeded by the
+          typed name, updating as the user types (no reroll / options). Shared by
+          the create and edit flows. While the name is empty there is no identity
+          to seed, so a neutral Bot tile stands in. */}
+      <div className="flex flex-col items-center gap-2">
+        {name.trim() ? (
+          <AgentAvatar name={name} size={56} className="rounded-2xl" />
+        ) : (
+          <div
+            aria-hidden
+            className="flex size-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground"
+          >
+            <Bot className="size-7" />
+          </div>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {t("settings.agentAvatarPreview")}
+        </span>
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor={nameInputId} className="text-[13px]">
           {t("settings.name")}
