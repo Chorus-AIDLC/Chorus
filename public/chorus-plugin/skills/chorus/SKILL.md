@@ -413,6 +413,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | Stage | Skill | Description |
 |-------|-------|-------------|
 | **Full Auto** | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done. Automates Idea → Proposal → Execute → Verify with adversarial reviewers |
+| **Orchestration** | `/orchestrate` | Coordinate OTHER agents & humans across the lifecycle — delegate ideas (`chorus_pm_assign_idea`) & tasks, fan a theme out to child ideas, run independent reviewers, and gatekeep the proposal/verify gates |
 | **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |

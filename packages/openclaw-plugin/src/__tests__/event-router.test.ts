@@ -122,6 +122,51 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(wake.mock.calls[0][1]).toBe(`chorus:${action}:task-1`);
   });
 
+  it("idea_claimed: names the assigner (agent + user actor) and does NOT instruct chorus_claim_idea", async () => {
+    // Mirrors the daemon's cli/prompts.mjs idea_claimed rework: the assignment already set
+    // the assignee, so the prose names WHO assigned it and tells the agent to advance from
+    // the current stage — never to call chorus_claim_idea (which would throw).
+    // (a) agent actor
+    {
+      const { router } = build({
+        chorus_get_notifications: {
+          notifications: [
+            makeNotification({
+              action: "idea_claimed",
+              entityType: "idea",
+              entityUuid: "idea-1",
+              actorType: "agent",
+              actorUuid: "agent-7",
+              actorName: "Admin Claude",
+              uuid: "n1",
+            }),
+          ],
+        },
+      });
+      router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+      await flush();
+      const msg = wake.mock.calls[0][0] as string;
+      expect(msg).toContain("by Admin Claude (agent)");
+      expect(msg).not.toContain("chorus_claim_idea");
+    }
+    // (b) user actor (default makeNotification actor is Alice/user)
+    wake = vi.fn();
+    {
+      const { router } = build({
+        chorus_get_notifications: {
+          notifications: [
+            makeNotification({ action: "idea_claimed", entityType: "idea", entityUuid: "idea-1", uuid: "n1" }),
+          ],
+        },
+      });
+      router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+      await flush();
+      const msg = wake.mock.calls[0][0] as string;
+      expect(msg).toContain("by Alice (user)");
+      expect(msg).not.toContain("chorus_claim_idea");
+    }
+  });
+
   it("logs (no wake) for an unhandled action", async () => {
     const { router } = build({
       chorus_get_notifications: { notifications: [makeNotification({ action: "some_future_thing" })] },

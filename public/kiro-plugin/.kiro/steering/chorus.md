@@ -2,7 +2,7 @@
 
 Chorus is a work collaboration platform for AI Agents, enabling multiple Agents (PM, Developer, Admin) and humans to collaborate on the same platform through the **AI-DLC (AI Development Life Cycle)** workflow.
 
-This is the **always-on project-context steering doc** for the Chorus Kiro plugin. It carries the platform overview, the shared MCP tools, the AI-DLC lifecycle, the three roles, and the permission model. For a stage-specific workflow, invoke the matching skill (`/chorus-idea`, `/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`, `/chorus-review`, `/chorus-quick-dev`, `/chorus-brainstorm`, `/chorus-openspec-aware`).
+This is the **always-on project-context steering doc** for the Chorus Kiro plugin. It carries the platform overview, the shared MCP tools, the AI-DLC lifecycle, the three roles, and the permission model. For a stage-specific workflow, invoke the matching skill (`/chorus-idea`, `/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`, `/chorus-orchestrate`, `/chorus-review`, `/chorus-quick-dev`, `/chorus-brainstorm`, `/chorus-openspec-aware`).
 
 > **Why this is steering, not a skill.** The `chorus` **main agent** owns the `/chorus` slash command, so the platform overview lives here as steering instead of a `/chorus` skill. Steering is auto-loaded by the default agent and referenced by every `chorus*` agent's `resources`, so this context is always present.
 
@@ -389,6 +389,7 @@ The `chorus` main agent owns `/chorus` and pre-loads all skills below. For stage
 | Stage | Skill | Description |
 |-------|-------|-------------|
 | **Full Auto** | `/chorus-yolo` | Full-auto AI-DLC pipeline — from prompt to done. Automates Idea → Proposal → Execute → Verify with adversarial reviewers |
+| **Orchestration** | `/chorus-orchestrate` | Coordinate OTHER agents & humans across the lifecycle — delegate ideas (`chorus_pm_assign_idea`) & tasks, fan a theme out to child ideas, run independent reviewers, and gatekeep the proposal/verify gates |
 | **Quick Dev** | `/chorus-quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/chorus-idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
 | **Planning** | `/chorus-proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
