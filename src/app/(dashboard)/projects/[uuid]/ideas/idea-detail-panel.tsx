@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { X, Bot, User, CheckCircle2, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
+import { X, User, CheckCircle2, Loader2, Pencil, Check, Trash2, ArrowRightLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -529,15 +530,15 @@ export function IdeaDetailPanel({
                   <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-background p-3">
                     {idea.assignee ? (
                       <>
-                        <Avatar className="h-7 w-7">
-                          <AvatarFallback className={isAgentAssignee(idea.assignee) ? "bg-primary text-white" : "bg-border text-muted-foreground"}>
-                            {isAgentAssignee(idea.assignee) ? (
-                              <Bot className="h-3.5 w-3.5" />
-                            ) : (
-                              idea.assignee.name.charAt(0).toUpperCase()
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
+                        {isAgentAssignee(idea.assignee) ? (
+                          <AgentAvatar name={idea.assignee.name} size={28} className="rounded-full" />
+                        ) : (
+                          <Avatar className="h-7 w-7">
+                            <AvatarFallback className="bg-border text-muted-foreground">
+                              {idea.assignee.name.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                        )}
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-foreground">
                             {idea.assignee.name}

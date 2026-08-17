@@ -4,7 +4,7 @@ description: Adversarial verification of a submitted Chorus task against its AC 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.2"
+  version: "0.16.3"
   category: project-management
   mcp_server: chorus
 ---

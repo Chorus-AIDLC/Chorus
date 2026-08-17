@@ -192,7 +192,8 @@ export function AgentCreateForm({
         </div>
       )}
 
-      {/* Body */}
+      {/* Body — the live avatar preview lives inside AgentFormFields (shared with
+          the edit flow), seeded by the typed name. */}
       <div className={embedded ? undefined : "p-6"}>
         <AgentFormFields
           name={newKeyName}

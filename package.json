@@ -1,6 +1,6 @@
 {
   "name": "@chorus-aidlc/chorus",
-  "version": "0.16.2",
+  "version": "0.16.3",
   "description": "The Agent Harness for AI-Human Collaboration — session lifecycle, task state, sub-agent orchestration, observability, and failure recovery",
   "homepage": "https://github.com/Chorus-AIDLC/Chorus",
   "repository": {
@@ -64,6 +64,8 @@
   },
   "dependencies": {
     "@bprogress/next": "^3.2.12",
+    "@dicebear/core": "^10",
+    "@dicebear/styles": "^10",
     "@electric-sql/pglite": "^0.4.4",
     "@electric-sql/pglite-socket": "^0.1.4",
     "@floating-ui/dom": "^1.7.5",

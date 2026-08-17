@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Pi. Detec
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.2"
+  version: "0.16.3"
   category: project-management
   mcp_server: chorus
 ---

@@ -106,10 +106,11 @@ describe("ProjectCwdSummary", () => {
     expect(dots[0].style.backgroundColor).toBe(hexToRgb(getAgentColor("Claude")));
     expect(dots[1].style.backgroundColor).toBe(hexToRgb(getAgentColor("Codex")));
     expect(dots[0].style.backgroundColor).not.toBe(dots[1].style.backgroundColor);
-    // Each agent's cwd lives in its own tooltip.
-    const tips = screen.getAllByTestId("cwd-tooltip").map((el) => el.textContent);
-    expect(tips).toContain("/home/ubuntu/dev/ai-pm");
-    expect(tips).toContain("/home/ubuntu/dev/ai-pm-worktree");
+    // Each agent's cwd lives in its own tooltip (now shown alongside the agent
+    // avatar), so assert the cwd's own text node rather than the tooltip's raw
+    // textContent (which the avatar fallback initial would prefix).
+    expect(screen.getByText("/home/ubuntu/dev/ai-pm")).toBeTruthy();
+    expect(screen.getByText("/home/ubuntu/dev/ai-pm-worktree")).toBeTruthy();
   });
 
   it("opens the agent's chat (pinned to its host+cwd) when the badge is clicked", async () => {

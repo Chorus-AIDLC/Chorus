@@ -13,7 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { User, Bot, Loader2 } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { User, Loader2 } from "lucide-react";
 
 interface Agent {
   uuid: string;
@@ -211,9 +212,7 @@ export function AssignModal({
                     htmlFor={`assign-agent-${agent.uuid}`}
                     className="flex flex-1 cursor-pointer items-center gap-3"
                   >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                      <Bot className="h-5 w-5 text-muted-foreground" />
-                    </div>
+                    <AgentAvatar name={agent.name} size={40} className="rounded-full" />
                     <div className="flex-1">
                       <div className="font-medium">{agent.name}</div>
                       <div className="text-xs text-muted-foreground">

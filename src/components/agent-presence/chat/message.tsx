@@ -14,6 +14,7 @@
 // same surface as the connections deck.
 
 import { useTranslations } from "next-intl";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { MarkdownContent } from "@/components/markdown-content";
 import type { TranscriptMessageView } from "@/services/daemon-session.service";
 
@@ -52,7 +53,16 @@ export function Message({
     // (e.g. a wide markdown table) instead of forcing the transcript column —
     // and on mobile the dialog — to scroll horizontally as a whole.
     <div className="flex min-w-0 flex-col gap-1">
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-center gap-2">
+        {/* Agent side leads with the agent's avatar (DiceBear, seeded by name)
+            so a reader sees WHO replied; the human "You" side stays label-only. */}
+        {!isUser && (
+          <AgentAvatar
+            name={agentName || t("roleAgent")}
+            size="xs"
+            className="rounded-md"
+          />
+        )}
         <span
           className={`text-[11px] font-semibold uppercase tracking-wide ${
             isUser ? "text-primary" : "text-muted-foreground"

@@ -17,6 +17,7 @@
 
 import { useTranslations } from "next-intl";
 import { MessageCirclePlus, PauseCircle, Sparkles, TriangleAlert } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -244,7 +245,13 @@ export function ConversationList({
           <SelectContent>
             {agents.map((a) => (
               <SelectItem key={a.agentUuid} value={a.agentUuid}>
-                {a.agentName}
+                {/* The agent selector is THE distinct-identity point for the chat
+                    (rows are already filtered to this agent), so seat the avatar
+                    here — it mirrors into the trigger via <SelectValue>. */}
+                <div className="flex items-center gap-2">
+                  <AgentAvatar name={a.agentName} size={16} className="rounded-full" />
+                  <span>{a.agentName}</span>
+                </div>
               </SelectItem>
             ))}
           </SelectContent>

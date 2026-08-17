@@ -478,6 +478,9 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       ...PM_AGENT_ADDED_IN_0_10_0,
       // 0.14.0 (reference-artifacts): three document:write-gated write tools.
       ...PM_AGENT_ADDED_IN_0_14_0,
+      // 0.16.3 (add-assign-idea-mcp-tool): chorus_pm_assign_idea is idea:admin-
+      // gated. admin_agent carries idea:admin; pm_agent (idea:write only) does not.
+      "chorus_pm_assign_idea",
     ]);
     expect(tools).toEqual(expected);
   });

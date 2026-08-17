@@ -304,19 +304,30 @@ export async function resolveElaboration({
   ideaUuid,
   actorUuid,
   actorType,
+  actorIsIdeaAdmin = false,
 }: {
   companyUuid: string;
   ideaUuid: string;
   actorUuid: string;
   actorType: string;
+  // True when the caller holds `idea:admin`. Lets a non-assignee gateway
+  // resolve an Idea assigned to another agent (MCP parity with the human UI
+  // Verify-Elaborate handoff). `chorus_pm_validate_elaboration` is already
+  // `idea:admin`-gated, so this is effectively always true there; the in-service
+  // check keeps the branch self-protecting and testable.
+  actorIsIdeaAdmin?: boolean;
 }): Promise<ElaborationResponse> {
-  // Verify the Idea exists and the actor is its assignee
+  // Verify the Idea exists and the actor may resolve it: either the assignee, or
+  // a non-assignee acting as an `idea:admin` gateway.
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
-    throw new Error("Only the assigned agent can resolve elaboration");
+  const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid);
+  if (!isAssignee && !actorIsIdeaAdmin) {
+    throw new Error(
+      "Only the assigned agent or an idea:admin gateway can resolve elaboration"
+    );
   }
 
   // Resolve operates on the whole Idea (not a single round). Precondition:
@@ -342,6 +353,15 @@ export async function resolveElaboration({
     data: { status: "elaborated", elaborationStatus: "resolved" },
   });
 
+  // Branch the emitted activity on WHO resolved (not on actor type):
+  // - Assignee self-validates → `elaboration_resolved`, no cross-wake (the
+  //   assignee is already live in-session).
+  // - Non-assignee `idea:admin` gateway → `elaboration_verified`, reusing the
+  //   existing wake pipeline. Its recipient resolution targets the Idea's
+  //   assignee agent (excluding the acting gateway via actor-exclusion), so the
+  //   assignee is woken to write the proposal — the MCP analogue of the human
+  //   Verify-Elaborate handoff. Offline is a queue: no liveness check here, so
+  //   resolution always succeeds and the wake is recovered on reconnect.
   await activityService.createActivity({
     companyUuid,
     projectUuid: idea.projectUuid,
@@ -349,7 +369,7 @@ export async function resolveElaboration({
     targetUuid: ideaUuid,
     actorType,
     actorUuid,
-    action: "elaboration_resolved",
+    action: isAssignee ? "elaboration_resolved" : "elaboration_verified",
     value: {
       totalRounds: rounds.length,
     },
@@ -445,19 +465,28 @@ export async function skipElaboration({
   actorUuid,
   actorType,
   reason,
+  actorIsIdeaAdmin = false,
 }: {
   companyUuid: string;
   ideaUuid: string;
   actorUuid: string;
   actorType: string;
   reason: string;
+  // True when the caller holds `idea:admin`. `chorus_pm_skip_elaboration` stays
+  // `idea:write`-gated so an assignee can skip its own Idea with write; this
+  // flag is the load-bearing check that lets a non-assignee gateway skip an Idea
+  // assigned to another agent (parity with the gateway resolve path).
+  actorIsIdeaAdmin?: boolean;
 }): Promise<void> {
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
-    throw new Error("Only the assigned agent can skip elaboration");
+  const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid);
+  if (!isAssignee && !actorIsIdeaAdmin) {
+    throw new Error(
+      "Only the assigned agent or an idea:admin gateway can skip elaboration"
+    );
   }
   if (idea.status !== "elaborating") {
     throw new Error(
@@ -474,6 +503,9 @@ export async function skipElaboration({
     },
   });
 
+  // Assignee self-skip → `elaboration_skipped`, no cross-wake. Non-assignee
+  // `idea:admin` gateway → `elaboration_verified` (carrying the skip reason) so
+  // the existing wake pipeline wakes the ASSIGNEE agent to write the proposal.
   await activityService.createActivity({
     companyUuid,
     projectUuid: idea.projectUuid,
@@ -481,8 +513,8 @@ export async function skipElaboration({
     targetUuid: ideaUuid,
     actorType,
     actorUuid,
-    action: "elaboration_skipped",
-    value: { reason },
+    action: isAssignee ? "elaboration_skipped" : "elaboration_verified",
+    value: isAssignee ? { reason } : { reason, viaSkip: true },
   });
 
   eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });

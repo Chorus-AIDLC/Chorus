@@ -15,6 +15,12 @@ importers:
       '@bprogress/next':
         specifier: ^3.2.12
         version: 3.2.12(next@15.5.12(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@dicebear/core':
+        specifier: ^10
+        version: 10.6.0
+      '@dicebear/styles':
+        specifier: ^10
+        version: 10.5.0
       '@electric-sql/pglite':
         specifier: ^0.4.4
         version: 0.4.4
@@ -615,6 +621,13 @@ packages:
   '@csstools/css-tokenizer@4.0.0':
     resolution: {integrity: sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==}
     engines: {node: '>=20.19.0'}
+
+  '@dicebear/core@10.6.0':
+    resolution: {integrity: sha512-XZtNSGq3LZCWPa9wx+HZOWQsKnixFkxBTKjjd+fDXcQ3mRWsjZDjoGcOA2rTRpX0TXM/+8CJOsBgGOytGBBXZg==}
+    engines: {node: '>=22.0.0'}
+
+  '@dicebear/styles@10.5.0':
+    resolution: {integrity: sha512-CV5rBIe/wECQua/jct3oJCN7aNNMb7H1TUFQr5x0DWMI+82KZDeLOgw50OzEjDIW0qGHfwvfz9tRh61ZEyardA==}
 
   '@dotenvx/dotenvx@1.52.0':
     resolution: {integrity: sha512-CaQcc8JvtzQhUSm9877b6V4Tb7HCotkcyud9X2YwdqtQKwgljkMRwU96fVYKnzN3V0Hj74oP7Es+vZ0mS+Aa1w==}
@@ -8060,6 +8073,10 @@ snapshots:
       css-tree: 3.2.1
 
   '@csstools/css-tokenizer@4.0.0': {}
+
+  '@dicebear/core@10.6.0': {}
+
+  '@dicebear/styles@10.5.0': {}
 
   '@dotenvx/dotenvx@1.52.0':
     dependencies:

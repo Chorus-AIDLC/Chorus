@@ -42,6 +42,7 @@ import { Loader2, SendHorizonal, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   Select,
   SelectContent,
@@ -391,7 +392,12 @@ export function ConversationalEntry({
           <SelectContent>
             {agentGroups.map((g) => (
               <SelectItem key={g.agentUuid} value={g.agentUuid}>
-                {g.agentName}
+                {/* Avatar on the selector so the user sees WHO they are about to
+                    talk to (the identity mirrors into the trigger via SelectValue). */}
+                <div className="flex items-center gap-2">
+                  <AgentAvatar name={g.agentName} size={16} className="rounded-full" />
+                  <span>{g.agentName}</span>
+                </div>
               </SelectItem>
             ))}
           </SelectContent>

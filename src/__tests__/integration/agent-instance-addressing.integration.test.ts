@@ -198,14 +198,15 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     // resolves against agent Y's OWN online-first connection, NOT instance A.
     //
     // This is LOAD-BEARING: agent Y's instance is seeded at the SAME (host, cwd)
-    // place as instance A (differing only by owning agent). If the guard were
-    // removed and Y inherited A's place, selectOriginConnection would find Y's
-    // ONLINE connection at that exact place and return DIRECTED (targetConnectionUuid
-    // === connY). Because the guard holds, the pin yields nothing for Y and the
-    // selection is online_first → null directed target.
+    // place as instance A (differing only by owning agent). Because the same-agent
+    // guard holds, the root-idea pin yields NOTHING for Y — so selection is
+    // online_first, and Step 4b then narrows it to agent Y's OWN online connection
+    // (connY, directed). The invariant that MUST hold is that the resolved connection
+    // and session belong to agent Y — never instance A / connA (which is owned by
+    // agent X): a leak across the agent boundary would be the real regression.
     const result = await createTurnAndResolveTarget(taskWake(s, s.taskCross, s.agentY));
-    // online_first selection for agent Y → its own connection, NOT directed.
-    expect(result.targetConnectionUuid).toBeNull(); // a broken guard would make this connY
+    // Step 4b narrows to agent Y's own online-first connection (never agent X's connA).
+    expect(result.targetConnectionUuid).toBe(s.connY);
     expect(result.suppressWake).toBe(false);
     expect(result.turn).not.toBeNull();
     // The turn's session is owned by agent Y's connection — never instance A/connA.
@@ -330,12 +331,17 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     expect(ideaRow.assigneeType).toBe("agent");
     expect(ideaRow.assigneeUuid).toBe(s.agentX);
 
-    // With no pin to inherit, the wake goes online-first (no directed target,
-    // no suppression). A turn is still created on the agent's first online conn.
+    // With no pin to inherit, selection is online_first and Step 4b narrows the wake to
+    // the agent's first online connection (directed, no suppression) — which is the same
+    // connection the turn's session is created on.
     const result = await createTurnAndResolveTarget(taskWake(s, s.taskInherit, s.agentX));
-    expect(result.targetConnectionUuid).toBeNull();
     expect(result.suppressWake).toBe(false);
     expect(result.turn).not.toBeNull();
+    const revertSession = agentInstanceStore.daemonSessions.find(
+      (ss) => ss.uuid === result.turn!.sessionUuid,
+    )!;
+    expect(result.targetConnectionUuid).toBe(revertSession.originConnectionUuid);
+    expect(result.targetConnectionUuid).not.toBeNull();
   });
 
   it("AC#2 (no silent drop): the instance-pinned idea is NEVER dropped from the agent's ideaTracker across the lifecycle", async () => {

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { X, Pencil, CheckCircle, Play, Eye, Bot, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
+import { X, Pencil, CheckCircle, Play, Eye, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
 import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
@@ -817,15 +818,15 @@ export function TaskDetailPanel({
                   <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-background p-3">
                     {task.assignee ? (
                       <>
-                        <Avatar className="h-7 w-7">
-                          <AvatarFallback className={isAgentAssignee(task.assignee) ? "bg-primary text-white" : "bg-border text-muted-foreground"}>
-                            {isAgentAssignee(task.assignee) ? (
-                              <Bot className="h-3.5 w-3.5" />
-                            ) : (
-                              task.assignee.name.charAt(0).toUpperCase()
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
+                        {isAgentAssignee(task.assignee) ? (
+                          <AgentAvatar name={task.assignee.name} size={28} className="rounded-full" />
+                        ) : (
+                          <Avatar className="h-7 w-7">
+                            <AvatarFallback className="bg-border text-muted-foreground">
+                              {task.assignee.name.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                        )}
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-foreground">
                             {task.assignee.name}
@@ -864,7 +865,10 @@ export function TaskDetailPanel({
                           key={worker.sessionUuid}
                           className="flex items-center gap-2.5 rounded-lg bg-background p-2.5"
                         >
-                          <div className="h-2 w-2 rounded-full bg-green-500 flex-shrink-0" />
+                          <div className="relative flex-shrink-0">
+                            <AgentAvatar name={worker.agentName} size={28} className="rounded-full" />
+                            <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-green-500 ring-2 ring-background" />
+                          </div>
                           <div className="min-w-0">
                             <div className="text-xs font-medium text-foreground truncate">
                               {worker.sessionName}
