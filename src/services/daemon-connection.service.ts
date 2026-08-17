@@ -811,8 +811,9 @@ export async function touchConnection(
 /**
  * List the daemon connections visible to a *user* owner: every connection whose
  * agent is owned by `ownerUuid`, scoped to `companyUuid`. Projected to
- * `ConnectionView` (with server-derived `effectiveStatus`) and ordered
- * online-first then `lastSeenAt` desc.
+ * `ConnectionView` (with server-derived `effectiveStatus`) and ordered by
+ * `sortConnectionViews` — online-first then a STABLE, timestamp-free identity
+ * tie-break (NOT `lastSeenAt`, so heartbeats never reorder an equivalent set).
  */
 export async function listConnectionsForOwner(
   companyUuid: string,
@@ -831,7 +832,10 @@ export async function listConnectionsForOwner(
 /**
  * List the daemon connections owned by a single agent (`agentUuid`), scoped to
  * `companyUuid` — the agent-key analogue of owner-scoping ("am I registered?").
- * Projected to `ConnectionView` and ordered online-first then `lastSeenAt` desc.
+ * Projected to `ConnectionView` and ordered by `sortConnectionViews` — online-first
+ * then a STABLE, timestamp-free identity tie-break (NOT `lastSeenAt`). The
+ * single-active-session narrow (notification-turn Step 4b) relies on this determinism:
+ * concurrent same-idea wakes observing the same online set pick the same connection.
  */
 export async function listConnectionsForAgent(
   companyUuid: string,
