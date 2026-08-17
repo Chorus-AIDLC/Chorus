@@ -49,6 +49,11 @@ export interface AgentRow {
   companyUuid: string;
   name: string;
   ownerUuid: string | null;
+  // Optional authz fields — the base scenario omits them (the addressing test
+  // never gates on permissions), but the assign-idea end-to-end test seeds them
+  // so getAgentByUuid → computeEffectivePermissions sees the target's idea:write.
+  roles?: string[];
+  permissions?: string[];
 }
 
 export interface AgentInstanceRow {
@@ -166,6 +171,82 @@ export interface DaemonSessionTurnRow {
   createdAt: Date;
 }
 
+// Activity / notification / notification-preference rows — only exercised by the
+// assign-idea end-to-end integration test, which drives the REAL notification
+// listener (handleActivity) + notification.service (createBatch) over this store
+// to assert idea_claimed recipient resolution and preference gating. Additive: the
+// addressing test never touches these arrays.
+export interface ActivityRow {
+  uuid: string;
+  companyUuid: string;
+  projectUuid: string;
+  targetType: string;
+  targetUuid: string;
+  actorType: string;
+  actorUuid: string;
+  action: string;
+  value: unknown;
+  sessionUuid: string | null;
+  sessionName: string | null;
+  createdAt: Date;
+}
+
+export interface NotificationRow {
+  uuid: string;
+  companyUuid: string;
+  projectUuid: string;
+  recipientType: string;
+  recipientUuid: string;
+  entityType: string;
+  entityUuid: string;
+  entityTitle: string;
+  projectName: string;
+  action: string;
+  message: string;
+  actorType: string;
+  actorUuid: string;
+  actorName: string;
+  instructionText: string | null;
+  readAt: Date | null;
+  archivedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface NotificationPreferenceRow {
+  uuid: string;
+  companyUuid: string;
+  ownerType: string;
+  ownerUuid: string;
+  taskAssigned: boolean;
+  taskStatusChanged: boolean;
+  taskVerified: boolean;
+  taskReopened: boolean;
+  proposalSubmitted: boolean;
+  proposalApproved: boolean;
+  proposalRejected: boolean;
+  ideaClaimed: boolean;
+  commentAdded: boolean;
+  elaborationRequested: boolean;
+  elaborationAnswered: boolean;
+  mentioned: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Per-(user, project, agent) fixed-cwd preference read by the autonomous-wake
+// project-cwd fallback (notification-turn.resolveProjectOwnerCwdPin). Left EMPTY by
+// the seeds so the fallback cleanly returns null → online-first (no owner pin); the
+// model must merely exist so the query does not throw.
+export interface ProjectAgentCwdPreferenceRow {
+  uuid: string;
+  companyUuid: string;
+  userUuid: string;
+  projectUuid: string;
+  agentUuid: string;
+  host: string | null;
+  cwd: string | null;
+}
+
 export interface AgentInstanceStore {
   users: UserRow[];
   agents: AgentRow[];
@@ -177,6 +258,10 @@ export interface AgentInstanceStore {
   projects: ProjectRow[];
   daemonSessions: DaemonSessionRow[];
   daemonSessionTurns: DaemonSessionTurnRow[];
+  activities: ActivityRow[];
+  notifications: NotificationRow[];
+  notificationPreferences: NotificationPreferenceRow[];
+  projectAgentCwdPreferences: ProjectAgentCwdPreferenceRow[];
 }
 
 export const agentInstanceStore: AgentInstanceStore = {
@@ -190,6 +275,10 @@ export const agentInstanceStore: AgentInstanceStore = {
   projects: [],
   daemonSessions: [],
   daemonSessionTurns: [],
+  activities: [],
+  notifications: [],
+  notificationPreferences: [],
+  projectAgentCwdPreferences: [],
 };
 
 export function resetAgentInstanceStore() {
@@ -203,6 +292,10 @@ export function resetAgentInstanceStore() {
   agentInstanceStore.projects = [];
   agentInstanceStore.daemonSessions = [];
   agentInstanceStore.daemonSessionTurns = [];
+  agentInstanceStore.activities = [];
+  agentInstanceStore.notifications = [];
+  agentInstanceStore.notificationPreferences = [];
+  agentInstanceStore.projectAgentCwdPreferences = [];
 }
 
 // ===== Generic where-clause matcher =====
@@ -556,6 +649,65 @@ export function buildMockPrisma() {
           createdAt: new Date(),
         }),
       },
+    ),
+    // activity.service.createActivity writes here; the assign-idea end-to-end test
+    // reads the persisted `assigned` idea Activity back to assert actorType.
+    activity: makeModel<ActivityRow & Record<string, unknown>>(
+      () => agentInstanceStore.activities as (ActivityRow & Record<string, unknown>)[],
+      {
+        defaults: () => ({
+          uuid: nextUuid("activity"),
+          value: null,
+          sessionUuid: null,
+          sessionName: null,
+          createdAt: new Date(),
+        }),
+      },
+    ),
+    // notification.service.createBatch/createReturningTurn write here; the end-to-end
+    // test reads the persisted rows back to assert the resolved wake recipient.
+    notification: makeModel<NotificationRow & Record<string, unknown>>(
+      () => agentInstanceStore.notifications as (NotificationRow & Record<string, unknown>)[],
+      {
+        defaults: () => ({
+          uuid: nextUuid("notification"),
+          instructionText: null,
+          readAt: null,
+          archivedAt: null,
+          createdAt: new Date(),
+        }),
+      },
+    ),
+    // getPreferences reads/creates here (compound-unique ownerType_ownerUuid). Defaults
+    // mirror the Prisma schema (@default(true)) so an auto-created pref row is fully
+    // enabled — the test only flips ideaClaimed off explicitly to prove pref gating.
+    notificationPreference: makeModel<NotificationPreferenceRow & Record<string, unknown>>(
+      () => agentInstanceStore.notificationPreferences as (NotificationPreferenceRow & Record<string, unknown>)[],
+      {
+        compoundKeys: { ownerType_ownerUuid: ["ownerType", "ownerUuid"] },
+        defaults: () => ({
+          uuid: nextUuid("notif-pref"),
+          taskAssigned: true,
+          taskStatusChanged: true,
+          taskVerified: true,
+          taskReopened: true,
+          proposalSubmitted: true,
+          proposalApproved: true,
+          proposalRejected: true,
+          ideaClaimed: true,
+          commentAdded: true,
+          elaborationRequested: true,
+          elaborationAnswered: true,
+          mentioned: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      },
+    ),
+    // Read by the autonomous-wake project-cwd fallback (resolveProjectOwnerCwdPin);
+    // left empty by the seeds → findFirst returns null → clean online-first selection.
+    projectAgentCwdPreference: makeModel<ProjectAgentCwdPreferenceRow & Record<string, unknown>>(
+      () => agentInstanceStore.projectAgentCwdPreferences as (ProjectAgentCwdPreferenceRow & Record<string, unknown>)[],
     ),
   };
 

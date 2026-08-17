@@ -18,6 +18,7 @@ import {
 import * as activityService from "@/services/activity.service";
 import * as elaborationService from "@/services/elaboration.service";
 import { getAgentByUuid } from "@/services/agent.service";
+import { getUserByUuid } from "@/services/user.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
@@ -874,6 +875,129 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
             content: [{ type: "text", text: "Agent instance not found" }],
             isError: true,
           };
+        }
+        throw e;
+      }
+    }
+  );
+
+  // chorus_pm_assign_idea - Assign an Idea to an agent or user (MCP surface over
+  // the human assign-idea action). Reuses ideaService.assignIdea (reassign-safe
+  // silent takeover; open→elaborating else status preserved) and — CRITICALLY —
+  // emits the actor-bearing `assigned` Activity that drives the existing
+  // idea_claimed wake. This is NOT new wake plumbing: it mirrors
+  // claimIdeaToAgentAction (actions.ts:107-127) with actorType:"agent".
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:admin",
+    "chorus_pm_assign_idea",
+    {
+      description: "Assign an Idea to an agent (must hold idea:write) or a user, on a human's behalf. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Optionally pin an agent assignment to a specific AgentInstance via `instanceUuid` (persists as an `agent_instance` assignment and targets that instance at wake time) — only valid when assigneeType=\"agent\". Assigning to an agent wakes it best-effort (offline still persists the assignment); assigning to a user sets the assignee and notifies the user with no daemon wake.",
+      inputSchema: z.object({
+        ideaUuid: z.string().describe("Idea UUID"),
+        assigneeType: z.enum(["agent", "user"]).describe("Assignee type: agent or user"),
+        assigneeUuid: z.string().describe("Target Agent UUID or User UUID, per assigneeType"),
+        instanceUuid: z
+          .string()
+          .nullish()
+          .describe("Optional AgentInstance UUID — only valid when assigneeType=\"agent\". Pins the Idea to that durable (agent, host, cwd) instance so the row persists as `agent_instance` and the wake targets that instance; omit for a plain `agent` assignment whose wake-time instance is online-first. The instance must belong to the target agent's company, else the call is rejected. Rejected if supplied with assigneeType=\"user\"."),
+      }),
+    },
+    async ({ ideaUuid, assigneeType, assigneeUuid, instanceUuid }) => {
+      // Validate the idea exists in this company (clear 404 vs a raw Prisma error).
+      const idea = await ideaService.getIdeaByUuid(auth.companyUuid, ideaUuid);
+      if (!idea) {
+        return { content: [{ type: "text", text: "Idea not found" }], isError: true };
+      }
+
+      // Validate the target per assigneeType.
+      if (assigneeType === "agent") {
+        // Target agent must exist in this company AND hold idea:write. Reuse the
+        // same effective-permission gate the human claim route uses
+        // (route.ts:80-88) — gate by permission, not by legacy role preset name,
+        // so a custom agent that holds idea:write directly is eligible too.
+        const targetAgent = await getAgentByUuid(auth.companyUuid, assigneeUuid);
+        if (!targetAgent) {
+          return { content: [{ type: "text", text: "Target Agent not found" }], isError: true };
+        }
+        const targetPerms = computeEffectivePermissions(
+          targetAgent.roles,
+          targetAgent.permissions,
+        );
+        if (!targetPerms.has("idea:write")) {
+          return {
+            content: [{ type: "text", text: `Agent "${targetAgent.name}" does not have idea:write permission` }],
+            isError: true,
+          };
+        }
+      } else {
+        // User target — must belong to this company. `instanceUuid` is only
+        // meaningful for an agent target; reject it here rather than let it
+        // silently promote the row to agent_instance (resolveAssigneeFields
+        // ignores assigneeType when a pin is present).
+        if (instanceUuid != null) {
+          return {
+            content: [{ type: "text", text: "instanceUuid is only valid when assigneeType is \"agent\"" }],
+            isError: true,
+          };
+        }
+        const targetUser = await getUserByUuid(assigneeUuid);
+        if (!targetUser || targetUser.companyUuid !== auth.companyUuid) {
+          return { content: [{ type: "text", text: "Target User not found" }], isError: true };
+        }
+      }
+
+      // Execute the assignment. assignIdea is reassign-safe (silent takeover;
+      // open→elaborating else status preserved) and applies the optional instance
+      // pin via resolveAssigneeFields (validates company ownership → agent_instance).
+      // Forward instanceUuid only for a pinned agent assignment so an un-pinned or
+      // user assignment's args are byte-identical to the human path.
+      try {
+        const updated = await ideaService.assignIdea({
+          ideaUuid: idea.uuid,
+          companyUuid: auth.companyUuid,
+          assigneeType,
+          assigneeUuid,
+          assignedByType: "agent",
+          assignedByUuid: auth.actorUuid,
+          ...(assigneeType === "agent" && instanceUuid != null ? { instanceUuid } : {}),
+        });
+
+        // CRITICAL: the actor-bearing `assigned` Activity is what triggers the
+        // idea_claimed wake (agent) / assignment notification (user). assignIdea
+        // emits only an `updated` change event — without this Activity there is NO
+        // wake. Value mirrors claimIdeaToAgentAction: the raw assignee identity
+        // plus the instance uuid (when pinned), for attribution parity with the UI.
+        await activityService.createActivity({
+          companyUuid: auth.companyUuid,
+          projectUuid: idea.projectUuid,
+          targetType: "idea",
+          targetUuid: idea.uuid,
+          actorType: "agent",
+          actorUuid: auth.actorUuid,
+          action: "assigned",
+          value: {
+            assigneeType,
+            assigneeUuid,
+            ...(assigneeType === "agent" && instanceUuid != null ? { instanceUuid } : {}),
+          },
+        });
+
+        return {
+          content: [{ type: "text", text: JSON.stringify({
+            uuid: updated.uuid,
+            status: updated.status,
+            assignee: updated.assignee
+              ? { type: updated.assignee.type, uuid: updated.assignee.uuid }
+              : null,
+          }, null, 2) }],
+        };
+      } catch (e) {
+        // A non-existent / foreign-company instance pin is rejected by the service
+        // with a plain Error; surface it as a tool error, not a throw.
+        if (e instanceof Error && e.message === "Agent instance not found") {
+          return { content: [{ type: "text", text: "Agent instance not found" }], isError: true };
         }
         throw e;
       }

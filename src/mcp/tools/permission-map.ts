@@ -36,6 +36,11 @@ export const TOOL_PERMISSIONS = {
   // (idea:write) cannot, by design. Exposed under the legacy name
   // `chorus_pm_validate_elaboration` (reused, not a new tool).
   chorus_pm_validate_elaboration: "idea:admin",
+  // Idea assignment (MCP surface over the human assign-idea action). Gated
+  // idea:admin — a directed reassignment/takeover is an admin-level action,
+  // aligning with chorus_pm_validate_elaboration; the pm_agent preset (idea:write)
+  // cannot see it, only admin_agent (idea:admin) can.
+  chorus_pm_assign_idea: "idea:admin",
   // Proposal writes
   chorus_pm_create_proposal: "proposal:write",
   chorus_pm_validate_proposal: "proposal:write",

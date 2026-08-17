@@ -332,12 +332,23 @@ export class ChorusEventRouter {
     );
   }
 
+  /**
+   * An idea was assigned to this agent. The assignment ALREADY set the assignee, so there is
+   * nothing to claim — chorus_claim_idea would throw (AlreadyClaimedError, and a hard "Cannot
+   * claim an elaborated Idea" for the elaborated-backfill case). Do NOT emit a claim
+   * instruction; tell the already-assigned agent to review and advance from the idea's CURRENT
+   * stage, stopping at the human proposal/verify gates, and name the assigner via
+   * n.actorName / n.actorType. Mirrors the daemon's cli/prompts.mjs `idea_claimed` case
+   * (plugin voice; no headless preamble) — KEEP THE TWO WORDINGS IN SYNC.
+   */
   private handleIdeaClaimed(n: NotificationDetail, attr: WakeAttribution): void {
     const mentionGuidance = this.buildMentionGuidance(n, "idea");
 
     this.wakeWithHandoff(
-      `[Chorus] Idea '${n.entityTitle}' has been assigned to you (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
-      `Use chorus_get_idea to review the idea, then chorus_claim_idea to start elaboration.\n` +
+      `[Chorus] Idea '${n.entityTitle}' was assigned to you by ${n.actorName} (${n.actorType}) (ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). ` +
+      `You are now the assignee — no need to claim it. Use chorus_get_idea to review it, then advance it from its CURRENT stage: ` +
+      `if it is still elaborating, run or continue elaboration; if it is already elaborated, author the proposal. ` +
+      `Stop at the human proposal/verify gates and never merge automatically.\n` +
       mentionGuidance,
       this.contextKeyFor("idea_claimed", n.entityUuid),
       n,

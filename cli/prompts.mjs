@@ -320,10 +320,20 @@ function buildPromptBody(n) {
       );
     }
     case "idea_claimed":
+      // The assignment ALREADY set you as the assignee, so there is nothing to claim —
+      // chorus_claim_idea would throw (AlreadyClaimedError, and a hard "Cannot claim an
+      // elaborated Idea" for the elaborated-backfill case). Do NOT emit a claim
+      // instruction here (a prompt test asserts the literal never appears). Instead tell
+      // the already-assigned agent to review and advance from the idea's CURRENT stage,
+      // stopping at the human proposal/verify gates. Names the assigner via n.actorName /
+      // n.actorType (already on the notification — no server change). Mirrored in the
+      // OpenClaw twin handleIdeaClaimed (event-router.ts) — KEEP THE TWO WORDINGS IN SYNC.
       return (
-        `[Chorus] Idea '${n.entityTitle}' was assigned to you (ideaUuid: ${n.entityUuid}, ` +
-        `projectUuid: ${n.projectUuid}). Use chorus_get_idea to review it, then claim it ` +
-        `(chorus_claim_idea) to begin elaboration.\n${mentionGuidance(n, "idea")}`
+        `[Chorus] Idea '${n.entityTitle}' was assigned to you by ${n.actorName} (${n.actorType}) ` +
+        `(ideaUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}). You are now the assignee — no need ` +
+        `to claim it. Use chorus_get_idea to review it, then advance it from its CURRENT stage: if it is ` +
+        `still elaborating, run or continue elaboration; if it is already elaborated, author the proposal. ` +
+        `Stop at the human proposal/verify gates and never merge automatically.\n${mentionGuidance(n, "idea")}`
       );
     case "task_reopened":
       return (

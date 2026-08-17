@@ -264,6 +264,44 @@ describe("buildPrompt", () => {
     expect(p).toContain("@[Alice](user:user-1)"); // mention guidance
   });
 
+  it("idea_claimed names the assigner and tells the already-assigned agent to advance, not claim (rework-idea-assignment-wake)", () => {
+    expect(WAKE_ACTIONS.has("idea_claimed")).toBe(true);
+    // (a) agent actor — the assigner is shown by name + type in the prose.
+    const pAgent = buildPrompt({
+      ...TASK_NOTIF,
+      action: "idea_claimed",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+      actorType: "agent",
+      actorUuid: "agent-7",
+      actorName: "Admin Claude",
+    });
+    expect(pAgent).not.toBeNull();
+    expect(pAgent).toContain("idea-9"); // the idea uuid
+    expect(pAgent).toContain("proj-1"); // project uuid for context
+    expect(pAgent).toContain("by Admin Claude (agent)"); // provenance for an agent actor
+    // (b) user actor — same provenance shape (TASK_NOTIF actor is Alice/user/user-1).
+    const pUser = buildPrompt({
+      ...TASK_NOTIF,
+      action: "idea_claimed",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      entityTitle: "Ship the widget",
+    });
+    expect(pUser).toContain("by Alice (user)"); // provenance for a user actor
+    // Stage-correct guidance: you are the assignee; review + advance from the current stage.
+    expect(pUser).toContain("chorus_get_idea");
+    expect(pUser.toLowerCase()).toContain("assignee");
+    expect(pUser.toLowerCase()).toContain("elaborat"); // continue elaboration while elaborating
+    expect(pUser.toLowerCase()).toContain("proposal"); // author the proposal once elaborated
+    // The claim instruction is GONE — chorus_claim_idea would throw on an already-assigned idea.
+    expect(pUser).not.toContain("chorus_claim_idea");
+    expect(pAgent).not.toContain("chorus_claim_idea");
+    // @mention tail retained.
+    expect(pUser).toContain("@[Alice](user:user-1)");
+  });
+
   it("start_development wakes the agent to EXECUTE ALL remaining tasks, never stopping after one (add-stage-advance-start-development)", () => {
     expect(WAKE_ACTIONS.has("start_development")).toBe(true);
     const p = buildPrompt({

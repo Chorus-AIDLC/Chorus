@@ -31,6 +31,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_move_idea` | `idea:write` |
 | `chorus_pm_create_idea` | `idea:write` |
 | `chorus_edit_idea` | `idea:write` |
+| `chorus_pm_assign_idea` | `idea:admin` |
 | `chorus_pm_start_elaboration` | `idea:write` |
 | `chorus_pm_validate_elaboration` | `idea:admin` |
 | `chorus_pm_skip_elaboration` | `idea:write` |
@@ -1023,6 +1024,37 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | ideaUuid | string | Yes | Idea UUID |
 
 **Output**: Updated Idea JSON
+
+### chorus_pm_assign_idea
+
+**Description**: Assign an Idea to an agent (must hold `idea:write`) or a user, on a human's behalf. Unlike `chorus_claim_idea` — which is a **self-claim** by the calling agent — this assigns the Idea to a **different** actor. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Assigning to an agent wakes it best-effort via the existing `idea_claimed` wake (an offline agent still gets the assignment persisted — the wake is a no-op); assigning to a user sets the assignee and delivers an assignment notification with **no** daemon wake. Optionally pin an agent assignment to a specific **AgentInstance** via `instanceUuid` (persists as an `agent_instance` assignment and targets that instance at wake time) — valid only when `assigneeType = "agent"`.
+
+**Required Permission**: `idea:admin`
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string | Yes | Idea UUID |
+| assigneeType | enum | Yes | Assignee type: `agent` or `user` |
+| assigneeUuid | string | Yes | Target Agent UUID or User UUID (per `assigneeType`) |
+| instanceUuid | string | No | AgentInstance UUID to pin an **agent** assignment to (the durable `(agent, host, cwd)` identity from the presence/daemon tools). **Present** → the Idea is assigned as `agent_instance` and the wake targets that instance. **Omitted** → a plain `agent` assignment whose wake-time instance is resolved online-first. Rejected if supplied with `assigneeType = "user"`. |
+
+**Validation rules**:
+- Idea must exist in the caller's company
+- `assigneeType = "agent"`: the target Agent must exist, belong to the same company, and hold the effective `idea:write` permission (preset or custom)
+- `assigneeType = "user"`: the target User must exist and belong to the same company; `instanceUuid` must not be supplied
+- When `instanceUuid` is supplied, it must reference an AgentInstance in the same company, otherwise the call is rejected ("Agent instance not found")
+
+**Contrast with `chorus_claim_idea`**: `chorus_claim_idea` (gated `idea:write`) is how an agent claims an Idea **for itself** (open → elaborating). `chorus_pm_assign_idea` (gated `idea:admin`) is the MCP surface over the human "assign idea" action — it assigns to **any** eligible agent or user and emits the same actor-bearing `assigned` Activity that wakes an assigned daemon agent.
+
+**Output**:
+```json
+{
+  "uuid": "Idea UUID",
+  "status": "elaborating",
+  "assignee": { "type": "agent", "uuid": "..." }
+}
+```
 
 ### chorus_pm_create_proposal
 

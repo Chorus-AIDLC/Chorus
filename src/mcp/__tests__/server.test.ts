@@ -300,6 +300,10 @@ describe("MCP tool permission wiring", () => {
         "chorus_add_reference",
         "chorus_update_reference",
         "chorus_remove_reference",
+        // 0.16.3 (add-assign-idea-mcp-tool): chorus_pm_assign_idea is
+        // idea:admin-gated (a directed reassignment/takeover). admin_agent
+        // carries idea:admin; pm_agent (idea:write only) does not.
+        "chorus_pm_assign_idea",
       ]);
       expect(registered).toEqual(expected);
     });
