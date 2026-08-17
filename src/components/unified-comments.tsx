@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import type { useTranslations as UseTranslationsType } from "next-intl";
-import { Bot, Send, Loader2, User, AlertCircle } from "lucide-react";
+import { Send, Loader2, User, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { MentionEditor, type MentionEditorRef } from "@/components/mention-editor";
 import {
   getCommentsAction,
@@ -228,7 +229,6 @@ export function UnifiedComments({
 
   const avatarSize = compact ? "h-6 w-6" : "h-[30px] w-[30px]";
   const gap = compact ? "gap-2" : "gap-2.5";
-  const iconSize = compact ? "h-3 w-3" : "h-[15px] w-[15px]";
 
   // Notify the parent of the server-reported total whenever it changes.
   useEffect(() => {
@@ -408,7 +408,6 @@ export function UnifiedComments({
               compact={compact}
               avatarSize={avatarSize}
               gap={gap}
-              iconSize={iconSize}
               t={t}
             />
           ))}
@@ -440,14 +439,12 @@ function CommentItem({
   compact,
   avatarSize,
   gap,
-  iconSize,
   t,
 }: {
   comment: CommentWithOwner;
   compact: boolean;
   avatarSize: string;
   gap: string;
-  iconSize: string;
   t: TranslateFn;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -460,26 +457,19 @@ function CommentItem({
 
   return (
     <div className={`flex ${gap} py-3 border-b border-[#F0EDE8] dark:border-[#26241f] last:border-b-0`}>
-      <Avatar className={`${avatarSize} shrink-0`}>
-        <AvatarFallback
-          style={
-            isAgent
-              ? { backgroundColor: agentBgColor, color: agentColor ?? undefined }
-              : undefined
-          }
-          className={
-            isAgent
-              ? ""
-              : "bg-border text-muted-foreground text-[11px] font-medium"
-          }
-        >
-          {isAgent ? (
-            <Bot className={iconSize} />
-          ) : (
-            c.author.name.charAt(0).toUpperCase()
-          )}
-        </AvatarFallback>
-      </Avatar>
+      {isAgent ? (
+        <AgentAvatar
+          name={c.author.name}
+          size={compact ? 24 : 30}
+          className="shrink-0 rounded-full"
+        />
+      ) : (
+        <Avatar className={`${avatarSize} shrink-0`}>
+          <AvatarFallback className="bg-border text-muted-foreground text-[11px] font-medium">
+            {c.author.name.charAt(0).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+      )}
       <div className="flex-1 min-w-0">
         {/* Meta line */}
         <div className="flex items-center gap-1.5 flex-wrap">

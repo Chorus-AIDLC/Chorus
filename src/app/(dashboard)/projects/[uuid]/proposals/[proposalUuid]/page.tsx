@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Separator } from "@/components/ui/separator";
 import { MarkdownContent } from "@/components/markdown-content";
 import { getServerAuthContext } from "@/lib/auth-server";
@@ -176,7 +177,11 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                 <>
                   <span className="text-[#D0CCC4]">·</span>
                   <span className="flex items-center gap-1">
-                    <Monitor className="h-3 w-3" />
+                    {proposal.createdByType === "agent" ? (
+                      <AgentAvatar name={proposal.createdBy.name} size={16} className="rounded-full" />
+                    ) : (
+                      <Monitor className="h-3 w-3" />
+                    )}
                     {proposal.createdBy.name}
                   </span>
                 </>

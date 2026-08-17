@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Bot, User } from "lucide-react";
+import { User } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { MarkdownContent } from "@/components/markdown-content";
 import type { DocumentDraft, TaskDraft } from "@/services/proposal.service";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
@@ -135,7 +136,7 @@ function ProposalCard({
           {proposal.createdBy && (
             <span className="flex items-center gap-1">
               {proposal.createdByType === "agent" ? (
-                <Bot className="h-3 w-3" />
+                <AgentAvatar name={proposal.createdBy.name} size={16} className="rounded-full" />
               ) : (
                 <User className="h-3 w-3" />
               )}

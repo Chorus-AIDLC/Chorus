@@ -10,8 +10,8 @@
 // vocabulary stays byte-identical.
 
 import { useTranslations } from "next-intl";
-import { Bot, Clock3 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { formatHost } from "@/lib/daemon-instance-format";
 import { useClientTypeLabel } from "./hooks";
 import { PathChip } from "./instance-group";
@@ -29,15 +29,10 @@ export function IdentityBlock({
 }) {
   const t = useTranslations("agentConnections");
   const clientTypeLabel = useClientTypeLabel();
-  const online = connection.effectiveStatus === "online";
 
-  // Icon: bot for online (active agent), clock for offline (paused/stopped).
-  const Icon = online ? Bot : Clock3;
-  const iconColor = online ? "#C67A52" : "#9A9A9A";
-  const tileColor = online ? "#C67A5214" : "#9A9A9A14";
-
-  const tileSize = size === "lg" ? "h-12 w-12" : size === "md" ? "h-10 w-10" : "h-9 w-9";
-  const iconSize = size === "lg" ? "h-6 w-6" : size === "md" ? "h-5 w-5" : "h-4 w-4";
+  // Agent identity tile footprint in px (matches the former icon-tile sizes:
+  // sm 36 / md 40 / lg 48).
+  const tilePx = size === "lg" ? 48 : size === "md" ? 40 : 36;
   const tileRadius = size === "lg" ? "rounded-xl" : "rounded-lg";
   const nameSize = size === "lg" ? "text-[20px]" : size === "md" ? "text-[16px]" : "text-[14px]";
 
@@ -54,12 +49,11 @@ export function IdentityBlock({
 
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div
-        className={`${tileSize} ${tileRadius} flex shrink-0 items-center justify-center`}
-        style={{ backgroundColor: tileColor }}
-      >
-        <Icon className={iconSize} style={{ color: iconColor }} />
-      </div>
+      {/* Agent identity tile — the shared DiceBear <AgentAvatar> seeded by the
+          agent name (replaces the former Bot-online / Clock3-offline icon tile).
+          Online/offline liveness is conveyed by the adjacent StatusBadge /
+          StatusDot at every call site, so both states show the agent's avatar. */}
+      <AgentAvatar name={agentName} size={tilePx} className={`shrink-0 ${tileRadius}`} />
       <div className="min-w-0 flex-1">
         <div className={`truncate font-semibold text-foreground ${nameSize}`}>
           {agentName}

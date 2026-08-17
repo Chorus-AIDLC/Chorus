@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { CodeBlock } from "@/components/install-guide/CodeBlock";
 
 interface TestConnectionStepProps {
@@ -87,7 +88,14 @@ export function TestConnectionStep({
             <div className="flex w-full flex-col items-center gap-4">
               <div className="relative flex h-16 w-16 items-center justify-center">
                 <div className="absolute h-16 w-16 animate-ping rounded-full bg-primary/20" />
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                {/* Show the just-created agent's avatar (same seed as the create
+                    preview) pulsing in the ring — visual continuity with the
+                    previous step. Falls back to the spinner if the name is unknown. */}
+                {agentName ? (
+                  <AgentAvatar name={agentName} size={48} className="rounded-full" />
+                ) : (
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                )}
               </div>
               <p className="text-center text-sm text-muted-foreground">
                 {t("testConnection.waiting")}

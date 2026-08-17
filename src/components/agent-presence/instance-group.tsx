@@ -29,12 +29,13 @@
 // byte-identical.
 
 import { useTranslations } from "next-intl";
-import { Bot, ChevronDown, Folder, FolderX, Monitor } from "lucide-react";
+import { ChevronDown, Folder, FolderX, Monitor } from "lucide-react";
 import {
   formatCwd,
   formatHost,
   type FormatCwdOptions,
 } from "@/lib/daemon-instance-format";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "./status";
 import { useClientTypeLabel, useElapsedMono, useRelativeTime } from "./hooks";
@@ -460,18 +461,11 @@ export function AgentGroupHeader({
         }`}
         aria-hidden
       />
-      <div
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-        style={{ backgroundColor: anyOnline ? "#C67A5214" : "#9A9A9A14" }}
-      >
-        {/* Bot glyph — warm terracotta when any instance is online, else grey.
-            Mirrors the IdentityBlock tile vocabulary. */}
-        <Bot
-          className="h-5 w-5"
-          style={{ color: anyOnline ? "#C67A52" : "#9A9A9A" }}
-          aria-hidden
-        />
-      </div>
+      {/* Agent identity tile — the shared DiceBear <AgentAvatar> seeded by the
+          agent name (replaces the former terracotta/grey Bot glyph). Online/
+          offline liveness is still conveyed by the aggregate StatusDot on the
+          right of this header, so the tile no longer needs to carry it. */}
+      <AgentAvatar name={agentName} size={36} className="rounded-lg" />
       <div className="min-w-0 flex-1 text-left">
         <div className="truncate text-[14px] font-semibold text-foreground">
           {agentName}

@@ -51,6 +51,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
@@ -270,8 +271,17 @@ function RailRow({
         />
       )}
       <span className="flex w-full items-center gap-3 px-4 py-3.5">
-        <span className="shrink-0">
-          <StatusDot online={online} size="md" />
+        {/* Agent identity avatar — the rail previously led with only a status
+            dot (T3 missed it). The shared DiceBear <AgentAvatar> is seeded by
+            the agent name; the online/offline dot is kept as a corner badge so
+            liveness still reads at a glance. The mobile card + desktop detail
+            get their avatar through <IdentityBlock>, so only this rail row
+            takes a direct avatar (no double avatar). */}
+        <span className="relative shrink-0">
+          <AgentAvatar name={agentName} size="md" className="rounded-lg" />
+          <span className="absolute -bottom-1 -right-1 rounded-full bg-card p-0.5">
+            <StatusDot online={online} size="md" />
+          </span>
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-[14px] font-semibold text-foreground">

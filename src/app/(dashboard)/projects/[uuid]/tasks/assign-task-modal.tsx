@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { Bot, User, Loader2, Info } from "lucide-react";
+import { User, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   ScrollableDialog,
   ScrollableDialogTitle,
@@ -354,7 +355,7 @@ export function AssignTaskModal({
                           agents.map((agent) => (
                             <SelectItem key={agent.uuid} value={agent.uuid}>
                               <div className="flex items-center gap-2">
-                                <Bot className="h-4 w-4 text-primary" />
+                                <AgentAvatar name={agent.name} size={16} className="rounded-full" />
                                 <span>{agent.name}</span>
                               </div>
                             </SelectItem>

@@ -767,6 +767,7 @@
     "installGuideIntro": "今すぐエージェントを接続しましょう — 以下からクライアントを選択してください。上のキーはスニペットに埋め込まれており、再表示されません。",
     "name": "名前",
     "namePlaceholder": "My Agent Key",
+    "agentAvatarPreview": "アバターのプレビュー",
     "agentRoles": "エージェントのロール",
     "agentRolesDesc": "この API キーがアクセスできるロールを選択してください。",
     "agentPersona": "エージェントのペルソナ",

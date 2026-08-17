@@ -767,6 +767,7 @@
     "installGuideIntro": "Connect your agent now — pick your client below. The key above is embedded in the snippets and won't be shown again.",
     "name": "Name",
     "namePlaceholder": "My Agent Key",
+    "agentAvatarPreview": "Avatar preview",
     "agentRoles": "Agent Roles",
     "agentRolesDesc": "Select the roles this API key has access to.",
     "agentPersona": "Agent Persona",
