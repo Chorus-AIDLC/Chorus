@@ -449,7 +449,7 @@ export function createSuggestionPopupRenderer(
       const avatarWrap = document.createElement("div");
       avatarWrap.className = "relative shrink-0";
 
-      // Agents render the shared DiceBear Critters avatar (same seed = name as the
+      // Agents render the shared DiceBear Clay avatar (same seed = name as the
       // React <AgentAvatar>). This is raw-DOM, so we mount the generated data URI
       // on an <img>; on a generation failure we fall back to the Bot glyph. Users
       // keep the plain User-icon avatar tile, unchanged. Reduced-motion is read
