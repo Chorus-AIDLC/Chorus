@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import { FolderCog, Loader2, RotateCcw, Trash2 } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Button } from "@/components/ui/button";
 import {
   DirectoryBrowser,
@@ -178,7 +179,16 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
         return (
           <div key={item.agent.uuid} className="min-w-0 rounded-lg border border-border p-4">
             <div className="flex min-w-0 items-start justify-between gap-3">
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-start gap-2.5">
+                {/* Per-row agent identity — each row is an explicit agent+cwd
+                    pin, so lead with the agent's avatar (DiceBear, seeded by
+                    name) next to the name + cwd. */}
+                <AgentAvatar
+                  name={item.agent.name}
+                  size="sm"
+                  className="mt-0.5 rounded-md"
+                />
+                <div className="min-w-0">
                 <p className="truncate text-[13px] font-semibold">{item.agent.name}</p>
                 {preference ? (
                   <>
@@ -197,6 +207,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
                     {t("projectSettings.agentCwds.notConfigured")}
                   </p>
                 )}
+                </div>
               </div>
               <div className="flex shrink-0 gap-1">
                 <Button

@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { Check, X } from "lucide-react";
+import { Bot, Check, X } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   AgentFormFields,
   type AgentFormPreset,
@@ -194,6 +195,25 @@ export function AgentCreateForm({
 
       {/* Body */}
       <div className={embedded ? undefined : "p-6"}>
+        {/* Live avatar preview — a deterministic DiceBear Thumbs avatar seeded by
+            the typed name, updating as the user types (no reroll / options). While
+            the name is still empty there is no identity to seed, so a neutral Bot
+            tile stands in until the first character is entered. */}
+        <div className="mb-5 flex flex-col items-center gap-2">
+          {newKeyName.trim() ? (
+            <AgentAvatar name={newKeyName} size={56} className="rounded-2xl" />
+          ) : (
+            <div
+              aria-hidden
+              className="flex size-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground"
+            >
+              <Bot className="size-7" />
+            </div>
+          )}
+          <span className="text-xs text-muted-foreground">
+            {t("settings.agentAvatarPreview")}
+          </span>
+        </div>
         <AgentFormFields
           name={newKeyName}
           onNameChange={setNewKeyName}

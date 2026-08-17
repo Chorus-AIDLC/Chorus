@@ -767,6 +767,7 @@
     "installGuideIntro": "现在就连接你的智能体——在下方选择你的客户端。上方密钥已嵌入到代码片段中，且不会再次显示。",
     "name": "名称",
     "namePlaceholder": "我的智能体密钥",
+    "agentAvatarPreview": "头像预览",
     "agentRoles": "智能体角色",
     "agentRolesDesc": "选择此 API 密钥可以访问的角色。",
     "agentPersona": "智能体人设",

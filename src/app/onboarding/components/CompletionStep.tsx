@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { CheckCircle2, FolderKanban, Settings } from "lucide-react";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/animation";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { DaemonConnectCta } from "@/components/agent-presence";
 
 interface CompletionStepProps {
@@ -60,6 +61,15 @@ export function CompletionStep({ createdAgent }: CompletionStepProps) {
       {createdAgent && (
         <Card className="w-full">
           <CardContent className="p-6">
+            {/* The created agent's avatar (same seed as the create preview /
+                test-connection step) — visual continuity across the wizard. */}
+            <div className="mb-4 flex justify-center">
+              <AgentAvatar
+                name={createdAgent.name}
+                size={48}
+                className="rounded-2xl"
+              />
+            </div>
             <h3 className="mb-3 text-sm font-medium text-foreground">
               {t("completion.summary")}
             </h3>

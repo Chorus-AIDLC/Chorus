@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { authFetch } from "@/lib/auth-client";
 import { getAgentColor } from "@/lib/agent-color";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
+import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -100,8 +101,12 @@ export function ProjectCwdSummary({ projectUuid }: { projectUuid: string }) {
                 </span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="font-mono">
-              {preference!.cwd}
+            {/* Hover card: the agent's avatar alongside its (often long,
+                common-prefixed) cwd, so the identity is unmistakable on hover —
+                the compact trigger keeps its color dot + name. */}
+            <TooltipContent side="bottom" className="flex items-center gap-2">
+              <AgentAvatar name={agent.name} size="sm" className="rounded-md" />
+              <span className="font-mono">{preference!.cwd}</span>
             </TooltipContent>
           </Tooltip>
         ))}

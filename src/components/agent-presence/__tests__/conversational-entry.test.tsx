@@ -333,7 +333,9 @@ describe("ConversationalEntry — selection", () => {
     const trigger = screen.getByLabelText("Agent");
     expect(screen.getByText("Pick an agent")).toBeTruthy();
     await user.click(trigger);
-    await user.click(screen.getByRole("option", { name: "Bravo" }));
+    // The option now leads with the agent's avatar (alt/aria-label = the name),
+    // so match the name as a substring rather than the full accessible name.
+    await user.click(screen.getByRole("option", { name: /Bravo/ }));
     // Bravo has two instances → both listed, none auto-picked.
     await waitFor(() => expect(screen.getByText("work/b1")).toBeTruthy());
     expect(screen.getByText("work/b2")).toBeTruthy();
