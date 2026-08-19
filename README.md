@@ -99,7 +99,7 @@ Task cards flow between To Do → In Progress → To Verify as agents work, with
 
 ## Connect an Agent
 
-The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, OpenCode, OpenClaw, Pi, or any MCP-compatible agent.
+The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, or any MCP-compatible agent.
 
 Full per-client guides → **[Agent platforms](https://doc.chorus-ai.dev/reference/agents/)**.
 

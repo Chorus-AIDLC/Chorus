@@ -103,8 +103,10 @@ per-wake detail.
 ## Agent backend (`--agent`)
 
 `--agent <type>` selects which local agent backend the daemon wakes. Three
-backends are implemented: `claude-code` (the default), `codex`, and `kiro`. An
-unknown value is a hard error (no silent fallback).
+backends are available: `claude-code` (the default), `codex`, and `kiro`. (A `dsh`
+DeepSeek Harness backend exists in the codebase but is temporarily offline — not
+offered; see [CONNECT_DSH.md](CONNECT_DSH.md).) An unknown value is a hard error
+(no silent fallback).
 
 The backend is resolved in this precedence (first defined source wins):
 
@@ -399,7 +401,7 @@ unattended posture.
 | Restrict the woken agent | `--chorus-only` / `CHORUS_CHORUS_ONLY=1` |
 | Force full autonomy | `--yolo` / `CHORUS_YOLO=1` (also the default) |
 | Verbose per-wake logs | `--verbose` / `CHORUS_VERBOSE=1` |
-| Choose agent backend | `--agent claude-code` / `CHORUS_AGENT` |
+| Choose agent backend | `--agent claude-code|codex|kiro` / `CHORUS_AGENT` |
 | Point at a `claude` binary | `CHORUS_CLAUDE_PATH=/path/to/claude` |
 | Save credentials | `chorus login` (or interactive on first `chorus daemon`) |
 | Per-subcommand help | `chorus daemon --help`, `chorus login --help` |

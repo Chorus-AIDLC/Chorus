@@ -99,7 +99,7 @@ PM 에이전트가 요구사항을 분석해 PRD와 작업 DAG를 생성하며, 
 
 ## 에이전트 연결하기
 
-가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, Kiro, OpenCode, OpenClaw, Pi, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다.
+가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다.
 
 클라이언트별 전체 가이드 → **[에이전트 플랫폼](https://doc.chorus-ai.dev/ko/reference/agents/)**.
 

@@ -109,6 +109,15 @@ describe("POST /api/daemon/turn-advance", () => {
     expect(mockAdvanceTurnForWake.mock.calls[0][0].backendSessionId).toBe("thread-1");
   });
 
+  it("passes optional turnUuid correlation to the agent-scoped service", async () => {
+    const res = await POST(
+      postRequest({ connectionUuid, sessionId, turnUuid: "turn-1", status: "ended" }),
+      emptyCtx,
+    );
+    expect(res.status).toBe(200);
+    expect(mockAdvanceTurnForWake.mock.calls[0][0].turnUuid).toBe("turn-1");
+  });
+
   it("rejects an empty backendSessionId", async () => {
     const res = await POST(
       postRequest({ connectionUuid, sessionId, status: "ended", backendSessionId: "   " }),

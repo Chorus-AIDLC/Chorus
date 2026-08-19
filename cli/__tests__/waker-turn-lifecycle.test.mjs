@@ -100,6 +100,24 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(advanceTurn.mock.calls[1][0].status).toBe("ended");
   });
 
+  it("threads the running response turn UUID onto the terminal report", async () => {
+    const advanceTurn = vi.fn(async ({ status }) =>
+      status === "running"
+        ? { ok: true, status: 200, data: { turnUuid: "turn-7" } }
+        : { ok: true, status: 200 },
+    );
+    const { waker } = makeWaker({ advanceTurn });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(advanceTurn.mock.calls[1][0]).toMatchObject({
+      sessionId: DIRECT_IDEA,
+      turnUuid: "turn-7",
+      status: "ended",
+    });
+  });
+
   it("reports running→interrupted(crash) on a NON-ZERO exit with no interrupt requested (outcome-aware)", async () => {
     const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatSpawns(2) });
     const resolved = await waker.keyFor(TASK_NOTIF);

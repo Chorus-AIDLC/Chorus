@@ -161,6 +161,7 @@ export interface DaemonSessionRow {
 export interface DaemonSessionTurnRow {
   uuid: string;
   sessionUuid: string;
+  backendSessionId: string | null;
   seq: number;
   trigger: string;
   promptText: string | null;

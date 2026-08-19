@@ -11,11 +11,12 @@
 
 import { ClaudeSpawner } from "./claude-spawner.mjs";
 import { CodexSpawner } from "./codex-spawner.mjs";
+import { DshSpawner } from "./dsh-spawner.mjs";
 import { KiroSpawner } from "./kiro-spawner.mjs";
 
 /**
  * Construct the spawner backend for `agentType`.
- * @param {string} agentType  "claude-code" | "codex" | "kiro" (already validated upstream).
+ * @param {string} agentType  "claude-code" | "codex" | "kiro" | "dsh" (already validated upstream).
  * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string } }} [opts]
  * @returns {import("./codex-spawner.mjs").Spawner}
  */
@@ -26,6 +27,14 @@ export function selectSpawner(agentType, opts = {}) {
   }
   if (agentType === "kiro") {
     return new KiroSpawner({ logger, permissionMode, creds });
+  }
+  if (agentType === "dsh") {
+    return new DshSpawner({
+      logger,
+      creds,
+      bundleVersion: opts.bundleVersion,
+      prepareManagedConfigFn: opts.prepareManagedConfigFn,
+    });
   }
   return new ClaudeSpawner({ logger, permissionMode, creds });
 }

@@ -402,7 +402,7 @@ export class OpenClawDaemonClient {
       this.emitExecutionSnapshot();
     }
     let advancedToRunning = false;
-    await this.advanceTurn(reportSessionId, "running", entity);
+    const runningTurnUuid = await this.advanceTurn(reportSessionId, "running", entity);
     advancedToRunning = true;
 
     const runId = this.nextRunId(contextKey);
@@ -462,7 +462,7 @@ export class OpenClawDaemonClient {
     // clean, aborted, or crashed). Guarded on advancedToRunning so a never-started wake
     // never attempts an illegal pending→ended transition.
     if (advancedToRunning) {
-      await this.advanceTurn(reportSessionId, "ended", entity);
+      await this.advanceTurn(reportSessionId, "ended", entity, runningTurnUuid);
     }
 
     // Interrupt-vs-crash reporting (entity-keyed — only for a reportable resource).
@@ -533,16 +533,20 @@ export class OpenClawDaemonClient {
     sessionId: string,
     status: "running" | "ended",
     entity: { entityType: string; entityUuid: string } | null,
-  ): Promise<void> {
+    turnUuid: string | null = null,
+  ): Promise<string | null> {
     try {
-      await this.restClient.turnAdvance({
+      const outcome = await this.restClient.turnAdvance({
         sessionId,
+        ...(turnUuid ? { turnUuid } : {}),
         status,
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
       });
+      return typeof outcome.data?.turnUuid === "string" ? outcome.data.turnUuid : null;
     } catch (err) {
       this.logger.warn(`[Chorus] advanceTurn failed for session ${sessionId} → ${status}: ${err}`);
+      return null;
     }
   }
 

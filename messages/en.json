@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "Other Agents"
@@ -1185,6 +1186,16 @@
         "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into the current directory's .kiro/ instead, append the flag: bash -s -- --workspace.",
         "step3Title": "Step 3: Verify connection",
         "step3Desc": "Open Kiro CLI and activate the /chorus-idea skill, or start with the Chorus agent directly: kiro-cli --agent chorus."
+      },
+      "dsh": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Prerequisites: dsh 0.1.0-rc.7 and pnpm must be available on PATH. Keep these credentials in your shell environment.",
+        "step2Title": "Step 2: Add the Chorus bundle",
+        "step2Tip": "Replace {name} with the dsh profile you want to use. The -w flag is required because a dsh profile is a pnpm workspace root. dsh owns the profile package state and satisfies the bundle's peer plugins.",
+        "step3Title": "Step 3: Store credentials",
+        "step3Tip": "Writes CHORUS_URL and CHORUS_API_KEY to $DSH_HOME/.env (mode 0600). dsh scrubs credential-shaped variables from tool subprocesses, so the document-mirror wrapper reads them from this file, not the shell.",
+        "step4Title": "Step 4: Launch and verify",
+        "step4Desc": "Run dsh --profile {name}, then ask it to \"check in to chorus\"."
       },
       "opencode": {
         "step1Title": "Step 1: Set environment variables",
@@ -1490,6 +1501,7 @@
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
+    "clientDsh": "DeepSeek Harness",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",

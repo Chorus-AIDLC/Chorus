@@ -509,6 +509,7 @@ export class Waker {
       // pending→ended transition. There is no separate turn registry — the turn is
       // identified server-side by `sessionId`, which the waker already has here.
       let turnAdvancedToRunning = false;
+      let runningTurnUuidPromise = Promise.resolve(null);
 
       // Track the session id the stream reports so the transcript hook can use
       // it even before spawner.wake() returns. (Do NOT reference the awaited
@@ -535,7 +536,16 @@ export class Waker {
             // The coalescedCount rides this → running edge so the server settles the
             // (count − 1) same-session pending turns coalesced into this one (a single
             // wake reports 1, which the client omits from the wire).
-            this.#advanceTurn(sessionId, "running", entity, null, null, null, null, coalescedCount).catch(() => {});
+            runningTurnUuidPromise = this.#advanceTurn(
+              sessionId,
+              "running",
+              entity,
+              null,
+              null,
+              null,
+              null,
+              coalescedCount,
+            );
           }
         },
         onMessage: (message) => {
@@ -615,14 +625,38 @@ export class Waker {
       // never-spawned wake left the turn `pending`; a pending→<terminal> skip is
       // rejected server-side as invalid_transition). Swallow-safe; never throws.
       if (sessionId && turnAdvancedToRunning) {
+        // Correlate the terminal report to the exact row resolved by →running. Awaiting
+        // here does not delay child spawn: the request started in onChild and ran in
+        // parallel with the subprocess.
+        const runningTurnUuid = await runningTurnUuidPromise;
         if (cleanExit) {
           // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
           // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
           // `turnUsage` rides the same terminal advance (daemon-token-usage).
-          await this.#advanceTurn(sessionId, "ended", entity, null, transcriptRelayError, turnUsage, result?.backendSessionId);
+          await this.#advanceTurn(
+            sessionId,
+            "ended",
+            entity,
+            null,
+            transcriptRelayError,
+            turnUsage,
+            result?.backendSessionId,
+            1,
+            runningTurnUuid,
+          );
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
-          await this.#advanceTurn(sessionId, "interrupted", entity, reason, transcriptRelayError, turnUsage, result?.backendSessionId);
+          await this.#advanceTurn(
+            sessionId,
+            "interrupted",
+            entity,
+            reason,
+            transcriptRelayError,
+            turnUsage,
+            result?.backendSessionId,
+            1,
+            runningTurnUuid,
+          );
         }
       }
 
@@ -662,13 +696,17 @@ export class Waker {
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
       if (sessionId && requestedRuntimeCwd && typeof err?.code === "string") {
-        await this.#advanceTurn(sessionId, "running", entity);
+        const invalidPathTurnUuid = await this.#advanceTurn(sessionId, "running", entity);
         await this.#advanceTurn(
           sessionId,
           "interrupted",
           entity,
           "invalid_path",
           `${err.code}: ${err.message ?? "Runtime cwd validation failed"}`,
+          null,
+          null,
+          1,
+          invalidPathTurnUuid,
         );
       }
     } finally {
@@ -735,11 +773,14 @@ export class Waker {
    * @param {number} [coalescedCount]  Number of wakes coalesced into this turn
    *   (add-daemon-wake-coalescing); forwarded only on the → running edge and only when > 1,
    *   so a single wake (default 1) leaves the field absent — byte-identical to before.
+   * @param {string|null} [turnUuid] Exact server turn correlation returned by → running.
+   * @returns {Promise<string|null>} The resolved turn UUID on → running, else null.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1, turnUuid = null) {
     try {
-      await this.advanceTurn({
+      const outcome = await this.advanceTurn({
         sessionId,
+        ...(turnUuid ? { turnUuid } : {}),
         status,
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
@@ -749,10 +790,12 @@ export class Waker {
         ...(backendSessionId ? { backendSessionId } : {}),
         ...(status === "running" && coalescedCount > 1 ? { coalescedCount } : {}),
       });
+      return typeof outcome?.data?.turnUuid === "string" ? outcome.data.turnUuid : null;
     } catch (err) {
       this.logger.warn(
         `[Chorus] advanceTurn failed for session ${sessionId} → ${status}: ${err}`
       );
+      return null;
     }
   }
 }

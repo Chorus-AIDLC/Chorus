@@ -43,6 +43,7 @@ const bodySchema = z
   .object({
     connectionUuid: z.string().min(1),
     sessionId: z.string().min(1),
+    turnUuid: z.string().min(1).max(100).nullish(),
     backendSessionId: z.string().trim().min(1).max(200).nullish(),
     status: z.enum([...TURN_STATUSES]),
     // Number of same-session wakes the daemon coalesced into THIS batch (daemon-wake-
@@ -109,6 +110,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const {
     connectionUuid,
     sessionId,
+    turnUuid,
     backendSessionId,
     status,
     coalescedCount,
@@ -135,6 +137,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     agentUuid: auth.actorUuid,
     connectionUuid,
     sessionId,
+    turnUuid: turnUuid ?? undefined,
     backendSessionId: backendSessionId ?? undefined,
     status,
     coalescedCount,

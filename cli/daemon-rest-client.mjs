@@ -4,10 +4,12 @@
 // the existing server endpoints accept, so the two daemon hosts — the chorus CLI daemon
 // (`cli/daemon.mjs`) and the OpenClaw plugin — cannot drift in the wire contract.
 //
-// The five operations and their EXACT server payload shapes (verified against
-// src/app/api/daemon/*/route.ts — the server is NOT changed by this work):
+// The operations and payload fields this client supports (verified against
+// src/app/api/daemon/*/route.ts):
 //   turnAdvance      → POST /api/daemon/turn-advance
-//                      { connectionUuid, sessionId, status, entityType?, entityUuid?,
+//                      { connectionUuid, sessionId, status, turnUuid?,
+//                        backendSessionId?, entityType?, entityUuid?,
+//                        interruptedReason?, transcriptRelayError?, usage?,
 //                        coalescedCount? }
 //   transcript       → POST /api/daemon/transcript
 //                      { sessionId, messages: [{ role, text }] }
@@ -71,7 +73,7 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
- *   turnAdvance: (p: { sessionId: string, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number }) => Promise<DaemonRestResult>,
+ *   turnAdvance: (p: { sessionId: string, turnUuid?: string|null, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
@@ -111,7 +113,7 @@ export function createDaemonRestClient(opts) {
    *                         established op-prefixed message.
    * @returns {Promise<DaemonRestResult>}
    */
-  async function post(op, path, body, successLog, context = "") {
+  async function post(op, path, body, successLog, context = "", readData = false) {
     let response;
     try {
       response = await fetchImpl(`${url}${path}`, {
@@ -131,8 +133,19 @@ export function createDaemonRestClient(opts) {
       logger.warn(`[Chorus] ${error}`);
       return { ok: false, status: response.status, error };
     }
+    let data;
+    if (readData) {
+      try {
+        const parsed = await response.json();
+        data = parsed && typeof parsed === "object" ? parsed.data : undefined;
+      } catch (err) {
+        // Mixed-version fallback: older servers may return an empty successful body.
+        // Keep the lifecycle report successful, but make the missing correlation visible.
+        logger.warn(`[Chorus] ${op} response correlation unavailable: ${err}`);
+      }
+    }
     if (successLog) logger.info(`[Chorus] ${successLog}`);
-    return { ok: true, status: response.status };
+    return { ok: true, status: response.status, ...(data !== undefined ? { data } : {}) };
   }
 
   return {
@@ -148,7 +161,7 @@ export function createDaemonRestClient(opts) {
      * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId, coalescedCount }) {
+    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId, coalescedCount }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -164,6 +177,7 @@ export function createDaemonRestClient(opts) {
         connectionUuid,
         sessionId,
         status,
+        ...(turnUuid ? { turnUuid } : {}),
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
@@ -182,12 +196,21 @@ export function createDaemonRestClient(opts) {
           ? { coalescedCount }
           : {}),
       };
-      return post(
+      const result = await post(
         "turn-advance",
         "/api/daemon/turn-advance",
         body,
         `advanced turn for session ${sessionId} → ${status}`,
+        "",
+        status === "running",
       );
+      const resolvedTurnUuid =
+        typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;
+      if (status !== "running") return result;
+      const { data: _rawData, ...baseResult } = result;
+      return resolvedTurnUuid
+        ? { ...baseResult, data: { turnUuid: resolvedTurnUuid } }
+        : baseResult;
     },
 
     /**

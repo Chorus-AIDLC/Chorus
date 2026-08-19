@@ -164,7 +164,11 @@ describe("createTurnReporter", () => {
       fetchImpl,
     });
 
-    await expect(advance({ sessionId: "idea-1", status: "running" })).resolves.toBeUndefined();
+    await expect(advance({ sessionId: "idea-1", status: "running" })).resolves.toMatchObject({
+      ok: false,
+      status: null,
+      error: expect.stringContaining("ECONNREFUSED"),
+    });
     expect(warns.join("")).toMatch(/turn-advance request failed/);
   });
 

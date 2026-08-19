@@ -1,0 +1,7 @@
+## 1. Live dsh acceptance
+
+- [x] 1.1 Confirm the implemented dsh backend, consumer, installer, skill, and lifecycle prerequisites and run the focused deterministic dsh regression suites without altering unrelated shared-worktree changes.
+- [x] 1.2 After the owner starts `chorus daemon --agent dsh` from the prepared secret-bearing environment, create an isolated acceptance Idea and drive a real normal wake through MCP/skill loading, proposal submission, transcript upload, and terminal usage attribution.
+- [ ] 1.3 Restart the daemon and prove a new native dsh runtime/session continues the same fixture workflow from the wake prompt and persisted Chorus resources; record both backend session identifiers and the resumed workflow boundary. The business action completed, but terminal settlement failed with `backend_session_conflict`; tracked by Idea `32ce2ac3-d72f-409b-8b56-e594c5a333ab`.
+- [x] 1.4 Interrupt a controlled side-effect-free long wake through Chorus and verify the user-interrupted turn state, runtime process-group exit, and absence of transcript or usage after the terminal boundary.
+- [x] 1.5 Publish `docs/acceptance/dsh-live-e2e.md` with fully redacted commands, prerequisite categories, Chorus identifiers, UI/API or log evidence, normalized usage, process observations, per-path results, and any follow-up Ideas; run secret-pattern checks and the focused regression suites before submission.

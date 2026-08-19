@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "기타 에이전트"
@@ -1185,6 +1186,16 @@
         "step2Tip": "기본적으로 ~/.kiro/에 전역 설치되어 모든 디렉터리에서 Chorus를 사용할 수 있습니다. 현재 디렉터리의 .kiro/에만 설치하려면 플래그를 추가하세요: bash -s -- --workspace.",
         "step3Title": "3단계: 연결 확인",
         "step3Desc": "Kiro CLI를 열고 /chorus-idea 스킬을 활성화하거나, Chorus 에이전트로 바로 시작하세요: kiro-cli --agent chorus."
+      },
+      "dsh": {
+        "step1Title": "1단계: 환경 변수 설정",
+        "step1Tip": "필수 조건: PATH에서 dsh 0.1.0-rc.7과 pnpm을 사용할 수 있어야 합니다. 자격 증명은 셸 환경 변수에만 보관하세요.",
+        "step2Title": "2단계: Chorus bundle 추가",
+        "step2Tip": "{name}을 사용할 dsh profile 이름으로 바꾸세요. dsh profile은 pnpm workspace 루트이므로 -w가 필요합니다. profile package 상태와 peer plugin은 dsh가 관리합니다.",
+        "step3Title": "3단계: 자격 증명 저장",
+        "step3Tip": "CHORUS_URL과 CHORUS_API_KEY를 $DSH_HOME/.env(모드 0600)에 씁니다. dsh는 자격 증명 형태의 변수를 도구 서브프로세스에서 제거하므로, 문서 미러 wrapper는 셸이 아니라 이 파일에서 읽습니다.",
+        "step4Title": "4단계: 실행 및 확인",
+        "step4Desc": "dsh --profile {name}을 실행한 뒤 \"check in to chorus\"라고 요청하세요."
       },
       "opencode": {
         "step1Title": "1단계: 환경 변수 설정",
@@ -1490,6 +1501,7 @@
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
+    "clientDsh": "DeepSeek Harness",
     "clientUnknown": "알 수 없는 클라이언트",
     "uptimeMonoDays": "{days}일 {time}",
     "mobileBack": "연결",

@@ -41,6 +41,8 @@ import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { resolveClaudePath } from "./claude-spawner.mjs";
 import { resolveCodexPath } from "./codex-spawner.mjs";
+import { resolveDshPath } from "./dsh-spawner.mjs";
+import { prepareManagedDshConfig } from "./dsh-managed-config.mjs";
 import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { selectSpawner } from "./spawner-select.mjs";
 import {
@@ -152,7 +154,13 @@ export function buildDaemon(creds, deps = {}) {
   // (construction byte-identical to before); codex → CodexSpawner. `creds` are
   // passed through so the Codex backend can export the daemon key into the woken
   // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
-  const spawner = deps.spawner ?? selectSpawner(agentType, { logger, permissionMode, creds });
+  const spawner = deps.spawner ?? selectSpawner(agentType, {
+    logger,
+    permissionMode,
+    creds,
+    bundleVersion: deps.bundleVersion,
+    prepareManagedConfigFn: deps.prepareManagedDshConfig,
+  });
   const maxConcurrency = deps.maxConcurrency ?? 4;
 
   // ===== Multi-path: the SET of cwds this daemon serves (T3 — FR-5) =====
@@ -742,6 +750,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // banner shows the right binary instead of always probing for `claude`.
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
   const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
+  const findDsh = deps.resolveDshPath ?? resolveDshPath;
   const findKiro = deps.resolveKiroPath ?? resolveKiroPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
@@ -786,6 +795,9 @@ export async function runDaemon(flags = {}, deps = {}) {
     writeConfig: deps.writeConfig,
     readJson: deps.readJson,
     loginPath: deps.loginPath,
+    prepareManagedDshConfig: deps.prepareManagedDshConfig,
+    bundleVersion: version,
+    resolveDshPath: findDsh,
   };
 
   const action = flags.action ?? "run";
@@ -884,6 +896,8 @@ export async function runDaemon(flags = {}, deps = {}) {
       mcpClient: deps.mcpClient,
       lineage: deps.lineage,
       build: deps.build,
+      bundleVersion: version,
+      prepareManagedDshConfig: deps.prepareManagedDshConfig,
     });
 
     const shutdownMulti = () => {
@@ -924,11 +938,16 @@ export async function runDaemon(flags = {}, deps = {}) {
   // Detect the SELECTED backend's executable (non-fatal): the daemon still
   // subscribes when it's missing; a wake surfaces the error visibly when one
   // arrives. The resolved path (or absence) is shown in the banner below. Each
-  // backend probes its own binary — codex → resolveCodexPath, kiro →
-  // resolveKiroPath, otherwise resolveClaudePath — so a `--agent kiro` run probes
-  // (and the banner reports) `kiro-cli`, not `claude`.
+  // backend probes its own binary, including dsh-jsonrpc-agent for dsh, so the
+  // startup banner and warning report the selected runtime rather than Claude.
   const cliPath =
-    agentType === "codex" ? findCodex() : agentType === "kiro" ? findKiro() : findClaude();
+    agentType === "codex"
+      ? findCodex()
+      : agentType === "kiro"
+        ? findKiro()
+        : agentType === "dsh"
+          ? findDsh()
+          : findClaude();
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
@@ -987,6 +1006,8 @@ export async function runDaemon(flags = {}, deps = {}) {
     sigintTimeoutMs,
     cwds,
     browseRoots,
+    bundleVersion: version,
+    prepareManagedDshConfig: deps.prepareManagedDshConfig,
   });
 
   // Graceful shutdown on signals.
@@ -1171,7 +1192,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     // CHORUS_AGENT env / a prior stored choice; probes the selected CLI and warns
     // (non-fatal) when it is missing. An unknown --agent was already rejected by
     // resolveAgentType above, so this phase never fails.
-    await installCfg.resolveInstallAgent(flags, env, {
+    const installAgent = await installCfg.resolveInstallAgent(flags, env, {
       isTTY,
       skip,
       writeConfig: pfDeps?.writeConfig ?? updateDaemonConfig,
@@ -1181,6 +1202,26 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       log,
       errLog,
     });
+    if (
+      installAgent.agent === "dsh" &&
+      !String(env.CHORUS_DSH_CONFIG ?? "").trim() &&
+      !String(env.DSH_CORDIS_CONFIG ?? "").trim()
+    ) {
+      try {
+        await (pfDeps?.prepareManagedDshConfig ?? prepareManagedDshConfig)({
+          env,
+          bundleVersion: pfDeps?.bundleVersion,
+          dshPath: installAgent.cliPath ?? pfDeps?.resolveDshPath?.(),
+          creds: credResult.creds,
+        });
+      } catch (error) {
+        errLog(
+          `[Chorus] install aborted — dsh managed composition preparation failed: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+        return 1;
+      }
+    }
 
     const spec = {
       ...svc.resolveServicePaths(),

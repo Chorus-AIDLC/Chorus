@@ -898,6 +898,7 @@ export async function createConversationalIdeaSession(
   const turn: TurnView = {
     uuid: turnRow.uuid,
     sessionUuid: turnRow.sessionUuid,
+    backendSessionId: null,
     seq: turnRow.seq,
     trigger: turnRow.trigger,
     promptText: turnRow.promptText,
