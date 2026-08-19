@@ -17,6 +17,7 @@
 import { ADAPTERS } from "./adapters.mjs";
 import { credentialSeedStep } from "./steps/credential-seed.mjs";
 import { pluginInstallStep } from "./steps/plugin-install.mjs";
+import { daemonSetupStep } from "./steps/daemon-setup.mjs";
 
 /** @typedef {import("./contracts.mjs").AgentAdapter} AgentAdapter */
 /** @typedef {import("./contracts.mjs").InitStep} InitStep */
@@ -30,12 +31,11 @@ import { pluginInstallStep } from "./steps/plugin-install.mjs";
 export const AGENT_REGISTRY = [...ADAPTERS];
 
 /**
- * Configuration steps, run in ascending `order`. The credential-seed step
- * (order 10) is registered by its own task; the plugin-install step (order 20)
- * is registered here. Sibling ideas push their steps too.
+ * Configuration steps, run in ascending `order`: credential-seed (10),
+ * plugin-install (20), daemon-setup (30). Sibling ideas push their steps too.
  * @type {InitStep[]}
  */
-export const STEP_REGISTRY = [credentialSeedStep, pluginInstallStep];
+export const STEP_REGISTRY = [credentialSeedStep, pluginInstallStep, daemonSetupStep];
 
 /**
  * Run every adapter's detection and return one AgentDetection per supported agent.

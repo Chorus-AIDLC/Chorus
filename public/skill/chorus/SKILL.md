@@ -367,6 +367,24 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_admin_delete_idea` | `idea:admin` | No | No | Yes |
 | `chorus_admin_delete_document` | `document:admin` | No | No | Yes |
 
+### 5. Daemon auto-start via `chorus init`
+
+`chorus init` runs an ordered set of steps to wire this machine to Chorus. Its final step — **daemon-setup** — configures the local Chorus daemon and, opt-in, installs it as a boot-autostart service.
+
+- **What it configures.** Reusing the same preflight as `chorus daemon install`, it persists the served working directories (`cwds`) and the default backend agent into `~/.chorus/daemon.json`. Credentials are the **connection credentials only** — the Chorus URL + API key (`cho_…`) seeded earlier in the run. `chorus init` never collects or stores model-provider secrets (see the limitation below).
+- **Opt-in auto-start.**
+  - Interactive (TTY): it asks *"Install & enable the Chorus daemon to auto-start on boot?"* — **default No**. Answer yes to install.
+  - Non-interactive (non-TTY, or `--yes`): it installs the boot service **only** when you pass `--daemon-autostart`; otherwise it writes `~/.chorus/daemon.json` and leaves starting the daemon to you (`chorus daemon`).
+- **Platform support.** Auto-start is a *real* boot service on **Linux (systemd `--user`)** and **macOS (launchd LaunchAgent)** — both start now and at every login. On other platforms (e.g. Windows) it writes the config and prints the manual start steps instead of installing anything.
+- **Idempotent.** Re-running when the service is already installed reports it as already configured and changes nothing.
+- **Manage it.** `chorus daemon status | stop | restart | logs` transparently delegate to the installed supervisor (`systemctl --user` on Linux, `launchctl` on macOS); with no service installed they operate on the `chorus daemon -d` pidfile/log as before.
+
+> **⚠️ Provider credentials on a boot service (important).** A boot-launched daemon (systemd `--user` or launchd) starts in a **clean environment** and does **not** inherit your shell-exported model-provider secrets (`ANTHROPIC_API_KEY`, `AWS_*` / `CLAUDE_CODE_USE_BEDROCK`, etc.). Chorus keeps `daemon.json` to the Chorus connection credentials only, so you must supply provider credentials to the service's environment yourself:
+> - **Linux (systemd):** add a drop-in `~/.config/systemd/user/chorus-daemon.service.d/env.conf` containing `[Service]` + `Environment=ANTHROPIC_API_KEY=…` then `systemctl --user daemon-reload && systemctl --user restart chorus-daemon.service`; or place the vars in `~/.config/environment.d/*.conf`.
+> - **macOS (launchd):** `launchctl setenv ANTHROPIC_API_KEY …` (before load), or add an `EnvironmentVariables` dict to `~/Library/LaunchAgents/com.chorus.daemon.plist`.
+>
+> Without this, a boot-started daemon reaches Chorus fine but its spawned agents may fail to reach the model provider.
+
 ---
 
 ## Execution Rules
