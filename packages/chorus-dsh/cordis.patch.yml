@@ -1,0 +1,47 @@
+# Chorus is a native dsh bundle. The lifecycle row publishes resolved,
+# non-serialized connection config for the MCP row that follows it.
+- insert:
+    - id: chorus-dsh-lifecycle
+      name: '@chorus-aidlc/chorus-dsh'
+
+    - id: chorus-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      inject: [chorusDshConfig]
+      config:
+        serverName: chorus
+        transport: streamable-http
+        url: !!js '`${chorusDshConfig.url}/api/mcp`'
+        headers:
+          Authorization: !!js '`Bearer ${chorusDshConfig.apiKey}`'
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+
+    - id: chorus-skill-filesystem
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      config:
+        providerName: chorus
+        includeDefaultRoots: false
+        customSkillDirs:
+          - !!js "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@chorus-aidlc/chorus-dsh/package.json')), 'skills')"
+
+    # dsh-persona rejects a root mount because the deployment persona already
+    # owns this section. The package controller mounts this external peer on
+    # each agent's scoped context.
+    - id: chorus-persona
+      name: '@chorus-aidlc/chorus-dsh/persona'
+      config:
+        plugin: '@deepseek-ai/dsh-persona'
+        text: |-
+          You are a Chorus PM and developer agent powered by {{model}}. Work from {{cwd}}.
+          Use the Chorus AI-DLC lifecycle and load the relevant Chorus skill before operating
+          a Chorus resource. Keep decisions, progress, acceptance evidence, and review verdicts
+          on the assigned resource. In a headless daemon turn, never wait for terminal input:
+          persist human decisions through Chorus, mention the requester, and end the turn.
+          Do not push, merge, publish, approve, verify, or cross a human-owned gate unless the
+          wake explicitly grants that authority.
+
+# dsh-base already owns the tool-skill instance and its durable session hooks.
+# Target that row in place so this layer asserts the peer without duplicating it.
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

@@ -1,0 +1,20 @@
+# The published contents are the package.json "files" allowlist
+# (bin, dist, skills, cordis.patch.yml, README.md). This .npmignore is
+# defense-in-depth AND, by existing, stops npm from falling back to
+# .gitignore for pack exclusions — that fallback would drop dist/ (which
+# .gitignore ignores for git) from the tarball and ship a broken package.
+#
+# Do NOT list dist/ here — it is the built runtime and must be published.
+src/
+tests/
+scripts/
+contract/
+node_modules/
+coverage/
+*.tgz
+*.log
+tsconfig.json
+tsconfig.build.json
+vitest.config.ts
+eslint.config.mjs
+.gitignore

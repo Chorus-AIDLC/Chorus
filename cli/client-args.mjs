@@ -14,10 +14,10 @@
 export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
 /** Known agent backends, kept in sync with the authoritative list in
- * daemon-agent.mjs (`claude-code`, `codex`, `kiro` — all implemented). This copy
+ * daemon-agent.mjs (`claude-code`, `codex`, `kiro`, `dsh` — all implemented). This copy
  * is informational only: parsing here does not validate the value (the resolver
  * in daemon-agent.mjs is the single source of truth for validation). */
-export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro"]);
+export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro", "dsh"]);
 
 /**
  * Parse the client-subcommand flags out of an arg list. Recognizes the
@@ -126,7 +126,8 @@ OPTIONS
   --agent <type>           Local agent backend to wake         (env: CHORUS_AGENT)
                            (claude-code | codex | kiro; default: claude-code)
                            (Also configurable as "agent":"…" in ~/.chorus/daemon.json;
-                           'chorus daemon install' prompts for it interactively.)
+                           'chorus daemon install' and 'chorus login' (incl. --add)
+                           prompt for it interactively on a TTY.)
   --yolo                   Full autonomy for the woken agent   (env: CHORUS_YOLO=1)
                            (--dangerously-skip-permissions: Bash, file writes, any
                            command). This is the DEFAULT permission mode.
@@ -205,10 +206,15 @@ OPTIONS
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
   --add                    Add this key as an ADDITIONAL agent (multi-agent daemon)
                            instead of overwriting the single credential
+  --agent <type>           Agent backend for THIS agent         (env: CHORUS_AGENT)
+                           (claude-code | codex | kiro). On a TTY, login (and
+                           --add) prompt for it when omitted; Enter inherits the
+                           daemon default (claude-code) and writes no backend.
   -h, --help               Show this help message
 
-  With no flags, login prompts interactively for the URL and a masked API key,
-  validates them against the server, and on success saves the credentials.
+  With no flags, login prompts interactively for the URL, a masked API key, and
+  (on a TTY) the agent backend, validates them against the server, and on success
+  saves the credentials.
 
   With --add, the validated key is appended to the daemon.json 'agents[]' array
   so one daemon can serve several independent agents (see docs/DAEMON.md). The

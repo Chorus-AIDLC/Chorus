@@ -1,6 +1,6 @@
 // cli/daemon-agent.mjs
 // Pure resolution + validation of the daemon's `--agent <type>` selection.
-// `claude-code` (the default), `codex`, and `kiro` are all implemented backends
+// `claude-code` (the default), `codex`, `kiro`, and `dsh` are recognized backends
 // (add-daemon-codex-backend cashed in the reserved `codex` slot;
 // add-daemon-kiro-backend adds `kiro`). Resolving an unknown value is a hard
 // error (no silent fallback).
@@ -16,10 +16,9 @@
 import { readFileSync } from "node:fs";
 import { loginFilePath } from "./credentials.mjs";
 
-/** The agent backends the daemon recognizes. All are implemented (claude-code
- * via ClaudeSpawner, codex via CodexSpawner, kiro via KiroSpawner — see
- * spawner-select.mjs). */
-export const KNOWN_AGENTS = ["claude-code", "codex", "kiro"];
+/** The agent backends the daemon recognizes. Existing spawners cover claude-code,
+ * codex, and kiro; dsh registration is the base contract for its bridge. */
+export const KNOWN_AGENTS = ["claude-code", "codex", "kiro", "dsh"];
 
 /** The default agent backend when neither --agent nor CHORUS_AGENT is set. */
 export const DEFAULT_AGENT = "claude-code";
@@ -35,6 +34,7 @@ export const DEFAULT_AGENT = "claude-code";
 export function backendCli(agentType) {
   if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
   if (agentType === "kiro") return { name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" };
+  if (agentType === "dsh") return { name: "dsh-jsonrpc-agent", envVar: "CHORUS_DSH_PATH" };
   return { name: "claude", envVar: "CHORUS_CLAUDE_PATH" };
 }
 
@@ -49,6 +49,7 @@ export function backendCli(agentType) {
 export function backendClientType(agentType) {
   if (agentType === "codex") return "codex";
   if (agentType === "kiro") return "kiro";
+  if (agentType === "dsh") return "dsh";
   return "claude_code";
 }
 

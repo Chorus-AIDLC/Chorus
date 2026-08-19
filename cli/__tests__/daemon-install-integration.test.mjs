@@ -200,4 +200,90 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
       cwds: ["/srv/x"],
     });
   });
+
+  it("prepares a managed dsh composition before activating the service", async () => {
+    const service = captureService();
+    const prepareManagedDshConfig = vi.fn(async () => ({ configPath: join(dir, "dsh", "cordis.yml") }));
+    const code = await runDaemon(
+      { action: "install", agent: "dsh" },
+      {
+        isTTY: false,
+        env: { CHORUS_URL: "https://c.example", CHORUS_API_KEY: "cho_dsh" },
+        validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
+        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        prepareManagedDshConfig,
+        writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
+        readJson: () => readConfig(),
+        loginPath,
+        service,
+        lifecycle: fakeLifecycle(),
+        log: () => {},
+        errLog: () => {},
+        version: "0.16.3",
+      },
+    );
+    expect(code).toBe(0);
+    expect(prepareManagedDshConfig).toHaveBeenCalledWith(expect.objectContaining({
+      bundleVersion: "0.16.3",
+      dshPath: "/usr/bin/dsh-jsonrpc-agent",
+      creds: { url: "https://c.example", apiKey: "cho_dsh" },
+    }));
+    expect(prepareManagedDshConfig.mock.invocationCallOrder[0])
+      .toBeLessThan(service.installService.mock.invocationCallOrder[0]);
+  });
+
+  it("aborts service activation on managed dsh validation failure", async () => {
+    const service = captureService();
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install", agent: "dsh" },
+      {
+        isTTY: false,
+        env: { CHORUS_URL: "https://c.example", CHORUS_API_KEY: "cho_dsh" },
+        validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
+        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        prepareManagedDshConfig: async () => { throw new Error("peer resolution failed"); },
+        writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
+        readJson: () => readConfig(),
+        loginPath,
+        service,
+        lifecycle: fakeLifecycle(),
+        log: () => {},
+        errLog: (line) => errs.push(line),
+        version: "0.16.3",
+      },
+    );
+    expect(code).toBe(1);
+    expect(service.installService).not.toHaveBeenCalled();
+    expect(errs.join("\n")).toMatch(/managed composition.*peer resolution failed/);
+  });
+
+  it("leaves an explicit dsh config override untouched and skips managed preparation", async () => {
+    const service = captureService();
+    const prepareManagedDshConfig = vi.fn();
+    const code = await runDaemon(
+      { action: "install", agent: "dsh" },
+      {
+        isTTY: false,
+        env: {
+          CHORUS_URL: "https://c.example",
+          CHORUS_API_KEY: "cho_dsh",
+          CHORUS_DSH_CONFIG: "/operator/cordis.yml",
+        },
+        validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
+        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        prepareManagedDshConfig,
+        writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
+        readJson: () => readConfig(),
+        loginPath,
+        service,
+        lifecycle: fakeLifecycle(),
+        log: () => {},
+        errLog: () => {},
+      },
+    );
+    expect(code).toBe(0);
+    expect(prepareManagedDshConfig).not.toHaveBeenCalled();
+    expect(readConfig()).not.toHaveProperty("dshConfig");
+  });
 });

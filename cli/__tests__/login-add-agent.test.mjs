@@ -116,10 +116,86 @@ describe("runLogin --add", () => {
   });
 });
 
+describe("runLogin — agent backend capture", () => {
+  const baseDeps = (over = {}) => ({
+    validate: async () => ({ name: "Bot", uuid: "id1" }),
+    prompt: async () => "",
+    log: () => {},
+    errLog: () => {},
+    ...over,
+  });
+
+  it("--add: a TTY menu pick sets agentType on the appended entry", async () => {
+    const appendAgent = vi.fn(() => ({ ok: true, path: "/cfg/daemon.json", agents: [{}, {}], index: 1 }));
+    const rc = await runLogin(
+      { url: "u1", apiKey: "k1", add: true },
+      baseDeps({ appendAgent, isTTY: true, promptBackend: async () => "codex" }),
+    );
+    expect(rc).toBe(0);
+    expect(appendAgent).toHaveBeenCalledWith({
+      url: "u1", apiKey: "k1", agentUuid: "id1", agentName: "Bot", agentType: "codex",
+    });
+  });
+
+  it("--add: Enter at the menu (undefined) appends WITHOUT an agentType key", async () => {
+    const appendAgent = vi.fn(() => ({ ok: true, path: "/cfg/daemon.json", agents: [{}, {}], index: 1 }));
+    const rc = await runLogin(
+      { url: "u1", apiKey: "k1", add: true },
+      baseDeps({ appendAgent, isTTY: true, promptBackend: async () => undefined }),
+    );
+    expect(rc).toBe(0);
+    expect(appendAgent).toHaveBeenCalledWith({
+      url: "u1", apiKey: "k1", agentUuid: "id1", agentName: "Bot",
+    });
+  });
+
+  it("single-agent: --agent kiro writes the top-level `agent` field", async () => {
+    const written = [];
+    const write = vi.fn((data) => { written.push(data); return "/p"; });
+    const rc = await runLogin(
+      { url: "u1", apiKey: "k1", agent: "kiro" },
+      baseDeps({ write }),
+    );
+    expect(rc).toBe(0);
+    expect(written).toEqual([
+      { url: "u1", apiKey: "k1", agentUuid: "id1", agentName: "Bot", agent: "kiro" },
+    ]);
+  });
+
+  it("single-agent: no choice (undefined) writes NO top-level `agent` key", async () => {
+    const written = [];
+    const write = vi.fn((data) => { written.push(data); return "/p"; });
+    const rc = await runLogin(
+      { url: "u1", apiKey: "k1" },
+      baseDeps({ write, isTTY: true, promptBackend: async () => undefined }),
+    );
+    expect(rc).toBe(0);
+    expect(written).toEqual([
+      { url: "u1", apiKey: "k1", agentUuid: "id1", agentName: "Bot" },
+    ]);
+  });
+
+  it("single-agent non-TTY with no --agent: no menu, no block, no backend key", async () => {
+    // Uses the REAL promptAgentBackend (not injected). isTTY:false must make it
+    // return immediately without touching `prompt`, and write no `agent` key.
+    const written = [];
+    const write = vi.fn((data) => { written.push(data); return "/p"; });
+    const prompt = vi.fn(async () => { throw new Error("prompt must not be called on non-TTY"); });
+    const rc = await runLogin(
+      { url: "u1", apiKey: "k1" },
+      baseDeps({ write, prompt, isTTY: false }),
+    );
+    expect(rc).toBe(0);
+    expect(written).toEqual([
+      { url: "u1", apiKey: "k1", agentUuid: "id1", agentName: "Bot" },
+    ]);
+  });
+});
+
 describe("install wizard — multi-add loop", () => {
-  it("adds a second agent when the operator answers yes once", async () => {
-    // prompt sequence: "add another?"→y, url, key, "add another?"→n
-    const answers = ["y", "u2", "k2", "n"];
+  it("adds a second agent when the operator answers yes once (Enter at backend = inherit)", async () => {
+    // prompt sequence: "add another?"→y, url, key, backend-menu→Enter(inherit), "add another?"→n
+    const answers = ["y", "u2", "k2", "", "n"];
     const prompt = vi.fn(async () => answers.shift() ?? "");
     const appendAgent = vi.fn(() => ({ ok: true, agents: [{}, {}], index: 1 }));
     const res = await resolveInstallCredentials(
@@ -139,7 +215,62 @@ describe("install wizard — multi-add loop", () => {
     );
     expect(res.ok).toBe(true);
     expect(appendAgent).toHaveBeenCalledTimes(1);
+    // Enter at the backend menu → no agentType (entry inherits the daemon default).
     expect(appendAgent).toHaveBeenCalledWith({ url: "u2", apiKey: "k2", agentUuid: "id", agentName: "Bot" });
+  });
+
+  it("install loop: a backend menu pick sets agentType on the appended entry", async () => {
+    // "add another?"→y, url, key, backend-menu→"2" (Codex), "add another?"→n
+    const answers = ["y", "u2", "k2", "2", "n"];
+    const prompt = vi.fn(async () => answers.shift() ?? "");
+    const appendAgent = vi.fn(() => ({ ok: true, agents: [{}, {}], index: 1 }));
+    const res = await resolveInstallCredentials(
+      { url: "u1", apiKey: "k1", add: true },
+      {},
+      {
+        isTTY: true,
+        skip: false,
+        resolve: () => ({ url: "u1", apiKey: "k1", source: "flag" }),
+        validate: async () => ({ uuid: "id", name: "Bot" }),
+        writeConfig: () => {},
+        prompt,
+        appendAgent,
+        log: () => {},
+        errLog: () => {},
+      },
+    );
+    expect(res.ok).toBe(true);
+    expect(appendAgent).toHaveBeenCalledWith({
+      url: "u2", apiKey: "k2", agentUuid: "id", agentName: "Bot", agentType: "codex",
+    });
+  });
+
+  it("install loop: --agent is honored (no backend menu prompt)", async () => {
+    // With --agent kiro, the loop must NOT ask a backend question — sequence is
+    // "add another?"→y, url, key, "add another?"→n (no backend slot consumed).
+    const answers = ["y", "u2", "k2", "n"];
+    const prompt = vi.fn(async () => answers.shift() ?? "");
+    const appendAgent = vi.fn(() => ({ ok: true, agents: [{}, {}], index: 1 }));
+    const res = await resolveInstallCredentials(
+      { url: "u1", apiKey: "k1", agent: "kiro", add: true },
+      {},
+      {
+        isTTY: true,
+        skip: false,
+        resolve: () => ({ url: "u1", apiKey: "k1", source: "flag" }),
+        validate: async () => ({ uuid: "id", name: "Bot" }),
+        writeConfig: () => {},
+        prompt,
+        appendAgent,
+        log: () => {},
+        errLog: () => {},
+      },
+    );
+    expect(res.ok).toBe(true);
+    expect(appendAgent).toHaveBeenCalledTimes(1);
+    expect(appendAgent).toHaveBeenCalledWith({
+      url: "u2", apiKey: "k2", agentUuid: "id", agentName: "Bot", agentType: "kiro",
+    });
   });
 
   it("non-TTY / skip run never prompts for extra agents (single-agent install unchanged)", async () => {

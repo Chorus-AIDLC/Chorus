@@ -50,6 +50,16 @@ describe("formatBanner — content", () => {
     expect(out).not.toMatch(/claude CLI/);
   });
 
+  it("labels the dsh runtime and its path override", () => {
+    const out = formatBanner(
+      { ...INFO, agentType: "dsh", cliPath: null },
+      { isTTY: false },
+    );
+    expect(out).toContain("dsh-jsonrpc-agent CLI");
+    expect(out).toContain("CHORUS_DSH_PATH");
+    expect(out).not.toMatch(/claude CLI/);
+  });
+
   it("highlights yolo permission mode", () => {
     const out = formatBanner(INFO, { isTTY: false });
     expect(out).toMatch(/YOLO/);
@@ -101,7 +111,8 @@ describe("formatBanner — rendering modes", () => {
   });
 
   it("does not throw on a missing optional connection field", () => {
-    const { connection, ...noConn } = INFO;
+    const noConn = { ...INFO };
+    delete noConn.connection;
     expect(() => formatBanner(noConn, { isTTY: true })).not.toThrow();
     expect(formatBanner(noConn, { isTTY: false })).toContain("connecting…");
   });

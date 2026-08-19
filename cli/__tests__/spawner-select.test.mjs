@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { selectSpawner } from "../spawner-select.mjs";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
+import { DshSpawner } from "../dsh-spawner.mjs";
 import { KiroSpawner } from "../kiro-spawner.mjs";
 
 const logger = { info() {}, warn() {}, error() {} };
@@ -29,6 +30,12 @@ describe("selectSpawner", () => {
     expect(s).toBeInstanceOf(KiroSpawner);
   });
 
+  it("returns a DshSpawner for dsh", () => {
+    const s = selectSpawner("dsh", { logger, permissionMode: "yolo", creds });
+    expect(s).toBeInstanceOf(DshSpawner);
+    expect(s.creds).toEqual(creds);
+  });
+
   it("threads permissionMode into the selected spawner", () => {
     expect(selectSpawner("claude-code", { logger, permissionMode: "chorus", creds }).permissionMode).toBe("chorus");
     expect(selectSpawner("codex", { logger, permissionMode: "yolo", creds }).permissionMode).toBe("yolo");
@@ -39,6 +46,7 @@ describe("selectSpawner", () => {
     expect(selectSpawner("claude-code", { logger, creds }).creds).toEqual(creds);
     expect(selectSpawner("codex", { logger, creds }).creds).toEqual(creds);
     expect(selectSpawner("kiro", { logger, creds }).creds).toEqual(creds);
+    expect(selectSpawner("dsh", { logger, creds }).creds).toEqual(creds);
   });
 
   it("defaults to claude-code when the agent type is unrecognized (no throw — selection is post-validation)", () => {
@@ -52,8 +60,10 @@ describe("selectSpawner", () => {
     const c = selectSpawner("claude-code", { logger, permissionMode: "yolo", creds });
     const x = selectSpawner("codex", { logger, permissionMode: "yolo", creds });
     const k = selectSpawner("kiro", { logger, permissionMode: "yolo", creds });
+    const d = selectSpawner("dsh", { logger, permissionMode: "yolo", creds });
     expect(typeof c.wake).toBe("function");
     expect(typeof x.wake).toBe("function");
     expect(typeof k.wake).toBe("function");
+    expect(typeof d.wake).toBe("function");
   });
 });

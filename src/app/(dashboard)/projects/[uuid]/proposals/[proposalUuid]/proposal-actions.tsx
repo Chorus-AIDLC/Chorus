@@ -22,9 +22,6 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { approveProposalAction, rejectProposalAction, closeProposalAction, revokeProposalAction, submitProposalAction, deleteProposalAction } from "./actions";
-import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
-import { usePinThenWake } from "@/hooks/use-pin-then-wake";
-import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 
 interface MaterializedEntities {
   tasks: { uuid: string; title: string; status: string }[];
@@ -36,33 +33,11 @@ interface ProposalActionsProps {
   projectUuid: string;
   status: string;
   materializedEntities?: MaterializedEntities | null;
-  // The proposal's input Idea uuid — approve/reject wake that idea's assignee, so
-  // the pin-then-wake preview is idea-scoped and resolved from the proposal
-  // BEFORE the wake (spec: "resolve the target Idea uuid from the proposal").
-  // null when the proposal has no input idea (e.g. document-input proposals) —
-  // then approve/reject wake directly with no preview.
-  inputIdeaUuid?: string | null;
-  // The input idea's assignee agent display name — shown in the cwd picker
-  // subtitle when the preview reports `pick`.
-  inputIdeaAssigneeName?: string | null;
 }
 
-export function ProposalActions({ proposalUuid, projectUuid, status, materializedEntities, inputIdeaUuid, inputIdeaAssigneeName }: ProposalActionsProps) {
+export function ProposalActions({ proposalUuid, projectUuid, status, materializedEntities }: ProposalActionsProps) {
   const t = useTranslations();
   const router = useRouter();
-  // Pin-then-wake: approve/reject wake the input idea's assignee. Resolve the
-  // idea-scoped preview and (pick) prompt for a cwd / (auto_pin) persist the
-  // sole cwd / (direct) wake as-is before firing the proposal action.
-  const {
-    start: startPinThenWake,
-    pickerState,
-    confirmPick,
-    cancelPick,
-    isResolving,
-  } = usePinThenWake({
-    reassignNoWake: reassignIdeaInstanceNoWakeAction,
-    previewIdeaUuid: inputIdeaUuid,
-  });
   const [isPending, startTransition] = useTransition();
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [approveNote, setApproveNote] = useState("");
@@ -85,8 +60,8 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
     });
   };
 
-  // The actual approve wake — fired directly (direct/auto_pin) or after the human
-  // picks a cwd (pick). Captures the note at call time.
+  // Fire the approve action directly. The assignee wake target is resolved
+  // entirely on the server (no cwd picker at this gate — see idea 146a7a9b).
   const runApproveWake = (note: string | undefined) => {
     startTransition(async () => {
       const result = await approveProposalAction(proposalUuid, note);
@@ -100,14 +75,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
 
   const handleApprove = () => {
     const note = approveNote.trim() || undefined;
-    if (!inputIdeaUuid) {
-      // No input idea (e.g. document-input proposal) → nothing to pin; wake as-is.
-      runApproveWake(note);
-      return;
-    }
-    // Resolve the idea-scoped preview from the proposal's input idea, then
-    // pin-then-wake. On `pick` the picker opens over the approve dialog.
-    startPinThenWake({ ideaUuid: inputIdeaUuid, wake: () => runApproveWake(note) });
+    runApproveWake(note);
   };
 
   const runRejectWake = (reason: string) => {
@@ -122,12 +90,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
   };
 
   const handleReject = () => {
-    const reason = rejectReason;
-    if (!inputIdeaUuid) {
-      runRejectWake(reason);
-      return;
-    }
-    startPinThenWake({ ideaUuid: inputIdeaUuid, wake: () => runRejectWake(reason) });
+    runRejectWake(rejectReason);
   };
 
   const handleClose = () => {
@@ -263,7 +226,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             </Button>
             <Button
               onClick={handleApprove}
-              disabled={isPending || isResolving}
+              disabled={isPending}
               className="bg-[#5A9E6F] hover:bg-[#4A8E5F] text-white"
             >
               {isPending ? t("common.processing") : t("common.approve")}
@@ -294,7 +257,7 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
             </Button>
             <Button
               onClick={handleReject}
-              disabled={isPending || isResolving || !rejectReason.trim()}
+              disabled={isPending || !rejectReason.trim()}
               className="bg-[#D32F2F] hover:bg-[#B71C1C] text-white"
             >
               {isPending ? t("common.processing") : t("common.reject")}
@@ -424,16 +387,6 @@ export function ProposalActions({ proposalUuid, projectUuid, status, materialize
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Pin-then-wake cwd picker for approve/reject — opens on the `pick`
-          outcome of the input idea's wake-target preview. */}
-      <WakeCwdPickerDialog
-        open={pickerState !== null}
-        agentName={inputIdeaAssigneeName ?? ""}
-        instances={pickerState?.instances ?? []}
-        onConfirm={confirmPick}
-        onCancel={cancelPick}
-      />
     </>
   );
 }

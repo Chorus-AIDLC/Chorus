@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "その他のエージェント"
@@ -1185,6 +1186,16 @@
         "step2Tip": "デフォルトでは ~/.kiro/ にグローバルインストールされ、Chorus をどのディレクトリでも利用できます。現在のディレクトリの .kiro/ にのみインストールする場合は、フラグを追加してください：bash -s -- --workspace。",
         "step3Title": "ステップ 3：接続を確認",
         "step3Desc": "Kiro CLI を開いて /chorus-idea スキルを有効化するか、Chorus エージェントで直接起動してください：kiro-cli --agent chorus。"
+      },
+      "dsh": {
+        "step1Title": "ステップ 1：環境変数を設定",
+        "step1Tip": "前提条件：dsh 0.1.0-rc.7 と pnpm が PATH から利用できる必要があります。認証情報はシェルの環境変数に保持してください。",
+        "step2Title": "ステップ 2：Chorus bundle を追加",
+        "step2Tip": "{name} を使用する dsh profile 名に置き換えてください。dsh の profile は pnpm workspace のルートなので -w が必要です。profile の package state と peer plugin は dsh が管理します。",
+        "step3Title": "ステップ 3：認証情報を書き込む",
+        "step3Tip": "CHORUS_URL と CHORUS_API_KEY を $DSH_HOME/.env（モード 0600）に書き込みます。dsh は認証情報らしい変数をツールのサブプロセスから除去するため、ドキュメントミラー wrapper はシェルではなくこのファイルから読み取ります。",
+        "step4Title": "ステップ 4：起動して確認",
+        "step4Desc": "dsh --profile {name} を実行し、「check in to chorus」と依頼してください。"
       },
       "opencode": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1490,6 +1501,7 @@
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
+    "clientDsh": "DeepSeek Harness",
     "clientUnknown": "不明なクライアント",
     "uptimeMonoDays": "{days}日 {time}",
     "mobileBack": "接続",

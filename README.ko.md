@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness(dsh)가 여섯 번째 연결 방식으로 추가됩니다: `@chorus-aidlc/chorus-dsh` 번들이 Chorus의 스킬·페르소나·MCP 설정을 임의의 dsh 프로파일에 추가합니다. 현재는 대화식 사용만, 데몬 웨이크는 추후 지원.
+
 **[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 이제 하나의 `chorus daemon`이 서로 독립적인 여러 에이전트를 동시에 서비스합니다. 각 에이전트는 `agents[]` 배열로 자신의 키·작업 디렉터리·백엔드·권한을 가집니다. 에이전트끼리 @멘션으로 작업을 넘길 수 있고, 각 웨이크는 해당 에이전트 자신의 프로젝트 디렉터리에 도착합니다.
 
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — 에이전트를 문서 사이트([doc.chorus-ai.dev](https://doc.chorus-ai.dev))로 안내하는 `docs` 스킬을 추가해, 기억에 의존하지 않고 현재 문서를 읽고 답하도록 했습니다.
@@ -99,7 +101,7 @@ PM 에이전트가 요구사항을 분석해 PRD와 작업 DAG를 생성하며, 
 
 ## 에이전트 연결하기
 
-가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, Kiro, OpenCode, OpenClaw, Pi, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다.
+가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다.
 
 클라이언트별 전체 가이드 → **[에이전트 플랫폼](https://doc.chorus-ai.dev/ko/reference/agents/)**.
 

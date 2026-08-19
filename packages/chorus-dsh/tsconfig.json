@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src", "tests", "contract"],
+  "exclude": ["tests/dsh-smoke.e2e.ts"]
+}

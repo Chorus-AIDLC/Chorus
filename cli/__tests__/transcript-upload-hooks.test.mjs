@@ -13,8 +13,10 @@ import {
   extractTranscriptText,
   extractTurnUsage,
   extractCodexTurnUsage,
+  extractDshTurnUsage,
   CLAUDE_CODE_USAGE_SOURCE,
   CODEX_USAGE_SOURCE,
+  DSH_USAGE_SOURCE,
   createTranscriptUploadHooks,
   mergeUploadHooks,
   createExecutionUploadHooks,
@@ -187,6 +189,29 @@ describe("extractTranscriptText — keep user/assistant text, drop everything el
   it("falls back to the envelope type when message.role is absent", () => {
     const noRole = { type: "user", message: { content: [{ type: "text", text: "hi" }] } };
     expect(extractTranscriptText(noRole)).toEqual({ role: "user", text: "hi" });
+  });
+
+  it("accepts committed dsh user/message and assistant/message frames", () => {
+    expect(
+      extractTranscriptText({
+        type: "user/message",
+        data: { message: { role: "user", content: [{ type: "text", text: "dsh prompt" }] } },
+      }),
+    ).toEqual({ role: "user", text: "dsh prompt" });
+    expect(
+      extractTranscriptText({
+        type: "assistant/message",
+        data: {
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "hidden" },
+              { type: "text", text: "dsh answer" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({ role: "assistant", text: "dsh answer" });
   });
 });
 
@@ -988,6 +1013,40 @@ describe("extractCodexTurnUsage — normalize the Codex turn.completed event", (
   });
 });
 
+describe("extractDshTurnUsage — normalize the DshSpawner terminal event", () => {
+  it("normalizes partial camelCase usage without fabricating missing or invalid values", () => {
+    expect(
+      extractDshTurnUsage({
+        type: "dsh.turn.completed",
+        usage: {
+          inputTokens: 12,
+          outputTokens: "4",
+          cacheCreationTokens: -1,
+          cacheReadTokens: 8,
+          model: "deepseek-v4-flash",
+        },
+      }),
+    ).toEqual({
+      inputTokens: 12,
+      outputTokens: null,
+      cacheCreationTokens: null,
+      cacheReadTokens: 8,
+      model: "deepseek-v4-flash",
+      source: DSH_USAGE_SOURCE,
+    });
+  });
+
+  it("rejects malformed, non-terminal, and missing/non-object usage frames", () => {
+    expect(extractDshTurnUsage(null)).toBeNull();
+    expect(extractDshTurnUsage(undefined)).toBeNull();
+    expect(extractDshTurnUsage("dsh.turn.completed")).toBeNull();
+    expect(extractDshTurnUsage({ type: "assistant/message" })).toBeNull();
+    expect(extractDshTurnUsage({ type: "dsh.turn.completed" })).toBeNull();
+    expect(extractDshTurnUsage({ type: "dsh.turn.completed", usage: null })).toBeNull();
+    expect(extractDshTurnUsage({ type: "dsh.turn.completed", usage: 42 })).toBeNull();
+  });
+});
+
 describe("createTranscriptUploadHooks — onSessionEnd returns captured token usage", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -1056,6 +1115,23 @@ describe("createTranscriptUploadHooks — onSessionEnd returns captured token us
     const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
     await hooks.onSessionStart({ sessionId: SID, isNew: true });
     await hooks.onTranscriptMessage({ sessionId: SID, message: CODEX_AGENT_MESSAGE });
+    expect((await hooks.onSessionEnd({ sessionId: SID })).usage).toBeNull();
+  });
+
+  it("does not settle usage when dsh frames are malformed or not usage-bearing", async () => {
+    const { fetchImpl } = fakeServer();
+    const hooks = createTranscriptUploadHooks({ url: "https://c", apiKey: "k", logger: silent, fetchImpl });
+    await hooks.onSessionStart({ sessionId: SID, isNew: true });
+    for (const message of [
+      null,
+      "dsh.turn.completed",
+      { type: "assistant/message" },
+      { type: "dsh.turn.completed" },
+      { type: "dsh.turn.completed", usage: null },
+      { type: "dsh.turn.completed", usage: 42 },
+    ]) {
+      await hooks.onTranscriptMessage({ sessionId: SID, message });
+    }
     expect((await hooks.onSessionEnd({ sessionId: SID })).usage).toBeNull();
   });
 });

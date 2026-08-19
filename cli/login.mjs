@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 
 import { loginFilePath } from "./credentials.mjs";
 import { validateAndFetchIdentity } from "./chorus-client.mjs";
+import { promptAgentBackend } from "./agent-backend-prompt.mjs";
 
 /**
  * Prompt for a line of input. When `mask` is true, typed characters are not
@@ -219,12 +220,21 @@ export function appendAgentConfig(agentObj, deps = {}) {
  * single flat credential — so one daemon can serve several agents. On an invalid
  * key, or a duplicate, nothing is written.
  *
+ * The agent backend (agent type) is captured too: an explicit `--agent` wins,
+ * otherwise an interactive menu is offered on a TTY (skipped on a non-TTY so a
+ * scripted login never blocks). No choice → nothing is written for the backend
+ * (the `--add` entry omits `agentType`; the single-agent config omits the
+ * top-level `agent`), so it inherits the daemon default — never a literal
+ * `claude-code`. See {@link promptAgentBackend}.
+ *
  * @param {{ url?: string, apiKey?: string, agent?: string, add?: boolean }} flags
  * @param {{
  *   validate?: typeof validateAndFetchIdentity,
  *   write?: typeof writeLoginFile,
  *   appendAgent?: typeof appendAgentConfig,
  *   prompt?: typeof prompt,
+ *   promptBackend?: typeof promptAgentBackend,
+ *   isTTY?: boolean,
  *   log?: (m: string) => void,
  *   errLog?: (m: string) => void,
  * }} [deps]
@@ -235,6 +245,8 @@ export async function runLogin(flags = {}, deps = {}) {
   const write = deps.write ?? writeLoginFile;
   const appendAgent = deps.appendAgent ?? appendAgentConfig;
   const ask = deps.prompt ?? prompt;
+  const promptBackend = deps.promptBackend ?? promptAgentBackend;
+  const isTTY = deps.isTTY ?? Boolean(process.stdin.isTTY);
   const log = deps.log ?? ((m) => process.stdout.write(m + "\n"));
   const errLog = deps.errLog ?? ((m) => process.stderr.write(m + "\n"));
 
@@ -259,10 +271,16 @@ export async function runLogin(flags = {}, deps = {}) {
     return 1;
   }
 
+  // Which agent backend should this agent use? Explicit --agent wins; otherwise
+  // offer the interactive menu on a TTY. `undefined` = no explicit choice → we
+  // write NO backend key so it inherits the daemon default (never claude-code).
+  let agentType = nonEmpty(flags.agent);
+  if (!agentType) agentType = await promptBackend({ ask, log, isTTY });
+
   // --add: append as an additional agent (multi-agent) instead of overwriting.
   if (flags.add) {
     const agentObj = { url, apiKey, agentUuid: identity.uuid, agentName: identity.name };
-    if (nonEmpty(flags.agent)) agentObj.agentType = nonEmpty(flags.agent);
+    if (agentType) agentObj.agentType = agentType;
     const res = appendAgent(agentObj);
     if (!res.ok) {
       errLog(
@@ -270,13 +288,17 @@ export async function runLogin(flags = {}, deps = {}) {
       );
       return 1;
     }
-    log(`Added agent ${identity.name} (${identity.uuid}) as agents[${res.index}] in ${res.path}.`);
+    const backendNote = agentType ? ` — backend: ${agentType}` : "";
+    log(`Added agent ${identity.name} (${identity.uuid}) as agents[${res.index}] in ${res.path}${backendNote}.`);
     log(`This daemon now serves ${res.agents.length} agent(s).`);
     return 0;
   }
 
-  const path = write({ url, apiKey, agentUuid: identity.uuid, agentName: identity.name });
-  log(`Logged in as ${identity.name} (${identity.uuid}).`);
+  const loginData = { url, apiKey, agentUuid: identity.uuid, agentName: identity.name };
+  if (agentType) loginData.agent = agentType;
+  const path = write(loginData);
+  const backendNote = agentType ? ` — backend: ${agentType}` : "";
+  log(`Logged in as ${identity.name} (${identity.uuid})${backendNote}.`);
   log(`Credentials saved to ${path}.`);
   return 0;
 }

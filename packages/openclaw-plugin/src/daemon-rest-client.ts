@@ -14,10 +14,12 @@
 // The two files are kept in lock-step by the spec's "single source of truth for
 // the payload shapes" requirement; a drift would be caught by T5 (live e2e).
 //
-// The five operations and their EXACT server payload shapes (verified against
-// cli/daemon-rest-client.mjs + src/app/api/daemon/*/route.ts — server unchanged):
+// The operations and payload fields this client supports (kept aligned with
+// cli/daemon-rest-client.mjs and accepted by src/app/api/daemon/*/route.ts):
 //   turnAdvance      → POST /api/daemon/turn-advance
-//                      { connectionUuid, sessionId, status, entityType?, entityUuid? }
+//                      { connectionUuid, sessionId, status, turnUuid?,
+//                        entityType?, entityUuid?, interruptedReason?,
+//                        transcriptRelayError?, usage? }
 //   transcript       → POST /api/daemon/transcript
 //                      { sessionId, messages: [{ role, text }] }
 //   executionState   → POST /api/daemon/execution-state
@@ -27,6 +29,8 @@
 //                                                       startedAt|null }] }
 //   reportInterrupt  → POST /api/daemon/report-interrupt
 //                      { connectionUuid, entityType, entityUuid, reason }
+//   heartbeat        → POST /api/daemon/connection-heartbeat
+//                      { connectionUuid, connectedAt }
 //   readPendingTurns → GET  /api/daemon/pending-turns?connectionUuid=…
 //                      → { turns: [{ turnUuid, sessionId, directIdeaUuid, trigger,
 //                                    promptText }] }
@@ -129,6 +133,7 @@ export interface CreateDaemonRestClientOptions {
 export interface DaemonRestClient {
   turnAdvance(p: {
     sessionId: string;
+    turnUuid?: string | null;
     status: "running" | "ended" | "interrupted";
     entityType?: string | null;
     entityUuid?: string | null;
@@ -136,7 +141,7 @@ export interface DaemonRestClient {
     transcriptRelayError?: string | null;
     // Per-turn token usage (daemon-token-usage); sent only on a terminal edge.
     usage?: TokenUsage | null;
-  }): Promise<DaemonRestResult>;
+  }): Promise<DaemonRestResult<{ turnUuid: string }>>;
   transcript(p: {
     sessionId: string;
     messages: DaemonTranscriptMessage[];
@@ -172,13 +177,14 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
    * IDENTICAL across all four POST endpoints; only the `op` label and the path
    * differ. Never throws — returns a structured {@link DaemonRestResult}.
    */
-  async function post(
+  async function post<TData = unknown>(
     op: string,
     path: string,
     body: unknown,
     successLog?: string,
     context = "",
-  ): Promise<DaemonRestResult> {
+    readData = false,
+  ): Promise<DaemonRestResult<TData>> {
     let response: Response;
     try {
       response = await fetchImpl(`${url}${path}`, {
@@ -198,8 +204,17 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
       logger.warn(`[Chorus] ${error}`);
       return { ok: false, status: response.status, error };
     }
+    let data: TData | undefined;
+    if (readData) {
+      try {
+        const parsed = (await response.json()) as { data?: TData } | null;
+        data = parsed && typeof parsed === "object" ? parsed.data : undefined;
+      } catch (err) {
+        logger.warn(`[Chorus] ${op} response correlation unavailable: ${err}`);
+      }
+    }
     if (successLog) logger.info(`[Chorus] ${successLog}`);
-    return { ok: true, status: response.status };
+    return { ok: true, status: response.status, ...(data !== undefined ? { data } : {}) };
   }
 
   return {
@@ -211,7 +226,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
      * normalized `usage` (daemon-token-usage) — byte-for-byte the CLI client's shape.
      * Requires the connectionUuid.
      */
-    async turnAdvance({ sessionId, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
+    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -225,6 +240,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         connectionUuid,
         sessionId,
         status,
+        ...(turnUuid ? { turnUuid } : {}),
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
@@ -234,12 +250,24 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
         ...(usage && isTerminal ? { usage } : {}),
       };
-      return post(
+      const result = await post<{ turn?: { uuid?: unknown } }>(
         "turn-advance",
         "/api/daemon/turn-advance",
         body,
         `advanced turn for session ${sessionId} → ${status}`,
+        "",
+        status === "running",
       );
+      const resolvedTurnUuid =
+        typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;
+      if (status !== "running") {
+        const { data: _rawData, ...baseResult } = result;
+        return baseResult;
+      }
+      const { data: _rawData, ...baseResult } = result;
+      return resolvedTurnUuid
+        ? { ...baseResult, data: { turnUuid: resolvedTurnUuid } }
+        : baseResult;
     },
 
     /**

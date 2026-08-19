@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.16.4] - 2026-08-19
+
+### Added
+- **DeepSeek Harness (dsh) plugin**: Ships `@chorus-aidlc/chorus-dsh` as an installable npm bundle — Chorus's sixth plugin surface — with the full skill set, a Node `chorus-mcp-call` wrapper, a served credential-provisioning script, a dedicated onboarding tab, and `CONNECT_DSH` docs. (#499)
+- **Backend-session resume**: Daemon-spawned backends now persist a `backendSessionId` (new Prisma migration) so a turn can resume the underlying agent session across the daemon turn-advance path. (#499)
+- **Prompt for agent backend when adding a daemon agent**: `daemon login`, `--add`, and the install "Add another agent?" loop now ask which backend to use (Claude Code / Codex / Kiro), reusing the install backend menu. `--agent` still wins; choosing nothing omits the field so the agent inherits the daemon default instead of a hardcoded `claude-code`. (#501)
+
+### Fixed
+- **Approve/reject proposal without a cwd picker**: Approving or rejecting a proposal in the UI no longer pops the cwd picker. The assignee wake target resolves entirely server-side (follow pin → online idea-session origin → agent-owner project cwd); with no pin it wakes only when exactly one connection is online and suppresses to notify-only on two or more. (#500)
+
+### Plugin
+- **Plugin & skill versions → 0.16.4**: Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh plugin/skill distributions plus the standalone skill all bumped to 0.16.4.
+
+---
+
 ## [0.16.3] - 2026-08-17
 
 ### Added

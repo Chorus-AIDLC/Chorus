@@ -235,6 +235,7 @@ export const CLAUDE_CODE_USAGE_SOURCE = "claude_code";
  * daemon's Codex client type (`"codex"`, per cli/daemon-agent.mjs `backendClientType`)
  * so persisted usage is attributable to the right backend / connection. */
 export const CODEX_USAGE_SOURCE = "codex";
+export const DSH_USAGE_SOURCE = "dsh";
 
 /**
  * Coerce a value to a non-negative integer token count, or null. Guards against a
@@ -363,6 +364,21 @@ export function extractCodexTurnUsage(obj) {
   };
 }
 
+/** Extract the normalized terminal usage frame emitted by DshSpawner. */
+export function extractDshTurnUsage(obj) {
+  if (!obj || typeof obj !== "object" || obj.type !== "dsh.turn.completed") return null;
+  const usage = obj.usage;
+  if (!usage || typeof usage !== "object") return null;
+  return {
+    inputTokens: toTokenInt(usage.inputTokens),
+    outputTokens: toTokenInt(usage.outputTokens),
+    cacheCreationTokens: toTokenInt(usage.cacheCreationTokens),
+    cacheReadTokens: toTokenInt(usage.cacheReadTokens),
+    model: typeof usage.model === "string" && usage.model.trim() ? usage.model : null,
+    source: DSH_USAGE_SOURCE,
+  };
+}
+
 /**
  * Remove `<system-reminder>…</system-reminder>` spans from a retained text block
  * (defense-in-depth for harness-injected reminders that ride inside a kept text
@@ -398,6 +414,17 @@ function stripSystemReminders(s) {
  */
 export function extractTranscriptText(obj) {
   if (!obj || typeof obj !== "object") return null;
+
+  // ── DeepSeek Harness committed session-event dialect ──
+  if (obj.type === "user/message" || obj.type === "assistant/message") {
+    const data = obj.data;
+    const message = data && typeof data === "object" ? data.message : null;
+    if (!message || typeof message !== "object") return null;
+    return extractTranscriptText({
+      type: obj.type === "user/message" ? "user" : "assistant",
+      message,
+    });
+  }
 
   // ── codex `codex exec --json` dialect ──
   // Only `item.completed` carries finished output; an `agent_message` item is the
@@ -659,7 +686,10 @@ export function createTranscriptUploadHooks(opts) {
       // no-op on the vast majority of lines and never touches the transcript path. Guarded
       // so a malformed frame can never break transcript relay (no-silent: warn).
       try {
-        const usage = extractTurnUsage(message) ?? extractCodexTurnUsage(message);
+        const usage =
+          extractTurnUsage(message) ??
+          extractCodexTurnUsage(message) ??
+          extractDshTurnUsage(message);
         if (usage) lastUsage = usage;
       } catch (err) {
         logger.warn(`[Chorus] token usage extract failed: ${err}`);

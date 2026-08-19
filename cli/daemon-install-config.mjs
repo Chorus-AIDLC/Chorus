@@ -27,9 +27,11 @@ import { updateDaemonConfig, appendAgentConfig, prompt as defaultPrompt } from "
 import { validateAndFetchIdentity } from "./chorus-client.mjs";
 import { normalizeCwd, cleanCwdList } from "./daemon-config.mjs";
 import { KNOWN_AGENTS, DEFAULT_AGENT } from "./daemon-agent.mjs";
+import { AGENT_MENU, promptAgentBackend } from "./agent-backend-prompt.mjs";
 import { agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { resolveClaudePath } from "./claude-spawner.mjs";
 import { resolveCodexPath } from "./codex-spawner.mjs";
+import { resolveDshPath } from "./dsh-spawner.mjs";
 import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { readFileSync } from "node:fs";
 
@@ -160,12 +162,20 @@ export async function resolveInstallCredentials(flags = {}, env = {}, opts = {})
         );
         continue;
       }
-      const res = appendAgent({ url: u, apiKey: k, agentUuid: id.uuid, agentName: id.name });
+      // Which backend for this agent? Explicit --agent wins; otherwise the menu
+      // (we're already on a TTY here). undefined → omit agentType so the entry
+      // inherits the daemon default at resolve time (never a literal claude-code).
+      let at = nonEmpty(flags.agent);
+      if (!at) at = await promptAgentBackend({ ask, log, isTTY });
+      const agentObj = { url: u, apiKey: k, agentUuid: id.uuid, agentName: id.name };
+      if (at) agentObj.agentType = at;
+      const res = appendAgent(agentObj);
       if (!res.ok) {
         errLog(`[Chorus] agent ${id.name} (${id.uuid}) is already configured — skipping.`);
         continue;
       }
-      log(`[Chorus] added agent ${id.name} (${id.uuid}) — this daemon now serves ${res.agents.length} agents.`);
+      const backendNote = at ? ` (backend: ${at})` : "";
+      log(`[Chorus] added agent ${id.name} (${id.uuid})${backendNote} — this daemon now serves ${res.agents.length} agents.`);
     }
   }
 
@@ -242,7 +252,6 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const first = nonEmpty(await ask(`Working directory [${defaultCwd}] (Enter to accept the default): `));
   collected.push(first ?? defaultCwd);
   // subsequent adds
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const next = nonEmpty(await ask("Add another working directory (blank to finish): "));
     if (!next) break;
@@ -280,25 +289,23 @@ export async function resolveInstallBrowseRoots(flags = {}, opts = {}) {
   return { browseRoots };
 }
 
-/**
- * The interactive agent-backend menu. Order mirrors KNOWN_AGENTS with claude-code
- * first (it is the default). Kept beside the resolver so the numbered prompt and
- * the accepted values never drift.
- */
-const AGENT_MENU = [
-  { value: "claude-code", label: "Claude Code (default)" },
-  { value: "codex", label: "Codex CLI" },
-  { value: "kiro", label: "Kiro CLI" },
-];
+// The interactive agent-backend menu (`AGENT_MENU`) now lives in
+// ./agent-backend-prompt.mjs as the single source of truth shared with the
+// add/login flows (imported above), so every backend prompt advertises the same
+// list and never drifts. resolveInstallAgent keeps its own inline menu render
+// below (its empty→DEFAULT_AGENT semantics differ from promptAgentBackend's
+// empty→undefined) but reads the same AGENT_MENU rows.
 
 /** Probe the selected backend's CLI on PATH. Returns the resolved path or null.
  * Injectable per backend so the check is testable without a real PATH. */
 function probeAgentCli(agent, probes = {}) {
   const findClaude = probes.resolveClaudePath ?? resolveClaudePath;
   const findCodex = probes.resolveCodexPath ?? resolveCodexPath;
+  const findDsh = probes.resolveDshPath ?? resolveDshPath;
   const findKiro = probes.resolveKiroPath ?? resolveKiroPath;
   if (agent === "codex") return findCodex();
   if (agent === "kiro") return findKiro();
+  if (agent === "dsh") return findDsh();
   return findClaude();
 }
 
@@ -331,7 +338,7 @@ function probeAgentCli(agent, probes = {}) {
  *   loginPath?: string,
  *   writeConfig?: (partial: Record<string, unknown>) => string,
  *   prompt?: typeof defaultPrompt,
- *   probes?: { resolveClaudePath?: Function, resolveCodexPath?: Function, resolveKiroPath?: Function },
+ *   probes?: { resolveClaudePath?: Function, resolveCodexPath?: Function, resolveKiroPath?: Function, resolveDshPath?: Function },
  *   log?: (m: string) => void,
  *   errLog?: (m: string) => void,
  * }} [opts]

@@ -34,6 +34,7 @@ describe("parseClientFlags — new daemon flags", () => {
   it("parses --agent (space + = forms)", () => {
     expect(parseClientFlags(["--agent", "claude-code"]).agent).toBe("claude-code");
     expect(parseClientFlags(["--agent=codex"]).agent).toBe("codex");
+    expect(parseClientFlags(["--agent=dsh"]).agent).toBe("dsh");
   });
 
   it("collects repeatable --browse-root values independently from --cwd", () => {
@@ -139,6 +140,15 @@ describe("daemonHelpText", () => {
   it("identifies itself as daemon help and carries the version", () => {
     expect(help.toLowerCase()).toContain("daemon");
     expect(help).toContain("9.9.9");
+  });
+
+  it("no longer advertises the (de-listed) dsh daemon backend in help", () => {
+    // The dsh daemon backend is temporarily offline; help must not offer it.
+    expect(help).not.toContain("DSH BACKEND");
+    expect(help).not.toContain("@chorus-aidlc/chorus-dsh");
+    expect(help).not.toContain("CHORUS_DSH_PATH");
+    expect(help).not.toContain("DSH_CORDIS_CONFIG");
+    expect(help).not.toContain("| dsh");
   });
 });
 

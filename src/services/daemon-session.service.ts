@@ -184,6 +184,7 @@ export interface SessionView {
 export interface TurnView {
   uuid: string;
   sessionUuid: string;
+  backendSessionId: string | null;
   seq: number;
   trigger: string;
   promptText: string | null;
@@ -258,6 +259,7 @@ interface DaemonSessionRow {
 interface DaemonSessionTurnRow {
   uuid: string;
   sessionUuid: string;
+  backendSessionId: string | null;
   seq: number;
   trigger: string;
   promptText: string | null;
@@ -322,6 +324,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
   return {
     uuid: row.uuid,
     sessionUuid: row.sessionUuid,
+    backendSessionId: row.backendSessionId ?? null,
     seq: row.seq,
     trigger: row.trigger,
     promptText: row.promptText,
@@ -659,6 +662,9 @@ export async function advanceTurn(
     // `usage` JSON column on a terminal edge; ignored on → running. The actual column write
     // + session rollup increment are wired in the persist task (Task 3).
     usage?: TokenUsage | null;
+    // Daemon reports resolve a row before advancing it. Guard that observed status in the
+    // write so concurrent identical terminal reports have exactly one side-effect winner.
+    expectedStatus?: TurnStatus;
   } = {},
 ): Promise<AdvanceTurnResult> {
   const turn = await prisma.daemonSessionTurn.findUnique({
@@ -720,7 +726,37 @@ export async function advanceTurn(
   // terminal advances on the same session accumulate correctly without a read-modify-write.
   // No usage → a plain single-row update (unchanged from before this feature).
   let updated;
-  if (usageToWrite) {
+  if (opts.expectedStatus !== undefined) {
+    updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.daemonSessionTurn.updateMany({
+        where: { uuid: turnUuid, status: opts.expectedStatus },
+        data,
+      });
+      if (claimed.count === 0) return null;
+
+      if (usageToWrite) {
+        await tx.daemonSession.update({
+          where: { uuid: turn.sessionUuid },
+          data: {
+            totalInputTokens: { increment: opts.usage?.inputTokens ?? 0 },
+            totalOutputTokens: { increment: opts.usage?.outputTokens ?? 0 },
+            totalCacheReadTokens: { increment: opts.usage?.cacheReadTokens ?? 0 },
+            totalCacheCreationTokens: { increment: opts.usage?.cacheCreationTokens ?? 0 },
+          },
+        });
+      }
+
+      return tx.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } });
+    });
+    if (!updated) {
+      const latest = await prisma.daemonSessionTurn.findUnique({
+        where: { uuid: turnUuid },
+        select: { status: true },
+      });
+      if (!latest) return { ok: false, reason: "not_found" };
+      return { ok: false, reason: "invalid_transition", from: latest.status, to: status };
+    }
+  } else if (usageToWrite) {
     const [turnRow] = await prisma.$transaction([
       prisma.daemonSessionTurn.update({ where: { uuid: turnUuid }, data }),
       prisma.daemonSession.update({
@@ -1698,6 +1734,7 @@ export async function advanceTurnForWake(params: {
   agentUuid: string;
   connectionUuid: string;
   sessionId: string;
+  turnUuid?: string | null;
   backendSessionId?: string | null;
   status: TurnStatus;
   entityType?: string | null;
@@ -1729,12 +1766,50 @@ export async function advanceTurnForWake(params: {
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
 
+  // New daemons correlate terminal reports to the exact turn UUID returned by their
+  // →running report. Older daemons omit it and retain status-based FIFO resolution:
+  //   • → running     : the OLDEST still-`pending` turn (the next queued wake to start).
+  //   • → ended       : the `running` turn (the one whose subprocess just exited).
+  //   • → interrupted : the `running` turn too (the one whose subprocess was stopped —
+  //                     both terminal edges leave from the same state).
+  const fromStatus =
+    params.status === "running"
+      ? "pending"
+      : params.status === "ended" || params.status === "interrupted"
+        ? "running"
+        : null;
+  const turn = await prisma.daemonSessionTurn.findFirst({
+    where: params.turnUuid
+      ? { uuid: params.turnUuid, sessionUuid: session.uuid }
+      : {
+          sessionUuid: session.uuid,
+          ...(fromStatus ? { status: fromStatus } : {}),
+        },
+    // Oldest-first so a `→running` advance picks up the next queued turn in FIFO order.
+    orderBy: { seq: "asc" },
+  });
+  if (!turn) return { ok: false, reason: "not_found" };
+
+  const isTerminal = params.status === "ended" || params.status === "interrupted";
+  // A correlated retry can address an already-terminal row after the original 2xx was
+  // lost. Return the existing projection without calling advanceTurn, so usage rollups,
+  // timestamps, and SSE side effects are not applied twice. A different backend ID is a
+  // genuine same-turn conflict; a different terminal status remains invalid.
+  if (params.turnUuid && isTerminal && turn.status === params.status) {
+    if (
+      (turn.backendSessionId ?? null) !== (params.backendSessionId ?? null)
+    ) {
+      return { ok: false, reason: "backend_session_conflict" };
+    }
+    return { ok: true, turn: toTurnView(turn) };
+  }
+
   if (params.backendSessionId) {
-    // Atomically allow only first assignment or an idempotent repeat. A different
-    // existing value cannot be overwritten, even by concurrent lifecycle reports.
-    const bound = await prisma.daemonSession.updateMany({
+    // The turn is the conflict authority. First assignment and an identical repeat
+    // succeed atomically; a different ID on this exact turn cannot overwrite it.
+    const bound = await prisma.daemonSessionTurn.updateMany({
       where: {
-        uuid: session.uuid,
+        uuid: turn.uuid,
         OR: [
           { backendSessionId: null },
           { backendSessionId: params.backendSessionId },
@@ -1745,38 +1820,14 @@ export async function advanceTurnForWake(params: {
     if (bound.count === 0) {
       return { ok: false, reason: "backend_session_conflict" };
     }
-  }
 
-  // Resolve the turn being executed by STATUS, not by most-recent seq. The daemon only
-  // ever drives `running` (on spawn) and `ended` (on subprocess exit), and same-session
-  // wakes are strictly serialized in the daemon's per-(agent,session) WakeQueue — so at
-  // most one turn is mid-flight at a time. Targeting "most-recent seq" was wrong: if a
-  // second wake created a newer `pending` turn while the current one was still running,
-  // the running turn's `→ended` would mis-target the newer pending turn (rejected as an
-  // invalid transition), stranding the real turn `running` forever. Status-based FIFO
-  // resolution fixes that without the daemon needing to learn the server turn uuid:
-  //   • → running     : the OLDEST still-`pending` turn (the next queued wake to start).
-  //   • → ended       : the `running` turn (the one whose subprocess just exited).
-  //   • → interrupted : the `running` turn too (the one whose subprocess was stopped —
-  //                     both terminal edges leave from the same state).
-  // For any other target status, fall back to the oldest turn in the prior state.
-  const fromStatus =
-    params.status === "running"
-      ? "pending"
-      : params.status === "ended" || params.status === "interrupted"
-        ? "running"
-        : null;
-  const turn = await prisma.daemonSessionTurn.findFirst({
-    where: {
-      sessionUuid: session.uuid,
-      ...(fromStatus ? { status: fromStatus } : {}),
-    },
-    // Oldest-first so a `→running` advance picks up the next queued turn in FIFO order.
-    orderBy: { seq: "asc" },
-    // `seq` anchors the coalesced-away settlement below (the `seq > X` filter).
-    select: { uuid: true, seq: true },
-  });
-  if (!turn) return { ok: false, reason: "not_found" };
+    // Preserve the session column as the immutable first-wake compatibility anchor.
+    // A zero count is expected on later wakes and is never a conflict.
+    await prisma.daemonSession.updateMany({
+      where: { uuid: session.uuid, backendSessionId: null },
+      data: { backendSessionId: params.backendSessionId },
+    });
+  }
 
   // Weak executionUuid link: resolve the live DaemonExecution row for this
   // connection + entity (when the caller named one). Recorded on the turn without
@@ -1821,10 +1872,30 @@ export async function advanceTurnForWake(params: {
       : {}),
     ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
     ...(params.usage !== undefined ? { usage: params.usage } : {}),
+    expectedStatus: turn.status as TurnStatus,
   });
 
   if (!result.ok) {
     if (result.reason === "not_found") return { ok: false, reason: "not_found" };
+    if (params.turnUuid && isTerminal) {
+      const latest = await prisma.daemonSessionTurn.findFirst({
+        where: { uuid: params.turnUuid, sessionUuid: session.uuid },
+      });
+      if (
+        latest &&
+        latest.status === params.status &&
+        (latest.backendSessionId ?? null) === (params.backendSessionId ?? null)
+      ) {
+        return { ok: true, turn: toTurnView(latest) };
+      }
+      if (
+        latest &&
+        latest.status === params.status &&
+        (latest.backendSessionId ?? null) !== (params.backendSessionId ?? null)
+      ) {
+        return { ok: false, reason: "backend_session_conflict" };
+      }
+    }
     return { ok: false, reason: "invalid_transition", from: result.from, to: result.to };
   }
 

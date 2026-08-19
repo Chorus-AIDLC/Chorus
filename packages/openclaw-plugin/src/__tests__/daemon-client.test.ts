@@ -165,6 +165,30 @@ describe("runWake — lifecycle reporting", () => {
     });
   });
 
+  it("threads the running response turn UUID onto the ended report", async () => {
+    const turnAdvance = vi.fn(async ({ status }: { status: string }) =>
+      status === "running"
+        ? { ok: true, status: 200, data: { turnUuid: "turn-7" } }
+        : { ok: true, status: 200 },
+    );
+    const rest = makeRestClient({ turnAdvance });
+    const { client } = build({ rest });
+
+    await client.runWake({
+      prompt: "do the task",
+      contextKey: "chorus:task_assigned:task-3",
+      entityType: "task",
+      entityUuid: "task-3",
+      directIdeaUuid: "idea-9",
+      rootIdeaUuid: "idea-root",
+    });
+
+    expect(turnAdvance).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: "ended", turnUuid: "turn-7" }),
+    );
+  });
+
   it("publishes an execution snapshot with rootIdeaUuid + directIdeaUuid + startedAt while running, then empty when ended", async () => {
     const rest = makeRestClient();
     let snapshotWhileRunning: unknown;

@@ -52,7 +52,7 @@ export const TURN_INTERRUPT_REASONS = new Set([
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(params: { sessionId: string, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null, coalescedCount?: number }) => Promise<void>}
+ * @returns {(params: { sessionId: string, turnUuid?: string|null, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null, coalescedCount?: number }) => Promise<import("./daemon-rest-client.mjs").DaemonRestResult|undefined>}
  */
 export function createTurnReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -69,6 +69,7 @@ export function createTurnReporter(opts) {
 
   return async function advanceTurn({
     sessionId,
+    turnUuid,
     status,
     entityType,
     entityUuid,
@@ -101,8 +102,9 @@ export function createTurnReporter(opts) {
     // entityType/entityUuid only when both are present, and transcriptRelayError only when
     // truthy (fix #444 follow-up) — and logs the failure cause on a network error / non-2xx.
     // We swallow the structured result so a failed report can never crash the wake path.
-    await client.turnAdvance({
+    const result = await client.turnAdvance({
       sessionId,
+      turnUuid,
       status,
       entityType,
       entityUuid,
@@ -116,5 +118,6 @@ export function createTurnReporter(opts) {
       // client sends it only on the → running edge and only when > 1 (a single wake omits it).
       coalescedCount,
     });
+    return result;
   };
 }

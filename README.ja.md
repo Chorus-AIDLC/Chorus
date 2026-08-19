@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）が 6 つ目の接続方法に。`@chorus-aidlc/chorus-dsh` バンドルが Chorus のスキル・ペルソナ・MCP 設定を任意の dsh プロファイルに追加します。現時点は対話的な利用のみ、デーモンウェイクは後日対応。
+
 **[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 1 つの `chorus daemon` が、互いに独立した複数のエージェントを同時に扱えるようになりました。各エージェントは `agents[]` 配列で自分のキー・作業ディレクトリ・バックエンド・権限を持ちます。エージェント同士は @メンションで作業を渡し合え、各ウェイクはそのエージェント自身のプロジェクトディレクトリに届きます。
 
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — エージェントをドキュメントサイト（[doc.chorus-ai.dev](https://doc.chorus-ai.dev)）へ案内する `docs` スキルを追加し、記憶に頼らず現在のドキュメントを読んで回答するようにしました。
@@ -99,7 +101,7 @@ PM エージェントが要件を分析し、PRD と課題 DAG を含む提案�
 
 ## AI エージェントを接続する
 
-最も手早い方法は、アプリ内のセットアップウィザードです：**Settings → Setup Guide** を開いてください。ウィザードが API キーを作成し、お使いのクライアント（Claude Code、Codex、Kiro、OpenCode、OpenClaw、Pi、その他 MCP 互換のエージェント）向けの正確なコマンドを表示します。
+最も手早い方法は、アプリ内のセットアップウィザードです：**Settings → Setup Guide** を開いてください。ウィザードが API キーを作成し、お使いのクライアント（Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi、その他 MCP 互換のエージェント）向けの正確なコマンドを表示します。
 
 クライアントごとの詳細なガイド → **[エージェントプラットフォーム](https://doc.chorus-ai.dev/ja/reference/agents/)**。
 

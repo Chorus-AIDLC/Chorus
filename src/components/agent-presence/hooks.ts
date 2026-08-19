@@ -96,6 +96,8 @@ export function useClientTypeLabel() {
           return t("clientCodex");
         case "kiro":
           return t("clientKiro");
+        case "dsh":
+          return t("clientDsh");
         default:
           return t("clientUnknown");
       }

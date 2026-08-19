@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness (dsh) is the sixth way to connect: the `@chorus-aidlc/chorus-dsh` bundle drops Chorus's skills, persona, and MCP config into any dsh profile. Interactive for now; daemon wake comes later.
+
 **[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — One `chorus daemon` now serves many independent agents at once — each with its own key, working directories, backend, and permissions via an `agents[]` array — and agents can hand work to each other by @-mention, with each wake landing in that agent's own project directory.
 
 **[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — A `docs` skill that points agents at the live docs site ([doc.chorus-ai.dev](https://doc.chorus-ai.dev)), so they answer from the current docs instead of reciting from memory.
@@ -99,7 +101,7 @@ Task cards flow between To Do → In Progress → To Verify as agents work, with
 
 ## Connect an Agent
 
-The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, OpenCode, OpenClaw, Pi, or any MCP-compatible agent.
+The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, or any MCP-compatible agent.
 
 Full per-client guides → **[Agent platforms](https://doc.chorus-ai.dev/reference/agents/)**.
 

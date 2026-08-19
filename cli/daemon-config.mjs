@@ -306,7 +306,7 @@ function positiveInt(value) {
  * @typedef {Object} AgentConfig  One fully-resolved agent runtime config.
  * @property {string} url                       Chorus server URL for this agent.
  * @property {string} apiKey                    This agent's `cho_` API key.
- * @property {string} agentType                 Backend: claude-code | codex | kiro.
+ * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh.
  * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
  * @property {"yolo"|"chorus"} permissionMode   Woken-agent permission posture.
  * @property {number} maxConcurrency            This agent's wake-queue cap.
