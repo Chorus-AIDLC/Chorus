@@ -1,6 +1,6 @@
 {
   "name": "@chorus-aidlc/chorus-dsh",
-  "version": "0.0.3",
+  "version": "0.16.3",
   "description": "Chorus lifecycle, MCP, prompt, and skill bundle for DeepSeek Harness",
   "license": "AGPL-3.0",
   "homepage": "https://github.com/Chorus-AIDLC/Chorus",
