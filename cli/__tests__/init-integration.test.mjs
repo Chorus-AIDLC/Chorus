@@ -74,7 +74,11 @@ describe("chorus init — step-registry is extensible", () => {
     // Simulate a sibling idea pushing its step — no edit to runInit's core.
     STEP_REGISTRY.push(fixtureStep);
     try {
-      const code = await runInit(["--agents", "kiro", "--yes"], {
+      // Supply --url/--api-key so credential-seed is deterministic (SEEDED)
+      // regardless of the machine's ~/.chorus/daemon.json — otherwise the exit
+      // code depends on the environment (skipped when creds already resolve,
+      // failed in a clean CI container where none do).
+      const code = await runInit(["--agents", "kiro", "--url", "https://c", "--api-key", "cho_k", "--yes"], {
         io,
         detectAgents,
         orderedSteps, // real, now includes the fixture
