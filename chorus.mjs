@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // client commands that connect OUT to a remote Chorus server. Their modules are
 // lazy-imported so the server-launch path pays no startup cost.
 
-const SUBCOMMANDS = new Set(["daemon", "login"]);
+const SUBCOMMANDS = new Set(["daemon", "login", "init"]);
 
 // Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
 // are pure and unit-testable (this entry module runs side effects at import).
@@ -54,6 +54,13 @@ function pkgVersion() {
 }
 
 async function runSubcommand(name, rest) {
+  // `init` has its own arg parser + help (runInit handles --help itself), so it
+  // is dispatched before the shared client-flag/help block below.
+  if (name === "init") {
+    const { runInit } = await import("./cli/init.mjs");
+    return runInit(rest, { version: pkgVersion() });
+  }
+
   const flags = parseClientFlags(rest);
 
   // Per-subcommand --help / -h fast-path: print subcommand-specific help and
@@ -146,6 +153,8 @@ Chorus v${pkg.version} — AI Agent & Human collaboration platform
 
 USAGE
   chorus [options]                 Start the Chorus server (default)
+  chorus init [--agents --all]     Detect & configure this machine's coding agents
+                                   for Chorus (plugin install + credential seeding)
   chorus login [--url --api-key]   Authenticate as an agent; saves ~/.chorus/daemon.json
   chorus daemon [--url --api-key]  Connect to a remote Chorus server, subscribe to the
                                    agent notification stream, and wake a local headless

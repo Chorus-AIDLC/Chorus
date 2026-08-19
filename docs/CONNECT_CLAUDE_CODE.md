@@ -4,6 +4,8 @@ This guide walks through connecting [Claude Code](https://claude.com/claude-code
 
 > **Tip:** The in-app setup wizard at **Settings → Setup Guide → Open setup guide** walks you through the same steps interactively, including API-key creation. Use this doc if you prefer a reference you can read end-to-end or automate.
 
+> **One command (experimental):** `chorus init` detects the coding agents installed on your machine, lets you pick which to configure, installs each one's Chorus plugin via that agent's own plugin CLI, and seeds your Chorus credentials once into `~/.chorus/daemon.json`. Non-interactive: `chorus init --agents claude,codex --url <url> --api-key <cho_...> --yes`. It installs the plugin surface; the manual steps below always work and remain fully supported.
+
 ## Prerequisites
 
 - Chorus instance running and reachable (e.g. `http://localhost:8637` or a deployed URL)

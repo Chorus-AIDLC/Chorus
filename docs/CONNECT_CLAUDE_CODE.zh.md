@@ -4,6 +4,8 @@
 
 > **提示：**应用内 setup 向导（**Settings → Setup Guide → 打开设置向导**）会用交互式方式引导你完成这些步骤，包括 API Key 的创建。如果你想要一份可以从头读到尾或脚本化的参考，就看本文档。
 
+> **一条命令（实验性）：**`chorus init` 会探测本机已安装的 coding agent，让你选择要配置哪些，用各 agent 自己的插件 CLI 安装对应的 Chorus 插件，并把你的 Chorus 凭据一次性写入 `~/.chorus/daemon.json`。非交互用法：`chorus init --agents claude,codex --url <url> --api-key <cho_...> --yes`。它负责安装插件本体；下面的手动步骤始终可用，也仍受完整支持。
+
 ## 前置条件
 
 - 运行中且可访问的 Chorus 实例（例如 `http://localhost:8637`，或部署后的 URL）
